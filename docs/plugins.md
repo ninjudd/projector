@@ -205,11 +205,9 @@ starts with its first row.
 When a poll cannot reach GitHub, the band keeps showing what GitHub said
 last, and the divider's time shows how old that is. It shows GitHub's error
 only while GitHub has not answered once. When your loops track no open pull
-request and your inbox is empty, the band shows a short philosophical quote,
-dimmed. It asks Claude's `haiku` model for the quote once a session. When
-the model gives none, the band shows Osho's: “Mind is always the cause. It
-is the projector, and outside there are only screens — you project
-yourself.”
+request and your inbox is empty, the band shows a quote of Osho's, dimmed:
+“Your mind is a projector; it uses everything as a kind of screen, it
+projects itself on the screen.”
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer says

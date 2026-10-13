@@ -1,4 +1,4 @@
-import type { AgentInfo, FsEntry, ModelCompleteResult, On } from 'claude-code'
+import type { AgentInfo, FsEntry, On } from 'claude-code'
 import { expect, mock, test, type Engine } from 'claude-code/testing'
 
 import type { Notice, Question } from './types'
@@ -109,28 +109,20 @@ type Ran = ReturnType<typeof ran>
  */
 type Outcome = Ran | { deny: string }
 
-const USAGE = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
-const QUOTE = '“The unexamined life is not worth living.” — Socrates'
-const OSHO =
-  '“Mind is always the cause. It is the projector, and outside there are only screens — you project yourself.” — Osho'
+const QUOTE = '“Your mind is a projector; it uses everything as a kind of screen, it projects itself on the screen.” — Osho'
 
-/** GitHub's answer to a query, and the model's to a prompt, where a test needs others. */
-type Beneath = { github?: (query: string) => Ran; model?: () => ModelCompleteResult }
+/** GitHub's answer to a query, where a test needs another. */
+type Beneath = { github?: (query: string) => Ran }
 
 function world(
   on: On,
   files: Record<string, string>,
   ps = PS,
   project?: (argv: string[], stdin: string) => Outcome | Promise<Outcome>,
-  { github = query => ran(answer(query)), model = () => ({ isAnswered: true, text: QUOTE, usage: USAGE }) }: Beneath = {},
+  { github = query => ran(answer(query)) }: Beneath = {},
 ) {
   const commands: string[][] = []
   const filled: string[] = []
-  const prompts: string[] = []
-  on('model.complete', ($, e) => {
-    prompts.push(e.prompt)
-    return { value: model() }
-  })
   on('fs.stat', ($, e) => ({
     value: { kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false, realPath: e.path },
   }))
@@ -156,7 +148,7 @@ function world(
     const { Text } = $.ui.resolve(e)
     return <Text>{ENGINE_BAND}</Text>
   })
-  return { commands, filled, prompts }
+  return { commands, filled }
 }
 
 test('draws one line per open pull request of the session’s own loops', async ($, on) => {
@@ -341,12 +333,10 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
   await ui.unmount()
 })
 
-test('shows a quote the model gives, dimmed and once a session, when no loop tracks an open pull request', async ($, on) => {
+test('shows Osho’s quote, dimmed, when no loop tracks an open pull request', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
-  const { prompts } = world(on, {}, '', undefined, {
-    model: () => ({ isAnswered: true, text: `  ${QUOTE.replace(' — ', '\n— ')}\n`, usage: USAGE }),
-  })
+  world(on, {}, '')
 
   await $.command.run(COMMAND)
   await clock.advance(1)
@@ -363,26 +353,6 @@ test('shows a quote the model gives, dimmed and once a session, when no loop tra
   expect(texts[0]).toBe(QUOTE)
   expect(texts.filter(text => text.includes('─'))).toEqual([])
   await desktop.unmount()
-
-  // The band keeps its quote as it reloads.
-  await clock.advance(60_000)
-  await clock.settle()
-  expect(prompts.length).toBe(1)
-  expect(prompts[0]).toMatch(/philosophical quote/)
-})
-
-test('shows Osho’s quote when the model gives none', async ($, on) => {
-  const clock = mock.clock(on)
-  mock.env(on, { HOME })
-  world(on, {}, '', undefined, { model: () => ({ isAnswered: false, reason: 'empty-reply', usage: USAGE }) })
-
-  await $.command.run(COMMAND)
-  await clock.advance(1)
-  await clock.settle()
-
-  const ui = await $.ui.mount(BAND)
-  expect((await ui.find({ type: 'Text', text: OSHO }))?.props.dimColor).toBe(true)
-  await ui.unmount()
 })
 
 test('says why GitHub failed only until the band first loads', async ($, on) => {
