@@ -929,15 +929,12 @@ export const register: Register = on => {
     }
 
     // An open question's drawer has the band to itself, until it is closed or
-    // the question leaves the band.
+    // the question leaves the band. The divider steps aside too, so the
+    // question is the top row and the drawer has one more row before the
+    // engine, which caps the band below half the terminal, starts to scroll.
     const focused = asked.find(question => opened === `question:${question.ref}`)
     if (focused !== undefined) {
-      return (
-        <Box flexDirection="column">
-          {divider}
-          {drawQuestion(focused)}
-        </Box>
-      )
+      return <Box flexDirection="column">{drawQuestion(focused)}</Box>
     }
 
     // Otherwise the pull requests come first, then a blank line, then the questions.
