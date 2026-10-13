@@ -192,7 +192,10 @@ reads the new head against that history instead of rediscovering it.
   `--no-describe`, so the comment alone links the summary, as `review-pr`
   describes.
 - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
-  to finish: delete any start comment it still holds and remove its scratch
+  to run `project review finish <number> --force` with the loop's `--loop`
+  and `--model`. A closed pull request takes no review, so `--force`
+  discards one still in progress. `finish` deletes the subagent's start
+  comments, clears its locks and state, and removes its scratch
   worktrees. Then close the subagent and remove the pull request's line from
   the tracked file with `project loop remove owner/repo#number --tracked <file>`.
 - When a subagent is lost, to a session restart for example, start a

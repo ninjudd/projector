@@ -24,8 +24,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -235,8 +237,12 @@ class Paths:
     def locks(self) -> list[Path]:
         return sorted(self.folder.glob("*.lock")) if self.folder.is_dir() else []
 
+    @property
+    def worktrees(self) -> Path:
+        return self.root / "worktrees" / self.repo / str(self.number) / self.key
+
     def worktree(self, sha: str) -> Path:
-        return self.root / "worktrees" / self.repo / str(self.number) / self.key / sha[:SHORT]
+        return self.worktrees / sha[:SHORT]
 
 
 def loop_record(root: Path, loop: str) -> Path:
@@ -259,7 +265,8 @@ def stored_state(paths: Paths) -> Optional[dict]:
     state = json.loads(paths.state.read_text(encoding="utf-8"))
     if state.get("identity") != identity(paths.model):
         raise ReviewError(f"the review state in {paths.folder} is model {state.get('model')}'s, and model "
-                          f"{paths.model} shares its folder; finish that review and remove the folder first")
+                          f"{paths.model} shares its folder; finish that review first with `project review finish "
+                          f"{paths.number} --repo {paths.repo} --model {state.get('model')}`")
     return state
 
 
@@ -404,7 +411,8 @@ def add_worktree(checkout: Path, path: Path, sha: str) -> None:
     git("-C", str(checkout), "worktree", "add", "--quiet", "--detach", str(path), sha)
     head = git("-C", str(path), "rev-parse", "HEAD")
     if head != sha:
-        raise ReviewError(f"the scratch worktree {path} is at {head[:7]}, not {sha[:7]}; remove it and run again")
+        raise ReviewError(f"the scratch worktree {path} is at {head[:7]}, not {sha[:7]}; run the command again, "
+                          "which replaces the worktree")
 
 
 # Start comments
@@ -679,13 +687,18 @@ def valid_loop(loop: Optional[str]) -> Optional[str]:
     return loop
 
 
+def set_up_repos(root: Path, number: int) -> list[str]:
+    """The repositories with a review of a pull request numbered `number` set up here."""
+    states = (root / "prs").glob(f"*/*/{number}/*/state.json") if (root / "prs").is_dir() else []
+    return sorted({f"{p.parents[3].name}/{p.parents[2].name}" for p in states})
+
+
 def find_repo(root: Path, number: int, repo: Optional[str], cwd: Path) -> str:
     """The repository a command after setup means: --repo, else the one with a review of this pull
     request set up here, else the origin of the checkout the command runs in."""
     if repo:
         return repo
-    states = (root / "prs").glob(f"*/*/{number}/*/state.json") if (root / "prs").is_dir() else []
-    found = sorted({f"{p.parents[3].name}/{p.parents[2].name}" for p in states})
+    found = set_up_repos(root, number)
     if len(found) == 1:
         return found[0]
     if len(found) > 1:
@@ -724,14 +737,15 @@ def review_paths(root: Path, repo: str, number: int, model: Optional[str]) -> Pa
 
 def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer: Optional[str],
           configured_reviewer: Optional[str], model: str, loop: Optional[str],
-          rereview: bool) -> dict:
+          rereview: bool, replace: Optional[int] = None) -> dict:
     checkout = checkout_root(checkout)
     origin = origin_repo(checkout)
     if repo and repo.lower() != origin.lower():
         raise ReviewError(f"--repo {repo} is not this checkout's origin {origin}; run from a checkout of {repo}")
     repo = origin
     paths = Paths(root, repo, number, model)
-    recorded = ((stored_state(paths) or {}).get("start_comment") or {}).get("id")
+    earlier = stored_state(paths) or {}
+    recorded = (earlier.get("start_comment") or {}).get("id")
     pr = pull_request(repo, number)
     sha = pr["head"]["sha"]
     lock = take_lock(paths, sha, loop)
@@ -739,7 +753,10 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
         operator = authenticated_login()
         reviewer = reviewer_login(reviewer, configured_reviewer, operator)
         starts = start_comments(repo, number, reviewer)
-        check_duplicate(starts, reviewer_reviews(repo, number, reviewer), model, recorded)
+        if replace is not None:
+            check_replaceable(starts, replace, model, reviewer, repo, number)
+        check_duplicate([comment for comment in starts if comment["id"] != replace],
+                        reviewer_reviews(repo, number, reviewer), model, recorded, number)
         merge_base = fetch_head(checkout, repo, pr)
         worktree = paths.worktree(sha)
         add_worktree(checkout, worktree, sha)
@@ -750,9 +767,11 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
     except BaseException:
         lock.unlink(missing_ok=True)
         raise
-    if any(comment["id"] == recorded for comment in starts):
-        # The review this machine set up before and never published is replaced by this one.
-        delete_comment(repo, recorded, token)
+    for comment in starts:
+        # The review this machine set up before and never published, and the stopped session's that
+        # --replace names, give way to this one.
+        if comment["id"] in (recorded, replace):
+            delete_comment(repo, comment["id"], token)
     ensure_loop(root, loop)
     state = {
         "repo": repo,
@@ -765,7 +784,8 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
         "untrusted_because": why or None,
         "checkout": str(checkout),
         "worktree": str(worktree),
-        "worktrees": [str(worktree)],
+        # A loop keeps each head's worktree until the pull request closes, so `finish` removes them all.
+        "worktrees": list(dict.fromkeys([*earlier.get("worktrees", []), str(worktree)])),
         "operator": operator,
         "reviewer": reviewer,
         "model": model,
@@ -779,7 +799,19 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
     return state
 
 
-def check_duplicate(starts: list[dict], reviews: list[dict], model: str, recorded: Optional[int]) -> None:
+def check_replaceable(starts: list[dict], comment: int, model: str, reviewer: str, repo: str, number: int) -> None:
+    """Refuse a --replace that names anything but one of this model's start comments on the pull request."""
+    found = next((start for start in starts if start["id"] == comment), None)
+    if found is None:
+        raise ReviewError(f"comment {comment} is not a start comment {reviewer} posted on {repo}#{number}, so "
+                          "--replace deletes nothing; pass the id that setup named when it refused")
+    if identity(found["model"]) != identity(model):
+        raise ReviewError(f"start comment {comment} is model {found['model']}'s, and --replace replaces only model "
+                          f"{model}'s; another model's review is a second opinion that never stops this setup")
+
+
+def check_duplicate(starts: list[dict], reviews: list[dict], model: str, recorded: Optional[int],
+                    number: int) -> None:
     """Refuse a review while a live start comment shows the same model reviewing the pull request in
     another session: one this machine's state for the model does not record."""
     at = now()
@@ -789,7 +821,9 @@ def check_duplicate(starts: list[dict], reviews: list[dict], model: str, recorde
             raise ReviewError(
                 f"model {comment['model']} is already reviewing this pull request in another session: start comment "
                 f"{comment['id']} ({comment.get('url') or 'no URL'}) names {comment['sha'][:7]}, posted "
-                f"{comment['created_at']}; if that session has stopped, delete the comment and run setup again")
+                f"{comment['created_at']}; if that session has stopped, run `project review setup {number} "
+                f"--model {model} --replace {comment['id']}` with the other flags you passed, which deletes that "
+                "comment and sets this review up in its place")
 
 
 def delete_comment(repo: str, comment: int, token: Optional[str] = None) -> None:
@@ -820,8 +854,9 @@ def move(paths: Paths, loop: Optional[str]) -> dict:
                 "-f", f"body={body}"], token)
         reread = gh_json(["api", f"repos/{state['repo']}/issues/comments/{comment}"])
         if f"sha={sha}" not in (reread or {}).get("body", ""):
-            raise ReviewError(f"the start comment {comment} still does not name {sha[:7]} after the edit; "
-                              "edit it by hand")
+            raise ReviewError(f"the start comment {comment} still does not name {sha[:7]} after the edit; run "
+                              f"`project review move {number}` again, which records the move only once the edit "
+                              "reads back")
     except BaseException:
         lock.unlink(missing_ok=True)
         raise
@@ -832,6 +867,96 @@ def move(paths: Paths, loop: Optional[str]) -> dict:
                  heads=state["heads"] + 1, worktrees=state["worktrees"] + [str(worktree)])
     write_state(paths, state)
     return state
+
+
+def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], force: bool, cwd: Path) -> dict:
+    """`review finish`: end one model's review of the pull request on this machine. As the reviewer, delete
+    the review's start comment and every other start comment of the model's that `is_live` no longer
+    counts; remove every scratch worktree the state lists; clear the locks; and delete the state, keeping
+    the loop's record. Refuses while the review is unpublished unless `force`, and succeeds when there is
+    nothing to clean, so a second run changes nothing."""
+    result: dict = {"repo": repo, "number": number, "model": model, "comments": [], "worktrees": [],
+                    "released": [], "state": False}
+    if repo is None and not set_up_repos(root, number):
+        return result
+    repo = find_repo(root, number, repo, cwd)
+    model = find_model(root, repo, number, model)
+    result.update(repo=repo, model=model)
+    if model is None:
+        return result
+    paths = Paths(root, repo, number, model)
+    state = stored_state(paths)
+    if state is not None:
+        recorded = (state.get("start_comment") or {}).get("id")
+        if recorded and not force:
+            raise ReviewError(f"model {model}'s review of {repo}#{number} at {state['sha'][:7]} is unpublished, "
+                              f"and its start comment {recorded} still says it is in progress; publish it first, "
+                              f"or discard it with `project review finish {number} --force`, as when the pull "
+                              "request closed")
+        result["comments"] = finished_starts(state, recorded)
+        if result["comments"]:
+            token = reviewer_token(state["reviewer"])
+            for comment in result["comments"]:
+                delete_comment(repo, comment, token)
+        result["worktrees"] = remove_worktrees(paths, state)
+    result["released"] = [str(lock) for lock in release(paths)]
+    paths.request.unlink(missing_ok=True)
+    if state is not None:
+        paths.state.unlink(missing_ok=True)
+        result["state"] = True
+    with suppress(OSError):
+        paths.folder.rmdir()
+    return result
+
+
+def finished_starts(state: dict, recorded: Optional[int]) -> list[int]:
+    """The start comments `finish` deletes: the review's own, and every other of its model's that no longer
+    means a review in progress. A pull request GitHub no longer shows has none."""
+    repo, number, reviewer = state["repo"], state["number"], state["reviewer"]
+    try:
+        starts = [comment for comment in start_comments(repo, number, reviewer)
+                  if identity(comment["model"]) == identity(state["model"])]
+        reviews = reviewer_reviews(repo, number, reviewer) if starts else []
+    except NotFound:
+        return []
+    at = now()
+    return [comment["id"] for comment in starts if comment["id"] == recorded or not is_live(comment, reviews, at)]
+
+
+def remove_worktrees(paths: Paths, state: dict) -> list[str]:
+    """Remove every scratch worktree the state lists, then prune the checkout's record of them, and return
+    those removed. When the checkout that made one is gone or no longer lists it, a worktree in the review's
+    own worktree folder is deleted outright; Git refuses to remove any other path."""
+    checkout = state["checkout"]
+    removed = []
+    for path in map(Path, dict.fromkeys(state["worktrees"])):
+        if not path.exists():
+            continue
+        try:
+            git("-C", checkout, "worktree", "remove", "--force", str(path))
+        except ReviewError:
+            if not path.is_relative_to(paths.worktrees):
+                raise
+            shutil.rmtree(path)
+        removed.append(str(path))
+    with suppress(ReviewError):
+        git("-C", checkout, "worktree", "prune")
+    with suppress(OSError):
+        paths.worktrees.rmdir()
+    return removed
+
+
+def finish_lines(result: dict) -> list[str]:
+    """`review finish` without --json: what it deleted, removed, and released."""
+    where = f"{result['repo'] or ''}#{result['number']}" + (f" by model {result['model']}" if result["model"] else "")
+    if not (result["state"] or result["comments"] or result["worktrees"] or result["released"]):
+        return [f"no review of {where} is set up here; there is nothing to finish"]
+    count = len(result["released"])
+    return ([f"finished the review of {where}"]
+            + [f"deleted start comment {comment}" for comment in result["comments"]]
+            + [f"removed worktree {path}" for path in result["worktrees"]]
+            + ([f"released {count} lock{'' if count == 1 else 's'}"] if count else [])
+            + (["deleted its state; the loop's record of published reviews stays"] if result["state"] else []))
 
 
 THREADS_QUERY = """query($o:String!,$r:String!,$n:Int!,$after:String){ repository(owner:$o,name:$r){

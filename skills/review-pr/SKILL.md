@@ -252,8 +252,12 @@ a day is stale and cleared; `project review release <number>` clears one left
 by a session that stopped, and only when no review of that pull request by
 that model is running. `setup` also refuses while a live start comment shows
 the same model reviewing the pull request in another session, on this
-machine or another, and names the comment; delete it only once you know that
-session has stopped.
+machine or another, and names the comment. Once you know that session has
+stopped, run `setup` again with `--replace <comment-id>`. It checks that the
+comment is this model's start comment on this pull request, and deletes it
+once this review's start comment is posted. Never delete a start comment
+through `gh api`, which a host's automatic approval can refuse as a write to
+an external system.
 
 Under `start-review-loop`, run `project review interdiff <number>` next. A head
 that changed little since the loop's last full review can get an incremental
@@ -356,7 +360,8 @@ session resuming mid-review looks for one on GitHub rather than in memory and
 edits it instead of posting a second one. The exception is a leftover from a
 session that stopped between publishing and deleting: a comment whose
 `created_at` is earlier than the `submitted_at` of a Projector review by the
-same model on its `sha=`. Delete that one. Compare the timestamps rather than
+same model on its `sha=`. It means no review in progress, so leave it to
+`project review finish`, which deletes it. Compare the timestamps rather than
 testing for the review's presence, because a re-review of an unmoved head,
 such as the one `start-review-loop` runs on `RESPONDED`, has a live start
 comment that shares its `sha=` with the verdict that preceded it. Compare the
@@ -836,10 +841,14 @@ publishes one. Before a `clean` verdict, settle every earlier finding first;
 reviewer's thread, resolve a finding you have not verified at this head,
 claim a newer SHA was reviewed, or merge.
 
-Once the summary below has run or been skipped, remove the scratch worktree,
-which a summary reads for context. A `start-review-loop` subagent may instead
-keep it for the pull request's next head and remove it when the pull request
-closes.
+Once the summary below has run or been skipped, run
+`project review finish <number>`, which removes the scratch worktree a
+summary reads for context. It also deletes every start comment of this
+model's that no longer means a review in progress, clears the locks, and
+deletes the review's state, keeping the loop's record. It refuses while the
+review is unpublished. A `start-review-loop` subagent may instead keep the
+worktree for the pull request's next head and run `finish` when the pull
+request closes.
 
 ## Summarize the pull request
 
