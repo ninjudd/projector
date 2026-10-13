@@ -115,9 +115,9 @@ sets the status to `completed`. A stale status is worse than a missing
 status.
 
 The commands load the plan before they write, so they refuse a plan whose
-frontmatter `project check` rejects, such as one with an empty `owner:` line.
-To repair such a plan, fix by hand what the error or `project check` names,
-then go back to the commands.
+frontmatter `project check` rejects. A plan with `status: blocked`, for
+example, makes even `project status` fail. To repair such a plan, fix by hand
+what the error or `project check` names, then go back to the commands.
 
 ## Write a project plan
 
