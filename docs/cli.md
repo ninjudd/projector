@@ -65,13 +65,38 @@ what it did to each:
   an import. When the two are genuinely distinct files, each with its own
   content and no import between them, each gets the section, because an import
   would change everything Claude Code reads rather than only Projector's part.
-- `~/.claude/settings.json`, your own Claude Code settings, gains the
-  permission rules `Bash(project review publish *)`,
-  `Bash(project review hold *)`, and `Bash(project summary publish *)` in
-  `permissions.allow`. When `CLAUDE_CONFIG_DIR` is set, the file is
-  `settings.json` in that directory instead. Claude Code's auto mode
-  otherwise can refuse a review loop's clean review of your own pull request
-  as self-approval, although the review is a `COMMENT` that moves no
+- `~/.claude/settings.json`, your own Claude Code settings, gains
+  `Bash(project *)` in `permissions.allow`, which allows every `project`
+  command, and these entries in `permissions.ask`, which still ask before the
+  few commands that reach outside Projector's own state:
+
+  ```json
+  "ask": [
+    "Bash(project init *)",
+    "Bash(project upgrade *)",
+    "Bash(project config set *)",
+    "Bash(project config unset *)",
+    "Bash(project -*)"
+  ]
+  ```
+
+  `project upgrade` runs an installer it downloads, `project init` writes
+  these rules, and `project config set` and `unset` can change a setting that
+  widens an agent's authority, such as `review.allow_approve`. Claude Code
+  checks ask rules before allow rules, so an ask rule prompts for a command
+  that `Bash(project *)` also allows, and a trailing ` *` matches the command
+  with no arguments too. `Bash(project -*)` covers an option before the
+  command, as in `project --root . init`, which no command's own ask rule
+  matches; it asks before `project --version` and `project --help` as well.
+  The ask rules match the command text an agent writes, so they keep an agent
+  from running these commands unasked, not from spelling one another way.
+
+  When `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that
+  directory instead. Without the allow rule, Claude Code asks before each
+  Projector command an agent runs, which pushes the agent toward editing
+  Projector's files by hand or calling `gh api` itself. Its auto mode can
+  refuse a review loop's clean review of your own pull request as
+  self-approval, although the review is a `COMMENT` that moves no
   `reviewDecision` and a person still merges. It can refuse the deletion of
   the comment that holds your pull request in draft, as a write to an
   external system, which leaves a clean pull request stuck in draft. It can
@@ -88,15 +113,16 @@ what it did to each:
   `review.publish_rule = true` does not change that. Pass `--no-publish-rule`
   to leave the file alone for one run. To check the rules without `init`, run
   `project review rules`, which writes nothing. `init` adds the rules to the
-  file's existing settings, keeps every other setting, writes through a
-  symlink such as one into a dotfiles repository, and writes the file back as
-  two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds settings
-  of an unexpected shape, sits under a `.claude` that is not a directory, or
-  cannot be written, as one linked into a read-only directory such as the Nix
-  store cannot, and says on stderr how to add the rules yourself. `init`
-  still exits 0.
-- `~/.codex/rules/projector.rules`, a Codex rules file, allows the same three
-  commands, for Codex's approval reviewer, which otherwise can refuse
+  file's existing settings, removes from `permissions.allow` the narrower
+  rules `Bash(project *)` replaces, such as `Bash(project review publish *)`,
+  keeps every other setting, writes through a symlink such as one into a
+  dotfiles repository, and writes the file back as two-space JSON. It keeps a
+  file that is not valid UTF-8 JSON, holds settings of an unexpected shape,
+  sits under a `.claude` that is not a directory, or cannot be written, as one
+  linked into a read-only directory such as the Nix store cannot, and says on
+  stderr how to add the rules yourself. `init` still exits 0.
+- `~/.codex/rules/projector.rules`, a Codex rules file, allows the same
+  commands for Codex, whose approval reviewer otherwise can refuse
   `project summary publish` as sending repository content to another host.
   When `CODEX_HOME` is set, the file is `rules/projector.rules` in that
   directory instead. `init` writes it only where that directory exists, so it
@@ -105,22 +131,31 @@ what it did to each:
   grant to `default.rules`, so `init` rewrites `projector.rules` whole and
   leaves your other rules alone. The terminal, `--publish-rule`, and
   `review.publish_rule` decide it exactly as they decide the Claude Code
-  rules. The file holds two rules:
+  rules.
+
+  A Codex rule matches exact words with no wildcard, so an ask rule for
+  `init` would miss an option before it, as in `project --root=. init`.
+  Instead, the file allows each `project` command by name, apart from
+  `init`, `upgrade`, and `config`, and allows only the reading commands of
+  `config`:
 
   ```text
   prefix_rule(
-      pattern = ["project", ["review", "summary"], "publish"],
+      pattern = ["project", ["check", "create", "done", "edit", "inbox", "list", "loop", "owner", "priority", "review", "search", "show", "site", "status", "summary"]],
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "review", "hold"],
+      pattern = ["project", "config", ["get", "list", "paths"]],
       decision = "allow",
   )
   ```
 
-  Codex runs a command that an `allow` rule matches without asking, and
-  outside its sandbox, so a publish reaches GitHub and the site. To see what
-  the rules allow, run
+  No rule matches `project init`, `project upgrade`, `project config set` or
+  `unset`, or a command line that starts with an option, so Codex's usual
+  approval decides them. A command added to Projector later reaches Codex
+  when you run `init` again. Codex runs a command that an `allow` rule
+  matches without asking, and outside its sandbox, so a publish reaches
+  GitHub and the site. To see what the rules allow, run
   `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
   `init` keeps the file, and says on stderr how to add the rules yourself, when
   the file is not valid UTF-8, cannot be read, or cannot be written, as one in
@@ -536,7 +571,7 @@ These are the keys Projector reads today:
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
-| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish`, `project review hold`, and `project summary publish` to your Claude Code settings and Codex rules |
+| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing every `project` command except `project init`, `project upgrade`, and `project config set` and `unset` to your Claude Code settings and Codex rules |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
@@ -1452,10 +1487,11 @@ head's code, so `gate` refuses, exiting 1 without running anything, on a head
 `setup` recorded as untrusted, whether or not `review.gate` is set, and when
 `review.gate` is unset.
 
-`rules` checks whether your own settings allow `project review publish`,
-`project review hold`, and `project summary publish`: the rules `init` adds to
+`rules` checks whether your own settings hold the rules `init` adds to
 `~/.claude/settings.json`, and to `~/.codex/rules/projector.rules` where Codex
-is installed. It prints
+is installed, which allow Projector's commands, such as
+`project review publish`, `project review hold`, and `project summary publish`,
+and ask before the few that reach outside Projector's own state. It prints
 each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
 whole check and for each file. It writes nothing, takes no pull request, and
 runs from any directory. It exits 0 when every file has the rules. It exits 1

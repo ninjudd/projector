@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import shutil
 import stat
 import subprocess
 import tempfile
@@ -39,6 +38,11 @@ def priority_line(priority: str | None) -> str:
     return f"priority: {priority}\n" if priority else ""
 
 
+def granted(*allow: str, ask: tuple[str, ...] = ()) -> dict:
+    """Claude Code settings as `init` leaves them: the given rules, then Projector's own."""
+    return {"permissions": {"allow": [*allow, *permissions.ALLOW], "ask": [*ask, *permissions.ASK]}}
+
+
 class RepositoryTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -68,7 +72,7 @@ class RepositoryTestCase(unittest.TestCase):
         os.environ.pop("CODEX_HOME", None)
         self.settings().parent.mkdir()
         self.settings().write_text(
-            json.dumps({"permissions": {"allow": list(permissions.RULES)}}, indent=2) + "\n", encoding="utf-8"
+            json.dumps(granted(), indent=2) + "\n", encoding="utf-8"
         )
         # Commands run as an agent would, without a terminal, whatever runs the
         # tests; a test that stands for a person at a terminal says so.
@@ -706,7 +710,7 @@ class MutationTests(RepositoryTestCase):
         modes = {stat.S_IMODE((self.root / name).stat().st_mode) for name in self.ADOPTED}
         self.assertEqual(1, len(modes), modes)
         self.assertTrue(modes.pop() & stat.S_IRGRP)
-        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}}, json.loads(self.settings().read_text()))
+        self.assertEqual(granted(), json.loads(self.settings().read_text()))
         self.assertFalse((self.root / ".claude").exists(), "the rule is the user's, not the repository's")
 
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
@@ -1054,22 +1058,75 @@ class MutationTests(RepositoryTestCase):
             payload["files"],
         )
 
-    def test_init_adds_the_publish_rule_to_existing_settings_and_keeps_the_rest(self) -> None:
+    def test_init_adds_the_rules_to_existing_settings_and_keeps_the_rest(self) -> None:
         self.at_a_terminal()
-        existing = {"env": {"A": "1"}, "permissions": {"allow": ["Bash(npm test)"], "deny": ["Read(.env)"]}}
+        existing = {"env": {"A": "1"},
+                    "permissions": {"allow": ["Bash(npm test)"], "ask": ["Bash(rm *)"], "deny": ["Read(.env)"]}}
         self.settings().write_text(json.dumps(existing), encoding="utf-8")
 
         code, stdout, stderr = self.invoke("init")
 
         self.assertEqual(0, code, stderr)
         self.assertIn("updated ~/.claude/settings.json\n", stdout)
-        self.assertEqual(
-            {"env": {"A": "1"}, "permissions": {"allow": ["Bash(npm test)", *permissions.RULES], "deny": ["Read(.env)"]}},
-            json.loads(self.settings().read_text()),
-        )
+        self.assertEqual({"env": {"A": "1"},
+                          "permissions": {**granted("Bash(npm test)", ask=("Bash(rm *)",))["permissions"],
+                                          "deny": ["Read(.env)"]}},
+                         json.loads(self.settings().read_text()))
         before = self.settings().read_bytes()
         self.assertIn("unchanged ~/.claude/settings.json\n", self.invoke("init")[1])
         self.assertEqual(before, self.settings().read_bytes())
+
+    def test_init_replaces_the_narrower_rules_projector_wrote_before(self) -> None:
+        self.at_a_terminal()
+        self.settings().write_text(json.dumps({"permissions": {
+            "allow": ["Bash(npm test)", "Bash(project review publish *)", "Bash(project review hold *)",
+                      "Bash(git status)", "Bash(project summary publish *)", "Bash(project review finish *)",
+                      "Bash(project review settle *)", "Bash(project review publish *)"],
+            "deny": ["Bash(project review hold *)"],
+        }}), encoding="utf-8")
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated ~/.claude/settings.json\n", stdout)
+        self.assertEqual({"permissions": {**granted("Bash(npm test)", "Bash(git status)")["permissions"],
+                                          "deny": ["Bash(project review hold *)"]}},
+                         json.loads(self.settings().read_text()), "only allow rules Projector wrote are removed")
+        before = self.settings().read_bytes()
+        self.assertIn("unchanged ~/.claude/settings.json\n", self.invoke("init")[1])
+        self.assertEqual(before, self.settings().read_bytes())
+
+    def test_init_removes_a_leftover_narrower_rule_only_when_it_writes(self) -> None:
+        leftover = granted("Bash(project review hold *)")
+        self.settings().write_text(json.dumps(leftover), encoding="utf-8")
+
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("unchanged ~/.claude/settings.json\n", stdout,
+                      "a leftover rule allows nothing the broad one does not, so a report has nothing to say")
+        self.assertEqual(leftover, json.loads(self.settings().read_text()))
+
+        self.at_a_terminal()
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated ~/.claude/settings.json\n", stdout)
+        self.assertEqual(granted(), json.loads(self.settings().read_text()))
+
+    def test_init_adds_the_ask_rules_beside_an_allow_rule_already_there(self) -> None:
+        self.settings().write_text(json.dumps({"permissions": {"allow": list(permissions.ALLOW)}}), encoding="utf-8")
+
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("kept ~/.claude/settings.json\n", stdout)
+        self.assertIn(", ".join(permissions.ASK), stderr)
+        self.assertIn("an agent can run `project init`, `project upgrade`, and `project config set` and `unset` "
+                      "without asking you", stderr)
+
+        self.at_a_terminal()
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated ~/.claude/settings.json\n", stdout)
+        self.assertEqual(granted(), json.loads(self.settings().read_text()))
 
     def test_init_keeps_settings_it_cannot_read_and_says_why(self) -> None:
         for text, reason in (
@@ -1077,6 +1134,7 @@ class MutationTests(RepositoryTestCase):
             ("[]", "does not hold a JSON object"),
             ('{"permissions": []}', "`permissions` that is not an object"),
             ('{"permissions": {"allow": "Bash(ls)"}}', "`permissions.allow` that is not a list"),
+            ('{"permissions": {"ask": {}}}', "`permissions.ask` that is not a list"),
         ):
             with self.subTest(text=text):
                 self.settings().write_text(text, encoding="utf-8")
@@ -1086,7 +1144,8 @@ class MutationTests(RepositoryTestCase):
                 self.assertEqual(0, code, stderr)
                 self.assertIn("kept ~/.claude/settings.json\n", stdout)
                 self.assertIn(reason, stderr)
-                self.assertTrue(all(rule in stderr for rule in permissions.RULES), stderr)
+                self.assertIn(f"add {', '.join(permissions.ALLOW)} to permissions.allow and "
+                              f"{', '.join(permissions.ASK)} to permissions.ask yourself", stderr)
                 self.assertEqual(text, self.settings().read_text())
 
     def test_init_writes_through_a_settings_link_into_a_dotfiles_repository(self) -> None:
@@ -1103,7 +1162,7 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertIn("updated ~/.claude/settings.json\n", stdout)
         self.assertTrue(self.settings().is_symlink())
-        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}}, json.loads(shared.read_text()))
+        self.assertEqual(granted(), json.loads(shared.read_text()))
 
     @unittest.skipIf(getattr(os, "geteuid", lambda: -1)() == 0, "root writes a read-only directory anyway")
     def test_init_keeps_settings_it_cannot_write_and_reports_the_rest(self) -> None:
@@ -1126,7 +1185,7 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("created CLAUDE.md\n", stdout, "the files init did write are still reported")
         self.assertIn("kept ~/.claude/settings.json\n", stdout)
         self.assertIn("could not be written", stderr)
-        self.assertTrue(all(rule in stderr for rule in permissions.RULES), stderr)
+        self.assertTrue(all(rule in stderr for rule in permissions.ALLOW + permissions.ASK), stderr)
         self.assertEqual("{}\n", shared.read_text())
 
     def test_init_adds_the_publish_rule_where_claude_config_dir_points(self) -> None:
@@ -1140,8 +1199,7 @@ class MutationTests(RepositoryTestCase):
 
         self.assertEqual(0, code, stderr)
         self.assertIn(f"created {Path(configured.name) / 'settings.json'}\n", stdout)
-        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}},
-                         json.loads((Path(configured.name) / "settings.json").read_text()))
+        self.assertEqual(granted(), json.loads((Path(configured.name) / "settings.json").read_text()))
         self.assertEqual(before, self.settings().read_bytes())
 
     def test_init_leaves_the_repositorys_own_claude_settings_alone(self) -> None:
@@ -1150,7 +1208,7 @@ class MutationTests(RepositoryTestCase):
         repository = self.root / ".claude" / "settings.json"
         repository.parent.mkdir()
         for text in ('{"permissions": {"allow": ["Bash(npm test)"]}}\n',
-                     json.dumps({"permissions": {"allow": list(permissions.RULES)}}) + "\n"):
+                     json.dumps(granted()) + "\n"):
             with self.subTest(text=text):
                 repository.write_text(text, encoding="utf-8")
 
@@ -1178,7 +1236,7 @@ class MutationTests(RepositoryTestCase):
         code, stdout, stderr = self.invoke("init", "--publish-rule")
         self.assertEqual(0, code, stderr)
         self.assertIn("created ~/.claude/settings.json\n", stdout)
-        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}}, json.loads(self.settings().read_text()))
+        self.assertEqual(granted(), json.loads(self.settings().read_text()))
 
         self.settings().unlink()
         self.at_a_terminal()
@@ -1203,31 +1261,6 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(78, code)
         self.assertIn("review.publish_rule must be true or false", stderr)
         self.assertFalse((self.root / "AGENTS.md").exists(), "a bad value refuses before any file is written")
-
-    def test_init_adds_the_hold_and_summary_rules_beside_an_existing_review_rule(self) -> None:
-        self.at_a_terminal()
-        self.settings().write_text(json.dumps({"permissions": {"allow": ["Bash(project review publish *)"]}}))
-
-        code, stdout, stderr = self.invoke("init")
-
-        self.assertEqual(0, code, stderr)
-        self.assertIn("updated ~/.claude/settings.json\n", stdout)
-        self.assertEqual({"permissions": {"allow": ["Bash(project review publish *)",
-                                                    "Bash(project review hold *)",
-                                                    "Bash(project summary publish *)"]}},
-                         json.loads(self.settings().read_text()))
-
-    def test_init_adds_the_hold_rule_to_settings_that_allow_both_publish_commands(self) -> None:
-        self.at_a_terminal()
-        published = ["Bash(project review publish *)", "Bash(project summary publish *)"]
-        self.settings().write_text(json.dumps({"permissions": {"allow": published}}))
-
-        code, stdout, stderr = self.invoke("init")
-
-        self.assertEqual(0, code, stderr)
-        self.assertIn("updated ~/.claude/settings.json\n", stdout)
-        self.assertEqual({"permissions": {"allow": [*published, "Bash(project review hold *)"]}},
-                         json.loads(self.settings().read_text()))
 
     def codex_rules(self) -> Path:
         """Projector's rules file in the user's Codex configuration."""
@@ -1280,24 +1313,6 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("run `project init` yourself in a terminal, or pass --publish-rule", stderr)
         self.assertFalse(self.codex_rules().exists())
 
-    @unittest.skipUnless(shutil.which("codex"), "checking the Codex rule needs the codex CLI")
-    def test_codex_allows_exactly_the_publish_and_hold_commands_under_the_rules(self) -> None:
-        rules = self.home / "projector.rules"
-        rules.write_text(permissions.CODEX_RULES)
-
-        def decision(*command: str) -> str:
-            result = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules), *command],
-                                    check=True, capture_output=True, text=True)
-            return json.loads(result.stdout).get("decision", "none")
-
-        self.assertEqual("allow", decision("project", "review", "publish", "--loop", "x"))
-        self.assertEqual("allow", decision("project", "summary", "publish", "--summary", "summary.json"))
-        self.assertEqual("allow", decision("project", "review", "hold", "12", "--drop"))
-        self.assertEqual("none", decision("project", "summary", "hold", "12", "--drop"))
-        self.assertEqual("none", decision("project", "review", "release", "12"))
-        self.assertEqual("none", decision("project", "site", "serve"))
-        self.assertEqual("none", decision("project", "summary", "init"))
-
     def test_init_outside_a_repository_sets_up_only_the_permission_rules(self) -> None:
         self.at_a_terminal()
         self.settings().unlink()
@@ -1308,7 +1323,7 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertEqual("created ~/.claude/settings.json\ncreated ~/.codex/rules/projector.rules\n", stdout)
         self.assertIn("not inside a Git repository, so init set up only the permission rules", stderr)
-        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}}, json.loads(self.settings().read_text()))
+        self.assertEqual(granted(), json.loads(self.settings().read_text()))
         self.assertFalse((self.home / "docs").exists(), "init adopts no convention outside a repository")
 
         code, stdout, _ = self.invoke("init", "--json", cwd=self.home)
@@ -1439,16 +1454,23 @@ class ReviewRulesTests(RepositoryTestCase):
         self.assertEqual({"allowed": True, "files": [{"path": "~/.claude/settings.json", "allowed": True}]},
                          json.loads(stdout))
 
-    def test_missing_rules_exit_1_and_ask_for_init_without_writing(self) -> None:
-        def allow(*rules: str) -> None:
-            self.settings().write_text(json.dumps({"permissions": {"allow": list(rules)}}))
+        self.settings().write_text(json.dumps(granted("Bash(project review hold *)")))
+        before = self.home_tree()
+        self.assertEqual((0, "allows ~/.claude/settings.json\n", ""), self.invoke("review", "rules"),
+                         "a narrower rule left beside the broad one takes nothing away")
+        self.assertEqual(before, self.home_tree())
 
+    def test_missing_rules_exit_1_and_ask_for_init_without_writing(self) -> None:
+        def write(permissions: dict) -> None:
+            self.settings().write_text(json.dumps({"permissions": permissions}))
+
+        narrower = ["Bash(project review publish *)", "Bash(project review hold *)", "Bash(project summary publish *)"]
         cases = {
-            "hold rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project summary publish *)"),
-                                  "Bash(project review hold *)"),
-            "summary rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review hold *)"),
-                                     "Bash(project summary publish *)"),
-            "settings absent": (self.settings().unlink, "Bash(project review hold *)"),
+            "only the narrower rules": (lambda: write({"allow": narrower}), "Bash(project *)"),
+            "ask rules missing": (lambda: write({"allow": list(permissions.ALLOW)}), "Bash(project -*)"),
+            "one ask rule missing": (lambda: write(granted()["permissions"] | {"ask": list(permissions.ASK[:-1])}),
+                                     "Bash(project -*)"),
+            "settings absent": (self.settings().unlink, "Bash(project *)"),
         }
         for name, (arrange, missing) in cases.items():
             with self.subTest(name):
@@ -1481,7 +1503,7 @@ class ReviewRulesTests(RepositoryTestCase):
 
         self.assertEqual(1, code, stderr)
         self.assertEqual("allows ~/.claude/settings.json\nlacks ~/.codex/rules/projector.rules\n", stdout)
-        self.assertIn("Codex's approval reviewer", stderr)
+        self.assertIn("its approval reviewer refuse, a Projector command an agent runs", stderr)
         self.assertNotIn("or pass --publish-rule", stderr)
         self.assertEqual(before, self.home_tree())
 

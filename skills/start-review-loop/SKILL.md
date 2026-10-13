@@ -55,8 +55,8 @@ a repository with nothing open.
    review or GitHub workflow skills.
 2. Run `project review rules` once. It reads the user's own Claude Code
    settings and Codex rules, writes nothing, and exits 1 when either lacks the
-   rules that allow `project review publish`, `project review hold`, and
-   `project summary publish`.
+   rules that allow Projector's commands, `project review publish`,
+   `project review hold`, and `project summary publish` among them.
    On exit 1, tell the user once, before the first review, that the host's
    automatic approval, such as Claude Code's auto mode or Codex's approval
    reviewer, can refuse the loop's publishes, a summary on another author's

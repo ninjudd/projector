@@ -238,14 +238,14 @@ run it in, and refuses outside one.
 Each run prints what it did, the comment's id and URL, the changes the hold
 lists, and the draft state; `--json` prints the same as one object.
 
-Run `project review hold` as a command of its own, because it is the one
-narrow command a session can allow for the hold. Claude Code's auto mode can
-refuse a raw `gh api` call that deletes a comment, as a write to an external
-system, which leaves a clean pull request stuck in draft. `project init`
-adds `Bash(project review hold *)` to the user's Claude Code settings, and
-the same allowance to their Codex rules, so the command runs where the raw
-call is refused. If the host refuses the command anyway, do not retry it as
-a raw `gh api` call. Leave the hold as it is, and ask the user to run
+Run `project review hold` as a command of its own, so the rule that allows
+it matches, rather than making its calls with `gh api`. Claude Code's auto
+mode can refuse a raw `gh api` call that deletes a comment, as a write to an
+external system, which leaves a clean pull request stuck in draft.
+`project init` adds `Bash(project *)` to the user's Claude Code settings,
+which allows every Projector command, and the same allowance to their Codex
+rules, so the command runs where the raw call is refused. If the host
+refuses the command anyway, do not retry it as a raw `gh api` call. Leave the hold as it is, and ask the user to run
 `project init` in a terminal, which adds the rules, or to run the command
 themselves.
 
