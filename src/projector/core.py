@@ -27,7 +27,7 @@ FRONTMATTER_LINE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):[ \t]*(.*)$")
 def _field_line(field: str) -> re.Pattern[str]:
     return re.compile(
         rf"^(?P<prefix>{field}:[ \t]*)(?P<value>[^#\r\n]*?)"
-        r"(?P<suffix>[ \t]*(?:#.*)?)$",
+        r"(?P<suffix>[ \t]*(?:#[^\r\n]*)?)(?=\r?$)",
         re.MULTILINE,
     )
 
@@ -262,18 +262,15 @@ def project_from_text(text: str, name: str, path: Path, display_path: Path) -> P
             )
     elif priority not in PRIORITIES:
         raise ProjectorError(f"{display_path}: priority must be one of {choices}")
-    owner = metadata.get("owner")
-    if owner is not None:
-        if not owner:
-            raise ProjectorError(f"{display_path}: owner must not be empty; name a person or remove the field")
-        if owner in ("|", ">") or owner[:1] in ("|", ">") and owner[1:] in ("-", "+"):
-            raise ProjectorError(f"{display_path}: owner must be a single line")
+    owner = metadata.get("owner", "")
+    if owner in ("|", ">") or owner[:1] in ("|", ">") and owner[1:] in ("-", "+"):
+        raise ProjectorError(f"{display_path}: owner must be a single line")
     return Project(
         name=name,
         title=title_from_text(text, name),
         status=status,
         priority=priority,
-        owner=owner,
+        owner=owner if owner.strip() else None,
         path=path,
     )
 
@@ -770,7 +767,12 @@ class ProjectStore:
             line_end = header.find("\n", match.end())
             header = header[: match.start()] + header[len(header) if line_end < 0 else line_end + 1 :]
         else:
-            header = header[: match.start("value")] + owner + header[match.end("value") :]
+            prefix, suffix = match.group("prefix"), match.group("suffix")
+            if not match.group("value"):
+                # An empty value can leave no space after the colon, and a
+                # comment right after it would read as part of the new value.
+                prefix, suffix = "owner: ", f" {suffix}" if suffix else ""
+            header = header[: match.start()] + prefix + owner + suffix + header[match.end() :]
         current_stat = project.path.stat()
         signature = (original_stat.st_ino, original_stat.st_size, original_stat.st_mtime_ns)
         current = (current_stat.st_ino, current_stat.st_size, current_stat.st_mtime_ns)
