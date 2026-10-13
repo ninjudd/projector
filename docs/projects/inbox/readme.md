@@ -543,7 +543,9 @@ goes away.
   notes and age end it as an item's pull request label and age do. A pull
   request that GitHub gave no time for shows no age. The drawer's facts no
   longer end with "updated … ago"; the divider's "updated" time, when the
-  band last loaded, stays.
+  band last loaded, stays. Open review threads show as a count after `⋮`
+  in yellow, such as `⋮5`, the last note before the age, in place of the
+  words "5 open threads".
 - **A pull request's drawer starts under its state.** Its lines start one
   column past the number, under `draft` or `ready`, not where the titles
   start.
@@ -584,13 +586,13 @@ goes away.
 
 | File | Change |
 | --- | --- |
-| `hooks/register.tsx` | **discuss** puts the quoted subject and two newlines in the prompt; a question's drawer draws no `Input`, and a resolved question keeps the `✓` row of its typed answer; `/projector` drops its `argumentHint` and its handling of a tracked file, and its description names the inbox; `runningLoops`, the `ps -A` scan, goes, and `load` lists only the seen loops that have a kind; the toast for a tracked path the band cannot read says that the loop is not listed; muted text takes the `subtle` color; a sent prompt that answers a question closes its drawer; a watcher's entry replaces a seen loop that has no kind |
+| `hooks/register.tsx` | **discuss** puts the quoted subject and two newlines in the prompt; a question's drawer draws no `Input`, and a resolved question keeps the `✓` row of its typed answer; `/projector` drops its `argumentHint` and its handling of a tracked file, and its description names the inbox; `runningLoops`, the `ps -A` scan, goes, and `load` lists only the seen loops that have a kind; the toast for a tracked path the band cannot read says that the loop is not listed; muted text takes the `subtle` color; a sent prompt that answers a question closes its drawer, and a sent reply that quotes a notice closes the notice's drawer; a watcher's entry replaces a seen loop that has no kind |
 | `hooks/parse.ts`, `hooks/parse.test.ts` | `expandPath`, which only `/projector <tracked file>` used, goes with its test |
 | `hooks/types.d.ts` | `SeenLoop.kind` is required |
 | `hooks/inbox.ts` | `answersIn` lets spaces or tabs follow a quote before its line break; `RESOLVED_MS` is `30_000` |
 | `hooks/inbox.test.ts`, `hooks/band.test.tsx` | The rows below |
 | `docs/plugins.md` | The drawer, **discuss**, which quotes answer, the 30 seconds, and the band without a file named by hand |
-| `hooks/register.tsx` | Each pull request's line ends with its age, in a column shared with the items' ages through one helper, and its title grows to fill the line; the drawer drops "updated … ago" and `drawerIndent`, and puts **github** and **projector** on lines of their own |
+| `hooks/register.tsx` | Each pull request's line ends with its age, in a column shared with the items' ages through one helper, and its title grows to fill the line; the drawer drops "updated … ago" and `drawerIndent`, and puts **github** and **projector** on lines of their own; open review threads show as a yellow count after `⋮`, the last note before the age |
 | `docs/plugins.md` | The band examples, the age at the end of a pull request's line, and the drawer under the state with one link per line |
 | `hooks/github.ts`, `hooks/register.tsx`, `hooks/types.d.ts`, `docs/plugins.md` | The query asks for `viewer { login }`, and the snapshot keeps it; the band lists your pull requests first and then everyone else's by author, names another person's author before the title, drops "by" and the author from the drawer's facts, and draws the **discuss** row after the links |
 | `src/projector/loop.py`, `src/projector/cli.py`, `tests/test_loop.py`, `skills/start-watch-loop/scripts/watch-threads.sh`, `skills/start-watch-loop/SKILL.md`, `tests/test_watchers.py`, `hooks/register.tsx`, `docs/cli.md`, `docs/plugins.md` | `project loop drop` and `restore` add and remove a tracked file's `!` lines; `watch-threads.sh` honors them; a pull request's drawer gains **dismiss**, which drops the pull request from each of the session's loops that lists it, through the CLI, on one actions' row shared with an item's drawer |
@@ -606,7 +608,7 @@ description lists them.
 | Type `keep the cap, but log each retry` under that quote, and send | The band records it as a typed answer under the last letter and marks it delivered; the prompt reaches the agent as you wrote it |
 | Type an option's text under the quote instead, and send | The band records that option |
 | Type on the quote's own line, and send | Nothing is recorded |
-| Press **discuss** on a notice, type under the quote, and send | Nothing is recorded; the prompt reaches the agent |
+| Press **discuss** on a notice, type under the quote, and send | Nothing is recorded; the prompt reaches the agent; the notice's drawer closes and the notice stays listed |
 | Press an option's number, then send the prompt | The drawer stays open after the press and closes when the prompt is sent; the band shows its list |
 | Press **discuss**, type an answer under the quote, and send | The drawer stays open while you type and closes when the prompt is sent |
 | Send a quoted question, two spaces, a line break, and an option's text | The band records that option |

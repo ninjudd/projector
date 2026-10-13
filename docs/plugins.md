@@ -185,7 +185,7 @@ session starts a loop's watcher for the first time.
 ──────────────────────────────────────────────────────────────── updated 12s ago [-]
 
 #267 draft List a loop's open pull requests above the Claude Code prompt      2h
-#258 draft grace Name the reviewed head in a review's signature line conflict 5m
+#258 draft grace Name the reviewed head in a review's signature conflict · ⋮5 5m
      reviewing · review-signature · +84 −12 in 5 files · checks passing
      github
      projector
@@ -194,10 +194,10 @@ session starts a loop's watcher for the first time.
 
 Each line is the pull request's number, `draft` or `ready`, its author when
 someone else wrote it, the title, and, when the pull request has them, a
-merge conflict, a change request, or unresolved review threads. The line
-ends with how long ago the pull request last changed, in the column where
-the inbox's items end with their ages. Only the title shortens on a narrow
-terminal.
+merge conflict or a change request, then the number of unresolved review
+threads after a `⋮` in yellow, such as `⋮5`. The line ends with how long
+ago the pull request last changed, in the column where the inbox's items
+end with their ages. Only the title shortens on a narrow terminal.
 
 Your own pull requests come first, then everyone else's, each author's
 together and the authors in order of login, with no line between the groups.

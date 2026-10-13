@@ -166,7 +166,9 @@ test('draws one line per open pull request of the session’s own loops', async 
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '1 open thread' })).toBeDefined()
+  // Open threads show as their count after a `⋮`, in yellow.
+  expect((await ui.findAll({ type: 'Text', text: '⋮1' })).map(found => found.props.color)).toContain('warning')
+  expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
@@ -213,6 +215,9 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
   expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
+  // The threads' count comes after the other notes, beside the age.
+  const notes = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  expect(notes.indexOf(' · ⋮2')).toBeGreaterThan(notes.indexOf('conflict'))
 
   await ui.press({ key: 'pr:x/y#7' })
   // The drawer's facts name no author, whoever wrote the pull request.

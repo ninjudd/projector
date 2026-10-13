@@ -552,10 +552,9 @@ function notesOf(pr: PullRequest): Note[] {
   const notes: Note[] = []
   if (pr.isConflicting) notes.push({ text: 'conflict', color: 'error' })
   if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
-  if (pr.openThreads > 0) {
-    notes.push({ text: `${pr.openThreads} open thread${pr.openThreads === 1 ? '' : 's'}`, color: 'warning' })
-  }
   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
+  // The open threads' count comes last, beside the age.
+  if (pr.openThreads > 0) notes.push({ text: `⋮${pr.openThreads}`, color: 'warning' })
   return notes
 }
 
