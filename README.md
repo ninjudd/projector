@@ -40,7 +40,8 @@ the repository follows them. Run at a terminal, it adds rules to your own
 Claude Code settings, `~/.claude/settings.json`, and to your Codex rules,
 `~/.codex/rules/projector.rules`, that let an agent run `project` commands, such
 as publishing a review or a pull request summary, without being asked or
-refused. `project init`, `project upgrade`, and `project config set` still ask.
+refused. `project init`, `project upgrade`, `project config set`, and a site
+build that runs a `--prepare` command still ask.
 It sets those up outside a repository too. When `origin` is on
 GitHub, it also sets up the [Projector site](docs/site.md). `create` writes
 the plan at

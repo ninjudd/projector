@@ -555,8 +555,10 @@ def parser() -> argparse.ArgumentParser:
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
+    # Without abbreviations, --prepare and --allow-prepare are always spelled in
+    # full, so the ask rule `init` adds for them matches every spelling.
     site_build = site_commands.add_parser(
-        "build", help="build the site from the projects, the published reviews, and the docs"
+        "build", help="build the site from the projects, the published reviews, and the docs", allow_abbrev=False
     )
     site_build.add_argument("--out", required=True)
     site_build.add_argument("--summaries", help="directory holding <number>/<head>/summary.json files")
@@ -593,7 +595,7 @@ def parser() -> argparse.ArgumentParser:
     site_status.add_argument("--repo", required=True, help="OWNER/NAME")
     site_status.add_argument("--pr", type=int, help="print the URL of this pull request's review")
     site_serve = site_commands.add_parser(
-        "serve", help="build the site and serve it over HTTP, rebuilding as its sources change"
+        "serve", help="build the site and serve it over HTTP, rebuilding as its sources change", allow_abbrev=False
     )
     site_serve.add_argument("--port", type=int, default=8000, help="the port to listen on (default: 8000; 0 picks one)")
     site_serve.add_argument(

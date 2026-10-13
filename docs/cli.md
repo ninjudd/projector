@@ -76,20 +76,37 @@ what it did to each:
     "Bash(project upgrade *)",
     "Bash(project config set *)",
     "Bash(project config unset *)",
+    "Bash(project site *prepare*)",
     "Bash(project -*)"
   ]
   ```
 
   `project upgrade` runs an installer it downloads, `project init` writes
   these rules, and `project config set` and `unset` can change a setting that
-  widens an agent's authority, such as `review.allow_approve`. Claude Code
-  checks ask rules before allow rules, so an ask rule prompts for a command
-  that `Bash(project *)` also allows, and a trailing ` *` matches the command
-  with no arguments too. `Bash(project -*)` covers an option before the
-  command, as in `project --root . init`, which no command's own ask rule
-  matches; it asks before `project --version` and `project --help` as well.
-  The ask rules match the command text an agent writes, so they keep an agent
-  from running these commands unasked, not from spelling one another way.
+  widens an agent's authority, such as `review.allow_approve`.
+  `project site build` and `serve` run the shell command `--prepare` names, or
+  the checkout's own `site.prepare` once `--allow-prepare` allows it, so
+  `Bash(project site *prepare*)` asks before either flag, as `--prepare x` or
+  `--prepare=x`, and before `--no-prepare` too. Those two commands refuse an
+  abbreviated option such as `--prep`, so no shorter spelling slips past the
+  rule. Claude Code checks ask rules before allow rules, so an ask rule
+  prompts for a command that `Bash(project *)` also allows, and a trailing
+  ` *` matches the command with no arguments too. `Bash(project -*)` covers an
+  option before the command, as in `project --root . init`, which no
+  command's own ask rule matches; it asks before `project --version` and
+  `project --help` as well.
+
+  `project edit`, and `project create` without `--no-edit`, open your
+  `$VISUAL` or `$EDITOR`, and need no ask rule. They open it only at a
+  terminal, which Claude Code gives no command, and Claude Code lets an allow
+  rule match past a leading variable assignment only for a fixed list of
+  variables, such as `LANG`, that holds neither of those, nor `PATH` or
+  `HOME`. A command such as `VISUAL='sh -c …' project edit plan`, which picks
+  the program Projector runs, therefore falls to Claude Code's usual
+  approval. `project review gate` runs the checks that `review.gate`
+  configures, as a review loop does on every review, and is allowed. The ask
+  rules match the command text an agent writes, so they keep an agent from
+  running these commands unasked, not from spelling one another way.
 
   When `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that
   directory instead. Without the allow rule, Claude Code asks before each
@@ -135,27 +152,38 @@ what it did to each:
 
   A Codex rule matches exact words with no wildcard, so an ask rule for
   `init` would miss an option before it, as in `project --root=. init`.
-  Instead, the file allows each `project` command by name, apart from
-  `init`, `upgrade`, and `config`, and allows only the reading commands of
-  `config`:
+  Instead, the file allows commands by name. Codex runs a command that an
+  `allow` rule matches without asking, and outside its sandbox, so a publish
+  reaches GitHub and the site. Codex can also give a command a terminal that
+  the agent types into, so the file leaves out every command that can run
+  another program, as well as those that reach outside Projector's own state:
 
   ```text
   prefix_rule(
-      pattern = ["project", ["check", "create", "done", "edit", "inbox", "list", "loop", "owner", "priority", "review", "search", "show", "site", "status", "summary"]],
+      pattern = ["project", ["check", "done", "inbox", "list", "loop", "owner", "priority", "search", "show", "status", "summary"]],
       decision = "allow",
   )
   prefix_rule(
       pattern = ["project", "config", ["get", "list", "paths"]],
       decision = "allow",
   )
+  prefix_rule(
+      pattern = ["project", "review", ["census", "hold", "interdiff", "move", "publish", "release", "rules", "setup", "status"]],
+      decision = "allow",
+  )
+  prefix_rule(
+      pattern = ["project", "site", ["page", "status", "workflow"]],
+      decision = "allow",
+  )
   ```
 
   No rule matches `project init`, `project upgrade`, `project config set` or
-  `unset`, or a command line that starts with an option, so Codex's usual
-  approval decides them. A command added to Projector later reaches Codex
-  when you run `init` again. Codex runs a command that an `allow` rule
-  matches without asking, and outside its sandbox, so a publish reaches
-  GitHub and the site. To see what the rules allow, run
+  `unset`, `project create` or `project edit`, whose editor an agent could
+  drive, `project review gate`, `project site build` or `serve`, or a command
+  line that starts with an option, so Codex's usual approval decides them,
+  in its sandbox. A command added to Projector later reaches Codex once
+  Projector names it and you run `init` again. To see what the rules allow,
+  run
   `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
   `init` keeps the file, and says on stderr how to add the rules yourself, when
   the file is not valid UTF-8, cannot be read, or cannot be written, as one in
@@ -571,7 +599,7 @@ These are the keys Projector reads today:
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
-| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing every `project` command except `project init`, `project upgrade`, and `project config set` and `unset` to your Claude Code settings and Codex rules |
+| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing every `project` command but the few that reach outside Projector's own state to your Claude Code settings and Codex rules |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
@@ -1071,6 +1099,11 @@ and a `--prepare` given on the command line needs no allowing. Allowing covers
 the command's text, not the files it runs: once `make explorer` is allowed, a
 branch that changes the Makefile's `explorer` target runs that change, as
 running `make` there would.
+
+`site build` and `site serve` take each option only spelled in full, so
+`--prep` is refused rather than read as `--prepare`. The ask rule `init` adds
+for these flags, `Bash(project site *prepare*)`, then matches every spelling
+an agent can use.
 
 `site serve` builds the site from a checkout, as `site build` does, into a
 temporary directory and serves it over HTTP until you press Ctrl-C, or it

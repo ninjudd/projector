@@ -4,10 +4,13 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 
 from projector import cli, permissions
@@ -19,11 +22,11 @@ DECISIONS = (
     ("project", "allow", "none"),
     ("project review publish --loop x", "allow", "allow"),
     ("project review hold 12 --drop", "allow", "allow"),
-    ("project review finish 12", "allow", "allow"),
+    ("project review setup 12", "allow", "allow"),
+    ("project review gate 12", "allow", "none"),
     ("project summary publish --summary summary.json", "allow", "allow"),
     ("project inbox ask question", "allow", "allow"),
     ("project list --json", "allow", "allow"),
-    ("project site serve", "allow", "allow"),
     ("project config get review.username", "allow", "allow"),
     ("project config list", "allow", "allow"),
     ("project config paths", "allow", "allow"),
@@ -39,8 +42,36 @@ DECISIONS = (
     ("project --projects-dir=plans config set review.allow_approve true", "ask", "none"),
     ("project --root=. list", "ask", "none"),
     ("project --version", "ask", "none"),
+    ("project site page --summary summary.json --out page", "allow", "allow"),
+    ("project site status --repo owner/name", "allow", "allow"),
+    ("project site workflow --write", "allow", "allow"),
+    ("project site build --out site", "allow", "none"),
+    ("project site serve", "allow", "none"),
+    ("project site build --out site --prepare 'make docs'", "ask", "none"),
+    ("project site build --out site --prepare=make", "ask", "none"),
+    ("project site serve --prepare make", "ask", "none"),
+    ("project site serve --allow-prepare", "ask", "none"),
+    ("project site build --out site --no-prepare", "ask", "none"),
+    ("project --root . site serve --prepare make", "ask", "none"),
+    ("project edit plan", "allow", "none"),
+    ("project create plan --no-edit", "allow", "none"),
+    ("VISUAL='sh -c make' project edit plan", "none", "none"),
+    ("EDITOR=make project create plan", "none", "none"),
+    ("PATH=/tmp/bin:/usr/bin project list", "none", "none"),
+    ("XDG_STATE_HOME=/tmp/state project site build --out site", "none", "none"),
+    ("LANG=C project list", "allow", "none"),
+    ("HOME=/tmp project init --publish-rule", "ask", "none"),
     ("projector list", "none", "none"),
 )
+
+# What the Codex rules leave to Codex's usual approval: each command with the
+# subcommands left out, or None where the whole command is.
+CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None,
+                  "config": {"set", "unset"}, "review": {"gate"}, "site": {"build", "serve"}}
+
+# Some of the variables Claude Code lets an allow rule match past. Its list is
+# fixed, and holds none of VISUAL, EDITOR, PATH, HOME, or XDG_STATE_HOME.
+SAFE_VARIABLES = {"LANG", "NODE_ENV", "TZ"}
 
 
 def claude_decision(command: str) -> str:
@@ -48,15 +79,23 @@ def claude_decision(command: str) -> str:
 
     Ask rules come before allow rules and the first match decides. A `*`
     stands for any text, and a trailing ` *` that is a rule's only wildcard
-    also matches the bare command.
+    also matches the bare command. An ask rule matches past any leading
+    variable assignment, and an allow rule only past one of a few variables.
     """
 
+    words = shlex.split(command)
+    assigned = set()
+    while words and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0], re.DOTALL):
+        assigned.add(words.pop(0).split("=", 1)[0])
+    text = " ".join(words)
     for decision, rules in (("ask", permissions.ASK), ("allow", permissions.ALLOW)):
+        if decision == "allow" and not assigned <= SAFE_VARIABLES:
+            continue
         for rule in rules:
             pattern = rule.removeprefix("Bash(").removesuffix(")")
-            if pattern.endswith(" *") and pattern.count("*") == 1 and command == pattern[:-2]:
+            if pattern.endswith(" *") and pattern.count("*") == 1 and text == pattern[:-2]:
                 return decision
-            if re.fullmatch(".*".join(map(re.escape, pattern.split("*"))), command, re.DOTALL):
+            if re.fullmatch(".*".join(map(re.escape, pattern.split("*"))), text, re.DOTALL):
                 return decision
     return "none"
 
@@ -65,8 +104,8 @@ def codex_decision(command: str) -> str:
     """The decision Codex's rules documentation gives `command`: a pattern matches a prefix of its tokens, where a
     list matches any one of its tokens."""
 
-    tokens = command.split()
-    for pattern in permissions.CODEX_PATTERNS:
+    tokens = shlex.split(command)
+    for pattern, _ in permissions.CODEX_ALLOW:
         if len(tokens) >= len(pattern) and all(
                 token in (part if isinstance(part, list) else [part]) for token, part in zip(tokens, pattern)):
             return "allow"
@@ -96,14 +135,37 @@ class PermissionRulesTests(unittest.TestCase):
         rules.write_text(permissions.CODEX_RULES)
         for command, _, codex in DECISIONS:
             with self.subTest(command):
-                result = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules), *command.split()],
+                result = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules),
+                                         *shlex.split(command)],
                                         check=True, capture_output=True, text=True,
                                         env={**os.environ, "CODEX_HOME": home.name})
                 self.assertEqual(codex, json.loads(result.stdout).get("decision", "none"))
 
-    def test_the_codex_rules_name_every_command_but_those_that_ask(self) -> None:
+    def test_the_codex_rules_name_every_command_or_leave_it_out(self) -> None:
+        (_, whole), *rest = (pattern for pattern, _ in permissions.CODEX_ALLOW)
+        partial = {command: set(names) for _, command, names in rest}
         commands = subcommands(cli.parser())
-        self.assertEqual(set(commands) - {"init", "upgrade", "config"}, set(permissions.CODEX_COMMANDS),
-                         "a new command is either allowed by name or left to ask")
-        self.assertEqual(set(subcommands(commands["config"])) - {"set", "unset"},
-                         set(permissions.CODEX_PATTERNS[1][2]))
+        self.assertLessEqual(set(whole) | set(partial), set(commands))
+        for command, parser in commands.items():
+            with self.subTest(command):
+                if command in whole:
+                    self.assertNotIn(command, CODEX_LEFT_OUT)
+                elif command in partial:
+                    names = set(subcommands(parser))
+                    self.assertLessEqual(partial[command], names)
+                    self.assertEqual(CODEX_LEFT_OUT[command] & names, names - partial[command],
+                                     "a new subcommand is either allowed by name or deliberately left out")
+                else:
+                    self.assertIn(command, CODEX_LEFT_OUT, "a new command is either allowed or deliberately left out")
+                    self.assertIsNone(CODEX_LEFT_OUT[command])
+
+    def test_site_build_and_serve_take_the_prepare_flags_only_spelled_in_full(self) -> None:
+        for command in (["site", "build", "--out", "site"], ["site", "serve"]):
+            for abbreviated in (["--prep", "make"], ["--allow"], ["--allow-prep"], ["--no-prep"]):
+                with self.subTest(command=command[1], flag=abbreviated[0]):
+                    with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as stop:
+                        cli.parser().parse_args([*command, *abbreviated])
+                    self.assertEqual(2, stop.exception.code)
+            self.assertEqual("make", cli.parser().parse_args([*command, "--prepare=make"]).prepare)
+            self.assertEqual("make", cli.parser().parse_args([*command, "--prepare", "make"]).prepare)
+            self.assertTrue(cli.parser().parse_args([*command, "--allow-prepare"]).allow_prepare)

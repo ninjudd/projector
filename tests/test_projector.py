@@ -1119,8 +1119,8 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertIn("kept ~/.claude/settings.json\n", stdout)
         self.assertIn(", ".join(permissions.ASK), stderr)
-        self.assertIn("an agent can run `project init`, `project upgrade`, and `project config set` and `unset` "
-                      "without asking you", stderr)
+        self.assertIn(f"an agent can run {permissions.ASKED} without asking you", stderr)
+        self.assertIn("`project site` with `--prepare` or `--allow-prepare`", permissions.ASKED)
 
         self.at_a_terminal()
         code, stdout, stderr = self.invoke("init")

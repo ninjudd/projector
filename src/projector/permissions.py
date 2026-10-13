@@ -16,9 +16,11 @@ content to another host.
 So the rules allow every `project` command, and a new command needs no new
 rule, except the few that reach outside Projector's own state, which still
 ask: `project upgrade` runs an installer it downloads, `project init` writes
-these rules, and `project config set` and `unset` can change a setting that
-widens an agent's authority, such as `review.allow_approve`. The rules go in
-the person's own settings, so they hold in every repository, clone, and
+these rules, `project config set` and `unset` can change a setting that
+widens an agent's authority, such as `review.allow_approve`, and
+`project site build` and `serve` run the shell command `--prepare` names, or
+the checkout's own `site.prepare` once `--allow-prepare` allows it. The rules
+go in the person's own settings, so they hold in every repository, clone, and
 worktree they open, and no repository has to carry a permission for everyone
 who opens it.
 
@@ -29,19 +31,35 @@ also allows. A trailing ` *` matches the bare command too, so
 The CLI's own options, such as `--root`, come before its command, so
 `project --root . init` matches the allow rule and no command's ask rule;
 `Bash(project -*)` asks for every command line that starts with an option,
-`project --version` included. Claude Code matches these rules against the
-command text an agent writes, so they keep an agent from running a command
-unasked, not from spelling it another way, such as with a quoted command name.
+`project --version` included. `Bash(project site *prepare*)` asks for both
+`--prepare` flags in either spelling, `--prepare x` or `--prepare=x`, and
+`site build` and `serve` refuse an abbreviated option such as `--prep`, so
+no shorter spelling slips past it; it asks for `--no-prepare` too.
+
+Two commands open the person's editor, `$VISUAL` or `$EDITOR`: `project edit`,
+and `project create` without `--no-edit`. They need not ask. Each opens the
+editor only at a terminal, which Claude Code gives no command, and Claude
+Code lets an allow rule match past a leading variable assignment only for a
+fixed list of variables, such as `LANG`, that holds neither of those, nor
+`PATH` or `HOME`. So `VISUAL='sh -c …' project edit x` is not allowed by
+`Bash(project *)`, and neither is any command that picks a program Projector
+runs. `project review gate` runs the checks `review.gate` configures, as a
+review loop does on every review, and is allowed. Claude Code matches these
+rules against the command text an agent writes, so they keep an agent from
+running a command unasked, not from spelling it another way, such as with a
+quoted command name.
 
 Codex's `prefix_rule` matches exact tokens with no wildcard, so no rule can
 match an option such as `--root=.` before the command. Codex applies the
 strictest decision when several rules match, but a `prompt` rule for
 `["project", "init"]` would miss `project --root=. init` under a rule allowing
-`["project"]`. The Codex rules therefore allow each command by name except
-`init`, `upgrade`, and `config`, whose reading commands get a rule of their
-own, and anything else, a command line that starts with an option included,
-falls through to Codex's usual approval. A new top-level command reaches
-Codex once `init` rewrites the file.
+`["project"]`. The Codex rules therefore allow commands by name, and anything
+else, a command line that starts with an option included, falls through to
+Codex's usual approval. Codex runs an allowed command outside its sandbox,
+and can give it a terminal the agent types into, so the rules also leave out
+every command that can run another program: `create` and `edit`, whose
+editor an agent could drive, `review gate`, and `site build` and `serve`. A
+new command reaches Codex once it is added here and `init` rewrites the file.
 """
 
 from __future__ import annotations
@@ -56,35 +74,43 @@ from .core import FileAction, write_through
 
 ALLOW = ("Bash(project *)",)
 ASK = ("Bash(project init *)", "Bash(project upgrade *)", "Bash(project config set *)",
-       "Bash(project config unset *)", "Bash(project -*)")
+       "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project -*)")
 # The narrower rules Projector wrote before `Bash(project *)` covered them,
 # which `init` removes from `permissions.allow`.
 SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
               "Bash(project review settle *)", "Bash(project summary publish *)")
 
-ASKED = "`project init`, `project upgrade`, and `project config set` and `unset`"
-COMMANDS = f"every `project` command except {ASKED}"
+ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, and `project site` with "
+         "`--prepare` or `--allow-prepare`")
+COMMANDS = "every `project` command but the few that reach outside Projector's own state"
 
-# Every top-level command but `init`, `upgrade`, and `config`, which the
-# second pattern opens only for reading.
-CODEX_COMMANDS = ("check", "create", "done", "edit", "inbox", "list", "loop", "owner", "priority", "review", "search",
-                  "show", "site", "status", "summary")
-CODEX_PATTERNS = (["project", list(CODEX_COMMANDS)], ["project", "config", ["get", "list", "paths"]])
-CODEX_JUSTIFICATIONS = ("Runs a Projector command, which works on plans, the inbox, loops, holds, reviews, or "
-                        "summaries.",
-                        "Reads Projector's configuration.")
+# Each pattern Codex may run without asking, and outside its sandbox, with the
+# justification Codex shows for it.
+CODEX_ALLOW = (
+    (["project", ["check", "done", "inbox", "list", "loop", "owner", "priority", "search", "show", "status",
+                  "summary"]],
+     "Runs a Projector command that works on plans, the inbox, loops, or pull request summaries."),
+    (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
+    (["project", "review", ["census", "hold", "interdiff", "move", "publish", "release", "rules", "setup",
+                            "status"]],
+     "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),
+    (["project", "site", ["page", "status", "workflow"]],
+     "Builds a summary page, says where the site is hosted, or writes the site's workflow file."),
+)
 CODEX_PREFIX_RULES = tuple(f'prefix_rule(pattern = {json.dumps(pattern)}, decision = "allow")'
-                           for pattern in CODEX_PATTERNS)
+                           for pattern, _ in CODEX_ALLOW)
 # Codex loads every `.rules` file in its rules directory, and writes the
 # approvals a person saves to `default.rules`, so Projector keeps its rules in
 # a file of its own and rewrites that file whole.
 CODEX_RULES = (
     "# Written by `project init`, which replaces this file. Put your own rules in another file.\n"
-    "# `project init`, `project upgrade`, `project config set` and `unset`, and a command line that starts with an\n"
-    "# option are left to Codex's usual approval.\n"
+    "# Codex's usual approval decides every command these rules leave out: `project init`, `project upgrade`,\n"
+    "# `project config set` and `unset`, `project create` and `project edit`, which can open an editor,\n"
+    "# `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
+    "# the command line names, and a command line that starts with an option.\n"
     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
               f'    justification = "{justification}",\n)\n'
-              for pattern, justification in zip(CODEX_PATTERNS, CODEX_JUSTIFICATIONS))
+              for pattern, justification in CODEX_ALLOW)
 )
 
 
