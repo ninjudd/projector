@@ -96,6 +96,18 @@ class InboxCase(unittest.TestCase):
     def item(self, number: int | str, session: str = "s1") -> dict:
         return json.loads((self.folder(session) / f"{number}.json").read_text())
 
+    def hold_lock(self, then: str) -> subprocess.Popen:
+        """Start a process that takes the session's lock and, once it holds it, either waits for its
+        standard input to close (`wait`) or exits without unlocking (`exit`)."""
+        holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, str(self.folder()), then],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                                  env={**os.environ, "PYTHONPATH": str(Path(inbox.__file__).parents[1])})
+        self.addCleanup(holder.stdout.close)
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.stdin.close)
+        self.assertEqual("held\n", holder.stdout.readline())
+        return holder
+
 
 class NumberingTests(InboxCase):
     def test_numbers_every_item_from_one_in_one_count_across_pull_requests_and_kinds(self) -> None:
@@ -357,18 +369,6 @@ class AnswerTests(InboxCase):
         self.assertEqual(["done", "refused"], at_once(lambda: inbox.answer("s1", "1", "a"),
                                                       lambda: inbox.answer("s1", "1", "b")))
         self.assertIn(self.item(1)["answer"]["letter"], "ab")
-
-    def hold_lock(self, then: str) -> subprocess.Popen:
-        """Start a process that takes the session's lock and, once it holds it, either waits for its
-        standard input to close (`wait`) or exits without unlocking (`exit`)."""
-        holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, str(self.folder()), then],
-                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
-                                  env={**os.environ, "PYTHONPATH": str(Path(inbox.__file__).parents[1])})
-        self.addCleanup(holder.stdout.close)
-        self.addCleanup(holder.wait)
-        self.addCleanup(holder.stdin.close)
-        self.assertEqual("held\n", holder.stdout.readline())
-        return holder
 
     def test_a_lock_another_process_holds_makes_a_command_wait_then_exit_75(self) -> None:
         holder = self.hold_lock("wait")
@@ -660,6 +660,113 @@ class WithdrawTests(InboxCase):
                 self.assertEqual((65, "", f"project: {said}"), self.run_cli("answer", reference, "--session", "s1"))
         self.assertNotIn("letter", self.item(1)["answer"])
         self.assertNotIn("letter", self.item(3)["answer"])
+
+
+class ReviseTests(InboxCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--detail", "Why.",
+                 "--pr", "acme/app#12", "--agent", "agent-7")
+        self.run_cli("tell", "Force-pushed #12", "--pr", "acme/app#12", "--session", "s1")
+
+    def revise(self, *args: str) -> tuple[int, str, str]:
+        return self.run_cli("revise", "1", "--session", "s1", *args)
+
+    def test_replaces_an_open_questions_text_and_keeps_its_number(self) -> None:
+        self.run_cli("snooze", "1", "--session", "s1")
+        before = self.item(1)
+        self.assertEqual((0, "revised 1\n", ""),
+                         self.revise("--question", "Decline the retry finding?", "--recommend", " Decline it: capped ",
+                                     "--option", "Add a budget per host", "--option", "Ask the reviewer",
+                                     "--detail", "The cap is three in total."))
+        after = self.item(1)
+        self.assertEqual("Decline the retry finding?", after["subject"])
+        self.assertEqual(["Decline it: capped", "Add a budget per host", "Ask the reviewer"], after["choices"])
+        self.assertEqual("The cap is three in total.", after["detail"])
+        for key in ("ref", "number", "kind", "pr", "postedAt", "agentId", "snoozedUntil"):
+            with self.subTest(key=key):
+                self.assertEqual(before[key], after[key])
+        self.assertEqual({"last": 2}, json.loads((self.folder() / "count.json").read_text()))
+        self.assertEqual("answered 1.c\n", self.run_cli("answer", "1.c", "--session", "s1")[1])
+        self.assertEqual("Ask the reviewer", self.item(1)["answer"]["text"])
+
+    def test_keeps_each_part_it_is_not_given(self) -> None:
+        self.assertEqual(0, self.revise("--option", "Add a budget per host")[0])
+        self.assertEqual(("Decline it?", ["Decline it", "Add a budget per host"], "Why."),
+                         (self.item(1)["subject"], self.item(1)["choices"], self.item(1)["detail"]))
+        self.assertEqual(0, self.revise("--detail", "")[0])
+        self.assertEqual(("", ["Decline it", "Add a budget per host"]), (self.item(1)["detail"], self.item(1)["choices"]))
+        self.assertEqual(0, self.revise("--no-options")[0])
+        self.assertEqual(["Decline it"], self.item(1)["choices"])
+        detail = self.scratch / "detail.md"
+        detail.write_text("From a file.\n")
+        self.assertEqual(0, self.revise("--detail-file", str(detail))[0])
+        self.assertEqual("From a file.", self.item(1)["detail"])
+
+    def test_prints_the_revised_question_as_json(self) -> None:
+        code, out, err = self.revise("--question", "Decline the retry finding?", "--json")
+        self.assertEqual(0, code, err)
+        self.assertEqual(self.item(1), json.loads(out)["item"])
+
+    def test_refuses_a_resolved_question_a_notice_and_an_unknown_number_and_changes_nothing(self) -> None:
+        self.ask("Rebase?", "--recommend", "Yes")
+        self.run_cli("answer", "1.a", "--session", "s1")
+        self.run_cli("withdraw", "3", "--session", "s1")
+        items = [self.item(ref) for ref in (1, 2, 3)]
+        for ref, said in (("1", "1 is already answered, as 1.a"), ("3", "3 is already withdrawn"),
+                          ("2", "2 is a notice, and only a question can be revised")):
+            with self.subTest(ref=ref):
+                code, out, err = self.run_cli("revise", ref, "--detail", "x", "--session", "s1")
+                self.assertEqual((65, ""), (code, out))
+                self.assertIn(said, err)
+        self.assertEqual(66, self.run_cli("revise", "4", "--detail", "x", "--session", "s1")[0])
+        self.assertEqual(66, self.run_cli("revise", "4", "--detail", "x")[0])
+        self.assertEqual([self.item(ref) for ref in (1, 2, 3)], items)
+
+    def test_refuses_a_revision_that_fails_a_check_and_changes_nothing(self) -> None:
+        before = self.item(1)
+        for args in ([],
+                     ["--question", "x" * 121],
+                     ["--question", "Two\nlines?"],
+                     ["--question", " "],
+                     ["--recommend", "line one\nline two"],
+                     ["--recommend", "Add a budget"],
+                     ["--option", "Decline it"],
+                     ["--option", " "],
+                     ["--option", "x", "--option", " x "],
+                     [arg for n in "abcdef" for arg in ("--option", n)]):
+            with self.subTest(args=args[:2]):
+                code, out, _ = self.revise(*args)
+                self.assertEqual((65, ""), (code, out))
+        self.assertEqual(65, self.run_cli("revise", "1.a", "--detail", "x", "--session", "s1")[0])
+        with self.assertRaises(SystemExit) as stop, redirect_stderr(io.StringIO()):
+            self.revise("--option", "x", "--no-options")
+        self.assertEqual(2, stop.exception.code)
+        self.assertEqual(before, self.item(1))
+
+    def test_accepts_five_other_options_and_a_question_of_120_characters(self) -> None:
+        options = [arg for n in "bcdef" for arg in ("--option", n)]
+        self.assertEqual(0, self.revise("--question", "x" * 120, *options)[0])
+        self.assertEqual(6, len(self.item(1)["choices"]))
+
+    def test_two_revisions_at_once_both_land(self) -> None:
+        self.assertEqual(["done", "done"],
+                         at_once(lambda: inbox.revise("s1", "1", question="Decline the retry finding?"),
+                                 lambda: inbox.revise("s1", "1", options=["Add a budget per host"])))
+        self.assertEqual(("Decline the retry finding?", ["Decline it", "Add a budget per host"]),
+                         (self.item(1)["subject"], self.item(1)["choices"]))
+
+    def test_a_lock_another_process_holds_makes_a_revision_wait_then_exit_75(self) -> None:
+        before = self.item(1)
+        holder = self.hold_lock("wait")
+        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
+            code, _, err = self.revise("--question", "Decline the retry finding?")
+        self.assertEqual(75, code)
+        self.assertIn("another command holds", err)
+        self.assertEqual(before, self.item(1))
+        holder.stdin.close()
+        self.assertEqual(0, holder.wait())
+        self.assertEqual(0, self.revise("--question", "Decline the retry finding?")[0])
 
 
 class SnoozeTests(InboxCase):

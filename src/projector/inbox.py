@@ -2,12 +2,13 @@
 
 An item is a question, which the person answers or dismisses and whose answer goes back to the
 agent, or a notice, which the person reads and dismisses and which sends nothing back. The agent
-that posted an open item can withdraw it, which dismisses it and sends nothing back. Each
-session numbers its items 1, 2, 3, and on, in one count across both kinds. Its items are JSON
-files in their own directory, one per item and named by its number, with `count.json` holding the
-last number given. Every write happens under the directory's lock, an operating-system lock on
-its `.lock` file, and lands by renaming a temporary file into place, so two writers never lose
-each other's change and a reader never sees half a file.
+that posted an open item can withdraw it, which dismisses it and sends nothing back, and can
+revise an open question's text in place. Each session numbers its items 1, 2, 3, and on, in one
+count across both kinds. Its items are JSON files in their own directory, one per item and named
+by its number, with `count.json` holding the last number given. Every write happens under the
+directory's lock, an operating-system lock on its `.lock` file, and lands by renaming a temporary
+file into place, so two writers never lose each other's change and a reader never sees half a
+file.
 """
 
 from __future__ import annotations
@@ -392,6 +393,33 @@ def dismiss(session: Optional[str], ref: str, withdrawn: bool = False) -> dict:
         item.pop("snoozedUntil", None)
         if withdrawn or is_notice(item):
             item["deliveredAt"] = now
+
+    return update(session, ref, record, prefer_open=True)
+
+
+def revise(session: Optional[str], ref: str, *, question: Optional[str] = None, detail: Optional[str] = None,
+           recommend: Optional[str] = None, options: Optional[list[str]] = None) -> dict:
+    """Replace an open question's text in place, keeping its number, its place in the list, and its
+    snooze. Each part left as None keeps its text; `options` replaces every option but the
+    recommendation. The revised question passes the checks `ask` makes."""
+    if question is None and detail is None and recommend is None and options is None:
+        raise InboxError("give the question's new text with --question, --detail, --recommend, or --option")
+
+    def record(item: dict) -> None:
+        if is_notice(item):
+            raise InboxError(f"{item['ref']} is a notice, and only a question can be revised; withdraw it and "
+                             "tell again")
+        if item.get("answer"):
+            raise InboxError(f"{item['ref']} is already {resolution(item)}")
+        subject = item["subject"] if question is None else question
+        first, *others = item["choices"]
+        chosen = first if recommend is None else recommend
+        rest = others if options is None else options
+        check(subject, chosen, rest, item.get("pr"))
+        item["subject"] = subject.strip()
+        item["choices"] = [chosen.strip(), *(option.strip() for option in rest)]
+        if detail is not None:
+            item["detail"] = detail.strip()
 
     return update(session, ref, record, prefer_open=True)
 

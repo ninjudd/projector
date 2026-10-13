@@ -47,9 +47,12 @@ what it did to each:
   `implement` skill, so a watch loop starts on its pull request, open every
   pull request as a draft until a clean review marks it ready, and, where the
   `ask` and `tell` tools are available, post anything the person must not
-  miss to the inbox as well as saying it in the conversation, and each time
-  the person writes, withdraw any item that no longer needs them with the
-  `withdraw` tool. `init` appends the section to an existing file or creates
+  miss to the inbox as well as saying it in the conversation. It tells an
+  agent whose question the person replied to, rather than picking an option,
+  to answer what they asked and then withdraw the question with the
+  `withdraw` tool, revise it with the `revise` tool, or leave it open, and to
+  withdraw any other item that no longer needs them each time the person
+  writes. `init` appends the section to an existing file or creates
   the file with only that section, and refreshes the section when it falls
   behind the template this command ships. Everything outside the markers is
   yours and is never changed.
@@ -67,16 +70,20 @@ what it did to each:
   would change everything Claude Code reads rather than only Projector's part.
 - `~/.claude/settings.json`, your own Claude Code settings, gains the
   permission rules `Bash(project review publish *)`,
-  `Bash(project review hold *)`, and `Bash(project summary publish *)` in
+  `Bash(project review hold *)`, `Bash(project review finish *)`,
+  `Bash(project review settle *)`, and `Bash(project summary publish *)` in
   `permissions.allow`. When `CLAUDE_CONFIG_DIR` is set, the file is
   `settings.json` in that directory instead. Claude Code's auto mode
   otherwise can refuse a review loop's clean review of your own pull request
   as self-approval, although the review is a `COMMENT` that moves no
-  `reviewDecision` and a person still merges. It can refuse the deletion of
-  the comment that holds your pull request in draft, as a write to an
-  external system, which leaves a clean pull request stuck in draft. It can
-  also refuse the publish of a summary you asked for. An allow rule resolves
-  the command before the classifier runs. The rules go in your settings rather
+  `reviewDecision` and a person still merges. It can refuse the deletion of a
+  comment as a write to an external system: the comment that holds your pull
+  request in draft, which leaves a clean pull request stuck in draft, and a
+  finished review's start comment, which leaves the pull request saying a
+  review is in progress. The reply and resolution that settle a finding
+  thread are writes of the same kind. It can also refuse the publish of a
+  summary you asked for. An allow rule resolves the command
+  before the classifier runs. The rules go in your settings rather
   than the repository's, so they hold in every repository, clone, and worktree
   you open, whether or not the repository commits or ignores `.claude/`, and
   no repository has to carry a permission for everyone who opens it. `init`
@@ -159,21 +166,20 @@ and exits 0. Its `--json` document then lists `files` with no top-level
 `action` or `path`, because there is no projects README. `--site` and `--url`
 need a repository, so outside one they exit 2.
 
-To keep Projector out of your instruction files, set in `.projector.toml`:
+To keep Projector out of your instruction files, set `instructions.enabled`
+to `false` in the repository's `.projector.toml`:
 
-```toml
-[instructions]
-enabled = false
+```sh
+project config set instructions.enabled false
 ```
 
 With that key false, `init` manages only the projects README and your
 permission rules, and `check` says nothing about `AGENTS.md` or `CLAUDE.md`.
 To leave your Claude Code settings and Codex rules alone when `init` runs in
-this repository, set:
+this repository, run:
 
-```toml
-[review]
-publish_rule = false
+```sh
+project config set review.publish_rule false
 ```
 
 Every command that reads or writes a project requires that directory. `init`
@@ -283,11 +289,10 @@ private repository is never left with a public site; it never deletes a
 site it did not create. A repository whose `origin` is not on GitHub skips
 the site without a note. `project site serve` still serves the site
 locally. Pass `--site` to make the other failures an error that exits 65,
-or `--no-site` to leave GitHub alone. To skip the site every time, set in `.projector.toml`:
+or `--no-site` to leave GitHub alone. To skip the site every time, run:
 
-```toml
-[site]
-enabled = false
+```sh
+project config set site.enabled false
 ```
 
 In `--json` mode the document gains a `site` object with `pages`,
@@ -370,6 +375,11 @@ project owner payments --clear
 and `--clear` removes the line. It refuses a value that would not read back
 unchanged, such as one with a leading `@`, a `: `, or a ` #`, with exit code 2.
 
+An `owner:` line with an empty value, such as `owner:` or `owner: ""`, names
+no one, so Projector reads the plan as having no owner: `check` accepts it,
+`list --owner` never selects it, `owner` fills in the value on that line, and
+`--clear` removes the line.
+
 `priority` adds the field when a plan has none, which happens only for a
 completed project being rescheduled. Set the priority first in that case:
 `status` refuses to move a completed plan to another status while it has no
@@ -390,7 +400,7 @@ Project plans are valid.
 ```
 
 The command reports malformed frontmatter, invalid statuses, invalid or
-missing priorities, an empty or multi-line owner, missing top-level
+missing priorities, a multi-line owner, missing top-level
 plans, uppercase project entry points, case collisions, symlinks, malformed
 Markdown links, and missing local link targets. It reads both directory entries
 and Git's tracked paths so casing errors remain visible on case-insensitive
@@ -518,10 +528,9 @@ project config get review.summarize --json
 }
 ```
 
-Keys are not validated. Any key a skill or a script agrees on works, so this
-stays useful for settings Projector itself knows nothing about.
-
-These are the keys Projector reads today:
+`get` reads any key, so a skill or a script can keep settings of its own in
+these files. [`set`](#change-configuration) accepts only the keys Projector
+reads, which are these:
 
 | Key | Type | Default | Read by |
 | --- | --- | --- | --- |
@@ -531,7 +540,7 @@ These are the keys Projector reads today:
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
 | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
-| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish`, `project review hold`, and `project summary publish` to your Claude Code settings and Codex rules |
+| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish`, `project review hold`, `project review finish`, `project review settle`, and `project summary publish` to your Claude Code settings and Codex rules |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
@@ -551,6 +560,109 @@ account could only disagree with it. Which pull requests a loop watches is not
 an identity question either: each watcher reads its tracked set from a file of
 `owner/repo#number` lines that the conversation maintains, and sees nothing
 outside it.
+
+## Change configuration
+
+Change one setting with `set`, and remove one with `unset`:
+
+```sh
+project config set watch.auto_start false
+project config unset watch.auto_start
+```
+
+Both change the repository's own `.projector.toml` at the root of the
+checkout, which is the file nearest the code and the last one merged, so the
+value you set is the value the repository's commands read. Choose another
+file with one of these options:
+
+- **`--user`** changes `~/.projector.toml`, which applies in every
+  repository. Use it for a personal preference, such as `watch.auto_start`,
+  that should not be checked in with a repository.
+- **`--file <path>`** changes the file at that path, such as
+  `~/work/.projector.toml`, which covers every repository under `~/work`.
+  The command creates the file but not its directory, and refuses a path
+  in a directory that does not exist with exit code 2.
+- **`--repo`** names the default.
+
+Outside a Git repository, the default has no file to change, so `set` and
+`unset` exit 69 unless you pass `--user` or `--file`.
+
+`set` takes `true` or `false` for a boolean key and any text for a string
+key, and refuses any other value with exit code 2. It also refuses, with
+exit code 2 and the list of keys, a key that the table in
+[Read configuration](#read-configuration) does not list. `get` still reads
+a key that is not in the table.
+
+`unset` removes any key the file sets, including one the table does not
+list, such as a setting Projector no longer reads:
+
+```sh
+project config unset review.peer_wait
+```
+
+A key the table lists but the file does not set is reported as
+`unchanged`. A key outside the table that the file does not set, such as a
+misspelled one, is refused with exit code 2 and the list of keys.
+
+`set` and `unset` edit the file as text and change only the line that sets
+the key, so your comments, blank lines, and other settings stay as you wrote
+them:
+
+- **A key that is set** gets its new value on the same line, with any
+  comment after the value kept.
+- **A key that is not set** goes after the last setting of its table, such
+  as `[watch]`. When the file sets the table's keys with dotted names, such
+  as `watch.auto_start = true` at the top of the file, the new key is
+  written the same way, beside them.
+- **A table the file lacks** is added at the end of the file, and a missing
+  file is created.
+- **`unset`** removes the key's line and leaves its table header. It
+  removes one setting, not a table, so it refuses a key that names a
+  table, such as `review`, with exit code 65 and the file unchanged.
+
+Each command refuses a file that is not valid TOML with exit code 78, and a
+key it cannot change on its own line, such as one in an inline table
+(`watch = { auto_start = true }`), with exit code 65. Neither refusal
+changes the file. After each change, the command reads the file back and
+checks that the key has the new value and that every other key is
+unchanged. When the check fails, it restores the file and exits 65. A
+symlink, such as a `~/.projector.toml` that links into a dotfiles
+repository, stays a link, and the command changes the file it points at.
+
+A nearer file can override the value you set, as a repository's file
+overrides `~/.projector.toml`. When the merged configuration does not give
+the new value, the command names the file that wins on stderr:
+
+```console
+$ project config set watch.auto_start false --user
+set watch.auto_start = false in /Users/you/.projector.toml
+project: /Users/you/work/repo/.projector.toml sets watch.auto_start = true, which applies here
+```
+
+Setting a key to the value it already has changes nothing, and the command
+reports it as `unchanged`. With `--json`, each command prints the `action`,
+which is `set`, `unset`, or `unchanged`. It also prints the `key`, the
+`old` value and the `new` value, each `null` when the file has none, and
+the `file` it changed:
+
+```json
+{
+  "action": "set",
+  "file": "/Users/you/work/repo/.projector.toml",
+  "key": "watch.auto_start",
+  "new": false,
+  "old": true,
+  "schema_version": 2
+}
+```
+
+You can still edit a `.projector.toml` by hand. The commands write the same
+TOML, such as this for `project config set watch.auto_start false`:
+
+```toml
+[watch]
+auto_start = false
+```
 
 ## Upgrade
 
@@ -1159,10 +1271,13 @@ a review loop does not rebuild them as helpers of its own:
 project review setup 66 --model claude-opus-5-5 --loop example-review-claude-opus-5-5
 project review move 66
 project review census 66 --json
+project review settle 66 --thread PRRT_kwDOAbc123 --result fixed --body reply.md
 project review publish 66 --verdict clean --body body.md --covered 12/12 --loop example-review-claude-opus-5-5
 project review interdiff 66
 project review publish 66 --incremental --body body.md
 project review release 66
+project review finish 66
+project review setup 66 --model claude-opus-5-5 --replace 4011
 project review gate 66
 project review status 66
 project review hold 66 --add "Skip fenced code blocks when looking for headings"
@@ -1196,6 +1311,14 @@ at which a lock is stale. `setup` refuses a model ID that is empty, holds
 whitespace, or makes a folder name that starts with `.`, and deletes a start
 comment this machine's state recorded for the model and never published.
 
+When the session whose start comment stops `setup` has stopped, run `setup`
+again with `--replace <comment-id>`, naming the comment the refusal named.
+`setup` checks that the comment is a start comment the reviewer posted on
+this pull request for the same model, and deletes it as the reviewer once
+this review's start comment is posted. It refuses, exiting 1 and deleting
+nothing, any other comment: another model's start comment, another account's,
+a comment that is no start comment, or one that does not exist.
+
 The start comment and the review's signature line name the head under review
 by its short SHA, the Projector version that `project --version` reports, the
 model from `--model`, and the reasoning effort from `CLAUDE_EFFORT` in the
@@ -1213,6 +1336,75 @@ every page, and prints how many are resolved and open and each open thread's
 every model's threads alike and takes `--model` like the commands around it,
 so a review loop passes the same flags to each. `release` clears the locks of
 one model's review of the pull request.
+
+`settle` answers one finding thread once the review has verified it at the
+head under review. `--thread` is the thread's `id` from `census --json`,
+`--result` says how the finding stands, and `--body` names a file holding the
+reply's text. `settle` opens the reply with the verify marker, filled from
+the review's state with the head and the model:
+
+```
+<!-- projector-verify v=1 result=fixed sha=<full-sha> model=claude-opus-5-5 -->
+```
+
+The watchers read that marker to tell the reviewer's reply from the author's
+answer. `settle` posts the reply as the reviewer, then sets the thread by the
+result:
+
+| `--result` | The thread |
+| --- | --- |
+| `fixed`, `accepted`, `withdrawn` | Resolved |
+| `reopened` | Unresolved |
+| `kept` | Left as it is |
+
+It reads the reply and the thread back, and exits 1 when the reply does not
+open with the marker or the thread is not resolved or unresolved as the
+result asks. When the thread's last comment already opens with the same
+marker, as after a run that stopped once it replied, `settle` posts no
+second reply and only sets the thread. It refuses, exiting 1 and posting
+nothing, a thread that is not a review thread on the pull request, one whose
+first comment carries no finding marker, an empty body, and a body that
+carries a Projector marker of its own. A `--result` outside the five exits 2.
+With `--json` it prints the `thread`, the `result`, the `sha` and `model` the
+marker names, the reply's `comment` id and `url`, and whether the thread is
+`resolved`.
+
+`finish` ends one model's review of the pull request on this machine, once
+the review is published and its summary has run, or when the pull request
+closes. It takes these steps:
+
+1. As the reviewer, it deletes every start comment of the model's that no
+   longer means a review in progress. By the rule `setup` uses, a start
+   comment stops meaning one once its model posts a verdict on the comment's
+   head after the comment, or once a day passes since its last edit. Another
+   model's start comments, and the model's live ones from another session,
+   stay.
+2. It removes every scratch worktree the review's state lists: each one the
+   model's reviews of the pull request made on this machine since its last
+   `finish`. It removes each with `git worktree remove` in the checkout, then
+   runs `git worktree prune`. When the checkout is gone, it deletes a
+   worktree under the state directory itself.
+3. It clears the locks and deletes the state. The loop's record of published
+   reviews stays.
+
+`finish` acts on the repository `--repo` names, or else on the `origin` of
+the checkout it runs in, as `setup` does. It never takes the repository from
+review state, so a run in one repository cannot end another repository's
+review of a pull request with the same number. Outside a checkout it needs
+`--repo`. When no review of the pull request is set up for that repository
+but a review of the same number is set up for another, it refuses until
+`--repo` names the review to finish.
+
+Without `--force`, `finish` also refuses while the state records a start
+comment. That means either a review set up and not yet published, or a
+publish that posted the review and stopped before it deleted the comment,
+which running the same `publish` command again finishes. `--force` discards
+that review and deletes its start comment too. Each refusal exits 1 before
+anything is deleted. With nothing set up for the pull request on this
+machine, `finish` asks GitHub nothing, prints that there is nothing to
+finish, and exits 0, so running it twice is safe. With `--json` it prints the `repo`, `number`, and
+`model`, the `comments` it deleted, the `worktrees` it removed, the locks it
+`released`, and whether it deleted the `state`.
 
 `publish` submits the review. `--body` names a file holding the review below
 its signature line, with `{census}` where the census goes and, wherever used,
@@ -1448,7 +1640,8 @@ head's code, so `gate` refuses, exiting 1 without running anything, on a head
 `review.gate` is unset.
 
 `rules` checks whether your own settings allow `project review publish`,
-`project review hold`, and `project summary publish`: the rules `init` adds to
+`project review hold`, `project review finish`, `project review settle`, and
+`project summary publish`: the rules `init` adds to
 `~/.claude/settings.json`, and to `~/.codex/rules/projector.rules` where Codex
 is installed. It prints
 each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
@@ -1468,14 +1661,17 @@ refuses outside one; the repository is that checkout's `origin`, and `--repo`
 must name the same one. Every later command reads the checkout, worktree, and
 repository from the state file, finding it by `--repo` or by the pull request's
 number, and by `--model` or the one model with a review of the pull request
-set up on this machine, so it runs from any directory. With several models
-set up, it refuses, naming them, until `--model` picks one. State an earlier
-release wrote is not read, so a review set up before an upgrade runs `setup`
-again. A command that posts a review or a start comment runs `gh` as the
-reviewer, `--reviewer` or `review.username` or else the authenticated user,
-with `GH_TOKEN` set to `gh auth token --user <reviewer>` for that call alone,
-so the account the rest of the session uses is left alone. `hold` posts as
-the authenticated user, who must be the pull request's author.
+set up on this machine, so it runs from any directory. `finish` is the
+exception: it deletes comments, so it never takes the repository from the
+state file, and outside a checkout it needs `--repo`. With several models
+set up, each later command refuses, naming them, until `--model` picks one.
+State an earlier release wrote is not read, so a review set up before an
+upgrade runs `setup` again. A command that posts a review, posts or deletes
+a start comment, or settles a finding thread runs `gh` as the reviewer,
+`--reviewer` or `review.username` or else the authenticated user, with
+`GH_TOKEN` set to `gh auth token --user <reviewer>` for that call alone, so
+the account the rest of the session uses is left alone. `hold` posts as the
+authenticated user, who must be the pull request's author.
 
 A review holds a lock for its pull request, head, and model from `setup` until
 it is published, recording the host, the loop, and when it was taken, so a
@@ -1525,19 +1721,19 @@ need to decide in `--detail`, or `--detail-file`.
 
 Every command names the posting session with `--session`, or reads
 `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
-every session's open items, and `show`, `answer`, `dismiss`, `withdraw`, and
-`snooze` find the session that holds the number. `list` prints each item's
-number, kind, state, and subject, separated by tabs, after the session when it
-lists every session. Every session counts from 1 and keeps the items you
-resolved, so two sessions often hold the same number. Without a session, those
-five commands look first among open items, the ones with no answer recorded: a
-number that one session holds open names that session's item, whatever other
-sessions hold resolved under the same number. Only when no session holds the
-number open do they look among every item. A command that still finds the
-number in more than one session exits 67 and names them; run it again with
-`--session` and the session that `list` prints beside the item. A command
-waits up to five seconds while another command changes the same session, and
-then exits 75, so you can run it again.
+every session's open items, and `show`, `answer`, `dismiss`, `withdraw`,
+`revise`, and `snooze` find the session that holds the number. `list` prints
+each item's number, kind, state, and subject, separated by tabs, after the
+session when it lists every session. Every session counts from 1 and keeps the
+items you resolved, so two sessions often hold the same number. Without a
+session, those six commands look first among open items, the ones with no
+answer recorded: a number that one session holds open names that session's
+item, whatever other sessions hold resolved under the same number. Only when
+no session holds the number open do they look among every item. A command that
+still finds the number in more than one session exits 67 and names them; run
+it again with `--session` and the session that `list` prints beside the item.
+A command waits up to five seconds while another command changes the same
+session, and then exits 75, so you can run it again.
 
 The answers are lettered. `a` is always the recommendation, the other options
 follow as `b`, `c`, and on, and the last letter is a typed answer:
@@ -1561,6 +1757,16 @@ second exits 65. `dismiss` answers it with no letter, and `list` then shows
 it as `dismissed`. Only `answer` takes a letter: every other command refuses
 `3.a` with exit code 65, so `dismiss` never drops the answer you meant to
 give.
+
+In Projector's band, only an option answers a question. The band records an
+answer when a prompt you send quotes the question and follows the quote with
+one of its options' text and nothing else, as clicking the option's number
+fills it in. Anything else you send under a quoted question, such as your own
+words, an option with more after it, or a question back, is a reply. The band
+records nothing, the question stays open, and the reply reaches the agent as
+your prompt. The agent then withdraws the question if the reply settles it,
+revises it if the reply shows it was unclear, or leaves it open while it still
+needs you.
 
 Every command refuses any other form of reference, such as `#337.3`,
 `octo/web#12.1`, or `q2`, with exit code 65, and no command lists, delivers,
@@ -1634,8 +1840,7 @@ snooze, so a resolved item never returns. `snooze` refuses, with exit code
 longer than a day, and it changes nothing when it refuses.
 
 An agent takes back an open item that no longer needs you with `withdraw`,
-such as a question you answered in the conversation or news that has gone
-stale:
+such as a question your reply settled or news that has gone stale:
 
 ```console
 $ project inbox withdraw 3 --session "$SESSION"
@@ -1651,39 +1856,94 @@ answered, dismissed, or withdrawn, with exit code 65, and a number no session
 holds, with exit code 66. In Claude Code, the agent withdraws an item with
 Projector's `withdraw` tool rather than from the shell.
 
-## Keep a pull request out of a loop
-
-A watch or review loop reads its tracked file, one `owner/repo#number` a
-line. A line `!owner/repo#number` keeps that pull request out of the loop
-wherever it sits in the file, and both watchers and Projector's band match it
-without regard to case. `project loop drop` writes that line, and `project
-loop restore` removes it:
+When your reply shows that an open question was unclear, or that the choice
+has changed, the agent rewrites the question in place with `revise`. Only the
+parts it names change:
 
 ```console
+$ project inbox revise 3 --session "$SESSION" \
+    --question "Decline the finding about the per-host retry budget?" \
+    --option "Add a budget of two retries per host" \
+    --option "Ask the reviewer which hosts they mean"
+revised 3
+```
+
+`--question` replaces the line, and `--recommend` replaces answer `a`. The
+`--option` flags replace every other option, lettered `b`, `c`, and on in the
+order given, and `--no-options` drops them all, which leaves only the
+recommendation. `--detail`, or `--detail-file`, replaces the detail, and
+`--detail ""` clears it. The question keeps its number, the pull request it is
+about, when it was posted, the subagent that asked, and any snooze, so its
+answer reaches the same agent as before. Only a question can be revised:
+`revise` refuses a notice with exit code 65. It also refuses, with exit code
+65, a revision that fails a check `ask` makes, such as a line of 121
+characters or a sixth option, a revision with nothing to change, an answer
+letter such as `3.a`, and a question already answered, dismissed, or
+withdrawn, and it changes nothing when it refuses. A number no session holds
+exits 66. In Claude Code, the agent revises a question with Projector's
+`revise` tool, and the band redraws it at once.
+
+## Change a loop's tracked file
+
+A watch or review loop reads its tracked file, one `owner/repo#number` a
+line, and acts only on the pull requests the file lists. A line
+`!owner/repo#number` keeps that pull request out of the loop wherever it sits
+in the file, and both watchers and Projector's band match it without regard
+to case. Change the file with `project loop`, whose four commands each
+change one kind of line:
+
+| Command | What it changes | When to run it |
+| --- | --- | --- |
+| `add` | Appends an `owner/repo#number` line, and creates the file. | To bring a pull request into the loop. |
+| `remove` | Removes the lines that list the pull request, and leaves its `!` lines. | To forget a pull request that merged or closed. |
+| `drop` | Appends a `!owner/repo#number` line. | To keep an open pull request out of the loop. |
+| `restore` | Removes the pull request's `!` lines. | To let a dropped pull request back in. |
+
+```console
+$ project loop add acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
+added acme/app#337 to /home/ada/.local/state/projector/projector-review-loop.tracked
 $ project loop drop acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
 dropped acme/app#337 from /home/ada/.local/state/projector/projector-review-loop.tracked
 $ project loop restore acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
 restored acme/app#337 to /home/ada/.local/state/projector/projector-review-loop.tracked
+$ project loop remove acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
+removed acme/app#337 from /home/ada/.local/state/projector/projector-review-loop.tracked
 ```
 
-`drop` appends its line rather than rewriting the file, because a watcher may
-be appending a pull request it adopted at the same moment. It changes nothing
-when the file already holds an exclusion for the pull request, in any letter
-case. `restore` removes every `!` line for the pull request, and only those,
-by writing the file anew and renaming it into place. It leaves a plain
-`owner/repo#number` line alone, so the pull request returns to the loop when
-the file names it.
+Each command matches the reference without regard to case.
 
-Both refuse, with exit code 65, a reference that is not `owner/repo#number`,
-and, with exit code 66, a tracked file that does not exist. With `--json`,
-each prints its `action`, which is `dropped`, `restored`, or `unchanged`,
-with the `pr` and the `tracked` file.
+`add` and `drop` append their line rather than rewriting the file, because a
+watcher may be appending a pull request it adopted at the same moment. `add`
+creates the tracked file and any missing directory above it, so a loop
+builds its set from nothing by adding each pull request. It changes nothing
+when the file already lists the pull request. It refuses, with exit code 65,
+a pull request the file drops, because the `!` line would keep that pull
+request out all the same; run `project loop restore` first to let it back
+in. `drop` changes nothing when the file already holds an exclusion for the
+pull request.
+
+`restore` removes every `!` line for the pull request, and only those, by
+writing the file anew and renaming it into place. It leaves a plain
+`owner/repo#number` line alone, so the pull request returns to the loop when
+the file lists it.
+
+`remove` removes every plain line for the pull request by the same rewrite,
+and changes nothing when the file does not list it. A loop runs it when a
+pull request merges or closes. It leaves the pull request's `!` lines alone,
+so a pull request you dropped stays out even if it reopens and a review loop
+would otherwise adopt it again.
+
+Each command refuses, with exit code 65, a reference that is not
+`owner/repo#number`. `drop`, `restore`, and `remove` refuse, with exit code
+66, a tracked file that does not exist. With `--json`, each prints its
+`action`, which is `added`, `dropped`, `restored`, `removed`, or
+`unchanged`, with the `pr` and the `tracked` file.
 
 ## Consume JSON
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
-`priority`, `done`, `check`, or any `inbox` or `loop` command. Responses use stdout
-only for JSON and include `"schema_version": 2`. An `inbox` command that
+`priority`, `done`, `check`, or any `config`, `inbox`, or `loop` command.
+Responses use stdout only for JSON and include `"schema_version": 2`. An `inbox` command that
 prints one item prints it under `item`, and `inbox list` prints `items`.
 `inbox watch --json` prints one JSON object a line, as a watcher reads it.
 
@@ -1732,8 +1992,8 @@ Projector uses these exit codes:
 | `0` | The command completed successfully. |
 | `2` | Command syntax or an argument is invalid. |
 | `3` | `project site status` found no Projector site for the repository. |
-| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, or a `loop` reference is not `owner/repo#number`. |
-| `66` | The requested project, the projects directory, the inbox item, or a `loop` command's tracked file does not exist. |
+| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, a `loop add`, `loop drop`, `loop restore`, or `loop remove` reference is not `owner/repo#number`, or `loop add` names a pull request the tracked file drops. |
+| `66` | The requested project, the projects directory, the inbox item, or the tracked file of a `loop drop`, `loop restore`, or `loop remove` command does not exist. |
 | `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
 | `69` | Git, the interactive editor, or the installer is unavailable. |
 | `75` | Another command held an inbox session's lock for five seconds; run the command again. |

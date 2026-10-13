@@ -321,8 +321,8 @@ either produced a sequence or the finding did not ship. Keep pass names and
 protocol vocabulary out of anything the author reads. Do not restate the
 change's context; the intent paragraph carries it.
 
-When a re-review shows an open finding was wrong, withdraw it: reply in its
-thread with `<!-- projector-verify v=1 result=withdrawn sha=<full-sha> -->`,
-name the guard or behavior that shows the finding was wrong, and resolve the
-thread. `SKILL.md` § Verify earlier findings covers the other ways a finding
-is settled.
+When a re-review shows an open finding was wrong, withdraw it with
+`project review settle <number> --thread <thread-id> --result withdrawn --body <file>`,
+where the file names the guard or behavior that shows the finding was wrong.
+The command writes the verify marker and resolves the thread. `SKILL.md`
+§ Verify earlier findings covers the other ways a finding is settled.

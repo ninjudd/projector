@@ -574,6 +574,81 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertEqual([("alpha", "Ben")], [(p["name"], p["owner"]) for p in json.loads(stdout)["projects"]])
 
+    def test_an_empty_owner_means_no_owner(self) -> None:
+        empty = {"alpha": "owner:\n", "beta": "owner: \"\"\n", "gamma": "owner: '  ' # unassigned\n"}
+        for name, line in empty.items():
+            self.plan(name, extra=line)
+        self.plan("delta", extra="owner: Ben\n")
+
+        code, stdout, stderr = self.invoke("check")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("Project plans are valid.\n", stdout)
+        code, stdout, stderr = self.invoke("list", "--json")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(
+            [("alpha", None), ("beta", None), ("delta", "Ben"), ("gamma", None)],
+            [(p["name"], p["owner"]) for p in json.loads(stdout)["projects"]],
+        )
+        code, stdout, stderr = self.invoke("show", "alpha", "--json")
+        self.assertEqual(0, code, stderr)
+        self.assertIsNone(json.loads(stdout)["project"]["owner"])
+        for wanted in ("ben", "''", '""'):
+            code, stdout, stderr = self.invoke("list", "--owner", wanted, "--json")
+            self.assertEqual(0, code, stderr)
+            self.assertEqual(["delta"] if wanted == "ben" else [],
+                             [p["name"] for p in json.loads(stdout)["projects"]], wanted)
+
+    def test_owner_replaces_an_empty_owner_in_place(self) -> None:
+        for line, expected in (("owner:\n", "owner: ben\n"), ("owner:   \n", "owner: ben\n"),
+                               ('owner: ""\n', "owner: ben\n"), ("owner: # unassigned\n", "owner: ben # unassigned\n")):
+            with self.subTest(line):
+                path = self.plan("alpha", extra=line + "custom: keep-me\n")
+                before = path.read_text()
+
+                code, stdout, stderr = self.invoke("owner", "alpha", "ben", "--json")
+
+                self.assertEqual(0, code, stderr)
+                self.assertEqual("updated", json.loads(stdout)["action"])
+                self.assertEqual(before.replace(line, expected, 1), path.read_text())
+                self.assertEqual("ben", ProjectStore(self.root).resolve("alpha").owner)
+
+    def test_owner_and_status_find_their_lines_in_a_crlf_plan(self) -> None:
+        path = self.plan("alpha", extra="owner:\n")
+        before = path.read_bytes().replace(b"\n", b"\r\n")
+        path.write_bytes(before)
+
+        for arguments in (("owner", "alpha", "ben"), ("status", "alpha", "ready")):
+            code, _, stderr = self.invoke(*arguments)
+            self.assertEqual(0, code, stderr)
+
+        self.assertEqual(
+            before.replace(b"status: draft\r\n", b"status: ready\r\n").replace(b"owner:\r\n", b"owner: ben\r\n"),
+            path.read_bytes(),
+        )
+
+    def test_owner_clear_removes_an_empty_owner_line(self) -> None:
+        path = self.plan("alpha", extra="owner:\ncustom: keep-me\n")
+        before = path.read_text()
+
+        code, stdout, stderr = self.invoke("owner", "alpha", "--clear", "--json")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("updated", json.loads(stdout)["action"])
+        self.assertEqual(before.replace("owner:\n", "", 1), path.read_text())
+
+    def test_status_priority_and_done_change_a_plan_with_an_empty_owner(self) -> None:
+        path = self.plan("alpha", extra="owner:\n")
+        before = path.read_text()
+
+        for arguments in (("status", "alpha", "in-progress"), ("priority", "alpha", "now"), ("done", "alpha")):
+            code, _, stderr = self.invoke(*arguments)
+            self.assertEqual(0, code, stderr)
+
+        self.assertEqual(
+            before.replace("status: draft\npriority: later\n", "status: completed\npriority: now\n", 1),
+            path.read_text(),
+        )
+
     def test_done_changes_status_and_reminds_about_the_outcome(self) -> None:
         path = self.plan("alpha", "in-progress", priority="now")
         code, _, stderr = self.invoke("done", "alpha")
@@ -1129,7 +1204,7 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("review.publish_rule must be true or false", stderr)
         self.assertFalse((self.root / "AGENTS.md").exists(), "a bad value refuses before any file is written")
 
-    def test_init_adds_the_hold_and_summary_rules_beside_an_existing_review_rule(self) -> None:
+    def test_init_adds_the_hold_finish_and_summary_rules_beside_an_existing_review_rule(self) -> None:
         self.at_a_terminal()
         self.settings().write_text(json.dumps({"permissions": {"allow": ["Bash(project review publish *)"]}}))
 
@@ -1139,10 +1214,12 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("updated ~/.claude/settings.json\n", stdout)
         self.assertEqual({"permissions": {"allow": ["Bash(project review publish *)",
                                                     "Bash(project review hold *)",
+                                                    "Bash(project review finish *)",
+                                                    "Bash(project review settle *)",
                                                     "Bash(project summary publish *)"]}},
                          json.loads(self.settings().read_text()))
 
-    def test_init_adds_the_hold_rule_to_settings_that_allow_both_publish_commands(self) -> None:
+    def test_init_adds_the_hold_and_finish_rules_to_settings_that_allow_both_publish_commands(self) -> None:
         self.at_a_terminal()
         published = ["Bash(project review publish *)", "Bash(project summary publish *)"]
         self.settings().write_text(json.dumps({"permissions": {"allow": published}}))
@@ -1151,7 +1228,22 @@ class MutationTests(RepositoryTestCase):
 
         self.assertEqual(0, code, stderr)
         self.assertIn("updated ~/.claude/settings.json\n", stdout)
-        self.assertEqual({"permissions": {"allow": [*published, "Bash(project review hold *)"]}},
+        self.assertEqual({"permissions": {"allow": [*published, "Bash(project review hold *)",
+                                                    "Bash(project review finish *)",
+                                                    "Bash(project review settle *)"]}},
+                         json.loads(self.settings().read_text()))
+
+    def test_init_adds_the_finish_and_settle_rules_to_settings_that_allow_the_other_commands(self) -> None:
+        self.at_a_terminal()
+        allowed = ["Bash(project review publish *)", "Bash(project review hold *)", "Bash(project summary publish *)"]
+        self.settings().write_text(json.dumps({"permissions": {"allow": allowed}}))
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated ~/.claude/settings.json\n", stdout)
+        self.assertEqual({"permissions": {"allow": [*allowed, "Bash(project review finish *)",
+                                                    "Bash(project review settle *)"]}},
                          json.loads(self.settings().read_text()))
 
     def codex_rules(self) -> Path:
@@ -1206,7 +1298,7 @@ class MutationTests(RepositoryTestCase):
         self.assertFalse(self.codex_rules().exists())
 
     @unittest.skipUnless(shutil.which("codex"), "checking the Codex rule needs the codex CLI")
-    def test_codex_allows_exactly_the_publish_and_hold_commands_under_the_rules(self) -> None:
+    def test_codex_allows_exactly_the_publish_hold_finish_and_settle_commands_under_the_rules(self) -> None:
         rules = self.home / "projector.rules"
         rules.write_text(permissions.CODEX_RULES)
 
@@ -1218,6 +1310,8 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual("allow", decision("project", "review", "publish", "--loop", "x"))
         self.assertEqual("allow", decision("project", "summary", "publish", "--summary", "summary.json"))
         self.assertEqual("allow", decision("project", "review", "hold", "12", "--drop"))
+        self.assertEqual("allow", decision("project", "review", "finish", "12", "--force"))
+        self.assertEqual("allow", decision("project", "review", "settle", "12", "--thread", "T", "--result", "fixed"))
         self.assertEqual("none", decision("project", "summary", "hold", "12", "--drop"))
         self.assertEqual("none", decision("project", "review", "release", "12"))
         self.assertEqual("none", decision("project", "site", "serve"))
@@ -1368,13 +1462,9 @@ class ReviewRulesTests(RepositoryTestCase):
         def allow(*rules: str) -> None:
             self.settings().write_text(json.dumps({"permissions": {"allow": list(rules)}}))
 
-        cases = {
-            "hold rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project summary publish *)"),
-                                  "Bash(project review hold *)"),
-            "summary rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review hold *)"),
-                                     "Bash(project summary publish *)"),
-            "settings absent": (self.settings().unlink, "Bash(project review hold *)"),
-        }
+        cases = {f"{rule} missing": ((lambda rule=rule: allow(*(r for r in permissions.RULES if r != rule))), rule)
+                 for rule in permissions.RULES}
+        cases["settings absent"] = (self.settings().unlink, "Bash(project review hold *)")
         for name, (arrange, missing) in cases.items():
             with self.subTest(name):
                 arrange()
@@ -1456,7 +1546,7 @@ class ValidationTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertEqual("Project plans are valid.\n", stdout)
 
-    def test_check_rejects_an_empty_or_multiline_owner(self) -> None:
+    def test_check_rejects_a_multiline_owner_but_not_an_empty_one(self) -> None:
         self.plan("alpha", extra="owner:\n")
         self.plan("beta", extra="owner: |\n")
         self.plan("gamma", extra="owner: aparsuri-poly\n")
@@ -1466,8 +1556,7 @@ class ValidationTests(RepositoryTestCase):
         self.assertEqual(65, code)
         invalid = {issue["path"]: issue["message"] for issue in json.loads(stdout)["issues"]
                    if issue["code"] == "invalid-project"}
-        self.assertEqual({"docs/projects/alpha/readme.md", "docs/projects/beta/readme.md"}, set(invalid))
-        self.assertIn("owner must not be empty", invalid["docs/projects/alpha/readme.md"])
+        self.assertEqual({"docs/projects/beta/readme.md"}, set(invalid))
         self.assertIn("owner must be a single line", invalid["docs/projects/beta/readme.md"])
 
     def test_check_accepts_markdown_images(self) -> None:
@@ -1671,13 +1760,13 @@ class StoreTests(RepositoryTestCase):
         plans = {
             "alpha": PLAN.format(status="ready", priority=priority_line("next"), title="Alpha", body="Text.",
                                  extra="owner: someone\n"),
+            "empty-owner": "---\nstatus: ready\npriority: next\nowner:\n---\n",
             "no-frontmatter": "# No frontmatter\n",
             "malformed": "---\nstatus ready\n---\n",
             "unclosed": "---\nstatus: ready\n",
             "bad-status": "---\nstatus: maybe\npriority: next\n---\n",
             "no-priority": "---\nstatus: ready\n---\n",
             "bad-priority": "---\nstatus: ready\npriority: soon\n---\n",
-            "empty-owner": "---\nstatus: ready\npriority: next\nowner:\n---\n",
             "block-owner": "---\nstatus: ready\npriority: next\nowner: |\n---\n",
             "Bad_Name": PLAN.format(status="draft", priority=priority_line("later"), title="Bad", body="Text.", extra=""),
         }
@@ -1698,7 +1787,7 @@ class StoreTests(RepositoryTestCase):
                     self.assertEqual(str(error), str(raised.exception))
                 else:
                     self.assertEqual(expected, project_from_text(text, name, expected.path, display))
-        self.assertEqual(len(plans) - 1, failures, "every plan but alpha is a kind of bad plan")
+        self.assertEqual(len(plans) - 2, failures, "every plan but alpha and empty-owner is a kind of bad plan")
 
 
 class SelfReportingTests(unittest.TestCase):

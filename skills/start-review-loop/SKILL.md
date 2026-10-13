@@ -35,12 +35,19 @@ after the request is answered, and every later push gets a review until it
 closes. A line `!owner/repo#number` keeps one pull request out when the user
 asks. `project loop drop owner/repo#number --tracked <file>` appends one, as
 Projector's band does when the user dismisses a pull request, and `project
-loop restore` with the same arguments removes it. Hold validated logins
-literally in every query you run yourself; never use `@me`. Under the default
-the two roles coincide and `@me` looks harmless, but its value follows
-whichever token is live, so under a reviewer override it resolves to the
-reviewer — an account that authors nothing here — and a listing by `@me` comes
-back empty, indistinguishable from a repository with nothing open.
+loop restore` with the same arguments removes it. `project loop add` with the
+same arguments lists a pull request the user assigns, and `project loop
+remove` removes the pull request's own line once it closes. The four commands
+change different lines: `add` lists a pull request, `remove` forgets one that
+merged or closed, `drop` keeps an open one out, and `restore` lets it back
+in. `remove` leaves a `!` line in place, and `add` refuses a pull request that
+has one, so only `restore` undoes a `drop`, and adoption never brings a
+dropped pull request back. Hold validated logins literally in every query you
+run yourself; never use `@me`. Under the default the two roles coincide and
+`@me` looks harmless, but its value follows whichever token is live, so under
+a reviewer override it resolves to the reviewer — an account that authors
+nothing here — and a listing by `@me` comes back empty, indistinguishable from
+a repository with nothing open.
 
 ## Establish the loop
 
@@ -48,7 +55,8 @@ back empty, indistinguishable from a repository with nothing open.
    review or GitHub workflow skills.
 2. Run `project review rules` once. It reads the user's own Claude Code
    settings and Codex rules, writes nothing, and exits 1 when either lacks the
-   rules that allow `project review publish`, `project review hold`, and
+   rules that allow `project review publish`, `project review hold`,
+   `project review finish`, `project review settle`, and
    `project summary publish`.
    On exit 1, tell the user once, before the first review, that the host's
    automatic approval, such as Claude Code's auto mode or Codex's approval
@@ -75,24 +83,28 @@ back empty, indistinguishable from a repository with nothing open.
    model names. Another model's verdict on a head is that model's review,
    not this loop's. Review any current head without a completed exact-head
    review by this model immediately; do not baseline it away.
-6. Write the tracked set to a durable tracked file, one `owner/repo#number`
-   per line, kept beside the state file and outside any checkout. That file
-   is the watcher's whole scope and the record of the set. The watcher
-   appends the operator's pull requests and the requested ones itself;
-   append one the user assigns, and delete a line when its pull request
-   closes. Start or reuse a persistent recurring goal that records the
-   repository, operator, the tracked file's path, the model ID the host
+6. Write the tracked set to a durable tracked file, kept beside the state
+   file and outside any checkout, by running
+   `project loop add owner/repo#number --tracked <file>` for each pull
+   request in it. `add` creates the file and writes one
+   `owner/repo#number` per line. That file is the watcher's whole scope and
+   the record of the set. The watcher appends the operator's pull requests
+   and the requested ones itself; add one the user assigns the same way,
+   and when a pull request closes, remove its line with
+   `project loop remove owner/repo#number --tracked <file>`.
+   Start or reuse a persistent recurring goal that records the repository,
+   operator, the tracked file's path, the model ID the host
    reports for this session, and this loop's id: a name chosen once for this
    model, such as `<repo>-review-<model-key>`, where the model key is the
    model ID lowercased, without a trailing bracketed variant such as `[1m]`,
    and with every character but a letter, a digit, `.`, `_`, and `-` made
    `-`. The loop passes `--loop <id>` and `--model <model-id>` to each
    `project review` command it runs on a pull request: `setup`, `move`,
-   `census`, `interdiff`, `gate`, `publish`, and `release`. The record of
-   which reviews this loop published lives under that id in the review state
-   directory, where `project review publish` keeps it. Give each model's loop
-   an id of its own, because two loops that write one record can lose an
-   entry.
+   `census`, `settle`, `interdiff`, `gate`, `publish`, `release`, and
+   `finish`. The record of which reviews this loop published lives under
+   that id in the review state directory, where `project review publish`
+   keeps it. Give each model's loop an id of its own, because two loops that
+   write one record can lose an entry.
 7. Seed the state file with only the SHAs already reviewed, then run one
    pass:
 
@@ -119,8 +131,10 @@ or by replying on an open finding thread, so no head event is coming, and only
 a re-review can settle the findings and sign off. It fires once per answer, and
 the re-review's own replies carry the verify marker, so they never count as
 one. It prevents a response without a push from deadlocking both loops. A `TRACKED` line is
-a problem with the tracked file itself, announced once; fix the file. Keep the
-loop silent while no event needs action.
+a problem with the tracked file itself, announced once. Remove a line that
+names no pull request with `project loop remove`, and tell the user about a
+line that is not `owner/repo#number`, which no `project loop` command writes.
+Keep the loop silent while no event needs action.
 
 The author's hold comment, which `fix-pr` posts with `project review hold`
 while it builds a change, as `../fix-pr/SKILL.md` describes under "Hold the
@@ -171,7 +185,8 @@ reads the new head against that history instead of rediscovering it.
 - Each subagent summarizes every pull request it reviews, as `review-pr`
   describes, another author's included. The loop never pauses or holds
   summaries on its own judgment. The one off switch is `review.summarize =
-  false` in `.projector.toml`, which the user sets. A brief that
+  false`, which the user sets, or asks you to set with
+  `project config set review.summarize false`. A brief that
   forbids editing the pull request body names the summary's link block as
   an exception, because `project summary publish` writes that block at the
   end of every description on purpose. Where the repository's own
@@ -179,9 +194,14 @@ reads the new head against that history instead of rediscovering it.
   `--no-describe`, so the comment alone links the summary, as `review-pr`
   describes.
 - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
-  to finish: delete any start comment it still holds and remove its scratch
-  worktrees. Then close the subagent and delete the pull request's line from
-  the tracked file.
+  to run `project review finish <number> --repo <owner>/<repo> --force`
+  with the loop's `--loop` and `--model`. A closed pull request takes no
+  review, so `--force` discards one still in progress, and `--repo` keeps
+  the command off another repository's review of the same number. `finish`
+  deletes the subagent's start comments, clears its locks and state, and
+  removes its scratch worktrees. Then close the subagent and remove the pull
+  request's line from the tracked file with
+  `project loop remove owner/repo#number --tracked <file>`.
 - When a subagent is lost, to a session restart for example, start a
   replacement under the same name. It rebuilds its context from GitHub: the
   pull request's Projector reviews, their finding threads, and the replies on
@@ -218,7 +238,9 @@ a verdict published on that SHA, full or incremental. `review-pr` decides
 which: a head that changed little since this loop's last full review can get
 an incremental review, and every other head gets a full one. Green CI and
 resolved threads are evidence about state, not substitutes for review. When a
-pull request closes or merges, close its subagent and delete its line from the
-tracked file. The watcher adopts the operator's new pull requests and new
-requests for the operator's review itself; append one the user assigns, and
-continue until the user stops the loop.
+pull request closes or merges, close its subagent and remove its line from the
+tracked file with `project loop remove owner/repo#number --tracked <file>`.
+The watcher adopts the operator's new pull requests and new requests for the
+operator's review itself; add one the user assigns with
+`project loop add owner/repo#number --tracked <file>`, and continue until the
+user stops the loop.
