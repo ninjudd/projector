@@ -1,0 +1,743 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 51f2f08..637401b 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -67,17 +67,19 @@ what it did to each:
+   would change everything Claude Code reads rather than only Projector's part.
+ - `~/.claude/settings.json`, your own Claude Code settings, gains the
+   permission rules `Bash(project review publish *)`,
+-  `Bash(project review hold *)`, `Bash(project review finish *)`, and
+-  `Bash(project summary publish *)` in `permissions.allow`. When
+-  `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that directory
+-  instead. Claude Code's auto mode otherwise can refuse a review loop's clean
+-  review of your own pull request as self-approval, although the review is a
+-  `COMMENT` that moves no `reviewDecision` and a person still merges. It can
+-  refuse the deletion of a comment as a write to an external system: the
+-  comment that holds your pull request in draft, which leaves a clean pull
+-  request stuck in draft, and a finished review's start comment, which leaves
+-  the pull request saying a review is in progress. It can also refuse the
+-  publish of a summary you asked for. An allow rule resolves the command
++  `Bash(project review hold *)`, `Bash(project review finish *)`,
++  `Bash(project review settle *)`, and `Bash(project summary publish *)` in
++  `permissions.allow`. When `CLAUDE_CONFIG_DIR` is set, the file is
++  `settings.json` in that directory instead. Claude Code's auto mode
++  otherwise can refuse a review loop's clean review of your own pull request
++  as self-approval, although the review is a `COMMENT` that moves no
++  `reviewDecision` and a person still merges. It can refuse the deletion of a
++  comment as a write to an external system: the comment that holds your pull
++  request in draft, which leaves a clean pull request stuck in draft, and a
++  finished review's start comment, which leaves the pull request saying a
++  review is in progress. The reply and resolution that settle a finding
++  thread are writes of the same kind. It can also refuse the publish of a
++  summary you asked for. An allow rule resolves the command
+   before the classifier runs. The rules go in your settings rather
+   than the repository's, so they hold in every repository, clone, and worktree
+   you open, whether or not the repository commits or ignores `.claude/`, and
+@@ -533,7 +535,7 @@ These are the keys Projector reads today:
+ | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
+ | `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
+ | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
+-| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish`, `project review hold`, `project review finish`, and `project summary publish` to your Claude Code settings and Codex rules |
++| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish`, `project review hold`, `project review finish`, `project review settle`, and `project summary publish` to your Claude Code settings and Codex rules |
+ | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
+ | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+@@ -1114,6 +1116,7 @@ a review loop does not rebuild them as helpers of its own:
+ project review setup 66 --model claude-opus-5-5 --loop example-review-claude-opus-5-5
+ project review move 66
+ project review census 66 --json
++project review settle 66 --thread PRRT_kwDOAbc123 --result fixed --body reply.md
+ project review publish 66 --verdict clean --body body.md --covered 12/12 --loop example-review-claude-opus-5-5
+ project review interdiff 66
+ project review publish 66 --incremental --body body.md
+@@ -1179,6 +1182,38 @@ every model's threads alike and takes `--model` like the commands around it,
+ so a review loop passes the same flags to each. `release` clears the locks of
+ one model's review of the pull request.
+ 
++`settle` answers one finding thread once the review has verified it at the
++head under review. `--thread` is the thread's `id` from `census --json`,
++`--result` says how the finding stands, and `--body` names a file holding the
++reply's text. `settle` opens the reply with the verify marker, filled from
++the review's state with the head and the model:
++
++```
++<!-- projector-verify v=1 result=fixed sha=<full-sha> model=claude-opus-5-5 -->
++```
++
++The watchers read that marker to tell the reviewer's reply from the author's
++answer. `settle` posts the reply as the reviewer, then sets the thread by the
++result:
++
++| `--result` | The thread |
++| --- | --- |
++| `fixed`, `accepted`, `withdrawn` | Resolved |
++| `reopened` | Unresolved |
++| `kept` | Left as it is |
++
++It reads the reply and the thread back, and exits 1 when the reply does not
++open with the marker or the thread is not resolved or unresolved as the
++result asks. When the thread's last comment already opens with the same
++marker, as after a run that stopped once it replied, `settle` posts no
++second reply and only sets the thread. It refuses, exiting 1 and posting
++nothing, a thread that is not a review thread on the pull request, one whose
++first comment carries no finding marker, an empty body, and a body that
++carries a Projector marker of its own. A `--result` outside the five exits 2.
++With `--json` it prints the `thread`, the `result`, the `sha` and `model` the
++marker names, the reply's `comment` id and `url`, and whether the thread is
++`resolved`.
++
+ `finish` ends one model's review of the pull request on this machine, once
+ the review is published and its summary has run, or when the pull request
+ closes. It takes these steps:
+@@ -1440,9 +1475,10 @@ head's code, so `gate` refuses, exiting 1 without running anything, on a head
+ `review.gate` is unset.
+ 
+ `rules` checks whether your own settings allow `project review publish`,
+-`project review hold`, `project review finish`, and `project summary publish`:
+-the rules `init` adds to `~/.claude/settings.json`, and to
+-`~/.codex/rules/projector.rules` where Codex is installed. It prints
++`project review hold`, `project review finish`, `project review settle`, and
++`project summary publish`: the rules `init` adds to
++`~/.claude/settings.json`, and to `~/.codex/rules/projector.rules` where Codex
++is installed. It prints
+ each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
+ whole check and for each file. It writes nothing, takes no pull request, and
+ runs from any directory. It exits 0 when every file has the rules. It exits 1
+@@ -1463,12 +1499,12 @@ number, and by `--model` or the one model with a review of the pull request
+ set up on this machine, so it runs from any directory. With several models
+ set up, it refuses, naming them, until `--model` picks one. State an earlier
+ release wrote is not read, so a review set up before an upgrade runs `setup`
+-again. A command that posts a review, or posts or deletes a start comment,
+-runs `gh` as the reviewer, `--reviewer` or `review.username` or else the
+-authenticated user, with `GH_TOKEN` set to `gh auth token --user <reviewer>`
+-for that call alone, so the account the rest of the session uses is left
+-alone. `hold` posts as the authenticated user, who must be the pull request's
+-author.
++again. A command that posts a review, posts or deletes a start comment, or
++settles a finding thread runs `gh` as the reviewer, `--reviewer` or
++`review.username` or else the authenticated user, with `GH_TOKEN` set to
++`gh auth token --user <reviewer>` for that call alone, so the account the
++rest of the session uses is left alone. `hold` posts as the authenticated
++user, who must be the pull request's author.
+ 
+ A review holds a lock for its pull request, head, and model from `setup` until
+ it is published, recording the host, the loop, and when it was taken, so a
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 74024d0..b60e47d 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -657,24 +657,37 @@ keeps `originalLine`. Outdated says the code changed, not that the finding was
+ addressed, so verify it like any other.
+ 
+ Read each thread's replies with the finding, verify by `method.md` § 5 against
+-this head, and settle it in one of these ways. Every reply you post opens with
+-`<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> -->`,
+-naming the model running this review, so neither loop reads it back as a new
+-finding or as the author answering:
++this head, and settle it in one of the ways below. Write the reply's text to a
++file, and settle the thread with one command, passing the thread's `id` from
++the census:
+ 
+-- **Fixed:** the head addresses the finding. Resolve an open thread with
+-  `resolveReviewThread`, replying `result=fixed` with what at this head
+-  settles it. A thread already resolved and fixed needs nothing more.
++```sh
++project review settle <number> --thread <thread-id> --result <result> --body <file>
++```
++
++The command opens the reply with
++`<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> -->`,
++filled from the review's state with the head under review and the model
++running it, so neither loop reads the reply back as a new finding or as the
++author answering. It posts the reply as the reviewer, resolves or unresolves
++the thread as the result asks, and reads both back. It refuses a thread that
++is not a Projector finding thread on this pull request. Never write the
++marker yourself or resolve a thread through `gh api`: a reply whose marker
++is mistyped reads to the review loop as the author answering.
++
++- **Fixed:** the head addresses the finding. Run `--result fixed` on an open
++  thread, saying what at this head settles it; the command resolves the
++  thread. A thread already resolved and fixed needs nothing more.
+ - **Accepted:** the author declined in a reply and the reasoning holds, or the
+-  finding was wrong. Resolve it, replying `result=accepted` or
+-  `result=withdrawn` with the guard or behavior that settles it.
+-- **Kept:** the author declined and the reasoning does not hold. Leave the
+-  thread open and reply `result=kept` once, saying what still fails and why.
+-  Do not repeat the reply on a later head unless something changed; an open
+-  disagreement is the user's merge decision.
++  finding was wrong. Run `--result accepted` or `--result withdrawn` with the
++  guard or behavior that settles it; the command resolves the thread.
++- **Kept:** the author declined and the reasoning does not hold. Run
++  `--result kept` once, saying what still fails and why; the thread stays
++  open. Do not repeat the reply on a later head unless something changed; an
++  open disagreement is the user's merge decision.
+ - **Reopened:** the thread is resolved but the finding is not addressed at
+-  this head. Unresolve it with `unresolveReviewThread`, and reply
+-  `result=reopened` with what still fails.
++  this head. Run `--result reopened` with what still fails; the command
++  unresolves the thread.
+ - **Still open:** open, not fixed, and not answered. Leave it; the finding
+   already says what to do.
+ 
+diff --git a/skills/review-pr/method.md b/skills/review-pr/method.md
+index dae94f5..2aeb0f4 100644
+--- a/skills/review-pr/method.md
++++ b/skills/review-pr/method.md
+@@ -321,8 +321,8 @@ either produced a sequence or the finding did not ship. Keep pass names and
+ protocol vocabulary out of anything the author reads. Do not restate the
+ change's context; the intent paragraph carries it.
+ 
+-When a re-review shows an open finding was wrong, withdraw it: reply in its
+-thread with `<!-- projector-verify v=1 result=withdrawn sha=<full-sha> -->`,
+-name the guard or behavior that shows the finding was wrong, and resolve the
+-thread. `SKILL.md` § Verify earlier findings covers the other ways a finding
+-is settled.
++When a re-review shows an open finding was wrong, withdraw it with
++`project review settle <number> --thread <thread-id> --result withdrawn --body <file>`,
++where the file names the guard or behavior that shows the finding was wrong.
++The command writes the verify marker and resolves the thread. `SKILL.md`
++§ Verify earlier findings covers the other ways a finding is settled.
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index c98a89c..0882822 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -452,6 +452,10 @@ def parser() -> argparse.ArgumentParser:
+         "move", help="follow a head that moved mid-review and update the start comment in place"
+     )
+     review_census = review_commands.add_parser("census", help="count a pull request's Projector finding threads")
++    review_settle = review_commands.add_parser(
++        "settle", help="reply on a Projector finding thread with the verify marker, as the reviewer, and resolve or "
++                       "unresolve the thread as the result asks"
++    )
+     review_release = review_commands.add_parser(
+         "release", help="clear a pull request's review lock when no review is running"
+     )
+@@ -499,8 +503,8 @@ def parser() -> argparse.ArgumentParser:
+                            help="a listed change that will not be built: remove it, and end the hold when none is "
+                                 "left (repeatable); with no TEXT, end the hold, which you do once the push that "
+                                 "carries every listed change succeeds, since the command does not check it")
+-    for command in (review_setup, review_move, review_census, review_release, review_finish, review_publish,
+-                    review_gate, review_interdiff):
++    for command in (review_setup, review_move, review_census, review_settle, review_release, review_finish,
++                    review_publish, review_gate, review_interdiff):
+         command.add_argument("pr", type=int, help="the pull request number")
+         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
+                              "later: default the review set up for this pull request)")
+@@ -515,10 +519,16 @@ def parser() -> argparse.ArgumentParser:
+     review_setup.add_argument("--model", required=True,
+                               help="the model ID of this session, which names the start comment and keys the "
+                                    "review's state")
+-    for command in (review_move, review_census, review_release, review_finish, review_publish, review_gate,
+-                    review_interdiff):
++    for command in (review_move, review_census, review_settle, review_release, review_finish, review_publish,
++                    review_gate, review_interdiff):
+         command.add_argument("--model", help="the model whose review this is (default: the one model with a review "
+                                              "of this pull request set up here)")
++    review_settle.add_argument("--thread", required=True, help="the finding thread's id, as `census --json` lists it")
++    review_settle.add_argument("--result", required=True, choices=tuple(review.SETTLED),
++                               help="how the finding stands at the head under review: fixed, accepted, and "
++                                    "withdrawn resolve the thread, reopened unresolves it, and kept leaves it open")
++    review_settle.add_argument("--body", type=Path, required=True,
++                               help="the reply's text, without the marker, which settle writes")
+     review_setup.add_argument("--rereview", action="store_true",
+                               help="a re-review of a head this loop already published a verdict on")
+     review_setup.add_argument("--replace", type=int, metavar="COMMENT_ID",
+@@ -1062,6 +1072,10 @@ def run_review(arguments: argparse.Namespace) -> int:
+                       + (f" by model {model}" if model else ""))
+             return 0
+         paths = review.review_paths(root, repo, arguments.pr, arguments.model)
++        if command == "settle":
++            result = review.settle(paths, arguments.thread, arguments.result, arguments.body)
++            print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.settle_lines(result)))
++            return 0
+         if command == "interdiff":
+             state = review.read_state(paths)
+             enabled = incremental_enabled(Path(state["checkout"]))
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 7a50d13..ef37e03 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -7,14 +7,15 @@
+ refuses the deletion of a comment, as a write to an external system: the
+ comment that holds a pull request in draft, which leaves a clean pull request
+ stuck in draft, and a finished review's start comment, which leaves the pull
+-request saying a review is in progress. Codex's approval reviewer refuses
+-`project summary publish`, which sends a pull request's diff to the
++request saying a review is in progress. The reply and resolution that settle
++a finding thread are writes of the same kind. Codex's approval reviewer
++refuses `project summary publish`, which sends a pull request's diff to the
+ repository's own site, as sending repository content to another host. A rule
+ that allows `project review publish`, `project review hold`, `project review
+-finish`, and `project summary publish` resolves each command before that
+-review runs. The rules go in the person's own settings, so they hold in every
+-repository, clone, and worktree they open, and no repository has to carry a
+-permission for everyone who opens it.
++finish`, `project review settle`, and `project summary publish` resolves each
++command before that review runs. The rules go in the person's own settings,
++so they hold in every repository, clone, and worktree they open, and no
++repository has to carry a permission for everyone who opens it.
+ """
+ 
+ from __future__ import annotations
+@@ -28,14 +29,15 @@
+ from .core import FileAction, write_through
+ 
+ RULES = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
+-         "Bash(project summary publish *)")
++         "Bash(project review settle *)", "Bash(project summary publish *)")
+ 
+ # Codex loads every `.rules` file in its rules directory, and writes the
+ # approvals a person saves to `default.rules`, so Projector keeps its rules in
+ # a file of its own and rewrites that file whole.
+ CODEX_PREFIX_RULES = ('prefix_rule(pattern = ["project", ["review", "summary"], "publish"], decision = "allow")',
+                       'prefix_rule(pattern = ["project", "review", "hold"], decision = "allow")',
+-                      'prefix_rule(pattern = ["project", "review", "finish"], decision = "allow")')
++                      'prefix_rule(pattern = ["project", "review", "finish"], decision = "allow")',
++                      'prefix_rule(pattern = ["project", "review", "settle"], decision = "allow")')
+ CODEX_RULES = """\
+ # Written by `project init`, which replaces this file. Put your own rules in another file.
+ prefix_rule(
+@@ -53,10 +55,15 @@
+     decision = "allow",
+     justification = "Ends a Projector review: deletes its start comments and removes its scratch worktrees and state.",
+ )
++prefix_rule(
++    pattern = ["project", "review", "settle"],
++    decision = "allow",
++    justification = "Replies on a Projector finding thread as the reviewer and resolves or reopens the thread.",
++)
+ """
+ 
+-COMMANDS = ("`project review publish`, `project review hold`, `project review finish`, and "
+-            "`project summary publish`")
++COMMANDS = ("`project review publish`, `project review hold`, `project review finish`, `project review settle`, "
++            "and `project summary publish`")
+ 
+ 
+ def settings_path(environ: Mapping[str, str] = os.environ) -> Path:
+@@ -151,8 +158,9 @@ def kept(reason: str) -> FileAction:
+     if not apply:
+         return FileAction(name, "kept", f"{name} lacks {' and '.join(missing)}, without which Claude Code's auto "
+                                         "mode can refuse a review loop's clean review of your own pull request, "
+-                                        "the end of a hold on it, the cleanup after a review, or the publish of "
+-                                        "a summary, unless the repository's own settings allow it"
++                                        "the end of a hold on it, the settling of a finding, the cleanup after a "
++                                        "review, or the publish of a summary, unless the repository's own "
++                                        "settings allow it"
+                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
+                                            "add them" if hint else ""))
+     allow.extend(missing)
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 4bcbc1b..593e618 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -1008,6 +1008,103 @@ def census_lines(result: dict) -> list[str]:
+     return lines
+ 
+ 
++# Settling a finding thread
++
++# What each result does to the thread, as review-pr/SKILL.md § Verify earlier findings describes: resolve it,
++# unresolve it, or leave it as it is.
++SETTLED = {"fixed": True, "accepted": True, "withdrawn": True, "kept": None, "reopened": False}
++# A Projector marker at the start of a line, which a reply's body leaves to `settle`.
++ANY_MARKER = re.compile(r"^\s*<!--\s*projector-", re.M)
++THREAD_QUERY = """query($t:ID!){ node(id:$t){ ... on PullRequestReviewThread { isResolved
++  pullRequest{ number repository{ nameWithOwner } }
++  first: comments(first:1){ nodes{ body } }
++  last: comments(last:1){ nodes{ databaseId body } } } } }"""
++REPLY_MUTATION = """mutation($t:ID!,$b:String!){
++  addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$t, body:$b}){ comment{ databaseId } } }"""
++RESOLVE_MUTATION = """mutation($t:ID!){ resolveReviewThread(input:{threadId:$t}){ thread{ isResolved } } }"""
++UNRESOLVE_MUTATION = """mutation($t:ID!){ unresolveReviewThread(input:{threadId:$t}){ thread{ isResolved } } }"""
++
++
++def verify_marker(result: str, sha: str, model: str) -> str:
++    """The line that opens a reviewer's reply on a finding thread, so neither loop reads the reply as a new
++    finding or as the author answering."""
++    return f"<!-- projector-verify v=1 result={result} sha={sha} model={model} -->"
++
++
++def finding_thread(repo: str, number: int, thread: str) -> dict:
++    """The Projector finding thread `thread` on the pull request as GitHub has it now: whether it is
++    `resolved`, and its `last` comment. Refuses any other thread, comment, or id."""
++    wrong = (f"{thread} is not a review thread on {repo}#{number}; pass a thread's id from "
++             f"`project review census {number} --json`")
++    try:
++        found = gh_json(["api", "graphql", "-f", f"query={THREAD_QUERY}", "-f", f"t={thread}"])
++    except NotFound as exc:
++        raise ReviewError(wrong) from exc
++    node = ((found or {}).get("data") or {}).get("node") or {}
++    pr = node.get("pullRequest") or {}
++    if pr.get("number") != number or ((pr.get("repository") or {}).get("nameWithOwner") or "").lower() != repo.lower():
++        raise ReviewError(wrong)
++    first = (node["first"]["nodes"] or [{}])[0]
++    if FINDING_MARKER not in (first.get("body") or ""):
++        raise ReviewError(f"thread {thread} on {repo}#{number} carries no Projector finding; another reviewer's "
++                          "thread is theirs to settle")
++    return {"resolved": bool(node.get("isResolved")), "last": (node["last"]["nodes"] or [{}])[-1]}
++
++
++def reply_text(body_path: Path) -> str:
++    if not body_path.is_file():
++        raise ReviewError(f"the body file {body_path} does not exist; write the reply there first")
++    text = body_path.read_text(encoding="utf-8").strip()
++    if not text:
++        raise ReviewError("the body is empty; say what at this head settles the finding, or what still fails")
++    if ANY_MARKER.search(text):
++        raise ReviewError("leave the marker out of the body; settle writes it from the review's state")
++    return text
++
++
++def settle(paths: Paths, thread: str, result: str, body_path: Path) -> dict:
++    """`review settle`: as the reviewer, reply on a finding thread with the verify marker filled from the
++    review's state, resolve or unresolve the thread as `result` asks, and read both back. A reply already
++    carrying the same marker as the thread's last comment is not posted again, so a run that stopped after
++    replying finishes when it runs again."""
++    if result not in SETTLED:
++        raise ReviewError(f"--result must be one of {', '.join(SETTLED)}, not {result}")
++    state = read_state(paths)
++    repo, number = state["repo"], state["number"]
++    text = reply_text(body_path)
++    marker = verify_marker(result, state["sha"], state["model"])
++    found = finding_thread(repo, number, thread)
++    token = reviewer_token(state["reviewer"])
++    if (found["last"].get("body") or "").startswith(marker):
++        comment = found["last"]["databaseId"]
++    else:
++        posted = gh_json(["api", "graphql", "-f", f"query={REPLY_MUTATION}", "-f", f"t={thread}",
++                          "-f", f"b={marker}\n{text}\n"], token)
++        comment = posted["data"]["addPullRequestReviewThreadReply"]["comment"]["databaseId"]
++    wanted = SETTLED[result]
++    if wanted is not None:
++        run_gh(["api", "graphql", "-f", f"query={RESOLVE_MUTATION if wanted else UNRESOLVE_MUTATION}",
++                "-f", f"t={thread}"], token)
++    reply = gh_json(["api", f"repos/{repo}/pulls/comments/{comment}"]) or {}
++    if not (reply.get("body") or "").startswith(marker):
++        raise ReviewError(f"reply {comment} on thread {thread} does not open with {marker} when read back; check it "
++                          f"at {reply.get('html_url') or 'the pull request'} and run settle again")
++    resolved = finding_thread(repo, number, thread)["resolved"]
++    if wanted is not None and resolved != wanted:
++        raise ReviewError(f"thread {thread} is {'resolved' if resolved else 'open'} after {result}; run settle "
++                          "again")
++    return {"repo": repo, "number": number, "thread": thread, "result": result, "sha": state["sha"],
++            "model": state["model"], "comment": comment, "url": reply.get("html_url"), "resolved": resolved}
++
++
++def settle_lines(result: dict) -> list[str]:
++    """`review settle` without --json: the reply it posted and where the thread stands."""
++    stands = "resolved" if result["resolved"] else "open"
++    return [f"replied {result['result']} on thread {result['thread']} of {result['repo']}#{result['number']} at "
++            f"{result['sha'][:7]}: {result['url'] or 'comment ' + str(result['comment'])}",
++            f"the thread is {stands}"]
++
++
+ # Incremental reviews
+ 
+ class Unmeasurable(ReviewError):
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 78fb278..1df7d0f 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -1140,6 +1140,7 @@ def test_init_adds_the_hold_finish_and_summary_rules_beside_an_existing_review_r
+         self.assertEqual({"permissions": {"allow": ["Bash(project review publish *)",
+                                                     "Bash(project review hold *)",
+                                                     "Bash(project review finish *)",
++                                                    "Bash(project review settle *)",
+                                                     "Bash(project summary publish *)"]}},
+                          json.loads(self.settings().read_text()))
+ 
+@@ -1153,10 +1154,11 @@ def test_init_adds_the_hold_and_finish_rules_to_settings_that_allow_both_publish
+         self.assertEqual(0, code, stderr)
+         self.assertIn("updated ~/.claude/settings.json\n", stdout)
+         self.assertEqual({"permissions": {"allow": [*published, "Bash(project review hold *)",
+-                                                    "Bash(project review finish *)"]}},
++                                                    "Bash(project review finish *)",
++                                                    "Bash(project review settle *)"]}},
+                          json.loads(self.settings().read_text()))
+ 
+-    def test_init_adds_the_finish_rule_to_settings_that_allow_the_other_commands(self) -> None:
++    def test_init_adds_the_finish_and_settle_rules_to_settings_that_allow_the_other_commands(self) -> None:
+         self.at_a_terminal()
+         allowed = ["Bash(project review publish *)", "Bash(project review hold *)", "Bash(project summary publish *)"]
+         self.settings().write_text(json.dumps({"permissions": {"allow": allowed}}))
+@@ -1165,7 +1167,8 @@ def test_init_adds_the_finish_rule_to_settings_that_allow_the_other_commands(sel
+ 
+         self.assertEqual(0, code, stderr)
+         self.assertIn("updated ~/.claude/settings.json\n", stdout)
+-        self.assertEqual({"permissions": {"allow": [*allowed, "Bash(project review finish *)"]}},
++        self.assertEqual({"permissions": {"allow": [*allowed, "Bash(project review finish *)",
++                                                    "Bash(project review settle *)"]}},
+                          json.loads(self.settings().read_text()))
+ 
+     def codex_rules(self) -> Path:
+@@ -1220,7 +1223,7 @@ def test_init_only_reports_missing_codex_rules_without_a_terminal(self) -> None:
+         self.assertFalse(self.codex_rules().exists())
+ 
+     @unittest.skipUnless(shutil.which("codex"), "checking the Codex rule needs the codex CLI")
+-    def test_codex_allows_exactly_the_publish_hold_and_finish_commands_under_the_rules(self) -> None:
++    def test_codex_allows_exactly_the_publish_hold_finish_and_settle_commands_under_the_rules(self) -> None:
+         rules = self.home / "projector.rules"
+         rules.write_text(permissions.CODEX_RULES)
+ 
+@@ -1233,6 +1236,7 @@ def decision(*command: str) -> str:
+         self.assertEqual("allow", decision("project", "summary", "publish", "--summary", "summary.json"))
+         self.assertEqual("allow", decision("project", "review", "hold", "12", "--drop"))
+         self.assertEqual("allow", decision("project", "review", "finish", "12", "--force"))
++        self.assertEqual("allow", decision("project", "review", "settle", "12", "--thread", "T", "--result", "fixed"))
+         self.assertEqual("none", decision("project", "summary", "hold", "12", "--drop"))
+         self.assertEqual("none", decision("project", "review", "release", "12"))
+         self.assertEqual("none", decision("project", "site", "serve"))
+@@ -1383,18 +1387,9 @@ def test_missing_rules_exit_1_and_ask_for_init_without_writing(self) -> None:
+         def allow(*rules: str) -> None:
+             self.settings().write_text(json.dumps({"permissions": {"allow": list(rules)}}))
+ 
+-        cases = {
+-            "hold rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review finish *)",
+-                                                "Bash(project summary publish *)"),
+-                                  "Bash(project review hold *)"),
+-            "finish rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review hold *)",
+-                                                  "Bash(project summary publish *)"),
+-                                    "Bash(project review finish *)"),
+-            "summary rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review hold *)",
+-                                                   "Bash(project review finish *)"),
+-                                     "Bash(project summary publish *)"),
+-            "settings absent": (self.settings().unlink, "Bash(project review hold *)"),
+-        }
++        cases = {f"{rule} missing": ((lambda rule=rule: allow(*(r for r in permissions.RULES if r != rule))), rule)
++                 for rule in permissions.RULES}
++        cases["settings absent"] = (self.settings().unlink, "Bash(project review hold *)")
+         for name, (arrange, missing) in cases.items():
+             with self.subTest(name):
+                 arrange()
+diff --git a/tests/test_review.py b/tests/test_review.py
+index d116521..0c9905e 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -1408,6 +1408,217 @@ def test_the_review_skills_clean_up_through_the_commands_alone(self) -> None:
+             self.assertNotIn("git worktree", text)
+ 
+ 
++class SettleTests(PublishCase):
++    """`settle` writes the verify marker from the review's state, so no reply on a finding is typed by hand."""
++
++    THREAD = "PRRT_finding"
++    REPLY = "The warm-up runs in `load` now, so a restart starts warm."
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.threads: dict[str, dict] = {}
++        self.add_thread(self.THREAD, FINDING % self.head)
++        self.next_reply = 601
++        self.calls: list[tuple[list[str], str | None]] = []
++        fake = self.github
++
++        def answer(args: list[str], token: str | None = None) -> str:
++            fields = dict(arg.split("=", 1) for arg in args[3::2]) if args[:2] == ["api", "graphql"] else {}
++            query = fields.get("query", "")
++            if "node(id:" in query or "ReviewThread" in query:
++                self.calls.append((list(args), token))
++            if "node(id:" in query:
++                return self.node(fields["t"])
++            if "addPullRequestReviewThreadReply" in query:
++                return self.reply(fields["t"], fields["b"], token)
++            if "unresolveReviewThread" in query or "resolveReviewThread" in query:
++                self.threads[fields["t"]]["resolved"] = "unresolveReviewThread" not in query
++                return "{}"
++            if len(args) == 2 and args[1].startswith(f"repos/{REPO}/pulls/comments/"):
++                return self.comment(int(args[1].rsplit("/", 1)[1]))
++            return fake(args, token)
++
++        patcher = mock.patch.object(review, "run_gh", answer)
++        patcher.start()
++        self.addCleanup(patcher.stop)
++
++    def add_thread(self, thread_id: str, first: str, *, number: int = 1, repo: str = REPO,
++                   resolved: bool = False) -> None:
++        self.threads[thread_id] = {"resolved": resolved, "number": number, "repo": repo,
++                                   "comments": [{"databaseId": 500 + len(self.threads), "body": first,
++                                                 "login": "operator"}]}
++
++    def node(self, thread_id: str) -> str:
++        if thread_id not in self.threads:
++            raise NotFound(f"gh: Could not resolve to a node with the global id of '{thread_id}'")
++        found = self.threads[thread_id]
++        last = found["comments"][-1]
++        return json.dumps({"data": {"node": {
++            "isResolved": found["resolved"],
++            "pullRequest": {"number": found["number"], "repository": {"nameWithOwner": found["repo"]}},
++            "first": {"nodes": [{"body": found["comments"][0]["body"]}]},
++            "last": {"nodes": [{"databaseId": last["databaseId"], "body": last["body"]}]}}}})
++
++    def reply(self, thread_id: str, body: str, token: str | None) -> str:
++        reply_id, self.next_reply = self.next_reply, self.next_reply + 1
++        self.threads[thread_id]["comments"].append({"databaseId": reply_id, "body": body,
++                                                    "login": (token or "").removeprefix("token-")})
++        return json.dumps({"data": {"addPullRequestReviewThreadReply": {"comment": {"databaseId": reply_id}}}})
++
++    def comment(self, comment_id: int) -> str:
++        for found in self.threads.values():
++            for posted in found["comments"]:
++                if posted["databaseId"] == comment_id:
++                    return json.dumps({"id": comment_id, "body": posted["body"],
++                                       "html_url": f"https://github.com/{REPO}/pull/1#discussion_r{comment_id}"})
++        raise NotFound("gh: Not Found (HTTP 404)")
++
++    def reply_file(self, text: str | None = None) -> Path:
++        path = self.dir / "reply.md"
++        path.write_text(self.REPLY + "\n" if text is None else text)
++        return path
++
++    def settle(self, result: str, *extra: str, thread: str | None = None, body: Path | None = None
++               ) -> tuple[int, str, str]:
++        return self.later("settle", "--thread", thread or self.THREAD, "--result", result,
++                          "--body", str(body or self.reply_file()), *extra)
++
++    def mutations(self) -> list[str]:
++        return [next(a for a in args if a.startswith("query=")).split("(input", 1)[0].rsplit(" ", 1)[-1]
++                for args, _ in self.calls if any(a.startswith("query=mutation") for a in args)]
++
++    def test_each_result_replies_with_the_marker_and_resolves_reopens_or_leaves_the_thread(self) -> None:
++        for result, before, after, mutations in (
++                ("fixed", False, True, ["addPullRequestReviewThreadReply", "resolveReviewThread"]),
++                ("accepted", False, True, ["addPullRequestReviewThreadReply", "resolveReviewThread"]),
++                ("withdrawn", False, True, ["addPullRequestReviewThreadReply", "resolveReviewThread"]),
++                ("kept", False, False, ["addPullRequestReviewThreadReply"]),
++                ("kept", True, True, ["addPullRequestReviewThreadReply"]),
++                ("reopened", True, False, ["addPullRequestReviewThreadReply", "unresolveReviewThread"])):
++            with self.subTest(result=result, resolved=before):
++                self.add_thread(self.THREAD, FINDING % self.head, resolved=before)
++                self.calls.clear()
++
++                code, out, err = self.settle(result, "--loop", "l1", "--model", self.model)
++
++                self.assertEqual(0, code, err)
++                posted = self.threads[self.THREAD]["comments"][-1]
++                self.assertEqual(f"<!-- projector-verify v=1 result={result} sha={self.head} model=claude-opus-5-5 -->"
++                                 f"\n{self.REPLY}\n", posted["body"])
++                self.assertEqual("operator", posted["login"], "the reviewer posts the reply")
++                self.assertTrue(all(token == "token-operator" for args, token in self.calls
++                                    if any(a.startswith("query=mutation") for a in args)))
++                self.assertIs(after, self.threads[self.THREAD]["resolved"])
++                self.assertEqual(mutations, self.mutations(), "the reply goes first, so no loop reads the thread "
++                                                              "as answered without it")
++                self.assertIn(f"replied {result} on thread {self.THREAD} of {REPO}#1 at {self.head[:7]}", out)
++                self.assertIn(f"the thread is {'resolved' if after else 'open'}", out)
++
++    def test_the_marker_names_the_head_and_model_the_review_state_records(self) -> None:
++        self.github.pr["head"]["sha"] = self.push_head("second head")
++        self.assertEqual(0, self.later("move")[0])
++
++        code, out, err = self.settle("fixed", "--json")
++
++        self.assertEqual(0, code, err)
++        moved = self.read_state()["sha"]
++        self.assertTrue(self.threads[self.THREAD]["comments"][-1]["body"].startswith(
++            f"<!-- projector-verify v=1 result=fixed sha={moved} model=claude-opus-5-5 -->\n"))
++        self.assertEqual({"repo": REPO, "number": 1, "thread": self.THREAD, "result": "fixed", "sha": moved,
++                          "model": self.model, "comment": 601,
++                          "url": f"https://github.com/{REPO}/pull/1#discussion_r601", "resolved": True},
++                         json.loads(out))
++
++    def test_refuses_any_thread_but_a_projector_finding_thread_on_this_pull_request(self) -> None:
++        self.add_thread("PRRT_other_pr", FINDING % self.head, number=2)
++        self.add_thread("PRRT_other_repo", FINDING % self.head, repo="acme/other")
++        self.add_thread("PRRT_person", "Could this use the cache?")
++        for thread, why in (("PRRT_missing", "is not a review thread on acme/app#1"),
++                            ("PRRT_other_pr", "is not a review thread on acme/app#1"),
++                            ("PRRT_other_repo", "is not a review thread on acme/app#1"),
++                            ("PRRT_person", "carries no Projector finding")):
++            with self.subTest(thread=thread):
++                code, _, err = self.settle("fixed", thread=thread)
++
++                self.assertEqual(1, code)
++                self.assertIn(why, err)
++        self.assertEqual([], self.mutations(), "nothing was posted or resolved")
++        self.assertEqual([1] * 4, [len(found["comments"]) for found in self.threads.values()])
++
++    def test_refuses_a_result_outside_the_set_and_a_body_that_is_empty_or_carries_a_marker(self) -> None:
++        with self.assertRaises(SystemExit) as refused, redirect_stderr(io.StringIO()):
++            self.settle("approved")
++        self.assertEqual(2, refused.exception.code)
++        with self.assertRaisesRegex(ReviewError, "--result must be one of fixed, accepted, withdrawn, kept, reopened"):
++            review.settle(review.Paths(self.state, REPO, 1, self.model), self.THREAD, "approved", self.reply_file())
++        for text, why in (("\n", "the body is empty"),
++                          (f"<!-- projector-verify v=1 result=fixed sha={self.head} model=x -->\nFixed.\n",
++                           "leave the marker out of the body"),
++                          (None, "does not exist")):
++            with self.subTest(why=why):
++                body = self.dir / "missing.md" if text is None else self.reply_file(text)
++
++                code, _, err = self.settle("fixed", body=body)
++
++                self.assertEqual(1, code)
++                self.assertIn(why, err)
++        self.assertEqual([], self.mutations())
++
++    def test_a_reply_that_does_not_read_back_with_its_marker_exits_one(self) -> None:
++        def mangled(comment_id: int) -> str:
++            return json.dumps({"id": comment_id, "body": self.REPLY, "html_url": None})
++
++        with mock.patch.object(self, "comment", mangled):
++            code, _, err = self.settle("fixed")
++
++        self.assertEqual(1, code)
++        self.assertIn("does not open with <!-- projector-verify v=1 result=fixed", err)
++
++    def test_a_thread_whose_resolution_does_not_take_exits_one(self) -> None:
++        def unchanged(args: list[str], token: str | None = None) -> str:
++            if any(a.startswith("query=mutation") and "resolveReviewThread" in a for a in args):
++                return "{}"
++            return answer(args, token)
++
++        answer = review.run_gh
++        with mock.patch.object(review, "run_gh", unchanged):
++            code, _, err = self.settle("fixed")
++
++        self.assertEqual(1, code)
++        self.assertIn(f"thread {self.THREAD} is open after fixed; run settle again", err)
++
++    def test_running_settle_again_after_its_reply_posted_resolves_without_a_second_reply(self) -> None:
++        marker = f"<!-- projector-verify v=1 result=fixed sha={self.head} model=claude-opus-5-5 -->"
++        self.reply(self.THREAD, f"{marker}\n{self.REPLY}\n", "token-operator")
++
++        code, _, err = self.settle("fixed")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(2, len(self.threads[self.THREAD]["comments"]), "no second reply")
++        self.assertEqual(["resolveReviewThread"], self.mutations())
++        self.assertTrue(self.threads[self.THREAD]["resolved"])
++
++    def test_refuses_without_a_review_set_up(self) -> None:
++        code, _, err = self.later("settle", "--repo", REPO, "--model", "gpt-5.5", "--thread", self.THREAD,
++                                  "--result", "fixed", "--body", str(self.reply_file()))
++
++        self.assertEqual(1, code)
++        self.assertIn("project review setup 1 --model gpt-5.5", err)
++        self.assertEqual([], self.mutations())
++
++    def test_review_pr_settles_threads_through_the_command_alone(self) -> None:
++        # A hand-typed marker that misses `projector-verify` makes the reviewer's own reply read as the author
++        # answering, which fires RESPONDED.
++        skill = (Path(cli.__file__).resolve().parents[2] / "skills" / "review-pr" / "SKILL.md").read_text()
++
++        self.assertIn("project review settle <number> --thread <thread-id> --result <result> --body <file>", skill)
++        for result in review.SETTLED:
++            self.assertIn(f"`--result {result}`", skill)
++        self.assertNotIn("resolveReviewThread", skill)
++        self.assertNotIn("Every reply you post opens with", skill)
++
++
+ def iso(at: datetime) -> str:
+     return at.strftime("%Y-%m-%dT%H:%M:%SZ")
+ 
+@@ -2963,7 +3174,7 @@ class ArgumentTests(unittest.TestCase):
+     def test_no_review_command_takes_a_sha(self) -> None:
+         # Every SHA comes from GitHub or the state file; a typed one is how two
+         # wrong 40-character SHAs reached a publish.
+-        for command in ("setup", "move", "census", "release", "finish", "publish", "gate", "interdiff"):
++        for command in ("setup", "move", "census", "settle", "release", "finish", "publish", "gate", "interdiff"):
+             with self.subTest(command):
+                 help_text = io.StringIO()
+                 with redirect_stdout(help_text), self.assertRaises(SystemExit):

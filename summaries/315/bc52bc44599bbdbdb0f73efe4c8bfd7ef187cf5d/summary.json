@@ -1,0 +1,150 @@
+{
+ "version": 1,
+ "name": "Review thread settle command",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 315,
+  "title": "Settle a review thread through project review settle",
+  "head": "bc52bc44599bbdbdb0f73efe4c8bfd7ef187cf5d",
+  "headRef": "review-settle",
+  "base": "2868e0fdcc14b6b3cc9a7f2324771f0926303c35",
+  "baseRef": "review-finish",
+  "basePr": 313
+ },
+ "overview": {
+  "summary": [
+   "A Projector review checks every earlier finding again at each new head. For each finding thread it then <b>settles</b> the thread: it posts a reply that says what it found, and resolves the thread, reopens it, or leaves it open. Until now the reviewer did this by hand. It typed a marker comment, <code>&lt;!-- projector-verify v=1 result=… sha=… model=… --&gt;</code>, at the top of the reply, and ran the <code>resolveReviewThread</code> or <code>unresolveReviewThread</code> GraphQL mutation itself.",
+   "The marker matters because the review loop's watcher reads it. When the newest comment on an open finding thread lacks a Projector marker, the watcher treats it as the author answering and asks for a re-review (<code>RESPONDED</code>). A mistyped marker therefore made the reviewer's own reply look like an author's answer. Claude Code's auto mode can also refuse the raw mutations as writes to an external system.",
+   "This pull request adds <code>project review settle</code>, which does each step: it writes the marker from the review's saved state, posts the reply as the reviewer, sets the thread's resolution, and reads both back. The <code>review-pr</code> skill now uses it, and <code>project init</code> adds an allow rule for it."
+  ],
+  "cards": [
+   {
+    "id": "results",
+    "title": "What each result does",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th><code>--result</code></th><th>Meaning</th><th>The thread</th></tr></thead><tbody><tr><td><code>fixed</code></td><td>The head addresses the finding</td><td class=\"r\">Resolved</td></tr><tr><td><code>accepted</code></td><td>The author declined, and the reasoning holds</td><td class=\"r\">Resolved</td></tr><tr><td><code>withdrawn</code></td><td>The finding was wrong</td><td class=\"r\">Resolved</td></tr><tr><td><code>kept</code></td><td>The author declined, and the reasoning does not hold</td><td class=\"r\">Left as it is</td></tr><tr><td><code>reopened</code></td><td>Resolved, but not addressed at this head</td><td class=\"r\">Unresolved</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Finding thread</b>: a review thread whose first comment carries the <code>projector-finding</code> marker, which only a Projector review writes.</li><li><b>Review state</b>: the file <code>project review setup</code> writes on this machine, recording the head under review, the model, and the reviewer.</li><li><b>Reviewer token</b>: a GitHub token for the reviewer account, set for one <code>gh</code> call so the session's own login is left alone.</li><li><b>Stack</b>: this pull request sits on #313, which adds <code>project review finish</code>, and this diff is shown against that branch.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "command",
+   "title": "The settle command",
+   "kicker": "The new review subcommand and its tests",
+   "intro": [
+    "<code>settle</code> lives in <code>src/projector/review.py</code>, next to <code>census</code>, which lists the finding threads whose ids <code>settle</code> takes. It works in this order:",
+    "<ol><li><b>It checks its inputs.</b> It reads the review state and the reply file, and refuses an empty reply or one that already carries a Projector marker.</li><li><b>It checks the thread.</b> <code>finding_thread</code> asks GitHub for the thread and refuses it unless it is a review thread on this pull request whose first comment carries the finding marker.</li><li><b>It posts the reply first.</b> The reply opens with the marker, filled from the state's head SHA and model. When the thread's last comment already opens with that exact marker, it skips the post, so a run that stopped after replying can simply run again.</li><li><b>It sets the thread.</b> It resolves or unresolves the thread, or leaves it alone for <code>kept</code>.</li><li><b>It reads both back.</b> It exits 1 when the reply does not open with the marker or the thread's resolution is not the one the result asks for.</li></ol>"
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The marker <code>settle</code> writes matches the watcher's <code>projector-(finding|verify)</code> test in <code>watch-prs.sh</code>, so the reviewer's reply does not trigger <code>RESPONDED</code>. I traced the watcher's jq filter at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds the GraphQL queries, <code>finding_thread</code>, <code>reply_text</code>, <code>settle</code>, and <code>settle_lines</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1015,
+       "text": "<code>True</code> means resolve, <code>False</code> means unresolve, and <code>None</code> means leave the thread alone. The CLI takes its <code>--result</code> choices from these keys."
+      },
+      {
+       "kind": "verify",
+       "line": 1034,
+       "text": "<code>THREAD_QUERY</code> returns the fields this function reads. I ran the query read-only against a real finding thread on this repository."
+      },
+      {
+       "kind": "context",
+       "line": 1078,
+       "text": "This is the retry path. The marker includes the result, head SHA, and model, so a reply on a later head or with another result is posted again."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Registers <code>settle</code> with <code>--thread</code>, <code>--result</code>, and <code>--body</code>, and gives it the shared <code>--repo</code>, <code>--loop</code>, <code>--model</code>, and <code>--json</code> flags.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1075,
+       "text": "<code>settle</code> finds the review by pull request and model, as <code>interdiff</code> and <code>publish</code> do, so it refuses when no review is set up on this machine."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "<code>SettleTests</code> runs <code>settle</code> against a fake <code>gh</code> for each result, the refusals, the read-back failures, and the retry after a posted reply.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The full suite passed at this head with Python 3.12: 942 tests, one skip for the Codex rule check, which needs the <code>codex</code> CLI."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rules",
+   "title": "Permission rules",
+   "kicker": "The allow rule that project init adds for settle",
+   "intro": [
+    "<code>project init</code> adds rules to your own Claude Code settings and Codex rules so that the review loop's GitHub writes are not refused by the host's automatic approval. <code>settle</code> posts a reply and resolves threads, so it joins <code>publish</code>, <code>hold</code>, <code>finish</code>, and <code>summary publish</code> in that list.",
+    "Anyone who ran <code>init</code> before this change now sees <code>project review rules</code> exit 1 until they run <code>init</code> again in a terminal."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds <code>Bash(project review settle *)</code> to <code>RULES</code> and a matching Codex <code>prefix_rule</code>, and updates the messages that list the commands."
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "Updates the expected rules, and builds the rule-missing cases from <code>RULES</code> so a new rule is covered without another hand-written case."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Skill and documentation",
+   "kicker": "The review skill and CLI reference now point to settle",
+   "intro": [
+    "The <code>review-pr</code> skill now tells the reviewer to write the reply to a file and run <code>settle</code>, and never to type the marker or call the resolve mutations through <code>gh api</code>. The method's withdraw step does the same, which also fixes an example marker there that lacked <code>model=</code>. <code>docs/cli.md</code> documents the command."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Two lists in the skills still leave <code>settle</code> out: the commands that take <code>--model</code> in <code>review-pr/SKILL.md</code>, and the commands a loop passes <code>--loop</code> and <code>--model</code> to in <code>start-review-loop/SKILL.md</code>. The review lists both as suggestions."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "§ Verify earlier findings now settles each thread with <code>project review settle</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 665,
+       "text": "Each settle way below this block now names its <code>--result</code> instead of a raw mutation."
+      }
+     ]
+    },
+    {
+     "path": "skills/review-pr/method.md",
+     "note": "The withdraw step runs <code>settle --result withdrawn</code>."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents <code>settle</code>, its results table, its refusals, and the new allow rule."
+    }
+   ]
+  }
+ ]
+}
