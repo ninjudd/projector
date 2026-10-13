@@ -102,18 +102,21 @@ back empty, indistinguishable from a repository with nothing open.
    reviewer's login as `--reviewer`:
 
    ```sh
-   scripts/watch-prs.sh --tracked <file> --state <state-file> \
+   scripts/watch-prs.sh --tracked <file> --state <new-state-file> \
      --model <model-id> --reviewer <reviewer> \
      --repo <owner/repo> --author <operator> --review-requested <operator> --once
    ```
 
-   Name a state file beside the tracked file and leave it to the watcher,
-   which creates it and alone writes it. A pull request with no row there
-   reports as `NEW PR`, unless its head already has a verdict by this model
-   from the reviewer's account, which the watcher records without a word.
-   It refuses to start, naming the line, on an entry that is not
-   `owner/repo#number` or a number that names no pull request, and it
-   distinguishes a lookup that failed for network or auth reasons from a
+   Name a new state file beside the tracked file, never one an earlier
+   watcher left, and leave it to the watcher, which creates it and alone
+   writes it. A pull request with no row there reports as `NEW PR`, unless
+   its head already has a verdict by this model from the reviewer's
+   account, which the watcher records without a word. A new file keeps the
+   check below true: a row an earlier watcher wrote can already hold a head
+   that step 5 found unreviewed, and that head would not come back as
+   `NEW PR`. The watcher refuses to start, naming the line, on an entry that
+   is not `owner/repo#number` or a number that names no pull request, and
+   it distinguishes a lookup that failed for network or auth reasons from a
    missing pull request. Every head you found unreviewed in step 5 must come
    back as `NEW PR`; one that does not is a pull request missing from the
    file. The pass records every head it saw, so the running watcher does not
@@ -152,8 +155,8 @@ for this repository and operator, reads the tracked file this loop records,
 and passes this loop's model ID as `--model` and the reviewer's login as
 `--reviewer`. Its state file needs no check. A row there says only that the
 watcher saw a head, not that a review of it finished, and a tracked pull
-request with no row reports on the watcher's next cycle. Restart it when
-the script changed after the process started.
+request with no row reports on the watcher's next cycle. Restart it, as
+step 7 starts it, when the script changed after the process started.
 Silence alone proves nothing.
 
 ## Give each pull request its own subagent

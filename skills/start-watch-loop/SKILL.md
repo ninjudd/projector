@@ -93,12 +93,15 @@ adopted it. Never list a pull request you would not push to.
 
 Before adopting an existing watcher, fetch unresolved threads, verdicts,
 body-only reviews, and mergeability directly, and dispatch that work at
-once. The watcher repeats work it already announced only at the
-renotification interval, but it repeats it until the work is resolved, so
-its state file needs no check. Confirm its tracked file is the set this
-conversation owns -- a watcher another session started watches that
-session's set. Restart the watcher when its script changed after it
-started; a live process cannot prove which file version it loaded.
+once. The watcher repeats a finding, verdict, conflict, or draft it already
+announced only at the renotification interval, and never repeats a review
+body, so fetching the work yourself is what catches what it told a
+conversation before this one. Its state file needs no check: it records
+only what the watcher announced, not whether anyone acted on it. Confirm
+its tracked file is the set this conversation owns -- a watcher another
+session started watches that session's set. Restart the watcher when its
+script changed after it started; a live process cannot prove which file
+version it loaded.
 
 The watcher is level-triggered:
 
