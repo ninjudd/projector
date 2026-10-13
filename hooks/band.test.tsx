@@ -109,11 +109,17 @@ type Ran = ReturnType<typeof ran>
  */
 type Outcome = Ran | { deny: string }
 
+const QUOTE = '“Your mind is a projector; it uses everything as a kind of screen, it projects itself on the screen.” — Osho'
+
+/** GitHub's answer to a query, where a test needs another. */
+type Beneath = { github?: (query: string) => Ran }
+
 function world(
   on: On,
   files: Record<string, string>,
   ps = PS,
   project?: (argv: string[], stdin: string) => Outcome | Promise<Outcome>,
+  { github = query => ran(answer(query)) }: Beneath = {},
 ) {
   const commands: string[][] = []
   const filled: string[] = []
@@ -128,7 +134,7 @@ function world(
       const outcome = project([...e.argv], e.init?.stdin ?? '')
       return outcome instanceof Promise ? outcome.then(answered) : answered(outcome)
     }
-    return { value: ran(e.argv[0] === 'ps' ? ps : answer(e.argv.join(' '))) }
+    return { value: e.argv[0] === 'ps' ? ran(ps) : github(e.argv.join(' ')) }
   })
   on('prompt.fill', ($, e) => {
     filled.push(`${e.mode}:${e.text}`)
@@ -327,7 +333,7 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
   await ui.unmount()
 })
 
-test('says so when no loop tracks an open pull request', async ($, on) => {
+test('shows Osho’s quote, dimmed, when no loop tracks an open pull request', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
   world(on, {}, '')
@@ -337,15 +343,74 @@ test('says so when no loop tracks an open pull request', async ($, on) => {
   await clock.settle()
 
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /No open pull requests are being watched or reviewed/ })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: QUOTE }))?.props.dimColor).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
   await ui.unmount()
 
   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
   const texts = (await desktop.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts[0]).toMatch(/No open pull requests/)
+  expect(texts[0]).toBe(QUOTE)
   expect(texts.filter(text => text.includes('─'))).toEqual([])
   await desktop.unmount()
+})
+
+/** What `gh` answers when it cannot reach GitHub. */
+const DOWN = { ...ran(''), exitCode: 1, stderr: 'read: connection reset by peer\n' }
+
+test('says why GitHub failed only when the band has no pull request from it to draw', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  let isDown = true
+  world(on, { [REVIEW]: 'o/r#1\n' }, PS, undefined, { github: query => (isDown ? DOWN : ran(answer(query))) })
+  // Hiding the band and showing it again loads it again.
+  const reload = async () => {
+    await $.command.run(COMMAND)
+    await $.command.run(COMMAND)
+    await clock.advance(1)
+    await clock.settle()
+  }
+
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeUndefined()
+
+  isDown = false
+  await reload()
+  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+
+  // A later failure keeps what GitHub said last, and says nothing of it.
+  isDown = true
+  await reload()
+  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^GitHub:/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('says why GitHub failed for a loop added after the band loaded with nothing to track', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const files: Record<string, string> = {}
+  world(on, files, '', undefined, { github: () => DOWN })
+
+  // A band shown before any loop tracks a pull request asks GitHub nothing.
+  await $.command.run(COMMAND)
+  await clock.advance(1)
+  await clock.settle()
+
+  files[REVIEW] = 'o/r#1\n'
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: QUOTE })).toBeUndefined()
+  await ui.unmount()
 })
 
 const SESSION = 's1'

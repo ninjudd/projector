@@ -38,6 +38,7 @@ const POLL_MS = 30_000
 const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
 const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
+const QUOTE = '“Your mind is a projector; it uses everything as a kind of screen, it projects itself on the screen.” — Osho'
 
 // Watching first: a pull request both loops track is listed once, where its
 // watch loop puts it.
@@ -742,7 +743,10 @@ export const register: Register = on => {
       .filter(part => part !== undefined)
       .join(' · ')
     const updated = heading === '' ? '' : ` ${heading}`
-    const failure = shown.error === null ? undefined : `GitHub: ${shown.error}`
+    // A failed poll keeps drawing the pull requests GitHub last gave, and the
+    // divider's time says how old they are, so the band says why it failed
+    // only when it has none of them to draw.
+    const failure = shown.error === null || shown.rows.length > 0 ? undefined : `GitHub: ${shown.error}`
     const toggle = (key: string) => {
       update($, drawer, was => (was === key ? null : key)).catch(() => undefined)
     }
@@ -766,14 +770,11 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           {divider}
-          <Box flexDirection="row" columnGap={1}>
-            <Text dimColor wrap="truncate-end">
-              {shown.fetchedAt === null && failure === undefined
-                ? 'Looking for pull requests…'
-                : 'No open pull requests are being watched or reviewed.'}
-            </Text>
-            {failure !== undefined && <Text color="error">{failure}</Text>}
-          </Box>
+          {failure !== undefined ? (
+            <Text color="error">{failure}</Text>
+          ) : (
+            <Text dimColor>{shown.fetchedAt === null ? 'Looking for pull requests…' : QUOTE}</Text>
+          )}
         </Box>
       )
     }
