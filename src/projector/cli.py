@@ -801,7 +801,10 @@ def config_file(arguments: argparse.Namespace) -> Path:
     """The file `set` and `unset` change: the repository's own unless `--user` or `--file` names another."""
 
     if arguments.file:
-        return arguments.file.absolute()
+        path = arguments.file.absolute()
+        if not path.parent.is_dir():
+            raise UsageError(f"{path.parent} is not a directory; --file creates a file but not its directory")
+        return path
     if arguments.scope == "user":
         return user_config_path()
     if arguments.root:

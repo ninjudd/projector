@@ -568,6 +568,8 @@ file with one of these options:
   that should not be checked in with a repository.
 - **`--file <path>`** changes the file at that path, such as
   `~/work/.projector.toml`, which covers every repository under `~/work`.
+  The command creates the file but not its directory, and refuses a path
+  in a directory that does not exist with exit code 2.
 - **`--repo`** names the default.
 
 Outside a Git repository, the default has no file to change, so `set` and

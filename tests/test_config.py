@@ -547,6 +547,16 @@ class ConfigSetTests(unittest.TestCase):
         self.assertEqual("[review]\nsummarize = false\n", parent.read_text())
         self.assertEqual("[watch]\nauto_start = false\n", self.repo_file.read_text())
 
+    def test_a_file_in_a_missing_directory_is_refused(self) -> None:
+        missing = Path(self.temporary.name).resolve() / "typo"
+
+        code, _, stderr = self.invoke("config", "set", "watch.auto_start", "false",
+                                      "--file", str(missing / "nested" / ".projector.toml"))
+
+        self.assertEqual(2, code)
+        self.assertIn(f"{missing / 'nested'} is not a directory", stderr)
+        self.assertFalse(missing.exists())
+
     def test_a_value_a_nearer_file_overrides_is_reported(self) -> None:
         self.repo_file.write_text("[watch]\nauto_start = true\n")
 
