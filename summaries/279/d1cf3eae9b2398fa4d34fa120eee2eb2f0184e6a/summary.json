@@ -1,0 +1,183 @@
+{
+ "version": 1,
+ "name": "Inbox for questions and notices",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 279,
+  "title": "Add notices and snoozing to the inbox",
+  "head": "d1cf3eae9b2398fa4d34fa120eee2eb2f0184e6a",
+  "headRef": "inbox-notices",
+  "base": "65ffe25dc8b5cadae01918d64068e87d69a06ad0",
+  "baseRef": "inbox-rename",
+  "basePr": 278
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox holds what an agent puts in front of you while it keeps working. Until now it held only questions: an agent runs <code>project inbox ask</code>, or calls the <code>ask</code> tool in Claude Code, and the question waits in a per-session store on disk until you answer it. Projector's band, the panel above the Claude Code prompt, lists the questions, and your answer goes back to the agent.",
+   "An agent often has something to tell you that needs no answer, such as the result of something you asked it to check, or a force-push it made. Bending a question to carry that puts a fake choice in front of you. And an item you cannot deal with yet either sits in front of you or gets dismissed and lost. This pull request, the second layer of the <a href=\"https://github.com/ninjudd/projector/blob/main/docs/projects/inbox/readme.md\">inbox plan</a> on top of #278's rename, adds two things:",
+   "<ul><li><b>Notices.</b> A <em>notice</em> is an item you read and dismiss. An agent posts one with <code>project inbox tell</code> or the new <code>tell</code> tool. It takes the next number in the same counts as questions, so a notice about #12 after one question is <code>#12.2</code>. It has no options, and nothing goes back to the agent, so dismissing it also marks it delivered at once.</li><li><b>Snoozing.</b> <code>project inbox snooze</code> hides an open item of either kind for an hour, or for <code>--for</code> minutes. The store records a time, <code>snoozedUntil</code>, rather than a state, so nothing has to run when a snooze ends: <code>list</code> and the band compare it with the clock.</li></ul>",
+   "The plan stays <code>in-progress</code>, because one acceptance row, opening an item's drawer on the main screen under tmux, needs a check by hand."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Item</b>: one entry in a session's inbox, either a question or a notice, stored as one JSON file.</li><li><b>Deliverer</b>: whatever carries a question's answer back to the agent, either <code>project inbox watch</code> or the band. It claims the answer, sends it, then marks it delivered.</li><li><b>Band</b>: Projector's panel above the Claude Code prompt, drawn by the hooks module in <code>hooks/</code>.</li><li><b>Drawer</b>: the expanded view of one item in the band, with its detail and its actions.</li><li><b>Tick</b>: the band's 5-second timer, which reads the store and runs the deliverer.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first Projector review, of <code>7fc6900</code>, found one problem: two new lines in <code>docs/plugins.md</code> broke the paragraph's wrapping. It is fixed, and the thread is resolved. Both of that review's suggestions were made too: <code>snooze --for 0</code> now ends a snooze at the current time, and three comments that restated their code are gone.</li><li>The reviews of <code>5c45b55</code> and <code>899653e</code> found the head clean. The second of those followed a rebase onto a base that carries #281, which drops the band's divider while an item's drawer is open.</li><li>The review of <code>d1cf3ea</code> found it clean too. That head makes the last suggestion: the band's tick reads the clock before it reads the store, so waking an item with <code>--for 0</code> always brings back a band you hid. A new band test fails without the change.</li><li>The author's hold is closed, so the clean verdict marked the pull request ready.</li><li>The full gate passed on <code>d1cf3ea</code>: 897 Python tests with 1 skip, the plan check, both plugin validations, and 64 hook tests.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "store",
+   "title": "The store and the CLI",
+   "kicker": "A second item kind and a snooze time in the per-session store, and the commands that use them",
+   "intro": [
+    "The store keeps each session's items as JSON files under <code>projector/inbox/&lt;session&gt;/</code>, every write under the directory's lock. Each record already carried a <code>kind</code>, which until now was always <code>question</code>. This group adds <code>notice</code> as a second kind and the <code>tell</code> command that writes one. The old <code>ask</code> splits into checks both kinds share, in <code>check_subject</code>, and a <code>post</code> function that numbers and records either kind.",
+    "Every command that delivers handles questions only. <code>answer</code> and <code>claim</code> refuse a notice with exit 65, naming <code>dismiss</code>. <code>dismiss</code> sets a notice's <code>deliveredAt</code> together with its dismissal, so <code>watch</code>, which looks for answers without <code>deliveredAt</code>, never sees it.",
+    "<code>snooze</code> records <code>snoozedUntil</code>, in milliseconds. <code>--for 0</code> sets it to the current time, which ends the snooze the way a snooze that runs out ends, so the band treats the item as woken. Answering or dismissing an item clears <code>snoozedUntil</code>, so a resolved item never comes back. <code>list</code> gains a kind column and shows a snoozed item as <code>snoozed until &lt;HH:MM&gt;</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "No notice reaches a deliverer. <code>undelivered</code> keeps only items with an answer and no <code>deliveredAt</code>, and <code>dismiss</code> is the only way a notice gets an answer, which always sets <code>deliveredAt</code> beside it. <code>test_dismissing_a_notice_delivers_it_at_once</code> runs <code>watch --once</code> after the dismissal and expects no output; it passed on this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Adds <code>tell</code>, <code>snooze</code>, and <code>snoozed_until</code>, splits <code>ask</code> into shared checks and <code>post</code>, and makes <code>dismiss</code>, <code>answer</code>, <code>claim</code>, and <code>context</code> handle a notice.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>load_items</code> now skips a file whose <code>kind</code> is neither <code>question</code> nor <code>notice</code>. The rename in #278 already wrote <code>kind: question</code> on every record, and the store of earlier releases lives in another directory, so no record this CLI wrote is skipped.",
+       "line": 164
+      },
+      {
+       "kind": "context",
+       "text": "A notice's dismissal is its delivery: the same timestamp goes in <code>answer.answeredAt</code> and <code>deliveredAt</code>, which also starts pruning, since each session keeps only its 100 most recently delivered items.",
+       "line": 385
+      },
+      {
+       "kind": "verify",
+       "text": "<code>--for 0</code> sets <code>snoozedUntil</code> to the current time instead of removing it. <code>snoozed_until</code> then returns <code>None</code>, so <code>list</code> shows the item <code>open</code>, and the band's <code>wokeBetween</code> sees the time pass on its next tick and brings back a band you hid. <code>test_wakes_an_item_by_ending_its_snooze_now</code> checks the stored time and passed on this head.",
+       "line": 399
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>tell</code> and <code>snooze</code> subcommands, the kind column in <code>list</code>, and the snoozed and dismissed states in <code>item_state</code>. <code>show</code> prints the choices, now in <code>print_choices</code>, only for a question.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>list</code>'s tab-separated text output gains a column, the kind, after the reference. The band reads <code>list --json</code>, which this does not change, and no skill parses the text form.",
+       "line": 1160
+      }
+     ]
+    },
+    {
+     "path": "tests/test_inbox.py",
+     "note": "Adds <code>NoticeTests</code>, <code>SnoozeTests</code>, and <code>NoticeContextTests</code>, and the kind column in the existing <code>list</code> tests."
+    }
+   ]
+  },
+  {
+   "id": "band",
+   "title": "The band in Claude Code",
+   "kicker": "The tell tool, notices in the list, the snooze action, and waking a hidden band",
+   "intro": [
+    "The hooks module in <code>hooks/</code> runs inside Claude Code. It registers the agent's tools and draws the band, reading the store through <code>project inbox list --json</code> whenever the store's directory changes. This group adds a <code>tell</code> tool beside <code>ask</code>, which the model sees as <code>mcp__projector__tell</code>. Both tools now share one <code>post</code> helper that runs the CLI and turns its exit code into a refusal.",
+    "<code>Item</code> in <code>hooks/types.d.ts</code> becomes a union of <code>Question</code> and <code>Notice</code>. The deliverer, <code>needsDelivery</code>, and the reader of answers in a sent prompt, <code>answersIn</code>, accept only a question, so the type system stops a notice from reaching them.",
+    "In the band, a notice's line starts with <code>•</code> where a question's starts with <code>-</code>. The divider counts open questions and open notices separately, and every drawer ends with three plain buttons, <code>discuss | dismiss | snooze</code>. <code>isShownAt</code> leaves a snoozed item out of the list, and pressing <b>snooze</b> closes its drawer. On each tick while the band is hidden, <code>wokeBetween</code> looks for an open item whose snooze ended since the previous tick and shows the band for it. An open item's drawer has the band to itself, with no divider above it, as #281 made a question's drawer do on the base branch, so the drawer gets one more row before the band scrolls."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Waking is measured from the previous tick, held in the module variable <code>tickedAt</code>. The first tick after the module loads wakes nothing, so a snooze that ended while no copy of the module ran returns the item to the list but leaves a hidden band hidden. The plan's § 9 records this. Each tick reads the clock before it reads the store, so a snooze that ends while the store is being read wakes on the next tick rather than being missed."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Registers and serves the <code>tell</code> tool, draws notices and the shared drawer actions, counts each kind in the divider, and wakes a hidden band when a snooze ends.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A new item brings the band back only when it is not snoozed, so a snoozed item that first appears from another host stays quiet until it wakes.",
+       "line": 295
+      },
+      {
+       "kind": "context",
+       "text": "<b>snooze</b> closes the drawer here because the snoozed item leaves the list. <b>dismiss</b> leaves its drawer open, and the dismissed item stays dim for a minute.",
+       "line": 440
+      },
+      {
+       "kind": "context",
+       "text": "Only a hidden band checks for wakes. A shown band moves its clock on, the <code>now</code> value below, and <code>isShownAt</code> returns the woken item to the list on that render.",
+       "line": 504
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Adds the <code>tell</code> tool's description, schema, and argument builder, and the <code>wokeBetween</code> and snooze-aware <code>isShownAt</code> helpers; <code>needsDelivery</code> and <code>answersIn</code> now accept only questions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "A notice never takes an answer from a sent prompt: <code>answersIn</code> filters to open questions before matching. The test <code>a sent prompt answers snoozed questions and never a notice</code> sends a prompt quoting a notice and expects no answer; it passed on this head.",
+       "line": 74
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Splits <code>Item</code> into the shared <code>Posted</code> fields and the <code>Question</code> and <code>Notice</code> kinds, and adds <code>snoozedUntil</code>."
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "Tests waking between two ticks, delivery and prompt answers for questions only, and the <code>tell</code> tool's arguments."
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Tests the <code>tell</code> tool end to end, a notice's line and a drawer that hides the divider, a dismissal that sends nothing, and snoozing with the band hidden, including a <code>--for 0</code> that lands while a tick reads the store."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI and band documentation for notices and snoozing, and what the build settled",
+   "intro": [
+    "<code>docs/cli.md</code> documents <code>tell</code>, <code>snooze</code>, a notice's <code>dismiss</code>, and the new <code>list</code> column. <code>docs/plugins.md</code> documents the <code>tell</code> tool, the band's notice lines, and the new drawer actions. The plan gains § 9, which records the points the build settled that the plan left open or stated loosely, such as a dismissed notice showing in <code>list</code> only with <code>--all</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The \"Use the inbox\" section gains notices and snoozing, and the exit-code table's 65 row names a refused snooze."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "The band section describes notices, the <code>discuss | dismiss | snooze</code> actions, and how a snoozed item returns."
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Appends § 9, \"What the implementation settled\", and keeps the plan <code>in-progress</code> until the main-screen row of § 4 is checked by hand.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "§ 9 records four points where the build differs from the plan's wording or from the base branch. The <code>tell</code> tool's refusal ends <code>tell the person in the conversation instead</code>. A dismissed notice shows in <code>list</code> only with <code>--all</code>. <code>--for 0</code> sets <code>snoozedUntil</code> to now rather than removing it. And a notice's drawer drops the divider, as #281 made a question's do. It leaves no question open, so the <code>in-progress</code> status still holds.",
+       "line": 352
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
