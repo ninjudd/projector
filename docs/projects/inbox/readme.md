@@ -65,9 +65,10 @@ migrating anything.
 3. You open a notice's drawer: its detail, then `discuss | dismiss |
    snooze`. **dismiss** runs `project inbox dismiss`, which, for a
    notice, records the dismissal and sets `deliveredAt` to the same moment.
-   The line stays dim for a minute and then leaves the band, as an answered
-   question does. A question's drawer works as it does now, with **snooze**
-   added after **dismiss**.
+   The line stays, in the `subtle` color, for 30 seconds and then leaves
+   the band, as an answered question does (§ 10). A question's drawer
+   works as it does now, with **snooze** added after **dismiss** and with
+   no `Type something` field (§ 10).
 4. **snooze** runs `project inbox snooze`, which records `snoozedUntil`, an
    hour away. The item leaves the band and its divider's counts at once.
    When that time passes, the band shows it again and brings back a hidden
@@ -151,9 +152,10 @@ ask`.
 ### 2.5 Claude Code: the band
 
 The band draws questions as it does now and notices beside them, oldest
-first. § 10 changes a question's drawer, what **discuss** puts in the
-prompt, and how long a resolved line stays. In a terminal, with one
-question and one notice about #337:
+first. § 10 gives the reasons for what **discuss** puts in the prompt,
+for a question's drawer without a `Type something` field, and for how
+long a resolved line stays. In a terminal, with one question and one
+notice about #337:
 
 ```text
 ──────────────────────────── 1 question · 1 notice · updated 12s ago [-]
@@ -174,21 +176,26 @@ question and one notice about #337:
   band count its items.
 - **A notice's drawer.** A blank line, its detail as `Markdown` and another
   blank line when it has detail, then `discuss | dismiss | snooze`: three
-  plain `Button`s, each drawn as its label alone, with a dim `|` between
-  them, in place of the bracketed buttons the drawer draws today.
-  **discuss** puts the quoted subject and a space in the prompt, as it does
-  for a question. **dismiss** runs `project inbox dismiss`, and **snooze**
-  runs `project inbox snooze`; each puts the item the command prints in the
-  band's list, and a second press finds the item changed and does nothing.
-- **A question's drawer** ends the same way, `discuss | dismiss |
-  snooze`, gaining **snooze** after **dismiss**.
+  plain `Button`s, each drawn as its label alone, with a `|` in the
+  `subtle` color between them, in place of the bracketed buttons the
+  drawer draws today. **discuss** puts the quoted subject and two newlines
+  in the prompt, as it does for a question, and what you type under a
+  quoted notice answers nothing. **dismiss** runs `project inbox dismiss`,
+  and **snooze** runs `project inbox snooze`; each puts the item the
+  command prints in the band's list, and a second press finds the item
+  changed and does nothing.
+- **A question's drawer** lists its options and ends the same way,
+  `discuss | dismiss | snooze`, gaining **snooze** after **dismiss**. It
+  has no `Type something` field: what you type under the quote that
+  **discuss** puts in the prompt is your answer.
 - **A snoozed item** leaves the list and closes its drawer. On each tick,
   shown or hidden, the band checks for an open item whose `snoozedUntil`
   has passed since its last tick; such an item returns to the list, and the
   band appears if you hid it. Waking needs no `list`, because the band
   already holds the item.
-- **A dismissed notice's line.** Dim and struck through for a minute after
-  `deliveredAt`, then gone. Its drawer still opens, with only **discuss**.
+- **A dismissed notice's line.** In the `subtle` color and struck through
+  for 30 seconds after `deliveredAt`, then gone. Its drawer still opens,
+  with only **discuss**.
 - **Sent prompts.** The reader of answers in a sent prompt considers
   questions only, snoozed ones included.
 
@@ -217,7 +224,7 @@ session's id in every host, which § 7 leaves open.
 - **One inbox, two kinds.** A question and a notice live the same life: an
   agent posts it, it waits for you in one place, and one action of yours
   clears it. Keeping both in one store reuses the numbering, the lock, the
-  band's reading of the store, its list, its drawer, and its minute of
+  band's reading of the store, its list, its drawer, and its 30 seconds of
   fading, and gives you one list to read. A third kind of store would
   duplicate all of it.
 - **A notice is not a question with one option.** A choice you cannot
@@ -229,8 +236,8 @@ session's id in every host, which § 7 leaves open.
   aside a question you will not answer; the kind decides only whether the
   agent hears of it.
 - **Dismissing a notice marks it delivered.** With `deliveredAt` set at
-  once, retention, `watch`, the band's deliverer, and the band's minute of
-  fading all handle a dismissed notice with no new branch: it is simply a
+  once, retention, `watch`, the band's deliverer, and the band's 30
+  seconds of fading all handle a dismissed notice with no new branch: it is simply a
   delivered item.
 - **Snoozing hides without losing.** An item you cannot deal with yet
   should leave your way without leaving the inbox. Snoozing records a time
@@ -283,10 +290,10 @@ session's id in every host, which § 7 leaves open.
 | `printf 'see #12.2.a' \| project inbox context --session s1` | Prints nothing and exits `0` |
 | A subagent calls `mcp__projector__tell` about #7 | Returns `Posted #7.1. …`; the band lists a `•` line naming `#7`, the divider counts `1 notice`, and one `$.ui.notify` is raised |
 | Open a notice's drawer | Its detail, then `discuss \| dismiss \| snooze` as three plain buttons |
-| Press **dismiss** in a notice's drawer | Runs `project inbox dismiss`; the line turns dim and struck through; no `$.session.send` or `$.prompt.submit` follows; the line leaves the band a minute later |
+| Press **dismiss** in a notice's drawer | Runs `project inbox dismiss`; the line turns to the `subtle` color and is struck through; no `$.session.send` or `$.prompt.submit` follows; the line leaves the band 30 seconds later |
 | Press **snooze** in either kind's drawer | Runs `project inbox snooze`; the item leaves the list and the divider's count; with the band hidden, an hour later the item returns and the band appears |
 | Snooze an item, hide the band, and dismiss the item from a terminal | An hour later the item does not return and the band stays hidden |
-| Press **discuss** in a notice's drawer | The prompt gains the quoted subject and a space |
+| Press **discuss** in a notice's drawer | The prompt gains the quoted subject and two newlines |
 | Send a prompt quoting a notice's subject and a line under it | Nothing is recorded |
 | With no items | The band, its divider, and the tick look and act as they do now |
 | On the main screen under tmux, ctrl+x tab and Enter on an item | Its drawer opens; a question's option numbers, `Markdown` links, take no press there |
@@ -455,21 +462,20 @@ project stays `in-progress`.
 
 ## 10. The band after layer 2
 
-After using layer 2, the owner decided five changes to the band, which a
-pull request of their own builds. They replace what § 2.5 and § 4 say
-about a question's drawer, about **discuss**, and about how long a
-resolved line stays, and what the questions plan says about the
-`/projector` command.
+After using layer 2, the owner decided five changes to the band, which
+#295 builds. § 2.1, § 2.5, and § 4 describe the band with these changes,
+and this section gives their reasons, their files, and their evidence.
+The `/projector <tracked file>` form that the questions plan describes
+goes away.
 
 - **Discuss puts the quote and a blank line in the prompt.** One handler
   serves both kinds: **discuss** puts the item's quoted subject and two
   newlines in the prompt, so the cursor waits a blank line below the
-  quote.
-  When you send the prompt, the first line that is not blank under a
-  quoted question is your answer: the option whose text it is, or else a
-  typed answer under the question's last letter. The band records it and
-  marks it delivered, because the prompt carries it to the agent, as it
-  does for an option you press. Under a quoted notice, what you type
+  quote. When you send the prompt, the first line that is not blank under
+  a quoted question is your answer: the option whose text it is, or else
+  a typed answer under the question's last letter. The band records it
+  and marks it delivered, because the prompt carries it to the agent, as
+  it does for an option you press. Under a quoted notice, what you type
   answers nothing and reaches the agent as conversation. To talk a
   question over without answering it, write on the quote's own line. You
   answer in your own words in the prompt, where you write everything else
@@ -479,17 +485,21 @@ resolved line stays, and what the questions plan says about the
   its options, then `discuss | dismiss | snooze`. **discuss** does what
   the field did, so two ways to type an answer differed only in where you
   typed. The field was also the one part of the drawer that the mobile app
-  cannot draw, so every surface now draws the same drawer.
+  cannot draw, so every surface now draws the same drawer. Once a typed
+  answer is recorded, the drawer still shows it after the options, marked
+  `✓`.
 - **A quote may end in spaces or tabs.** When the band reads a sent
   prompt, a quoted question followed by spaces or tabs and then a line
-  break still ends its line, so the answer under it is read.
-  You cannot see a trailing space in the prompt, so it must not decide
-  whether your answer is recorded.
+  break still ends its line, so the answer under it is read. You cannot
+  see a trailing space in the prompt, so it must not decide whether your
+  answer is recorded.
 - **A resolved line stays 30 seconds.** An answered or dismissed item
-  stays in the band, dim, for 30 seconds after `deliveredAt`, which
+  stays in the band for 30 seconds after `deliveredAt`, which
   `RESOLVED_MS` in `hooks/inbox.ts` sets, in place of a minute. That is
   long enough to see that your answer or dismissal took, and the list
-  clears sooner.
+  clears sooner. The line is drawn in the theme's `subtle` color, as all
+  of the band's muted text is, because some terminals draw `dimColor` text
+  at full strength.
 - **`/projector` takes no argument.** The command shows or hides the band
   and does nothing more. The band lists only the loops whose watchers the
   session starts, which it learns when its `Bash` and `Monitor` hooks see
@@ -498,15 +508,24 @@ resolved line stays, and what the questions plan says about the
   its loops' pull requests and its inbox, so another session's loop
   belongs in that session's band, beside the agents that act on it. With
   no file named by hand, every loop the band lists takes its kind from the
-  watcher the session started, so the band has no need to read the
-  machine's processes to learn one.
+  watcher the session started, so the band never scans the machine's
+  processes to learn one, and it leaves out a loop that the session's
+  state holds without a kind. When the band cannot tell which file a
+  watcher's `--tracked` argument names, its toast says that the band does
+  not list that loop.
 
 | File | Change |
 | --- | --- |
-| `hooks/register.tsx` | **discuss** puts the quoted subject and two newlines in the prompt; a question's drawer draws no `Input`; `/projector` drops its `argumentHint` and its handling of a tracked file |
+| `hooks/register.tsx` | **discuss** puts the quoted subject and two newlines in the prompt; a question's drawer draws no `Input`, and a resolved question keeps the `✓` row of its typed answer; `/projector` drops its `argumentHint` and its handling of a tracked file, and its description names the inbox; `runningLoops`, the `ps -A` scan, goes, and `load` lists only the seen loops that have a kind; the toast for a tracked path the band cannot read says that the loop is not listed; muted text takes the `subtle` color |
+| `hooks/parse.ts`, `hooks/parse.test.ts` | `expandPath`, which only `/projector <tracked file>` used, goes with its test |
+| `hooks/types.d.ts` | `SeenLoop.kind` is required |
 | `hooks/inbox.ts` | `answersIn` lets spaces or tabs follow a quote before its line break; `RESOLVED_MS` is `30_000` |
 | `hooks/inbox.test.ts`, `hooks/band.test.tsx` | The rows below |
-| `docs/plugins.md` | The drawer, **discuss**, which quotes answer, the 30 seconds, and `/projector` without a file |
+| `docs/plugins.md` | The drawer, **discuss**, which quotes answer, the 30 seconds, and the band without a file named by hand |
+
+#295 also carries smaller fixes found while using the band, such as the
+pull request drawer's **discuss** becoming a plain `Button`, and its
+description lists them.
 
 | Do | Expect |
 | --- | --- |
@@ -517,7 +536,7 @@ resolved line stays, and what the questions plan says about the
 | Type on the quote's own line, and send | Nothing is recorded |
 | Press **discuss** on a notice, type under the quote, and send | Nothing is recorded; the prompt reaches the agent |
 | Send a quoted question, two spaces, a line break, and an option's text | The band records that option |
-| Answer or dismiss an item | Its line stays dim for 30 seconds after `deliveredAt`, then leaves the band |
+| Answer or dismiss an item | Its line stays, in the `subtle` color, for 30 seconds after `deliveredAt`, then leaves the band |
 | Run `/projector` while another session runs a loop | The band shows or hides, and lists only the loops whose watchers this session started |
 
 Before these changes, the rows for the drawer, for **discuss** on a
@@ -741,8 +760,8 @@ Each `ask` and `tell` reads one small file where it read two, and runs no
 runs for any prompt that holds text shaped like `#12.3` or `q2`. Nothing
 else changes.
 
-Build the change as one pull request after § 10's band pull request
-merges, since both change `hooks/register.tsx`, `hooks/inbox.ts`, their
+Build the change as one pull request after #295, § 10's band pull
+request, merges, since both change `hooks/register.tsx`, `hooks/inbox.ts`, their
 tests, and `docs/plugins.md`. The CLI and the hooks change in that one
 pull request, and because `ref` stays a string, a band and a CLI a
 release apart still work together.
