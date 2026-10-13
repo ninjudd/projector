@@ -245,6 +245,9 @@ function refresh($: Engine, isForced = false): Promise<void> {
 const replace = ($: Engine, item: Item) =>
   update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
 
+/** Closes an item's drawer when it is the one open. */
+const closeDrawer = ($: Engine, ref: string) => update($, drawer, was => (was === `item:${ref}` ? null : was))
+
 /**
  * An item as the CLI prints it, without the session the band adds. Each kind
  * is its own `Omit`, because one over the union would merge their `kind`s.
@@ -416,7 +419,7 @@ async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promis
     const ran = await project($, ['inbox', command, ref, '--session', session, '--json'])
     if (ran.exitCode === 0) {
       await replace($, itemOf(ran.stdout, session))
-      if (command === 'snooze') await update($, drawer, was => (was === `item:${ref}` ? null : was))
+      if (command === 'snooze') await closeDrawer($, ref)
     } else if (ran.exitCode === 65) {
       // Resolved elsewhere since the band read the store: read it again.
       listed = undefined
@@ -652,9 +655,10 @@ export const register: Register = on => {
 
     // An answer the band put in the prompt, now sent: the prompt carries it to
     // the main loop, with a note naming the subagent that asked when one did,
-    // and the band records it once the prompt has entered. Only a prompt you
-    // sent, at the terminal or through Remote Control, answers: an agent's
-    // message or a notification can quote a question it is still waiting on.
+    // and once the prompt has entered, the band records it and closes the
+    // question's drawer. Only a prompt you sent, at the terminal or through
+    // Remote Control, answers: an agent's message or a notification can quote
+    // a question it is still waiting on.
     const session = await $.session.id()
     const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
     const given = isYours
@@ -670,7 +674,10 @@ export const register: Register = on => {
     const added = [...(said === undefined ? [] : [said]), ...notes]
     const entered = await next(added.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...added] })
     if (entered.drop === undefined) {
-      for (const one of given) void answerFromPrompt($, one.question, one.letter, one.text)
+      for (const one of given) {
+        void closeDrawer($, one.question.ref).catch(() => undefined)
+        void answerFromPrompt($, one.question, one.letter, one.text)
+      }
     }
     return entered
   }).catch(($, e, next) => next(e))

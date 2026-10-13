@@ -292,12 +292,13 @@ you to send as it stands or change first:
 Add a budget of two retries per host, and keep the total cap
 ```
 
-Sending that prompt answers the question. The band finds each quoted question
-whose quote ends its line, and takes the next line that is not blank as its
-answer: the option with that text, or else an answer in your own words. Each
-quote answers one question: when two open questions ask the same thing, it
-answers the one whose drawer last put that same answer in your prompt, or
-else the older one.
+The drawer stays open until you send. Sending that prompt answers the
+question and closes its drawer, so the band shows its list again. The band
+finds each quoted question whose quote ends its line, and takes the next
+line that is not blank as its answer: the option with that text, or else an
+answer in your own words. Each quote answers one question: when two open
+questions ask the same thing, it answers the one whose drawer last put that
+same answer in your prompt, or else the older one.
 
 Only a prompt you send, at the terminal or through Remote Control, answers a
 question. Another session's message or a notification that quotes one
@@ -308,9 +309,10 @@ can pass the answer on.
 Under the options, a question's drawer has three actions:
 
 - **discuss** puts the quoted question in the prompt, followed by a blank
-  line. Type an answer in your own words under it and send the prompt, and
-  that answers the question. Text you add on the quote's own line talks the
-  question over and answers nothing.
+  line, and leaves the drawer open, so the options and detail stay in view
+  while you type. Type an answer in your own words under the quote and send
+  the prompt, and that answers the question. Text you add on the quote's own
+  line talks the question over and answers nothing.
 - **dismiss** sets the question aside without an answer.
 - **snooze** hides the question for an hour.
 

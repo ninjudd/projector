@@ -790,7 +790,7 @@ test('an idle session with no questions starts no project process', async ($, on
   await ui.unmount()
 })
 
-test('an option puts the question and its answer in the prompt, and sending it answers the question', async ($, on) => {
+test('an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const later = held({ ref: '#7.2', number: 2, subject: 'Rebase first?', postedAt: NOW - 60_000 })
@@ -813,10 +813,11 @@ test('an option puts the question and its answer in the prompt, and sending it a
   // A digit typed first in an empty prompt presses a band Button whose hotkey it is.
   for (const button of await ui.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
 
-  // Choosing an option answers nothing yet: it fills the prompt.
+  // Choosing an option answers nothing yet: it fills the prompt, and the drawer stays open.
   await ui.press({ key: 'answer:#7.1.b', link: { href: SEVEN } })
   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nAdd a budget\n'])
   expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+  expect(await ui.find({ key: 'detail:#7.1' })).toBeDefined()
 
   const text = 'Thanks.\n"Decline the finding?"\n\nAdd a budget\n'
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
@@ -832,7 +833,12 @@ test('an option puts the question and its answer in the prompt, and sending it a
   // The prompt delivered it, so the band sends nothing more.
   expect(session.sent).toEqual([])
 
+  // Sending the answer closed the drawer, so the band shows its list again.
+  expect(await ui.find({ key: 'detail:#7.1' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
+
   // The resolved question still opens, its choice marked, the rest muted, and nothing left to press.
+  await ui.press({ key: 'item:#7.1' })
   expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
   expect((await ui.find({ type: 'Text', text: /^2\.$/ }))?.props.color).toBe('success')
   expect((await ui.find({ type: 'Text', text: /^1\.$/ }))?.props.color).toBe('subtle')
@@ -914,7 +920,7 @@ test('only a prompt you sent answers a question', async ($, on) => {
   expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
 })
 
-test('discuss puts the question above a blank line, what you type under it answers, and dismiss resolves it', async ($, on) => {
+test('discuss keeps the drawer open with the question above a blank line, what you type under it answers, and dismiss resolves it', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held(), held({ ref: '#7.2', number: 2, subject: 'Rebase first?' })])
@@ -924,18 +930,23 @@ test('discuss puts the question above a blank line, what you type under it answe
   await ui.press({ key: 'item:#7.1' })
   await ui.press({ key: 'discuss:#7.1' })
   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\n'])
+  // The drawer stays open, so its options and detail stay in view while you type.
+  expect(await ui.find({ key: 'detail:#7.1' })).toBeDefined()
 
-  // Text after the quoted question on its own line answers nothing.
+  // Text after the quoted question on its own line answers nothing, and leaves the drawer open.
   const discussed = '"Decline the finding?" what does the cap cover?'
   await $.prompt.submit({ text: discussed, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+  expect(await ui.find({ key: 'detail:#7.1' })).toBeDefined()
 
   await $.prompt.submit({ text: '"Decline the finding?"\n\nkeep the cap', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'c', text: 'keep the cap' }))
   expect(session.project()).toContain('inbox answer #7.1.c --text=keep the cap --session s1 --json')
-  // The resolved drawer shows the answer you typed after the options, marked.
+  // Sending the answer closed the drawer; opened again, it shows the answer you typed after the options, marked.
+  expect(await ui.find({ key: 'detail:#7.1' })).toBeUndefined()
+  await ui.press({ key: 'item:#7.1' })
   expect((await ui.find({ type: 'Text', text: /^3\.$/ }))?.props.color).toBe('success')
   expect(await ui.find({ type: 'Text', text: /^keep the cap/ })).toBeDefined()
 
