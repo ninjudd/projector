@@ -760,6 +760,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           {divider}
+          <Text key="under-divider"> </Text>
           <Box flexDirection="row" columnGap={1}>
             <Text dimColor wrap="truncate-end">
               {shown.fetchedAt === null && failure === undefined
@@ -998,18 +999,19 @@ export const register: Register = on => {
     }
 
     // An open item's drawer has the band to itself, until it is closed or the
-    // item leaves the band. The divider steps aside too, so the item is the
-    // top row and the drawer has one more row before the engine, which caps
-    // the band below half the terminal, starts to scroll.
+    // item leaves the band. The divider and the blank line under it step
+    // aside too, so the item is the top row and the drawer has two more rows
+    // before the engine, which caps the band below half the terminal, starts
+    // to scroll.
     const focused = shownItems.find(item => opened === `item:${item.ref}`)
     if (focused !== undefined) {
       return <Box flexDirection="column">{drawItem(focused)}</Box>
     }
 
-    // Otherwise the pull requests come first, then a blank line, then the items.
     return (
       <Box flexDirection="column">
         {divider}
+        <Text key="under-divider"> </Text>
         {shown.rows.map(drawRow)}
         {failure !== undefined && <Text color="error">{failure}</Text>}
         {shownItems.length > 0 && shown.rows.length > 0 && <Text key="before-items"> </Text>}

@@ -183,6 +183,7 @@ session starts a loop's watcher for the first time.
 
 ```text
 ───────────────────────────────────────────────── updated 12s ago [-]
+
 #267 draft List a loop's open pull requests above the Claude Code prompt
 #258 draft Name the reviewed head in a review's signature line  conflict
            reviewing · by ada · review-signature · +84 −12 in 5 files · checks passing
@@ -195,7 +196,8 @@ unresolved review threads. A pull request that both a `start-watch-loop`
 watcher, `watch-threads.sh`, and a `start-review-loop` watcher,
 `watch-prs.sh`, track is listed once. Only the title shortens on a narrow
 terminal. The divider says how long ago the band reloaded, and Claude Code's
-`[-]` at its end collapses the band.
+`[-]` at its end collapses the band. A blank line sets the divider apart from
+the rows under it.
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer says
@@ -246,6 +248,7 @@ divider counts the open questions and the open notices.
 
 ```text
 ──────────────────────────────── 2 questions · 1 notice · updated 12s ago [-]
+
 #337 draft Retry failed webhook deliveries with backoff
 
 - Run project init to add the publish rule?                             2m
