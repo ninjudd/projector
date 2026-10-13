@@ -576,10 +576,11 @@ exact one, both refusing a version that does not go up:
 .github/scripts/release.py set 0.6.0
 ```
 
-Once the bump merges, `tag` releases it. `released` exits 0 when the merged
-version already has a tag and 3 when it does not, which is how the workflow
-decides, on every `pyproject.toml` change, whether there is anything to
-release:
+Once the bump merges, `tag` releases it. A version counts as released when
+its `v0.6.0` tag and the major tag, `v0`, name the same commit and its GitHub
+release exists. `released` exits 0 when all three are in place and 3 when any
+is missing, which is how the workflow decides, on every `pyproject.toml`
+change, whether there is anything to release:
 
 ```sh
 .github/scripts/release.py released
@@ -587,12 +588,33 @@ release:
 ```
 
 `tag` reads the version from `origin/main`, not from the checkout, so an
-unmerged bump cannot name a release. It pushes an immutable `v0.6.0` tag,
-force-moves the major tag, `v0`, to the same commit, and creates the GitHub
-release for `v0.6.0` with generated notes, which needs an authenticated `gh`.
-Pass `--no-release` to push only the tags. If the release step fails, the tags
-are already pushed, and the error prints the `gh release create` command that
-finishes the release. The immutable tag names an exact release; the major tag
+unmerged bump cannot name a release. It does only the steps the remote still
+lacks: it pushes an immutable `v0.6.0` tag, force-moves `v0` to the same
+commit, and creates the GitHub release for `v0.6.0` with generated notes. It
+prints what it did and what it found already done. `released` needs an
+authenticated `gh`, because it looks for the GitHub release, and so does `tag`
+unless you pass `--no-release`, which pushes only the tags and never calls
+`gh`.
+
+When a release stops partway, for example because GitHub rejects the push of
+`v0`, re-run the failed Release workflow job. The job's `tag` finds the steps
+that already happened and does the rest, and then the job asks the site
+workflow to rebuild with the released action. You can instead run `tag` again
+from a checkout. That finishes the tags and the GitHub release, but only the
+job asks for the rebuild, so the site stays as the previous action built it
+until you send the request yourself:
+
+```sh
+gh api repos/ninjudd/projector/dispatches -f event_type=projector-summaries
+```
+
+Once `v0.6.0` exists, its commit is the release's commit, so `tag` moves `v0`
+there even after `main` has moved past it. Both commands exit 1 rather than
+move a tag when `v0.6.0` cannot belong to this release: when `main` does not
+contain the tagged commit, or when `main` named a different version at any
+point between that commit and its head. Set a new version instead.
+
+The immutable tag names an exact release; the major tag
 is the channel that follows compatible releases, the convention GitHub's own
 actions use. A breaking change starts the next major tag. Under `0.x` a minor
 release may still break, so the `v0` channel promises less than a `v1` channel
