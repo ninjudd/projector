@@ -1,4 +1,4 @@
-<!-- projector:begin 8 -->
+<!-- projector:begin 9 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -64,5 +64,5 @@ are open, look over them each time the person writes to you, with
 `project inbox list --session "$CLAUDE_CODE_SESSION_ID"`, and dismiss any
 that no longer need them, such as a question they answered in the
 conversation or news that has gone stale, with
-`project inbox dismiss <reference> --session "$CLAUDE_CODE_SESSION_ID"`.
+`project inbox dismiss <number> --session "$CLAUDE_CODE_SESSION_ID"`.
 <!-- projector:end -->
