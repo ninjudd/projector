@@ -1,0 +1,655 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index f9a755d..21ac87d 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1473,16 +1473,18 @@ this session; one about another repository spells it out, as
+ session runs `ask` in, and it stays the same when later questions come
+ from other repositories' checkouts, so two repositories never share a
+ reference. `ask` refuses, with exit code 65, a question longer than one line
+-or 120 characters, a missing recommendation, more than five other options, or
+-an option that repeats the recommendation. Put what you need to decide in
+-`--detail`, or `--detail-file`.
++or 120 characters, a question that holds a tab, a missing recommendation, a
++recommendation or option longer than one line, more than five other options,
++or an option that repeats the recommendation or another option. Put what you
++need to decide in `--detail`, or `--detail-file`.
+ 
+ Every command names the posting session with `--session`, or reads
+ `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
+ every session's open items, and `show`, `answer`, `dismiss`, and `snooze`
+ find the session that holds the reference. `list` prints each item's
+ reference, kind, state, and subject, separated by tabs, after the session
+-when it lists every session.
++when it lists every session. A command waits up to five seconds while another
++command changes the same session, and then exits 75, so you can run it again.
+ 
+ The answers are lettered. `a` is always the recommendation, the other options
+ follow as `b`, `c`, and on, and the last letter is a typed answer:
+@@ -1501,8 +1503,11 @@ answered #337.3.a
+ 
+ To give an answer of your own instead, use the last letter with `--text`, as
+ in `project inbox answer '#337.3.c' --text "keep the cap, but log each
+-retry"`. A question takes one answer; a second exits 65. `dismiss` answers it
+-with no letter.
++retry"`. A typed answer is one line, like every answer. A question takes one
++answer; a second exits 65. `dismiss` answers it with no letter, and `list`
++then shows it as `dismissed`. Only `answer` takes a letter: every other
++command refuses a reference such as `#337.3.a` with exit code 65, so
++`dismiss` never drops the answer you meant to give.
+ 
+ An answer reaches its agent through one deliverer, which claims it, sends it,
+ and marks it delivered. `watch` is the deliverer for any host that can run a
+@@ -1545,28 +1550,33 @@ $ project inbox tell "Force-pushed #337 to drop a stray debug file" \
+ ```
+ 
+ `tell` refuses, with exit code 65, an empty notice, a notice longer than one
+-line or 120 characters, and a `--pr` that is not `owner/repo#number`. A
++line or 120 characters, a notice that holds a tab, and a `--pr` that is not
++`owner/repo#number`. A
+ notice has no options, so `answer` and `claim` refuse one with exit code 65.
+ Once you have read it, run `project inbox dismiss '#337.4'`. Nothing goes
+ back to the agent, so the dismissal also marks the notice delivered, and
+ `list` shows it, as `dismissed`, only with `--all`.
+ 
+ To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
+-an hour, or for the whole minutes that `--for` gives, and `--for 0` wakes it
+-now. Projector's band leaves a snoozed item out until its time passes, and
+-`list` shows it as `snoozed until <HH:MM>`, in local time:
++an hour, or for the whole minutes that `--for` gives, up to a day (1440
++minutes), and `--for 0` wakes it now. Projector's band leaves a snoozed item
++out until its time passes, and `list` shows it as `snoozed until <HH:MM>`, in
++local time, or as `snoozed until tomorrow <HH:MM>` when it returns tomorrow:
+ 
+ ```console
+ $ project inbox snooze '#337.3' --for 30
+ #337.3 snoozed until 14:32
++$ project inbox snooze '#337.4' --for 720
++#337.4 snoozed until tomorrow 02:02
+ $ project inbox list --session "$SESSION"
+ #337.3	question	snoozed until 14:32	Decline the finding about the retry budget?
+-#337.4	notice	open	Force-pushed #337 to drop a stray debug file
++#337.4	notice	snoozed until tomorrow 02:02	Force-pushed #337 to drop a stray debug file
+ ```
+ 
+ A snoozed item can still be answered or dismissed, and either one clears its
+ snooze, so a resolved item never returns. `snooze` refuses, with exit code
+-65, an item already answered or dismissed, and a negative `--for`.
++65, an item already answered or dismissed, a negative `--for`, and a `--for`
++longer than a day, and it changes nothing when it refuses.
+ 
+ `project inbox context` reads text on standard input and prints what each
+ reference in it means, for the items the session holds, so a prompt such as
+@@ -1634,4 +1644,5 @@ Projector uses these exit codes:
+ | `66` | The requested project, the projects directory, or the inbox item does not exist. |
+ | `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
+ | `69` | Git, the interactive editor, or the installer is unavailable. |
++| `75` | Another command held an inbox session's lock for five seconds; run the command again. |
+ | `78` | A `.projector.toml` file is not valid TOML. |
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 0831430..d9a692d 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -386,6 +386,13 @@ sections above leave open or state loosely:
+   drawer, a notice's included, has the band to itself the same way. The
+   divider and its counts return when the drawer closes or the item leaves
+   the list, as a snooze makes it do.
++- **A snooze lasts a day at most.** `snooze` refuses a `--for` over 1440
++  minutes before it writes anything, and a state whose wake time is not
++  today names the day, as `snoozed until tomorrow 01:30`.
++- **A dismissed question lists as `dismissed`,** as a dismissed notice
++  does, before and after its dismissal is delivered.
++- **A command that waits out the store's lock exits 75,** not 65, so the
++  band shows the failure instead of reading it as an item resolved elsewhere.
+ 
+ The main-screen row of § 4 waits for a check by hand under tmux, so the
+ project stays `in-progress`.
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index aa65c91..95ac691 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -458,8 +458,8 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+   const times = new Map<string, number>()
+   /** How `ask` fails: an exit code and its message, or `rejection` when the command never finishes. */
+   const refusal: { code?: number; message?: string; rejection?: string } = {}
+-  /** How many of the next `list` commands fail. */
+-  const failing = { lists: 0 }
++  /** How many of the next `list` commands fail, and how many of the next item commands find the lock held. */
++  const failing = { lists: 0, locks: 0 }
+   /** A write that lands while the next `list` runs, after that list read the store. */
+   const during: { list?: () => void } = {}
+   let writes = 0
+@@ -540,6 +540,10 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+     const ref = command === 'answer' ? written.slice(0, written.lastIndexOf('.')) : written
+     const item = store.get(ref)
+     if (item === undefined) return failed(66, `no item ${ref}`)
++    if (failing.locks > 0) {
++      failing.locks -= 1
++      return failed(75, `another command holds ${STORE}/.lock; try again once it finishes`)
++    }
+     if (item.answer !== undefined && (command === 'answer' || command === 'dismiss' || command === 'snooze')) {
+       return failed(65, `${ref} is already answered`)
+     }
+@@ -1138,6 +1142,26 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
+   await woken.unmount()
+ })
+ 
++test('a dismiss or snooze that finds the store locked says so and leaves the item open', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held()])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'item:#7.1' })
++  session.store.failing.locks = 2
++  for (const name of ['dismiss', 'snooze']) {
++    await ui.press({ key: `${name}:#7.1` })
++    await clock.settle()
++  }
++  const busy = `projector: another command holds ${STORE}/.lock; try again once it finishes`
++  expect(session.toasts).toEqual([busy, busy])
++  expect(session.store.store.get('#7.1')).toEqual(held())
++  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeDefined()
++  await ui.unmount()
++})
++
+ test('a snooze ended while a tick reads the store brings a hidden band back', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index 65bda53..febb035 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -123,7 +123,7 @@ export function storeOf(env: Env, session: string): string | undefined {
+ }
+ 
+ /**
+- * What the store's directory holds: each question file's name, size and
++ * What the store's directory holds: each item file's name, size and
+  * time, leaving out the lock and any file being written. A file whose claim
+  * the band itself renews counts by name alone, so the band's own renewal
+  * never makes it read the store again.
+@@ -136,7 +136,7 @@ export function signatureOf(entries: readonly FsEntry[], renewing: ReadonlySet<s
+     .join('\n')
+ }
+ 
+-/** The reference a question file is named for, the CLI having quoted it; empty for any other file. */
++/** The reference an item file is named for, the CLI having quoted it; empty for any other file. */
+ function refOf(name: string): string {
+   if (!name.endsWith('.json')) return ''
+   try {
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 72cee27..db536f5 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -669,7 +669,7 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     snooze = command("snooze", "hide an open item for a while")
+     snooze.add_argument("reference")
+     snooze.add_argument("--for", dest="minutes", type=int, default=inbox.SNOOZE_MINUTES, metavar="MINUTES",
+-                        help="minutes until it returns (default: 60); 0 wakes it now")
++                        help="minutes until it returns, at most 1440 (default: 60); 0 wakes it now")
+ 
+     claim = command("claim", "claim a recorded answer for delivery and print its token and text")
+     claim.add_argument("reference")
+@@ -1102,13 +1102,23 @@ def checkout_repo(checkout: Path) -> Optional[str]:
+         return None
+ 
+ 
++def wake_time(until: int) -> str:
++    """When a snoozed item returns, in local time, with its day when that is not today."""
++    wake = datetime.datetime.fromtimestamp(until / 1000)
++    days = (wake.date() - datetime.datetime.fromtimestamp(inbox.now_ms() / 1000).date()).days
++    if days == 0:
++        return f"{wake:%H:%M}"
++    return f"tomorrow {wake:%H:%M}" if days == 1 else f"{wake:%Y-%m-%d %H:%M}"
++
++
+ def item_state(item: dict) -> str:
+     until = inbox.snoozed_until(item)
+     if until is not None:
+-        return f"snoozed until {time.strftime('%H:%M', time.localtime(until / 1000))}"
+-    if not item.get("answer"):
++        return f"snoozed until {wake_time(until)}"
++    answered = item.get("answer")
++    if not answered:
+         return "open"
+-    if inbox.is_notice(item):
++    if answered.get("dismissed"):
+         return "dismissed"
+     if item.get("deliveredAt"):
+         return f"delivered {inbox.answer_ref(item)}"
+@@ -1137,16 +1147,16 @@ def print_choices(question: dict) -> None:
+ def run_inbox(arguments: argparse.Namespace) -> int:
+     command = arguments.inbox_command
+     json_output = arguments.json_output
+-    if command == "ask":
++    written = getattr(arguments, "reference", None)
++    ref, letter = inbox.parse_reference(written) if written is not None else (None, None)
++    if letter is not None and command != "answer":
++        raise inbox.InboxError(f"`{command}` takes the item's reference, {ref}, without an answer letter")
++    if command in ("ask", "tell"):
+         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
+-        item = inbox.ask(inbox_session(arguments, True), arguments.question, arguments.recommend,
+-                         arguments.option, detail=detail, pr=arguments.pr, agent=arguments.agent,
+-                         repo=checkout_repo(Path.cwd()))
+-        print(json_text({"item": item}) if json_output else item["ref"])
+-    elif command == "tell":
+-        detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
+-        item = inbox.tell(inbox_session(arguments, True), arguments.notice, detail=detail, pr=arguments.pr,
+-                          agent=arguments.agent, repo=checkout_repo(Path.cwd()))
++        session = inbox_session(arguments, True)
++        posted = {"detail": detail, "pr": arguments.pr, "agent": arguments.agent, "repo": checkout_repo(Path.cwd())}
++        item = (inbox.ask(session, arguments.question, arguments.recommend, arguments.option, **posted)
++                if command == "ask" else inbox.tell(session, arguments.notice, **posted))
+         print(json_text({"item": item}) if json_output else item["ref"])
+     elif command == "list":
+         session = inbox_session(arguments, False)
+@@ -1160,31 +1170,26 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+             columns = [row["ref"], row["kind"], item_state(row), row["subject"]]
+             print("\t".join(columns if session else [row["session"], *columns]))
+     elif command == "show":
+-        ref, _ = inbox.parse_reference(arguments.reference)
+-        _, item = inbox.find(inbox_session(arguments, False), ref)
++        item = inbox.find(inbox_session(arguments, False), ref)
+         if json_output:
+             print(json_text({"item": item}))
+         else:
+             print_item(item)
+     elif command in ("answer", "dismiss"):
+-        ref, letter = inbox.parse_reference(arguments.reference)
+         session = inbox_session(arguments, False)
+         item = (inbox.answer(session, ref, letter, arguments.text) if command == "answer"
+                 else inbox.dismiss(session, ref))
+         print(json_text({"item": item}) if json_output
+               else f"{'answered' if command == 'answer' else 'dismissed'} {inbox.answer_ref(item)}")
+     elif command == "snooze":
+-        ref, _ = inbox.parse_reference(arguments.reference)
+         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
+         print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
+     elif command == "claim":
+-        ref, _ = inbox.parse_reference(arguments.reference)
+         item = inbox.claim(inbox_session(arguments, False), ref, arguments.renew)
+         token, text = item["claim"]["token"], inbox.message(item)
+         print(json_text({"token": token, "text": text, "item": item}) if json_output
+               else f"{token}\t{text}")
+     elif command in ("delivered", "reopen"):
+-        ref, _ = inbox.parse_reference(arguments.reference)
+         item = inbox.settle(inbox_session(arguments, False), ref, arguments.claim,
+                             delivered=command == "delivered")
+         print(json_text({"item": item}) if json_output
+diff --git a/src/projector/inbox.py b/src/projector/inbox.py
+index 68c7250..303e843 100644
+--- a/src/projector/inbox.py
++++ b/src/projector/inbox.py
+@@ -27,6 +27,7 @@
+ MAX_SUBJECT = 120
+ MAX_OPTIONS = 5
+ SNOOZE_MINUTES = 60
++MAX_SNOOZE_MINUTES = 24 * 60
+ KINDS = ("question", "notice")
+ KEEP_DELIVERED = 100
+ CLAIM_EXPIRES_MS = 60_000
+@@ -52,6 +53,12 @@ class InboxError(ProjectorError):
+     """An item fails a check, or an answer, claim, or snooze is not allowed in its state."""
+ 
+ 
++class InboxBusy(InboxError):
++    """Another command held the session's lock for the whole wait, so running the command again can work."""
++
++    exit_code = 75
++
++
+ class ItemNotFound(ProjectorError):
+     exit_code = 66
+ 
+@@ -121,7 +128,7 @@ def locked(folder: Path) -> Iterator[None]:
+         deadline = time.monotonic() + LOCK_WAIT_SECONDS
+         while not try_lock(descriptor):
+             if time.monotonic() > deadline:
+-                raise InboxError(f"another command holds {lock}; try again once it finishes")
++                raise InboxBusy(f"another command holds {lock}; try again once it finishes")
+             time.sleep(0.05)
+         try:
+             yield
+@@ -151,24 +158,34 @@ def read_json(path: Path) -> Optional[dict]:
+     return value if isinstance(value, dict) else None
+ 
+ 
++def item_in(path: Path) -> Optional[dict]:
++    """The item a file holds, or None for a file that does not parse, whose name does not match its
++    reference, or whose kind is neither `question` nor `notice`, so such a file never breaks a command."""
++    item = read_json(path)
++    if (item and isinstance(item.get("ref"), str) and item_file(path.parent, item["ref"]) == path
++            and item.get("kind") in KINDS):
++        return item
++    return None
++
++
++def read_item(folder: Path, ref: str) -> dict:
++    item = item_in(item_file(folder, ref))
++    if item is None:
++        raise ItemNotFound(f"{item_file(folder, ref)} is not an inbox item")
++    return item
++
++
+ def load_items(folder: Path) -> list[dict]:
+-    """The session's items, oldest first; a file that does not parse, whose name does not match its
+-    reference, or whose kind is neither `question` nor `notice`, is skipped rather than allowed to break
+-    a view."""
+-    items = []
+-    if not folder.is_dir():
+-        return items
+-    for path in folder.glob("*.json"):
+-        item = read_json(path)
+-        if (item and isinstance(item.get("ref"), str) and item_file(folder, item["ref"]) == path
+-                and item.get("kind") in KINDS):
+-            items.append(item)
++    """The session's items, oldest first, leaving out each file that holds none."""
++    items = [item for item in map(item_in, folder.glob("*.json")) if item] if folder.is_dir() else []
+     return sorted(items, key=lambda item: (item.get("postedAt", 0), item["ref"]))
+ 
+ 
+ def sessions() -> list[str]:
+     root = store_root()
+-    return sorted(path.name for path in root.iterdir() if path.is_dir()) if root.is_dir() else []
++    if not root.is_dir():
++        return []
++    return sorted(path.name for path in root.iterdir() if path.is_dir() and SESSION.match(path.name))
+ 
+ 
+ # Asking
+@@ -181,13 +198,20 @@ def reference(pull: Optional[re.Match], count: int, repo: Optional[str]) -> str:
+     return f"{pull['repo']}#{pull['number']}.{count}"
+ 
+ 
++def is_one_line(text: str) -> bool:
++    """Whether text keeps to one line, as `watch` prints an answer and the band reads one."""
++    return "\n" not in text and "\r" not in text
++
++
+ def check_subject(kind: str, subject: str, pr: Optional[str]) -> None:
+-    """The checks every item passes: a subject of one line and at most `MAX_SUBJECT` characters,
+-    and a pull request written as owner/repo#number."""
++    """The checks every item passes: a subject of one line with no tab and at most `MAX_SUBJECT`
++    characters, and a pull request written as owner/repo#number."""
+     if not subject.strip():
+         raise InboxError(f"the {kind} is empty")
+-    if "\n" in subject or "\r" in subject:
++    if not is_one_line(subject):
+         raise InboxError(f"the {kind} must be one line; put the rest in --detail")
++    if "\t" in subject:
++        raise InboxError(f"the {kind} holds a tab, which separates the columns `project inbox list` prints")
+     if len(subject) > MAX_SUBJECT:
+         raise InboxError(f"the {kind} is {len(subject)} characters; keep it to {MAX_SUBJECT} and put the "
+                          "rest in --detail")
+@@ -199,13 +223,19 @@ def check(question: str, recommend: str, options: list[str], pr: Optional[str])
+     check_subject("question", question, pr)
+     if not recommend.strip():
+         raise InboxError("give the answer you recommend with --recommend")
++    if not is_one_line(recommend):
++        raise InboxError("the recommendation must be one line; put the rest in --detail")
+     if len(options) > MAX_OPTIONS:
+         raise InboxError(f"{len(options)} other options; offer at most {MAX_OPTIONS} besides the recommendation")
+-    for option in options:
++    for index, option in enumerate(options):
+         if not option.strip():
+             raise InboxError("an --option is empty")
++        if not is_one_line(option):
++            raise InboxError(f"the option {option!r} must be one line; put the rest in --detail")
+         if option.strip() == recommend.strip():
+             raise InboxError(f"the option {option!r} repeats the recommendation, which is already answer a")
++        if option.strip() in (other.strip() for other in options[:index]):
++            raise InboxError(f"the option {option.strip()!r} is offered twice")
+ 
+ 
+ def session_repo(folder: Path, repo: Optional[str]) -> Optional[str]:
+@@ -297,12 +327,8 @@ def locate(session: Optional[str], ref: str) -> Path:
+     return store_root() / holders[0]
+ 
+ 
+-def find(session: Optional[str], ref: str) -> tuple[Path, dict]:
+-    folder = locate(session, ref)
+-    item = read_json(item_file(folder, ref))
+-    if item is None:
+-        raise ItemNotFound(f"{item_file(folder, ref)} is not an inbox item")
+-    return folder, item
++def find(session: Optional[str], ref: str) -> dict:
++    return read_item(locate(session, ref), ref)
+ 
+ 
+ def is_notice(item: dict) -> bool:
+@@ -337,9 +363,7 @@ def update(session: Optional[str], ref: str, change) -> dict:
+     """Read the item under the lock, let `change` alter it, and write it back."""
+     folder = locate(session, ref)
+     with locked(folder):
+-        item = read_json(item_file(folder, ref))
+-        if item is None:
+-            raise ItemNotFound(f"{item_file(folder, ref)} is not an inbox item")
++        item = read_item(folder, ref)
+         change(item)
+         write_json(item_file(folder, ref), item)
+         if item.get("deliveredAt"):
+@@ -358,6 +382,8 @@ def record(question: dict) -> None:
+         if letter == last:
+             if not (text or "").strip():
+                 raise InboxError(f"{question['ref']}.{last} is a typed answer; give it with --text")
++            if not is_one_line(text):
++                raise InboxError("the typed answer must be one line")
+             chosen = text.strip()
+         elif text is not None:
+             raise InboxError(f"--text goes with the typed answer, {question['ref']}.{last}")
+@@ -378,19 +404,19 @@ def record(item: dict) -> None:
+         if item.get("answer"):
+             raise InboxError(f"{item['ref']} is already {'dismissed' if is_notice(item) else 'answered'}, as "
+                              f"{answer_ref(item)}")
+-        time = now_ms()
+-        item["answer"] = {"dismissed": True, "answeredAt": time}
++        now = now_ms()
++        item["answer"] = {"dismissed": True, "answeredAt": now}
+         item.pop("snoozedUntil", None)
+         if is_notice(item):
+-            item["deliveredAt"] = time
++            item["deliveredAt"] = now
+ 
+     return update(session, ref, record)
+ 
+ 
+ def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> dict:
+-    """Hide an open item until `minutes` from now, or wake it now with 0."""
+-    if minutes < 0:
+-        raise InboxError(f"snooze for 0 minutes or more, not {minutes}")
++    """Hide an open item until `minutes` from now, a day at most, or wake it now with 0."""
++    if not 0 <= minutes <= MAX_SNOOZE_MINUTES:
++        raise InboxError(f"snooze for 0 to {MAX_SNOOZE_MINUTES} minutes, a day at most, not {minutes}")
+ 
+     def record(item: dict) -> None:
+         if item.get("answer"):
+@@ -422,13 +448,12 @@ def take(question: dict) -> None:
+             raise InboxError(f"{question['ref']} has no answer to deliver")
+         if question.get("deliveredAt"):
+             raise InboxError(f"{answer_ref(question)} is already delivered")
+-        held = live_claim(question)
+         if renew is not None:
+             if (question.get("claim") or {}).get("token") != renew:
+                 raise InboxError(f"{answer_ref(question)} is not claimed with that token")
+             question["claim"]["renewedAt"] = now_ms()
+             return
+-        if held:
++        if live_claim(question):
+             raise InboxError(f"{answer_ref(question)} is already claimed for delivery")
+         question["claim"] = {"token": secrets.token_hex(8), "renewedAt": now_ms()}
+ 
+@@ -493,11 +518,12 @@ def context(session: str, text: str) -> list[str]:
+     folder = session_dir(session)
+     lines = []
+     for ref, letter in references_in(text):
+-        question = read_json(item_file(folder, ref))
+-        if question is None:
++        try:
++            item = read_item(folder, ref)
++        except ItemNotFound:
+             continue
+-        subject = question["subject"]
+-        if is_notice(question):
++        subject = item["subject"]
++        if is_notice(item):
+             if letter is None:
+                 lines.append(f"{ref} is the notice: {subject}")
+             continue
+@@ -505,11 +531,11 @@ def context(session: str, text: str) -> list[str]:
+             lines.append(f"{ref} is the question: {subject}")
+             continue
+         index = ord(letter) - ord("a")
+-        answered = question.get("answer") or {}
+-        if index < len(question["choices"]):
+-            lines.append(f"{ref}.{letter} answers {subject} with {question['choices'][index]}")
+-        elif letter == typed_letter(question) and answered.get("letter") == letter:
++        answered = item.get("answer") or {}
++        if index < len(item["choices"]):
++            lines.append(f"{ref}.{letter} answers {subject} with {item['choices'][index]}")
++        elif letter == typed_letter(item) and answered.get("letter") == letter:
+             lines.append(f"{ref}.{letter} answers {subject} with {answered['text']}")
+-        elif letter == typed_letter(question):
++        elif letter == typed_letter(item):
+             lines.append(f"{ref}.{letter} is a typed answer to {subject}")
+     return lines
+diff --git a/tests/test_inbox.py b/tests/test_inbox.py
+index b199230..b92acdc 100644
+--- a/tests/test_inbox.py
++++ b/tests/test_inbox.py
+@@ -128,12 +128,16 @@ def test_letters_the_recommendation_a_and_records_the_question(self) -> None:
+ 
+     def test_refuses_a_question_that_fails_a_check_and_writes_nothing(self) -> None:
+         for args in (["Two\nlines?", "--recommend", "x"],
++                     ["A\ttab?", "--recommend", "x"],
+                      ["x" * 121, "--recommend", "x"],
+                      ["Empty?", "--recommend", " "],
++                     ["Two-line answer?", "--recommend", "line one\nline two"],
++                     ["Two-line option?", "--recommend", "x", "--option", "line one\rline two"],
+                      ["Many?", "--recommend", "a", *[f"--option={n}" for n in "bcdef"], "--option=g"],
+                      ["Repeat?", "--recommend", "Same", "--option", "Same"],
++                     ["Twice?", "--recommend", "a", "--option", "Other", "--option", " Other "],
+                      ["Bad pull?", "--recommend", "x", "--pr", "app#12"]):
+-            with self.subTest(args=args[0][:12]):
++            with self.subTest(args=args[0][:16]):
+                 code, _, err = self.run_cli("ask", *args, "--session", "s1")
+                 self.assertEqual(65, code, err)
+         self.assertFalse((self.folder() / "counts.json").exists())
+@@ -195,6 +199,22 @@ def test_refuses_a_letter_the_question_does_not_have(self) -> None:
+             with self.subTest(args=args):
+                 self.assertEqual(65, self.run_cli("answer", *args, "--session", "s1")[0])
+ 
++    def test_refuses_a_typed_answer_of_more_than_one_line(self) -> None:
++        code, _, err = self.run_cli("answer", "#337.1.c", "--text", "line one\nline two", "--session", "s1")
++        self.assertEqual(65, code)
++        self.assertIn("one line", err)
++        self.assertNotIn("answer", json.loads((self.folder() / "%23337.1.json").read_text()))
++
++    def test_refuses_an_answer_letter_on_every_other_command(self) -> None:
++        for args in (["show", "#337.1.a"], ["dismiss", "#337.1.a"], ["snooze", "#337.1.a"], ["claim", "#337.1.a"],
++                     ["delivered", "#337.1.a", "--claim", "x"], ["reopen", "#337.1.a", "--claim", "x"]):
++            with self.subTest(command=args[0]):
++                code, out, err = self.run_cli(*args, "--session", "s1")
++                self.assertEqual((65, ""), (code, out))
++                self.assertIn("#337.1, without an answer letter", err)
++        question = json.loads((self.folder() / "%23337.1.json").read_text())
++        self.assertEqual([], [key for key in ("answer", "snoozedUntil", "claim") if key in question])
++
+     def test_finds_the_session_without_one_and_refuses_an_ambiguous_reference(self) -> None:
+         self.assertEqual(0, self.run_cli("answer", "#337.1.a")[0])
+         self.ask("Same reference?", "--recommend", "x", "--pr", "acme/app#337", session="s2")
+@@ -229,13 +249,13 @@ def hold_lock(self, then: str) -> subprocess.Popen:
+         self.assertEqual("held\n", holder.stdout.readline())
+         return holder
+ 
+-    def test_a_lock_another_process_holds_makes_a_command_wait_then_refuse(self) -> None:
++    def test_a_lock_another_process_holds_makes_a_command_wait_then_exit_75(self) -> None:
+         holder = self.hold_lock("wait")
+         with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
+             started = time.monotonic()
+             code, _, err = self.run_cli("answer", "#337.1.a", "--session", "s1")
+         self.assertGreaterEqual(time.monotonic() - started, 0.3)
+-        self.assertEqual(65, code)
++        self.assertEqual(75, code)
+         self.assertIn("another command holds", err)
+         holder.stdin.close()
+         self.assertEqual(0, holder.wait())
+@@ -357,6 +377,34 @@ def test_skips_a_file_that_is_not_an_item(self) -> None:
+         (self.folder() / "misnamed.json").write_text(json.dumps({"ref": "q8", "subject": "?"}))
+         self.assertEqual(["q1\tquestion\topen\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
+ 
++    def test_every_command_refuses_a_file_that_is_not_an_item(self) -> None:
++        self.ask("One?", "--recommend", "x")
++        (self.folder() / "q7.json").write_text(json.dumps({"ref": "q7", "subject": "No kind?"}))
++        (self.folder() / "q8.json").write_text(json.dumps({"ref": "q9", "kind": "notice", "subject": "Misnamed?"}))
++        for ref in ("q7", "q8"):
++            for args in (["show", ref], ["answer", f"{ref}.a"], ["dismiss", ref], ["snooze", ref]):
++                with self.subTest(args=args):
++                    code, _, err = self.run_cli(*args, "--session", "s1")
++                    self.assertEqual(66, code)
++                    self.assertIn("is not an inbox item", err)
++            with self.subTest(context=ref):
++                self.assertEqual((0, ""), self.run_cli("context", "--session", "s1", stdin=f"see {ref}")[:2])
++        self.assertEqual({"ref": "q7", "subject": "No kind?"}, json.loads((self.folder() / "q7.json").read_text()))
++
++    def test_lists_every_session_past_a_directory_that_is_not_one(self) -> None:
++        self.ask("One?", "--recommend", "x")
++        (self.folder().parent / "not a session").mkdir()
++        self.assertEqual((0, "s1\tq1\tquestion\topen\tOne?\n", ""), self.run_cli("list"))
++
++    def test_lists_and_shows_a_dismissed_question_as_dismissed(self) -> None:
++        self.ask("One?", "--recommend", "x")
++        self.run_cli("dismiss", "q1", "--session", "s1")
++        self.assertEqual(["q1\tquestion\tdismissed\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
++        self.assertEqual("DISMISSED q1 One?\n", self.run_cli("watch", "--once", "--session", "s1")[1])
++        self.assertEqual(["q1\tquestion\tdismissed\tOne?"],
++                         self.run_cli("list", "--all", "--session", "s1")[1].splitlines())
++        self.assertTrue(self.run_cli("show", "q1")[1].endswith("\ndismissed\n"))
++
+     def test_show_prints_the_lettered_answers(self) -> None:
+         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget")
+         out = self.run_cli("show", "q1")[1]
+@@ -429,7 +477,7 @@ def test_records_the_detail_and_the_posting_subagent(self) -> None:
+ 
+     def test_refuses_a_notice_that_fails_a_check_and_writes_nothing(self) -> None:
+         counts = (self.folder() / "counts.json").read_text()
+-        for args in (["Two\nlines"], ["x" * 121], [" "], ["Bad pull", "--pr", "12"]):
++        for args in (["Two\nlines"], ["A\ttab"], ["x" * 121], [" "], ["Bad pull", "--pr", "12"]):
+             with self.subTest(args=args[0][:12]):
+                 code, _, err = self.run_cli("tell", *args, "--session", "s1")
+                 self.assertEqual(65, code, err)
+@@ -509,6 +557,25 @@ def test_refuses_a_resolved_item_and_a_negative_time(self) -> None:
+         self.assertEqual(65, self.run_cli("snooze", "#12.2", "--session", "s1")[0])
+         self.assertEqual(65, self.run_cli("snooze", "#12.1", "--for", "-1", "--session", "s1")[0])
+ 
++    def test_refuses_a_snooze_longer_than_a_day_and_writes_nothing(self) -> None:
++        for minutes in ("1441", "99999999999999"):
++            with self.subTest(minutes=minutes):
++                code, out, err = self.run_cli("snooze", "#12.1", "--for", minutes, "--session", "s1")
++                self.assertEqual((65, ""), (code, out))
++                self.assertIn("1440", err)
++        self.assertNotIn("snoozedUntil", json.loads((self.folder() / "%2312.1.json").read_text()))
++        self.assertEqual({"#12.1": "open", "#12.2": "open"}, self.states())
++
++    def test_names_the_day_of_a_snooze_that_ends_after_today(self) -> None:
++        tomorrow = time.strftime("%H:%M", time.localtime(self.NOW / 1000 + 86_400))
++        self.assertEqual((0, f"#12.1 snoozed until tomorrow {tomorrow}\n", ""),
++                         self.run_cli("snooze", "#12.1", "--for", "1440", "--session", "s1"))
++        path = self.folder() / "%2312.2.json"
++        path.write_text(json.dumps({**json.loads(path.read_text()), "snoozedUntil": self.NOW + 3 * 86_400_000}))
++        later = time.strftime("%Y-%m-%d %H:%M", time.localtime(self.NOW / 1000 + 3 * 86_400))
++        self.assertEqual({"#12.1": f"snoozed until tomorrow {tomorrow}", "#12.2": f"snoozed until {later}"},
++                         self.states())
++
+     def test_answering_a_snoozed_question_clears_its_snooze(self) -> None:
+         self.run_cli("snooze", "#12.1", "--session", "s1")
+         self.assertEqual(0, self.run_cli("answer", "#12.1.a", "--session", "s1")[0])
+@@ -518,7 +585,7 @@ def test_dismissing_a_snoozed_item_clears_its_snooze(self) -> None:
+         for ref in ("#12.1", "#12.2"):
+             self.run_cli("snooze", ref, "--session", "s1")
+             self.assertEqual(0, self.run_cli("dismiss", ref, "--session", "s1")[0])
+-        self.assertEqual({"#12.1": "answered #12.1", "#12.2": "dismissed"}, self.states("--all"))
++        self.assertEqual({"#12.1": "dismissed", "#12.2": "dismissed"}, self.states("--all"))
+ 
+ 
+ class NoticeContextTests(InboxCase):

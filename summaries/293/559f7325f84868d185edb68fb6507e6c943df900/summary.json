@@ -1,0 +1,142 @@
+{
+ "version": 1,
+ "name": "Inbox input checks",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 293,
+  "title": "Check inbox input for line breaks, long snoozes, and stray letters",
+  "head": "559f7325f84868d185edb68fb6507e6c943df900",
+  "headRef": "inbox-cli-fixes",
+  "base": "82822f0140c594d5e99f84db8aeac1b5b0900f81",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The <b>inbox</b> is where an agent leaves the person a <b>question</b> (which the person answers with a lettered choice, or dismisses) or a <b>notice</b> (which the person reads and dismisses). Each item is a JSON file in a per-session folder under Projector's state directory, and every change to it runs through <code>project inbox</code>. Two readers consume the store: <code>project inbox watch</code>, which prints one line per delivered answer, and the <b>band</b>, Projector's Claude Code plugin strip above the prompt, which lists items and runs the CLI when the person presses dismiss or snooze.",
+   "A review of <code>project inbox</code> found inputs it accepted and edge cases it handled badly, each of which lost or garbled what the person meant. This pull request closes them together:",
+   "<ul class=\"tight\"><li><b>One-line answers.</b> A recommendation, an option, and a typed <code>--text</code> answer must be one line, as the subject already had to be, because <code>watch</code> prints one line per event. A subject may not hold a tab, which would split <code>list</code>'s columns, and <code>ask</code> refuses an option offered twice.</li><li><b>Bounded snoozes.</b> <code>snooze --for</code> is capped at 1440 minutes, and a wake time after today names its day, as <code>snoozed until tomorrow 02:13</code>.</li><li><b>No stray letters.</b> Only <code>answer</code> takes a reference with an answer letter such as <code>#337.3.a</code>; every other command refuses one rather than silently dropping it.</li><li><b>A distinct busy exit.</b> Waiting out another command's lock now exits 75 rather than 65, the code the band reads as \"resolved elsewhere\".</li><li><b>Tolerant reads.</b> <code>list</code> skips store folders that are not sessions, and every command treats a malformed item file the way <code>list</code> already did.</li><li><b>Consistent state.</b> A dismissed question lists as <code>dismissed</code>, like a dismissed notice.</li></ul>",
+   "The pull request leaves out a fix for references that only one spelling finds, such as <code>acme/app#337.3</code> for an item stored as <code>#337.3</code>; a follow-up replaces inbox references with plain per-session numbers."
+  ],
+  "cards": [
+   {
+    "id": "codes",
+    "title": "Exit codes the inbox uses",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Code</th><th>Meaning</th></tr></thead><tbody><tr><td class=\"r\">65</td><td>Input refused, or the item is already resolved. The band treats it as \"resolved elsewhere\" and shows nothing.</td></tr><tr><td class=\"r\">66</td><td>No such item, or the file is not an inbox item.</td></tr><tr><td class=\"r\">75</td><td>New: another command held the session's lock for five seconds; run it again.</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The Projector review of <code>559f732</code> opened one finding: the band's <code>ask</code> and <code>tell</code> tools treat the new exit 75 as an outdated CLI and tell the agent to run <code>project upgrade</code>. It is flagged under <code>src/projector/inbox.py</code>.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "store",
+   "title": "Checks in the inbox store",
+   "kicker": "What inbox.py accepts, refuses, and how it reads item files",
+   "intro": [
+    "<code>src/projector/inbox.py</code> holds the store: it checks each new item, numbers it, and reads and rewrites item files under a per-session lock. This group tightens the checks and makes every read share one validation.",
+    "An <b>item file</b> is valid when it parses, its stored <code>ref</code> maps back to its own file name, and its <code>kind</code> is <code>question</code> or <code>notice</code>. <code>list</code> already skipped files that failed this test; <code>show</code>, the commands that change an item, and <code>context</code> crashed on them with a <code>KeyError</code>. The new <code>item_in</code> holds the test, and <code>read_item</code> raises <code>ItemNotFound</code> (exit 66) when it fails."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Adds the one-line, tab, duplicate-option, and snooze-cap checks; the <code>InboxBusy</code> exit 75; shared item validation; and a session-name filter in <code>sessions()</code>.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 59,
+       "text": "Exit 75 reaches the band's <code>ask</code> and <code>tell</code> tools too. <code>post</code> in <code>hooks/register.tsx</code> passes 65 through but adds <code>; run project upgrade</code> to any other non-zero code, so an agent that hits a busy lock is told to reinstall Projector. Open review finding."
+      },
+      {
+       "kind": "verify",
+       "line": 131,
+       "text": "Under a lock held by another process, <code>project inbox ask</code> exits 75 with the retry message; checked by running it at this head. <code>watch</code>'s <code>deliver_pass</code> still skips a busy claim, because <code>InboxBusy</code> subclasses <code>InboxError</code>."
+      },
+      {
+       "kind": "context",
+       "line": 188,
+       "text": "<code>list</code> without <code>--session</code> called <code>session_dir</code> on every folder, which raises for a name that is not a session id. Filtering on the same <code>SESSION</code> pattern here keeps the two in step."
+      },
+      {
+       "kind": "context",
+       "line": 418,
+       "text": "The cap check runs before the lock and the write, so a refused snooze changes nothing. A <code>snoozedUntil</code> stored by an older release past the year 9999 still makes <code>list</code> crash in <code>wake_time</code>, as it did at the base."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_inbox.py",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "cli",
+   "title": "The inbox command runner",
+   "kicker": "How cli.py parses references and prints an item's state",
+   "intro": [
+    "<code>run_inbox</code> in <code>src/projector/cli.py</code> dispatches each <code>project inbox</code> subcommand. It now parses the reference once, before the dispatch, and refuses an answer letter on every command except <code>answer</code>. Before, <code>dismiss q1.a</code> printed <code>dismissed q1</code>, and the answer the person meant was lost.",
+    "<code>item_state</code> is the state column that <code>list</code> and <code>show</code> print. It now names the day of a snooze that ends after today, through <code>wake_time</code>, and prints <code>dismissed</code> for any dismissed item rather than only for a notice."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every caller that passes a reference still sends a bare one: the band's <code>claim</code>, <code>delivered</code>, <code>reopen</code>, <code>dismiss</code>, and <code>snooze</code> calls all pass <code>ref</code>, and only <code>answerFromPrompt</code> adds a letter, to <code>answer</code>. Checked by reading <code>hooks/register.tsx</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Parses the reference once and refuses a stray letter; adds <code>wake_time</code>; merges the <code>ask</code> and <code>tell</code> branches.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1105,
+       "text": "A snooze is now at most a day, so <code>days</code> is 0 or 1 for new snoozes. The dated fallback covers a spring-forward night, when 24 hours can end two calendar days later, and snoozes stored by an older release."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "band",
+   "title": "The band",
+   "kicker": "The plugin strip's handling of a busy lock",
+   "intro": [
+    "The band's <code>act()</code> runs <code>dismiss</code> or <code>snooze</code> when the person presses a button. It reads exit 65 as \"resolved elsewhere\", rereads the store, and shows nothing; any other failure shows a toast. With the lock timeout moved to 75, a press that meets a busy lock now shows a toast rather than vanishing. <code>act()</code> itself does not change; a new test pins the toast."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Comment wording only: \"item\" for \"question\" where either kind applies."
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The CLI reference and the inbox plan",
+   "intro": [
+    "<code>docs/cli.md</code> documents the new refusals, the snooze cap and its <code>tomorrow</code> form, the letter rule, and exit 75 in the exit-code table. The inbox plan, which stays <code>in-progress</code>, records the same three decisions in its list of settled details."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/projects/inbox/readme.md"
+    }
+   ]
+  }
+ ]
+}
