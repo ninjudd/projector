@@ -188,10 +188,10 @@ reviewing. GitHub's branch rules, such as requiring every conversation to be
 resolved before a merge, hold the merge where they apply.
 
 `project review status <number>` prints the newest verdict on the current
-head, the model and review it came from, each model's newest verdict there
-when several gave one, the open finding threads, and any open hold, as
-`docs/cli.md` describes; `fix-pr` reads it to tell whether a head is signed
-off.
+head, the model and review it came from, each account's newest verdict by
+each model there when several gave one, the open finding threads, and any
+open hold, as `docs/cli.md` describes; `fix-pr` reads it to tell whether a
+head is signed off.
 
 ## Review an exact head
 

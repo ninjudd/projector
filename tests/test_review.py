@@ -2112,6 +2112,25 @@ class StatusTests(LatestWinsCase):
         self.assertEqual(("changes-requested", "gpt-5.5", newest),
                          (result["verdict"], result["newest"]["model"], result["newest"]["review"]))
 
+    def test_each_account_keeps_its_own_newest_verdict_by_a_model(self) -> None:
+        # A teammate whose own loop runs the same model reviews the head after the operator's loop did. The
+        # review loop looks for its own account's verdict, so the teammate's must not replace it.
+        mine = self.add_verdict("claude-opus-5-5", at="2026-09-27T14:02:00Z", verdict="changes-requested")
+        theirs = self.add_verdict("claude-opus-5-5", login="teammate", association="COLLABORATOR",
+                                  at="2026-09-27T14:20:00Z")
+
+        code, out, err = self.status()
+        result = json.loads(self.status("--json")[1])
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(("clean", theirs), (result["verdict"], result["newest"]["review"]))
+        self.assertEqual([("teammate", theirs), ("operator", mine)],
+                         [(m["login"], m["review"]) for m in result["models"]])
+        self.assertEqual([f"#1 at {self.head[:7]}: clean from claude-opus-5-5, {review_page(theirs)}",
+                          f"  claude-opus-5-5 (teammate)   clean               review {theirs}, 14:20 UTC",
+                          f"  claude-opus-5-5 (operator)   changes-requested   review {mine}, 14:02 UTC"],
+                         out.splitlines())
+
     def test_a_verdict_whose_marker_names_no_version_or_spells_clean_approved_counts(self) -> None:
         older = self.add_verdict("gpt-5.5", at="2026-09-27T14:02:00Z", verdict="changes-requested")
         newest = self.add_verdict("claude-opus-5-5", at="2026-09-27T14:20:00Z")

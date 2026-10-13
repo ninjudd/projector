@@ -51,9 +51,9 @@ push to.
    each base and head SHA, author, state, mergeability, review decision, and
    unresolved review threads. Include every layer of a stack created by this
    conversation, found as `../implement/SKILL.md` describes under "Stack
-   dependent work". Baseline only already-resolved threads. Never baseline an
-   unresolved thread; every finding already waiting when the loop starts
-   remains outstanding.
+   dependent work". Every unresolved thread is outstanding work, however
+   long it waited before the loop started. The watcher reports each one
+   until the thread is resolved.
 3. Verify the operator can push each tracked branch. Do not test with an empty
    commit or direct push.
 4. Write the tracked set to a durable tracked file, kept beside the state
@@ -106,11 +106,16 @@ push to.
    flag, so it stays idle on an empty file as a loop the user started does.
 
 Before adopting an existing watcher, fetch unresolved threads, verdicts,
-body-only reviews, and mergeability directly. Confirm its tracked file is the
-set this conversation owns -- a watcher another session started watches that
-session's set -- and verify its state file contains every expected unresolved
-row. Restart the watcher when its script changed after it started; a live
-process cannot prove which file version it loaded.
+body-only reviews, and mergeability directly, and dispatch that work at
+once. The watcher repeats a finding, verdict, conflict, or draft it already
+announced only at the renotification interval, and never repeats a review
+body, so fetching the work yourself is what catches what it told a
+conversation before this one. Its state file needs no check: it records
+only what the watcher announced, not whether anyone acted on it. Confirm
+its tracked file is the set this conversation owns -- a watcher another
+session started watches that session's set. Restart the watcher when its
+script changed after it started; a live process cannot prove which file
+version it loaded.
 
 The watcher is level-triggered:
 

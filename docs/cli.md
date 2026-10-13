@@ -1462,8 +1462,10 @@ review rather than posting another.
 `status` prints the newest Projector verdict on the pull request's current
 head, the one `publish` sets draft state by, with the model and the review it
 came from. When several models gave a verdict on the head, it adds each
-model's newest one, newest first. Then it lists the open finding threads,
-and any hold comment the author has open:
+model's newest one, newest first. Two accounts that run the same model each
+keep their own line, with the account in parentheses after the model, as
+`claude-opus-5-5 (teammate)`. Then it lists the open finding threads, and
+any hold comment the author has open:
 
 ```
 $ project review status 66
@@ -1490,7 +1492,7 @@ it cannot read the pull request. With `--json` it prints one object:
 | `draft` | Whether the pull request is a draft. |
 | `verdict` | The newest verdict on the head: `clean`, `changes-requested`, or `unreviewed`. |
 | `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, or `null` when the head is `unreviewed`. |
-| `models` | Each model's newest verdict on the head in the same shape, newest first. |
+| `models` | Each account's newest verdict by each model on the head in the same shape, newest first. A review loop finds its own by `login` and `model`. |
 | `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
 | `held` | Whether the pull request's author has a hold comment open, which keeps the pull request a draft whatever `verdict` says. |
 | `holds` | Each hold comment the pull request's author has open on it, as its `id` and `url`. A comment by anyone else that carries the marker holds nothing. |
