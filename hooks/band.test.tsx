@@ -167,6 +167,9 @@ test('draws one line per open pull request of the session’s own loops', async 
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
+  // A blank line sets the divider apart from the rows under it.
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  expect(texts[texts.indexOf(divider?.text ?? '') + 1]).toBe(' ')
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()

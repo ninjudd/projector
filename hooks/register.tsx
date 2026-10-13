@@ -760,6 +760,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           {divider}
+          <Text key="under-divider"> </Text>
           <Box flexDirection="row" columnGap={1}>
             <Text dimColor wrap="truncate-end">
               {shown.fetchedAt === null && failure === undefined
@@ -1006,10 +1007,12 @@ export const register: Register = on => {
       return <Box flexDirection="column">{drawItem(focused)}</Box>
     }
 
-    // Otherwise the pull requests come first, then a blank line, then the items.
+    // Otherwise the divider and a blank line come first, then the pull requests,
+    // another blank line, and the items.
     return (
       <Box flexDirection="column">
         {divider}
+        <Text key="under-divider"> </Text>
         {shown.rows.map(drawRow)}
         {failure !== undefined && <Text color="error">{failure}</Text>}
         {shownItems.length > 0 && shown.rows.length > 0 && <Text key="before-items"> </Text>}
