@@ -153,14 +153,15 @@ ask`.
 
 The band draws questions as it does now and notices beside them, oldest
 first. § 10 gives the reasons for what **discuss** puts in the prompt,
-for a question's drawer without a `Type something` field, and for how
-long a resolved line stays. In a terminal, with one question and one
-notice about #337:
+for a question's drawer without a `Type something` field, for how long a
+resolved line stays, and for the age that ends a pull request's line, in
+the column where the items' ages end theirs. In a terminal, with one
+question and one notice about #337:
 
 ```text
 ──────────────────────────── 1 question · 1 notice · updated 12s ago [-]
 
-#337 draft Retry failed webhook deliveries with backoff
+#337 draft Retry failed webhook deliveries with backoff                 1h
 
 - Decline the finding about the retry budget?                     #337  5m
 • Force-pushed #337 to drop a stray debug file                    #337  1m
