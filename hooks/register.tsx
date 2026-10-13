@@ -781,9 +781,7 @@ export const register: Register = on => {
           ) : shown.fetchedAt === null ? (
             <Text color="subtle">Looking for pull requests…</Text>
           ) : (
-            <Box key="quote" justifyContent="center">
-              <Text color="subtle">{QUOTE}</Text>
-            </Box>
+            <Text key="quote" color="subtle">{` ${QUOTE}`}</Text>
           )}
         </Box>
       )

@@ -333,7 +333,7 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
   await ui.unmount()
 })
 
-test('shows Osho’s quote, centered in the subtle color, when no loop tracks an open pull request', async ($, on) => {
+test('shows Osho’s quote, one space in and in the subtle color, when no loop tracks an open pull request', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
   world(on, {}, '')
@@ -344,17 +344,15 @@ test('shows Osho’s quote, centered in the subtle color, when no loop tracks an
 
   const ui = await $.ui.mount(BAND)
   // `dimColor` does not dim in every terminal, so the quote takes the theme's subtle color.
-  expect((await ui.find({ type: 'Text', text: QUOTE }))?.props.color).toBe('subtle')
-  expect((await ui.find({ type: 'Box', key: 'quote' }))?.props.justifyContent).toBe('center')
+  expect((await ui.find({ type: 'Text', text: ` ${QUOTE}` }))?.props.color).toBe('subtle')
   expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
   await ui.unmount()
 
   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
   const texts = (await desktop.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts[0]).toBe(QUOTE)
+  expect(texts[0]).toBe(` ${QUOTE}`)
   expect(texts.filter(text => text.includes('─'))).toEqual([])
-  expect((await desktop.find({ type: 'Box', key: 'quote' }))?.props.justifyContent).toBe('center')
   await desktop.unmount()
 })
 
