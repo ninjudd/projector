@@ -47,7 +47,8 @@ what it did to each:
   `implement` skill, so a watch loop starts on its pull request, open every
   pull request as a draft until a clean review marks it ready, and, where the
   `ask` and `tell` tools are available, post anything the person must not
-  miss to the inbox as well as saying it in the conversation. `init`
+  miss to the inbox as well as saying it in the conversation, and each time
+  the person writes, dismiss any item that no longer needs them. `init`
   appends the section to an existing file or creates the file
   with only that section, and refreshes the section when it falls behind the
   template this command ships. Everything outside the markers is yours and
