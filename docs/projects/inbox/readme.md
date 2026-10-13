@@ -1027,9 +1027,10 @@ and owner:
 - **The loop skills posting through the inbox.** Deferred until a
   session's id outside Claude Code is settled.
 - **Views for Codex and Paseo.** Deferred for the same reason.
-- **Removing old directories.** Old session directories and old
-  `projector/questions/` directories stay on disk until they turn out to
+- **Removing old session directories.** Deferred until they turn out to
   pile up.
+- **Removing old `projector/questions/` directories.** Deferred, since no
+  one but the owner used `project question`.
 - **Revising an open item in place.** Deferred by the owner until revising
   proves common.
 - **Finding items across sessions.** `project inbox list --pr` is deferred
