@@ -1,0 +1,204 @@
+{
+ "version": 1,
+ "name": "Review finish command",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 313,
+  "title": "Finish a review's cleanup through project review finish",
+  "head": "8677f0b97e7ad6f06c80d2f6aef149fcd674f5d7",
+  "headRef": "review-finish",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A Projector review leaves things behind on the reviewer's machine and on GitHub. <code>project review setup</code> makes a scratch worktree for each head it reviews, holds a lock, writes a state file, and posts a <b>start comment</b>, an issue comment that tells readers a review of the pull request is in progress. <code>project review publish</code> deletes the start comment, but nothing removed the worktrees or the state. The skills told the agent to remove them by hand, and to delete a stopped session's start comment with <code>gh api</code>.",
+   "Those hand steps cause two problems. A worktree removed by hand leaves the state file naming a path that is gone. Claude Code's auto mode can also refuse a raw <code>gh api -X DELETE</code> as a write to an external system, so the cleanup stalls.",
+   "This pull request moves the cleanup into commands:",
+   "<ul><li><b><code>project review finish &lt;pr&gt;</code></b> ends one model's review of the pull request on this machine. It deletes that model's start comments that no longer mean a review in progress, removes every scratch worktree the state lists, clears the locks, and deletes the state. The loop's record of published reviews stays. It refuses while a review is set up and unpublished, unless you pass <code>--force</code>.</li><li><b><code>project review setup --replace &lt;comment-id&gt;</code></b> deletes a stopped session's start comment, after it checks that the comment is this model's start comment on this pull request.</li><li><b><code>project init</code></b> adds a permission rule, <code>Bash(project review finish *)</code>, to Claude Code settings, and a matching rule to the Codex rules file, so auto mode does not refuse <code>finish</code>.</li></ul>",
+   "The <code>review-pr</code> and <code>start-review-loop</code> skills now name these commands instead of the hand steps, and <code>docs/cli.md</code> documents them."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Start comment</b>: the issue comment <code>setup</code> posts, with a <code>projector-start</code> marker naming the head SHA and the model. It means a review is in progress.</li><li><b>Live</b>: what <code>is_live</code> decides about a start comment. A comment stops being live once its model posts a verdict on its head after the comment was created, or once a day passes since its last edit.</li><li><b>State</b>: <code>state.json</code> under <code>prs/&lt;owner&gt;/&lt;repo&gt;/&lt;pr&gt;/&lt;model-key&gt;/</code> in the review state directory. It records the head, the checkout, the worktrees, and the start comment of one model's review.</li><li><b>Loop record</b>: <code>loops/&lt;id&gt;/published.json</code>, the review ids a review loop published. <code>finish</code> keeps it.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><b><code>2868e0f</code>, changes requested.</b> Without <code>--repo</code>, <code>finish</code> could pick another repository's review that had the same pull request number, and <code>--force</code> would discard it.</li><li><b><code>8677f0b</code>, clean.</b> <code>finish</code> now takes its repository from <code>--repo</code> or from the checkout it runs in, and the loop passes <code>--repo</code>. The finding thread is resolved.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "The finish command and setup --replace",
+   "kicker": "The review state code that deletes start comments and removes worktrees",
+   "intro": [
+    "All the behavior lives in <code>src/projector/review.py</code>, the module behind every <code>project review</code> command. It adds <code>finish</code> and its helpers, a <code>--replace</code> path in <code>setup</code>, and one change to what <code>setup</code> writes to the state.",
+    "<ol><li><b><code>finish</code> finds the review.</b> It takes the repository from <code>--repo</code>, or else from the <code>origin</code> of the checkout it runs in, through <code>named_repo</code>, the resolver <code>hold</code> also uses. It never takes the repository from review state, so a run in one repository cannot end another repository's review of a pull request with the same number. It refuses when only another repository has a review of that number set up here, and when a state file names a different repository. With nothing set up, it returns early and asks GitHub nothing.</li><li><b>It refuses an unpublished review.</b> A state that still records a start comment belongs to a review that has not been published. Without <code>--force</code>, <code>finish</code> raises before it changes anything.</li><li><b>It deletes start comments.</b> <code>finished_starts</code> lists the reviewer's start comments for this model, and selects the review's own comment and every one that <code>is_live</code> says is no longer live. <code>finish</code> deletes each one with the reviewer's token.</li><li><b>It removes worktrees.</b> <code>remove_worktrees</code> runs <code>git worktree remove --force</code> in the checkout for each listed path. When Git refuses and the path is under the review's own worktree folder, it deletes the folder outright. Then it runs <code>git worktree prune</code>.</li><li><b>It clears the rest.</b> It releases the locks, and deletes <code>review.json</code>, the state file, and the empty folder.</li></ol>",
+    "For <code>finish</code> to remove every worktree, the state must list them all. A review loop keeps each head's worktree between heads, so <code>setup</code> now carries the earlier state's <code>worktrees</code> list forward instead of starting it fresh."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>publish</code> sets the state's <code>start_comment</code> to <code>None</code> after it deletes the comment, so <code>finish</code> without <code>--force</code> runs after a publish that completed. I traced this in <code>publish</code> at the head, and the <code>FinishTests</code> cases that publish and then finish pass."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>finish</code>, <code>unfinished</code>, <code>finished_starts</code>, <code>remove_worktrees</code>, <code>finish_lines</code>, and <code>check_replaceable</code>. Also carries worktrees forward in <code>setup</code>, and renames <code>hold_repo</code> to <code>named_repo</code> for both commands, and rewrites four refusal messages to name a command instead of a hand step.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 890,
+       "text": "A review set up for another repository with the same pull request number stops <code>finish</code> before it deletes anything. I ran a reproduction against this head: from an <code>other/repo</code> checkout, <code>finish 1 --force --model claude-opus-5-5</code> exits 1, and the <code>acme/app#1</code> review's start comment, worktree, and state remain."
+      },
+      {
+       "kind": "context",
+       "line": 789,
+       "text": "The list keeps the earlier heads' worktrees, with duplicates dropped, so a re-review of an unchanged head lists its worktree once. A path that no longer exists is skipped when <code>finish</code> runs."
+      },
+      {
+       "kind": "context",
+       "line": 803,
+       "text": "<code>--replace</code> accepts only a start comment that the reviewer posted on this pull request for the same model. The comment is deleted after the new start comment is posted, in the same loop that deletes the comment the old state recorded."
+      },
+      {
+       "kind": "context",
+       "line": 948,
+       "text": "<code>shutil.rmtree</code> runs only for a path under the review's own worktree folder, and only after Git refused to remove it, as it does when the checkout is gone."
+      },
+      {
+       "kind": "context",
+       "line": 919,
+       "text": "A publish that posted its review and stopped before it deleted the start comment gets its own refusal, which says to run the same <code>publish</code> again."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "surface",
+   "title": "Command line and permission rules",
+   "kicker": "The finish subcommand, the --replace flag, and the rule init adds",
+   "intro": [
+    "<code>src/projector/cli.py</code> registers <code>finish</code> with the same <code>pr</code>, <code>--repo</code>, <code>--state-dir</code>, <code>--loop</code>, <code>--json</code>, and <code>--model</code> options as the other review commands, plus <code>--force</code>. It adds <code>--replace</code> to <code>setup</code>.",
+    "<code>src/projector/permissions.py</code> holds the rules <code>project init</code> writes into the user's own Claude Code settings and Codex rules file. Auto mode refuses a deletion through a raw <code>gh api</code> call, but an allow rule for the command resolves it first. The new rule follows the one for <code>project review hold</code>, which exists for the same reason."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Anyone who ran <code>project init</code> before this change lacks the new rule, so <code>project review rules</code> exits 1 for them until they run <code>init</code> again in a terminal."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Registers <code>finish</code> and <code>setup --replace</code>, dispatches <code>finish</code> before the code that the other commands share, and calls <code>named_repo</code> for <code>hold</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1030,
+       "text": "<code>finish</code> always exits 0 when it does not raise, including when it finds nothing to finish."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds <code>Bash(project review finish *)</code> to <code>RULES</code> and a <code>prefix_rule</code> for <code>project review finish</code> to the Codex rules."
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "Skill instructions",
+   "kicker": "The review skills now name the commands in place of hand cleanup",
+   "intro": [
+    "An agent follows these files as instructions, so a change here changes what a review does. <code>review-pr</code> now runs <code>project review finish</code> after the summary, and runs <code>setup --replace</code> when a stopped session's start comment blocks <code>setup</code>. It tells the agent never to delete a start comment through <code>gh api</code>. <code>start-review-loop</code> tells a subagent to run <code>finish --force</code> when its pull request closes."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Replaces three hand steps: delete a stopped session's comment, delete a leftover comment, and remove the scratch worktree. Adds <code>finish</code> to the commands that take <code>--model</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 363,
+       "text": "A leftover start comment, from a session that stopped between publishing and deleting, now waits for the next <code>finish</code> by that model on this machine. <code>finish</code> deletes it only when this machine has a state for the review."
+      }
+     ]
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "The <code>CLOSED</code> step now runs <code>project review finish &lt;number&gt; --repo &lt;owner&gt;/&lt;repo&gt; --force</code> with <code>--loop</code> and <code>--model</code>. <code>finish</code> joins the commands the loop passes both flags to, and the rules check names its rule.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 182,
+       "text": "<code>--repo</code> keeps this command off another repository's review of the same pull request number."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The CLI reference for finish, setup --replace, and the new rule",
+   "intro": [
+    "<code>docs/cli.md</code> documents <code>finish</code> step by step, the <code>--replace</code> flag, the new permission rule in the <code>init</code> and <code>rules</code> sections, and the <code>review.publish_rule</code> configuration row."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Describes <code>finish</code> and <code>setup --replace</code>, and adds the <code>finish</code> rule wherever the rule set is listed.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1200,
+       "text": "<code>finish</code> needs <code>--repo</code> outside a checkout. The paragraph on later commands near the end of the review section still says each one runs from any directory, without naming this exception."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "FinishTests, the --replace cases, and the rule tests",
+   "intro": [
+    "The review tests run real Git against a bare origin and replace <code>gh</code> with a fake GitHub that records each call and its token. <code>FinishTests</code> covers removing three heads' worktrees, which start comments are deleted and which stay, refusal without <code>--force</code>, a second run, a missing checkout, another model's review, a run from another repository's checkout, and a publish that stopped after it posted. The permission tests check that <code>init</code> adds the new rule beside existing ones."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "I ran the full suite at <code>8677f0b</code> with Python 3.12: 937 tests passed, with one skip for the Codex rule check, which needs the <code>codex</code> CLI. <code>project check</code>, both <code>claude plugin validate</code> runs, and <code>git diff --check</code> also passed."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_review.py",
+     "note": "Adds <code>FinishTests</code>, two <code>--replace</code> tests, and a <code>move</code> retry test.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1379,
+       "text": "Runs <code>finish</code> from a checkout of another repository, with and without <code>--force</code> and <code>--model</code>, and checks that nothing is deleted."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "Updates the <code>init</code> and <code>rules</code> tests for the <code>finish</code> rule."
+    }
+   ]
+  }
+ ]
+}
