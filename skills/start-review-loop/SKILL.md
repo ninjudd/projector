@@ -70,10 +70,13 @@ back empty, indistinguishable from a repository with nothing open.
 4. Fetch each pull request's base SHA, head SHA, state, reviews, and
    thread-aware review threads. Say how many pull requests are tracked, the
    operator's and the requested ones, out of the repository total.
-5. Determine the last reviewed SHA from durable GitHub state or the current
-   conversation: the newest head that a Projector verdict by this loop's
-   model names. Another model's verdict on a head is that model's review,
-   not this loop's. Review any current head without a completed exact-head
+5. Find the current heads this loop's model has reviewed. For each tracked
+   pull request, run `project review status <number> --json`. Its `models`
+   list holds each model's newest verdict on the current head, and the head
+   is reviewed when an entry's `model` is the model ID the host reports for
+   this session, lowercased and without a trailing bracketed variant such as
+   `[1m]`. Another model's verdict on a head is that model's review, not
+   this loop's. Review any current head without a completed exact-head
    review by this model immediately; do not baseline it away.
 6. Write the tracked set to a durable tracked file, one `owner/repo#number`
    per line, kept beside the state file and outside any checkout. That file
@@ -93,24 +96,28 @@ back empty, indistinguishable from a repository with nothing open.
    directory, where `project review publish` keeps it. Give each model's loop
    an id of its own, because two loops that write one record can lose an
    entry.
-7. Seed the state file with only the SHAs already reviewed, then run one
-   pass:
+7. Run one pass, with the model ID from step 6 as `--model`:
 
    ```sh
-   scripts/watch-prs.sh --tracked <file> --state <seeded-file> \
+   scripts/watch-prs.sh --tracked <file> --state <state-file> --model <model-id> \
      --repo <owner/repo> --author <operator> --review-requested <operator> --once
    ```
 
-   It refuses to start, naming the line, on an entry that is not
-   `owner/repo#number` or a number that names no pull request, and it
-   distinguishes a lookup that failed for network or auth reasons from a
-   missing pull request. Every head you found unreviewed in step 5 must come
-   back as `NEW PR`; one that does not is a pull request missing from the
-   file. The pass records those heads as announced, so the running watcher
-   will not repeat them; review them from this output. Then run the same
-   script without `--once`, with the same state file and adoption flags,
-   `--worktree <repository>`, and an interval of at least 30 seconds, under
-   the host's persistent process or monitor facility.
+   Name a state file beside the tracked file and leave it to the watcher,
+   which creates it and alone writes it. A pull request with no row there
+   reports as `NEW PR`, unless its head already has a verdict by this model,
+   which the watcher records without a word. It refuses to start, naming the
+   line, on an entry that is not `owner/repo#number` or a number that names
+   no pull request, and it distinguishes a lookup that failed for network or
+   auth reasons from a missing pull request. Every head you found unreviewed
+   in step 5 must come back as `NEW PR`; one that does not is a pull request
+   missing from the file. The pass records every head it saw, so the running
+   watcher does not announce them again; review the heads it names from this
+   output.
+   Then run the same script without `--once`, with the same state file,
+   `--model`, and adoption flags, `--worktree <repository>`, and an interval
+   of at least 30 seconds, under the host's persistent process or monitor
+   facility.
 
 The watcher prints `NEW PR`, `NEW HEAD`, `RESPONDED`, `CLOSED`, `BRANCH`, and
 `TRACKED`. Treat `RESPONDED` as a re-review request for a head still waiting on
@@ -133,11 +140,16 @@ while the hold kept it a draft. A `RESPONDED` that reaches a subagent after
 a review has marked the pull request ready, with no change request
 standing, needs nothing: that review already signed the head off.
 
-If adopting an existing watcher, fetch unresolved state first, confirm it runs
-with both adoption flags, `--author` and `--review-requested`, for this
-repository and operator and reads the tracked file this loop records, and
-verify its state file contains every expected row. Restart it when the script
-changed after the process started. Silence alone proves nothing.
+If adopting an existing watcher, fetch unresolved state first and run step 5,
+reviewing each head it finds unreviewed: the watcher announces a head once,
+possibly to a conversation that never finished its review. Confirm that the
+watcher runs with both adoption flags, `--author` and `--review-requested`,
+for this repository and operator, reads the tracked file this loop records,
+and passes this loop's model ID as `--model`. Its state file needs no check.
+A row there says only that the watcher saw a head, not that a review of it
+finished, and a tracked pull request with no row reports on the watcher's
+next cycle. Restart it when the script changed after the process started.
+Silence alone proves nothing.
 
 ## Give each pull request its own subagent
 

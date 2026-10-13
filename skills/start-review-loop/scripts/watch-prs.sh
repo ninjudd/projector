@@ -3,7 +3,8 @@
 # review loop tracks, and stay silent otherwise. Intended to run under Claude
 # Code's `Monitor`, where each stdout line becomes one notification.
 #
-#   NEW PR     a tracked pull request the state file has not seen
+#   NEW PR     a tracked pull request the state file has not seen, unless its
+#              head already has a verdict by the --model model
 #   NEW HEAD   a tracked pull request's head SHA moved
 #   RESPONDED  the author answered without pushing on a pull request still
 #              waiting for a review: a draft by the --author login, or any
@@ -26,7 +27,7 @@
 #              than mistaken for a quiet repository
 #
 # Usage:
-#   watch-prs.sh --tracked <file> --state <path>
+#   watch-prs.sh --tracked <file> --state <path> [--model <id>]
 #                [--repo <owner/repo> [--author <login>] [--review-requested <login>]]
 #                [--interval 60] [--worktree <dir>] [--once]
 #
@@ -57,20 +58,24 @@
 # that pull request out of both the watch and adoption. A failed listing
 # adopts nothing that cycle and is tried again.
 #
-# The state file is the loop's memory of what has been seen. Seed it with rows
-# of `<owner/repo> <number> <sha> <ref>` to baseline heads as already reviewed;
-# an empty file means every tracked pull request reports as new, which is the
-# right default when the loop is establishing itself. A row for a pull request
-# no longer in the tracked file is dropped without a word, since the loop
-# removed it on purpose; CLOSED is for the other direction, a listed pull
-# request that left the open set.
+# The state file is the watcher's memory of what it has seen, and only the
+# watcher writes it. A tracked pull request with no row there reports as NEW
+# PR, so a new or empty file announces every tracked pull request. --model
+# takes the model ID the review loop reviews as. With it, a pull request with
+# no row whose head already carries that model's Projector verdict gets its
+# row without a word instead, since the head has had its exact-head review.
+# The verdict counts as it does for RESPONDED, and the model is compared as
+# `project review` compares one: lowercased, without a trailing bracketed
+# variant such as `[1m]`. A row for a pull request no longer in the tracked
+# file is dropped without a word, since the loop removed it on purpose; CLOSED
+# is for the other direction, a listed pull request that left the open set.
 #
 # --once makes a single pass and exits, which is how the loop checks, before
 # arming the watch, that the file names the pull requests it meant to track.
 
 set -uo pipefail
 
-TRACKED=""; STATE=""; INTERVAL=60; WORKTREE=""; ONCE=0; REPO=""; AUTHOR=""; REQUESTED=""
+TRACKED=""; STATE=""; INTERVAL=60; WORKTREE=""; ONCE=0; REPO=""; AUTHOR=""; REQUESTED=""; MODEL=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -78,6 +83,7 @@ while [ $# -gt 0 ]; do
     --repo)     REPO="${2:-}"; shift 2 ;;
     --author)   AUTHOR="${2:-}"; shift 2 ;;
     --review-requested) REQUESTED="${2:-}"; shift 2 ;;
+    --model)    MODEL="${2:-}"; shift 2 ;;
     --state)    STATE="${2:-}"; shift 2 ;;
     --interval) INTERVAL="${2:-60}"; shift 2 ;;
     --worktree) WORKTREE="${2:-}"; shift 2 ;;
@@ -97,6 +103,11 @@ if [ -n "$REPO$AUTHOR$REQUESTED" ]; then
   # An adopting watch may start from nothing; adoption fills the file.
   touch "$TRACKED" 2>/dev/null || { echo "watch-prs.sh: cannot write tracked file: $TRACKED" >&2; exit 2; }
 fi
+# The model is looked up in a comma-separated list of models, "-" when it is
+# empty, and no model in it holds whitespace. An ID that is "-" or holds a
+# comma could match a head this model never reviewed, and one that holds
+# whitespace could never match.
+[ -z "$MODEL" ] || [[ $MODEL =~ ^[A-Za-z0-9][^[:space:],]*$ ]] || { echo "watch-prs.sh: --model is not a model ID: $MODEL" >&2; exit 2; }
 
 # The skill's own floor: never poll GitHub harder than every 30 seconds.
 [ "$INTERVAL" -lt 30 ] 2>/dev/null && INTERVAL=30
@@ -143,6 +154,18 @@ EOF
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
+VARIANT_RE='^(.*)\[[^][]*\]$'
+MODEL_ID=$(lower "$MODEL")
+[[ $MODEL_ID =~ $VARIANT_RE ]] && MODEL_ID="${BASH_REMATCH[1]}"
+
+# Whether $1, the comma-separated models that gave a head a verdict, names
+# the --model model.
+reviewed_by_model() {
+  [ -n "$MODEL_ID" ] || return 1
+  case ",$1," in *",$MODEL_ID,"*) return 0 ;; esac
+  return 1
+}
+
 # One row per pull request: state, draft flag, verdict, head SHA, head ref,
 # how many threads are unresolved, and the newest unanswered author reply on
 # an open Projector finding thread ("-" when there is none): the id of a last
@@ -170,7 +193,9 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 # open on it, one whose body carries `<!-- projector-hold v=1 -->`, and "-"
 # otherwise. Only the author's comment counts, because anyone can comment. A
 # hold lives only while its changes are built, so it is among the newest 100
-# comments. The last field is the author's login.
+# comments. The field after it names each model that gave the head a counted
+# verdict, lowercased, without a trailing bracketed variant, and separated by
+# commas, or "-" when none did. The last field is the author's login.
 PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
   visibility
   pullRequest(number:$n){
@@ -183,13 +208,15 @@ PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
 PR_JQ='(.data.repository.visibility | IN("PRIVATE", "INTERNAL")) as $closed
   | .data.repository.pullRequest
   | .headRefOid as $head
-  | ([.reviews.nodes[]
+  | [.reviews.nodes[]
       | select($closed or (.authorAssociation | IN("OWNER", "MEMBER", "COLLABORATOR")))
       | .submittedAt as $at
       | .body // ""
-      | capture("(?m)^<!-- projector-review v=1 verdict=(?<verdict>[a-z-]+) [^>]*?sha=(?<sha>[0-9a-f]{40}) ")
-      | select(.sha == $head) | {at: $at, verdict}]
-     | sort_by(.at) | last | .verdict // "-") as $verdict
+      | capture("(?m)^<!-- projector-review v=1 verdict=(?<verdict>[a-z-]+) (?:[^>]*?model=(?<model>\\S+) )?[^>]*?sha=(?<sha>[0-9a-f]{40}) ")
+      | select(.sha == $head) | {at: $at, verdict, model}] as $verdicts
+  | ($verdicts | sort_by(.at) | last | .verdict // "-") as $verdict
+  | ([$verdicts[].model // empty | select(. != "") | ascii_downcase | sub("\\[[^\\[\\]]*\\]$"; "")]
+     | unique | join(",") | if . == "" then "-" else . end) as $models
   | ([.reviewThreads.nodes[]
       | select(.isResolved == false)
       | select(.comments.nodes[0].body | test("projector-finding"))
@@ -200,7 +227,7 @@ PR_JQ='(.data.repository.visibility | IN("PRIVATE", "INTERNAL")) as $closed
   | (if $author != "" and any(.comments.nodes[];
          (.author.login // "") == $author and (.body // "" | contains("<!-- projector-hold v=1 -->")))
      then "held" else "-" end) as $held
-  | "\(.state) \(.isDraft) \($verdict) \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer) \($held) \($author)"'
+  | "\(.state) \(.isDraft) \($verdict) \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer) \($held) \($models) \($author)"'
 
 # stdout: the row above for $1#$2. stderr is kept in $STATE.err so a failure
 # can be told apart from a pull request that does not exist.
@@ -334,7 +361,7 @@ EOF
 "
       continue
     fi
-    read -r pstate pdraft pverdict sha ref unresolved answer held pauthor <<EOF
+    read -r pstate pdraft pverdict sha ref unresolved answer held pmodels pauthor <<EOF
 $row
 EOF
     [ -n "${answer:-}" ] || answer="-"
@@ -345,6 +372,11 @@ EOF
       [ -n "$known" ] && echo "CLOSED $slug#$n (${kref:-$ref}) — no longer open; drop it from the tracked file"
       continue
     fi
+
+    # A head the --model model already reviewed is one this loop has seen. It
+    # still goes through the RESPONDED test below, which hears an author who
+    # answered that review while no watcher ran.
+    [ -z "$known" ] && reviewed_by_model "$pmodels" && known="$sha"
 
     if [ -z "$known" ]; then
       echo "NEW PR $slug#$n ($ref) head=${sha:0:7} — unreviewed, needs an exact-head review"

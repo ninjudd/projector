@@ -124,9 +124,12 @@ def review(review_id, *, who="codex", body="Body-only concern", sha=SHA_A, state
     return {"id": review_id, "state": state, "user": {"login": who}, "body": body, "commit_id": sha}
 
 
-def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:00Z", association="COLLABORATOR"):
-    """A GraphQL review node whose body carries the marker line `project review publish` writes."""
-    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.7.12 model=claude-opus-5-5 effort=high "
+def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:00Z", association="COLLABORATOR",
+                      model="claude-opus-5-5"):
+    """A GraphQL review node whose body carries the marker line `project review publish` writes, naming
+    `model`, or no model when it is None."""
+    named = f"model={model} " if model else ""
+    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.7.12 {named}effort=high "
               f"sha={sha} findings=1 seconds=60 covered=1/1 -->")
     return {"authorAssociation": association, "submittedAt": at, "body": f"Projector review\n\n{marker}\n\nSummary"}
 
@@ -784,6 +787,72 @@ class WatchPrsTests(WatcherCase):
             result.stdout.splitlines(),
         )
 
+    def test_a_head_the_model_already_reviewed_takes_its_row_without_a_word(self) -> None:
+        self.pull_request(1, ref="reviewed", verdicts=[projector_verdict(SHA_A, "clean")])
+        self.pull_request(2, ref="other-model", verdicts=[projector_verdict(SHA_A, "clean", model="gpt-6")])
+        self.pull_request(3, ref="unreviewed")
+        self.pull_request(4, ref="older-head", verdicts=[projector_verdict(SHA_B, "clean")])
+        self.pull_request(5, ref="no-model", verdicts=[projector_verdict(SHA_A, "clean", model=None)])
+        # Anyone can review a public repository, so a passerby's verdict reviews nothing there.
+        self.pull_request(6, ref="passerby", verdicts=[projector_verdict(SHA_A, "clean", association="NONE")])
+        self.track(*(f"acme/app#{n}" for n in range(1, 7)))
+
+        without_model = self.run_watcher(PRS)
+        self.state.unlink()
+        # The model ID the host reports, with the context-window variant `project review` ignores.
+        with_model = self.run_watcher(PRS, "--model", "Claude-Opus-5-5[1m]")
+        again = self.run_watcher(PRS, "--model", "claude-opus-5-5")
+
+        def new_pr(n, ref):
+            return f"NEW PR acme/app#{n} ({ref}) head=aaaaaaa — unreviewed, needs an exact-head review"
+
+        self.assert_ok(without_model)
+        self.assertEqual(6, len(without_model.stdout.splitlines()), without_model.stdout)
+        self.assertIn(new_pr(1, "reviewed"), without_model.stdout)
+        self.assert_ok(with_model)
+        self.assertEqual(
+            [new_pr(2, "other-model"), new_pr(3, "unreviewed"), new_pr(4, "older-head"), new_pr(5, "no-model"),
+             new_pr(6, "passerby")],
+            with_model.stdout.splitlines(),
+        )
+        self.assertEqual(["acme/app", "1", SHA_A, "reviewed", "-"], self.state_rows()[0])
+        self.assertEqual(6, len(self.state_rows()))
+        self.assert_ok(again)
+        self.assertEqual("", again.stdout)
+
+    def test_a_reviewed_head_whose_author_answered_asks_for_a_re_review(self) -> None:
+        # The author resolved every thread of this model's review without
+        # pushing while no watcher ran, so no head event is coming.
+        self.pull_request(1, draft=True, verdicts=[projector_verdict(SHA_A)], threads=[thread("T1", resolved=True)])
+        self.track("acme/app#1")
+
+        baselined = self.run_watcher(PRS, "--model", "claude-opus-5-5")
+        quiet = self.run_watcher(PRS, "--model", "claude-opus-5-5")
+
+        self.assert_ok(baselined)
+        self.assertEqual(
+            ["RESPONDED acme/app#1 (feature) head=aaaaaaa — still a draft with every thread resolved; "
+             "re-review this head and sign off if clean"],
+            baselined.stdout.splitlines(),
+        )
+        self.assert_ok(quiet)
+        self.assertEqual("", quiet.stdout)
+
+    def test_the_model_leaves_a_pull_request_with_a_row_to_its_row(self) -> None:
+        reviewed = [projector_verdict(SHA_A, "clean")]
+        self.pull_request(1, ref="moved", verdicts=reviewed)
+        self.pull_request(2, ref="seen", verdicts=reviewed)
+        self.track("acme/app#1", "acme/app#2")
+        self.state.write_text(f"acme/app 1 {SHA_B} moved -\nacme/app 2 {SHA_A} seen -\n")
+
+        result = self.run_watcher(PRS, "--model", "claude-opus-5-5")
+
+        self.assert_ok(result)
+        self.assertEqual(["NEW HEAD acme/app#1 (moved): bbbbbbb -> aaaaaaa — needs an exact-head review"],
+                         result.stdout.splitlines())
+        self.assertEqual([["acme/app", "1", SHA_A, "moved", f"{SHA_A}:-"], ["acme/app", "2", SHA_A, "seen", "-"]],
+                         self.state_rows())
+
     def test_reports_a_tracked_pull_request_that_closed_once(self) -> None:
         self.pull_request(1)
         self.track("acme/app#1")
@@ -857,6 +926,18 @@ class WatchPrsTests(WatcherCase):
             self.assertIn("--repo goes with --author, --review-requested, or both", alone.stderr)
         self.assertEqual(2, not_a_login.returncode)
         self.assertIn("--review-requested is not a GitHub login: ada is:merged", not_a_login.stderr)
+
+    def test_refuses_a_model_that_would_match_the_wrong_heads_or_none(self) -> None:
+        # "-" is what the row says when no model gave the head a verdict.
+        self.pull_request(1)
+        self.track("acme/app#1")
+
+        for model in ("-", "a,b", "claude opus"):
+            refused = self.run_watcher(PRS, "--model", model)
+
+            self.assertEqual(2, refused.returncode, model)
+            self.assertIn(f"--model is not a model ID: {model}", refused.stderr)
+            self.assertEqual("", refused.stdout)
 
     def test_adopts_the_authors_open_pull_requests(self) -> None:
         self.pull_request(1, ref="mine")

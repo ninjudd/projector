@@ -50,9 +50,9 @@ adopted it. Never list a pull request you would not push to.
    each base and head SHA, author, state, mergeability, review decision, and
    unresolved review threads. Include every layer of a stack created by this
    conversation, found as `../implement/SKILL.md` describes under "Stack
-   dependent work". Baseline only already-resolved threads. Never baseline an
-   unresolved thread; every finding already waiting when the loop starts
-   remains outstanding.
+   dependent work". Every unresolved thread is outstanding work, however
+   long it waited before the loop started. The watcher reports each one
+   until the thread is resolved.
 3. Verify the operator can push each tracked branch. Do not test with an empty
    commit or direct push.
 4. Write the tracked set to a durable tracked file, one `owner/repo#number`
@@ -92,11 +92,13 @@ adopted it. Never list a pull request you would not push to.
    flag, so it stays idle on an empty file as a loop the user started does.
 
 Before adopting an existing watcher, fetch unresolved threads, verdicts,
-body-only reviews, and mergeability directly. Confirm its tracked file is the
-set this conversation owns -- a watcher another session started watches that
-session's set -- and verify its state file contains every expected unresolved
-row. Restart the watcher when its script changed after it started; a live
-process cannot prove which file version it loaded.
+body-only reviews, and mergeability directly, and dispatch that work at
+once. The watcher repeats work it already announced only at the
+renotification interval, but it repeats it until the work is resolved, so
+its state file needs no check. Confirm its tracked file is the set this
+conversation owns -- a watcher another session started watches that
+session's set. Restart the watcher when its script changed after it
+started; a live process cannot prove which file version it loaded.
 
 The watcher is level-triggered:
 
