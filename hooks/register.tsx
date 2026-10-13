@@ -748,19 +748,24 @@ export const register: Register = on => {
     }
 
     // The engine draws the band's `[-]` just past `bodyColumns` on the first
-    // row, so a divider that fills the body ends at the mark.
-    const divider = (
-      <Text dimColor>
-        {'─'.repeat(Math.max(0, e.props.bodyColumns - updated.length))}
-        {updated}
-      </Text>
-    )
+    // row, so a divider that fills the body ends at the mark, and a blank line
+    // sets it apart from the rows under it. Only a terminal lays text out in
+    // those columns; any other surface would wrap the rule, so it draws none.
+    const divider =
+      e.surface === 'terminal'
+        ? [
+            <Text key="divider" dimColor>
+              {'─'.repeat(Math.max(0, e.props.bodyColumns - updated.length))}
+              {updated}
+            </Text>,
+            <Text key="under-divider"> </Text>,
+          ]
+        : []
 
     if (shown.rows.length === 0 && shownItems.length === 0) {
       return (
         <Box flexDirection="column">
           {divider}
-          <Text key="under-divider"> </Text>
           <Box flexDirection="row" columnGap={1}>
             <Text dimColor wrap="truncate-end">
               {shown.fetchedAt === null && failure === undefined
@@ -1011,7 +1016,6 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {divider}
-        <Text key="under-divider"> </Text>
         {shown.rows.map(drawRow)}
         {failure !== undefined && <Text color="error">{failure}</Text>}
         {shownItems.length > 0 && shown.rows.length > 0 && <Text key="before-items"> </Text>}

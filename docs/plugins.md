@@ -197,7 +197,10 @@ watcher, `watch-threads.sh`, and a `start-review-loop` watcher,
 `watch-prs.sh`, track is listed once. Only the title shortens on a narrow
 terminal. The divider says how long ago the band reloaded, and Claude Code's
 `[-]` at its end collapses the band. A blank line sets the divider apart from
-the rows under it.
+the rows under it. Only a terminal draws the divider and that blank line.
+Claude Desktop, VS Code, and the mobile app do not set the band's text in a
+terminal's columns, so a rule sized to them would wrap, and there the band
+starts with its first row.
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer says
