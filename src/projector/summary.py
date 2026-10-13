@@ -1555,6 +1555,13 @@ def init(repo: str, number: int, summary_path: str, diff_path: str | None = None
         print(f"  {file_row(f)}")
 
 
+def shown_field(value: object) -> str:
+    """A `pr` field's value as `refresh` prints it: a commit SHA shortened to nine characters, as it prints a head,
+    and a missing field as `none`."""
+    text = "none" if value is None else str(value)
+    return text[:9] if FULL_SHA.fullmatch(text) else text
+
+
 class Refreshed(NamedTuple):
     """What `carry_forward` changed in a summary, and the notes it left for someone to move."""
     changes: list[str]
@@ -1576,7 +1583,7 @@ def carry_forward(summary: dict, meta: dict, files: list[dict]) -> Refreshed:
     emptied, and each note whose `line` the diff does not show, which stays.
     """
     old = summary.get("pr") or {}
-    changes = [f"pr.{key}: {old.get(key, 'none')} → {meta.get(key, 'none')}"
+    changes = [f"pr.{key}: {shown_field(old.get(key))} → {shown_field(meta.get(key))}"
                for key in [*meta, *(key for key in old if key not in meta)] if old.get(key) != meta.get(key)]
     summary["pr"] = meta
     by_path = {f["path"]: f for f in files}

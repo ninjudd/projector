@@ -2075,7 +2075,9 @@ class RefreshTests(unittest.TestCase):
                                    "files": [{"path": "src/extra.go"}]})
         self.assertEqual(expected, after, "the stale note stays, and every other piece of prose is as it was")
         self.assertEqual(["summary.json"], [p.name for p in self.tmp.iterdir()], "no temporary file is left")
-        for line in (f"pr.head: {'a' * 40} → {'c' * 40}", f"pr.base: {'b' * 40} → {'e' * 40}",
+        for full in ("a" * 40, "b" * 40, "c" * 40, "e" * 40):
+            self.assertNotIn(full, out, "a SHA prints shortened, as the head on the first line is")
+        for line in (f"at {'c' * 9}\n", f"pr.head: {'a' * 9} → {'c' * 9}\n", f"pr.base: {'b' * 9} → {'e' * 9}\n",
                      "pr.baseRef: feature-a → main", "pr.basePr: 6 → none", "src/extra.go (new)",
                      "src/core_test.go, from core", "note: The test.",
                      "context on line 2 (new side): Covers <code>Check</code>.",

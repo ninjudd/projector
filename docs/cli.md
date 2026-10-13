@@ -681,8 +681,8 @@ something changed:
 ```console
 $ project summary refresh --summary summary.json
 refreshed summary.json to owner/example#66 at 9c1d07e2a
-  pr.head: 4f2a9c1… → 9c1d07e…
-  pr.base: 0b7e3d4… → 61aa2f0…
+  pr.head: 4f2a9c107 → 9c1d07e2a
+  pr.base: 0b7e3d4c8 → 61aa2f05e
 added 1 file new to the diff to the unassigned group; move each into the group it belongs to:
   +40    -0     src/check/name.go (new)
 1 note names a line the diff no longer shows; move each to where its code now sits, or remove it:
