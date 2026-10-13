@@ -23,7 +23,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import inbox, permissions, review, site, summary
+from . import inbox, loop, permissions, review, site, summary
 from .permissions import allow_publish
 from .summary import WORKFLOW_PATH
 from .config import ConfigError
@@ -534,6 +534,7 @@ def parser() -> argparse.ArgumentParser:
                                      "full review, when `project review interdiff` allows one")
 
     add_inbox_parser(subcommands)
+    add_loop_parser(subcommands)
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
@@ -686,6 +687,32 @@ def add_inbox_parser(subcommands) -> None:
     watch.add_argument("--once", action="store_true", help="make one pass and exit")
 
     command("context", "print what each inbox reference in standard input means")
+
+
+def add_loop_parser(subcommands) -> None:
+    parser = subcommands.add_parser("loop", help="keep a pull request out of a loop's tracked file, or let it back in")
+    commands = parser.add_subparsers(dest="loop_command", required=True)
+    for name, help_text in (("drop", "append a !owner/repo#number line that keeps the pull request out of the loop"),
+                            ("restore", "remove the pull request's !owner/repo#number lines")):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("reference", help="the pull request, as owner/repo#number")
+        command.add_argument("--tracked", required=True, type=Path, help="the loop's tracked file")
+        add_output(command)
+
+
+def run_loop(arguments: argparse.Namespace) -> int:
+    command = arguments.loop_command
+    reference = arguments.reference
+    tracked = arguments.tracked
+    changed = (loop.drop if command == "drop" else loop.restore)(tracked, reference)
+    action = ("dropped" if command == "drop" else "restored") if changed else "unchanged"
+    if arguments.json_output:
+        print(json_text({"action": action, "pr": reference, "tracked": str(tracked)}))
+    elif command == "drop":
+        print(f"dropped {reference} from {tracked}" if changed else f"{reference} is already dropped from {tracked}")
+    else:
+        print(f"restored {reference} to {tracked}" if changed else f"{reference} is not dropped from {tracked}")
+    return 0
 
 
 def open_editor(path: Path) -> None:
@@ -1695,6 +1722,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_review(arguments)
     if arguments.command == "inbox":
         return run_inbox(arguments)
+    if arguments.command == "loop":
+        return run_loop(arguments)
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.

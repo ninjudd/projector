@@ -61,7 +61,11 @@ adopted it. Never list a pull request you would not push to.
    creates or adopts one, delete its line when it closes or merges, and
    record the file's path in a persistent recurring goal so a later turn
    edits the same file. The watcher re-reads it every cycle, so neither
-   change needs a restart.
+   change needs a restart. A line `!owner/repo#number` keeps that pull
+   request out of the watch wherever it sits in the file, matched without
+   regard to case. `project loop drop owner/repo#number --tracked <file>`
+   appends one, as Projector's band does when the user dismisses a pull
+   request, and `project loop restore` with the same arguments removes it.
 5. Run one pass first:
 
    ```sh
