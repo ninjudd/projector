@@ -1,0 +1,1892 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 4dd8d32..a779121 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1444,20 +1444,18 @@ such as `a/b` and `a-b`, cannot both be set up for one pull request on one
+ machine: the second `setup` refuses. Every refusal exits 1 and says what to
+ do.
+ 
+-## Ask and answer questions
++## Use the inbox
+ 
+-`project question` keeps the questions an agent asks you, so the agent can
+-keep working while it waits and you can answer from any host. Each session's
+-questions live in their own directory under
+-`$XDG_STATE_HOME/projector/questions/`, or under
+-`~/.local/state/projector/questions/` when `XDG_STATE_HOME` is unset, and
+-every command reaches them the same way from Claude Code, Codex, or a
+-terminal.
++`project inbox` keeps the questions an agent asks you, so the agent can keep
++working while it waits and you can answer from any host. Each session's
++inbox is its own directory under `$XDG_STATE_HOME/projector/inbox/`, or under
++`~/.local/state/projector/inbox/` when `XDG_STATE_HOME` is unset, and every
++command reaches it the same way from Claude Code, Codex, or a terminal.
+ 
+ An agent asks with one line, the answer it recommends, and any other options:
+ 
+ ```console
+-$ project question ask "Decline the finding about the retry budget?" \
++$ project inbox ask "Decline the finding about the retry budget?" \
+     --recommend "Decline it: the total cap already bounds retries" \
+     --option "Add a budget of two retries per host" \
+     --pr acme/app#337 --session "$SESSION"
+@@ -1485,19 +1483,19 @@ The answers are lettered. `a` is always the recommendation, the other options
+ follow as `b`, `c`, and on, and the last letter is a typed answer:
+ 
+ ```console
+-$ project question show '#337.3'
++$ project inbox show '#337.3'
+ #337.3 Decline the finding about the retry budget?
+ about acme/app#337
+ a. Decline it: the total cap already bounds retries (recommended)
+ b. Add a budget of two retries per host
+ c. type an answer with --text
+ open
+-$ project question answer '#337.3.a'
++$ project inbox answer '#337.3.a'
+ answered #337.3.a
+ ```
+ 
+ To give an answer of your own instead, use the last letter with `--text`, as
+-in `project question answer '#337.3.c' --text "keep the cap, but log each
++in `project inbox answer '#337.3.c' --text "keep the cap, but log each
+ retry"`. A question takes one answer; a second exits 65. `dismiss` answers it
+ with no letter.
+ 
+@@ -1507,7 +1505,7 @@ watcher: it prints one line for each answer and marks it delivered, so the
+ loop running it hears the answer:
+ 
+ ```console
+-$ project question watch --session "$SESSION"
++$ project inbox watch --session "$SESSION"
+ ANSWER #337.3.a Decline the finding about the retry budget? → Decline it: the total cap already bounds retries
+ DISMISSED q2 Run project init to add the publish rule?
+ ```
+@@ -1529,7 +1527,7 @@ delivered only after its line prints, so when nothing reads the watcher any
+ more, the answer waits for the next deliverer rather than being lost. Each
+ session keeps its 100 most recently delivered questions.
+ 
+-`project question context` reads text on standard input and prints what each
++`project inbox context` reads text on standard input and prints what each
+ question reference in it means, for the questions the session holds, so a
+ prompt such as `go with #337.3.b.` can carry its question along. It matches a
+ reference only when it stands alone: `#337.3.b` and `q2.a` match, at the end
+@@ -1539,9 +1537,10 @@ failing tests` do not.
+ ## Consume JSON
+ 
+ Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
+-`priority`, `done`, `check`, or any `question` command. Responses use stdout
+-only for JSON and include `"schema_version": 2`. `question watch --json`
+-prints one JSON object a line, as a watcher reads it.
++`priority`, `done`, `check`, or any `inbox` command. Responses use stdout
++only for JSON and include `"schema_version": 2`. An `inbox` command that
++prints one item prints it under `item`, and `inbox list` prints `items`.
++`inbox watch --json` prints one JSON object a line, as a watcher reads it.
+ 
+ `init --json` keeps the `action` and `path` of the projects README at the top
+ level, as it always has, and adds `files` with every file it manages:
+@@ -1589,7 +1588,7 @@ Projector uses these exit codes:
+ | `2` | Command syntax or an argument is invalid. |
+ | `3` | `project site status` found no Projector site for the repository. |
+ | `65` | Project data is invalid, a mutation is unsafe, or a question or answer is refused. |
+-| `66` | The requested project, the projects directory, or the question does not exist. |
+-| `67` | The requested project is ambiguous, or a question reference names questions in more than one session. |
++| `66` | The requested project, the projects directory, or the inbox item does not exist. |
++| `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
+ | `69` | Git, the interactive editor, or the installer is unavailable. |
+ | `78` | A `.projector.toml` file is not valid TOML. |
+diff --git a/docs/plugins.md b/docs/plugins.md
+index ee19bfe..4bd3c12 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -228,12 +228,12 @@ when a turn ends, and every 30 seconds otherwise. Each reload asks GitHub
+ for every pull request in one `gh api graphql` call, and only while the band
+ is shown. The skills never depend on the band, and Codex has no equivalent.
+ 
+-### Answer your agents' questions in Projector's band
++### Read your inbox in Projector's band
+ 
+ An agent in Claude Code asks you a question with Projector's `ask` tool,
+ which the model sees as `mcp__projector__ask`, and keeps working. An agent
+-that runs `project question ask` from the shell reaches the same questions,
+-as [Ask and answer questions](cli.md#ask-and-answer-questions) describes.
++that runs `project inbox ask` from the shell reaches the same inbox, as
++[Use the inbox](cli.md#use-the-inbox) describes.
+ The questions are a bulleted list below the pull requests, oldest first.
+ Each line ends with the pull request the question is
+ about, as the band labels it, and how long ago it was asked. The band appears
+@@ -296,7 +296,7 @@ An answered question stays in the list, dim, for a minute after its answer is
+ delivered; a dismissed one is struck through. Its drawer still opens and
+ marks the answer given with `✓`.
+ 
+-An answer you give from a terminal with `project question answer` reaches the
++An answer you give from a terminal with `project inbox answer` reaches the
+ agent through the band of the session that asked. A subagent that is still
+ running receives it directly, as a message that starts `ANSWER`, or
+ `DISMISSED` for a dismissal. Otherwise the main loop receives it as a prompt
+@@ -305,8 +305,8 @@ of its own once its turn ends, with the name of the subagent that asked, and
+ in a prompt, such as `#337.3.b`, reaches the agent with the question it
+ names.
+ 
+-Shown or hidden, the band lists the session's question directory every 5
+-seconds and runs `project question` only when the directory changed since
++Shown or hidden, the band lists the session's inbox directory every 5
++seconds and runs `project inbox` only when the directory changed since
+ its last successful read or an answer is on its way, so a session with no
+ questions starts no process. A read that fails runs again 5 seconds later.
+ 
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 18298ba..36666fd 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: ready
++status: in-progress
+ priority: now
+ ---
+ 
+diff --git a/docs/projects/questions/readme.md b/docs/projects/questions/readme.md
+index 7a35646..7c91b75 100644
+--- a/docs/projects/questions/readme.md
++++ b/docs/projects/questions/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: in-progress
++status: completed
+ priority: now
+ ---
+ 
+@@ -539,3 +539,12 @@ Paseo plugin that runs the same actions in Paseo's daemon. Projector's
+ version differs where its hosts and loops do: it serves Codex as well as
+ Claude Code, it delivers through a watcher as its loops already do, and it
+ raises a notification when a question arrives.
++
++## 9. Outcome
++
++The project shipped in two pull requests, #271 for the CLI and #273 for the
++band and the `ask` tool, both released in 0.7.14. It continues as the
++[inbox](../inbox/readme.md) project, which renames `project question` to
++`project inbox`, so each command this plan names now runs under
++`project inbox`. The inbox plan's § 7 carries every open question in § 7
++here.
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index e38b65c..b4f8708 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -1,7 +1,7 @@
+ import type { AgentInfo, FsEntry, On } from 'claude-code'
+ import { expect, mock, test, type Engine } from 'claude-code/testing'
+ 
+-import type { Question } from './types'
++import type { Item } from './types'
+ 
+ const HOME = '/home/ada'
+ const REVIEW = `${HOME}/loops/review/tracked`
+@@ -316,18 +316,19 @@ test('says so when no loop tracks an open pull request', async ($, on) => {
+ })
+ 
+ const SESSION = 's1'
+-const STORE = `${HOME}/.local/state/projector/questions/${SESSION}`
++const STORE = `${HOME}/.local/state/projector/inbox/${SESSION}`
+ const TICK = 5_000
+ 
+-type Held = Omit<Question, 'session'>
++type Held = Omit<Item, 'session'>
+ type Clock = ReturnType<typeof mock.clock>
+ 
+ const held = (fields: Partial<Held> = {}): Held => ({
+   ref: '#7.1',
+   number: 1,
+   pr: 'x/y#7',
+-  askedAt: NOW - 120_000,
+-  question: 'Decline the finding?',
++  postedAt: NOW - 120_000,
++  kind: 'question',
++  subject: 'Decline the finding?',
+   detail: 'The loop caps retries at three.',
+   choices: ['Decline it', 'Add a budget'],
+   ...fields,
+@@ -337,7 +338,7 @@ const held = (fields: Partial<Held> = {}): Held => ({
+ const reopened = (question: Held): Held =>
+   Object.fromEntries(Object.entries(question).filter(([key]) => key !== 'answer' && key !== 'claim')) as Held
+ 
+-/** `project question`, answered from questions held in memory the way the CLI keeps them. */
++/** `project inbox`, answered from items held in memory the way the CLI keeps them. */
+ function questionStore(clock: Clock, seed: readonly Held[]) {
+   const store = new Map<string, Held>()
+   const times = new Map<string, number>()
+@@ -357,7 +358,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+ 
+   const failed = (exitCode: number, message: string): Ran => ({ ...ran(''), exitCode, stderr: `project: ${message}\n` })
+   const printed = (question: Held, extra: Record<string, unknown> = {}) =>
+-    ran(JSON.stringify({ schema_version: 2, ...extra, question }))
++    ran(JSON.stringify({ schema_version: 2, ...extra, item: question }))
+   const flag = (args: readonly string[], name: string) => {
+     const joined = args.find(arg => arg.startsWith(`--${name}=`))
+     if (joined !== undefined) return joined.slice(name.length + 3)
+@@ -366,19 +367,20 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+   }
+   const textOf = (question: Held) =>
+     question.answer !== undefined && 'letter' in question.answer
+-      ? `ANSWER ${question.ref}.${question.answer.letter} ${question.question} → ${question.answer.text}`
+-      : `DISMISSED ${question.ref} ${question.question}`
++      ? `ANSWER ${question.ref}.${question.answer.letter} ${question.subject} → ${question.answer.text}`
++      : `DISMISSED ${question.ref} ${question.subject}`
+ 
+   const run = (argv: string[], stdin: string): Outcome => {
+-    const [, , command = '', ...args] = argv
++    const [, group, command = '', ...args] = argv
+     const time = clock.now()
++    if (group !== 'inbox') return failed(2, `invalid choice: '${group ?? ''}'`)
+     if (command === 'list') {
+       if (failing.lists > 0) {
+         failing.lists -= 1
+         return failed(1, 'the store could not be read')
+       }
+-      const questions = [...store.values()].map(one => ({ ...one, session: SESSION }))
+-      return ran(JSON.stringify({ schema_version: 2, questions }))
++      const items = [...store.values()].map(one => ({ ...one, session: SESSION }))
++      return ran(JSON.stringify({ schema_version: 2, items }))
+     }
+     if (command === 'ask') {
+       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
+@@ -392,8 +394,9 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+         ref,
+         number: asked,
+         pr,
+-        askedAt: time,
+-        question: args[args.indexOf('--') + 1] ?? '',
++        postedAt: time,
++        kind: 'question',
++        subject: args[args.indexOf('--') + 1] ?? '',
+         detail: flag(args, 'detail') ?? '',
+         choices: [flag(args, 'recommend') ?? '', ...options],
+         ...(agentId === undefined ? {} : { agentId }),
+@@ -521,7 +524,7 @@ test('asks through the tool, and the band lists the question below the pull requ
+   expect(String(called.text ?? called.result)).toContain('Asked #7.1.')
+   expect(session.registered).toEqual([expect.objectContaining({ name: 'ask', isDeferred: false })])
+   expect(session.project()).toContain(
+-    'question ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
++    'inbox ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
+   )
+   expect(session.notified).toEqual(['#7.1 Decline the finding?'])
+ 
+@@ -534,7 +537,7 @@ test('asks through the tool, and the band lists the question below the pull requ
+   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
+   // The line names the question's pull request as the band labels it.
+   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
+-  expect(await ui.find({ type: 'Button', key: 'question:#7.1' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'item:#7.1' })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -549,9 +552,9 @@ test('refuses what the CLI refuses, asks an old CLI to upgrade, and says when it
+   const refused = await $.tool.call(ask)
+   expect(refused.deny ?? refused.text).toBe('the question must be one line; put the rest in --detail')
+ 
+-  Object.assign(session.store.refusal, { code: 2, message: "error: argument command: invalid choice: 'question'" })
++  Object.assign(session.store.refusal, { code: 2, message: "error: argument command: invalid choice: 'inbox'" })
+   const old = await $.tool.call(ask)
+-  expect(old.deny ?? old.text).toBe("error: argument command: invalid choice: 'question'; run project upgrade")
++  expect(old.deny ?? old.text).toBe("error: argument command: invalid choice: 'inbox'; run project upgrade")
+ 
+   Object.assign(session.store.refusal, { rejection: 'project timed out after 15000 ms' })
+   const hung = await $.tool.call(ask)
+@@ -563,7 +566,7 @@ test('refuses what the CLI refuses, asks an old CLI to upgrade, and says when it
+ test('a question asked from the shell shows the hidden band within a tick', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  questionWorld(on, clock, [held({ ref: 'q1', pr: null, question: 'Run project init?' })])
++  questionWorld(on, clock, [held({ ref: 'q1', pr: null, subject: 'Run project init?' })])
+   await startSession($, clock, false)
+   await clock.advance(TICK)
+   await clock.settle()
+@@ -591,12 +594,12 @@ test('an idle session with no questions starts no project process', async ($, on
+ test('an option puts the question and its answer in the prompt, and sending it answers the question', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  const later = held({ ref: '#7.2', number: 2, question: 'Rebase first?', askedAt: NOW - 60_000 })
++  const later = held({ ref: '#7.2', number: 2, subject: 'Rebase first?', postedAt: NOW - 60_000 })
+   const session = questionWorld(on, clock, [held({ agentId: 'agent-1' }), later], { agents: [running('running')] })
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'question:#7.1' })
++  await ui.press({ key: 'item:#7.1' })
+   // The open question has the band to itself, the divider included, so it is the top row.
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
+@@ -634,7 +637,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
+   expect(await ui.find({ type: 'Input', key: 'answer:#7.1.c' })).toBeUndefined()
+   expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeUndefined()
+ 
+-  await ui.press({ key: 'question:#7.1' })
++  await ui.press({ key: 'item:#7.1' })
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
+   await clock.advance(60_000 + TICK)
+@@ -646,12 +649,12 @@ test('an option puts the question and its answer in the prompt, and sending it a
+ test('a question another shares the text of takes only the answer its own drawer put in the prompt', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  const newer = held({ ref: '#8.1', pr: 'x/y#8', askedAt: NOW - 60_000 })
++  const newer = held({ ref: '#8.1', pr: 'x/y#8', postedAt: NOW - 60_000 })
+   const session = questionWorld(on, clock, [held(), newer])
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'question:#8.1' })
++  await ui.press({ key: 'item:#8.1' })
+   await ui.press({ key: 'answer:#8.1.a', link: { href: 'https://github.com/x/y/pull/8' } })
+   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nDecline it\n'])
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
+@@ -664,16 +667,16 @@ test('a question another shares the text of takes only the answer its own drawer
+ test('a proposal you cleared from the prompt does not take the answer you sent for another question', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  const newer = held({ ref: '#8.1', pr: 'x/y#8', askedAt: NOW - 60_000 })
+-  const session = questionWorld(on, clock, [held({ askedAt: NOW - 30_000 }), newer])
++  const newer = held({ ref: '#8.1', pr: 'x/y#8', postedAt: NOW - 60_000 })
++  const session = questionWorld(on, clock, [held({ postedAt: NOW - 30_000 }), newer])
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'question:#8.1' })
++  await ui.press({ key: 'item:#8.1' })
+   await ui.press({ key: 'answer:#8.1.a', link: { href: 'https://github.com/x/y/pull/8' } })
+   // You clear that from the prompt, then choose the other answer in #7.1's drawer.
+-  await ui.press({ key: 'question:#8.1' })
+-  await ui.press({ key: 'question:#7.1' })
++  await ui.press({ key: 'item:#8.1' })
++  await ui.press({ key: 'item:#7.1' })
+   await ui.press({ key: 'answer:#7.1.b', link: { href: SEVEN } })
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+@@ -699,7 +702,7 @@ test('only a prompt you sent answers a question', async ($, on) => {
+   ] as const
+   for (const origin of others) await $.prompt.submit({ text, wait: false, origin })
+   await clock.settle()
+-  expect(session.project().filter(command => command.startsWith('question answer'))).toEqual([])
++  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
+   expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+ 
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget', wait: false, origin: { kind: 'bridge' } })
+@@ -710,11 +713,11 @@ test('only a prompt you sent answers a question', async ($, on) => {
+ test('a typed answer fills the prompt, discuss quotes the question, and dismiss resolves it', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  const session = questionWorld(on, clock, [held(), held({ ref: '#7.2', number: 2, question: 'Rebase first?' })])
++  const session = questionWorld(on, clock, [held(), held({ ref: '#7.2', number: 2, subject: 'Rebase first?' })])
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'question:#7.1' })
++  await ui.press({ key: 'item:#7.1' })
+   await ui.input({ key: 'answer:#7.1.c', text: 'keep the cap' })
+   await ui.press({ key: 'discuss:#7.1' })
+   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nkeep the cap\n', 'insert:"Decline the finding?" '])
+@@ -728,12 +731,12 @@ test('a typed answer fills the prompt, discuss quotes the question, and dismiss
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nkeep the cap', wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+   expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'c', text: 'keep the cap' }))
+-  expect(session.project()).toContain('question answer #7.1.c --text=keep the cap --session s1 --json')
++  expect(session.project()).toContain('inbox answer #7.1.c --text=keep the cap --session s1 --json')
+ 
+-  await ui.press({ key: 'question:#7.1' })
+-  await ui.press({ key: 'question:#7.2' })
++  await ui.press({ key: 'item:#7.1' })
++  await ui.press({ key: 'item:#7.2' })
+   await ui.press({ key: 'dismiss:#7.2' })
+-  expect(session.project()).toContain('question dismiss #7.2 --session s1 --json')
++  expect(session.project()).toContain('inbox dismiss #7.2 --session s1 --json')
+   await clock.advance(1)
+   await clock.settle()
+   expect(session.submitted.map(one => one.text)).toContain('DISMISSED #7.2 Rebase first?')
+@@ -783,7 +786,7 @@ test('a dropped submit reopens the question and says why', async ($, on) => {
+   expect(session.toasts).toEqual(['projector: #7.1 did not reach its agent (a hook refused it); answer it again'])
+   expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+   const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Button', key: 'question:#7.1' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'item:#7.1' })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -795,12 +798,12 @@ test('an answer from a terminal waits behind a long turn on one claim, renewed w
+   await startSession($, clock, false)
+   await clock.advance(TICK)
+   await clock.settle()
+-  const lists = () => session.project().filter(command => command.startsWith('question list')).length
++  const lists = () => session.project().filter(command => command.startsWith('inbox list')).length
+   const before = lists()
+ 
+   for (let at = 0; at < 6; at += 1) await clock.advance(TICK)
+   await clock.settle()
+-  const claims = session.project().filter(command => command.startsWith('question claim'))
++  const claims = session.project().filter(command => command.startsWith('inbox claim'))
+   expect(claims.filter(command => !command.includes('--renew'))).toHaveLength(1)
+   expect(claims.filter(command => command.includes('--renew')).length).toBeGreaterThanOrEqual(6)
+   expect(lists()).toBe(before)
+@@ -823,7 +826,7 @@ test('a store read that fails runs again on the next tick', async ($, on) => {
+   for (let at = 0; at < 3; at += 1) await clock.advance(TICK)
+   await clock.settle()
+ 
+-  expect(session.project().filter(command => command.startsWith('question list')).length).toBeGreaterThanOrEqual(2)
++  expect(session.project().filter(command => command.startsWith('inbox list')).length).toBeGreaterThanOrEqual(2)
+   expect(session.submitted.map(one => one.text)).toEqual(['ANSWER #7.1.a Decline the finding? → Decline it'])
+   expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+ })
+@@ -846,11 +849,11 @@ test('a submit an earlier copy of the module left keeps its claim and settles wh
+   await clock.advance(2 * TICK)
+   await clock.settle()
+ 
+-  const claims = session.project().filter(command => command.startsWith('question claim'))
++  const claims = session.project().filter(command => command.startsWith('inbox claim'))
+   expect(claims.length).toBeGreaterThanOrEqual(2)
+-  for (const claim of claims) expect(claim).toBe('question claim #7.1 --renew old --session s1')
++  for (const claim of claims) expect(claim).toBe('inbox claim #7.1 --renew old --session s1')
+   await $.prompt.submit({ text, wait: false, origin: { kind: 'plugin', name: 'projector' } })
+-  expect(session.project()).toContain('question delivered #7.1 --claim old --session s1 --json')
++  expect(session.project()).toContain('inbox delivered #7.1 --claim old --session s1 --json')
+   expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+   expect(pending).toEqual({})
+ })
+@@ -867,5 +870,5 @@ test('a reference typed in the prompt reaches the agent with its question', asyn
+     { text: 'go with #7.1.b', context: ['#7.1.b answers Decline the finding? with Add a budget'] },
+     { text: 'rerun the 2 failing tests', context: [] },
+   ])
+-  expect(session.project().filter(command => command.startsWith('question context'))).toHaveLength(1)
++  expect(session.project().filter(command => command.startsWith('inbox context'))).toHaveLength(1)
+ })
+diff --git a/hooks/questions.test.ts b/hooks/inbox.test.ts
+similarity index 93%
+rename from hooks/questions.test.ts
+rename to hooks/inbox.test.ts
+index fa4a501..b88fa30 100644
+--- a/hooks/questions.test.ts
++++ b/hooks/inbox.test.ts
+@@ -16,17 +16,18 @@ import {
+   span,
+   storeOf,
+   typedLetter,
+-} from './questions'
+-import type { Question } from './types'
++} from './inbox'
++import type { Item } from './types'
+ 
+ const NOW = Date.UTC(2026, 9, 12, 12, 0)
+ 
+-const question = (fields: Partial<Question> = {}): Question => ({
++const question = (fields: Partial<Item> = {}): Item => ({
+   ref: '#7.1',
+   number: 1,
+   pr: 'o/r#7',
+-  askedAt: NOW - 60_000,
+-  question: 'Decline the finding?',
++  postedAt: NOW - 60_000,
++  kind: 'question',
++  subject: 'Decline the finding?',
+   detail: '',
+   choices: ['Decline it', 'Add a budget'],
+   session: 's1',
+@@ -53,7 +54,7 @@ test('the prompt carries a question in quotes, and an answer on a line of its ow
+ })
+ 
+ test('a sent prompt answers each question whose quote ends its line', () => {
+-  const open = [question(), question({ ref: '#7.2', question: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
++  const open = [question(), question({ ref: '#7.2', subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
+   expect(answersIn('"Decline the finding?"\n\nAdd a budget\n', open)).toEqual([{ question: open[0], letter: 'b' }])
+   expect(answersIn('Both:\n"Decline the finding?"\nDecline it\n"Rebase first?"\n\nkeep it', open)).toEqual([
+     { question: open[0], letter: 'a' },
+@@ -68,7 +69,7 @@ test('a sent prompt answers each question whose quote ends its line', () => {
+ 
+ test('a quote two questions share answers one: the one whose drawer put that answer there, else the oldest', () => {
+   const newer = question({ ref: '#8.1', pr: 'o/r#8' })
+-  const older = question({ askedAt: NOW - 120_000 })
++  const older = question({ postedAt: NOW - 120_000 })
+   const budget = '"Decline the finding?"\n\nAdd a budget'
+   const decline = '"Decline the finding?"\n\nDecline it'
+   expect(answersIn(budget, [newer, older])).toEqual([{ question: older, letter: 'b' }])
+@@ -139,8 +140,8 @@ test('the main loop is told which subagent asked', () => {
+ 
+ test('the store is where the CLI keeps it', () => {
+   const env = (values: Record<string, string>) => (name: string) => values[name]
+-  expect(storeOf(env({ HOME: '/home/ada' }), 's1')).toBe('/home/ada/.local/state/projector/questions/s1')
+-  expect(storeOf(env({ HOME: '/home/ada', XDG_STATE_HOME: '/state' }), 's1')).toBe('/state/projector/questions/s1')
++  expect(storeOf(env({ HOME: '/home/ada' }), 's1')).toBe('/home/ada/.local/state/projector/inbox/s1')
++  expect(storeOf(env({ HOME: '/home/ada', XDG_STATE_HOME: '/state' }), 's1')).toBe('/state/projector/inbox/s1')
+   expect(storeOf(env({}), 's1')).toBeUndefined()
+ })
+ 
+@@ -160,7 +161,7 @@ test('ages are short', () => {
+   expect([span(40), span(300), span(7200), span(3 * 86_400)]).toEqual(['40s', '5m', '2h', '3d'])
+ })
+ 
+-test('a call of the tool becomes `project question ask`, text kept as text', () => {
++test('a call of the tool becomes `project inbox ask`, text kept as text', () => {
+   expect(
+     askArguments(
+       { question: '-Ship it?', recommendation: '--yes', options: ['no'], detail: 'Why', pr: 'o/r#7' },
+@@ -168,7 +169,7 @@ test('a call of the tool becomes `project question ask`, text kept as text', ()
+       'agent-1',
+     ),
+   ).toEqual([
+-    'question',
++    'inbox',
+     'ask',
+     '--session=s1',
+     '--recommend=--yes',
+@@ -180,7 +181,7 @@ test('a call of the tool becomes `project question ask`, text kept as text', ()
+     '-Ship it?',
+   ])
+   expect(askArguments({ question: 'Ship it?', recommendation: 'Yes' }, 's1', undefined)).toEqual([
+-    'question',
++    'inbox',
+     'ask',
+     '--session=s1',
+     '--recommend=Yes',
+diff --git a/hooks/questions.ts b/hooks/inbox.ts
+similarity index 85%
+rename from hooks/questions.ts
+rename to hooks/inbox.ts
+index 8da4cb0..dd8ab63 100644
+--- a/hooks/questions.ts
++++ b/hooks/inbox.ts
+@@ -1,45 +1,45 @@
+ import type { AgentInfo, FsEntry } from 'claude-code'
+ 
+-import type { Question } from './types'
++import type { Item } from './types'
+ import type { Env } from './parse'
+ 
+ /** How long a delivered question stays in the band. */
+ export const RESOLVED_MS = 60_000
+ 
+-/** How long a claim lasts without renewal, as `project question claim` counts it. */
++/** How long a claim lasts without renewal, as `project inbox claim` counts it. */
+ export const CLAIM_MS = 60_000
+ 
+ const LIVE: ReadonlySet<AgentInfo['status']> = new Set(['pending', 'running', 'waiting', 'idle'])
+ 
+ /**
+  * Whether text holds anything shaped like a reference, `#337.3` or `q2`, so
+- * that only such a prompt starts `project question context`, which decides.
++ * that only such a prompt starts `project inbox context`, which decides.
+  */
+ export const mayReference = (text: string) => /#\d+\.\d|\bq\d/.test(text)
+ 
+ export const letterAt = (index: number) => String.fromCharCode('a'.charCodeAt(0) + index)
+ 
+ /** The letter of a typed answer: the one after the last choice. */
+-export const typedLetter = (question: Question) => letterAt(question.choices.length)
++export const typedLetter = (question: Item) => letterAt(question.choices.length)
+ 
+ /** Whether the band still shows a question: open, being delivered, or delivered under a minute ago. */
+-export const isShownAt = (question: Question, time: number) =>
++export const isShownAt = (question: Item, time: number) =>
+   question.deliveredAt === undefined || time - question.deliveredAt < RESOLVED_MS
+ 
+ /** Whether an answer waits for a deliverer: recorded, undelivered, and claimed by none that is live. */
+-export const needsDelivery = (question: Question, time: number) =>
++export const needsDelivery = (question: Item, time: number) =>
+   question.answer !== undefined &&
+   question.deliveredAt === undefined &&
+   (question.claim === undefined || time - question.claim.renewedAt >= CLAIM_MS)
+ 
+ /** What the band puts in the prompt to discuss a question: its text, in quotes. */
+-export const quoteOf = (question: Question) => `"${question.question}"`
++export const quoteOf = (question: Item) => `"${question.subject}"`
+ 
+ /** What the band puts in the prompt for an answer: the quoted question, a blank line, and the answer's text. */
+-export const proposalOf = (question: Question, answer: string) => `${quoteOf(question)}\n\n${answer}`
++export const proposalOf = (question: Item, answer: string) => `${quoteOf(question)}\n\n${answer}`
+ 
+ /** One answer a sent prompt gives: a choice's letter, or the typed letter and its text. */
+-export type Given = { question: Question; letter: string; text?: string }
++export type Given = { question: Item; letter: string; text?: string }
+ 
+ /** An answer a question's drawer put in the prompt. */
+ export type Proposal = { ref: string; answer: string }
+@@ -54,10 +54,10 @@ export type Proposal = { ref: string; answer: string }
+  * never take one answer. A quoted question with more on its line, as discuss
+  * leaves it, answers nothing.
+  */
+-export function answersIn(text: string, questions: readonly Question[], proposed: readonly Proposal[] = []): Given[] {
++export function answersIn(text: string, questions: readonly Item[], proposed: readonly Proposal[] = []): Given[] {
+   const open = questions
+     .filter(question => question.answer === undefined)
+-    .sort((one, other) => one.askedAt - other.askedAt)
++    .sort((one, other) => one.postedAt - other.postedAt)
+   const found: { at: number; given: Given }[] = []
+   const taken = new Set<string>()
+   for (const quote of new Set(open.map(quoteOf))) {
+@@ -79,32 +79,32 @@ export function answersIn(text: string, questions: readonly Question[], proposed
+ }
+ 
+ /** Names the subagent that asked, by its description and id when the session still lists it. */
+-function whoAsked(question: Question, agents: readonly AgentInfo[]): string {
++function whoAsked(question: Item, agents: readonly AgentInfo[]): string {
+   const agent = agents.find(one => one.id === question.agentId)
+   return agent === undefined ? (question.agentId ?? '') : `${agent.description} (${agent.id})`
+ }
+ 
+ /** What the main loop reads beside a prompt that answers a subagent's question: whom to send it to. */
+-export const relayNote = (question: Question, agents: readonly AgentInfo[]) =>
++export const relayNote = (question: Item, agents: readonly AgentInfo[]) =>
+   `The subagent ${whoAsked(question, agents)} asked ${quoteOf(question)}; send it the answer this prompt gives.`
+ 
+ /** The subagent that asked, while it can still read a message; undefined sends the answer to the main loop. */
+-export function liveAgent(question: Question, agents: readonly AgentInfo[]): string | undefined {
++export function liveAgent(question: Item, agents: readonly AgentInfo[]): string | undefined {
+   const agent = agents.find(one => one.id === question.agentId)
+   return agent !== undefined && LIVE.has(agent.status) ? agent.id : undefined
+ }
+ 
+ /** What the main loop receives: the answer, and the subagent to relay it to when one asked. */
+-export function forMainLoop(text: string, question: Question, agents: readonly AgentInfo[]): string {
++export function forMainLoop(text: string, question: Item, agents: readonly AgentInfo[]): string {
+   if (question.agentId === undefined) return text
+   return `${text}\n\nThe subagent ${whoAsked(question, agents)} asked this, and the answer could not reach it; send it this answer, or act on it yourself.`
+ }
+ 
+-/** Where a session's questions live: `project question`'s store, found by the CLI's own rule. */
++/** Where a session's items live: `project inbox`'s store, found by the CLI's own rule. */
+ export function storeOf(env: Env, session: string): string | undefined {
+   const home = env('HOME')
+   const base = env('XDG_STATE_HOME') ?? (home === undefined ? undefined : `${home}/.local/state`)
+-  return base === undefined ? undefined : `${base}/projector/questions/${session}`
++  return base === undefined ? undefined : `${base}/projector/inbox/${session}`
+ }
+ 
+ /**
+@@ -169,7 +169,7 @@ export const ASK_SCHEMA = {
+ const isText = (value: unknown): value is string => typeof value === 'string'
+ 
+ /**
+- * The arguments of `project question ask` for one call of the tool, or why
++ * The arguments of `project inbox ask` for one call of the tool, or why
+  * the call cannot be one. Each value rides in its flag's `=` form and the
+  * question after `--`, so text that starts with `-` stays text.
+  */
+@@ -185,7 +185,7 @@ export function askArguments(
+   if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
+   if (pr !== undefined && !isText(pr)) return { error: '`pr` must be a string such as owner/repo#123' }
+   return [
+-    'question',
++    'inbox',
+     'ask',
+     `--session=${session}`,
+     `--recommend=${recommendation}`,
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index fff43b1..73ddcad 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1,7 +1,7 @@
+ import { atom, read, update } from 'claude-code'
+ import type { EngineInterface, FsEntry, Register } from 'claude-code'
+ 
+-import type { Checks, LoopKind, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
++import type { Checks, Item, LoopKind, PullRequest, Row, SeenLoop, Sending, Snapshot } from './types'
+ import { buildQuery, parseResponse, type Fetched } from './github'
+ import { expandPath, findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
+ import {
+@@ -23,7 +23,7 @@ import {
+   storeOf,
+   typedLetter,
+   type Proposal,
+-} from './questions'
++} from './inbox'
+ 
+ type Engine = EngineInterface
+ type Loop = { kind: LoopKind; tracked: string }
+@@ -49,7 +49,7 @@ const snapshot = atom({ plugin: 'projector', key: 'bandSnapshot' } as const, EMP
+ const now = atom({ plugin: 'projector', key: 'bandNow' } as const, 0)
+ const isShown = atom({ plugin: 'projector', key: 'isBandShown' } as const, false)
+ const drawer = atom({ plugin: 'projector', key: 'bandDrawer' } as const, null)
+-const questions = atom({ plugin: 'projector', key: 'bandQuestions' } as const, [])
++const items = atom({ plugin: 'projector', key: 'bandInbox' } as const, [])
+ const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
+ 
+ // The session keeps its state across a reload or an update of the plugin,
+@@ -265,21 +265,21 @@ function refresh($: Engine, isForced = false): Promise<void> {
+ }
+ 
+ /** Puts a question the CLI just answered for in the band's list, in place of what it showed. */
+-const replace = ($: Engine, question: Question) =>
+-  update($, questions, list =>
++const replace = ($: Engine, question: Item) =>
++  update($, items, list =>
+     list.map(one => (one.ref === question.ref && one.session === question.session ? question : one)),
+   )
+ 
+ /** The question a CLI command printed with `--json`, in the session it belongs to. */
+-const questionOf = (stdout: string, session: string): Question => ({
+-  ...(JSON.parse(stdout) as { question: Omit<Question, 'session'> }).question,
++const itemOf = (stdout: string, session: string): Item => ({
++  ...(JSON.parse(stdout) as { item: Omit<Item, 'session'> }).item,
+   session,
+ })
+ 
+ /** Takes the band's list from the store, and shows the band for a question it has not shown before. */
+-async function setQuestions($: Engine, list: Question[]): Promise<void> {
++async function setItems($: Engine, list: Item[]): Promise<void> {
+   let isNew = false
+-  await update($, questions, before => {
++  await update($, items, before => {
+     const known = new Set(before.map(one => one.ref))
+     isNew = list.some(one => one.answer === undefined && !known.has(one.ref))
+     return list
+@@ -301,12 +301,12 @@ async function readStore($: Engine, session: string): Promise<void> {
+   const signature = `${session}\n${files}`
+   if (signature === listed) return
+   if (files === '') {
+-    await setQuestions($, [])
++    await setItems($, [])
+   } else {
+-    const ran = await project($, ['question', 'list', '--all', '--json', '--session', session])
++    const ran = await project($, ['inbox', 'list', '--all', '--json', '--session', session])
+     if (ran.exitCode !== 0) return
+-    const { questions: list } = JSON.parse(ran.stdout) as { questions: Question[] }
+-    await setQuestions($, list)
++    const { items: list } = JSON.parse(ran.stdout) as { items: Item[] }
++    await setItems($, list)
+   }
+   listed = signature
+ }
+@@ -327,10 +327,10 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
+   })
+   if (entry === undefined) return
+   const { session, token } = entry
+-  const ran = await project($, ['question', outcome, ref, '--claim', token, '--session', session, '--json']).catch(
++  const ran = await project($, ['inbox', outcome, ref, '--claim', token, '--session', session, '--json']).catch(
+     () => undefined,
+   )
+-  if (ran?.exitCode === 0) await replace($, questionOf(ran.stdout, session))
++  if (ran?.exitCode === 0) await replace($, itemOf(ran.stdout, session))
+   if (outcome === 'reopen') {
+     void $.ui.toast(`projector: ${ref} did not reach its agent${reason ? ` (${reason})` : ''}; answer it again`)
+   }
+@@ -341,15 +341,15 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
+  * it can still read a message, otherwise to the main loop as a prompt of its
+  * own, which waits for the session to be idle.
+  */
+-async function deliver($: Engine, question: Question): Promise<void> {
++async function deliver($: Engine, question: Item): Promise<void> {
+   const { ref, session } = question
+   delivering.add(ref)
+   try {
+-    const ran = await project($, ['question', 'claim', ref, '--session', session, '--json'])
++    const ran = await project($, ['inbox', 'claim', ref, '--session', session, '--json'])
+     // Another deliverer holds it, or it was delivered since the band read the store.
+     if (ran.exitCode !== 0) return
+     const claimed = JSON.parse(ran.stdout) as { token: string; text: string }
+-    await replace($, questionOf(ran.stdout, session))
++    await replace($, itemOf(ran.stdout, session))
+ 
+     const agents = question.agentId === undefined ? [] : await $.agent.list().catch(() => [])
+     const agentId = liveAgent(question, agents)
+@@ -383,14 +383,14 @@ async function renewClaims($: Engine): Promise<void> {
+       await update($, sending, all => Object.fromEntries(Object.entries(all).filter(([key]) => key !== entry.ref)))
+       continue
+     }
+-    await project($, ['question', 'claim', entry.ref, '--renew', entry.token, '--session', entry.session]).catch(
++    await project($, ['inbox', 'claim', entry.ref, '--renew', entry.token, '--session', entry.session]).catch(
+       () => undefined,
+     )
+   }
+ }
+ 
+ /** Reads the store when it changed, renews the band's claims, and delivers each answer nobody is delivering. */
+-async function checkQuestions($: Engine): Promise<void> {
++async function checkInbox($: Engine): Promise<void> {
+   if (isChecking) return
+   isChecking = true
+   try {
+@@ -399,7 +399,7 @@ async function checkQuestions($: Engine): Promise<void> {
+     await renewClaims($)
+     const time = await $.clock.now()
+     const pending = await read($, sending)
+-    for (const question of await read($, questions)) {
++    for (const question of await read($, items)) {
+       if (question.session !== session || delivering.has(question.ref) || question.ref in pending) continue
+       if (needsDelivery(question, time)) void deliver($, question)
+     }
+@@ -411,17 +411,17 @@ async function checkQuestions($: Engine): Promise<void> {
+ }
+ 
+ /** Checks the questions now rather than at the next tick. */
+-const checkSoon = ($: Engine) => $.clock.after(1, () => void checkQuestions($))
++const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
+ 
+ /** Dismisses a question from the band; a second press finds it dismissed and does nothing. */
+-async function dismiss($: Engine, question: Question): Promise<void> {
++async function dismiss($: Engine, question: Item): Promise<void> {
+   const { ref, session } = question
+   if (answering.has(ref)) return
+   answering.add(ref)
+   try {
+-    const ran = await project($, ['question', 'dismiss', ref, '--session', session, '--json'])
++    const ran = await project($, ['inbox', 'dismiss', ref, '--session', session, '--json'])
+     if (ran.exitCode === 0) {
+-      await replace($, questionOf(ran.stdout, session))
++      await replace($, itemOf(ran.stdout, session))
+     } else if (ran.exitCode === 65) {
+       // Answered elsewhere since the band read the store: read it again.
+       listed = undefined
+@@ -441,18 +441,18 @@ async function dismiss($: Engine, question: Question): Promise<void> {
+  * prompt itself carries it to the main loop. The band's own deliverer leaves
+  * the question alone meanwhile, so the agent hears the answer once.
+  */
+-async function answerFromPrompt($: Engine, question: Question, letter: string, text?: string): Promise<void> {
++async function answerFromPrompt($: Engine, question: Item, letter: string, text?: string): Promise<void> {
+   const { ref, session } = question
+   delivering.add(ref)
+   try {
+     const typed = text === undefined ? [] : [`--text=${text}`]
+-    const answered = await project($, ['question', 'answer', `${ref}.${letter}`, ...typed, '--session', session, '--json'])
++    const answered = await project($, ['inbox', 'answer', `${ref}.${letter}`, ...typed, '--session', session, '--json'])
+     if (answered.exitCode !== 0) return
+-    const claimed = await project($, ['question', 'claim', ref, '--session', session, '--json'])
++    const claimed = await project($, ['inbox', 'claim', ref, '--session', session, '--json'])
+     if (claimed.exitCode !== 0) return
+     const { token } = JSON.parse(claimed.stdout) as { token: string }
+-    const ran = await project($, ['question', 'delivered', ref, '--claim', token, '--session', session, '--json'])
+-    if (ran.exitCode === 0) await replace($, questionOf(ran.stdout, session))
++    const ran = await project($, ['inbox', 'delivered', ref, '--claim', token, '--session', session, '--json'])
++    if (ran.exitCode === 0) await replace($, itemOf(ran.stdout, session))
+   } catch {
+     // An answer recorded but not marked delivered is the band's to deliver on a later tick.
+   } finally {
+@@ -463,7 +463,7 @@ async function answerFromPrompt($: Engine, question: Question, letter: string, t
+ /** What the CLI says about each question a prompt refers to, or undefined when it names none. */
+ async function explain($: Engine, text: string): Promise<string | undefined> {
+   try {
+-    const ran = await project($, ['question', 'context', '--session', await $.session.id()], text)
++    const ran = await project($, ['inbox', 'context', '--session', await $.session.id()], text)
+     const said = ran.exitCode === 0 ? ran.stdout.trim() : ''
+     return said === '' ? undefined : said
+   } catch {
+@@ -476,7 +476,7 @@ async function explain($: Engine, text: string): Promise<string | undefined> {
+  * clock on and polls GitHub once the last load is old enough.
+  */
+ async function tick($: Engine): Promise<void> {
+-  await checkQuestions($)
++  await checkInbox($)
+   if (!(await read($, isShown))) return
+   const time = await $.clock.now()
+   await update($, now, () => time)
+@@ -619,7 +619,7 @@ export const register: Register = on => {
+     const session = await $.session.id()
+     const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+     const given = isYours
+-      ? answersIn(e.text, (await read($, questions)).filter(question => question.session === session), proposed)
++      ? answersIn(e.text, (await read($, items)).filter(question => question.session === session), proposed)
+       : []
+     proposed = proposed.filter(proposal => !given.some(one => one.question.ref === proposal.ref))
+     const asked = given.filter(one => one.question.agentId !== undefined)
+@@ -672,7 +672,7 @@ export const register: Register = on => {
+     const shown = current(await read($, snapshot))
+     const time = await read($, now)
+     const opened = await read($, drawer)
+-    const asked = (await read($, questions)).filter(question => isShownAt(question, time))
++    const asked = (await read($, items)).filter(question => isShownAt(question, time))
+     const open = asked.filter(question => question.answer === undefined).length
+     const label = labeler(shown.rows.map(row => row.pr))
+     const reference = referencer(shown.rows.map(row => row.pr))
+@@ -722,7 +722,7 @@ export const register: Register = on => {
+     // question's pull request, or the question's own file in the store when it
+     // has none.
+     const store = (session: string) => storeOf(env, session) ?? ''
+-    const hrefOf = (question: Question) => {
++    const hrefOf = (question: Item) => {
+       const pull = question.pr?.match(/^([^#]+)#(\d+)$/)
+       return pull === null || pull === undefined
+         ? `file://${encodeURI(`${store(question.session)}/${encodeURIComponent(question.ref)}.json`)}`
+@@ -734,7 +734,7 @@ export const register: Register = on => {
+     )
+     // A question names its pull request as the band labels it, or in full
+     // when the band does not list it.
+-    const pullOf = (question: Question) => {
++    const pullOf = (question: Item) => {
+       const row = shown.rows.find(one => keyOf(one.pr) === question.pr?.toLowerCase())
+       return row === undefined ? (question.pr ?? '') : label(row.pr)
+     }
+@@ -745,10 +745,10 @@ export const register: Register = on => {
+     // change, and sending it is what answers the question.
+     // Each age sits in one column as wide as the widest, so the pull requests
+     // before it end in one column too.
+-    const ageWidth = Math.max(0, ...asked.map(question => span(secondsSince(time, question.askedAt)).length))
+-    const drawQuestion = (question: Question) => {
++    const ageWidth = Math.max(0, ...asked.map(question => span(secondsSince(time, question.postedAt)).length))
++    const drawQuestion = (question: Item) => {
+       const { ref, answer } = question
+-      const key = `question:${ref}`
++      const key = `item:${ref}`
+       const isOpen = answer === undefined
+       const isDismissed = answer !== undefined && 'dismissed' in answer
+       const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
+@@ -795,7 +795,7 @@ export const register: Register = on => {
+                   -{' '}
+                 </Text>
+                 <Text dimColor={!isOpen} strikethrough={isDismissed} inverse={opened === key}>
+-                  {question.question}
++                  {question.subject}
+                 </Text>
+               </Button>
+             </Box>
+@@ -810,7 +810,7 @@ export const register: Register = on => {
+               </Box>
+             )}
+             <Box flexShrink={0} width={ageWidth} justifyContent="flex-end">
+-              <Text color="subtle">{span(secondsSince(time, question.askedAt))}</Text>
++              <Text color="subtle">{span(secondsSince(time, question.postedAt))}</Text>
+             </Box>
+           </Box>
+           {opened === key && (
+@@ -924,7 +924,7 @@ export const register: Register = on => {
+     // the question leaves the band. The divider steps aside too, so the
+     // question is the top row and the drawer has one more row before the
+     // engine, which caps the band below half the terminal, starts to scroll.
+-    const focused = asked.find(question => opened === `question:${question.ref}`)
++    const focused = asked.find(question => opened === `item:${question.ref}`)
+     if (focused !== undefined) {
+       return <Box flexDirection="column">{drawQuestion(focused)}</Box>
+     }
+@@ -936,7 +936,7 @@ export const register: Register = on => {
+         {shown.rows.map(drawRow)}
+         {failure !== undefined && <Text color="error">{failure}</Text>}
+         {asked.length > 0 && shown.rows.length > 0 && <Text key="before-questions"> </Text>}
+-        {[...asked].sort((a, b) => a.askedAt - b.askedAt).map(drawQuestion)}
++        {[...asked].sort((a, b) => a.postedAt - b.postedAt).map(drawQuestion)}
+       </Box>
+     )
+   })
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index f26b671..e082173 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -38,17 +38,20 @@ export type Snapshot = {
+   error: string | null
+ }
+ 
+-/** How a question was answered: a lettered choice or typed text, or dismissed. */
++/** How an item was answered: a question by a lettered choice or typed text, or dismissed. */
+ export type Answer = { letter: string; text: string; answeredAt: number } | { dismissed: true; answeredAt: number }
+ 
+-/** One question as `project question list --json` gives it, with the session whose store holds it. */
+-export type Question = {
++/** One item as `project inbox list --json` gives it, with the session whose store holds it. */
++export type Item = {
+   ref: string
++  kind: 'question'
+   number: number
+   /** The pull request it is about, as `owner/repo#number`; null when none. */
+   pr: string | null
+-  askedAt: number
+-  question: string
++  /** When the agent posted it, in milliseconds. */
++  postedAt: number
++  /** The question, in one line. */
++  subject: string
+   detail: string
+   /** The answers in letter order, the recommendation first; the letter after the last is a typed answer. */
+   choices: string[]
+@@ -79,10 +82,10 @@ declare module 'claude-code' {
+       bandSnapshot: Snapshot
+       bandNow: number
+       isBandShown: boolean
+-      /** The drawer that is open: a pull request's by `keyOf`, or `question:` and a question's reference. */
++      /** The drawer that is open: a pull request's by `keyOf`, or `item:` and an item's reference. */
+       bandDrawer: string | null
+-      /** The session's questions, as the band last read them. */
+-      bandQuestions: Question[]
++      /** The session's inbox, as the band last read it. */
++      bandInbox: Item[]
+       /** The answers the band is delivering, by reference. */
+       bandSending: Record<string, Sending>
+     }
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index b13d2f2..debf87f 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -23,7 +23,7 @@
+ from urllib.parse import urlparse
+ from urllib.request import url2pathname, urlopen
+ 
+-from . import permissions, questions, review, site, summary
++from . import inbox, permissions, review, site, summary
+ from .permissions import allow_publish
+ from .summary import WORKFLOW_PATH
+ from .config import ConfigError
+@@ -533,7 +533,7 @@ def parser() -> argparse.ArgumentParser:
+                                 help="publish a clean incremental review of the change since this loop's last "
+                                      "full review, when `project review interdiff` allows one")
+ 
+-    add_question_parser(subcommands)
++    add_inbox_parser(subcommands)
+ 
+     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
+     site_commands = site.add_subparsers(dest="site_command", required=True)
+@@ -624,9 +624,9 @@ def seconds(text: str) -> float:
+     return value
+ 
+ 
+-def add_question_parser(subcommands) -> None:
+-    question = subcommands.add_parser("question", help="ask the person a question, and answer and deliver it")
+-    commands = question.add_subparsers(dest="question_command", required=True)
++def add_inbox_parser(subcommands) -> None:
++    parser = subcommands.add_parser("inbox", help="ask the person a question, and answer and deliver it")
++    commands = parser.add_subparsers(dest="inbox_command", required=True)
+ 
+     def command(name: str, help_text: str) -> argparse.ArgumentParser:
+         parsed = commands.add_parser(name, help=help_text)
+@@ -644,10 +644,10 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     ask.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
+     ask.add_argument("--agent", help="the asking subagent's id, when a subagent asks")
+ 
+-    listing = command("list", "list open questions: the session's, or every session's without one")
+-    listing.add_argument("--all", action="store_true", help="include delivered questions")
++    listing = command("list", "list open items: the session's, or every session's without one")
++    listing.add_argument("--all", action="store_true", help="include delivered items")
+ 
+-    show = command("show", "print one question with its detail and lettered answers")
++    show = command("show", "print one item with its detail and lettered answers")
+     show.add_argument("reference", help="such as #337.3, owner/repo#337.3, or q2")
+ 
+     answer = command("answer", "record an answer, such as #337.3.a")
+@@ -671,7 +671,7 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     watch.add_argument("--interval", type=seconds, default=5.0, help="seconds between passes (default: 5)")
+     watch.add_argument("--once", action="store_true", help="make one pass and exit")
+ 
+-    command("context", "print what each question reference in standard input means")
++    command("context", "print what each inbox reference in standard input means")
+ 
+ 
+ def open_editor(path: Path) -> None:
+@@ -1073,10 +1073,10 @@ def run_review(arguments: argparse.Namespace) -> int:
+     return 0
+ 
+ 
+-def question_session(arguments: argparse.Namespace, required: bool) -> Optional[str]:
++def inbox_session(arguments: argparse.Namespace, required: bool) -> Optional[str]:
+     session = arguments.session or os.environ.get("PROJECTOR_SESSION") or None
+     if required and session is None:
+-        raise UsageError(f"`project question {arguments.question_command}` needs the asking session: pass --session "
++        raise UsageError(f"`project inbox {arguments.inbox_command}` needs the posting session: pass --session "
+                          "or set PROJECTOR_SESSION")
+     return session
+ 
+@@ -1088,76 +1088,76 @@ def checkout_repo(checkout: Path) -> Optional[str]:
+         return None
+ 
+ 
+-def question_state(question: dict) -> str:
+-    if not question.get("answer"):
++def item_state(item: dict) -> str:
++    if not item.get("answer"):
+         return "open"
+-    if question.get("deliveredAt"):
+-        return f"delivered {questions.answer_ref(question)}"
+-    if questions.live_claim(question):
+-        return f"delivering {questions.answer_ref(question)}"
+-    return f"answered {questions.answer_ref(question)}"
+-
+-
+-def print_question(question: dict) -> None:
+-    print(f"{question['ref']} {question['question']}")
+-    if question.get("pr"):
+-        print(f"about {question['pr']}")
+-    if question.get("detail"):
+-        print(f"\n{question['detail']}\n")
+-    for index, choice in enumerate(question["choices"]):
++    if item.get("deliveredAt"):
++        return f"delivered {inbox.answer_ref(item)}"
++    if inbox.live_claim(item):
++        return f"delivering {inbox.answer_ref(item)}"
++    return f"answered {inbox.answer_ref(item)}"
++
++
++def print_item(item: dict) -> None:
++    print(f"{item['ref']} {item['subject']}")
++    if item.get("pr"):
++        print(f"about {item['pr']}")
++    if item.get("detail"):
++        print(f"\n{item['detail']}\n")
++    for index, choice in enumerate(item["choices"]):
+         print(f"{chr(ord('a') + index)}. {choice}{' (recommended)' if index == 0 else ''}")
+-    print(f"{questions.typed_letter(question)}. type an answer with --text")
+-    print(question_state(question))
++    print(f"{inbox.typed_letter(item)}. type an answer with --text")
++    print(item_state(item))
+ 
+ 
+-def run_question(arguments: argparse.Namespace) -> int:
+-    command = arguments.question_command
++def run_inbox(arguments: argparse.Namespace) -> int:
++    command = arguments.inbox_command
+     json_output = arguments.json_output
+     if command == "ask":
+         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
+-        question = questions.ask(question_session(arguments, True), arguments.question, arguments.recommend,
+-                                 arguments.option, detail=detail, pr=arguments.pr, agent=arguments.agent,
+-                                 repo=checkout_repo(Path.cwd()))
+-        print(json_text({"question": question}) if json_output else question["ref"])
++        item = inbox.ask(inbox_session(arguments, True), arguments.question, arguments.recommend,
++                         arguments.option, detail=detail, pr=arguments.pr, agent=arguments.agent,
++                         repo=checkout_repo(Path.cwd()))
++        print(json_text({"item": item}) if json_output else item["ref"])
+     elif command == "list":
+-        session = question_session(arguments, False)
+-        names = [session] if session else questions.sessions()
+-        rows = [{**question, "session": name} for name in names
+-                for question in questions.load_questions(questions.session_dir(name))
+-                if arguments.all or not question.get("deliveredAt")]
++        session = inbox_session(arguments, False)
++        names = [session] if session else inbox.sessions()
++        rows = [{**item, "session": name} for name in names
++                for item in inbox.load_items(inbox.session_dir(name))
++                if arguments.all or not item.get("deliveredAt")]
+         if json_output:
+-            print(json_text({"questions": rows}))
++            print(json_text({"items": rows}))
+         for row in [] if json_output else rows:
+-            columns = [row["ref"], question_state(row), row["question"]]
++            columns = [row["ref"], item_state(row), row["subject"]]
+             print("\t".join(columns if session else [row["session"], *columns]))
+     elif command == "show":
+-        ref, _ = questions.parse_reference(arguments.reference)
+-        _, question = questions.find(question_session(arguments, False), ref)
++        ref, _ = inbox.parse_reference(arguments.reference)
++        _, item = inbox.find(inbox_session(arguments, False), ref)
+         if json_output:
+-            print(json_text({"question": question}))
++            print(json_text({"item": item}))
+         else:
+-            print_question(question)
++            print_item(item)
+     elif command in ("answer", "dismiss"):
+-        ref, letter = questions.parse_reference(arguments.reference)
+-        session = question_session(arguments, False)
+-        question = (questions.answer(session, ref, letter, arguments.text) if command == "answer"
+-                    else questions.dismiss(session, ref))
+-        print(json_text({"question": question}) if json_output
+-              else f"{'answered' if command == 'answer' else 'dismissed'} {questions.answer_ref(question)}")
++        ref, letter = inbox.parse_reference(arguments.reference)
++        session = inbox_session(arguments, False)
++        item = (inbox.answer(session, ref, letter, arguments.text) if command == "answer"
++                else inbox.dismiss(session, ref))
++        print(json_text({"item": item}) if json_output
++              else f"{'answered' if command == 'answer' else 'dismissed'} {inbox.answer_ref(item)}")
+     elif command == "claim":
+-        ref, _ = questions.parse_reference(arguments.reference)
+-        question = questions.claim(question_session(arguments, False), ref, arguments.renew)
+-        token, text = question["claim"]["token"], questions.message(question)
+-        print(json_text({"token": token, "text": text, "question": question}) if json_output
++        ref, _ = inbox.parse_reference(arguments.reference)
++        item = inbox.claim(inbox_session(arguments, False), ref, arguments.renew)
++        token, text = item["claim"]["token"], inbox.message(item)
++        print(json_text({"token": token, "text": text, "item": item}) if json_output
+               else f"{token}\t{text}")
+     elif command in ("delivered", "reopen"):
+-        ref, _ = questions.parse_reference(arguments.reference)
+-        question = questions.settle(question_session(arguments, False), ref, arguments.claim,
+-                                    delivered=command == "delivered")
+-        print(json_text({"question": question}) if json_output
+-              else f"{'delivered' if command == 'delivered' else 'reopened'} {question['ref']}")
++        ref, _ = inbox.parse_reference(arguments.reference)
++        item = inbox.settle(inbox_session(arguments, False), ref, arguments.claim,
++                            delivered=command == "delivered")
++        print(json_text({"item": item}) if json_output
++              else f"{'delivered' if command == 'delivered' else 'reopened'} {item['ref']}")
+     elif command == "watch":
+-        session = question_session(arguments, True)
++        session = inbox_session(arguments, True)
+ 
+         def send(line: str) -> None:
+             # A watcher reads one event a line, so JSON here stays on one line too.
+@@ -1165,12 +1165,12 @@ def send(line: str) -> None:
+                   flush=True)
+ 
+         while True:
+-            questions.deliver_pass(session, send)
++            inbox.deliver_pass(session, send)
+             if arguments.once:
+                 return 0
+             time.sleep(arguments.interval)
+     elif command == "context":
+-        lines = questions.context(question_session(arguments, True), sys.stdin.read())
++        lines = inbox.context(inbox_session(arguments, True), sys.stdin.read())
+         print(json_text({"context": lines}) if json_output else "\n".join(lines), end="" if not lines else "\n")
+     return 0
+ 
+@@ -1651,8 +1651,8 @@ def run(arguments: argparse.Namespace) -> int:
+         return run_site(arguments)
+     if arguments.command == "review":
+         return run_review(arguments)
+-    if arguments.command == "question":
+-        return run_question(arguments)
++    if arguments.command == "inbox":
++        return run_inbox(arguments)
+ 
+     # Resolved once and passed down, so configuration and the store agree on
+     # the repository without asking git for it twice.
+diff --git a/src/projector/questions.py b/src/projector/inbox.py
+similarity index 63%
+rename from src/projector/questions.py
+rename to src/projector/inbox.py
+index 8da7089..2e5c41b 100644
+--- a/src/projector/questions.py
++++ b/src/projector/inbox.py
+@@ -1,11 +1,10 @@
+-"""Questions an agent asks the person, kept per session under Projector's state directory.
+-
+-Each session's questions are JSON files in their own directory, one per question, with
+-`counts.json` holding the last number given in each count and `session.json` the session's
+-repository, once an `ask` from a checkout has recorded one. Every write happens under the
+-directory's lock, an operating-system lock on its `.lock` file, and lands by renaming a
+-temporary file into place, so two writers never lose each other's change and a reader never
+-sees half a file.
++"""The items an agent puts in the person's inbox, kept per session under Projector's state directory.
++
++Each session's items are JSON files in their own directory, one per item, with `counts.json`
++holding the last number given in each count and `session.json` the session's repository, once a
++post from a checkout has recorded one. Every write happens under the directory's lock, an
++operating-system lock on its `.lock` file, and lands by renaming a temporary file into place, so
++two writers never lose each other's change and a reader never sees half a file.
+ """
+ 
+ from __future__ import annotations
+@@ -23,7 +22,7 @@
+ 
+ from .core import ProjectorError
+ 
+-MAX_QUESTION = 120
++MAX_SUBJECT = 120
+ MAX_OPTIONS = 5
+ KEEP_DELIVERED = 100
+ CLAIM_EXPIRES_MS = 60_000
+@@ -45,15 +44,15 @@
+ )
+ 
+ 
+-class QuestionError(ProjectorError):
+-    """A question fails a check, or an answer or claim is not allowed in its state."""
++class InboxError(ProjectorError):
++    """An item fails a check, or an answer or claim is not allowed in its state."""
+ 
+ 
+-class QuestionNotFound(ProjectorError):
++class ItemNotFound(ProjectorError):
+     exit_code = 66
+ 
+ 
+-class AmbiguousQuestion(ProjectorError):
++class AmbiguousItem(ProjectorError):
+     exit_code = 67
+ 
+ 
+@@ -64,16 +63,16 @@ def now_ms() -> int:
+ def store_root(environ: Optional[dict] = None) -> Path:
+     environ = os.environ if environ is None else environ
+     base = environ.get("XDG_STATE_HOME")
+-    return (Path(base) if base else Path.home() / ".local" / "state") / "projector" / "questions"
++    return (Path(base) if base else Path.home() / ".local" / "state") / "projector" / "inbox"
+ 
+ 
+ def session_dir(session: str) -> Path:
+     if not SESSION.match(session):
+-        raise QuestionError(f"{session!r} is not a session id: use letters, digits, `.`, `_`, and `-`")
++        raise InboxError(f"{session!r} is not a session id: use letters, digits, `.`, `_`, and `-`")
+     return store_root() / session
+ 
+ 
+-def question_file(folder: Path, ref: str) -> Path:
++def item_file(folder: Path, ref: str) -> Path:
+     return folder / f"{quote(ref, safe='')}.json"
+ 
+ 
+@@ -118,7 +117,7 @@ def locked(folder: Path) -> Iterator[None]:
+         deadline = time.monotonic() + LOCK_WAIT_SECONDS
+         while not try_lock(descriptor):
+             if time.monotonic() > deadline:
+-                raise QuestionError(f"another command holds {lock}; try again once it finishes")
++                raise InboxError(f"another command holds {lock}; try again once it finishes")
+             time.sleep(0.05)
+         try:
+             yield
+@@ -148,17 +147,17 @@ def read_json(path: Path) -> Optional[dict]:
+     return value if isinstance(value, dict) else None
+ 
+ 
+-def load_questions(folder: Path) -> list[dict]:
+-    """The session's questions, oldest first; a file that does not parse, or whose name does
+-    not match its reference, is skipped rather than allowed to break a view."""
+-    questions = []
++def load_items(folder: Path) -> list[dict]:
++    """The session's items, oldest first; a file that does not parse, or whose name does not
++    match its reference, is skipped rather than allowed to break a view."""
++    items = []
+     if not folder.is_dir():
+-        return questions
++        return items
+     for path in folder.glob("*.json"):
+-        question = read_json(path)
+-        if question and isinstance(question.get("ref"), str) and question_file(folder, question["ref"]) == path:
+-            questions.append(question)
+-    return sorted(questions, key=lambda question: (question.get("askedAt", 0), question["ref"]))
++        item = read_json(path)
++        if item and isinstance(item.get("ref"), str) and item_file(folder, item["ref"]) == path:
++            items.append(item)
++    return sorted(items, key=lambda item: (item.get("postedAt", 0), item["ref"]))
+ 
+ 
+ def sessions() -> list[str]:
+@@ -178,23 +177,23 @@ def reference(pull: Optional[re.Match], count: int, repo: Optional[str]) -> str:
+ 
+ def check(question: str, recommend: str, options: list[str], pr: Optional[str]) -> None:
+     if not question.strip():
+-        raise QuestionError("the question is empty")
++        raise InboxError("the question is empty")
+     if "\n" in question or "\r" in question:
+-        raise QuestionError("the question must be one line; put the rest in --detail")
+-    if len(question) > MAX_QUESTION:
+-        raise QuestionError(f"the question is {len(question)} characters; keep it to {MAX_QUESTION} and put the "
+-                            "rest in --detail")
++        raise InboxError("the question must be one line; put the rest in --detail")
++    if len(question) > MAX_SUBJECT:
++        raise InboxError(f"the question is {len(question)} characters; keep it to {MAX_SUBJECT} and put the "
++                         "rest in --detail")
+     if not recommend.strip():
+-        raise QuestionError("give the answer you recommend with --recommend")
++        raise InboxError("give the answer you recommend with --recommend")
+     if len(options) > MAX_OPTIONS:
+-        raise QuestionError(f"{len(options)} other options; offer at most {MAX_OPTIONS} besides the recommendation")
++        raise InboxError(f"{len(options)} other options; offer at most {MAX_OPTIONS} besides the recommendation")
+     for option in options:
+         if not option.strip():
+-            raise QuestionError("an --option is empty")
++            raise InboxError("an --option is empty")
+         if option.strip() == recommend.strip():
+-            raise QuestionError(f"the option {option!r} repeats the recommendation, which is already answer a")
++            raise InboxError(f"the option {option!r} repeats the recommendation, which is already answer a")
+     if pr is not None and not PULL.match(pr):
+-        raise QuestionError(f"{pr!r} is not a pull request; write it as owner/repo#number")
++        raise InboxError(f"{pr!r} is not a pull request; write it as owner/repo#number")
+ 
+ 
+ def session_repo(folder: Path, repo: Optional[str]) -> Optional[str]:
+@@ -225,10 +224,11 @@ def ask(session: str, question: str, recommend: str, options: list[str], *, deta
+         count = int(counts.get(key, 0)) + 1
+         record = {
+             "ref": reference(pull, count, home),
++            "kind": "question",
+             "number": count,
+             "pr": pr,
+-            "askedAt": now_ms(),
+-            "question": question.strip(),
++            "postedAt": now_ms(),
++            "subject": question.strip(),
+             "detail": detail.strip(),
+             "choices": [recommend.strip(), *(option.strip() for option in options)],
+         }
+@@ -236,19 +236,19 @@ def ask(session: str, question: str, recommend: str, options: list[str], *, deta
+             record["agentId"] = agent
+         counts[key] = count
+         # The count lands first: a write that stops between the two then skips a
+-        # number, where the other order would hand the next question this reference.
++        # number, where the other order would hand the next item this reference.
+         write_json(counts_path, counts)
+-        write_json(question_file(folder, record["ref"]), record)
++        write_json(item_file(folder, record["ref"]), record)
+     return record
+ 
+ 
+-# Finding a question
++# Finding an item
+ 
+ def parse_reference(text: str) -> tuple[str, Optional[str]]:
+     match = REFERENCE.match(text.strip())
+     if not match:
+-        raise QuestionError(f"{text!r} is not a question reference, such as #337.3, owner/repo#337.3, or q2, "
+-                            "with an optional answer letter, such as #337.3.a")
++        raise InboxError(f"{text!r} is not an inbox reference, such as #337.3, owner/repo#337.3, or q2, "
++                         "with an optional answer letter, such as #337.3.a")
+     return match["ref"], match["letter"]
+ 
+ 
+@@ -256,86 +256,86 @@ def locate(session: Optional[str], ref: str) -> Path:
+     """The folder holding `ref`: the session's, or, without one, the one session that has it."""
+     if session is not None:
+         folder = session_dir(session)
+-        if not question_file(folder, ref).is_file():
+-            raise QuestionNotFound(f"session {session} has no question {ref}")
++        if not item_file(folder, ref).is_file():
++            raise ItemNotFound(f"session {session} has no item {ref}")
+         return folder
+-    holders = [name for name in sessions() if question_file(store_root() / name, ref).is_file()]
++    holders = [name for name in sessions() if item_file(store_root() / name, ref).is_file()]
+     if not holders:
+-        raise QuestionNotFound(f"no session has a question {ref}")
++        raise ItemNotFound(f"no session has an item {ref}")
+     if len(holders) > 1:
+-        raise AmbiguousQuestion(f"{ref} names a question in {len(holders)} sessions: {', '.join(holders)}; "
+-                                "pass --session")
++        raise AmbiguousItem(f"{ref} names an item in {len(holders)} sessions: {', '.join(holders)}; "
++                            "pass --session")
+     return store_root() / holders[0]
+ 
+ 
+ def find(session: Optional[str], ref: str) -> tuple[Path, dict]:
+     folder = locate(session, ref)
+-    question = read_json(question_file(folder, ref))
+-    if question is None:
+-        raise QuestionNotFound(f"{question_file(folder, ref)} is not a question")
+-    return folder, question
++    item = read_json(item_file(folder, ref))
++    if item is None:
++        raise ItemNotFound(f"{item_file(folder, ref)} is not an inbox item")
++    return folder, item
+ 
+ 
+ def typed_letter(question: dict) -> str:
+     return chr(ord("a") + len(question["choices"]))
+ 
+ 
+-def answer_ref(question: dict) -> str:
+-    answered = question.get("answer") or {}
+-    return question["ref"] if answered.get("dismissed") else f"{question['ref']}.{answered['letter']}"
++def answer_ref(item: dict) -> str:
++    answered = item.get("answer") or {}
++    return item["ref"] if answered.get("dismissed") else f"{item['ref']}.{answered['letter']}"
+ 
+ 
+ def message(question: dict) -> str:
+     """The line that delivers an answer, as `watch` prints it and the band sends it."""
+     answered = question["answer"]
+     if answered.get("dismissed"):
+-        return f"DISMISSED {question['ref']} {question['question']}"
+-    return f"ANSWER {answer_ref(question)} {question['question']} → {answered['text']}"
++        return f"DISMISSED {question['ref']} {question['subject']}"
++    return f"ANSWER {answer_ref(question)} {question['subject']} → {answered['text']}"
+ 
+ 
+ # Answering and delivering
+ 
+ def update(session: Optional[str], ref: str, change) -> dict:
+-    """Read the question under the lock, let `change` alter it, and write it back."""
++    """Read the item under the lock, let `change` alter it, and write it back."""
+     folder = locate(session, ref)
+     with locked(folder):
+-        question = read_json(question_file(folder, ref))
+-        if question is None:
+-            raise QuestionNotFound(f"{question_file(folder, ref)} is not a question")
+-        change(question)
+-        write_json(question_file(folder, ref), question)
+-        if question.get("deliveredAt"):
++        item = read_json(item_file(folder, ref))
++        if item is None:
++            raise ItemNotFound(f"{item_file(folder, ref)} is not an inbox item")
++        change(item)
++        write_json(item_file(folder, ref), item)
++        if item.get("deliveredAt"):
+             prune(folder)
+-    return question
++    return item
+ 
+ 
+ def answer(session: Optional[str], ref: str, letter: Optional[str], text: Optional[str] = None) -> dict:
+     def record(question: dict) -> None:
+         if question.get("answer"):
+-            raise QuestionError(f"{question['ref']} is already answered, as {answer_ref(question)}")
++            raise InboxError(f"{question['ref']} is already answered, as {answer_ref(question)}")
+         last = typed_letter(question)
+         if letter is None:
+-            raise QuestionError(f"name the answer's letter, such as {question['ref']}.a")
++            raise InboxError(f"name the answer's letter, such as {question['ref']}.a")
+         if letter == last:
+             if not (text or "").strip():
+-                raise QuestionError(f"{question['ref']}.{last} is a typed answer; give it with --text")
++                raise InboxError(f"{question['ref']}.{last} is a typed answer; give it with --text")
+             chosen = text.strip()
+         elif text is not None:
+-            raise QuestionError(f"--text goes with the typed answer, {question['ref']}.{last}")
++            raise InboxError(f"--text goes with the typed answer, {question['ref']}.{last}")
+         elif ord(letter) - ord("a") < len(question["choices"]):
+             chosen = question["choices"][ord(letter) - ord("a")]
+         else:
+-            raise QuestionError(f"{question['ref']} has no answer {letter}; its letters run a to {last}")
++            raise InboxError(f"{question['ref']} has no answer {letter}; its letters run a to {last}")
+         question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
+ 
+     return update(session, ref, record)
+ 
+ 
+ def dismiss(session: Optional[str], ref: str) -> dict:
+-    def record(question: dict) -> None:
+-        if question.get("answer"):
+-            raise QuestionError(f"{question['ref']} is already answered, as {answer_ref(question)}")
+-        question["answer"] = {"dismissed": True, "answeredAt": now_ms()}
++    def record(item: dict) -> None:
++        if item.get("answer"):
++            raise InboxError(f"{item['ref']} is already answered, as {answer_ref(item)}")
++        item["answer"] = {"dismissed": True, "answeredAt": now_ms()}
+ 
+     return update(session, ref, record)
+ 
+@@ -351,17 +351,17 @@ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict
+     """Claim an answer for delivery, or renew a claim by its token; returns the question."""
+     def take(question: dict) -> None:
+         if not question.get("answer"):
+-            raise QuestionError(f"{question['ref']} has no answer to deliver")
++            raise InboxError(f"{question['ref']} has no answer to deliver")
+         if question.get("deliveredAt"):
+-            raise QuestionError(f"{answer_ref(question)} is already delivered")
++            raise InboxError(f"{answer_ref(question)} is already delivered")
+         held = live_claim(question)
+         if renew is not None:
+             if (question.get("claim") or {}).get("token") != renew:
+-                raise QuestionError(f"{answer_ref(question)} is not claimed with that token")
++                raise InboxError(f"{answer_ref(question)} is not claimed with that token")
+             question["claim"]["renewedAt"] = now_ms()
+             return
+         if held:
+-            raise QuestionError(f"{answer_ref(question)} is already claimed for delivery")
++            raise InboxError(f"{answer_ref(question)} is already claimed for delivery")
+         question["claim"] = {"token": secrets.token_hex(8), "renewedAt": now_ms()}
+ 
+     return update(session, ref, take)
+@@ -371,9 +371,9 @@ def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dic
+     """Mark a claimed answer delivered, or reopen the question when its delivery failed."""
+     def finish(question: dict) -> None:
+         if question.get("deliveredAt"):
+-            raise QuestionError(f"{answer_ref(question)} is already delivered")
++            raise InboxError(f"{answer_ref(question)} is already delivered")
+         if (question.get("claim") or {}).get("token") != token:
+-            raise QuestionError(f"{question['ref']} is not claimed with that token")
++            raise InboxError(f"{question['ref']} is not claimed with that token")
+         del question["claim"]
+         if delivered:
+             question["deliveredAt"] = now_ms()
+@@ -384,16 +384,16 @@ def finish(question: dict) -> None:
+ 
+ 
+ def prune(folder: Path) -> None:
+-    delivered = [question for question in load_questions(folder) if question.get("deliveredAt")]
+-    delivered.sort(key=lambda question: question["deliveredAt"], reverse=True)
+-    for question in delivered[KEEP_DELIVERED:]:
++    delivered = [item for item in load_items(folder) if item.get("deliveredAt")]
++    delivered.sort(key=lambda item: item["deliveredAt"], reverse=True)
++    for item in delivered[KEEP_DELIVERED:]:
+         with contextlib.suppress(FileNotFoundError):
+-            question_file(folder, question["ref"]).unlink()
++            item_file(folder, item["ref"]).unlink()
+ 
+ 
+ def undelivered(session: str) -> list[dict]:
+-    return [question for question in load_questions(session_dir(session))
+-            if question.get("answer") and not question.get("deliveredAt") and not live_claim(question)]
++    return [item for item in load_items(session_dir(session))
++            if item.get("answer") and not item.get("deliveredAt") and not live_claim(item)]
+ 
+ 
+ def deliver_pass(session: str, send: Callable[[str], None]) -> None:
+@@ -403,7 +403,7 @@ def deliver_pass(session: str, send: Callable[[str], None]) -> None:
+     for question in undelivered(session):
+         try:
+             claimed = claim(session, question["ref"])
+-        except QuestionError:
++        except InboxError:
+             continue
+         send(message(claimed))
+         settle(session, claimed["ref"], claimed["claim"]["token"], delivered=True)
+@@ -421,22 +421,23 @@ def references_in(text: str) -> list[tuple[str, Optional[str]]]:
+ 
+ 
+ def context(session: str, text: str) -> list[str]:
+-    """What each reference in `text` means, for the questions the session holds."""
++    """What each reference in `text` means, for the items the session holds."""
+     folder = session_dir(session)
+     lines = []
+     for ref, letter in references_in(text):
+-        question = read_json(question_file(folder, ref))
++        question = read_json(item_file(folder, ref))
+         if question is None:
+             continue
++        subject = question["subject"]
+         if letter is None:
+-            lines.append(f"{ref} is the question: {question['question']}")
++            lines.append(f"{ref} is the question: {subject}")
+             continue
+         index = ord(letter) - ord("a")
+         answered = question.get("answer") or {}
+         if index < len(question["choices"]):
+-            lines.append(f"{ref}.{letter} answers {question['question']} with {question['choices'][index]}")
++            lines.append(f"{ref}.{letter} answers {subject} with {question['choices'][index]}")
+         elif letter == typed_letter(question) and answered.get("letter") == letter:
+-            lines.append(f"{ref}.{letter} answers {question['question']} with {answered['text']}")
++            lines.append(f"{ref}.{letter} answers {subject} with {answered['text']}")
+         elif letter == typed_letter(question):
+-            lines.append(f"{ref}.{letter} is a typed answer to {question['question']}")
++            lines.append(f"{ref}.{letter} is a typed answer to {subject}")
+     return lines
+diff --git a/tests/test_questions.py b/tests/test_inbox.py
+similarity index 85%
+rename from tests/test_questions.py
+rename to tests/test_inbox.py
+index 02b1f72..76f725b 100644
+--- a/tests/test_questions.py
++++ b/tests/test_inbox.py
+@@ -1,4 +1,4 @@
+-"""The `project question` commands, against a temporary state directory.
++"""The `project inbox` commands, against a temporary state directory.
+ 
+ Each test points `XDG_STATE_HOME` at its own directory and runs the CLI from a temporary
+ Git checkout whose origin is `acme/app`, so a question about `acme/app` takes the short
+@@ -22,14 +22,14 @@
+ from typing import Callable
+ from unittest import mock
+ 
+-from projector import cli, questions
++from projector import cli, inbox
+ 
+ HOLD_LOCK = """
+ import os, sys
+ from pathlib import Path
+-from projector import questions
++from projector import inbox
+ 
+-with questions.locked(Path(sys.argv[1])):
++with inbox.locked(Path(sys.argv[1])):
+     print("held", flush=True)
+     if sys.argv[2] == "exit":
+         os._exit(0)
+@@ -39,7 +39,7 @@
+ 
+ def at_once(*calls: Callable[[], object]) -> list[str]:
+     """Start the calls together, each in its own thread, and return how each ended, sorted:
+-    `done`, or `refused` when it raised `QuestionError`."""
++    `done`, or `refused` when it raised `InboxError`."""
+     outcomes: list[str] = []
+     start = threading.Barrier(len(calls))
+ 
+@@ -48,7 +48,7 @@ def run(call: Callable[[], object]) -> None:
+         try:
+             call()
+             outcomes.append("done")
+-        except questions.QuestionError:
++        except inbox.InboxError:
+             outcomes.append("refused")
+ 
+     threads = [threading.Thread(target=run, args=(call,)) for call in calls]
+@@ -59,7 +59,7 @@ def run(call: Callable[[], object]) -> None:
+     return sorted(outcomes)
+ 
+ 
+-class QuestionCase(unittest.TestCase):
++class InboxCase(unittest.TestCase):
+     def setUp(self) -> None:
+         scratch = tempfile.TemporaryDirectory()
+         self.addCleanup(scratch.cleanup)
+@@ -83,7 +83,7 @@ def run_cli(self, *args: str, stdin: str = "", cwd: Path | None = None) -> tuple
+         out, err = io.StringIO(), io.StringIO()
+         with contextlib.chdir(cwd or self.checkout), mock.patch("sys.stdin", io.StringIO(stdin)), \
+                 redirect_stdout(out), redirect_stderr(err):
+-            code = cli.main(["question", *args])
++            code = cli.main(["inbox", *args])
+         return code, out.getvalue(), err.getvalue()
+ 
+     def ask(self, question: str = "Decline the finding?", *args: str, session: str = "s1",
+@@ -93,10 +93,10 @@ def ask(self, question: str = "Decline the finding?", *args: str, session: str =
+         return out.strip()
+ 
+     def folder(self, session: str = "s1") -> Path:
+-        return self.state / "projector" / "questions" / session
++        return self.state / "projector" / "inbox" / session
+ 
+ 
+-class AskTests(QuestionCase):
++class AskTests(InboxCase):
+     def test_numbers_each_pull_request_and_the_session_count_apart(self) -> None:
+         recommend = ["--recommend", "Decline it"]
+         self.assertEqual("#337.1", self.ask("First?", *recommend, "--pr", "acme/app#337"))
+@@ -155,10 +155,23 @@ def test_refuses_a_session_id_that_is_not_a_plain_name(self) -> None:
+     def test_prints_the_question_as_json(self) -> None:
+         code, out, _ = self.run_cli("ask", "Json?", "--recommend", "x", "--session", "s1", "--json")
+         self.assertEqual(0, code)
+-        self.assertEqual("q1", json.loads(out)["question"]["ref"])
++        self.assertEqual("q1", json.loads(out)["item"]["ref"])
+ 
++    def test_records_the_question_in_the_inbox_store(self) -> None:
++        self.ask("Where?", "--recommend", "x")
++        item = json.loads((self.folder() / "q1.json").read_text())
++        self.assertEqual(("question", "Where?"), (item["kind"], item["subject"]))
++        self.assertIsInstance(item["postedAt"], int)
++        self.assertNotIn("question", item)
++        self.assertFalse((self.state / "projector" / "questions").exists())
+ 
+-class AnswerTests(QuestionCase):
++    def test_the_old_question_command_is_gone(self) -> None:
++        with self.assertRaises(SystemExit) as stop, redirect_stderr(io.StringIO()):
++            cli.main(["question", "list"])
++        self.assertEqual(2, stop.exception.code)
++
++
++class AnswerTests(InboxCase):
+     def setUp(self) -> None:
+         super().setUp()
+         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--pr", "acme/app#337")
+@@ -199,8 +212,8 @@ def test_dismisses_once(self) -> None:
+         self.assertEqual(65, self.run_cli("answer", "#337.1.a", "--session", "s1")[0])
+ 
+     def test_two_answers_at_once_record_one(self) -> None:
+-        self.assertEqual(["done", "refused"], at_once(lambda: questions.answer("s1", "#337.1", "a"),
+-                                                      lambda: questions.answer("s1", "#337.1", "b")))
++        self.assertEqual(["done", "refused"], at_once(lambda: inbox.answer("s1", "#337.1", "a"),
++                                                      lambda: inbox.answer("s1", "#337.1", "b")))
+         self.assertIn(json.loads((self.folder() / "%23337.1.json").read_text())["answer"]["letter"], "ab")
+ 
+     def hold_lock(self, then: str) -> subprocess.Popen:
+@@ -208,7 +221,7 @@ def hold_lock(self, then: str) -> subprocess.Popen:
+         standard input to close (`wait`) or exits without unlocking (`exit`)."""
+         holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, str(self.folder()), then],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+-                                  env={**os.environ, "PYTHONPATH": str(Path(questions.__file__).parents[1])})
++                                  env={**os.environ, "PYTHONPATH": str(Path(inbox.__file__).parents[1])})
+         self.addCleanup(holder.stdout.close)
+         self.addCleanup(holder.wait)
+         self.addCleanup(holder.stdin.close)
+@@ -217,7 +230,7 @@ def hold_lock(self, then: str) -> subprocess.Popen:
+ 
+     def test_a_lock_another_process_holds_makes_a_command_wait_then_refuse(self) -> None:
+         holder = self.hold_lock("wait")
+-        with mock.patch.object(questions, "LOCK_WAIT_SECONDS", 0.3):
++        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
+             started = time.monotonic()
+             code, _, err = self.run_cli("answer", "#337.1.a", "--session", "s1")
+         self.assertGreaterEqual(time.monotonic() - started, 0.3)
+@@ -230,11 +243,11 @@ def test_a_lock_another_process_holds_makes_a_command_wait_then_refuse(self) ->
+     def test_a_holder_that_exits_without_unlocking_leaves_the_lock_free_at_once(self) -> None:
+         holder = self.hold_lock("exit")
+         self.assertEqual(0, holder.wait())
+-        with mock.patch.object(questions, "LOCK_WAIT_SECONDS", 0):
++        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0):
+             self.assertEqual(0, self.run_cli("answer", "#337.1.a", "--session", "s1")[0])
+ 
+ 
+-class DeliveryTests(QuestionCase):
++class DeliveryTests(InboxCase):
+     def setUp(self) -> None:
+         super().setUp()
+         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--pr", "acme/app#337")
+@@ -251,8 +264,8 @@ def test_claims_once_and_prints_the_text_to_deliver(self) -> None:
+         self.assertEqual(65, self.claim()[0])
+ 
+     def test_two_claims_at_once_take_one(self) -> None:
+-        self.assertEqual(["done", "refused"], at_once(lambda: questions.claim("s1", "#337.1"),
+-                                                      lambda: questions.claim("s1", "#337.1")))
++        self.assertEqual(["done", "refused"], at_once(lambda: inbox.claim("s1", "#337.1"),
++                                                      lambda: inbox.claim("s1", "#337.1")))
+ 
+     def test_renews_only_with_the_claims_token(self) -> None:
+         _, token = self.claim()
+@@ -261,8 +274,8 @@ def test_renews_only_with_the_claims_token(self) -> None:
+ 
+     def test_a_claim_not_renewed_for_a_minute_is_taken_by_a_new_claim(self) -> None:
+         _, token = self.claim()
+-        later = questions.now_ms() + questions.CLAIM_EXPIRES_MS + 1
+-        with mock.patch.object(questions, "now_ms", return_value=later):
++        later = inbox.now_ms() + inbox.CLAIM_EXPIRES_MS + 1
++        with mock.patch.object(inbox, "now_ms", return_value=later):
+             code, fresh = self.claim()
+             self.assertEqual(0, code)
+             self.assertNotEqual(token, fresh)
+@@ -271,10 +284,10 @@ def test_a_claim_not_renewed_for_a_minute_is_taken_by_a_new_claim(self) -> None:
+ 
+     def test_a_lapsed_claims_token_settles_it_until_a_new_claim_replaces_it(self) -> None:
+         _, token = self.claim()
+-        later = questions.now_ms() + questions.CLAIM_EXPIRES_MS + 1
+-        with mock.patch.object(questions, "now_ms", return_value=later):
++        later = inbox.now_ms() + inbox.CLAIM_EXPIRES_MS + 1
++        with mock.patch.object(inbox, "now_ms", return_value=later):
+             self.assertEqual(0, self.claim("--renew", token)[0])
+-        with mock.patch.object(questions, "now_ms", return_value=later + questions.CLAIM_EXPIRES_MS + 1):
++        with mock.patch.object(inbox, "now_ms", return_value=later + inbox.CLAIM_EXPIRES_MS + 1):
+             self.assertEqual(0, self.run_cli("delivered", "#337.1", "--claim", token, "--session", "s1")[0])
+ 
+     def test_delivered_hides_the_question_from_the_open_list(self) -> None:
+@@ -304,10 +317,10 @@ def write(self, text: str) -> int:
+                 raise BrokenPipeError(32, "Broken pipe")
+ 
+         with contextlib.chdir(self.checkout), redirect_stdout(ClosedPipe()), redirect_stderr(io.StringIO()):
+-            self.assertEqual(65, cli.main(["question", "watch", "--once", "--session", "s1"]))
++            self.assertEqual(65, cli.main(["inbox", "watch", "--once", "--session", "s1"]))
+         self.assertIn("\tdelivering #337.1.b\t", self.run_cli("list", "--session", "s1")[1])
+-        later = questions.now_ms() + questions.CLAIM_EXPIRES_MS + 1
+-        with mock.patch.object(questions, "now_ms", return_value=later):
++        later = inbox.now_ms() + inbox.CLAIM_EXPIRES_MS + 1
++        with mock.patch.object(inbox, "now_ms", return_value=later):
+             self.assertEqual("ANSWER #337.1.b Decline it? → Add a budget\n",
+                              self.run_cli("watch", "--once", "--session", "s1")[1])
+ 
+@@ -316,12 +329,12 @@ def test_watch_refuses_an_interval_that_is_not_a_positive_number(self) -> None:
+             with self.subTest(interval=interval):
+                 err = io.StringIO()
+                 with self.assertRaises(SystemExit) as stop, redirect_stderr(err):
+-                    cli.main(["question", "watch", "--interval", interval, "--once", "--session", "s1"])
++                    cli.main(["inbox", "watch", "--interval", interval, "--once", "--session", "s1"])
+                 self.assertEqual(2, stop.exception.code)
+                 self.assertIn("--interval", err.getvalue())
+ 
+     def test_keeps_the_newest_delivered_questions(self) -> None:
+-        with mock.patch.object(questions, "KEEP_DELIVERED", 2):
++        with mock.patch.object(inbox, "KEEP_DELIVERED", 2):
+             for number in range(3):
+                 ref = self.ask(f"Q{number}?", "--recommend", "x")
+                 self.run_cli("answer", f"{ref}.a", "--session", "s1")
+@@ -330,17 +343,17 @@ def test_keeps_the_newest_delivered_questions(self) -> None:
+         self.assertEqual(["q2.json", "q3.json"], names)
+ 
+ 
+-class ListTests(QuestionCase):
++class ListTests(InboxCase):
+     def test_lists_every_sessions_open_questions_without_a_session(self) -> None:
+         self.ask("One?", "--recommend", "x", session="s1")
+         self.ask("Two?", "--recommend", "x", session="s2")
+         out = self.run_cli("list")[1]
+         self.assertEqual(["s1\tq1\topen\tOne?", "s2\tq1\topen\tTwo?"], out.splitlines())
+ 
+-    def test_skips_a_file_that_is_not_a_question(self) -> None:
++    def test_skips_a_file_that_is_not_an_item(self) -> None:
+         self.ask("One?", "--recommend", "x")
+         (self.folder() / "q7.json").write_text("{not json")
+-        (self.folder() / "misnamed.json").write_text(json.dumps({"ref": "q8", "question": "?"}))
++        (self.folder() / "misnamed.json").write_text(json.dumps({"ref": "q8", "subject": "?"}))
+         self.assertEqual(["q1\topen\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
+ 
+     def test_show_prints_the_lettered_answers(self) -> None:
+@@ -349,7 +362,7 @@ def test_show_prints_the_lettered_answers(self) -> None:
+         self.assertIn("a. Decline it (recommended)\nb. Add a budget\nc. type an answer with --text\nopen", out)
+ 
+ 
+-class ContextTests(QuestionCase):
++class ContextTests(InboxCase):
+     def setUp(self) -> None:
+         super().setUp()
+         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--pr", "acme/app#337")
+@@ -376,12 +389,12 @@ def test_leaves_text_that_only_looks_like_a_reference(self) -> None:
+                 self.assertEqual([], self.context(text))
+ 
+     def test_finds_references_in_text_by_the_plans_table(self) -> None:
+-        self.assertEqual([("#337.3", "b")], questions.references_in("Go with #337.3.b."))
+-        self.assertEqual([("octo/app#337.3", "b")], questions.references_in("octo/app#337.3.b"))
+-        self.assertEqual([("q2", "a")], questions.references_in("Let's do q2.a."))
++        self.assertEqual([("#337.3", "b")], inbox.references_in("Go with #337.3.b."))
++        self.assertEqual([("octo/app#337.3", "b")], inbox.references_in("octo/app#337.3.b"))
++        self.assertEqual([("q2", "a")], inbox.references_in("Let's do q2.a."))
+         for text in ("#337", "#337.3.4", "x#337.3", "2", "Q2", "eq2", "q2.4"):
+             with self.subTest(text=text):
+-                self.assertEqual([], questions.references_in(text))
++                self.assertEqual([], inbox.references_in(text))
+ 
+ 
+ if __name__ == "__main__":
