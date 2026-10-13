@@ -1,0 +1,106 @@
+{
+ "version": 1,
+ "name": "Open question at band top",
+ "project": "questions",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 281,
+  "title": "Show an open question at the top of Projector's band",
+  "head": "e7e6f27316f9e3d6b7e58c196fdbdf2e04edc892",
+  "headRef": "band-open-item-top",
+  "base": "eae49a56d86efa9808a9c2536f9056b6f49f4cc7",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's band is the strip Projector draws above Claude Code's prompt. It lists the pull requests your loops watch and the questions agents have asked you, under a dim <b>divider</b> line that counts the open questions and says when the band last updated. Claude Code draws its <code>[-]</code> mark, which collapses the band, at the end of the band's first row.",
+   "When you open a question's drawer, the question takes the band to itself: the drawer shows the question's detail, its numbered options, a field for a typed answer, and the <b>discuss</b> and <b>dismiss</b> buttons. In fullscreen, Claude Code caps the band at half the terminal's rows, the prompt included, and scrolls a band taller than that. A drawer often exceeds the cap, and the divider still took one of its rows.",
+   "This pull request drops the divider while a question's drawer is open. The question becomes the band's first row, with <code>[-]</code> at its end, and the drawer gets one more row before the band scrolls. Closing the drawer brings back the divider, the pull requests, and the other questions. The change is one branch in the band's renderer, one test assertion in each direction, and the two documents that draw the open drawer."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the rows Projector draws above Claude Code's prompt, rendered by the <code>ui.render</code> hook for <code>AbovePrompt</code> in <code>hooks/register.tsx</code>.</li><li><b>Divider</b>: the band's dim first line of <code>─</code> characters, ending in the open-question count and the update time.</li><li><b>Drawer</b>: the detail, options, and buttons shown under a question you open.</li><li><b><code>bodyColumns</code></b>: the width Claude Code lays the band out in, the terminal's width less the five cells that hold <code>[-]</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review of <code>e7e6f27</code> found it clean, with no finding threads.</li><li>It suggested saying that the half-terminal cap applies in fullscreen only, in the code comment and the plan text.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "renderer",
+   "title": "The open question becomes the band's first row",
+   "kicker": "One branch of the band's renderer stops drawing the divider",
+   "intro": [
+    "The band's renderer in <code>hooks/register.tsx</code> has three layouts: an empty band, the list of pull requests and questions, and a single question whose drawer is open. Only the last one changes. It returns the question alone, without the <code>divider</code> element it drew above it.",
+    "The other two layouts still draw the divider first, so <code>[-]</code> stays at the divider's end whenever no question's drawer is open."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The open-question branch returns the question without the divider, and its comment gives the reason: the engine's scroll cap.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 937,
+       "text": "The question row does not run under <code>[-]</code>. Claude Code's types define <code>bodyColumns</code> as the layout width less the five cells that hold the mark, and the row lays out in that width, so the question's age column ends before the mark."
+      },
+      {
+       "kind": "context",
+       "line": 934,
+       "text": "The comment says the engine caps the band below half the terminal. Claude Code's types apply that cap in fullscreen only. On the main screen the band can be as tall as the terminal. The review listed this as a suggestion, not a finding."
+      }
+     ]
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "The drawer test now checks that no divider is drawn while a question's drawer is open, and that the divider returns once it closes.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 579,
+       "text": "This assertion fails against the base renderer. With <code>hooks/register.tsx</code> reverted to the base, <code>claude plugin test .</code> fails this test and passes the other 50."
+      },
+      {
+       "kind": "context",
+       "line": 616,
+       "text": "The same pattern, <code>/^─+/</code>, checks that the divider is back after the drawer closes, so the test fails if the divider never returns."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Both drawings of the open drawer lose the divider",
+   "kicker": "The plugin guide and the questions plan show the new first row",
+   "intro": [
+    "<code>docs/plugins.md</code>, the guide to Projector's Claude Code plugin, and <code>docs/projects/questions/readme.md</code>, the plan for answering agents' questions, each draw the band with a question's drawer open. Both drawings now start with the question, with <code>[-]</code> at its end, and both texts say that the divider steps aside along with the rest of the band.",
+    "The questions plan is <code>in-progress</code>. This change revises how its band section describes the open drawer and adds no open question."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The open-drawer example starts with the question, and the text says why the divider steps aside.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 263,
+       "text": "The new first row is 74 columns wide, the same as the divider line in the closed-band example above it, so <code>[-]</code> sits in the same column in both."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/questions/readme.md",
+     "note": "The band section's example and its description of the open question both drop the divider."
+    }
+   ]
+  }
+ ]
+}

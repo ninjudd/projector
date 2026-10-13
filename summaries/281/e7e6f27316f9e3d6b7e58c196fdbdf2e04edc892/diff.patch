@@ -1,0 +1,93 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 0d8e32e..c36fb7e 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -256,11 +256,11 @@ questions still open.
+ Click anywhere on a question to open its drawer, and click it again to close
+ it. On the main screen, press ctrl+x tab to move into the band, then Enter on
+ a question. While its drawer is open, the question stays highlighted and has
+-the band to itself:
++the band to itself, the divider included, so the question is the top row and
++the drawer has one more row before the band scrolls:
+ 
+ ```text
+-──────────────────────────────────────── 2 questions · updated 12s ago [-]
+-- Decline the finding about the retry budget?                     #337  5m
++- Decline the finding about the retry budget?                 #337  5m [-]
+ 
+   The review asks for a retry budget per host. The loop caps retries at
+   three in total, which covers the case the finding names.
+diff --git a/docs/projects/questions/readme.md b/docs/projects/questions/readme.md
+index 6ac0e17..c4726ce 100644
+--- a/docs/projects/questions/readme.md
++++ b/docs/projects/questions/readme.md
+@@ -243,8 +243,7 @@ too, which reaches the same store.
+ With a question's drawer open:
+ 
+ ```text
+-──────────────────────────────────────── 2 questions · updated 12s ago [-]
+-- Decline the finding about the retry budget?                     #337  5m
++- Decline the finding about the retry budget?                 #337  5m [-]
+ 
+   The review asks for a retry budget per host. The loop caps retries at
+   three in total, which covers the case the finding names.
+@@ -269,8 +268,10 @@ With a question's drawer open:
+   screen. Pressing it opens the question's drawer, and opening any drawer
+   closes any other, through the band's `bandDrawer`. While its drawer is
+   open the question draws inverted, as the pointer draws it, and it has the
+-  band to itself: the other questions and the pull requests return when the
+-  drawer closes or the question leaves the band.
++  band to itself, the divider included, so it is the top row and its drawer
++  has one more row before the engine, which caps the band below half the
++  terminal, starts to scroll it. The other questions, the pull requests, and
++  the divider return when the drawer closes or the question leaves the band.
+ - **The drawer.** A blank line, `detail` as `Markdown` and another blank
+   line when there is detail, then the options, numbered from `1.`, one line
+   each. Each number is a `Markdown` link, drawn as a pull request's number
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 2830afb..3fb3249 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -574,8 +574,9 @@ test('an option puts the question and its answer in the prompt, and sending it a
+ 
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'question:#7.1' })
+-  // The open question has the band to itself.
++  // The open question has the band to itself, the divider included, so it is the top row.
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+   expect((await ui.find({ key: 'detail:#7.1' }))?.props.text).toBe('The loop caps retries at three.')
+   expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeDefined()
+@@ -612,6 +613,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
+ 
+   await ui.press({ key: 'question:#7.1' })
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
+   await clock.advance(60_000 + TICK)
+   await clock.settle()
+   expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index ceb2ce7..ddc8d2c 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -929,15 +929,12 @@ export const register: Register = on => {
+     }
+ 
+     // An open question's drawer has the band to itself, until it is closed or
+-    // the question leaves the band.
++    // the question leaves the band. The divider steps aside too, so the
++    // question is the top row and the drawer has one more row before the
++    // engine, which caps the band below half the terminal, starts to scroll.
+     const focused = asked.find(question => opened === `question:${question.ref}`)
+     if (focused !== undefined) {
+-      return (
+-        <Box flexDirection="column">
+-          {divider}
+-          {drawQuestion(focused)}
+-        </Box>
+-      )
++      return <Box flexDirection="column">{drawQuestion(focused)}</Box>
+     }
+ 
+     // Otherwise the pull requests come first, then a blank line, then the questions.
