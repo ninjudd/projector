@@ -246,8 +246,8 @@ The items are a list below the pull requests, oldest first. A question's
 line starts with `-`, and a notice's with `•`, so you can tell which items
 want an answer and which want a read. Each line ends with the pull request
 the item is about, as the band labels it, and how long ago it was posted.
-The band appears when an item arrives, even after you hid it, and the
-divider counts the open questions and the open notices.
+The band appears when an item arrives, even after you hid it, and in a
+terminal the divider counts the open questions and the open notices.
 
 ```text
 ──────────────────────────────── 2 questions · 1 notice · updated 12s ago [-]
