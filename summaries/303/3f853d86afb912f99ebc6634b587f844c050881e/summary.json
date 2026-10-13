@@ -1,0 +1,134 @@
+{
+ "version": 1,
+ "name": "Band drawer fixes",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 303,
+  "title": "Start a pull request's drawer under its state, and close a notice's drawer on reply",
+  "head": "3f853d86afb912f99ebc6634b587f844c050881e",
+  "headRef": "band-drawer-indent",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's band is the panel above the Claude Code prompt that lists the pull requests your review and fix loops track, and the questions and notices agents left in your inbox. Clicking a pull request's number, or an inbox item, opens a <b>drawer</b> under it: a few extra lines of facts and actions such as <b>github</b>, <b>discuss</b>, and <b>dismiss</b>.",
+   "This pull request makes two small fixes the owner asked for after using the band:",
+   "<ol><li><b>A pull request's drawer starts under its state.</b> Each pull request row reads <code>#258 draft title …</code>. The drawer used to start in the row's first column, under the number, so its lines looked like rows of their own. It now starts one column past the number, under <code>draft</code> or <code>ready</code>, so it reads as part of the pull request above it.</li><li><b>Replying to a notice closes its drawer.</b> A notice is an inbox item an agent posts for you to read, with nothing to answer. Its drawer's <b>discuss</b> button puts the notice's subject, in quotes, in the prompt. Sending a prompt that answers a question already closed that question's drawer, but sending a reply that quotes a notice left the notice's drawer open over the band. Now that reply closes the drawer too. The reply still records nothing, and the notice stays in the band until you dismiss it.</li></ol>",
+   "Both changes live in <code>hooks/register.tsx</code>, the hooks module that draws the band and watches sent prompts. Each has one test in <code>hooks/band.test.tsx</code>, and <code>docs/plugins.md</code> and the inbox plan describe both."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review of <code>3f853d8</code>: clean, with no finding threads.</li><li>The review's one suggestion: the inbox plan's acceptance row for replying under a quoted notice, and its file-table row for <code>hooks/register.tsx</code>, do not yet mention that the notice's drawer closes.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "band",
+   "title": "The band's drawers",
+   "kicker": "Where a pull request's drawer starts, and which sent prompts close a notice's drawer.",
+   "intro": [
+    "Each pull request row is a flex row of columns with a one-column gap between them: the <b>label</b> (the number, such as <code>#258</code>, as wide as the widest label shown), then the state, <code>draft</code> or <code>ready</code>, then the author and title. The drawer now has a left margin of <code>labelWidth + 1</code>, the label column plus that gap, so its first column is the state's.",
+    "The <code>prompt.submit</code> handler reads every prompt you send. It finds the questions the prompt answers with <code>answersIn</code>, records those answers, and closes their drawers once the prompt has entered the conversation. The handler now also lists this session's notices whose quoted subject appears in the prompt, and closes their drawers at the same moment. Only a prompt you send at the terminal or through Remote Control counts, as before; an agent's message or a notification that quotes a notice closes nothing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The prompt handler closes a quoted notice's drawer; the pull request drawer gets a left margin.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 710,
+       "text": "<code>mine</code> now holds every item of this session, not only questions, but <code>answersIn</code> still keeps only open questions itself, and gets an empty list for a prompt you did not send, as before. So the set of answered questions is unchanged. Checked by reading <code>answersIn</code> in <code>hooks/inbox.ts</code>, and the 78 plugin tests pass."
+      },
+      {
+       "kind": "context",
+       "line": 712,
+       "text": "A notice matches when its quoted subject appears anywhere in the prompt. A question's answer needs the quote to end its line, but a notice takes no answer, so any mention of it is a reply."
+      },
+      {
+       "kind": "verify",
+       "line": 723,
+       "text": "The notice drawers close only when the prompt entered (<code>entered.drop</code> is unset), the same condition that closes an answered question's drawer. <code>closeDrawer</code> changes nothing unless that item's drawer is the open one."
+      },
+      {
+       "kind": "verify",
+       "line": 1028,
+       "text": "<code>labelWidth + 1</code> matches the row above: its label <code>Box</code> has <code>width={labelWidth}</code> and the row has <code>columnGap={1}</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "One test for each change, each failing on the base.",
+   "intro": [
+    "The band's tests mount the band in a simulated Claude Code session, press its buttons, send prompts, and inspect the rendered tree."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "With <code>hooks/register.tsx</code> replaced by the base's, exactly these two tests fail and the other 76 pass; at the head all 78 pass."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "The drawer test expects a margin of 4; the notice test opens a drawer, replies, and expects it closed.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 228,
+       "text": "The fixture's labels are <code>r#1</code> and <code>y#7</code>, three columns each, so the margin is 3 plus the one-column gap."
+      },
+      {
+       "kind": "context",
+       "line": 1533,
+       "text": "The drawer's <b>discuss</b> button is gone, so the drawer closed, while the next line shows the notice still listed."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and plan",
+   "kicker": "The user guide and the inbox plan describe both changes.",
+   "intro": [
+    "<code>docs/plugins.md</code> is the user guide for the band. The inbox plan, <code>docs/projects/inbox/readme.md</code>, records in § 10 what building the band settled; it stays <code>in-progress</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The band example indents the drawer, and the notice section says a reply closes the drawer.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 222,
+       "text": "The example above indents the drawer five columns under four-column labels such as <code>#258</code>, which matches <code>labelWidth + 1</code>."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "§ 10 records both changes and updates the drawer's acceptance row.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 509,
+       "text": "§ 10's acceptance table still has the row \"Press <b>discuss</b> on a notice, type under the quote, and send\" expecting only that nothing is recorded. The review suggested adding that the notice's drawer closes."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
