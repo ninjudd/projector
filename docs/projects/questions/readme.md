@@ -243,8 +243,7 @@ too, which reaches the same store.
 With a question's drawer open:
 
 ```text
-──────────────────────────────────────── 2 questions · updated 12s ago [-]
-- Decline the finding about the retry budget?                     #337  5m
+- Decline the finding about the retry budget?                 #337  5m [-]
 
   The review asks for a retry budget per host. The loop caps retries at
   three in total, which covers the case the finding names.
@@ -269,8 +268,10 @@ With a question's drawer open:
   screen. Pressing it opens the question's drawer, and opening any drawer
   closes any other, through the band's `bandDrawer`. While its drawer is
   open the question draws inverted, as the pointer draws it, and it has the
-  band to itself: the other questions and the pull requests return when the
-  drawer closes or the question leaves the band.
+  band to itself, the divider included, so it is the top row and its drawer
+  has one more row before the engine, which caps the band below half the
+  terminal, starts to scroll it. The other questions, the pull requests, and
+  the divider return when the drawer closes or the question leaves the band.
 - **The drawer.** A blank line, `detail` as `Markdown` and another blank
   line when there is detail, then the options, numbered from `1.`, one line
   each. Each number is a `Markdown` link, in a column of its own beside the

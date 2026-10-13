@@ -251,11 +251,11 @@ questions still open.
 Click anywhere on a question to open its drawer, and click it again to close
 it. On the main screen, press ctrl+x tab to move into the band, then Enter on
 a question. While its drawer is open, the question stays highlighted and has
-the band to itself:
+the band to itself, the divider included, so the question is the top row and
+the drawer has one more row before the band scrolls:
 
 ```text
-──────────────────────────────────────── 2 questions · updated 12s ago [-]
-- Decline the finding about the retry budget?                     #337  5m
+- Decline the finding about the retry budget?                 #337  5m [-]
 
   The review asks for a retry budget per host. The loop caps retries at
   three in total, which covers the case the finding names.

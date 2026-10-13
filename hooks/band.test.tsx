@@ -597,8 +597,9 @@ test('an option puts the question and its answer in the prompt, and sending it a
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'question:#7.1' })
-  // The open question has the band to itself.
+  // The open question has the band to itself, the divider included, so it is the top row.
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   expect((await ui.find({ key: 'detail:#7.1' }))?.props.text).toBe('The loop caps retries at three.')
   expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeDefined()
@@ -635,6 +636,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
 
   await ui.press({ key: 'question:#7.1' })
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
   await clock.advance(60_000 + TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
