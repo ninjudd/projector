@@ -636,6 +636,31 @@ test('a question another shares the text of takes only the answer its own drawer
   await ui.unmount()
 })
 
+test('only a prompt you sent answers a question', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held()])
+  await startSession($, clock)
+
+  const text = 'Waiting on the person for:\n"Decline the finding?"\nI will keep fixing the other threads meanwhile.'
+  const others = [
+    { kind: 'peer-send-message' },
+    { kind: 'peer' },
+    { kind: 'task-notification' },
+    { kind: 'scheduled-trigger' },
+    { kind: 'channel', server: 'chat' },
+    { kind: 'unclassified' },
+  ] as const
+  for (const origin of others) await $.prompt.submit({ text, wait: false, origin })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('question answer'))).toEqual([])
+  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+
+  await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget', wait: false, origin: { kind: 'bridge' } })
+  await clock.settle()
+  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+})
+
 test('a typed answer fills the prompt, discuss quotes the question, and dismiss resolves it', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

@@ -616,13 +616,14 @@ export const register: Register = on => {
 
     // An answer the band put in the prompt, now sent: the prompt carries it to
     // the main loop, with a note naming the subagent that asked when one did,
-    // and the band records it once the prompt has entered.
+    // and the band records it once the prompt has entered. Only a prompt you
+    // sent, at the terminal or through Remote Control, answers: an agent's
+    // message or a notification can quote a question it is still waiting on.
     const session = await $.session.id()
-    const given = answersIn(
-      e.text,
-      (await read($, questions)).filter(question => question.session === session),
-      proposed,
-    )
+    const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+    const given = isYours
+      ? answersIn(e.text, (await read($, questions)).filter(question => question.session === session), proposed)
+      : []
     for (const one of given) {
       const at = proposed.indexOf(one.question.ref)
       if (at !== -1) proposed.splice(at, 1)
