@@ -1,0 +1,1186 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 2d686f15..034538db 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -37,6 +37,7 @@ project status <name> <status>
+ project priority <name> <priority>
+ project check
+ project config get <key>
++project config set <key> <value>
+ ```
+ 
+ ## Keep the core portable
+diff --git a/docs/cli.md b/docs/cli.md
+index 5db801de..d0f6f566 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -159,21 +159,20 @@ and exits 0. Its `--json` document then lists `files` with no top-level
+ `action` or `path`, because there is no projects README. `--site` and `--url`
+ need a repository, so outside one they exit 2.
+ 
+-To keep Projector out of your instruction files, set in `.projector.toml`:
++To keep Projector out of your instruction files, set `instructions.enabled`
++to `false` in the repository's `.projector.toml`:
+ 
+-```toml
+-[instructions]
+-enabled = false
++```sh
++project config set instructions.enabled false
+ ```
+ 
+ With that key false, `init` manages only the projects README and your
+ permission rules, and `check` says nothing about `AGENTS.md` or `CLAUDE.md`.
+ To leave your Claude Code settings and Codex rules alone when `init` runs in
+-this repository, set:
++this repository, run:
+ 
+-```toml
+-[review]
+-publish_rule = false
++```sh
++project config set review.publish_rule false
+ ```
+ 
+ Every command that reads or writes a project requires that directory. `init`
+@@ -283,11 +282,10 @@ private repository is never left with a public site; it never deletes a
+ site it did not create. A repository whose `origin` is not on GitHub skips
+ the site without a note. `project site serve` still serves the site
+ locally. Pass `--site` to make the other failures an error that exits 65,
+-or `--no-site` to leave GitHub alone. To skip the site every time, set in `.projector.toml`:
++or `--no-site` to leave GitHub alone. To skip the site every time, run:
+ 
+-```toml
+-[site]
+-enabled = false
++```sh
++project config set site.enabled false
+ ```
+ 
+ In `--json` mode the document gains a `site` object with `pages`,
+@@ -518,10 +516,9 @@ project config get review.summarize --json
+ }
+ ```
+ 
+-Keys are not validated. Any key a skill or a script agrees on works, so this
+-stays useful for settings Projector itself knows nothing about.
+-
+-These are the keys Projector reads today:
++`get` reads any key, so a skill or a script can keep settings of its own in
++these files. [`set`](#change-configuration) accepts only the keys Projector
++reads, which are these:
+ 
+ | Key | Type | Default | Read by |
+ | --- | --- | --- | --- |
+@@ -552,6 +549,109 @@ an identity question either: each watcher reads its tracked set from a file of
+ `owner/repo#number` lines that the conversation maintains, and sees nothing
+ outside it.
+ 
++## Change configuration
++
++Change one setting with `set`, and remove one with `unset`:
++
++```sh
++project config set watch.auto_start false
++project config unset watch.auto_start
++```
++
++Both change the repository's own `.projector.toml` at the root of the
++checkout, which is the file nearest the code and the last one merged, so the
++value you set is the value the repository's commands read. Choose another
++file with one of these options:
++
++- **`--user`** changes `~/.projector.toml`, which applies in every
++  repository. Use it for a personal preference, such as `watch.auto_start`,
++  that should not be checked in with a repository.
++- **`--file <path>`** changes the file at that path, such as
++  `~/work/.projector.toml`, which covers every repository under `~/work`.
++  The command creates the file but not its directory, and refuses a path
++  in a directory that does not exist with exit code 2.
++- **`--repo`** names the default.
++
++Outside a Git repository, the default has no file to change, so `set` and
++`unset` exit 69 unless you pass `--user` or `--file`.
++
++`set` takes `true` or `false` for a boolean key and any text for a string
++key, and refuses any other value with exit code 2. It also refuses, with
++exit code 2 and the list of keys, a key that the table in
++[Read configuration](#read-configuration) does not list. `get` still reads
++a key that is not in the table.
++
++`unset` removes any key the file sets, including one the table does not
++list, such as a setting Projector no longer reads:
++
++```sh
++project config unset review.peer_wait
++```
++
++A key the table lists but the file does not set is reported as
++`unchanged`. A key outside the table that the file does not set, such as a
++misspelled one, is refused with exit code 2 and the list of keys.
++
++`set` and `unset` edit the file as text and change only the line that sets
++the key, so your comments, blank lines, and other settings stay as you wrote
++them:
++
++- **A key that is set** gets its new value on the same line, with any
++  comment after the value kept.
++- **A key that is not set** goes after the last setting of its table, such
++  as `[watch]`. When the file sets the table's keys with dotted names, such
++  as `watch.auto_start = true` at the top of the file, the new key is
++  written the same way, beside them.
++- **A table the file lacks** is added at the end of the file, and a missing
++  file is created.
++- **`unset`** removes the key's line and leaves its table header. It
++  removes one setting, not a table, so it refuses a key that names a
++  table, such as `review`, with exit code 65 and the file unchanged.
++
++Each command refuses a file that is not valid TOML with exit code 78, and a
++key it cannot change on its own line, such as one in an inline table
++(`watch = { auto_start = true }`), with exit code 65. Neither refusal
++changes the file. After each change, the command reads the file back and
++checks that the key has the new value and that every other key is
++unchanged. When the check fails, it restores the file and exits 65. A
++symlink, such as a `~/.projector.toml` that links into a dotfiles
++repository, stays a link, and the command changes the file it points at.
++
++A nearer file can override the value you set, as a repository's file
++overrides `~/.projector.toml`. When the merged configuration does not give
++the new value, the command names the file that wins on stderr:
++
++```console
++$ project config set watch.auto_start false --user
++set watch.auto_start = false in /Users/you/.projector.toml
++project: /Users/you/work/repo/.projector.toml sets watch.auto_start = true, which applies here
++```
++
++Setting a key to the value it already has changes nothing, and the command
++reports it as `unchanged`. With `--json`, each command prints the `action`,
++which is `set`, `unset`, or `unchanged`. It also prints the `key`, the
++`old` value and the `new` value, each `null` when the file has none, and
++the `file` it changed:
++
++```json
++{
++  "action": "set",
++  "file": "/Users/you/work/repo/.projector.toml",
++  "key": "watch.auto_start",
++  "new": false,
++  "old": true,
++  "schema_version": 2
++}
++```
++
++You can still edit a `.projector.toml` by hand. The commands write the same
++TOML, such as this for `project config set watch.auto_start false`:
++
++```toml
++[watch]
++auto_start = false
++```
++
+ ## Upgrade
+ 
+ `upgrade` moves the installed command and the host plugins to what they were
+@@ -1617,8 +1717,8 @@ with the `pr` and the `tracked` file.
+ ## Consume JSON
+ 
+ Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
+-`priority`, `done`, `check`, or any `inbox` or `loop` command. Responses use stdout
+-only for JSON and include `"schema_version": 2`. An `inbox` command that
++`priority`, `done`, `check`, or any `config`, `inbox`, or `loop` command.
++Responses use stdout only for JSON and include `"schema_version": 2`. An `inbox` command that
+ prints one item prints it under `item`, and `inbox list` prints `items`.
+ `inbox watch --json` prints one JSON object a line, as a watcher reads it.
+ 
+diff --git a/docs/plugins.md b/docs/plugins.md
+index fda5dd40..5a482cf2 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -36,8 +36,9 @@ running as a subagent hands its pull request up, through every subagent
+ above it, to that conversation, which starts or joins the loop on it, and a
+ subagent asked to start the loop hands that request up the same way. Where
+ the host cannot keep the loop running, `implement` says so when it hands the
+-pull request over. Set `watch.auto_start = false` in `.projector.toml` to
+-start the loop yourself instead. `fix-pr` also implements or defers each
++pull request over. To start the loop yourself instead, run
++`project config set watch.auto_start false --user`, or leave out `--user` to
++change only the current repository. `fix-pr` also implements or defers each
+ suggestion a review lists. While it builds a change that no review has read,
+ such as a
+ suggestion it implements or a change you ask for, it holds the pull request
+@@ -50,9 +51,9 @@ findings on every head: it resolves one it verifies fixed, reopens one resolved
+ too early, and keeps one whose decline does not hold, so its verdict rests on
+ what it checked rather than on who clicked resolve. In a repository with a
+ Projector site, `review-pr` then runs `summarize-pr` on every pull request it
+-reviews and links the summary from its review; `review.summarize = false` in
+-`.projector.toml` turns that off. All three of `implement`,
+-`review-pr`, and `fix-pr` share the code guidelines in
++reviews and links the summary from its review;
++`project config set review.summarize false` turns that off. All three of
++`implement`, `review-pr`, and `fix-pr` share the code guidelines in
+ `skills/guidelines.md`, so the rules one follows are the rules the others
+ review and fix against. Every skill that writes prose a person reads, such as
+ a plan, a review, a summary, or a pull request body, follows the writing
+diff --git a/docs/site.md b/docs/site.md
+index d9bd0147..cf7311bc 100644
+--- a/docs/site.md
++++ b/docs/site.md
+@@ -98,8 +98,15 @@ is the GitHub repository:
+ 
+    A page the repository generates rather than commits, such as an HTML
+    explorer or a WebAssembly module a playground loads, needs building before
+-   the site. Name the command that builds it as `site.prepare` in
+-   `.projector.toml`, where the deploy and `project site serve` both find it:
++   the site. Name the command that builds it as `site.prepare` in the
++   repository's `.projector.toml`, where the deploy and `project site serve`
++   both find it:
++
++   ```sh
++   project config set site.prepare "make docs-wasm"
++   ```
++
++   That writes this to the file, which you can also edit by hand:
+ 
+    ```toml
+    [site]
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 86e8c40c..8d369b58 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -861,8 +861,8 @@ While both hold, the summary is not optional. Summarize every pull request
+ you review, whoever opened it. A summary matters most on another author's
+ pull request, because that is how its reviewers read the change. Neither
+ the author, a brief, nor your own judgment is a reason to skip or hold one.
+-The one off switch is `review.summarize = false` in `.projector.toml`,
+-and the user sets it.
++The one off switch is `review.summarize = false`, and the user sets it, or
++asks you to set it with `project config set review.summarize false`.
+ 
+ Then follow `summarize-pr` for this head, with two differences from a
+ summary a person asks for:
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 2b356a4e..c63a238d 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -171,7 +171,8 @@ reads the new head against that history instead of rediscovering it.
+ - Each subagent summarizes every pull request it reviews, as `review-pr`
+   describes, another author's included. The loop never pauses or holds
+   summaries on its own judgment. The one off switch is `review.summarize =
+-  false` in `.projector.toml`, which the user sets. A brief that
++  false`, which the user sets, or asks you to set with
++  `project config set review.summarize false`. A brief that
+   forbids editing the pull request body names the summary's link block as
+   an exception, because `project summary publish` writes that block at the
+   end of every description on purpose. Where the repository's own
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index c7b7bc9b..9e88e729 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -26,7 +26,16 @@
+ from . import inbox, loop, permissions, review, site, summary
+ from .permissions import allow_publish
+ from .summary import WORKFLOW_PATH
+-from .config import ConfigError
++from .config import (
++    CONFIG_NAME,
++    Change,
++    ConfigError,
++    parse_value,
++    same_value,
++    unset_value,
++    user_config_path,
++    write_value,
++)
+ from .config import load as load_config
+ from .core import (
+     DISTRIBUTION,
+@@ -394,7 +403,7 @@ def parser() -> argparse.ArgumentParser:
+ 
+     add_output(subcommands.add_parser("check", help="validate all projects"))
+ 
+-    config = subcommands.add_parser("config", help="read layered configuration")
++    config = subcommands.add_parser("config", help="read and change layered configuration")
+     config_commands = config.add_subparsers(dest="config_command", required=True)
+ 
+     config_get = config_commands.add_parser("get", help="print one value")
+@@ -402,6 +411,17 @@ def parser() -> argparse.ArgumentParser:
+     config_get.add_argument("--default", help="printed when the key is unset")
+     add_output(config_get)
+ 
++    config_set = config_commands.add_parser("set", help="set one value in one configuration file")
++    config_set.add_argument("key", help="a key Projector reads, for example watch.auto_start")
++    config_set.add_argument("value", help="true or false, or text, as the key takes")
++    add_config_file(config_set)
++    add_output(config_set)
++
++    config_unset = config_commands.add_parser("unset", help="remove one value from one configuration file")
++    config_unset.add_argument("key", help="a key Projector reads, or any other key the file sets")
++    add_config_file(config_unset)
++    add_output(config_unset)
++
+     config_list = config_commands.add_parser("list", help="print the merged configuration")
+     add_output(config_list)
+ 
+@@ -618,6 +638,15 @@ def add_output(command: argparse.ArgumentParser) -> None:
+     command.add_argument("--json", action="store_true", dest="json_output")
+ 
+ 
++def add_config_file(command: argparse.ArgumentParser) -> None:
++    target = command.add_mutually_exclusive_group()
++    target.add_argument("--repo", action="store_const", const="repo", dest="scope",
++                        help=f"the repository's own {CONFIG_NAME}, the default")
++    target.add_argument("--user", action="store_const", const="user", dest="scope",
++                        help=f"~/{CONFIG_NAME}, which applies in every repository")
++    target.add_argument("--file", type=Path, help="this configuration file, such as one in a parent directory")
++
++
+ def seconds(text: str) -> float:
+     value = float(text)
+     if not 0 < value < float("inf"):
+@@ -768,7 +797,62 @@ def format_value(value: object) -> str:
+     return json.dumps(value, sort_keys=True, default=json_scalar)
+ 
+ 
++def config_file(arguments: argparse.Namespace) -> Path:
++    """The file `set` and `unset` change: the repository's own unless `--user` or `--file` names another."""
++
++    if arguments.file:
++        path = arguments.file.absolute()
++        if not path.parent.is_dir():
++            raise UsageError(f"{path.parent} is not a directory; --file creates a file but not its directory")
++        return path
++    if arguments.scope == "user":
++        return user_config_path()
++    if arguments.root:
++        return arguments.root.resolve() / CONFIG_NAME
++    try:
++        return discover_git_root(Path.cwd()) / CONFIG_NAME
++    except EnvironmentError as error:
++        raise EnvironmentError(f"{error}; pass --user or --file to name a configuration file") from error
++
++
++def report_override(arguments: argparse.Namespace, change: Change) -> None:
++    """Say on stderr when the merged configuration here does not give the value just written."""
++
++    try:
++        config = load_config(config_start(arguments))
++    except ConfigError:
++        return
++    effective = config.get(change.key)
++    if same_value(effective, change.new):
++        return
++    source = config.source(change.key)
++    if source is not None:
++        print(f"project: {source} sets {change.key} = {format_value(effective)}, which applies here",
++              file=sys.stderr)
++    else:
++        print(f"project: {change.path} is not read here; 'project config paths' lists the files that are",
++              file=sys.stderr)
++
++
++def change_config(arguments: argparse.Namespace) -> int:
++    path = config_file(arguments)
++    if arguments.config_command == "set":
++        change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value))
++    else:
++        change = unset_value(path, arguments.key)
++    if arguments.json_output:
++        print(json_text({"action": change.action, "key": change.key, "old": change.old, "new": change.new,
++                         "file": str(change.path)}), flush=True)
++    else:
++        shown = "" if change.new is None else f" = {format_value(change.new)}"
++        print(f"{change.action} {change.key}{shown} in {change.path}", flush=True)
++    report_override(arguments, change)
++    return 0
++
++
+ def run_config(arguments: argparse.Namespace) -> int:
++    if arguments.config_command in ("set", "unset"):
++        return change_config(arguments)
+     config = load_config(config_start(arguments))
+     command = arguments.config_command
+ 
+@@ -850,36 +934,20 @@ def emit_files(files: list[FileAction], json_output: bool, pages: Optional[dict]
+ def instructions_enabled(root: Path) -> bool:
+     """`instructions.enabled` from configuration; unset means enabled."""
+ 
+-    value = load_config(root).get("instructions.enabled")
+-    if value is None:
+-        return True
+-    if not isinstance(value, bool):
+-        raise ConfigError(
+-            f"instructions.enabled must be true or false, not {type(value).__name__}"
+-        )
+-    return value
++    return load_config(root).setting("instructions.enabled") is not False
+ 
+ 
+ def configured_projects_dir(root: Path) -> Optional[Path]:
+     """`projects.dir` from configuration, when the flag did not supply one."""
+ 
+-    configured = load_config(root).get("projects.dir")
+-    if configured is None:
+-        return None
+-    if not isinstance(configured, str):
+-        raise ConfigError(f"projects.dir must be a string, not {type(configured).__name__}")
+-    return Path(configured)
++    configured = load_config(root).setting("projects.dir")
++    return None if configured is None else Path(configured)
+ 
+ 
+ def configured_prepare(root: Path) -> Optional[str]:
+     """`site.prepare` from configuration: the command that generates what the site copies."""
+ 
+-    configured = load_config(root).get("site.prepare")
+-    if configured is None or configured == "":
+-        return None
+-    if not isinstance(configured, str):
+-        raise ConfigError(f"site.prepare must be a string, not {type(configured).__name__}")
+-    return configured
++    return load_config(root).setting("site.prepare") or None
+ 
+ 
+ def allowed_prepare_file() -> Path:
+@@ -974,12 +1042,7 @@ def review_rules(json_output: bool) -> int:
+ def incremental_enabled(checkout: Path) -> bool:
+     """`review.incremental` from the review's checkout; unset means incremental reviews are on."""
+ 
+-    value = load_config(checkout).get("review.incremental")
+-    if value is None:
+-        return True
+-    if not isinstance(value, bool):
+-        raise ConfigError(f"review.incremental must be true or false, not {type(value).__name__}")
+-    return value
++    return load_config(checkout).setting("review.incremental") is not False
+ 
+ 
+ def review_status(root: Path, arguments: argparse.Namespace) -> int:
+@@ -1629,23 +1692,13 @@ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = ""
+ def site_enabled(root: Path) -> bool:
+     """`site.enabled` from configuration; unset means `init` sets the site up."""
+ 
+-    value = load_config(root).get("site.enabled")
+-    if value is None:
+-        return True
+-    if not isinstance(value, bool):
+-        raise ConfigError(f"site.enabled must be true or false, not {type(value).__name__}")
+-    return value
++    return load_config(root).setting("site.enabled") is not False
+ 
+ 
+ def publish_rule_enabled(root: Path) -> bool:
+     """`review.publish_rule` from configuration; unset means `init` adds the rules."""
+ 
+-    value = load_config(root).get("review.publish_rule")
+-    if value is None:
+-        return True
+-    if not isinstance(value, bool):
+-        raise ConfigError(f"review.publish_rule must be true or false, not {type(value).__name__}")
+-    return value
++    return load_config(root).setting("review.publish_rule") is not False
+ 
+ 
+ def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[str]:
+diff --git a/src/projector/config.py b/src/projector/config.py
+index b9d14f0a..7d6fe5b7 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -24,25 +24,78 @@
+ A worktree under the repository, as `.claude/worktrees/<name>` is, keeps the
+ repository and its parents on the walk. A worktree created outside the
+ repository does not, and sees only its own file and the user layer.
++
++`project config set` and `unset` change one file, one line at a time, so the
++comments and layout a person wrote survive every change.
+ """
+ 
+ from __future__ import annotations
+ 
++import json
+ import os
++import re
+ import tomllib
++from dataclasses import dataclass
+ from pathlib import Path
+ from typing import Any, Optional
+ 
+-from .core import ProjectorError
++from .core import ProjectorError, UsageError, write_through
+ 
+ 
+ CONFIG_NAME = ".projector.toml"
+ 
++# Every key Projector reads, with its type. `project config set` accepts only
++# these keys and values of these types, and `Config.setting` refuses a file's
++# value of another type.
++SETTINGS: dict[str, type] = {
++    "projects.dir": str,
++    "instructions.enabled": bool,
++    "site.enabled": bool,
++    "site.prepare": str,
++    "review.username": str,
++    "review.allow_approve": bool,
++    "review.publish_rule": bool,
++    "review.gate": str,
++    "review.incremental": bool,
++    "review.summarize": bool,
++    "fix.resolve_human_threads": bool,
++    "watch.auto_start": bool,
++}
++
+ 
+ class ConfigError(ProjectorError):
+     exit_code = 78
+ 
+ 
++def same_value(one: Any, other: Any) -> bool:
++    return type(one) is type(other) and one == other
++
++
++def _unknown_key(key: str, reason: str = "") -> UsageError:
++    return UsageError(f"unknown key {key!r}{reason}; the keys are {', '.join(sorted(SETTINGS))}")
++
++
++def setting_type(key: str) -> type:
++    try:
++        return SETTINGS[key]
++    except KeyError:
++        raise _unknown_key(key) from None
++
++
++def parse_value(key: str, text: str) -> Any:
++    """`text` from the command line as the type `key` takes."""
++
++    if setting_type(key) is bool:
++        if text not in ("true", "false"):
++            raise UsageError(f"{key} must be true or false, not {text!r}")
++        return text == "true"
++    try:
++        text.encode("utf-8")
++    except UnicodeEncodeError:
++        raise UsageError(f"{key} must be text that UTF-8 can encode") from None
++    return text
++
++
+ def user_config_path(environ: Optional[dict[str, str]] = None) -> Path:
+     """The user layer: the same filename, in the home directory."""
+ 
+@@ -156,6 +209,16 @@ def get(self, key: str, default: Any = None) -> Any:
+             current = current[part]
+         return current
+ 
++    def setting(self, key: str) -> Any:
++        """A key from `SETTINGS`, or None when unset; a value of another type is an error naming the key."""
++
++        value = self.get(key)
++        kind = SETTINGS[key]
++        if value is not None and not isinstance(value, kind):
++            expected = "true or false" if kind is bool else "a string"
++            raise ConfigError(f"{key} must be {expected}, not {type(value).__name__}")
++        return value
++
+     def source(self, key: str) -> Optional[Path]:
+         return self.sources.get(key)
+ 
+@@ -185,3 +248,235 @@ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, s
+     final = _flatten(values)
+     sources = {key: path for key, path in sources.items() if key in final}
+     return Config(values, sources, paths)
++
++
++@dataclass(frozen=True)
++class Change:
++    """What `write_value` did to one key: `set`, `unset`, or `unchanged`."""
++
++    action: str
++    key: str
++    old: Any
++    new: Any
++    path: Path
++
++
++def write_value(path: Path, key: str, value: Any) -> Change:
++    """Set `key` to `value` in the file at `path`, or remove it when `value` is None.
++
++    Only the lines that set `key` change, so every comment, blank line, and
++    other setting stays byte for byte. The edit is checked twice: before
++    writing, by parsing the new text, and after, by reading the file back,
++    which restores the original when the two disagree.
++    """
++
++    original = path.read_bytes().decode("utf-8") if path.exists() else None
++    try:
++        before = tomllib.loads(original or "")
++    except tomllib.TOMLDecodeError as error:
++        raise ConfigError(f"{path}: invalid TOML: {error}") from error
++    old = Config(before, {}, []).get(key)
++    if same_value(old, value):
++        return Change("unchanged", key, old, value, path)
++    if isinstance(old, dict):
++        command = "unset removes" if value is None else "set changes"
++        raise ProjectorError(f"{path}: {key} is a table, and {command} one setting, not a table; the file is unchanged")
++
++    expected = {name: setting for name, setting in _flatten(before).items() if name != key}
++    if value is not None:
++        expected[key] = value
++    text = _edited(original or "", key, value)
++    if not _reads_back(text, key, value, expected):
++        raise ProjectorError(
++            f"{path}: cannot change {key} by editing its own line, as when an inline table holds it; "
++            "the file is unchanged"
++        )
++    write_through(path, text)
++    if not _reads_back(path.read_bytes().decode("utf-8"), key, value, expected):
++        if original is None:
++            path.resolve().unlink(missing_ok=True)
++        else:
++            write_through(path, original)
++        raise ProjectorError(f"{path}: {key} did not read back as written, so the file was restored")
++    return Change("unset" if value is None else "set", key, old, value, path)
++
++
++def unset_value(path: Path, key: str) -> Change:
++    """Remove `key` from the file at `path`.
++
++    A key outside `SETTINGS` is removed when the file sets it, so a setting
++    Projector no longer reads can be cleaned up, and refused when the file
++    does not, so a misspelled key still gets the list of keys.
++    """
++
++    change = write_value(path, key, None)
++    if change.action == "unchanged" and key not in SETTINGS:
++        raise _unknown_key(key, f", which {path} does not set")
++    return change
++
++
++def _reads_back(text: str, key: str, value: Any, expected: dict[str, Any]) -> bool:
++    try:
++        values = tomllib.loads(text)
++    except tomllib.TOMLDecodeError:
++        return False
++    return same_value(Config(values, {}, []).get(key), value) and _flatten(values) == expected
++
++
++_KEY_PART = r"""(?:[A-Za-z0-9_-]+|"(?:[^"\\\n]|\\.)*"|'[^'\n]*')"""
++_DOTTED_KEY = rf"{_KEY_PART}(?:[ \t]*\.[ \t]*{_KEY_PART})*"
++_HEADER = re.compile(rf"[ \t]*(\[\[?)[ \t]*({_DOTTED_KEY})[ \t]*\]")
++_ASSIGNMENT = re.compile(rf"([ \t]*)({_DOTTED_KEY})[ \t]*=[ \t]*")
++
++
++@dataclass(frozen=True)
++class _Header:
++    line: int
++    table: tuple[str, ...]
++    array: bool
++
++
++@dataclass(frozen=True)
++class _Entry:
++    """One `key = value` statement: lines `start` up to `end`, under the table `table`."""
++
++    start: int
++    end: int
++    table: tuple[str, ...]
++    key: tuple[str, ...]
++    indent: str
++    value_start: int
++
++    @property
++    def path(self) -> tuple[str, ...]:
++        return self.table + self.key
++
++
++def _key_path(dotted: str) -> tuple[str, ...]:
++    """A dotted key as TOML reads it, with quotes and escapes resolved."""
++
++    node: Any = tomllib.loads(f"{dotted} = 0")
++    path: list[str] = []
++    while isinstance(node, dict):
++        ((name, node),) = node.items()
++        path.append(name)
++    return tuple(path)
++
++
++def _statement_end(lines: list[str], start: int) -> int:
++    """The line after the last one the statement at `start` spans.
++
++    A value such as a multi-line string or array continues onto later lines,
++    and the first run of lines that parses on its own is the whole statement.
++    """
++
++    for end in range(start + 1, len(lines) + 1):
++        try:
++            tomllib.loads("".join(lines[start:end]))
++        except tomllib.TOMLDecodeError:
++            continue
++        return end
++    raise ConfigError(f"line {start + 1}: cannot find the end of the value")
++
++
++def _scan(lines: list[str]) -> tuple[list[_Header], list[_Entry]]:
++    headers: list[_Header] = []
++    entries: list[_Entry] = []
++    table: tuple[str, ...] = ()
++    index = 0
++    while index < len(lines):
++        line = lines[index]
++        if not line.strip() or line.lstrip().startswith("#"):
++            index += 1
++        elif header := _HEADER.match(line):
++            table = _key_path(header.group(2))
++            headers.append(_Header(index, table, header.group(1) == "[["))
++            index += 1
++        else:
++            assignment = _ASSIGNMENT.match(line)
++            if assignment is None:
++                raise ConfigError(f"line {index + 1}: cannot read the key")
++            end = _statement_end(lines, index)
++            entries.append(
++                _Entry(index, end, table, _key_path(assignment.group(2)), assignment.group(1), assignment.end())
++            )
++            index = end
++    return headers, entries
++
++
++def _value_end(statement: str, value_start: int) -> int:
++    """Where the value that begins at `value_start` ends, so a comment after it survives.
++
++    The value ends either at the end of the statement or before a `#` that
++    starts a comment. A `#` inside a string leaves the text before it
++    unparseable, so the first cut that parses is the end of the value.
++    """
++
++    cuts = [match.start() for match in re.finditer("#", statement) if match.start() > value_start]
++    for cut in [*cuts, len(statement)]:
++        head = statement[:cut].rstrip()
++        try:
++            tomllib.loads(head)
++        except tomllib.TOMLDecodeError:
++            continue
++        return len(head)
++    raise ConfigError("cannot find the end of the value")
++
++
++def _toml_value(value: Any) -> str:
++    if isinstance(value, bool):
++        return "true" if value else "false"
++    # JSON escapes every control character TOML does except DEL, which a TOML
++    # basic string may not hold unescaped.
++    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007F")
++
++
++def _edited(text: str, key: str, value: Any) -> str:
++    """`text` with `key` set to `value`, or removed when `value` is None."""
++
++    lines = re.findall(r"[^\n]*\n|[^\n]+\Z", text)
++    newline = "\r\n" if "\r\n" in text else "\n"
++    path = tuple(key.split("."))
++    headers, entries = _scan(lines)
++
++    entry = next((entry for entry in entries if entry.path == path), None)
++    if entry is not None:
++        if value is None:
++            del lines[entry.start:entry.end]
++        else:
++            statement = "".join(lines[entry.start:entry.end])
++            end = _value_end(statement, entry.value_start)
++            lines[entry.start:entry.end] = [statement[:entry.value_start] + _toml_value(value) + statement[end:]]
++        return "".join(lines)
++    if value is None:
++        return text
++
++    parent = path[:-1]
++    header = next((header for header in headers if header.table == parent and not header.array), None)
++    if header is not None or not parent:
++        # After the section's last statement rather than at its end, so a
++        # comment that introduces the next table stays above that table.
++        siblings = [entry for entry in entries if entry.table == parent]
++        written = path[-1:]
++        after = siblings[-1] if siblings else None
++        at = after.end if after else (header.line + 1 if header else 0)
++    else:
++        # A table made by dotted keys, as `watch.auto_start = true` at the top
++        # level makes `watch`, cannot also take a `[watch]` header, so the key
++        # joins those dotted keys.
++        dotted = [entry for entry in entries
++                  if len(entry.table) < len(parent) < len(entry.path) and entry.path[:len(parent)] == parent]
++        if not dotted:
++            separator = newline if text.strip() and not text.endswith(newline * 2) else ""
++            ending = newline if text and not text.endswith("\n") else ""
++            return (f"{text}{ending}{separator}[{'.'.join(parent)}]{newline}"
++                    f"{path[-1]} = {_toml_value(value)}{newline}")
++        after = dotted[-1]
++        written = path[len(after.table):]
++        at = after.end
++
++    if at and not lines[at - 1].endswith("\n"):
++        lines[at - 1] += newline
++    indent = after.indent if after else ""
++    lines.insert(at, f"{indent}{'.'.join(written)} = {_toml_value(value)}{newline}")
++    return "".join(lines)
+diff --git a/tests/test_config.py b/tests/test_config.py
+index 1eec8319..1187666c 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -2,6 +2,7 @@
+ 
+ import json
+ import os
++import re
+ import subprocess
+ import tempfile
+ import unittest
+@@ -10,8 +11,9 @@
+ from pathlib import Path
+ from unittest import mock
+ 
++from projector import config as config_module
+ from projector.cli import main
+-from projector.config import ConfigError, config_paths, load, merge, user_config_path
++from projector.config import SETTINGS, ConfigError, config_paths, load, merge, user_config_path
+ from projector.core import json_scalar
+ 
+ 
+@@ -294,3 +296,341 @@ def test_invalid_toml_reports_cleanly_through_the_cli(self) -> None:
+ 
+         self.assertEqual(78, code)
+         self.assertIn("invalid TOML", stderr)
++
++
++class ConfigSetTests(unittest.TestCase):
++    """`project config set` and `unset`, which change one line of one file."""
++
++    def setUp(self) -> None:
++        self.temporary = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temporary.cleanup)
++        self.home = Path(self.temporary.name).resolve() / "home"
++        self.root = self.home / "work" / "repo"
++        self.root.mkdir(parents=True)
++        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
++        environment = mock.patch.dict(os.environ, {"HOME": str(self.home)})
++        environment.start()
++        self.addCleanup(environment.stop)
++        self.repo_file = self.root / ".projector.toml"
++        self.user_file = self.home / ".projector.toml"
++
++    def invoke(self, *arguments: str) -> tuple[int, str, str]:
++        stdout, stderr = StringIO(), StringIO()
++        with redirect_stdout(stdout), redirect_stderr(stderr):
++            code = main(["--root", str(self.root), *arguments])
++        return code, stdout.getvalue(), stderr.getvalue()
++
++    def assert_set(self, key: str, value: str, *scope: str) -> str:
++        code, stdout, stderr = self.invoke("config", "set", key, value, *scope)
++        self.assertEqual(0, code, stderr)
++        return stdout
++
++    def test_each_type_lands_in_its_table_in_a_new_file(self) -> None:
++        self.assert_set("watch.auto_start", "false")
++        self.assert_set("review.username", 'mi"n\\judd')
++
++        self.assertEqual(
++            "[watch]\nauto_start = false\n\n"
++            '[review]\nusername = "mi\\"n\\\\judd"\n',
++            self.repo_file.read_text(),
++        )
++        config = load(self.root)
++        self.assertIs(False, config.get("watch.auto_start"))
++        self.assertEqual('mi"n\\judd', config.get("review.username"))
++
++    def test_only_the_changed_line_differs_in_a_file_a_person_wrote(self) -> None:
++        original = (
++            "# Settings for this repository.\n"
++            "\n"
++            "[review]\n"
++            "# Who posts reviews.\n"
++            'username = "review-bot"\n'
++            "summarize = true\n"
++            "\n"
++            "# The site.\n"
++            "[site]\n"
++            'prepare = "make docs"\n'
++        )
++        self.repo_file.write_bytes(original.encode())
++
++        self.assert_set("review.username", "minjudd")
++
++        self.assertEqual(original.replace('"review-bot"', '"minjudd"'), self.repo_file.read_text())
++
++    def test_a_new_key_joins_its_table_after_the_last_setting(self) -> None:
++        self.repo_file.write_text(
++            "[review]\n"
++            '  username = "review-bot"  # indented\n'
++            "\n"
++            "# The site comes next.\n"
++            "[site]\n"
++            "enabled = true\n"
++        )
++
++        self.assert_set("review.summarize", "false")
++
++        self.assertEqual(
++            "[review]\n"
++            '  username = "review-bot"  # indented\n'
++            "  summarize = false\n"
++            "\n"
++            "# The site comes next.\n"
++            "[site]\n"
++            "enabled = true\n",
++            self.repo_file.read_text(),
++        )
++
++    def test_a_replaced_value_keeps_its_trailing_comment(self) -> None:
++        self.repo_file.write_text('[review]\nallow_approve = false   # off # for now\ngate = "make # all"  # gate\n')
++
++        self.assert_set("review.allow_approve", "true")
++        self.assert_set("review.gate", "make check")
++
++        self.assertEqual(
++            '[review]\nallow_approve = true   # off # for now\ngate = "make check"  # gate\n',
++            self.repo_file.read_text(),
++        )
++
++    def test_a_dotted_top_level_key_is_changed_where_it_is_written(self) -> None:
++        self.repo_file.write_text('watch.auto_start = true\nreview.username = "bot"\n\n[site]\nenabled = true\n')
++
++        self.assert_set("watch.auto_start", "false")
++        self.assert_set("review.summarize", "false")
++
++        self.assertEqual(
++            'watch.auto_start = false\nreview.username = "bot"\nreview.summarize = false\n\n'
++            "[site]\nenabled = true\n",
++            self.repo_file.read_text(),
++        )
++
++    def test_a_multi_line_value_is_replaced_whole(self) -> None:
++        self.repo_file.write_text('[review]\ngate = """\nmake test # all\n"""  # the gate\nsummarize = true\n')
++
++        self.assert_set("review.gate", "make check")
++
++        self.assertEqual('[review]\ngate = "make check"  # the gate\nsummarize = true\n', self.repo_file.read_text())
++
++    def test_windows_line_endings_survive(self) -> None:
++        self.repo_file.write_bytes(b"[watch]\r\nauto_start = true\r\n")
++
++        self.assert_set("watch.auto_start", "false")
++        self.assert_set("review.summarize", "false")
++
++        self.assertEqual(
++            b"[watch]\r\nauto_start = false\r\n\r\n[review]\r\nsummarize = false\r\n",
++            self.repo_file.read_bytes(),
++        )
++
++    def test_unset_removes_the_line_and_leaves_the_table(self) -> None:
++        self.repo_file.write_text("# keep\n[watch]\nauto_start = false  # mine\n\n[site]\nenabled = false\n")
++
++        code, stdout, _ = self.invoke("config", "unset", "watch.auto_start")
++
++        self.assertEqual(0, code)
++        self.assertEqual(f"unset watch.auto_start in {self.repo_file}\n", stdout)
++        self.assertEqual("# keep\n[watch]\n\n[site]\nenabled = false\n", self.repo_file.read_text())
++
++    def test_an_unset_key_or_a_missing_file_is_left_unchanged(self) -> None:
++        code, stdout, _ = self.invoke("config", "unset", "watch.auto_start")
++
++        self.assertEqual(0, code)
++        self.assertEqual(f"unchanged watch.auto_start in {self.repo_file}\n", stdout)
++        self.assertFalse(self.repo_file.exists())
++
++        self.repo_file.write_text("[watch]\nauto_start = false\n")
++        before = self.repo_file.stat().st_mtime_ns
++        code, stdout, _ = self.invoke("config", "set", "watch.auto_start", "false")
++
++        self.assertEqual(0, code)
++        self.assertEqual(f"unchanged watch.auto_start = false in {self.repo_file}\n", stdout)
++        self.assertEqual(before, self.repo_file.stat().st_mtime_ns)
++
++    def test_json_names_the_action_both_values_and_the_file(self) -> None:
++        self.repo_file.write_text("[watch]\nauto_start = true\n")
++
++        code, stdout, _ = self.invoke("config", "set", "watch.auto_start", "false", "--json")
++
++        self.assertEqual(0, code)
++        self.assertEqual(
++            {"action": "set", "key": "watch.auto_start", "old": True, "new": False,
++             "file": str(self.repo_file), "schema_version": 2},
++            json.loads(stdout),
++        )
++
++        _, stdout, _ = self.invoke("config", "unset", "watch.auto_start", "--json")
++
++        self.assertEqual({"action": "unset", "old": False, "new": None},
++                         {key: json.loads(stdout)[key] for key in ("action", "old", "new")})
++
++    def test_an_unknown_key_is_refused_with_the_known_ones(self) -> None:
++        for command in (["set", "watch.autostart", "true"], ["unset", "watch.autostart"]):
++            code, _, stderr = self.invoke("config", *command)
++
++            self.assertEqual(2, code)
++            self.assertIn("unknown key 'watch.autostart'", stderr)
++            self.assertIn("watch.auto_start", stderr)
++            self.assertFalse(self.repo_file.exists())
++
++    def test_unset_removes_a_key_outside_the_schema_that_the_file_sets(self) -> None:
++        self.repo_file.write_text('# mine\n[review]\npeer_wait = "10m"  # no longer read\nsummarize = false\n')
++
++        code, stdout, stderr = self.invoke("config", "unset", "review.peer_wait")
++
++        self.assertEqual(0, code, stderr)
++        self.assertEqual(f"unset review.peer_wait in {self.repo_file}\n", stdout)
++        self.assertEqual("# mine\n[review]\nsummarize = false\n", self.repo_file.read_text())
++
++    def test_unset_refuses_a_key_that_names_a_table(self) -> None:
++        text = "legacy.kept = true\n\n[review]\nsummarize = false\n\n[site]\nlimits = { retries = 3 }\n"
++        self.repo_file.write_text(text)
++
++        for key in ("review", "legacy", "site.limits"):
++            code, _, stderr = self.invoke("config", "unset", key)
++
++            self.assertEqual(65, code, key)
++            self.assertIn(f"{key} is a table, and unset removes one setting, not a table", stderr)
++            self.assertEqual(text, self.repo_file.read_text())
++
++    def test_unset_refuses_a_misspelled_key_the_file_does_not_set(self) -> None:
++        text = '[review]\npeer_wait = "10m"\n'
++        self.repo_file.write_text(text)
++
++        code, stdout, stderr = self.invoke("config", "unset", "review.peer_wiat")
++
++        self.assertEqual(2, code)
++        self.assertEqual("", stdout)
++        self.assertIn(f"unknown key 'review.peer_wiat', which {self.repo_file} does not set", stderr)
++        self.assertIn("watch.auto_start", stderr)
++        self.assertEqual(text, self.repo_file.read_text())
++
++    def test_a_value_of_the_wrong_type_is_refused(self) -> None:
++        cases = [
++            ("watch.auto_start", "yes", "must be true or false"),
++            ("watch.auto_start", "True", "must be true or false"),
++            ("review.username", "\udcff", "must be text that UTF-8 can encode"),
++        ]
++        for key, value, message in cases:
++            code, _, stderr = self.invoke("config", "set", key, value)
++
++            self.assertEqual(2, code)
++            self.assertIn(message, stderr)
++        self.assertFalse(self.repo_file.exists())
++
++    def test_a_file_that_is_not_valid_toml_is_refused_untouched(self) -> None:
++        self.repo_file.write_bytes(b"# mine\nreviewer = \n")
++
++        code, _, stderr = self.invoke("config", "set", "watch.auto_start", "false")
++
++        self.assertEqual(78, code)
++        self.assertIn("invalid TOML", stderr)
++        self.assertEqual(b"# mine\nreviewer = \n", self.repo_file.read_bytes())
++
++    def test_a_key_in_an_inline_table_is_refused_untouched(self) -> None:
++        for text in ("watch = { auto_start = true }\n", "watch = { other = 1 }\n", "[[watch]]\nauto_start = true\n"):
++            self.repo_file.write_text(text)
++
++            code, _, stderr = self.invoke("config", "set", "watch.auto_start", "false")
++
++            self.assertEqual(65, code, text)
++            self.assertIn("the file is unchanged", stderr)
++            self.assertEqual(text, self.repo_file.read_text())
++
++    def test_user_and_file_scopes_write_their_own_files(self) -> None:
++        parent = self.home / "work" / ".projector.toml"
++
++        self.assert_set("review.username", "minjudd", "--user")
++        self.assert_set("review.summarize", "false", "--file", str(parent))
++        self.assert_set("watch.auto_start", "false")
++
++        self.assertEqual('[review]\nusername = "minjudd"\n', self.user_file.read_text())
++        self.assertEqual("[review]\nsummarize = false\n", parent.read_text())
++        self.assertEqual("[watch]\nauto_start = false\n", self.repo_file.read_text())
++
++    def test_a_file_in_a_missing_directory_is_refused(self) -> None:
++        missing = Path(self.temporary.name).resolve() / "typo"
++
++        code, _, stderr = self.invoke("config", "set", "watch.auto_start", "false",
++                                      "--file", str(missing / "nested" / ".projector.toml"))
++
++        self.assertEqual(2, code)
++        self.assertIn(f"{missing / 'nested'} is not a directory", stderr)
++        self.assertFalse(missing.exists())
++
++    def test_a_value_a_nearer_file_overrides_is_reported(self) -> None:
++        self.repo_file.write_text("[watch]\nauto_start = true\n")
++
++        code, _, stderr = self.invoke("config", "set", "watch.auto_start", "false", "--user")
++
++        self.assertEqual(0, code)
++        self.assertIn(f"{self.repo_file} sets watch.auto_start = true, which applies here", stderr)
++
++        elsewhere = Path(self.temporary.name).resolve() / "elsewhere.toml"
++        _, _, stderr = self.invoke("config", "set", "review.summarize", "false", "--file", str(elsewhere))
++
++        self.assertIn(f"{elsewhere} is not read here", stderr)
++
++    def test_an_override_is_reported_when_the_file_already_held_the_value(self) -> None:
++        self.user_file.write_text("[watch]\nauto_start = false\n")
++        self.repo_file.write_text("[watch]\nauto_start = true\n")
++
++        code, stdout, stderr = self.invoke("config", "set", "watch.auto_start", "false", "--user")
++
++        self.assertEqual(0, code)
++        self.assertEqual(f"unchanged watch.auto_start = false in {self.user_file}\n", stdout)
++        self.assertIn(f"{self.repo_file} sets watch.auto_start = true, which applies here", stderr)
++
++    def test_outside_a_repository_the_default_file_is_refused(self) -> None:
++        outside = Path(self.temporary.name) / "outside"
++        outside.mkdir()
++        previous = Path.cwd()
++        os.chdir(outside)
++        self.addCleanup(os.chdir, previous)
++        stderr = StringIO()
++
++        with redirect_stdout(StringIO()), redirect_stderr(stderr):
++            code = main(["config", "set", "watch.auto_start", "false"])
++
++        self.assertEqual(69, code)
++        self.assertIn("pass --user or --file", stderr.getvalue())
++
++    def test_a_write_that_does_not_read_back_restores_the_file(self) -> None:
++        real_write = config_module.write_through
++
++        def corrupt_first_write(path: Path, text: str) -> None:
++            nonlocal corrupted
++            real_write(path, text if corrupted else text.replace("false", "true"))
++            corrupted = True
++
++        for original in ("# mine\n[watch]\nauto_start = true  # on\n", None):
++            if original is None:
++                self.repo_file.unlink()
++            else:
++                self.repo_file.write_text(original)
++            corrupted = False
++            with mock.patch.object(config_module, "write_through", corrupt_first_write):
++                code, _, stderr = self.invoke("config", "set", "watch.auto_start", "false")
++
++            self.assertEqual(65, code)
++            self.assertIn("did not read back as written, so the file was restored", stderr)
++            if original is None:
++                self.assertFalse(self.repo_file.exists())
++            else:
++                self.assertEqual(original, self.repo_file.read_text())
++
++    def test_a_symlinked_user_file_stays_a_link(self) -> None:
++        dotfiles = self.home / "dotfiles" / "projector.toml"
++        dotfiles.parent.mkdir()
++        dotfiles.write_text("[review]\nsummarize = true\n")
++        self.user_file.symlink_to(dotfiles)
++
++        self.assert_set("review.summarize", "false", "--user")
++
++        self.assertTrue(self.user_file.is_symlink())
++        self.assertEqual("[review]\nsummarize = false\n", dotfiles.read_text())
++
++    def test_the_documented_keys_are_the_known_keys(self) -> None:
++        documentation = (Path(__file__).resolve().parents[1] / "docs" / "cli.md").read_text()
++        rows = re.findall(r"^\| `([a-z_.]+)` \| (boolean|string) \|", documentation, re.MULTILINE)
++        names = {bool: "boolean", str: "string"}
++
++        self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))
