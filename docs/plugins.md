@@ -297,8 +297,8 @@ The items are a list below the pull requests, oldest first. A question's
 line starts with `-`, and a notice's with `•`, so you can tell which items
 want an answer and which want a read. Each line ends with the pull request
 the item is about, as the band labels it, and how long ago it was posted.
-The band appears when an item arrives, even after you hid it, and in a
-terminal the divider counts the open questions and the open notices.
+The band appears when an item arrives or is restored, even after you hid it,
+and in a terminal the divider counts the open questions and the open notices.
 
 ```text
 ──────────────────────────────── 2 questions · 1 notice · updated 12s ago [-]
@@ -423,7 +423,8 @@ item is open again at once, in its place in the list, with its drawer still
 open and **dismiss** and **snooze** back in their places. A dismissed question
 whose `DISMISSED` has not gone out sends its agent nothing; one whose agent
 already heard `DISMISSED` sends `RESTORED`. Once the item has left the band,
-ask the agent to restore it. A drawer closes when its line leaves the band,
+ask the agent to restore it, and the band appears with the item open, even
+if you hid it. A drawer closes when its line leaves the band,
 so a pull request or an item that comes back returns with its drawer closed.
 
 An answer you give from a terminal with `project inbox answer` reaches the

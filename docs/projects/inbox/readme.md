@@ -1290,6 +1290,13 @@ and for "unsnooze when an item is snoozed".
   snoozed item's drawer reads `discuss | dismiss | unsnooze`. Either
   action runs `project inbox restore`, redraws the item open at once, and
   leaves the drawer open on it, with `discuss | dismiss | snooze` again.
+- **A restored item brings a hidden band back, as a new item does.** The
+  band shows itself for any item that is open and not snoozed where the
+  list it last held had it otherwise: a new item, or one restored or
+  unsnoozed from a terminal. The `restore` tool shows a hidden band itself,
+  since it puts the item in the list before the band reads the store. Before,
+  only a `ref` the band had never seen counted, so an item the person had
+  asked an agent to bring back stayed out of sight behind a hidden band.
 - **A drawer closes when its line leaves the band.** The band closes the
   open drawer once its pull request or item is no longer listed, on each
   tick and each reload. Before, the drawer's key stayed set, so a line that
@@ -1370,6 +1377,7 @@ and for "unsnooze when an item is snoozed".
 | The refusals, the bare number, and the lock | `test_refuses_an_open_answered_or_withdrawn_item_and_an_unknown_number`, `test_a_bare_number_looks_first_among_dismissed_and_snoozed_items`, `test_two_restores_at_once_restore_once`, `test_a_lock_another_process_holds_makes_a_restore_wait_then_exit_75`, and `restore` in `test_refuses_an_answer_letter_on_every_other_command` |
 | **dismiss** closes the drawer and strikes the line through; the drawer then reads `discuss \| restore`; **restore** redraws it open with **dismiss** back, sends `RESTORED` only after `DISMISSED`, and a pick answers it | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place` in `hooks/band.test.tsx`, and `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
 | **snooze** closes the drawer and leaves the line in `subtle`, not struck, for 30 seconds; the drawer reads `discuss \| dismiss \| unsnooze`, and **unsnooze** brings `snooze` back | `snooze closes an item’s drawer and mutes it for 30 seconds, and its drawer offers unsnooze in snooze’s place`, `snooze hides either kind for an hour, then brings a hidden band back`, and `a snoozed item stays in the band for 30 seconds after it is snoozed, then leaves until its time` in `hooks/inbox.test.ts` |
+| A restore from the tool or a terminal brings a hidden band back | `a restore brings a hidden band back, from the tool or from a terminal, as a new item does` |
 | A drawer closes when its line leaves the band, so a returning line has it closed | `a pull request’s drawer closes when its line leaves the band, so it does not open again when the line returns`, and the restore tool's test below |
 | The `restore` tool redraws the item at once, its old drawer closed, refuses what the CLI refuses, and a failed `RESTORED` is said once | `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED`, `the restore tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs`, `a dropped RESTORED says so without asking for an answer, and is not sent again` |
 | The tools' descriptions and arguments | `the restore tool is for a dismissal the person calls a mistake, never a question asked again`, `` a call of the restore tool becomes `project inbox restore`, and only a whole number names an item ``, `the ask tool tells the agent that a pick arrives by number and a reply as the person’s prompt`, `word that a question was restored waits for a deliverer until a live claim holds it`, in `hooks/inbox.test.ts` |

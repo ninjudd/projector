@@ -2262,6 +2262,48 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
   await ui.unmount()
 })
 
+test('a restore brings a hidden band back, from the tool or from a terminal, as a new item does', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const dismissed = { dismissed: true as const, answeredAt: NOW - 60_000 }
+  const session = questionWorld(on, clock, [
+    held({ answer: dismissed, deliveredAt: NOW - 60_000 }),
+    notice({ snoozedAt: NOW - 60_000, snoozedUntil: NOW + HOUR }),
+    held({ ref: '3', number: 3, subject: 'Rebase first?', answer: dismissed, deliveredAt: NOW - 60_000 }),
+  ])
+  await startSession($, clock)
+  const isHidden = async () => {
+    const ui = await $.ui.mount(BAND)
+    const hidden = (await ui.find({ type: 'Text', text: ENGINE_BAND })) !== undefined
+    await ui.unmount()
+    return hidden
+  }
+  const hide = async () => {
+    await $.command.run(COMMAND)
+    await clock.advance(TICK)
+    await clock.settle()
+    expect(await isHidden()).toBe(true)
+  }
+
+  await hide()
+  await $.tool.call({ tool: 'mcp__projector__restore', number: 1 })
+  await clock.advance(1)
+  await clock.settle()
+  expect(await isHidden()).toBe(false)
+
+  // Unsnoozing or restoring from a terminal brings it back on the next tick.
+  for (const ref of ['2', '3']) {
+    await hide()
+    session.store.run(['project', 'inbox', 'restore', ref, '--session', SESSION])
+    await clock.advance(TICK)
+    await clock.settle()
+    expect(await isHidden()).toBe(false)
+  }
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: /^─+ 2 questions · 1 notice · updated/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('the restore tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

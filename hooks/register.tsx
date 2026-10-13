@@ -310,15 +310,17 @@ const itemOf = (stdout: string, session: string): Item => ({
 })
 
 /**
- * Takes the band's list from the store, and shows the band for an open item
- * it has not shown before, unless that item is still snoozed.
+ * Takes the band's list from the store, and shows the band for an item that
+ * is open and not snoozed when the band last held it otherwise: a new item,
+ * or one restored or unsnoozed since.
  */
 async function setItems($: Engine, list: Item[]): Promise<void> {
   const time = await $.clock.now()
   let isNew = false
   await update($, items, before => {
-    const known = new Set(before.map(one => one.ref))
-    isNew = list.some(one => one.answer === undefined && !known.has(one.ref) && !isSnoozedAt(one, time))
+    const isAwake = (item: Item) => item.answer === undefined && !isSnoozedAt(item, time)
+    const awake = new Set(before.filter(isAwake).map(one => one.ref))
+    isNew = list.some(one => isAwake(one) && !awake.has(one.ref))
     return list
   })
   if (isNew && !(await read($, isShown))) show($)
@@ -758,7 +760,8 @@ export const register: Register = on => {
   }))
 
   // The band takes the restored item from the CLI at once, so it is open in
-  // the band before the next read of the store.
+  // the band before the next read of the store, and comes back as a new item
+  // does when the person hid it.
   on('tool.call', { tool: RESTORE_TOOL }, async ($, e) => {
     const session = await $.session.id()
     const instead = 'tell the person in the conversation that it could not be restored'
@@ -766,6 +769,7 @@ export const register: Register = on => {
     if ('deny' in ran) return ran
     const item = itemOf(ran.stdout, session)
     await replace($, item)
+    if (!(await read($, isShown))) show($)
     const { ref } = item
     return {
       result:
