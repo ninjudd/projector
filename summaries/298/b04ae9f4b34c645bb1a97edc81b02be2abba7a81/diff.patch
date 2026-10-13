@@ -1,0 +1,520 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index f2b9d03..43f33d0 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -182,28 +182,36 @@ line each. Run `/projector` to show or hide the band. It also appears when the
+ session starts a loop's watcher for the first time.
+ 
+ ```text
+-──────────────────────────────────────────────────────────── updated 12s ago [-]
++──────────────────────────────────────────────────────────────── updated 12s ago [-]
+ 
+-#267 draft List a loop's open pull requests above the Claude Code prompt  2h
+-#258 draft Name the reviewed head in a review's signature line   conflict 5m
+-reviewing · by ada · review-signature · +84 −12 in 5 files · checks passing
+-discuss
++#267 draft List a loop's open pull requests above the Claude Code prompt      2h
++#258 draft grace Name the reviewed head in a review's signature line conflict 5m
++reviewing · review-signature · +84 −12 in 5 files · checks passing
+ github
+ projector
++discuss
+ ```
+ 
+-Each line is the pull request's number, `draft` or `ready`, the title, and,
+-when the pull request has them, a merge conflict, a change request, or
+-unresolved review threads. The line ends with how long ago the pull request
+-last changed, in the column where the inbox's items end with their ages. A
+-pull request that both a `start-watch-loop` watcher, `watch-threads.sh`, and
+-a `start-review-loop` watcher, `watch-prs.sh`, track is listed once. Only
+-the title shortens on a narrow terminal. The divider says how long ago the
+-band reloaded, and Claude Code's `[-]` at its end collapses the band. A
+-blank line sets the divider apart from the rows under it. Only a terminal
+-draws the divider and that blank line. Claude Desktop, VS Code, and the
+-mobile app do not set the band's text in a terminal's columns, so a rule
+-sized to them would wrap, and there the band starts with its first row.
++Each line is the pull request's number, `draft` or `ready`, its author when
++someone else wrote it, the title, and, when the pull request has them, a
++merge conflict, a change request, or unresolved review threads. The line
++ends with how long ago the pull request last changed, in the column where
++the inbox's items end with their ages. Only the title shortens on a narrow
++terminal.
++
++Your own pull requests come first, then everyone else's, each author's
++together and the authors in order of login, with no line between the groups.
++The band tells which are yours by the account `gh` is signed in as, which it
++asks for in the same query as the pull requests. A pull request that both a
++`start-watch-loop` watcher, `watch-threads.sh`, and a `start-review-loop`
++watcher, `watch-prs.sh`, track is listed once.
++
++The divider says how long ago the band reloaded, and Claude Code's `[-]` at
++its end collapses the band. A blank line sets the divider apart from the
++rows under it. Only a terminal draws the divider and that blank line. Claude
++Desktop, VS Code, and the mobile app do not set the band's text in a
++terminal's columns, so a rule sized to them would wrap, and there the band
++starts with its first row.
+ 
+ When a poll cannot reach GitHub, the band keeps showing the pull requests
+ GitHub gave last, and the divider's time shows how old they are. It shows
+@@ -212,18 +220,19 @@ GitHub's error only when it has none of them to show.
+ Click a pull request's number to open a drawer under it, and click it again
+ to close the drawer; opening one drawer closes any other. The drawer starts
+ under the number. It says whether your loops are watching or reviewing the
+-pull request, then its author, branch, size, and checks. Below that:
++pull request, then its branch, size, and checks. Below that:
+ 
+-- **discuss** puts the pull request's number in the prompt at the cursor,
+-  as `#258`, or as `owner/repo#258` when the band lists more than one
+-  repository.
+ - **github** opens the pull request on GitHub.
+ - **projector** opens its Projector summary, when the pull request's
+   description links one.
++- **discuss** puts the pull request's number in the prompt at the cursor,
++  as `#258`, or as `owner/repo#258` when the band lists more than one
++  repository.
+ 
+ Each link has a line of its own, because a terminal that does not draw
+ hyperlinks shows a link's URL after its text, and a line shared with
+-another link would cut the URL off.
++another link would cut the URL off. **discuss** comes last, on the row the
++drawer keeps for its actions.
+ 
+ On the main screen, which Claude Code uses under tmux and when
+ `CLAUDE_CODE_NO_FLICKER=0` is set, press ctrl+x tab to move into the band,
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index afc0044..91ae026 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -472,7 +472,8 @@ project stays `in-progress`.
+ ## 10. The band after layer 2
+ 
+ After using layer 2, the owner decided six changes to the band, which
+-#295 builds, and three to its pull request lines and drawers, which #297
++#295 builds, three to its pull request lines and drawers, which #297
++builds, and two more to its pull request lines and drawers, which #298
+ builds. § 2.1, § 2.5, and § 4 describe the band with these changes, and
+ this section gives their reasons, their files, and their evidence.
+ The `/projector <tracked file>` form that the questions plan describes
+@@ -542,10 +543,23 @@ goes away.
+   band last loaded, stays.
+ - **A pull request's drawer starts under the number.** Its lines start in
+   the row's first column, not where the titles start.
+-- **Each drawer link has a line of its own.** **discuss** keeps its own
+-  row, and **github** and **projector** each take a line, because a
+-  terminal without hyperlink support draws a link's URL after its text,
+-  and a line shared with another link cut that URL off.
++- **Each drawer link has a line of its own, and the actions come last.**
++  **github** and **projector** each take a line, because a terminal
++  without hyperlink support draws a link's URL after its text, and a line
++  shared with another link cut that URL off. The row with **discuss**
++  follows them, last in the drawer, so more actions can join it.
++- **Pull requests are grouped by author.** The band lists your own pull
++  requests first, then everyone else's, each author's together and the
++  authors in order of login, with nothing between the groups; within a
++  group the order is unchanged. Your own work and the reviews you owe
++  other people no longer interleave. Another person's line names its
++  author after `draft`, in the `subtle` color, in a column as wide as the
++  longest of those logins, so their titles start in one column. Your own
++  lines name no author, and the drawer's facts name none either. The band
++  tells which pull requests are yours by the login of the account its
++  `gh` is signed in as, which the query that asks for the pull requests
++  also asks for, as `viewer { login }`, so a load still makes one `gh`
++  call. The snapshot keeps the login beside the rows.
+ 
+ | File | Change |
+ | --- | --- |
+@@ -557,6 +571,7 @@ goes away.
+ | `docs/plugins.md` | The drawer, **discuss**, which quotes answer, the 30 seconds, and the band without a file named by hand |
+ | `hooks/register.tsx` | Each pull request's line ends with its age, in a column shared with the items' ages through one helper, and its title grows to fill the line; the drawer drops "updated … ago" and `drawerIndent`, and puts **github** and **projector** on lines of their own |
+ | `docs/plugins.md` | The band examples, the age at the end of a pull request's line, and the drawer under the number with one link per line |
++| `hooks/github.ts`, `hooks/register.tsx`, `hooks/types.d.ts`, `docs/plugins.md` | The query asks for `viewer { login }`, and the snapshot keeps it; the band lists your pull requests first and then everyone else's by author, names another person's author before the title, drops "by" and the author from the drawer's facts, and draws the **discuss** row after the links |
+ 
+ #295 also carries smaller fixes found while using the band, such as the
+ pull request drawer's **discuss** becoming a plain `Button`, and its
+@@ -576,7 +591,8 @@ description lists them.
+ | Answer or dismiss an item | Its line stays, in the `subtle` color, for 30 seconds after `deliveredAt`, then leaves the band |
+ | Run `/projector` while another session runs a loop | The band shows or hides, and lists only the loops whose watchers this session started |
+ | Look at a pull request's line | It ends with how long ago the pull request changed, such as `7h`, in the `subtle` color, in the same column as the items' ages |
+-| Open a pull request's drawer | Its lines start under the number; its facts end with the checks; **discuss**, **github**, and **projector** each have a line |
++| Open a pull request's drawer | Its lines start under the number; its facts name no author and end with the checks; **github** and **projector** each have a line, and the row with **discuss** comes last |
++| Track your own pull requests and someone else's | Yours come first, naming no author; then the others, each author's together and the authors in order of login, each line naming its author in the `subtle` color before the title |
+ 
+ Before these changes, the rows for the drawer, for **discuss** on a
+ question and the two answers typed under its quote, for the two drawers
+@@ -587,7 +603,10 @@ answered question's drawer stays open, and a resolved line stays a
+ minute. Before #297, the rows for a pull request's line and its drawer
+ fail their test too: the line ends with no age, and the drawer starts
+ under the title, ends its facts with when the pull request was updated,
+-and puts its links on one line.
++and puts its links on one line. Before #298, the rows for the drawer and
++for grouping by author fail their test as well: the lines come in the
++order the loops track them and name no author, and the drawer names the
++author and puts **discuss** before the links.
+ 
+ ## 11. Number each session's items 1, 2, 3
+ 
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 0dc04c6..c933fa9 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -31,6 +31,8 @@ const COMMAND = {
+ } as const
+ 
+ const NOW = Date.UTC(2026, 9, 12, 12, 0)
++/** The account the band's `gh` is signed in as. */
++const VIEWER = 'ada'
+ const SEVEN = 'https://github.com/x/y/pull/7'
+ const SUMMARY = 'https://example.com/site/reviews/7'
+ 
+@@ -56,6 +58,10 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+       updatedAt: new Date(NOW - 45_000).toISOString(),
+     }),
+     p3: pr(3, 'Already merged', { state: 'MERGED' }),
++    p4: pr(4, 'First change by grace', { author: { login: 'grace' } }),
++    p5: pr(5, 'Change by bob', { author: { login: 'bob' } }),
++    p6: pr(6, 'Second change by grace', { author: { login: 'grace' } }),
++    p9: pr(9, 'Another change of my own', { author: { login: VIEWER } }),
+   },
+   'x/y': {
+     p7: pr(7, 'Conflicting change', {
+@@ -75,9 +81,9 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+   },
+ }
+ 
+-/** Answers a GraphQL query with each repository it names, under the alias it gave. */
++/** Answers a GraphQL query with the signed-in login and each repository it names, under the alias it gave. */
+ function answer(query: string): string {
+-  const data: Record<string, unknown> = {}
++  const data: Record<string, unknown> = query.includes('viewer { login }') ? { viewer: { login: VIEWER } } : {}
+   for (const [, alias, owner, name] of query.matchAll(/(r\d+): repository\(owner: "([^"]+)", name: "([^"]+)"\)/g)) {
+     data[alias ?? ''] = BY_REPO[`${owner}/${name}`] ?? null
+   }
+@@ -211,8 +217,10 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
+ 
+   await ui.press({ key: 'pr:x/y#7' })
+-  const facts = await ui.find({ type: 'Text', text: /^watching · by ada · fix-branch · \+12 −3 in 2 files$/ })
++  // The line names another person's author, and the drawer names none.
++  const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files$/ })
+   expect(facts?.props.color).toBe('subtle')
++  expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
+   // The pull request's age ends its line, so the drawer does not repeat it.
+   expect(await ui.find({ type: 'Text', text: /updated 5m ago/ })).toBeUndefined()
+@@ -220,9 +228,9 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   const opened = await ui.find({ key: 'drawer:x/y#7' })
+   expect(opened).toBeDefined()
+   expect(opened?.props.marginLeft).toBeUndefined()
+-  // Under the facts, discuss has a row, and each link a line of its own, so a terminal without hyperlinks shows the whole URL.
++  // Under the facts, each link has a line of its own, so a terminal without hyperlinks shows the whole URL, and the actions' row comes last.
+   const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
+-  expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'Box', 'github:x/y#7', 'projector:x/y#7'])
++  expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'github:x/y#7', 'projector:x/y#7', 'Box'])
+   expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
+   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[projector](${SUMMARY})`)
+   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
+@@ -262,6 +270,41 @@ test('ends each pull request’s line with its age, in one column as wide as the
+   await ui.unmount()
+ })
+ 
++test('lists your pull requests first, then everyone else’s by author, naming theirs before the title', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const { commands } = world(on, { [REVIEW]: 'o/r#4\no/r#9\no/r#5\no/r#6\n', [WATCH]: 'x/y#7\n' })
++
++  // One command starts both watchers, so the band loads once.
++  await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
++  await clock.advance(1)
++  await clock.settle()
++
++  // The signed-in login comes in the one query that asks for the pull requests.
++  const gh = commands.filter(argv => argv[0] === 'gh')
++  expect(gh).toHaveLength(1)
++  expect(gh[0]?.join(' ')).toContain('viewer { login }')
++
++  const ui = await $.ui.mount(BAND)
++  // Yours keep their order, then bob's, then grace's two in theirs, with nothing between the groups.
++  const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
++  expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
++  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
++  expect(texts.filter(text => text === ' ')).toHaveLength(1)
++
++  // Only someone else's line names its author, in `subtle`, in a column as wide as the longest login.
++  expect(await ui.find({ key: 'author:x/y#7' })).toBeUndefined()
++  expect(await ui.find({ key: 'author:o/r#9' })).toBeUndefined()
++  const authors = await Promise.all(['o/r#5', 'o/r#4', 'o/r#6'].map(key => ui.find({ key: `author:${key}` })))
++  expect(authors.map(author => [author?.text, author?.props.width])).toEqual([
++    ['bob', 5],
++    ['grace', 5],
++    ['grace', 5],
++  ])
++  for (const name of await ui.findAll({ type: 'Text', text: /^(bob|grace)$/ })) expect(name.props.color).toBe('subtle')
++  await ui.unmount()
++})
++
+ test('opening one drawer closes the one that was open', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+diff --git a/hooks/github.ts b/hooks/github.ts
+index a13d482..d44530d 100644
+--- a/hooks/github.ts
++++ b/hooks/github.ts
+@@ -8,6 +8,8 @@ export type Query = { text: string; slots: Slot[] }
+ 
+ export type Fetched = {
+   prs: Map<string, PullRequest>
++  /** The login of the account `gh` is signed in as; null when GitHub did not say. */
++  viewer: string | null
+   error: string | null
+ }
+ 
+@@ -28,9 +30,10 @@ const CHECKS: Record<string, Checks> = {
+ }
+ 
+ /**
+- * Builds one GraphQL query for every pull request, grouped by repository.
+- * Repository names come from `parseTracked`, which admits only GitHub's
+- * name characters, so they are safe inside a string literal.
++ * Builds one GraphQL query for every pull request, grouped by repository,
++ * and for the signed-in account's login. Repository names come from
++ * `parseTracked`, which admits only GitHub's name characters, so they are
++ * safe inside a string literal.
+  */
+ export function buildQuery(prs: readonly TrackedPr[]): Query {
+   const byRepo = new Map<string, TrackedPr[]>()
+@@ -50,7 +53,7 @@ export function buildQuery(prs: readonly TrackedPr[]): Query {
+     return `${repoAlias}: repository(owner: "${owner}", name: "${name}") { ${pulls.join(' ')} }`
+   })
+ 
+-  return { text: `query { ${repos.join(' ')} }`, slots }
++  return { text: `query { viewer { login } ${repos.join(' ')} }`, slots }
+ }
+ 
+ const isRecord = (value: unknown): value is Record<string, unknown> =>
+@@ -120,12 +123,16 @@ export function parseResponse(
+     body = JSON.parse(result.stdout)
+   } catch {
+     const reason = firstLine(result.stderr) || `gh exited with ${result.exitCode}`
+-    return { prs: new Map(), error: reason }
++    return { prs: new Map(), viewer: null, error: reason }
+   }
+ 
+   const data = isRecord(body) && isRecord(body.data) ? body.data : undefined
+   if (data === undefined) {
+-    return { prs: new Map(), error: messageOf(body) ?? (firstLine(result.stderr) || 'GitHub returned no data') }
++    return {
++      prs: new Map(),
++      viewer: null,
++      error: messageOf(body) ?? (firstLine(result.stderr) || 'GitHub returned no data'),
++    }
+   }
+ 
+   const prs = new Map<string, PullRequest>()
+@@ -135,5 +142,6 @@ export function parseResponse(
+     if (isRecord(node)) prs.set(keyOf(slot.pr), toPullRequest(slot.pr, node))
+   }
+ 
+-  return { prs, error: null }
++  const viewer = isRecord(data.viewer) && typeof data.viewer.login === 'string' ? data.viewer.login : null
++  return { prs, viewer, error: null }
+ }
+diff --git a/hooks/parse.test.ts b/hooks/parse.test.ts
+index 34cf0cd..87c45f4 100644
+--- a/hooks/parse.test.ts
++++ b/hooks/parse.test.ts
+@@ -78,7 +78,8 @@ describe('GitHub', () => {
+     { repo: 'x/y', number: 3 },
+   ])
+ 
+-  test('asks for every pull request in one query, grouped by repository', () => {
++  test('asks for every pull request in one query, grouped by repository, with the signed-in login', () => {
++    expect(query.text).toMatch(/^query \{ viewer \{ login \} r0: /)
+     expect(query.text).toContain('r0: repository(owner: "o", name: "r") { p1: pullRequest(number: 1)')
+     expect(query.text).toContain('p2: pullRequest(number: 2)')
+     expect(query.text).toContain('r1: repository(owner: "x", name: "y") { p3: pullRequest(number: 3)')
+@@ -87,6 +88,7 @@ describe('GitHub', () => {
+   test('reads what came back even when one pull request is missing', () => {
+     const body = {
+       data: {
++        viewer: { login: 'ada' },
+         r0: {
+           p1: {
+             number: 1,
+@@ -118,6 +120,7 @@ describe('GitHub', () => {
+     const fetched = parseResponse(query, { exitCode: 1, stdout: JSON.stringify(body), stderr: '' })
+ 
+     expect(fetched.error).toBeNull()
++    expect(fetched.viewer).toBe('ada')
+     expect([...fetched.prs.keys()]).toEqual(['o/r#1', 'x/y#3'])
+     expect(fetched.prs.get('o/r#1')).toEqual({
+       repo: 'o/r',
+@@ -149,13 +152,13 @@ describe('GitHub', () => {
+       stdout: '',
+       stderr: 'error connecting to api.github.com\ncheck your internet connection\n',
+     })
+-    expect(offline).toEqual({ prs: new Map(), error: 'error connecting to api.github.com' })
++    expect(offline).toEqual({ prs: new Map(), viewer: null, error: 'error connecting to api.github.com' })
+ 
+     const refused = parseResponse(query, {
+       exitCode: 1,
+       stdout: JSON.stringify({ errors: [{ message: 'Bad credentials' }] }),
+       stderr: '',
+     })
+-    expect(refused.error).toBe('Bad credentials')
++    expect(refused).toEqual({ prs: new Map(), viewer: null, error: 'Bad credentials' })
+   })
+ })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 6495881..5167745 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -34,7 +34,7 @@ type Ran = { exitCode: number; stdout: string; stderr: string }
+ 
+ const TICK_MS = 5_000
+ const POLL_MS = 30_000
+-const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
++const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null, error: null }
+ const ASK_TOOL = 'mcp__projector__ask'
+ const TELL_TOOL = 'mcp__projector__tell'
+ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
+@@ -60,7 +60,8 @@ const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
+ // The session keeps its state across a reload or an update of the plugin,
+ // so a value an earlier version wrote can have another shape.
+ const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
+-const current = (value: Snapshot): Snapshot => (Array.isArray(value.rows) ? value : EMPTY)
++const current = (value: Snapshot): Snapshot =>
++  Array.isArray(value.rows) ? { ...value, viewer: value.viewer ?? null } : EMPTY
+ 
+ const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+ 
+@@ -155,7 +156,7 @@ async function adopt($: Engine, command: string): Promise<void> {
+ }
+ 
+ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> {
+-  if (prs.length === 0) return { prs: new Map(), error: null }
++  if (prs.length === 0) return { prs: new Map(), viewer: null, error: null }
+   const query = buildQuery(prs)
+   try {
+     const result = await $.process.run(['gh', 'api', 'graphql', '-f', `query=${query.text}`], {
+@@ -163,7 +164,7 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched>
+     })
+     return parseResponse(query, result)
+   } catch (error) {
+-    return { prs: new Map(), error: messageOf(error) }
++    return { prs: new Map(), viewer: null, error: messageOf(error) }
+   }
+ }
+ 
+@@ -205,6 +206,7 @@ async function load($: Engine): Promise<void> {
+   const time = await $.clock.now()
+   await update($, snapshot, () => ({
+     rows,
++    viewer: fetched.viewer ?? last.viewer,
+     fetchedAt: isFetched ? time : last.fetchedAt,
+     error: fetched.error,
+   }))
+@@ -531,12 +533,11 @@ function notesOf(pr: PullRequest): Note[] {
+   return notes
+ }
+ 
+-/** The drawer's facts, before its checks: what the loops do, who, where, and how big. */
++/** The drawer's facts, before its checks: what the loops do, where, and how big. */
+ function factsOf(pr: PullRequest, kinds: readonly LoopKind[]): string {
+   const files = `${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`
+   return [
+     kinds.join(' and '),
+-    pr.author === null ? undefined : `by ${pr.author}`,
+     pr.branch || undefined,
+     `+${pr.additions} −${pr.deletions} in ${files}`,
+   ]
+@@ -544,6 +545,23 @@ function factsOf(pr: PullRequest, kinds: readonly LoopKind[]): string {
+     .join(' · ')
+ }
+ 
++/** Whether the account the band's `gh` is signed in as wrote a pull request. */
++const isOwn = (pr: PullRequest, viewer: string | null) => viewer !== null && pr.author === viewer
++
++/**
++ * The band's pull requests in the order it lists them: yours first, then
++ * everyone else's, each author's together and the authors by login. Within
++ * each, they keep the order they came in.
++ */
++function byAuthor(rows: readonly Row[], viewer: string | null): Row[] {
++  const loginOf = (row: Row) => (row.pr.author ?? '').toLowerCase()
++  const others = rows.filter(row => !isOwn(row.pr, viewer))
++  return [
++    ...rows.filter(row => isOwn(row.pr, viewer)),
++    ...others.sort((one, other) => loginOf(one).localeCompare(loginOf(other))),
++  ]
++}
++
+ const ago = (seconds: number) => (seconds < 5 ? 'just now' : `${span(seconds)} ago`)
+ 
+ const secondsSince = (time: number, then: number) => Math.max(0, Math.round((time - then) / 1000))
+@@ -717,6 +735,13 @@ export const register: Register = on => {
+     const label = labeler(shown.rows.map(row => row.pr))
+     const reference = referencer(shown.rows.map(row => row.pr))
+     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
++    // Another person's line names its author after `draft`, in a column as
++    // wide as the longest of those logins, so their titles start in one
++    // column too.
++    const authorWidth = Math.max(
++      0,
++      ...shown.rows.filter(row => !isOwn(row.pr, shown.viewer)).map(row => (row.pr.author ?? '').length),
++    )
+     const heading = [
+       ...counts,
+       shown.fetchedAt === null ? undefined : `updated ${ago(secondsSince(time, shown.fetchedAt))}`,
+@@ -948,6 +973,11 @@ export const register: Register = on => {
+             <Box flexShrink={0}>
+               <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
+             </Box>
++            {!isOwn(pr, shown.viewer) && (
++              <Box key={`author:${key}`} flexShrink={0} width={authorWidth}>
++                <Text color="subtle">{pr.author ?? ''}</Text>
++              </Box>
++            )}
+             <Box flexGrow={1} flexShrink={1}>
+               <Text wrap="truncate-end">{pr.title}</Text>
+             </Box>
+@@ -971,14 +1001,14 @@ export const register: Register = on => {
+                 <Text color="subtle">{factsOf(pr, kinds)}</Text>
+                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}
+               </Text>
+-              <Box flexDirection="row">
+-                <Button key={`discuss:${key}`} plain label="discuss" onPress={() => fill(`${reference(pr)} `)} />
+-              </Box>
+               {/* Each link has a line of its own: a terminal without hyperlinks
+                   draws a link's URL after its text, and a shared line would
+-                  cut the URL off. */}
++                  cut the URL off. The actions follow, on one row. */}
+               <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
+               {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
++              <Box flexDirection="row">
++                <Button key={`discuss:${key}`} plain label="discuss" onPress={() => fill(`${reference(pr)} `)} />
++              </Box>
+             </Box>
+           )}
+         </Box>
+@@ -998,7 +1028,7 @@ export const register: Register = on => {
+     return (
+       <Box flexDirection="column">
+         {divider}
+-        {shown.rows.map(drawRow)}
++        {byAuthor(shown.rows, shown.viewer).map(drawRow)}
+         {failure !== undefined && <Text color="error">{failure}</Text>}
+         {shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
+           <Text key="before-items"> </Text>
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 05825c0..69d3ad6 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -34,6 +34,8 @@ export type Row = { pr: PullRequest; kinds: LoopKind[] }
+ 
+ export type Snapshot = {
+   rows: Row[]
++  /** The login of the account the band's `gh` is signed in as; null until GitHub says. */
++  viewer: string | null
+   fetchedAt: number | null
+   error: string | null
+ }
