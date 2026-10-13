@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
 from . import inbox, loop, permissions, review, site, summary
-from .permissions import allow_publish
+from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
     CONFIG_NAME,
@@ -344,7 +344,7 @@ def parser() -> argparse.ArgumentParser:
         "--publish-rule",
         action="store_true",
         default=None,
-        help=f"add the rules allowing {permissions.COMMANDS} to your Claude Code settings and Codex rules even "
+        help=f"add rules allowing {permissions.COMMANDS} to your Claude Code settings and Codex rules, even "
         "without a terminal (default: add them when run at a terminal)",
     )
     rule_choice.add_argument(
@@ -596,8 +596,10 @@ def parser() -> argparse.ArgumentParser:
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
+    # Without abbreviations, --prepare and --allow-prepare are always spelled in
+    # full, so the ask rule `init` adds for them matches every spelling.
     site_build = site_commands.add_parser(
-        "build", help="build the site from the projects, the published reviews, and the docs"
+        "build", help="build the site from the projects, the published reviews, and the docs", allow_abbrev=False
     )
     site_build.add_argument("--out", required=True)
     site_build.add_argument("--summaries", help="directory holding <number>/<head>/summary.json files")
@@ -634,7 +636,7 @@ def parser() -> argparse.ArgumentParser:
     site_status.add_argument("--repo", required=True, help="OWNER/NAME")
     site_status.add_argument("--pr", type=int, help="print the URL of this pull request's review")
     site_serve = site_commands.add_parser(
-        "serve", help="build the site and serve it over HTTP, rebuilding as its sources change"
+        "serve", help="build the site and serve it over HTTP, rebuilding as its sources change", allow_abbrev=False
     )
     site_serve.add_argument("--port", type=int, default=8000, help="the port to listen on (default: 8000; 0 picks one)")
     site_serve.add_argument(
@@ -1070,7 +1072,7 @@ def review_rules(json_output: bool) -> int:
     """`review rules`: whether the user's settings allow every command Projector's permission rules name,
     exiting 1 when one may not.
 
-    It asks `allow_publish` only to report, so it writes nothing, and a review
+    It asks `allow_commands` only to report, so it writes nothing, and a review
     loop can run it before its first publish rather than learn of a refusal on
     one pull request mid-loop. The rules belong in the person's own settings,
     which only a person at a terminal adds, so the closing line asks for them
@@ -1079,7 +1081,7 @@ def review_rules(json_output: bool) -> int:
 
     # Without the hint, a missing rule's note names no command, since the
     # agent that runs this check must not add the rules itself.
-    files = allow_publish(apply=False, hint=False)
+    files = allow_commands(apply=False, hint=False)
     allowed = all(entry.action == "unchanged" for entry in files)
     if json_output:
         print(json.dumps({"allowed": allowed,
@@ -1094,8 +1096,9 @@ def review_rules(json_output: bool) -> int:
         if entry.note:
             print(f"project: {entry.note}", file=sys.stderr)
     if not allowed:
-        print(f"project: without these rules, the host's automatic approval can refuse {permissions.COMMANDS}, "
-              "unless the repository's own or managed settings allow them; ask the user to run `project init` "
+        print("project: without these rules, the host can ask before, or its automatic approval refuse, Projector's "
+              "commands, such as a review's publish, unless the repository's own or managed settings allow them; "
+              "ask the user to run `project init` "
               "in a terminal, or to add the rules above, and do not run `project init --publish-rule` to add them "
               "yourself", file=sys.stderr)
     return 0 if allowed else 1
@@ -1832,8 +1835,8 @@ def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[st
     """Whether `init` adds Projector's permission rules ("add"), only reports them ("report"), or leaves them
     (None).
 
-    The rules exempt three commands from each host's automatic approval in the
-    person's own settings, so `init` adds them only when a person runs it at a
+    The rules exempt Projector's commands from each host's automatic approval in
+    the person's own settings, so `init` adds them only when a person runs it at a
     terminal or names --publish-rule; an agent refreshing the instructions gets
     a note instead. Configuration can only turn them off.
     """
@@ -1851,7 +1854,7 @@ def init_permissions_only(arguments: argparse.Namespace) -> int:
     if arguments.site or arguments.url:
         raise UsageError("--site and --url set up a repository's site; run `project init` inside that repository")
     publish_rule = publish_rule_mode(arguments, Path.cwd())
-    files = allow_publish(apply=publish_rule == "add") if publish_rule else []
+    files = allow_commands(apply=publish_rule == "add") if publish_rule else []
     emit_files(files, arguments.json_output, readme=False)
     # Said from what was written, because an agent relays this line: a rule
     # only reported is a rule the next publish still lacks.
@@ -1920,7 +1923,7 @@ def run(arguments: argparse.Namespace) -> int:
         try:
             files = store.init(instructions_enabled(root))
             if publish_rule:
-                files.extend(allow_publish(apply=publish_rule == "add"))
+                files.extend(allow_commands(apply=publish_rule == "add"))
             pages = None
             if wanted:
                 try:
