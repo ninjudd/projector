@@ -1,0 +1,1863 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index dcf2fbb..f9a5ae0 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1848,8 +1848,8 @@ give.
+ 
+ In Projector's band, only an option answers a question. The band records an
+ answer when a prompt you send quotes the question and follows the quote with
+-one of its options' text and nothing else, as clicking the option's number
+-fills it in. Anything else you send under a quoted question, such as your own
++one of its options' text and nothing else, as pressing the option in its
++drawer fills it in. Anything else you send under a quoted question, such as your own
+ words, an option with more after it, or a question back, is a reply. The band
+ records nothing, the question stays open, and the reply reaches the agent as
+ your prompt. The agent then withdraws the question if the reply settles it,
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 5df8b09..c813a04 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -197,9 +197,10 @@ session starts a loop's watcher for the first time.
+ #267 draft List a loop's open pull requests above the Claude Code prompt      2h
+ #258 draft grace Name the reviewed head in a review's signature conflict · ⋮5 5m
+      reviewing · review-signature · +84 −12 in 5 files · checks passing
+-     github
+-     projector
+-     discuss | dismiss
++     open in github
++     open in projector
++     d: discuss this
++     x: dismiss pull request
+ ```
+ 
+ Each line is the pull request's number, `draft` or `ready`, its author when
+@@ -231,22 +232,25 @@ Click a pull request's number to open a drawer under it, and click it again
+ to close the drawer; opening one drawer closes any other. The drawer starts
+ one column past the number, under `draft` or `ready`. It says whether your
+ loops are watching or reviewing the pull request, then its branch, size, and
+-checks. Below that:
+-
+-- **github** opens the pull request on GitHub.
+-- **projector** opens its Projector summary, when the pull request's
+-  description links one.
+-- **discuss** puts the pull request's number in the prompt at the cursor,
+-  as `#258`, or as `owner/repo#258` when the band lists more than one
+-  repository.
+-- **dismiss** keeps the pull request out of every loop of this session that
+-  tracks it, and the band drops its line and says which loops stopped, such
+-  as `stopped watching and reviewing acme/app#258`.
++checks, in the default text color; only the checks' state takes a color of
++its own. Below that:
++
++- **open in github** opens the pull request on GitHub.
++- **open in projector** opens its Projector summary, when the pull
++  request's description links one.
++- **discuss this** puts the pull request's number in the prompt at the
++  cursor, as `#258`, or as `owner/repo#258` when the band lists more than
++  one repository.
++- **dismiss pull request** keeps the pull request out of every loop of this
++  session that tracks it, and the band drops its line and says which loops
++  stopped, such as `stopped watching and reviewing acme/app#258`.
+ 
+ Each link has a line of its own, because a terminal that does not draw
+ hyperlinks shows a link's URL after its text, and a line shared with
+-another link would cut the URL off. **discuss** and **dismiss** come last,
+-on the row the drawer keeps for its actions.
++another link would cut the URL off. The two actions come last, a line each,
++on the letters `d` and `x`, as
++[Use the band from the keyboard](#use-the-band-from-the-keyboard)
++describes.
+ 
+ **dismiss** runs `project loop drop` once for each tracked file that lists
+ the pull request, which appends a `!owner/repo#number` line that both
+@@ -259,11 +263,10 @@ dismissed here, dropped from a terminal, or merged, so the line comes back
+ with its drawer closed.
+ 
+ On the main screen, which Claude Code uses under tmux and when
+-`CLAUDE_CODE_NO_FLICKER=0` is set, press ctrl+x tab to move into the band,
+-then Enter on a number to open its drawer and Enter on **discuss** or
+-**dismiss** to use it.
+-The **github** and **projector** links take no press there; the terminal
+-opens them the way it opens any other link.
++`CLAUDE_CODE_NO_FLICKER=0` is set, use the band from the keyboard, as
++[Use the band from the keyboard](#use-the-band-from-the-keyboard)
++describes. The **open in github** and **open in projector** links take no
++press there; the terminal opens them the way it opens any other link.
+ 
+ The band lists only this session's loops. It finds a loop by the
+ `--tracked` file its watcher reads, and learns that file when the session
+@@ -293,8 +296,11 @@ than asking again. An agent that runs `project inbox ask`, `tell`, `withdraw`,
+ `revise`, or `restore` from the shell reaches the same inbox, as
+ [Use the inbox](cli.md#use-the-inbox) describes.
+ 
+-The items are a list below the pull requests, oldest first. A question's
+-line starts with `-`, and a notice's with `•`, so you can tell which items
++The items are a list below the pull requests, oldest first, each line
++starting with `-`. An open question's line is drawn in the theme's
++`permission` color, the one Claude Code gives its own permission prompts,
++because an agent's question usually asks leave to do something. An open
++notice's line keeps the default text color, so you can tell which items
+ want an answer and which want a read. Each line ends with the pull request
+ the item is about, as the band labels it, and how long ago it was posted.
+ The band appears when an item arrives or is restored, even after you hid it,
+@@ -307,15 +313,15 @@ and in a terminal the divider counts the open questions and the open notices.
+ 
+ - Run project init to add the publish rule?                             2m
+ - Decline the finding about the retry budget?                     #337  5m
+-• Force-pushed #337 to drop a stray debug file                    #337  1m
++- Force-pushed #337 to drop a stray debug file                    #337  1m
+ ```
+ 
+ Click anywhere on an item to open its drawer, and click it again to close
+-it. On the main screen, press ctrl+x tab to move into the band, then Enter on
+-an item. While its drawer is open, the item stays highlighted and has the
+-band to itself, so the item is the top row. In a terminal, the divider and
+-the blank line under it step aside too, which gives the drawer two more rows
+-before the band scrolls:
++it. On the main screen, press Enter on it from the keyboard instead. While
++its drawer is open, the item stays highlighted and has the band to itself,
++so the item is the top row. In a terminal, the divider and the blank line
++under it step aside too, which gives the drawer two more rows before the
++band scrolls:
+ 
+ ```text
+ - Decline the finding about the retry budget?                 #337  5m [-]
+@@ -323,16 +329,17 @@ before the band scrolls:
+   The review asks for a retry budget per host. The loop caps retries at
+   three in total, which covers the case the finding names.
+ 
+-  1. Decline it: the total cap already bounds retries to one host
+-     (recommended)
+-  2. Add a budget of two retries per host, and keep the total cap
+-
+-  discuss | dismiss | snooze
++  1: Decline it: the total cap already bounds retries to one host
++  (recommended)
++  2: Add a budget of two retries per host, and keep the total cap
++  d: discuss this
++  x: dismiss question
++  s: snooze question
+ ```
+ 
+-The first option is always the agent's recommendation. Click an option's
+-number, and the band puts the question and that answer in your prompt, for
+-you to send as it stands or change first:
++The first option is always the agent's recommendation. Press an option by
++clicking it, by Enter, or by its digit, and the band puts the question and
++that answer in your prompt, for you to send as it stands or change first:
+ 
+ ```text
+ "Decline the finding about the retry budget?"
+@@ -379,30 +386,50 @@ quotes one does neither. Your prompt is what carries the answer or the reply
+ to the main loop, and when a subagent asked, the main loop also reads a note
+ naming it, so it can pass the answer or the reply on.
+ 
+-Under the options, a question's drawer has three actions:
+-
+-- **discuss** puts the quoted question in the prompt, followed by a blank
+-  line, and leaves the drawer open, so the options and detail stay in view
+-  while you type. Type your reply under the quote, or on the quote's own
+-  line, and send the prompt. The reply reaches the agent and answers
++The options and the actions form one list, the actions a line each after
++the options. Each line's key is drawn in Claude Code's accent color and the
++rest of the line in the default text color, which Claude Code's own `: `
++after the key always takes, so under the pointer or the focus ring the
++line inverts as the key and one block after it. A question's drawer has
++three actions:
++
++- **discuss this** puts the quoted question in the prompt, followed by a
++  blank line, and leaves the drawer open, so the options and detail stay in
++  view while you type. Type your reply under the quote, or on the quote's
++  own line, and send the prompt. The reply reaches the agent and answers
+   nothing.
+-- **dismiss** sets the question aside without an answer and closes the
+-  drawer.
+-- **snooze** puts the question off for an hour and closes the drawer.
++- **dismiss question** sets the question aside without an answer and closes
++  the drawer.
++- **snooze question** asks how long to put the question off, as the next
++  paragraph but one describes.
++
++A notice's drawer shows its detail, then the same three actions:
++**discuss this**, **dismiss notice**, and **snooze notice**. **discuss
++this** puts the quoted notice in the prompt. A prompt you send that quotes
++a notice answers nothing, but it closes the notice's drawer; the notice
++stays in the band until you dismiss it. **dismiss notice** clears the
++notice once you have read it and closes its drawer, and nothing goes back
++to the agent.
++
++**snooze** snoozes nothing at once. It replaces the drawer's action lines
++with the lengths it offers and a way back, on one row:
++
++```text
++  15 min | 1 hour | 4 hours | 1 day | cancel
++```
+ 
+-A notice's drawer shows its detail, then the same `discuss | dismiss |
+-snooze`. **discuss** puts the quoted notice in the prompt. A prompt you send
+-that quotes a notice answers nothing, but it closes the notice's drawer; the
+-notice stays in the band until you dismiss it. **dismiss** clears the notice
+-once you have read it and closes its drawer, and nothing goes back to the
+-agent.
++Pick a length, and the band runs
++`project inbox snooze <number> --for <minutes>` with 15, 60, 240, or 1440
++minutes, a day being the longest the CLI takes, and closes the drawer.
++**cancel** puts the actions back, and so does closing the drawer or opening
++another, so a drawer always opens on its actions.
+ 
+ A snoozed item leaves the divider's counts at once, and stays in the list
+ for 30 seconds in the `subtle` color, not struck through, so it reads as put
+-off rather than dismissed. Then it leaves the band. When its hour passes, it
+-returns to the list, and the band appears if you hid it. To pick another
+-time, or to wake an item now, find the item's number with
+-`project inbox list` in a terminal, then run
++off rather than dismissed. Then it leaves the band. When its time is up, it
++returns to the list, and the band appears if you hid it. To wake an item
++now, or to pick a length the band does not offer, find the item's number
++with `project inbox list` in a terminal, then run
+ `project inbox snooze <number> --for <minutes>`. An item you answer or
+ dismiss from a terminal while it is snoozed does not return.
+ 
+@@ -410,22 +437,24 @@ A resolved item stays in the list, muted, for 30 seconds after it is
+ delivered, and a dismissed one is struck through. A dismissed notice is
+ delivered at once, since nothing goes back to the agent. An item the agent
+ withdrew leaves the band at once, its drawer with it, and sends nothing back,
+-not even `DISMISSED` for a question. A question's drawer
+-still opens and marks the answer given with `✓`, listing an answer typed in
+-a terminal with `project inbox answer --text` after the options.
++not even `DISMISSED` for a question. A question's drawer still opens and
++lists its options, without their digits and with nothing to press, and
++marks the answer given with `✓`, listing an answer typed in a terminal with
++`project inbox answer --text` after the options.
+ 
+ While a dismissed or snoozed item is still listed, click its line to open
+-its drawer again. There, **restore** takes the place of **dismiss** for a
+-dismissed item, which reads `discuss | restore`, and **unsnooze** takes the
+-place of **snooze** for a snoozed one, which reads
+-`discuss | dismiss | unsnooze`. Either runs `project inbox restore`, and the
+-item is open again at once, in its place in the list, with its drawer still
+-open and **dismiss** and **snooze** back in their places. A dismissed question
+-whose `DISMISSED` has not gone out sends its agent nothing; one whose agent
+-already heard `DISMISSED` sends `RESTORED`. Once the item has left the band,
+-ask the agent to restore it, and the band appears with the item open, even
+-if you hid it. A drawer closes when its line leaves the band,
+-so a pull request or an item that comes back returns with its drawer closed.
++its drawer again. There, **restore question** or **restore notice** takes
++the place of **dismiss** for a dismissed item, which has no **snooze**
++line, since a resolved item cannot be snoozed. **unsnooze question** or
++**unsnooze notice** takes the place of **snooze** for a snoozed one. Either
++runs `project inbox restore`, and the item is open again at once, in its
++place in the list, with its drawer still open and **dismiss** and
++**snooze** back in their places. A dismissed question whose `DISMISSED`
++has not gone out sends its agent nothing; one whose agent already heard
++`DISMISSED` sends `RESTORED`. Once the item has left the band, ask the
++agent to restore it, and the band appears with the item open, even if you
++hid it. A drawer closes when its line leaves the band, so a pull request
++or an item that comes back returns with its drawer closed.
+ 
+ An answer you give from a terminal with `project inbox answer` reaches the
+ agent through the band of the session that asked. A subagent that is still
+@@ -440,6 +469,50 @@ seconds and runs `project inbox` only when the directory changed since
+ its last successful read or an answer is on its way, so a session with an
+ empty inbox starts no process. A read that fails runs again 5 seconds later.
+ 
++### Use the band from the keyboard
++
++Claude Code moves the keyboard between the prompt and the band, and draws
++a focus ring, an inverted highlight, on the band's line or action that has
++it:
++
++- **ctrl+x tab** moves the keyboard into the band, onto its first line.
++  Press it again to move to the next.
++- **Tab** and **→** move the ring to the next line or action, and
++  **shift+Tab** and **←** to the one before. **↑** and **↓** scroll a band
++  taller than the room it has.
++- **Enter** presses what the ring is on, as a click does.
++- **Esc** gives the keyboard back to the prompt.
++- **ctrl+x ctrl+a** collapses the band to one line, and shows it again.
++
++Enter on a line opens its drawer and moves the ring onto the drawer's first
++control: a question's first option, otherwise **discuss**. Tab then walks
++the options and the actions. Enter on the open line closes the drawer and
++leaves the ring on the line. A click opens and closes a drawer without
++moving the ring. In the same way, Enter on the **snooze** line moves the
++ring onto the first length, and Enter on **cancel** moves it back onto the
++**snooze** line. The lengths take no keys, since the digits belong to a
++question's options.
++
++An open question's options read `1:` to `6:`, the digit in the accent
++color. Press a digit while the band has the keyboard, or type it first into
++an empty prompt, as you answer Claude Code's own surveys, and the band puts
++that option in your prompt as a click does. A digit only fills the prompt,
++so nothing reaches the agent until you send. A resolved question's options
++have no digits.
++
++A drawer's actions follow its options, a line each, with the letter that
++presses it before the label in the accent color, such as
++`d: discuss this`:
++
++- **d** presses **discuss this**.
++- **x** presses **dismiss**, or **restore** in its place, followed by what
++  it acts on: `question`, `notice`, or `pull request`.
++- **s** presses **snooze**, or **unsnooze** in its place, followed by
++  `question` or `notice`.
++
++A letter presses its action only while the band has the keyboard. Typed in
++the prompt, it is text.
++
+ ## Install for Codex
+ 
+ Add the same repository as a Codex marketplace and install the plugin:
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 9e40044..2847d1a 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -1383,3 +1383,233 @@ and for "unsnooze when an item is snoozed".
+ | The tools' descriptions and arguments | `the restore tool is for a dismissal the person calls a mistake, never a question asked again`, `` a call of the restore tool becomes `project inbox restore`, and only a whole number names an item ``, `the ask tool tells the agent that a pick arrives by number and a reply as the person’s prompt`, `word that a question was restored waits for a deliverer until a live claim holds it`, in `hooks/inbox.test.ts` |
+ | Codex allows `restore` by name | The `project inbox restore` row of `DECISIONS` and `test_the_codex_rules_name_every_command_or_leave_it_out` in `tests/test_permissions.py` |
+ | The Projector section's new sentence is pinned to begin marker 12 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |
++
++## 15. Use the band from the keyboard
++
++You can work the band from the keyboard as you answer Claude Code's own
++surveys. An open question's options are Buttons on the digits `1` to `6`,
++and a digit presses one from the band or typed first into an empty prompt.
++A drawer's options and actions form one list, a line each, and each
++action takes a letter by its place: `d` for **discuss**, `x` for
++**dismiss** or **restore**, and `s` for **snooze** or **unsnooze**.
++Enter on a line opens its drawer and moves the focus ring into it, and
++Enter on the open line closes the drawer with the ring on the line.
++`docs/plugins.md` gains a section on the band's keys. This section
++supersedes the bullets of § 2.5 that draw a drawer's actions on one row,
++`discuss | dismiss | snooze`, and the last row of § 4's table, under which
++an option's number takes no press on the main screen.
++
++### 15.1 Problem
++
++Claude Code moves the keyboard into the band with ctrl+x tab, walks a focus
++ring over the band's Buttons with Tab and the arrows, and presses the one
++under the ring with Enter. A question's options did not take part. Each was
++a `Markdown` link, `1.`, which only a click presses, so on the main screen,
++which Claude Code uses under tmux and takes no clicks, a question could be
++answered only by typing its quote and option by hand. Enter on a line
++opened its drawer but left the ring on the line, and the engine keeps the
++ring by position, so after an item's drawer took the band to itself the
++ring sat on whatever element held the line's old place. Every action took
++Tab presses and Enter. The owner asked for the band to work as a survey
++does: digits for the options and letters for the actions.
++
++### 15.2 What changes
++
++- **Options are Buttons on digits.** An open question's options are `plain`
++  Buttons with the hotkeys `1` to `6`, in the order of their letters, the
++  recommendation first with its `(recommended)` mark. The engine draws the
++  digit before the option in the accent color, as `1: Decline it`, so the
++  band draws no number of its own. Pressing an option, by a click, Enter,
++  or its digit, does what clicking its number did: it records the pick
++  through `propose` and fills the prompt with the quote and the option, so
++  `readPrompt` reads the sent prompt as before.
++- **The digits work from an empty prompt.** Claude Code presses a band
++  Button whose hotkey is a digit typed first into an empty prompt, as it
++  answers a survey, so the digits are set whenever an open question's
++  drawer is open. A digit only fills the prompt, so a stray one sends
++  nothing.
++- **A resolved question's options are text.** Its drawer lists the options
++  with no digits and nothing to press, the answer given at full strength
++  and marked `✓`, the rest in `subtle`, and an answer typed with
++  `project inbox answer --text` after them.
++- **Options and actions form one list.** The `discuss | dismiss | snooze`
++  row is gone. Each action is a line of its own after the options, with no
++  blank line between: a `plain` Button whose letter the engine draws before
++  its label in the accent color. A notice's actions follow its detail after
++  a blank line.
++- **A keyed line draws in two colors.** On an option or an action line, the
++  key takes the engine's accent color, `suggestion`, and the `: ` and the
++  label take the default text color. The label is a plain string, so an
++  open question's `(recommended)` mark loses its `success` color on the
++  option line; a resolved question's text options keep it.
++- **Actions take letters by their place.** **discuss** takes `d`, the
++  second place takes `x`, whether it holds **dismiss** or **restore**, and
++  the third takes `s`, whether it holds **snooze** or **unsnooze**.
++- **Each label names what it acts on.** A question's drawer reads
++  `d: discuss this`, `x: dismiss question`, and `s: snooze question`, and a
++  notice's reads `notice` in place of `question`. A dismissed item's `x`
++  line reads `x: restore question` or `x: restore notice`, and it has no
++  `s` line, since the CLI refuses to snooze a resolved item. A snoozed
++  item's `s` line reads `s: unsnooze question` or `s: unsnooze notice`. A
++  pull request's drawer keeps its links above its actions, without keys,
++  and reads `d: discuss this` and `x: dismiss pull request`.
++- **The letters always show.** A letter presses its action only while the
++  band holds the keyboard; typed in the prompt, it is text.
++- **Enter takes the ring into the drawer.** A `ui.focus` hook records the
++  band element the ring last landed on. When a line is pressed with the
++  ring on it, the press came from Enter, and the band moves the ring with
++  `$.ui.focus`: onto a question's first option when a drawer opens, or
++  onto **discuss** when the drawer has no options to press. Enter on an
++  open item's line moves the ring back onto the item's line in the list. A
++  pull request's drawer opens and closes under its line, which keeps its
++  place, so closing it leaves the ring where it is. A click moves nothing.
++- **An open item's line has a key of its own.** While its drawer is open,
++  an item's line is keyed `close:<number>`, not `item:<number>`, so the
++  move back onto the line waits for the band to draw the list again.
++- **A refused move is logged.** When the engine refuses a move, or the call
++  fails, the band writes `projector: the focus stayed off <key>: <reason>`
++  to the debug log.
++- **A ctrl-click on an option no longer opens the pull request.** The link
++  that carried the option went with it. The pull request's own drawer
++  links it, and the owner accepted the loss.
++
++### 15.3 Why this design
++
++- **Survey keys.** The owner answers Claude Code's surveys with a digit
++  from an empty prompt, and the band's questions are the same kind of
++  choice, so they take the same keys. Filling the prompt rather than
++  answering keeps § 13's rule that only a sent prompt answers.
++- **`1` to `6`, not `1` to `5`.** The `ask` tool takes a recommendation and
++  up to five other options, six answers in all.
++- **Letters by place, not by name.** **restore** and **unsnooze** undo what
++  **dismiss** and **snooze** did, in the places they held, so each keeps
++  the letter of what it undoes. Only one drawer is open at a time, so no
++  two actions share a letter. `x` stands for **dismiss** because `d` is
++  **discuss**.
++- **What the engine says about the keyboard.** `AbovePrompt`'s render
++  props carry no focus state, unlike a `Pane`'s `isFocused`. `ui.focus`
++  fires before the ring moves: on ctrl+x tab, which puts the ring on the
++  band's first element; on a click on the band outside its Buttons; on Tab
++  and the arrows; and on `$.ui.focus`. Esc and a click into the prompt
++  move nothing the band hears, and the band is not drawn again. So the band
++  learns when it takes the keyboard but not when it loses it, and cannot
++  show the letters only while it holds it, as the owner first asked.
++- **Every action is a line, its letter drawn.** A `plain` Button with a
++  hotkey always draws the hotkey before its label, a Button without
++  `plain` draws `[ label ]` in bold, and no prop hides the hotkey, so the
++  engine offers no way to keep a letter undrawn on a plain label. The owner
++  chose to make the letters part of the drawer: options and actions as one
++  list a key each, like a survey's rows.
++- **The label takes the `: `'s color.** The engine draws a plain Button as
++  one `Text`: the hotkey in a nested `Text` fixed to `suggestion`, then
++  `: ` and the label. Its own `Text` takes no color from the plugin; only a
++  `hover` override colors it, and only while the pointer is over the
++  Button, never under the focus ring. Hover or focus inverts that `Text`,
++  so each part with its own color inverts into a block of its own. The
++  owner first had the actions' labels in `subtle`, then asked for the whole
++  line in one color, and found the `: ` in a third color the oddest part.
++  Neither the key nor the `: ` can take the label's color, so the label
++  takes the `: `'s, the default text color: the line draws and inverts as
++  the key's block and one block after it. `suggestion` is the same color
++  as `permission`, lavender on the default dark theme.
++- **The ring tells Enter from a click.** `ui.press` does not say what
++  pressed a Button. A click on a Button presses it without moving the ring
++  or taking the keyboard, and Enter presses the Button under the ring, so a
++  press on the line the ring is on is the keyboard's. The record can be
++  stale after Esc, but the engine refuses `$.ui.focus` for a band that
++  does not hold the keyboard, so a stale record moves nothing.
++- **`close:<number>` rather than a timer.** The engine keeps the ring by
++  position, and an open item's drawer has the band to itself, so the item's
++  line is the top row while the drawer is open and lower in the list once
++  it closes. `$.ui.focus` resolves a key against the band as drawn when
++  the key is already drawn, and waits for the next drawing only when it is
++  not. A key the open line does not share waits for the list, with no
++  timing to guess.
++- **Tests read the debug line.** Claude Code's test kit serves no
++  `$.ui.focus` and lets no test hook see a plugin's call, so a test raises
++  `ui.focus` to place the ring and reads which element the band then tried
++  from the debug line it writes when the kit refuses the move.
++
++### 15.4 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| An open question's options are plain Buttons on `1` to `6` with no number of the band's; the digits are set only while its drawer is open; pressing the sixth fills the prompt and sending it answers; a resolved question's options have no digits | `an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open`, `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer` in `hooks/band.test.tsx` |
++| A pick through a Button speaks to its question as a pick through the link did | The tests § 13.4 lists, which now press the Buttons |
++| A drawer's actions follow its options a line each, with no blank line or `|`; they take `d`, `x`, and `s` by place, labelled by kind, **restore** and **unsnooze** included, with no `s` line on a dismissed item; a pull request's drawer reads `discuss this` and `dismiss pull request` under its links; no line of the band takes a letter | `a drawer’s actions follow its options a line each, on d, x and s, named for what they act on`, `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
++| A keyed line's label is a plain string with no color, `hover`, or `dimColor`, so it takes the `: `'s color | `` a keyed line’s label takes the color of the `: ` before it, so it inverts as one block `` |
++| Enter on a line moves the ring into the drawer it opens and back onto an item's line; a click moves nothing; a pull request's drawer closes in place | `Enter on a line moves the ring into the drawer it opens and back onto the line, and a click moves nothing` |
++| The ring on a live terminal, ctrl+x tab, the digits from an empty prompt, and the drawer's lines | Checked by hand by the owner in a preview session |
++
++## 16. Smaller changes to the band
++
++The owner asked for five changes to the band while previewing § 15, four
++to how it draws its lines and one to how **snooze** works. They are
++recorded apart from § 15 so they can ship apart. This section supersedes
++the bullet of § 2.5 that gives a notice the bullet `•`, and its bullet
++under which **snooze** runs `project inbox snooze` at once, which snoozes
++for the CLI's default hour.
++
++### 16.1 What changes
++
++- **The links read `open in github` and `open in projector`.** A pull
++  request's drawer drew them as `github` and `projector`, which read as
++  labels rather than as things to press. No other drawer draws these
++  links: an item names its pull request as text, and § 15 removed the link
++  that carried a question's options.
++- **A pull request's facts take the default color.** The line under a pull
++  request, such as `watching · fix-branch · +12 −3 in 2 files`, was drawn
++  in `subtle`, which made the drawer's main content its faintest line.
++- **Only the checks take the checks' color.** The facts line ended with
++  ` · checks pending` drawn whole in the checks' color, so the `·` turned
++  yellow while checks ran. The `·` now keeps the line's color, and only
++  `checks <state>` takes `success`, `error`, or `warning`.
++- **Questions and notices share one bullet, and an open question takes a
++  color.** Every item's line starts with `-`. An open question's line, its
++  bullet and its subject, is drawn in the theme color `permission`, and an
++  open notice's keeps the default text color. A resolved or snoozed item
++  is drawn in `subtle` as before, and a dismissed one is struck through.
++  The color lives in one constant, `QUESTION_COLOR`, in
++  `hooks/register.tsx`.
++- **Snooze asks how long.** Pressing **snooze** in an item's drawer
++  snoozes nothing. It replaces the action lines with
++  `15 min | 1 hour | 4 hours | 1 day | cancel`, plain Buttons on one row,
++  `|` between them. A length runs
++  `project inbox snooze <number> --for <minutes>` with 15, 60, 240, or
++  1440, and **cancel** puts the actions back. The question lives in the
++  open drawer only, in the `bandSnoozing` atom keyed by the drawer: closing
++  the drawer or opening another puts the actions back. The lengths take no
++  hotkeys. Enter on **snooze** moves the ring onto the first length, and
++  Enter on **cancel** moves it back onto **snooze**, as § 15 moves it for a
++  drawer. **unsnooze** still acts at once.
++
++### 16.2 Why this design
++
++- **A color tells the kinds apart better than a glyph.** `-` and `•` look
++  alike at a glance, and the difference between the kinds that matters is
++  that a question waits on the owner. A color draws the eye to it.
++- **`permission` is the question's color.** Claude Code draws its own
++  permission prompts in `permission`, and an agent's question usually asks
++  leave to do something, so the band reuses the color the owner already
++  reads that way. In Claude Code's built-in themes it is a lavender or
++  light blue on dark backgrounds, a stronger blue on light ones, and
++  `ansi:blue` or `ansi:blueBright` in the ANSI themes, distinct from the
++  text color and from `subtle` in every one. The owner tried `inactive`,
++  which made a question recede, and `text`, before choosing it.
++- **The notice keeps the default color.** A notice needs only a read, so
++  it stays as plain as a pull request's title.
++- **Snooze asks rather than assuming an hour.** The owner pressed
++  **snooze** expecting to be asked how long, and the item left the band on
++  the default hour. Asking first costs one more press, and nothing is
++  snoozed until a length is picked, so a press by mistake costs nothing.
++  The lengths stay within the CLI's cap of a day. They take no digits,
++  because the digits belong to a question's options.
++
++### 16.3 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| The drawer's links read `open in github` and `open in projector`; the facts take the default color, and only `checks <state>` takes the checks' color | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt` in `hooks/band.test.tsx` |
++| Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in the default color` |
++| **snooze** shows the lengths and cancel, runs nothing, and takes no digits; each length runs `snooze --for` with its minutes; **cancel** and closing the drawer put the actions back; Enter carries the ring onto the first length and back onto **snooze** | `snooze asks how long, and only a length it offers snoozes the item`, and the snooze tests § 14.4 lists, which now pick a length |
++| A restored question's line returns to `permission` | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place`, `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` |
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 69f69ab..cf4b5f3 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -222,21 +222,28 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+ 
+   await ui.press({ key: 'pr:x/y#7' })
+   // The drawer's facts name no author, whoever wrote the pull request.
+-  const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files$/ })
+-  expect(facts?.props.color).toBe('subtle')
++  const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files · checks passing$/ })
+   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
+-  expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
++  // The facts take the default color, and only the checks take theirs, not the `·` before them.
++  expect([facts?.props.color, facts?.props.dimColor]).toEqual([undefined, undefined])
++  expect((await ui.find({ type: 'Text', text: /^checks passing$/ }))?.props.color).toBe('success')
+   // The pull request's age ends its line, so the drawer does not repeat it.
+   expect(await ui.find({ type: 'Text', text: /updated 5m ago/ })).toBeUndefined()
+   // The drawer starts where the state does: past the three-column labels `r#1` and `y#7` and the gap after them.
+   const opened = await ui.find({ key: 'drawer:x/y#7' })
+   expect(opened).toBeDefined()
+   expect(opened?.props.marginLeft).toBe(4)
+-  // Under the facts, each link has a line of its own, so a terminal without hyperlinks shows the whole URL, and the actions' row comes last.
++  // Under the facts, each link has a line of its own, so a terminal without hyperlinks shows the whole URL, and the actions come last, a line each.
+   const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
+-  expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'github:x/y#7', 'projector:x/y#7', 'Box'])
+-  expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
+-  expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[projector](${SUMMARY})`)
++  expect(lines.map(line => line.props.key ?? line.type)).toEqual([
++    'Text',
++    'github:x/y#7',
++    'projector:x/y#7',
++    'discuss:x/y#7',
++    'dismiss:x/y#7',
++  ])
++  expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
++  expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
+   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
+ 
+   // discuss is a plain Button, so Enter fills the prompt on the main screen too.
+@@ -335,8 +342,8 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
+ 
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'pr:x/y#7' })
+-  // The drawer's actions share one row, as an item's do.
+-  expect(await ui.findAll({ type: 'Text', text: '|' })).toHaveLength(1)
++  // The drawer's actions are lines of their own, as an item's are.
++  expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
+   expect((await ui.find({ type: 'Button', key: 'dismiss:x/y#7' }))?.props.plain).toBe(true)
+ 
+   await ui.press({ key: 'dismiss:x/y#7' })
+@@ -822,7 +829,10 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       const answer = { dismissed: true as const, withdrawn: true as const, answeredAt: time }
+       return printed(put({ ...awake, answer, deliveredAt: time }))
+     }
+-    if (command === 'snooze') return printed(put({ ...item, snoozedAt: time, snoozedUntil: time + HOUR }))
++    if (command === 'snooze') {
++      const minutes = Number(flag(args, 'for') ?? 60)
++      return printed(put({ ...item, snoozedAt: time, snoozedUntil: time + minutes * 60_000 }))
++    }
+     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
+     if (command === 'revise') {
+       const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
+@@ -977,6 +987,59 @@ test('asks through the tool, and the band lists the question below the pull requ
+   await ui.unmount()
+ })
+ 
++test('every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const dismissed = { dismissed: true as const, answeredAt: NOW - 1_000 }
++  questionWorld(on, clock, [
++    held(),
++    notice(),
++    held({ ref: '3', number: 3, subject: 'Rebase first?', answer, deliveredAt: NOW - 1_000 }),
++    notice({ ref: '4', number: 4, subject: 'Pushed a fix', answer: dismissed, deliveredAt: NOW - 1_000 }),
++    notice({ ref: '5', number: 5, subject: 'Merged #6', snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR }),
++  ])
++  await startSession($, clock)
++  const ui = await $.ui.mount(BAND)
++  type Part = { props: { color?: string; strikethrough?: boolean; inverse?: boolean }; children: string[] }
++  /** Each part of an item's line, the bullet then the subject: its text, color, and strikethrough. */
++  const lineOf = async (key: string) => {
++    const parts = ((await ui.find({ type: 'Button', key }))?.children ?? []) as Part[]
++    return parts.map(part => [part.children.join(''), part.props.color, part.props.strikethrough === true])
++  }
++
++  expect(await lineOf('item:1')).toEqual([
++    ['- ', 'permission', false],
++    ['Decline the finding?', 'permission', false],
++  ])
++  expect(await lineOf('item:2')).toEqual([
++    ['- ', undefined, false],
++    [FORCE_PUSHED, undefined, false],
++  ])
++  expect(await lineOf('item:3')).toEqual([
++    ['- ', 'subtle', false],
++    ['Rebase first?', 'subtle', false],
++  ])
++  expect(await lineOf('item:4')).toEqual([
++    ['- ', 'subtle', false],
++    ['Pushed a fix', 'subtle', true],
++  ])
++  expect(await lineOf('item:5')).toEqual([
++    ['- ', 'subtle', false],
++    ['Merged #6', 'subtle', false],
++  ])
++  expect((await ui.findAll({ type: 'Text' })).filter(text => text.props.dimColor !== undefined)).toEqual([])
++
++  // An open question's line stays in its color, inverted, while its drawer is open.
++  await ui.press({ key: 'item:1' })
++  const opened = ((await ui.find({ type: 'Button', key: 'close:1' }))?.children ?? []) as Part[]
++  expect(opened.map(part => [part.props.color, part.props.inverse])).toEqual([
++    ['permission', true],
++    ['permission', true],
++  ])
++  await ui.unmount()
++})
++
+ test('a pull request’s age and an item’s age end in one column', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -1003,7 +1066,7 @@ test('a blank line sets GitHub’s error apart from the items under it', async (
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+   const failure = texts.indexOf('GitHub: read: connection reset by peer')
+   expect(failure).toBeGreaterThan(-1)
+-  expect(texts.slice(failure + 1, failure + 3)).toEqual([' ', '• '])
++  expect(texts.slice(failure + 1, failure + 3)).toEqual([' ', '- '])
+   await ui.unmount()
+ })
+ 
+@@ -1061,6 +1124,17 @@ test('an idle session with no questions starts no project process', async ($, on
+   await ui.unmount()
+ })
+ 
++/** The Buttons of a question's options, in the order its drawer draws them. */
++async function optionsOf(ui: Pick<Mounted, 'findAll'>) {
++  return (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('answer:'))
++}
++
++/** The keys of the band's Buttons that a digit presses. */
++async function digitsOf(ui: Pick<Mounted, 'findAll'>) {
++  const buttons = await ui.findAll({ type: 'Button' })
++  return buttons.flatMap(button => (/^\d$/.test(String(button.props.hotkey ?? '')) ? [button.key] : []))
++}
++
+ test('an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -1075,17 +1149,21 @@ test('an option puts the question and its answer in the prompt, and sending it a
+   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The loop caps retries at three.')
+-  expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeDefined()
+   // An answer in your own words goes through discuss, so only the options are numbered.
+   expect(await ui.find({ type: 'Input' })).toBeUndefined()
+   expect(await ui.find({ key: 'answer:1.c' })).toBeUndefined()
+   expect(await ui.find({ type: 'Button', key: 'discuss:1' })).toBeDefined()
+   expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeDefined()
+-  // A digit typed first in an empty prompt presses a band Button whose hotkey it is.
+-  for (const button of await ui.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
++  // Each option is a plain Button on its digit, which the engine draws before it, so the band draws no number.
++  const options = await optionsOf(ui)
++  expect(options.map(option => [option.key, option.props.hotkey, option.props.plain, option.text])).toEqual([
++    ['answer:1.a', '1', true, 'Decline it (recommended)'],
++    ['answer:1.b', '2', true, 'Add a budget'],
++  ])
++  expect(await ui.find({ type: 'Text', text: /^\d\.$/ })).toBeUndefined()
+ 
+   // Choosing an option answers nothing yet: it fills the prompt, and the drawer stays open.
+-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
++  await ui.press({ key: 'answer:1.b' })
+   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nAdd a budget\n'])
+   expect(session.store.store.get('1')?.answer).toBeUndefined()
+   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
+@@ -1108,17 +1186,17 @@ test('an option puts the question and its answer in the prompt, and sending it a
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
+ 
+-  // The resolved question still opens, its choice marked, the rest muted, and nothing left to press.
++  // The resolved question still opens, its choice marked, the rest muted, and nothing left to press or number.
+   await ui.press({ key: 'item:1' })
+   expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
+-  expect((await ui.find({ type: 'Text', text: /^2\.$/ }))?.props.color).toBe('success')
+-  expect((await ui.find({ type: 'Text', text: /^1\.$/ }))?.props.color).toBe('subtle')
++  expect((await ui.find({ type: 'Text', text: /^Add a budget/ }))?.props.color).toBeUndefined()
+   expect((await ui.find({ type: 'Text', text: /^Decline it/ }))?.props.color).toBe('subtle')
+   expect((await ui.find({ type: 'Text', text: /^Decline the finding\?$/ }))?.props.color).toBe('subtle')
+-  expect(await ui.find({ key: 'answer:1.a' })).toBeUndefined()
++  expect(await optionsOf(ui)).toEqual([])
++  expect(await digitsOf(ui)).toEqual([])
+   expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeUndefined()
+ 
+-  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'close:1' })
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
+   await clock.advance(30_000 + TICK)
+@@ -1136,7 +1214,7 @@ test('a question another shares the text of takes only the answer its own drawer
+ 
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'item:2' })
+-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
++  await ui.press({ key: 'answer:2.a' })
+   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nDecline it\n'])
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+@@ -1154,11 +1232,11 @@ test('a proposal you cleared from the prompt does not take the answer you sent f
+ 
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'item:2' })
+-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
++  await ui.press({ key: 'answer:2.a' })
+   // You clear that from the prompt, then choose the other answer in the older question's drawer.
+-  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'close:2' })
+   await ui.press({ key: 'item:1' })
+-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
++  await ui.press({ key: 'answer:1.b' })
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+@@ -1218,14 +1296,16 @@ test('discuss keeps the drawer open with the question above a blank line, a repl
+     await ui.press({ key: 'item:1' })
+   }
+   expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
+-  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'close:1' })
+ 
+   // An answer typed from a terminal shows after the options, marked.
+   await ui.press({ key: 'item:3' })
+-  expect((await ui.find({ type: 'Text', text: /^3\.$/ }))?.props.color).toBe('success')
+-  expect(await ui.find({ type: 'Text', text: /^keep the cap/ })).toBeDefined()
++  const typedAnswer = await ui.find({ type: 'Text', text: /^keep the cap ✓$/ })
++  expect(typedAnswer?.props.color).toBeUndefined()
++  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
++  expect(texts.indexOf(typedAnswer?.text ?? '')).toBeGreaterThan(texts.findIndex(text => text.startsWith('Add a budget')))
+ 
+-  await ui.press({ key: 'item:3' })
++  await ui.press({ key: 'close:3' })
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'dismiss:2' })
+   expect(session.project()).toContain('inbox dismiss 2 --session s1 --json')
+@@ -1245,7 +1325,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'item:1' })
+   // You choose an option, then add to it before you send.
+-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
++  await ui.press({ key: 'answer:1.b' })
+   const text = '"Decline the finding?"\n\nAdd a budget\n\nBut what does the cap cover?\n'
+   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+@@ -1283,7 +1363,6 @@ test('a prompt about one of two questions that share a subject leaves the other
+   const agents = [fixer('agent-a', 'Fix #7'), fixer('agent-b', 'Fix #8')]
+   const session = questionWorld(on, clock, [first, second], { agents })
+   await startSession($, clock)
+-  const pull8 = { href: 'https://github.com/x/y/pull/8' }
+ 
+   const ui = await $.ui.mount(BAND)
+   // You discuss the second question: your reply goes to its subagent alone.
+@@ -1301,8 +1380,8 @@ test('a prompt about one of two questions that share a subject leaves the other
+   // Then you pick No in its drawer and open the first question's drawer before you send. The
+   // prompt answers the second question, and the first hears nothing and keeps its drawer open.
+   await ui.press({ key: 'item:2' })
+-  await ui.press({ key: 'answer:2.b', link: pull8 })
+-  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'answer:2.b' })
++  await ui.press({ key: 'close:2' })
+   await ui.press({ key: 'item:1' })
+   const answer = '"Merge it?"\n\nNo\n'
+   await $.prompt.submit({ text: answer, wait: false, origin: { kind: 'composer' } })
+@@ -1330,8 +1409,8 @@ test('a quote two questions share goes to the one whose drawer you acted in last
+   const ui = await $.ui.mount(BAND)
+   // You pick Yes in the second question's drawer, think better of it, and discuss the first instead.
+   await ui.press({ key: 'item:2' })
+-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+-  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'answer:2.a' })
++  await ui.press({ key: 'close:2' })
+   await ui.press({ key: 'item:1' })
+   await ui.press({ key: 'discuss:1' })
+   await $.prompt.submit({ text: '"Merge it?"\n\nYes\n', wait: false, origin: { kind: 'composer' } })
+@@ -1526,7 +1605,7 @@ test('a number or an old reference typed in the prompt reaches the agent as plai
+ 
+ const FORCE_PUSHED = 'Force-pushed #7 to drop a stray file'
+ 
+-test('a subagent tells through the tool, and the band lists the notice with its own bullet', async ($, on) => {
++test('a subagent tells through the tool, and the band lists the notice in the default color', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock)
+@@ -1543,7 +1622,7 @@ test('a subagent tells through the tool, and the band lists the notice with its
+   await clock.settle()
+   const ui = await $.ui.mount(BAND)
+   expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated (just now|\d+s ago)$/ })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: '• ' })).toBeDefined()
++  expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
+   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
+   await ui.unmount()
+@@ -1581,7 +1660,7 @@ test('no line or drawer shows an item’s number', async ($, on) => {
+     await ui.press({ key: `item:${ref}` })
+     expect(await ui.find({ key: `detail:${ref}` })).toBeDefined()
+     expect(await drawn()).not.toMatch(/42|43/)
+-    await ui.press({ key: `item:${ref}` })
++    await ui.press({ key: `close:${ref}` })
+   }
+   await ui.unmount()
+ })
+@@ -1623,8 +1702,11 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+   for (const name of ['discuss', 'dismiss', 'snooze']) {
+     expect((await ui.find({ type: 'Button', key: `${name}:2` }))?.props.plain).toBe(true)
+   }
+-  const bars = await ui.findAll({ type: 'Text', text: '|' })
+-  expect(bars.map(bar => bar.props.color)).toEqual(['subtle', 'subtle'])
++  expect(await actionLinesOf(ui)).toEqual([
++    'discuss:2 d discuss this',
++    'dismiss:2 x dismiss notice',
++    'snooze:2 s snooze notice',
++  ])
+ 
+   await ui.press({ key: 'discuss:2' })
+   expect(session.filled).toEqual([`insert:"${FORCE_PUSHED}"\n\n`])
+@@ -1651,7 +1733,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+   expect(session.submitted).toEqual([])
+   expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
+ 
+-  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'close:2' })
+   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+   await clock.advance(30_000 - 2 * TICK)
+   await clock.settle()
+@@ -1732,7 +1814,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'item:1' })
+   // You choose an option from the question as it reads now, and have not sent it yet.
+-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
++  await ui.press({ key: 'answer:1.b' })
+ 
+   const options = ['Add a budget of two per host', 'Ask the reviewer']
+   const called = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, options, detail: 'The cap is three.' })
+@@ -1744,12 +1826,13 @@ test('the revise tool redraws the question with its new text at once, keeping it
+   )
+   // Before the band reads the store again, the open drawer shows the new text.
+   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The cap is three.')
+-  expect(await ui.find({ type: 'Text', text: /^Add a budget of two per host/ })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: /^Ask the reviewer/ })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: /^Add a budget$/ })).toBeUndefined()
+-  expect(await ui.find({ key: 'answer:1.c' })).toBeDefined()
++  expect((await optionsOf(ui)).map(option => [option.props.hotkey, option.text])).toEqual([
++    ['1', 'Decline it (recommended)'],
++    ['2', 'Add a budget of two per host'],
++    ['3', 'Ask the reviewer'],
++  ])
+ 
+-  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'close:1' })
+   await $.tool.call({ tool: 'mcp__projector__revise', number: 1, question: 'Decline the retry finding?' })
+   expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
+@@ -1762,7 +1845,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
+   expect(session.store.store.get('1')?.answer).toBeUndefined()
+ 
+   await ui.press({ key: 'item:1' })
+-  await ui.press({ key: 'answer:1.c', link: { href: SEVEN } })
++  await ui.press({ key: 'answer:1.c' })
+   expect(session.filled.at(-1)).toBe('insert:"Decline the retry finding?"\n\nAsk the reviewer\n')
+   await $.prompt.submit({ text: '"Decline the retry finding?"\n\nAsk the reviewer\n', wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+@@ -1781,7 +1864,7 @@ test('an answer chosen before a revise answers no question, and a pick from the
+ 
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'item:2' })
+-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
++  await ui.press({ key: 'answer:2.a' })
+   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
+   expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe('The cap is three.')
+ 
+@@ -1803,7 +1886,7 @@ test('an answer chosen before a revise answers no question, and a pick from the
+ 
+   // The same option, picked again in the revised question's drawer, answers it.
+   await ui.press({ key: 'item:2' })
+-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
++  await ui.press({ key: 'answer:2.a' })
+   await $.prompt.submit({ text: decline, wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+   expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
+@@ -1820,7 +1903,7 @@ test('an answer chosen before a revise rewords its question does not answer anot
+ 
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'item:2' })
+-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
++  await ui.press({ key: 'answer:2.a' })
+   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, question: 'Decline the retry finding?' })
+   expect(await ui.find({ key: 'detail:2' })).toBeDefined()
+ 
+@@ -1863,7 +1946,6 @@ test('an option typed under a quote discussed before a revise answers no questio
+ })
+ 
+ const DECLINE = '"Decline the finding?"\n\nDecline it\n'
+-const PULL_8 = { href: 'https://github.com/x/y/pull/8' }
+ 
+ test('a pick for a question withdrawn before you send answers no other question', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+@@ -1873,7 +1955,7 @@ test('a pick for a question withdrawn before you send answers no other question'
+ 
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'item:2' })
+-  await ui.press({ key: 'answer:2.a', link: PULL_8 })
++  await ui.press({ key: 'answer:2.a' })
+   await $.tool.call({ tool: 'mcp__projector__withdraw', number: 2 })
+   await $.prompt.submit({ text: DECLINE, wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+@@ -1890,7 +1972,7 @@ test('a pick made before a revise, for a question dismissed before you send, ans
+ 
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'item:2' })
+-  await ui.press({ key: 'answer:2.a', link: PULL_8 })
++  await ui.press({ key: 'answer:2.a' })
+   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
+   await ui.press({ key: 'dismiss:2' })
+   await clock.settle()
+@@ -1943,12 +2025,14 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'item:1' })
+   await ui.press({ key: 'snooze:1' })
++  await ui.press({ key: 'snooze-60:1' })
+   await clock.settle()
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'snooze:2' })
++  await ui.press({ key: 'snooze-60:2' })
+   await clock.settle()
+-  expect(session.project()).toContain('inbox snooze 1 --session s1 --json')
+-  expect(session.project()).toContain('inbox snooze 2 --session s1 --json')
++  expect(session.project()).toContain('inbox snooze 1 --for 60 --session s1 --json')
++  expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
+   // Each stays listed for 30 seconds, out of the divider's counts, and then leaves the band.
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
+@@ -1985,8 +2069,8 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'item:1' })
+   session.store.failing.locks = 2
+-  for (const name of ['dismiss', 'snooze']) {
+-    await ui.press({ key: `${name}:1` })
++  for (const keys of [['dismiss:1'], ['snooze:1', 'snooze-60:1']]) {
++    for (const key of keys) await ui.press({ key })
+     await clock.settle()
+   }
+   expect(session.toasts).toEqual([`projector: ${BUSY}`, `projector: ${BUSY}`])
+@@ -2030,6 +2114,7 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'snooze:2' })
++  await ui.press({ key: 'snooze-60:2' })
+   await clock.advance(TICK)
+   await clock.settle()
+   await ui.unmount()
+@@ -2142,7 +2227,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
+   expect(await ui.find({ key: 'answer:1.a' })).toBeDefined()
+   expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
+   const restored = await line()
+-  expect([restored?.props.color, restored?.props.strikethrough]).toEqual([undefined, false])
++  expect([restored?.props.color, restored?.props.strikethrough]).toEqual(['permission', false])
+   expect(session.store.store.get('1')).toEqual(held())
+ 
+   // The dismissal had not gone out, so the restore sends nothing.
+@@ -2166,7 +2251,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
+   expect(Object.keys(session.store.store.get('1') ?? {})).not.toContain('restoredAt')
+ 
+   // Picking an option answers it as if it had never been dismissed.
+-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
++  await ui.press({ key: 'answer:1.b' })
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+@@ -2183,8 +2268,9 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
+ 
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'snooze:2' })
++  await ui.press({ key: 'snooze-60:2' })
+   await clock.settle()
+-  expect(session.project()).toContain('inbox snooze 2 --session s1 --json')
++  expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
+   // The drawer closes, and the line stays in the subtle color, not struck through, out of the divider's count.
+   expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
+   const snoozed = await line()
+@@ -2208,6 +2294,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
+ 
+   // Snoozed again, it leaves the band 30 seconds later, and nothing reached the agent.
+   await ui.press({ key: 'snooze:2' })
++  await ui.press({ key: 'snooze-15:2' })
+   await clock.advance(30_000 - TICK)
+   await clock.settle()
+   expect(await line()).toBeDefined()
+@@ -2243,7 +2330,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
+   expect(session.project()).toContain('inbox restore 1 --session s1 --json')
+   // Before the band reads the store again, the question is open in the band, and its old drawer stays closed.
+   const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
+-  expect([line?.props.color, line?.props.strikethrough]).toEqual([undefined, false])
++  expect([line?.props.color, line?.props.strikethrough]).toEqual(['permission', false])
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+   await clock.advance(TICK)
+@@ -2338,3 +2425,293 @@ test('the restore tool refuses what the CLI refuses, asks an old CLI to upgrade,
+   expect(session.store.store.get('1')).toEqual(answered)
+   expect(session.store.store.get('2')).toEqual(notice())
+ })
++
++test('an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  // The recommendation and five more options, the most the ask tool takes.
++  const choices = ['Decline it', 'Add a budget', 'Cap per host', 'Ask the reviewer', 'Wait a day', 'Split the change']
++  const session = questionWorld(on, clock, [held({ choices }), notice()])
++  await startSession($, clock)
++  const ui = await $.ui.mount(BAND)
++  const digits = () => digitsOf(ui)
++
++  // A closed drawer leaves the digits to the prompt.
++  expect(await digits()).toEqual([])
++  await ui.press({ key: 'item:2' })
++  expect(await digits()).toEqual([])
++  await ui.press({ key: 'close:2' })
++
++  await ui.press({ key: 'item:1' })
++  expect((await optionsOf(ui)).map(option => [option.key, option.props.hotkey])).toEqual([
++    ['answer:1.a', '1'],
++    ['answer:1.b', '2'],
++    ['answer:1.c', '3'],
++    ['answer:1.d', '4'],
++    ['answer:1.e', '5'],
++    ['answer:1.f', '6'],
++  ])
++  // Pressing the sixth, by its digit or Enter, fills the prompt as clicking its number did, and sending it answers.
++  await ui.press({ key: 'answer:1.f' })
++  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nSplit the change\n'])
++  await $.prompt.submit({ text: '"Decline the finding?"\n\nSplit the change\n', wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'f', text: 'Split the change' }))
++
++  // The answered question's drawer lists its options with no digits.
++  await ui.press({ key: 'item:1' })
++  expect(await ui.find({ type: 'Text', text: /^Split the change ✓$/ })).toBeDefined()
++  expect(await digits()).toEqual([])
++  await ui.unmount()
++})
++
++/** The open drawer's action lines, in order: each one's key, the letter that presses it, and its label. */
++async function actionLinesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
++  const actions = (await ui.findAll({ type: 'Button' })).filter(button =>
++    /^(discuss|dismiss|snooze|unsnooze|restore):/.test(button.key ?? ''),
++  )
++  return actions.map(action => `${action.key ?? ''} ${String(action.props.hotkey ?? '')} ${action.text}`)
++}
++
++test('a drawer’s actions follow its options a line each, on d, x and s, named for what they act on', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  questionWorld(on, clock, [held(), notice()])
++  await startSession($, clock)
++  const ui = await $.ui.mount(BAND)
++
++  // No line of the band takes a letter; only an open drawer's actions do.
++  expect((await ui.findAll({ type: 'Button' })).filter(button => button.props.hotkey !== undefined)).toEqual([])
++
++  // A question's options and actions are one list: the options on their digits, then d, x and s.
++  await ui.press({ key: 'item:1' })
++  expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual([
++    'close:1',
++    'answer:1.a',
++    'answer:1.b',
++    'discuss:1',
++    'dismiss:1',
++    'snooze:1',
++  ])
++  expect(await actionLinesOf(ui)).toEqual([
++    'discuss:1 d discuss this',
++    'dismiss:1 x dismiss question',
++    'snooze:1 s snooze question',
++  ])
++  // No blank line or `|` comes between them: the drawer's only blank lines set the detail apart.
++  expect(await ui.findAll({ type: 'Text', text: /^ $/ })).toHaveLength(2)
++  expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
++
++  // Snoozed, unsnooze takes snooze's place.
++  await ui.press({ key: 'snooze:1' })
++  await ui.press({ key: 'snooze-60:1' })
++  await clock.settle()
++  await ui.press({ key: 'item:1' })
++  expect(await actionLinesOf(ui)).toEqual([
++    'discuss:1 d discuss this',
++    'dismiss:1 x dismiss question',
++    'unsnooze:1 s unsnooze question',
++  ])
++
++  // Dismissed, restore takes dismiss's place, and a resolved item has nothing to snooze.
++  await ui.press({ key: 'dismiss:1' })
++  await clock.settle()
++  await ui.press({ key: 'item:1' })
++  expect(await actionLinesOf(ui)).toEqual(['discuss:1 d discuss this', 'restore:1 x restore question'])
++  await ui.press({ key: 'close:1' })
++
++  // A notice's actions name a notice.
++  await ui.press({ key: 'item:2' })
++  expect(await actionLinesOf(ui)).toEqual([
++    'discuss:2 d discuss this',
++    'dismiss:2 x dismiss notice',
++    'snooze:2 s snooze notice',
++  ])
++  await ui.press({ key: 'close:2' })
++
++  // A pull request's drawer has its links above its actions, the links with no letters.
++  await ui.press({ key: 'pr:x/y#7' })
++  expect(await actionLinesOf(ui)).toEqual(['discuss:x/y#7 d discuss this', 'dismiss:x/y#7 x dismiss pull request'])
++  await ui.unmount()
++})
++
++test('a keyed line’s label takes the color of the `: ` before it, so it inverts as one block', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  questionWorld(on, clock, [held()])
++  await startSession($, clock)
++  const ui = await $.ui.mount(BAND)
++
++  // The engine draws a plain Button's key in its accent color and the `: ` in
++  // the Button's own color, which takes no color, `hover`, or `dimColor` from
++  // the band. A label of plain text, with no colored child, takes that same
++  // color, at rest and inverted.
++  const partsOf = async (key: string) => {
++    const line = await ui.find({ type: 'Button', key })
++    return {
++      key: line?.props.hotkey,
++      plain: line?.props.plain,
++      line: [line?.props.color, line?.props.hover, line?.props.dimColor],
++      label: [line?.props.label, line?.children],
++    }
++  }
++  await ui.press({ key: 'item:1' })
++  expect(await partsOf('answer:1.a')).toEqual({
++    key: '1',
++    plain: true,
++    line: [undefined, undefined, undefined],
++    label: ['Decline it (recommended)', []],
++  })
++  expect(await partsOf('answer:1.b')).toEqual({
++    key: '2',
++    plain: true,
++    line: [undefined, undefined, undefined],
++    label: ['Add a budget', []],
++  })
++  expect(await partsOf('dismiss:1')).toEqual({
++    key: 'x',
++    plain: true,
++    line: [undefined, undefined, undefined],
++    label: ['dismiss question', []],
++  })
++  await ui.press({ key: 'close:1' })
++
++  await ui.press({ key: 'pr:x/y#7' })
++  expect(await partsOf('discuss:x/y#7')).toEqual({
++    key: 'd',
++    plain: true,
++    line: [undefined, undefined, undefined],
++    label: ['discuss this', []],
++  })
++  await ui.unmount()
++})
++
++/**
++ * Moves the band's focus ring as the person's Tab or ctrl+x tab does, and
++ * records each element the band then tried to move the ring onto. The kit
++ * serves no `$.ui.focus`, so it refuses every move the band tries, and the
++ * debug line the band writes for a refused move names the element.
++ */
++function keyboardOf(on: On) {
++  const tried: string[] = []
++  on('ui.focus', () => ({}))
++  on('ui.log', ($, e) => {
++    const element = /^projector: the focus stayed off (\S+): /.exec(e.text)?.[1]
++    if (element !== undefined) tried.push(element)
++    return { value: undefined }
++  })
++  const tab = ($: Engine, element: string) =>
++    $.ui.focus({
++      component: 'AbovePrompt',
++      requestId: 'above-prompt',
++      plugin: 'projector',
++      element,
++      origin: { kind: 'person' },
++    })
++  return { tried, tab }
++}
++
++test('Enter on a line moves the ring into the drawer it opens and back onto the line, and a click moves nothing', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const answered = held({ ref: '3', number: 3, answer, deliveredAt: NOW - 1_000 })
++  questionWorld(on, clock, [held(), notice(), answered])
++  const { tried, tab } = keyboardOf(on)
++  await startSession($, clock)
++  const ui = await $.ui.mount(BAND)
++
++  // A click, with the ring on nothing or on another line, leaves the ring alone.
++  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'close:1' })
++  await tab($, 'pr:x/y#7')
++  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'close:1' })
++  expect(tried).toEqual([])
++
++  // Enter on a question's line moves the ring onto its first option, and Enter
++  // on the open line moves it back onto the line in the list.
++  await tab($, 'item:1')
++  await ui.press({ key: 'item:1' })
++  expect(tried).toEqual(['answer:1.a'])
++  await tab($, 'close:1')
++  await ui.press({ key: 'close:1' })
++  expect(tried).toEqual(['answer:1.a', 'item:1'])
++
++  // A notice's drawer and an answered question's have no options to press, so the ring goes onto discuss.
++  await tab($, 'item:2')
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'close:2' })
++  await tab($, 'item:3')
++  await ui.press({ key: 'item:3' })
++  await ui.press({ key: 'close:3' })
++  expect(tried).toEqual(['answer:1.a', 'item:1', 'discuss:2', 'discuss:3'])
++
++  // A pull request's drawer opens under its line, so closing it leaves the ring where it is.
++  await tab($, 'pr:x/y#7')
++  await ui.press({ key: 'pr:x/y#7' })
++  await ui.press({ key: 'pr:x/y#7' })
++  expect(tried).toEqual(['answer:1.a', 'item:1', 'discuss:2', 'discuss:3', 'discuss:x/y#7'])
++  await ui.unmount()
++})
++
++test('snooze asks how long, and only a length it offers snoozes the item', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held(), notice()])
++  const { tried, tab } = keyboardOf(on)
++  await startSession($, clock)
++  const ui = await $.ui.mount(BAND)
++  /** The open drawer's row of Buttons, each by its key and what it reads. */
++  const row = async () =>
++    (await ui.findAll({ type: 'Button' }))
++      .filter(button => /^(?!close:|item:).*:2$/.test(button.key ?? ''))
++      .map(button => `${button.key ?? ''} ${button.text}`)
++  const actions = ['discuss:2 discuss this', 'dismiss:2 dismiss notice', 'snooze:2 snooze notice']
++  const snoozes = () => session.project().filter(command => command.startsWith('inbox snooze'))
++
++  // Snooze puts the lengths and cancel where the actions were, with no digits, and snoozes nothing yet.
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'snooze:2' })
++  expect(await row()).toEqual([
++    'snooze-15:2 15 min',
++    'snooze-60:2 1 hour',
++    'snooze-240:2 4 hours',
++    'snooze-1440:2 1 day',
++    'cancel:2 cancel',
++  ])
++  expect((await ui.findAll({ type: 'Text', text: '|' })).map(bar => bar.props.color)).toEqual(Array(4).fill('subtle'))
++  expect(await digitsOf(ui)).toEqual([])
++  expect(snoozes()).toEqual([])
++
++  // Cancel puts the actions back.
++  await ui.press({ key: 'cancel:2' })
++  expect(await row()).toEqual(actions)
++
++  // So does closing the drawer, so it opens again on its actions.
++  await ui.press({ key: 'snooze:2' })
++  await ui.press({ key: 'close:2' })
++  await ui.press({ key: 'item:2' })
++  expect(await row()).toEqual(actions)
++  expect(snoozes()).toEqual([])
++
++  // From the keyboard, snooze moves the ring onto the first length, and cancel moves it back onto snooze.
++  await tab($, 'snooze:2')
++  await ui.press({ key: 'snooze:2' })
++  await tab($, 'cancel:2')
++  await ui.press({ key: 'cancel:2' })
++  expect(tried).toEqual(['snooze-15:2', 'snooze:2'])
++
++  // Each length snoozes the item for its minutes.
++  for (const minutes of [15, 60, 240, 1440]) {
++    await ui.press({ key: 'snooze:2' })
++    await ui.press({ key: `snooze-${minutes}:2` })
++    await clock.settle()
++    expect(session.store.store.get('2')?.snoozedUntil).toBe(clock.now() + minutes * 60_000)
++    await ui.press({ key: 'item:2' })
++    await ui.press({ key: 'unsnooze:2' })
++    await clock.settle()
++  }
++  expect(snoozes()).toEqual([15, 60, 240, 1440].map(minutes => `inbox snooze 2 --for ${minutes} --session s1 --json`))
++  await ui.unmount()
++})
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index 281a069..61f4804 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -72,7 +72,7 @@ export type Read = { answers: Given[]; replies: Question[] }
+  * question. A quoted open question takes an answer only when its quote ends
+  * its line and the text after it, up to the next quoted item or the prompt's
+  * end, is one of its options, whatever blank lines and spaces surround it:
+- * what an option's number puts in the prompt. A quote that a drawer put in
++ * what pressing an option puts in the prompt. A quote that a drawer put in
+  * the prompt, with that answer or alone through discuss, speaks to the
+  * question of the drawer that did so last, `proposed` holding them oldest
+  * first: one of its options answers it, and any other text replies to it.
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index c3d2319..4f173aa 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -62,11 +62,27 @@ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
+   pending: 'warning',
+ }
+ 
++/**
++ * The theme color of an open question's line: the one Claude Code gives its
++ * own permission prompts, since an agent's question usually asks leave to do
++ * something. A notice keeps the default color.
++ */
++const QUESTION_COLOR = 'permission'
++
++/** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
++const SNOOZES = [
++  { label: '15 min', minutes: 15 },
++  { label: '1 hour', minutes: 60 },
++  { label: '4 hours', minutes: 240 },
++  { label: '1 day', minutes: 1440 },
++] as const
++
+ const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
+ const snapshot = atom({ plugin: 'projector', key: 'bandSnapshot' } as const, EMPTY)
+ const now = atom({ plugin: 'projector', key: 'bandNow' } as const, 0)
+ const isShown = atom({ plugin: 'projector', key: 'isBandShown' } as const, false)
+ const drawer = atom({ plugin: 'projector', key: 'bandDrawer' } as const, null)
++const snoozing = atom({ plugin: 'projector', key: 'bandSnoozing' } as const, null)
+ const items = atom({ plugin: 'projector', key: 'bandInbox' } as const, [])
+ const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
+ 
+@@ -101,6 +117,14 @@ let tickedAt: number | undefined
+  * its question or holds the quote it was chosen under.
+  */
+ let proposed: Proposal[] = []
++/**
++ * Where the band's focus ring last landed, as `ui.focus` reported it: the
++ * band's site, and the key of the band's element under the ring, absent when
++ * the ring is on none of them. The engine says nothing when the band hands
++ * the keyboard back, so the ring can be stale, and the engine refuses a move
++ * once the band no longer holds the keyboard.
++ */
++let ring: { requestId: string; key: string | undefined } | undefined
+ 
+ /**
+  * Records what a question's drawer put in the prompt: an option, or an empty
+@@ -280,8 +304,11 @@ function refresh($: Engine, isForced = false): Promise<void> {
+ const replace = ($: Engine, item: Item) =>
+   update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
+ 
+-/** Closes a drawer when it is the one open. */
+-const closeDrawer = ($: Engine, key: string) => update($, drawer, was => (was === key ? null : was))
++/** Closes a drawer when it is the one open, and with it any question of how long to snooze. */
++async function closeDrawer($: Engine, key: string): Promise<void> {
++  await update($, drawer, was => (was === key ? null : was))
++  await update($, snoozing, was => (was === key ? null : was))
++}
+ 
+ /**
+  * Closes the open drawer once its line has left the band, so it does not
+@@ -467,18 +494,24 @@ async function checkInbox($: Engine): Promise<void> {
+ const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
+ 
+ /**
+- * Dismisses, snoozes, or restores an item from the band; a second press finds
+- * it changed and does nothing. Dismissing or snoozing closes the item's
+- * drawer, and the item stays listed, muted, for 30 seconds, so its line
+- * opens the drawer again to restore it. Restoring keeps the drawer open on
+- * the item, open again.
++ * Dismisses, snoozes for `minutes`, or restores an item from the band; a
++ * second press finds it changed and does nothing. Dismissing or snoozing
++ * closes the item's drawer, and the item stays listed, muted, for 30 seconds,
++ * so its line opens the drawer again to restore it. Restoring keeps the
++ * drawer open on the item, open again.
+  */
+-async function act($: Engine, item: Item, command: 'dismiss' | 'snooze' | 'restore'): Promise<void> {
++async function act(
++  $: Engine,
++  item: Item,
++  command: 'dismiss' | 'snooze' | 'restore',
++  minutes?: number,
++): Promise<void> {
+   const { ref, session } = item
+   if (acting.has(ref)) return
+   acting.add(ref)
+   try {
+-    const ran = await project($, ['inbox', command, ref, '--session', session, '--json'])
++    const length = minutes === undefined ? [] : ['--for', String(minutes)]
++    const ran = await project($, ['inbox', command, ref, ...length, '--session', session, '--json'])
+     if (ran.exitCode === 0) {
+       await replace($, itemOf(ran.stdout, session))
+       if (command !== 'restore') await closeDrawer($, `item:${ref}`)
+@@ -589,6 +622,16 @@ function show($: Engine): void {
+   })
+ }
+ 
++/**
++ * Moves the band's focus ring onto one of its elements, which the engine
++ * waits for when the band has yet to draw it, and writes why the ring stayed
++ * to the debug log when the engine refuses the move.
++ */
++async function focusOn($: Engine, requestId: string, key: string): Promise<void> {
++  const moved = await $.ui.focus({ requestId, key }).catch((error: unknown) => ({ deny: messageOf(error) }))
++  if (moved.deny !== undefined) $.ui.log(`projector: the focus stayed off ${key}: ${moved.deny}`, { to: 'debug' })
++}
++
+ /** Refreshes soon, from a timer so the hook that noticed a change returns at once. */
+ const soon = ($: Engine) => $.clock.after(1, () => void refresh($))
+ 
+@@ -849,6 +892,16 @@ export const register: Register = on => {
+     return entered
+   }).catch(($, e, next) => next(e))
+ 
++  // Enter presses the band's element under the ring, so where the ring is
++  // tells a press from the keyboard from a click.
++  on('ui.focus', { component: 'AbovePrompt' }, async ($, e, next) => {
++    const moved = await next(e)
++    if (moved.deny === undefined) {
++      ring = { requestId: e.requestId, key: e.plugin === 'projector' ? e.element : undefined }
++    }
++    return moved
++  }).catch(($, e, next) => next(e))
++
+   // A turn may have pushed, replied or resolved threads.
+   on('turn.complete', ($, e, next) => {
+     soon($)
+@@ -871,10 +924,10 @@ export const register: Register = on => {
+     if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
+ 
+     const { Box, Button, Markdown, Text } = $.ui.resolve(e)
+-    const env = await envOf($)
+     const shown = current(await read($, snapshot))
+     const time = await read($, now)
+     const opened = await read($, drawer)
++    const asking = await read($, snoozing)
+     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
+     const counts = (['question', 'notice'] as const).map(kind => {
+       const count = shownItems.filter(
+@@ -903,8 +956,19 @@ export const register: Register = on => {
+     // divider's time says how old they are, so the band says why it failed
+     // only when it has none of them to draw.
+     const failure = shown.error === null || shown.rows.length > 0 ? undefined : `GitHub: ${shown.error}`
+-    const toggle = (key: string) => {
++    // Enter with the ring on the Button it presses takes the ring along,
++    // `onto` what the press puts in the Button's place; a click leaves the
++    // ring where it was.
++    const carry = (pressed: string, onto: string | undefined) => {
++      if (ring?.key === pressed && onto !== undefined) void focusOn($, ring.requestId, onto)
++    }
++    // A line's press opens or closes its drawer, and the ring goes onto the
++    // drawer's first control or back onto the line. A drawer always opens on
++    // its actions, never on a question of how long to snooze.
++    const toggle = (key: string, line: string, onto?: string) => {
+       update($, drawer, was => (was === key ? null : key)).catch(() => undefined)
++      update($, snoozing, () => null).catch(() => undefined)
++      carry(line, onto)
+     }
+ 
+     // The engine draws the band's `[-]` just past `bodyColumns` on the first
+@@ -937,18 +1001,6 @@ export const register: Register = on => {
+       )
+     }
+ 
+-    // A question's numbered options are Markdown links: a plain click runs
+-    // `onPress`, and a ctrl, alt or cmd click opens `href`. Markdown draws
+-    // only an `https:`, `http:` or `file:` link as one, so an option links its
+-    // question's pull request, or the question's own file in the store when it
+-    // has none.
+-    const store = (session: string) => storeOf(env, session) ?? ''
+-    const hrefOf = (question: Question) => {
+-      const pull = question.pr?.match(/^([^#]+)#(\d+)$/)
+-      return pull === null || pull === undefined
+-        ? `file://${encodeURI(`${store(question.session)}/${encodeURIComponent(question.ref)}.json`)}`
+-        : `https://github.com/${pull[1] ?? ''}/pull/${pull[2] ?? ''}`
+-    }
+     // An item names its pull request as the band labels it, or in full when
+     // the band does not list it.
+     const pullOf = (item: Item) => {
+@@ -956,13 +1008,15 @@ export const register: Register = on => {
+       return row === undefined ? (item.pr ?? '') : label(row.pr)
+     }
+ 
+-    // The items are a list below the pull requests, oldest first: a question
+-    // bulleted `-`, a notice `•`. A question's drawer numbers its options;
+-    // choosing one puts the question and that answer in the prompt as text,
+-    // for you to send or change, and sending it unchanged is what answers the
+-    // question. Discuss puts the question alone, for a reply in your own words,
+-    // which answers nothing. A resolved question's drawer shows an answer typed
+-    // with `project inbox answer --text` after its options.
++    // The items are a list below the pull requests, oldest first, each
++    // bulleted `-`; an open question's line takes `QUESTION_COLOR`, and a
++    // resolved or snoozed item's `subtle`. An open question's drawer numbers
++    // its options; choosing one puts the question and that answer in the
++    // prompt as text, for you to send or change, and sending it unchanged is
++    // what answers the question. Discuss puts the question alone, for a reply
++    // in your own words, which answers nothing. A resolved question's drawer
++    // lists its options with nothing to press, and an answer typed with
++    // `project inbox answer --text` after them.
+ 
+     // A pull request's line and an item's line each end with an age, in one
+     // column as wide as the widest age in the band, so what comes before the
+@@ -982,71 +1036,73 @@ export const register: Register = on => {
+     const fill = (text: string) => {
+       $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
+     }
+-    // A drawer's actions are plain Buttons on one row, `|` between them.
+-    const drawActions = (id: string, actions: readonly { name: string; onPress: () => void }[]) => (
++    // The engine draws a plain Button's key in its fixed accent color and the
++    // `: ` after it in the Button's own text color, which a plugin cannot set,
++    // and a hover or the focus ring inverts each colored part apart. So a
++    // keyed line's label is a plain string, drawn and inverted with the `: `
++    // as one block after the key.
++    //
++    // A drawer's actions follow its options, a line each: a plain Button on
++    // its letter, as `d: discuss this`. A letter presses its action while the
++    // band holds the keyboard: `d` discusses, `x` sets the line aside or
++    // brings it back, and `s` puts it off or ends the snooze.
++    type Action = { name: string; label: string; hotkey: 'd' | 'x' | 's'; onPress: () => void }
++    const drawActions = (id: string, actions: readonly Action[]) =>
++      actions.map(({ name, label, hotkey, onPress }) => (
++        <Button key={`${name}:${id}`} plain hotkey={hotkey} onPress={onPress}>
++          {label}
++        </Button>
++      ))
++    // The lengths snooze offers share one row, `|` between them, with no
++    // keys, since the digits belong to a question's options.
++    type Length = { name: string; label: string; onPress: () => void }
++    const drawLengths = (id: string, lengths: readonly Length[]) => (
+       <Box flexDirection="row" columnGap={1}>
+-        {actions.flatMap(({ name, onPress }, at) => [
++        {lengths.flatMap(({ name, label, onPress }, at) => [
+           ...(at === 0 ? [] : [<Text key={`between:${id}.${at}`} color="subtle">|</Text>]),
+           <Button key={`${name}:${id}`} plain onPress={onPress}>
+-            <Text>{name}</Text>
++            <Text>{label}</Text>
+           </Button>,
+         ])}
+       </Box>
+     )
++    // An open question's options are plain Buttons on the digits 1 to 6,
++    // which the engine draws before them, as `1: Decline it`. A digit presses
++    // its option from the band, or typed first into an empty prompt, as a
++    // survey's does; either only fills the prompt, so a stray one sends
++    // nothing. A resolved question's options are text, its answer marked.
+     const drawAnswers = (question: Question) => {
+       const { ref, answer } = question
+-      const isOpen = answer === undefined
+       const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
+-      const href = hrefOf(question)
+-      const pick = (answer: string) => {
+-        propose(question, answer)
+-        fill(`${proposalOf(question, answer)}\n`)
+-      }
+-      const option = (index: number, content: JSX.Element) => {
+-        const letter = letterAt(index)
+-        const number = `${index + 1}.`
+-        const choice = question.choices[index]
+-        return (
+-          <Box key={`option:${ref}.${letter}`} flexDirection="row" columnGap={1}>
+-            <Box flexShrink={0}>
+-              {isOpen && choice !== undefined ? (
+-                <Markdown
+-                  key={`answer:${ref}.${letter}`}
+-                  text={`[${number}](${href})`}
+-                  onLinkPress={() => pick(choice)}
+-                />
+-              ) : (
+-                <Text color={letter === chosen ? 'success' : 'subtle'}>{number}</Text>
+-              )}
+-            </Box>
+-            <Box flexShrink={1}>{content}</Box>
+-          </Box>
+-        )
++      const recommended = ' (recommended)'
++      const marked = <Text color="success"> ✓</Text>
++      const pick = (choice: string) => {
++        propose(question, choice)
++        fill(`${proposalOf(question, choice)}\n`)
+       }
+ 
+       return [
+         <Text key={`before-answers:${ref}`}> </Text>,
+         ...question.choices.map((choice, index) => {
+           const letter = letterAt(index)
+-          return option(
+-            index,
+-            <Text color={isOpen || letter === chosen ? undefined : 'subtle'}>
++          return answer === undefined ? (
++            <Button key={`answer:${ref}.${letter}`} plain hotkey={String(index + 1)} onPress={() => pick(choice)}>
++              {index === 0 ? `${choice}${recommended}` : choice}
++            </Button>
++          ) : (
++            <Text key={`option:${ref}.${letter}`} color={letter === chosen ? undefined : 'subtle'}>
+               {choice}
+-              {index === 0 && <Text color="success"> (recommended)</Text>}
+-              {letter === chosen && <Text color="success"> ✓</Text>}
+-            </Text>,
++              {index === 0 && <Text color="success">{recommended}</Text>}
++              {letter === chosen && marked}
++            </Text>
+           )
+         }),
+-        chosen === typedLetter(question) &&
+-          answer !== undefined &&
+-          'text' in answer &&
+-          option(
+-            question.choices.length,
+-            <Text>
+-              {answer.text}
+-              <Text color="success"> ✓</Text>
+-            </Text>,
+-          ),
++        chosen === typedLetter(question) && answer !== undefined && 'text' in answer && (
++          <Text key={`option:${ref}.${chosen}`}>
++            {answer.text}
++            {marked}
++          </Text>
++        ),
+       ]
+     }
+     const drawItem = (item: Item) => {
+@@ -1057,14 +1113,22 @@ export const register: Register = on => {
+       // A snoozed item stays listed for 30 seconds, muted but not struck
+       // through, so it reads as put off rather than dismissed.
+       const isSnoozed = isSnoozedAt(item, time)
+-      const isMuted = !isOpen || isSnoozed
++      const color = !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' ? QUESTION_COLOR : undefined
+       const pull = pullOf(item)
+-      // A dismissed or snoozed item's drawer offers to bring it back where it
+-      // offered to dismiss or snooze it.
+-      const restore = (name: string) => ({ name, onPress: () => void act($, item, 'restore') })
+-      const actions = [
++      // Each action names the kind of item it acts on. A dismissed or snoozed
++      // item's drawer offers to bring it back where it offered to dismiss or
++      // snooze it, on the same letter; a resolved item cannot be snoozed.
++      const restore = (name: string, hotkey: Action['hotkey']): Action => ({
++        name,
++        label: `${name} ${item.kind}`,
++        hotkey,
++        onPress: () => void act($, item, 'restore'),
++      })
++      const actions: Action[] = [
+         {
+           name: 'discuss',
++          label: 'discuss this',
++          hotkey: 'd',
+           onPress: () => {
+             if (item.kind === 'question') propose(item, '')
+             fill(`${quoteOf(item)}\n\n`)
+@@ -1072,13 +1136,56 @@ export const register: Register = on => {
+         },
+         ...(isOpen
+           ? [
+-              { name: 'dismiss', onPress: () => void act($, item, 'dismiss') },
+-              isSnoozed ? restore('unsnooze') : { name: 'snooze', onPress: () => void act($, item, 'snooze') },
++              {
++                name: 'dismiss',
++                label: `dismiss ${item.kind}`,
++                hotkey: 'x' as const,
++                onPress: () => void act($, item, 'dismiss'),
++              },
++              isSnoozed
++                ? restore('unsnooze', 's')
++                : {
++                    name: 'snooze',
++                    label: `snooze ${item.kind}`,
++                    hotkey: 's' as const,
++                    onPress: () => {
++                      update($, snoozing, () => key).catch(() => undefined)
++                      carry(`snooze:${ref}`, `snooze-${SNOOZES[0].minutes}:${ref}`)
++                    },
++                  },
+             ]
+           : isDismissed
+-            ? [restore('restore')]
++            ? [restore('restore', 'x')]
+             : []),
+       ]
++      // Snooze asks how long before it snoozes anything: the action lines
++      // give way to the lengths and cancel, which puts the actions back.
++      const isAsking = asking === key && isOpen && !isSnoozed
++      const lengths: Length[] = [
++        ...SNOOZES.map(({ label, minutes }) => ({
++          name: `snooze-${minutes}`,
++          label,
++          onPress: () => {
++            update($, snoozing, () => null).catch(() => undefined)
++            void act($, item, 'snooze', minutes)
++          },
++        })),
++        {
++          name: 'cancel',
++          label: 'cancel',
++          onPress: () => {
++            update($, snoozing, () => null).catch(() => undefined)
++            carry(`cancel:${ref}`, `snooze:${ref}`)
++          },
++        },
++      ]
++      // An open item's line has the band to itself, so closing its drawer
++      // puts the line back lower in the list. The engine keeps the ring by
++      // position, and the open line's key is one the list never draws, so a
++      // move onto the line in the list waits for the band to draw the list.
++      const isOpened = opened === key
++      const line = isOpened ? `close:${ref}` : key
++      const first = item.kind === 'question' && isOpen ? `answer:${ref}.${letterAt(0)}` : `discuss:${ref}`
+ 
+       return (
+         <Box key={`line:${ref}`} flexDirection="column">
+@@ -1088,11 +1195,11 @@ export const register: Register = on => {
+                 screen. */}
+             <Box flexGrow={1} flexShrink={1}>
+               {/* An open drawer keeps its item inverted, as the pointer draws it. */}
+-              <Button key={key} plain onPress={() => toggle(key)}>
+-                <Text color={isMuted ? 'subtle' : undefined} inverse={opened === key}>
+-                  {item.kind === 'notice' ? '•' : '-'}{' '}
++              <Button key={line} plain onPress={() => toggle(key, line, isOpened ? key : first)}>
++                <Text color={color} inverse={isOpened}>
++                  -{' '}
+                 </Text>
+-                <Text color={isMuted ? 'subtle' : undefined} strikethrough={isDismissed} inverse={opened === key}>
++                <Text color={color} strikethrough={isDismissed} inverse={isOpened}>
+                   {item.subject}
+                 </Text>
+               </Button>
+@@ -1109,15 +1216,15 @@ export const register: Register = on => {
+             )}
+             {ageColumn(key, item.postedAt)}
+           </Box>
+-          {opened === key && (
++          {isOpened && (
+             <Box flexDirection="column" marginLeft={2}>
+               {/* A blank line sets the item apart from its line, and the detail,
+-                  when there is one, sits between two. */}
++                  when there is one, sits between two. A question's actions
++                  follow its options directly, as one list. */}
+               {item.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
+               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
+-              {item.kind === 'question' && drawAnswers(item)}
+-              <Text key={`before-buttons:${ref}`}> </Text>
+-              {drawActions(ref, actions)}
++              {item.kind === 'question' ? drawAnswers(item) : <Text key={`before-buttons:${ref}`}> </Text>}
++              {isAsking ? drawLengths(ref, lengths) : drawActions(ref, actions)}
+             </Box>
+           )}
+         </Box>
+@@ -1138,7 +1245,12 @@ export const register: Register = on => {
+               beside it. */}
+           <Box flexDirection="row" columnGap={1}>
+             <Box flexShrink={0} width={labelWidth}>
+-              <Button key={`pr:${key}`} plain label={label(pr)} onPress={() => toggle(key)} />
++              <Button
++                key={`pr:${key}`}
++                plain
++                label={label(pr)}
++                onPress={() => toggle(key, `pr:${key}`, opened === key ? undefined : `discuss:${key}`)}
++              />
+             </Box>
+             <Box flexShrink={0}>
+               <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
+@@ -1168,18 +1280,22 @@ export const register: Register = on => {
+           {/* The drawer starts where the state does, one column past the label. */}
+           {opened === key && (
+             <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
++              {/* Only the checks take a color, not the `·` before them. */}
+               <Text wrap="truncate-end">
+-                <Text color="subtle">{factsOf(pr, kinds)}</Text>
+-                {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}
++                {factsOf(pr, kinds)}
++                {pr.checks !== null && ' · '}
++                {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
+               </Text>
+               {/* Each link has a line of its own: a terminal without hyperlinks
+                   draws a link's URL after its text, and a shared line would
+                   cut the URL off. The actions follow, on one row. */}
+-              <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
+-              {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
++              <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
++              {pr.summaryUrl !== null && (
++                <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
++              )}
+               {drawActions(key, [
+-                { name: 'discuss', onPress: () => fill(`${reference(pr)} `) },
+-                { name: 'dismiss', onPress: () => void dismissPr($, pr) },
++                { name: 'discuss', label: 'discuss this', hotkey: 'd', onPress: () => fill(`${reference(pr)} `) },
++                { name: 'dismiss', label: 'dismiss pull request', hotkey: 'x', onPress: () => void dismissPr($, pr) },
+               ])}
+             </Box>
+           )}
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index b41271b..aba8703 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -109,6 +109,8 @@ declare module 'claude-code' {
+       isBandShown: boolean
+       /** The drawer that is open: a pull request's by `keyOf`, or `item:` and an item's reference. */
+       bandDrawer: string | null
++      /** The item drawer, by the key `bandDrawer` holds, that asks how long to snooze. */
++      bandSnoozing: string | null
+       /** The session's inbox, as the band last read it. */
+       bandInbox: Item[]
+       /** The answers the band is delivering, by reference. */
