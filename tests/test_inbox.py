@@ -493,6 +493,11 @@ class SnoozeTests(InboxCase):
         self.assertEqual(0, self.run_cli("snooze", "#12.1", "--for", "0", "--session", "s1")[0])
         self.assertEqual({"#12.1": "open", "#12.2": "open"}, self.states())
 
+    def test_wakes_an_item_by_ending_its_snooze_now(self) -> None:
+        self.run_cli("snooze", "#12.1", "--session", "s1")
+        self.run_cli("snooze", "#12.1", "--for", "0", "--session", "s1")
+        self.assertEqual(self.NOW, json.loads((self.folder() / "%2312.1.json").read_text())["snoozedUntil"])
+
     def test_takes_the_minutes_and_returns_the_item_once_they_pass(self) -> None:
         self.run_cli("snooze", "#12.2", "--for", "5", "--session", "s1")
         self.assertEqual(self.NOW + 300_000, json.loads((self.folder() / "%2312.2.json").read_text())["snoozedUntil"])

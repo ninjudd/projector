@@ -396,10 +396,7 @@ def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> d
         if item.get("answer"):
             raise InboxError(f"{item['ref']} is already {'dismissed' if is_notice(item) else 'answered'}, so it "
                              "has nothing to return for")
-        if minutes == 0:
-            item.pop("snoozedUntil", None)
-        else:
-            item["snoozedUntil"] = now_ms() + minutes * 60_000
+        item["snoozedUntil"] = now_ms() + minutes * 60_000
 
     return update(session, ref, record)
 

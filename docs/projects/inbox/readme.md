@@ -98,7 +98,7 @@ removed, so `project question ...` exits `2` as any unknown command does.
 | `project inbox show <reference>` | Renamed; a notice prints its reference and subject, `about <pr>`, its detail, and its state, with no options |
 | `project inbox answer` | Renamed; exits `65` for a notice, naming `dismiss`; answering clears `snoozedUntil` |
 | `project inbox dismiss <reference>` | Renamed, and takes either kind. A notice records `{ dismissed: true, answeredAt }` and `deliveredAt` together; a question, as now, waits for its deliverer. Dismissing either kind clears `snoozedUntil` |
-| `project inbox snooze <reference> [--for <minutes>]` | New: sets `snoozedUntil` to `--for` minutes from now, 60 by default; `--for 0` removes it. Exits `65` for an item already answered or dismissed, and for a negative `--for` |
+| `project inbox snooze <reference> [--for <minutes>]` | New: sets `snoozedUntil` to `--for` minutes from now, 60 by default; `--for 0` sets it to now, which wakes the item. Exits `65` for an item already answered or dismissed, and for a negative `--for` |
 | `project inbox claim`, `delivered`, `reopen` | Renamed; `claim` exits `65` for a notice, which has nothing to deliver |
 | `project inbox watch` | Renamed; unchanged, since a dismissed notice already has `deliveredAt` |
 | `project inbox context` | Renamed; a notice's reference prints `<ref> is the notice: <subject>`. With a letter, such as `#12.2.a`, it prints nothing, because a notice has no answers to name |
@@ -127,7 +127,7 @@ its 100 most recently delivered items, either kind.
 | `detail` | Unchanged |
 | `choices` | A question's answers in letter order, as now; absent on a notice |
 | `answer` | A question's as now; a notice's `{ dismissed: true, answeredAt }` once dismissed |
-| `snoozedUntil` | New: when a snoozed item returns, in milliseconds; absent when it is not snoozed, and cleared when the item is answered or dismissed |
+| `snoozedUntil` | New: when a snoozed item returns, in milliseconds; absent until the item is first snoozed, and cleared when the item is answered or dismissed |
 | `claim` | A question's only |
 | `deliveredAt` | As now; a notice's is set when it is dismissed |
 
@@ -375,6 +375,9 @@ sections above leave open or state loosely:
   hooks module loads wakes nothing. An item whose snooze ended while no copy
   of the module ran returns to the list, but does not bring back a hidden
   band.
+- **`--for 0` ends a snooze now rather than removing it.** It sets
+  `snoozedUntil` to the current time, so the band's next tick sees the item
+  wake and brings back a band you hid, as it does when a snooze runs out.
 
 The main-screen row of § 4 waits for a check by hand under tmux, so the
 project stays `in-progress`.
