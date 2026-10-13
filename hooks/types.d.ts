@@ -109,6 +109,8 @@ declare module 'claude-code' {
       isBandShown: boolean
       /** The drawer that is open: a pull request's by `keyOf`, or `item:` and an item's reference. */
       bandDrawer: string | null
+      /** The item drawer, by the key `bandDrawer` holds, that asks how long to snooze. */
+      bandSnoozing: string | null
       /** The session's inbox, as the band last read it. */
       bandInbox: Item[]
       /** The answers the band is delivering, by reference. */

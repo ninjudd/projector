@@ -1512,12 +1512,14 @@ does: digits for the options and letters for the actions.
 | Enter on a line moves the ring into the drawer it opens and back onto an item's line; a click moves nothing; a pull request's drawer closes in place | `Enter on a line moves the ring into the drawer it opens and back onto the line, and a click moves nothing` |
 | The ring on a live terminal, ctrl+x tab, the digits from an empty prompt, and the letters' drawing | Checked by hand by the owner in a preview session |
 
-## 16. Smaller changes to the band's look
+## 16. Smaller changes to the band
 
-The owner asked for four changes to how the band draws its lines while
-previewing § 15. They are recorded apart from it so they can ship apart.
-This section supersedes the bullet of § 2.5 that gives a notice the bullet
-`•`.
+The owner asked for five changes to the band while previewing § 15, four
+to how it draws its lines and one to how **snooze** works. They are
+recorded apart from § 15 so they can ship apart. This section supersedes
+the bullet of § 2.5 that gives a notice the bullet `•`, and its bullet
+under which **snooze** runs `project inbox snooze` at once, which snoozes
+for the CLI's default hour.
 
 ### 16.1 What changes
 
@@ -1540,6 +1542,17 @@ This section supersedes the bullet of § 2.5 that gives a notice the bullet
   is drawn in `subtle` as before, and a dismissed one is struck through.
   The color lives in one constant, `QUESTION_COLOR`, in
   `hooks/register.tsx`.
+- **Snooze asks how long.** Pressing **snooze** in an item's drawer
+  snoozes nothing. It replaces the row of actions with
+  `15 min | 1 hour | 4 hours | 1 day | cancel`, plain Buttons in the same
+  `|`-separated style. A length runs
+  `project inbox snooze <number> --for <minutes>` with 15, 60, 240, or
+  1440, and **cancel** puts the actions back. The question lives in the
+  open drawer only, in the `bandSnoozing` atom keyed by the drawer: closing
+  the drawer or opening another puts the actions back. The lengths take no
+  hotkeys. Enter on **snooze** moves the ring onto the first length, and
+  Enter on **cancel** moves it back onto **snooze**, as § 15 moves it for a
+  drawer. **unsnooze** still acts at once.
 
 ### 16.2 Why this design
 
@@ -1556,6 +1569,12 @@ This section supersedes the bullet of § 2.5 that gives a notice the bullet
   which made a question recede, and `text`, before choosing it.
 - **The notice keeps the default color.** A notice needs only a read, so
   it stays as plain as a pull request's title.
+- **Snooze asks rather than assuming an hour.** The owner pressed
+  **snooze** expecting to be asked how long, and the item left the band on
+  the default hour. Asking first costs one more press, and nothing is
+  snoozed until a length is picked, so a press by mistake costs nothing.
+  The lengths stay within the CLI's cap of a day. They take no digits,
+  because the digits belong to a question's options.
 
 ### 16.3 Evidence
 
@@ -1563,4 +1582,5 @@ This section supersedes the bullet of § 2.5 that gives a notice the bullet
 | --- | --- |
 | The drawer's links read `open in github` and `open in projector`; the facts take the default color, and only `checks <state>` takes the checks' color | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt` in `hooks/band.test.tsx` |
 | Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in the default color` |
+| **snooze** shows the lengths and cancel, runs nothing, and takes no digits; each length runs `snooze --for` with its minutes; **cancel** and closing the drawer put the actions back; Enter carries the ring onto the first length and back onto **snooze** | `snooze asks how long, and only a length it offers snoozes the item`, and the snooze tests § 14.4 lists, which now pick a length |
 | A restored question's line returns to `permission` | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place`, `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` |

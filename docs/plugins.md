@@ -391,7 +391,8 @@ Under the options, a question's drawer has three actions:
   nothing.
 - **dismiss** sets the question aside without an answer and closes the
   drawer.
-- **snooze** puts the question off for an hour and closes the drawer.
+- **snooze** asks how long to put the question off, as the next paragraph
+  but one describes.
 
 A notice's drawer shows its detail, then the same
 `d: discuss | x: dismiss | s: snooze`. **discuss** puts the quoted notice
@@ -400,12 +401,25 @@ it closes the notice's drawer; the notice stays in the band until you
 dismiss it. **dismiss** clears the notice once you have read it and closes
 its drawer, and nothing goes back to the agent.
 
+**snooze** snoozes nothing at once. It replaces the drawer's actions with
+the lengths it offers and a way back:
+
+```text
+  15 min | 1 hour | 4 hours | 1 day | cancel
+```
+
+Pick a length, and the band runs
+`project inbox snooze <number> --for <minutes>` with 15, 60, 240, or 1440
+minutes, a day being the longest the CLI takes, and closes the drawer.
+**cancel** puts the actions back, and so does closing the drawer or opening
+another, so a drawer always opens on its actions.
+
 A snoozed item leaves the divider's counts at once, and stays in the list
 for 30 seconds in the `subtle` color, not struck through, so it reads as put
-off rather than dismissed. Then it leaves the band. When its hour passes, it
-returns to the list, and the band appears if you hid it. To pick another
-time, or to wake an item now, find the item's number with
-`project inbox list` in a terminal, then run
+off rather than dismissed. Then it leaves the band. When its time is up, it
+returns to the list, and the band appears if you hid it. To wake an item
+now, or to pick a length the band does not offer, find the item's number
+with `project inbox list` in a terminal, then run
 `project inbox snooze <number> --for <minutes>`. An item you answer or
 dismiss from a terminal while it is snoozed does not return.
 
@@ -464,7 +478,9 @@ Enter on a line opens its drawer and moves the ring onto the drawer's first
 control: a question's first option, otherwise **discuss**. Tab then walks
 the options and the actions. Enter on the open line closes the drawer and
 leaves the ring on the line. A click opens and closes a drawer without
-moving the ring.
+moving the ring. In the same way, Enter on **snooze** moves the ring onto
+the first length, and Enter on **cancel** moves it back onto **snooze**.
+The lengths take no digits, which belong to a question's options.
 
 An open question's options read `1:` to `6:`, the digit in the accent
 color. Press a digit while the band has the keyboard, or type it first into

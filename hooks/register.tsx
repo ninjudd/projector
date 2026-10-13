@@ -69,11 +69,20 @@ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
  */
 const QUESTION_COLOR = 'permission'
 
+/** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
+const SNOOZES = [
+  { label: '15 min', minutes: 15 },
+  { label: '1 hour', minutes: 60 },
+  { label: '4 hours', minutes: 240 },
+  { label: '1 day', minutes: 1440 },
+] as const
+
 const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
 const snapshot = atom({ plugin: 'projector', key: 'bandSnapshot' } as const, EMPTY)
 const now = atom({ plugin: 'projector', key: 'bandNow' } as const, 0)
 const isShown = atom({ plugin: 'projector', key: 'isBandShown' } as const, false)
 const drawer = atom({ plugin: 'projector', key: 'bandDrawer' } as const, null)
+const snoozing = atom({ plugin: 'projector', key: 'bandSnoozing' } as const, null)
 const items = atom({ plugin: 'projector', key: 'bandInbox' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
 
@@ -295,8 +304,11 @@ function refresh($: Engine, isForced = false): Promise<void> {
 const replace = ($: Engine, item: Item) =>
   update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
 
-/** Closes a drawer when it is the one open. */
-const closeDrawer = ($: Engine, key: string) => update($, drawer, was => (was === key ? null : was))
+/** Closes a drawer when it is the one open, and with it any question of how long to snooze. */
+async function closeDrawer($: Engine, key: string): Promise<void> {
+  await update($, drawer, was => (was === key ? null : was))
+  await update($, snoozing, was => (was === key ? null : was))
+}
 
 /**
  * Closes the open drawer once its line has left the band, so it does not
@@ -482,18 +494,24 @@ async function checkInbox($: Engine): Promise<void> {
 const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
 
 /**
- * Dismisses, snoozes, or restores an item from the band; a second press finds
- * it changed and does nothing. Dismissing or snoozing closes the item's
- * drawer, and the item stays listed, muted, for 30 seconds, so its line
- * opens the drawer again to restore it. Restoring keeps the drawer open on
- * the item, open again.
+ * Dismisses, snoozes for `minutes`, or restores an item from the band; a
+ * second press finds it changed and does nothing. Dismissing or snoozing
+ * closes the item's drawer, and the item stays listed, muted, for 30 seconds,
+ * so its line opens the drawer again to restore it. Restoring keeps the
+ * drawer open on the item, open again.
  */
-async function act($: Engine, item: Item, command: 'dismiss' | 'snooze' | 'restore'): Promise<void> {
+async function act(
+  $: Engine,
+  item: Item,
+  command: 'dismiss' | 'snooze' | 'restore',
+  minutes?: number,
+): Promise<void> {
   const { ref, session } = item
   if (acting.has(ref)) return
   acting.add(ref)
   try {
-    const ran = await project($, ['inbox', command, ref, '--session', session, '--json'])
+    const length = minutes === undefined ? [] : ['--for', String(minutes)]
+    const ran = await project($, ['inbox', command, ref, ...length, '--session', session, '--json'])
     if (ran.exitCode === 0) {
       await replace($, itemOf(ran.stdout, session))
       if (command !== 'restore') await closeDrawer($, `item:${ref}`)
@@ -909,6 +927,7 @@ export const register: Register = on => {
     const shown = current(await read($, snapshot))
     const time = await read($, now)
     const opened = await read($, drawer)
+    const asking = await read($, snoozing)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
     const counts = (['question', 'notice'] as const).map(kind => {
       const count = shownItems.filter(
@@ -937,13 +956,19 @@ export const register: Register = on => {
     // divider's time says how old they are, so the band says why it failed
     // only when it has none of them to draw.
     const failure = shown.error === null || shown.rows.length > 0 ? undefined : `GitHub: ${shown.error}`
-    // A line's press opens or closes its drawer. Enter with the ring on the
-    // line takes the ring along, `onto` the drawer's first control or back
-    // onto the line; a click leaves the ring where it was.
+    // Enter with the ring on the Button it presses takes the ring along,
+    // `onto` what the press puts in the Button's place; a click leaves the
+    // ring where it was.
+    const carry = (pressed: string, onto: string | undefined) => {
+      if (ring?.key === pressed && onto !== undefined) void focusOn($, ring.requestId, onto)
+    }
+    // A line's press opens or closes its drawer, and the ring goes onto the
+    // drawer's first control or back onto the line. A drawer always opens on
+    // its actions, never on a question of how long to snooze.
     const toggle = (key: string, line: string, onto?: string) => {
-      const from = ring?.key === line ? ring : undefined
       update($, drawer, was => (was === key ? null : key)).catch(() => undefined)
-      if (from !== undefined && onto !== undefined) void focusOn($, from.requestId, onto)
+      update($, snoozing, () => null).catch(() => undefined)
+      carry(line, onto)
     }
 
     // The engine draws the band's `[-]` just past `bodyColumns` on the first
@@ -1011,17 +1036,18 @@ export const register: Register = on => {
     const fill = (text: string) => {
       $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
     }
-    // A drawer's actions are plain Buttons on one row, `|` between them, each
-    // pressed by its letter while the band holds the keyboard: `d` discusses,
-    // `x` sets the line aside or brings it back, and `s` puts it off or ends
-    // the snooze. The engine draws the letter before the name, as `d: discuss`.
-    type Action = { name: string; hotkey: 'd' | 'x' | 's'; onPress: () => void }
+    // A drawer's row is plain Buttons, `|` between them. Its actions are
+    // pressed by their letters while the band holds the keyboard: `d`
+    // discusses, `x` sets the line aside or brings it back, and `s` puts it
+    // off or ends the snooze. The engine draws the letter before the name, as
+    // `d: discuss`.
+    type Action = { name: string; label?: string; hotkey?: 'd' | 'x' | 's'; onPress: () => void }
     const drawActions = (id: string, actions: readonly Action[]) => (
       <Box flexDirection="row" columnGap={1}>
-        {actions.flatMap(({ name, hotkey, onPress }, at) => [
+        {actions.flatMap(({ name, label, hotkey, onPress }, at) => [
           ...(at === 0 ? [] : [<Text key={`between:${id}.${at}`} color="subtle">|</Text>]),
           <Button key={`${name}:${id}`} plain hotkey={hotkey} onPress={onPress}>
-            <Text>{name}</Text>
+            <Text>{label ?? name}</Text>
           </Button>,
         ])}
       </Box>
@@ -1096,11 +1122,39 @@ export const register: Register = on => {
               { name: 'dismiss', hotkey: 'x' as const, onPress: () => void act($, item, 'dismiss') },
               isSnoozed
                 ? restore('unsnooze', 's')
-                : { name: 'snooze', hotkey: 's' as const, onPress: () => void act($, item, 'snooze') },
+                : {
+                    name: 'snooze',
+                    hotkey: 's' as const,
+                    onPress: () => {
+                      update($, snoozing, () => key).catch(() => undefined)
+                      carry(`snooze:${ref}`, `snooze-${SNOOZES[0].minutes}:${ref}`)
+                    },
+                  },
             ]
           : isDismissed
             ? [restore('restore', 'x')]
             : []),
+      ]
+      // Snooze asks how long before it snoozes anything: the row of actions
+      // gives way to the lengths and cancel, which puts the actions back.
+      // The lengths take no digits, which belong to a question's options.
+      const isAsking = asking === key && isOpen && !isSnoozed
+      const lengths: Action[] = [
+        ...SNOOZES.map(({ label, minutes }) => ({
+          name: `snooze-${minutes}`,
+          label,
+          onPress: () => {
+            update($, snoozing, () => null).catch(() => undefined)
+            void act($, item, 'snooze', minutes)
+          },
+        })),
+        {
+          name: 'cancel',
+          onPress: () => {
+            update($, snoozing, () => null).catch(() => undefined)
+            carry(`cancel:${ref}`, `snooze:${ref}`)
+          },
+        },
       ]
       // An open item's line has the band to itself, so closing its drawer
       // puts the line back lower in the list. The engine keeps the ring by
@@ -1147,7 +1201,7 @@ export const register: Register = on => {
               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
               {item.kind === 'question' && drawAnswers(item)}
               <Text key={`before-buttons:${ref}`}> </Text>
-              {drawActions(ref, actions)}
+              {drawActions(ref, isAsking ? lengths : actions)}
             </Box>
           )}
         </Box>

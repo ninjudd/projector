@@ -823,7 +823,10 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       const answer = { dismissed: true as const, withdrawn: true as const, answeredAt: time }
       return printed(put({ ...awake, answer, deliveredAt: time }))
     }
-    if (command === 'snooze') return printed(put({ ...item, snoozedAt: time, snoozedUntil: time + HOUR }))
+    if (command === 'snooze') {
+      const minutes = Number(flag(args, 'for') ?? 60)
+      return printed(put({ ...item, snoozedAt: time, snoozedUntil: time + minutes * 60_000 }))
+    }
     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
     if (command === 'revise') {
       const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
@@ -2014,12 +2017,14 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:1' })
   await ui.press({ key: 'snooze:1' })
+  await ui.press({ key: 'snooze-60:1' })
   await clock.settle()
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'snooze:2' })
+  await ui.press({ key: 'snooze-60:2' })
   await clock.settle()
-  expect(session.project()).toContain('inbox snooze 1 --session s1 --json')
-  expect(session.project()).toContain('inbox snooze 2 --session s1 --json')
+  expect(session.project()).toContain('inbox snooze 1 --for 60 --session s1 --json')
+  expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
   // Each stays listed for 30 seconds, out of the divider's counts, and then leaves the band.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
@@ -2056,8 +2061,8 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:1' })
   session.store.failing.locks = 2
-  for (const name of ['dismiss', 'snooze']) {
-    await ui.press({ key: `${name}:1` })
+  for (const keys of [['dismiss:1'], ['snooze:1', 'snooze-60:1']]) {
+    for (const key of keys) await ui.press({ key })
     await clock.settle()
   }
   expect(session.toasts).toEqual([`projector: ${BUSY}`, `projector: ${BUSY}`])
@@ -2101,6 +2106,7 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'snooze:2' })
+  await ui.press({ key: 'snooze-60:2' })
   await clock.advance(TICK)
   await clock.settle()
   await ui.unmount()
@@ -2254,8 +2260,9 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
 
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'snooze:2' })
+  await ui.press({ key: 'snooze-60:2' })
   await clock.settle()
-  expect(session.project()).toContain('inbox snooze 2 --session s1 --json')
+  expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
   // The drawer closes, and the line stays in the subtle color, not struck through, out of the divider's count.
   expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
   const snoozed = await line()
@@ -2279,6 +2286,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
 
   // Snoozed again, it leaves the band 30 seconds later, and nothing reached the agent.
   await ui.press({ key: 'snooze:2' })
+  await ui.press({ key: 'snooze-15:2' })
   await clock.advance(30_000 - TICK)
   await clock.settle()
   expect(await line()).toBeDefined()
@@ -2475,6 +2483,7 @@ test('a drawer’s actions take d, x and s by their place, restore and unsnooze 
 
   // Snoozed, unsnooze takes snooze's letter.
   await ui.press({ key: 'snooze:1' })
+  await ui.press({ key: 'snooze-60:1' })
   await clock.settle()
   await ui.press({ key: 'item:1' })
   expect(await lettersOf(ui)).toEqual(['discuss:1 d', 'dismiss:1 x', 'unsnooze:1 s'])
@@ -2553,5 +2562,66 @@ test('Enter on a line moves the ring into the drawer it opens and back onto the 
   await ui.press({ key: 'pr:x/y#7' })
   await ui.press({ key: 'pr:x/y#7' })
   expect(tried).toEqual(['answer:1.a', 'item:1', 'discuss:2', 'discuss:3', 'discuss:x/y#7'])
+  await ui.unmount()
+})
+
+test('snooze asks how long, and only a length it offers snoozes the item', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held(), notice()])
+  const { tried, tab } = keyboardOf(on)
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  /** The open drawer's row of Buttons, each by its key and what it reads. */
+  const row = async () =>
+    (await ui.findAll({ type: 'Button' }))
+      .filter(button => /^(?!close:|item:).*:2$/.test(button.key ?? ''))
+      .map(button => `${button.key ?? ''} ${button.text}`)
+  const actions = ['discuss:2 discuss', 'dismiss:2 dismiss', 'snooze:2 snooze']
+  const snoozes = () => session.project().filter(command => command.startsWith('inbox snooze'))
+
+  // Snooze puts the lengths and cancel where the actions were, with no digits, and snoozes nothing yet.
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'snooze:2' })
+  expect(await row()).toEqual([
+    'snooze-15:2 15 min',
+    'snooze-60:2 1 hour',
+    'snooze-240:2 4 hours',
+    'snooze-1440:2 1 day',
+    'cancel:2 cancel',
+  ])
+  expect((await ui.findAll({ type: 'Text', text: '|' })).map(bar => bar.props.color)).toEqual(Array(4).fill('subtle'))
+  expect(await digitsOf(ui)).toEqual([])
+  expect(snoozes()).toEqual([])
+
+  // Cancel puts the actions back.
+  await ui.press({ key: 'cancel:2' })
+  expect(await row()).toEqual(actions)
+
+  // So does closing the drawer, so it opens again on its actions.
+  await ui.press({ key: 'snooze:2' })
+  await ui.press({ key: 'close:2' })
+  await ui.press({ key: 'item:2' })
+  expect(await row()).toEqual(actions)
+  expect(snoozes()).toEqual([])
+
+  // From the keyboard, snooze moves the ring onto the first length, and cancel moves it back onto snooze.
+  await tab($, 'snooze:2')
+  await ui.press({ key: 'snooze:2' })
+  await tab($, 'cancel:2')
+  await ui.press({ key: 'cancel:2' })
+  expect(tried).toEqual(['snooze-15:2', 'snooze:2'])
+
+  // Each length snoozes the item for its minutes.
+  for (const minutes of [15, 60, 240, 1440]) {
+    await ui.press({ key: 'snooze:2' })
+    await ui.press({ key: `snooze-${minutes}:2` })
+    await clock.settle()
+    expect(session.store.store.get('2')?.snoozedUntil).toBe(clock.now() + minutes * 60_000)
+    await ui.press({ key: 'item:2' })
+    await ui.press({ key: 'unsnooze:2' })
+    await clock.settle()
+  }
+  expect(snoozes()).toEqual([15, 60, 240, 1440].map(minutes => `inbox snooze 2 --for ${minutes} --session s1 --json`))
   await ui.unmount()
 })
