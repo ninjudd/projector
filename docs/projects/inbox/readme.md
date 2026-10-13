@@ -187,7 +187,8 @@ notice about #337:
 - **A question's drawer** lists its options and ends the same way,
   `discuss | dismiss | snooze`, gaining **snooze** after **dismiss**. It
   has no `Type something` field: what you type under the quote that
-  **discuss** puts in the prompt is your answer.
+  **discuss** puts in the prompt is your answer. Sending a prompt that
+  answers the question closes its drawer.
 - **A snoozed item** leaves the list and closes its drawer. On each tick,
   shown or hidden, the band checks for an open item whose `snoozedUntil`
   has passed since its last tick; such an item returns to the list, and the
@@ -462,7 +463,7 @@ project stays `in-progress`.
 
 ## 10. The band after layer 2
 
-After using layer 2, the owner decided five changes to the band, which
+After using layer 2, the owner decided six changes to the band, which
 #295 builds. § 2.1, § 2.5, and § 4 describe the band with these changes,
 and this section gives their reasons, their files, and their evidence.
 The `/projector <tracked file>` form that the questions plan describes
@@ -488,6 +489,12 @@ goes away.
   cannot draw, so every surface now draws the same drawer. Once a typed
   answer is recorded, the drawer still shows it after the options, marked
   `✓`.
+- **Sending an answer closes the question's drawer.** When a sent prompt
+  answers a question, from an option's text or from what you type under
+  the quote, the band closes that question's drawer if it is the open
+  one, so the band shows its list again. Pressing an option fills the
+  prompt and leaves the drawer open until you send, and **discuss** leaves
+  it open too, so the options and detail stay in view while you type.
 - **A quote may end in spaces or tabs.** When the band reads a sent
   prompt, a quoted question followed by spaces or tabs and then a line
   break still ends its line, so the answer under it is read. You cannot
@@ -508,15 +515,16 @@ goes away.
   its loops' pull requests and its inbox, so another session's loop
   belongs in that session's band, beside the agents that act on it. With
   no file named by hand, every loop the band lists takes its kind from the
-  watcher the session started, so the band never scans the machine's
-  processes to learn one, and it leaves out a loop that the session's
-  state holds without a kind. When the band cannot tell which file a
+  watcher the session started. When the band cannot tell which file a
   watcher's `--tracked` argument names, its toast says that the band does
-  not list that loop.
+  not list that loop. The band never scans the machine's processes to
+  learn a loop's kind, and it leaves out a loop that the session's state
+  holds without a kind, until the session starts a watcher on that file,
+  whose entry then replaces it.
 
 | File | Change |
 | --- | --- |
-| `hooks/register.tsx` | **discuss** puts the quoted subject and two newlines in the prompt; a question's drawer draws no `Input`, and a resolved question keeps the `✓` row of its typed answer; `/projector` drops its `argumentHint` and its handling of a tracked file, and its description names the inbox; `runningLoops`, the `ps -A` scan, goes, and `load` lists only the seen loops that have a kind; the toast for a tracked path the band cannot read says that the loop is not listed; muted text takes the `subtle` color |
+| `hooks/register.tsx` | **discuss** puts the quoted subject and two newlines in the prompt; a question's drawer draws no `Input`, and a resolved question keeps the `✓` row of its typed answer; `/projector` drops its `argumentHint` and its handling of a tracked file, and its description names the inbox; `runningLoops`, the `ps -A` scan, goes, and `load` lists only the seen loops that have a kind; the toast for a tracked path the band cannot read says that the loop is not listed; muted text takes the `subtle` color; a sent prompt that answers a question closes its drawer; a watcher's entry replaces a seen loop that has no kind |
 | `hooks/parse.ts`, `hooks/parse.test.ts` | `expandPath`, which only `/projector <tracked file>` used, goes with its test |
 | `hooks/types.d.ts` | `SeenLoop.kind` is required |
 | `hooks/inbox.ts` | `answersIn` lets spaces or tabs follow a quote before its line break; `RESOLVED_MS` is `30_000` |
@@ -535,15 +543,19 @@ description lists them.
 | Type an option's text under the quote instead, and send | The band records that option |
 | Type on the quote's own line, and send | Nothing is recorded |
 | Press **discuss** on a notice, type under the quote, and send | Nothing is recorded; the prompt reaches the agent |
+| Press an option's number, then send the prompt | The drawer stays open after the press and closes when the prompt is sent; the band shows its list |
+| Press **discuss**, type an answer under the quote, and send | The drawer stays open while you type and closes when the prompt is sent |
 | Send a quoted question, two spaces, a line break, and an option's text | The band records that option |
 | Answer or dismiss an item | Its line stays, in the `subtle` color, for 30 seconds after `deliveredAt`, then leaves the band |
 | Run `/projector` while another session runs a loop | The band shows or hides, and lists only the loops whose watchers this session started |
 
 Before these changes, the rows for the drawer, for **discuss** on a
-question and the two answers typed under its quote, for a quote that ends
-in spaces, and for the 30 seconds each fail their test. The drawer draws
-the field, **discuss** leaves a space and no line break, a quote followed
-by a space answers nothing, and a resolved line stays a minute.
+question and the two answers typed under its quote, for the two drawers
+an answer closes, for a quote that ends in spaces, and for the 30 seconds
+each fail their test. The drawer draws the field, **discuss** leaves a
+space and no line break, a quote followed by a space answers nothing, an
+answered question's drawer stays open, and a resolved line stays a
+minute.
 
 ## 11. Number each session's items 1, 2, 3
 
