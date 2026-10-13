@@ -1,0 +1,792 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 6e599a8..6769611 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1588,10 +1588,38 @@ reference only when it stands alone: `#337.3.b` and `q2.a` match, at the end
+ of a sentence too, while `#337.3.4`, `x#337.3`, and the `2` in `rerun the 2
+ failing tests` do not.
+ 
++## Keep a pull request out of a loop
++
++A watch or review loop reads its tracked file, one `owner/repo#number` a
++line. A line `!owner/repo#number` keeps that pull request out of the loop
++wherever it sits in the file, and both watchers and Projector's band match it
++without regard to case. `project loop drop` writes that line, and `project
++loop restore` removes it:
++
++```console
++$ project loop drop acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
++dropped acme/app#337 from /home/ada/.local/state/projector/projector-review-loop.tracked
++$ project loop restore acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
++restored acme/app#337 to /home/ada/.local/state/projector/projector-review-loop.tracked
++```
++
++`drop` appends its line rather than rewriting the file, because a watcher may
++be appending a pull request it adopted at the same moment. It changes nothing
++when the file already holds an exclusion for the pull request, in any letter
++case. `restore` removes every `!` line for the pull request, and only those,
++by writing the file anew and renaming it into place. It leaves a plain
++`owner/repo#number` line alone, so the pull request returns to the loop when
++the file names it.
++
++Both refuse, with exit code 65, a reference that is not `owner/repo#number`,
++and, with exit code 66, a tracked file that does not exist. With `--json`,
++each prints its `action`, which is `dropped`, `restored`, or `unchanged`,
++with the `pr` and the `tracked` file.
++
+ ## Consume JSON
+ 
+ Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
+-`priority`, `done`, `check`, or any `inbox` command. Responses use stdout
++`priority`, `done`, `check`, or any `inbox` or `loop` command. Responses use stdout
+ only for JSON and include `"schema_version": 2`. An `inbox` command that
+ prints one item prints it under `item`, and `inbox list` prints `items`.
+ `inbox watch --json` prints one JSON object a line, as a watcher reads it.
+@@ -1641,8 +1669,8 @@ Projector uses these exit codes:
+ | `0` | The command completed successfully. |
+ | `2` | Command syntax or an argument is invalid. |
+ | `3` | `project site status` found no Projector site for the repository. |
+-| `65` | Project data is invalid, a mutation is unsafe, or an inbox item, answer, or snooze is refused. |
+-| `66` | The requested project, the projects directory, or the inbox item does not exist. |
++| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, or a `loop` reference is not `owner/repo#number`. |
++| `66` | The requested project, the projects directory, the inbox item, or a `loop` command's tracked file does not exist. |
+ | `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
+ | `69` | Git, the interactive editor, or the installer is unavailable. |
+ | `75` | Another command held an inbox session's lock for five seconds; run the command again. |
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 43f33d0..5085e3b 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -189,7 +189,7 @@ session starts a loop's watcher for the first time.
+ reviewing · review-signature · +84 −12 in 5 files · checks passing
+ github
+ projector
+-discuss
++discuss | dismiss
+ ```
+ 
+ Each line is the pull request's number, `draft` or `ready`, its author when
+@@ -228,15 +228,27 @@ pull request, then its branch, size, and checks. Below that:
+ - **discuss** puts the pull request's number in the prompt at the cursor,
+   as `#258`, or as `owner/repo#258` when the band lists more than one
+   repository.
++- **dismiss** keeps the pull request out of every loop of this session that
++  tracks it, and the band drops its line and says which loops stopped, such
++  as `stopped watching and reviewing acme/app#258`.
+ 
+ Each link has a line of its own, because a terminal that does not draw
+ hyperlinks shows a link's URL after its text, and a line shared with
+-another link would cut the URL off. **discuss** comes last, on the row the
+-drawer keeps for its actions.
++another link would cut the URL off. **discuss** and **dismiss** come last,
++on the row the drawer keeps for its actions.
++
++**dismiss** runs `project loop drop` once for each tracked file that lists
++the pull request, which appends a `!owner/repo#number` line that both
++watchers honor, so the loops stop acting on it. When the command fails, the
++band shows its error and keeps the line. To bring a dismissed pull request
++back, run `project loop restore` with the same reference and tracked file,
++as [Keep a pull request out of a loop](cli.md#keep-a-pull-request-out-of-a-loop)
++describes.
+ 
+ On the main screen, which Claude Code uses under tmux and when
+ `CLAUDE_CODE_NO_FLICKER=0` is set, press ctrl+x tab to move into the band,
+-then Enter on a number to open its drawer and Enter on **discuss** to use it.
++then Enter on a number to open its drawer and Enter on **discuss** or
++**dismiss** to use it.
+ The **github** and **projector** links take no press there; the terminal
+ opens them the way it opens any other link.
+ 
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 91ae026..0b537af 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -473,9 +473,10 @@ project stays `in-progress`.
+ 
+ After using layer 2, the owner decided six changes to the band, which
+ #295 builds, three to its pull request lines and drawers, which #297
+-builds, and two more to its pull request lines and drawers, which #298
+-builds. § 2.1, § 2.5, and § 4 describe the band with these changes, and
+-this section gives their reasons, their files, and their evidence.
++builds, two more to its pull request lines and drawers, which #298
++builds, and a **dismiss** action for a pull request, which #300 builds.
++§ 2.1, § 2.5, and § 4 describe the band with these changes, and this
++section gives their reasons, their files, and their evidence.
+ The `/projector <tracked file>` form that the questions plan describes
+ goes away.
+ 
+@@ -560,6 +561,23 @@ goes away.
+   `gh` is signed in as, which the query that asks for the pull requests
+   also asks for, as `viewer { login }`, so a load still makes one `gh`
+   call. The snapshot keeps the login beside the rows.
++- **Dismiss keeps a pull request out of the session's loops.** A pull
++  request's drawer has **dismiss** after **discuss**, on the actions' row
++  with `|` between them, as an item's drawer draws its actions. It runs
++  `project loop drop owner/repo#number --tracked <file>` once for each of
++  the session's tracked files that lists the pull request, then closes the
++  drawer, reloads the band so the line goes, and says which loops stopped,
++  as `stopped watching and reviewing owner/repo#number`. When the CLI
++  refuses, the band shows its error and keeps the line. `project loop drop`
++  appends a `!owner/repo#number` line rather than rewriting the file,
++  because a watcher may be appending a pull request it adopted at the same
++  moment, and it changes nothing when the file already excludes the pull
++  request in any letter case. `project loop restore` rewrites the file
++  atomically without that pull request's `!` lines, so a dismissal can be
++  undone. The CLI is the only writer, so the band and an agent edit a
++  tracked file the same way. Both watchers honor a `!` line:
++  `watch-prs.sh` already did, and `watch-threads.sh` now does instead of
++  reporting it as a malformed line.
+ 
+ | File | Change |
+ | --- | --- |
+@@ -572,6 +590,7 @@ goes away.
+ | `hooks/register.tsx` | Each pull request's line ends with its age, in a column shared with the items' ages through one helper, and its title grows to fill the line; the drawer drops "updated … ago" and `drawerIndent`, and puts **github** and **projector** on lines of their own |
+ | `docs/plugins.md` | The band examples, the age at the end of a pull request's line, and the drawer under the number with one link per line |
+ | `hooks/github.ts`, `hooks/register.tsx`, `hooks/types.d.ts`, `docs/plugins.md` | The query asks for `viewer { login }`, and the snapshot keeps it; the band lists your pull requests first and then everyone else's by author, names another person's author before the title, drops "by" and the author from the drawer's facts, and draws the **discuss** row after the links |
++| `src/projector/loop.py`, `src/projector/cli.py`, `tests/test_loop.py`, `skills/start-watch-loop/scripts/watch-threads.sh`, `skills/start-watch-loop/SKILL.md`, `tests/test_watchers.py`, `hooks/register.tsx`, `docs/cli.md`, `docs/plugins.md` | `project loop drop` and `restore` add and remove a tracked file's `!` lines; `watch-threads.sh` honors them; a pull request's drawer gains **dismiss**, which drops the pull request from each of the session's loops that lists it, through the CLI, on one actions' row shared with an item's drawer |
+ 
+ #295 also carries smaller fixes found while using the band, such as the
+ pull request drawer's **discuss** becoming a plain `Button`, and its
+@@ -593,6 +612,9 @@ description lists them.
+ | Look at a pull request's line | It ends with how long ago the pull request changed, such as `7h`, in the `subtle` color, in the same column as the items' ages |
+ | Open a pull request's drawer | Its lines start under the number; its facts name no author and end with the checks; **github** and **projector** each have a line, and the row with **discuss** comes last |
+ | Track your own pull requests and someone else's | Yours come first, naming no author; then the others, each author's together and the authors in order of login, each line naming its author in the `subtle` color before the title |
++| Press **dismiss** in the drawer of a pull request both loops track | `project loop drop` runs once for each tracked file; the drawer closes, the line leaves the band, and a toast says `stopped watching and reviewing owner/repo#number` |
++| Press **dismiss** when `project loop drop` refuses | The band shows the CLI's error, keeps the line, and leaves the drawer open |
++| Run `project loop restore owner/repo#number --tracked <file>` | The `!` line goes, and the pull request returns to the loop and to the band on its next reload |
+ 
+ Before these changes, the rows for the drawer, for **discuss** on a
+ question and the two answers typed under its quote, for the two drawers
+@@ -606,7 +628,9 @@ under the title, ends its facts with when the pull request was updated,
+ and puts its links on one line. Before #298, the rows for the drawer and
+ for grouping by author fail their test as well: the lines come in the
+ order the loops track them and name no author, and the drawer names the
+-author and puts **discuss** before the links.
++author and puts **discuss** before the links. Before #300, the rows for
++**dismiss** fail their test too, since the drawer has no **dismiss**, no
++`project loop` command exists, and `watch-threads.sh` refuses a `!` line.
+ 
+ ## 11. Number each session's items 1, 2, 3
+ 
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 0d15b59..cf19faf 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -305,6 +305,71 @@ test('lists your pull requests first, then everyone else’s by author, naming t
+   await ui.unmount()
+ })
+ 
++/** Records each toast the band shows. */
++function toastsOf(on: On): string[] {
++  const toasts: string[] = []
++  on('ui.toast', ($, e) => {
++    toasts.push(e.text)
++    return { value: undefined }
++  })
++  return toasts
++}
++
++test('dismiss drops a pull request from each loop that tracks it, and its line goes', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const files: Record<string, string> = { [REVIEW]: 'o/r#1\nx/y#7\n', [WATCH]: 'x/y#7\n' }
++  // `project loop drop <reference> --tracked <file>` appends the exclusion, as the CLI does.
++  const { commands } = world(on, files, ([, , , reference = '', , tracked = '']) => {
++    files[tracked] = `${files[tracked] ?? ''}!${reference}\n`
++    return ran(`dropped ${reference} from ${tracked}\n`)
++  })
++  const toasts = toastsOf(on)
++  await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'pr:x/y#7' })
++  // The drawer's actions share one row, as an item's do.
++  expect(await ui.findAll({ type: 'Text', text: '|' })).toHaveLength(1)
++  expect((await ui.find({ type: 'Button', key: 'dismiss:x/y#7' }))?.props.plain).toBe(true)
++
++  await ui.press({ key: 'dismiss:x/y#7' })
++  await clock.settle()
++
++  expect(commands.filter(argv => argv[0] === 'project')).toEqual([
++    ['project', 'loop', 'drop', 'x/y#7', '--tracked', REVIEW],
++    ['project', 'loop', 'drop', 'x/y#7', '--tracked', WATCH],
++  ])
++  expect(toasts).toEqual(['projector: stopped watching and reviewing x/y#7'])
++  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
++  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('a dismiss the CLI refuses says why and keeps the line', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const refused = { ...ran(''), exitCode: 66, stderr: `project: no tracked file at ${WATCH}\n` }
++  world(on, { [WATCH]: 'x/y#7\n' }, () => refused)
++  const toasts = toastsOf(on)
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'pr:x/y#7' })
++  await ui.press({ key: 'dismiss:x/y#7' })
++  await clock.settle()
++
++  expect(toasts).toEqual([`projector: no tracked file at ${WATCH}`])
++  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
++  expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
++  await ui.unmount()
++})
++
+ test('opening one drawer closes the one that was open', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 5167745..0872c8e 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -76,7 +76,7 @@ let listed: string | undefined
+ let isChecking = false
+ /** The answers this copy of the module is claiming or delivering, by reference. */
+ const delivering = new Set<string>()
+-/** The items the band is dismissing or snoozing, so a second press does nothing. */
++/** The items and pull requests the band is dismissing or snoozing, so a second press does nothing. */
+ const acting = new Set<string>()
+ /** When the last tick ran, so an item whose snooze ends between two ticks wakes once. */
+ let tickedAt: number | undefined
+@@ -168,17 +168,20 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched>
+   }
+ }
+ 
+-async function load($: Engine): Promise<void> {
+-  // The band lists the session's own loops: the watchers it started.
++/** The session's own loops, the watchers it started, each with the pull requests its tracked file lists. */
++async function trackedSets($: Engine): Promise<(SeenLoop & { entries: TrackedPr[] })[]> {
+   const loops = (await read($, seen)).filter(loop => isKind(loop.kind))
+-
+   // A tracked file that is gone belongs to a loop that ended.
+-  const sets = await Promise.all(
++  return Promise.all(
+     loops.map(async loop => ({
+-      kind: loop.kind,
++      ...loop,
+       entries: await $.fs.read(loop.tracked).then(parseTracked, () => [] as TrackedPr[]),
+     })),
+   )
++}
++
++async function load($: Engine): Promise<void> {
++  const sets = await trackedSets($)
+ 
+   const kindsOf = new Map<string, LoopKind[]>()
+   const tracked = new Map<string, TrackedPr>()
+@@ -247,8 +250,8 @@ function refresh($: Engine, isForced = false): Promise<void> {
+ const replace = ($: Engine, item: Item) =>
+   update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
+ 
+-/** Closes an item's drawer when it is the one open. */
+-const closeDrawer = ($: Engine, ref: string) => update($, drawer, was => (was === `item:${ref}` ? null : was))
++/** Closes a drawer when it is the one open. */
++const closeDrawer = ($: Engine, key: string) => update($, drawer, was => (was === key ? null : was))
+ 
+ /**
+  * An item as the CLI prints it, without the session the band adds. Each kind
+@@ -421,7 +424,7 @@ async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promis
+     const ran = await project($, ['inbox', command, ref, '--session', session, '--json'])
+     if (ran.exitCode === 0) {
+       await replace($, itemOf(ran.stdout, session))
+-      if (command === 'snooze') await closeDrawer($, ref)
++      if (command === 'snooze') await closeDrawer($, `item:${ref}`)
+     } else if (ran.exitCode === 65) {
+       // Resolved elsewhere since the band read the store: read it again.
+       listed = undefined
+@@ -436,6 +439,38 @@ async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promis
+   }
+ }
+ 
++/**
++ * Dismisses a pull request from the session's loops: `project loop drop`
++ * keeps it out of each tracked file that lists it, and the band reloads
++ * without it. A failure says why, and the line stays.
++ */
++async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
++  const key = keyOf(pr)
++  const named = `${pr.repo}#${pr.number}`
++  if (acting.has(key)) return
++  acting.add(key)
++  const stopped: LoopKind[] = []
++  try {
++    for (const loop of await trackedSets($)) {
++      if (!loop.entries.some(entry => keyOf(entry) === key)) continue
++      const ran = await project($, ['loop', 'drop', named, '--tracked', loop.tracked])
++      if (ran.exitCode !== 0) {
++        void $.ui.toast(`projector: ${errorOf(ran)}`)
++        return
++      }
++      stopped.push(loop.kind)
++    }
++    await closeDrawer($, key)
++  } catch (error) {
++    void $.ui.toast(`projector: ${messageOf(error)}`)
++  } finally {
++    acting.delete(key)
++    const kinds = KINDS.filter(kind => stopped.includes(kind))
++    if (kinds.length > 0) void $.ui.toast(`projector: stopped ${kinds.join(' and ')} ${named}`)
++    await refresh($)
++  }
++}
++
+ /**
+  * Records an answer a sent prompt gave and marks it delivered, because the
+  * prompt itself carries it to the main loop. The band's own deliverer leaves
+@@ -694,7 +729,7 @@ export const register: Register = on => {
+     const entered = await next(added.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...added] })
+     if (entered.drop === undefined) {
+       for (const one of given) {
+-        void closeDrawer($, one.question.ref).catch(() => undefined)
++        void closeDrawer($, `item:${one.question.ref}`).catch(() => undefined)
+         void answerFromPrompt($, one.question, one.letter, one.text)
+       }
+     }
+@@ -831,6 +866,17 @@ export const register: Register = on => {
+     const fill = (text: string) => {
+       $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
+     }
++    // A drawer's actions are plain Buttons on one row, `|` between them.
++    const drawActions = (id: string, actions: readonly { name: string; onPress: () => void }[]) => (
++      <Box flexDirection="row" columnGap={1}>
++        {actions.flatMap(({ name, onPress }, at) => [
++          ...(at === 0 ? [] : [<Text key={`between:${id}.${at}`} color="subtle">|</Text>]),
++          <Button key={`${name}:${id}`} plain onPress={onPress}>
++            <Text>{name}</Text>
++          </Button>,
++        ])}
++      </Box>
++    )
+     const drawAnswers = (question: Question) => {
+       const { ref, answer } = question
+       const isOpen = answer === undefined
+@@ -940,14 +986,7 @@ export const register: Register = on => {
+               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
+               {item.kind === 'question' && drawAnswers(item)}
+               <Text key={`before-buttons:${ref}`}> </Text>
+-              <Box flexDirection="row" columnGap={1}>
+-                {actions.flatMap(({ name, onPress }, at) => [
+-                  ...(at === 0 ? [] : [<Text key={`between:${ref}.${at}`} color="subtle">|</Text>]),
+-                  <Button key={`${name}:${ref}`} plain onPress={onPress}>
+-                    <Text>{name}</Text>
+-                  </Button>,
+-                ])}
+-              </Box>
++              {drawActions(ref, actions)}
+             </Box>
+           )}
+         </Box>
+@@ -1006,9 +1045,10 @@ export const register: Register = on => {
+                   cut the URL off. The actions follow, on one row. */}
+               <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
+               {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
+-              <Box flexDirection="row">
+-                <Button key={`discuss:${key}`} plain label="discuss" onPress={() => fill(`${reference(pr)} `)} />
+-              </Box>
++              {drawActions(key, [
++                { name: 'discuss', onPress: () => fill(`${reference(pr)} `) },
++                { name: 'dismiss', onPress: () => void dismissPr($, pr) },
++              ])}
+             </Box>
+           )}
+         </Box>
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index c7784d6..2b356a4 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -33,12 +33,14 @@ is someone else's, so `review-pr` reviews it in the cross-author mode and
+ never moves its draft state. Adoption only adds lines, so it stays tracked
+ after the request is answered, and every later push gets a review until it
+ closes. A line `!owner/repo#number` keeps one pull request out when the user
+-asks. Hold validated logins literally in every query you run yourself; never
+-use `@me`. Under the default the two roles coincide and `@me` looks harmless,
+-but its value follows whichever token is live, so under a reviewer override
+-it resolves to the reviewer — an account that authors nothing here — and a
+-listing by `@me` comes back empty, indistinguishable from a repository with
+-nothing open.
++asks. `project loop drop owner/repo#number --tracked <file>` appends one, as
++Projector's band does when the user dismisses a pull request, and `project
++loop restore` with the same arguments removes it. Hold validated logins
++literally in every query you run yourself; never use `@me`. Under the default
++the two roles coincide and `@me` looks harmless, but its value follows
++whichever token is live, so under a reviewer override it resolves to the
++reviewer — an account that authors nothing here — and a listing by `@me` comes
++back empty, indistinguishable from a repository with nothing open.
+ 
+ ## Establish the loop
+ 
+diff --git a/skills/start-watch-loop/SKILL.md b/skills/start-watch-loop/SKILL.md
+index 5018c8b..6d31594 100644
+--- a/skills/start-watch-loop/SKILL.md
++++ b/skills/start-watch-loop/SKILL.md
+@@ -61,7 +61,11 @@ adopted it. Never list a pull request you would not push to.
+    creates or adopts one, delete its line when it closes or merges, and
+    record the file's path in a persistent recurring goal so a later turn
+    edits the same file. The watcher re-reads it every cycle, so neither
+-   change needs a restart.
++   change needs a restart. A line `!owner/repo#number` keeps that pull
++   request out of the watch wherever it sits in the file, matched without
++   regard to case. `project loop drop owner/repo#number --tracked <file>`
++   appends one, as Projector's band does when the user dismisses a pull
++   request, and `project loop restore` with the same arguments removes it.
+ 5. Run one pass first:
+ 
+    ```sh
+diff --git a/skills/start-watch-loop/scripts/watch-threads.sh b/skills/start-watch-loop/scripts/watch-threads.sh
+index 73a664f..df0353d 100755
+--- a/skills/start-watch-loop/scripts/watch-threads.sh
++++ b/skills/start-watch-loop/scripts/watch-threads.sh
+@@ -34,16 +34,19 @@
+ #                    [--interval 60] [--renotify 900] [--once]
+ #                    [--exit-when-closed]
+ #
+-# --tracked names the file holding the tracked set: one `owner/repo#number`
+-# per line, with blank lines and lines starting with `#` ignored. The file is
+-# the whole scope of the watch. Nothing is listed and nothing is discovered, so
+-# a pull request absent from it produces no event however loud its threads
+-# are, and every event that does arrive is the loop's to act on. The file is
+-# re-read every cycle: the loop adds a pull request it opened or adopted by
+-# appending a line and drops a merged one by deleting its line, without a
+-# restart. Every line is checked before the watch starts, because a bad one
+-# would otherwise be a watch that starts cleanly and never mentions the pull
+-# request it was meant for; a bad line that appears later is announced once.
++# --tracked names the file holding the tracked set: one `owner/repo#number` per
++# line, with blank lines and lines starting with `#` ignored. A line of the
++# form `!owner/repo#number` keeps that pull request out of the watch wherever
++# it sits in the file, as `project loop drop` writes it and `project loop
++# restore` removes it. The file is the whole scope of the watch. Nothing is
++# listed and nothing is discovered, so a pull request absent from it produces
++# no event however loud its threads are, and every event that does arrive is
++# the loop's to act on. The file is re-read every cycle: the loop adds a pull
++# request it opened or adopted by appending a line and drops a merged one by
++# deleting its line, without a restart. Every line is checked before the watch
++# starts, because a bad one would otherwise be a watch that starts cleanly and
++# never mentions the pull request it was meant for; a bad line that appears
++# later is announced once.
+ #
+ # --renotify is how many seconds before a still-unresolved thread is announced
+ # again. Set it high enough to be a reminder rather than a stream. Every line
+@@ -87,22 +90,37 @@ touch "$STATE" 2>/dev/null || { echo "watch-threads.sh: cannot write state file:
+ # problem with the file to stderr, one per line. Returns 1 when the file
+ # cannot be read and 2 when a line is malformed; the well-formed lines are
+ # still printed in that case, so a running watch can keep to them.
++#
++# A `!` line removes its pull request wherever it sits in the file, since the
++# plain line may come after it. GitHub names ignore case, so an exclusion
++# matches its pull request case-insensitively.
+ ENTRY_RE='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$'
++lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+ parse_tracked() {
+-  local line lineno=0 rc=0
++  local line lineno=0 rc=0 entries="" excluded=" "
+   [ -r "$TRACKED" ] || { echo "$TRACKED: cannot read the tracked file" >&2; return 1; }
+   while IFS= read -r line || [ -n "$line" ]; do
+     lineno=$((lineno + 1))
+     line="${line#"${line%%[![:space:]]*}"}"
+     line="${line%"${line##*[![:space:]]}"}"
+     case "$line" in ""|\#*) continue ;; esac
+-    if [[ $line =~ $ENTRY_RE ]]; then
+-      printf '%s %s\n' "${line%#*}" "${line##*#}"
++    if [ "${line:0:1}" = "!" ] && [[ ${line#!} =~ $ENTRY_RE ]]; then
++      excluded="$excluded$(lower "${line#!}") "
++    elif [[ $line =~ $ENTRY_RE ]]; then
++      entries="$entries$line
++"
+     else
+       echo "$TRACKED:$lineno is not owner/repo#number: $line" >&2
+       rc=2
+     fi
+   done < "$TRACKED"
++  while IFS= read -r line; do
++    [ -n "$line" ] || continue
++    case "$excluded" in *" $(lower "$line") "*) continue ;; esac
++    printf '%s %s\n' "${line%#*}" "${line##*#}"
++  done <<EOF
++$entries
++EOF
+   return $rc
+ }
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 7a08a37..94f527e 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -23,7 +23,7 @@
+ from urllib.parse import urlparse
+ from urllib.request import url2pathname, urlopen
+ 
+-from . import inbox, permissions, review, site, summary
++from . import inbox, loop, permissions, review, site, summary
+ from .permissions import allow_publish
+ from .summary import WORKFLOW_PATH
+ from .config import ConfigError
+@@ -534,6 +534,7 @@ def parser() -> argparse.ArgumentParser:
+                                      "full review, when `project review interdiff` allows one")
+ 
+     add_inbox_parser(subcommands)
++    add_loop_parser(subcommands)
+ 
+     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
+     site_commands = site.add_subparsers(dest="site_command", required=True)
+@@ -688,6 +689,32 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     command("context", "print what each inbox reference in standard input means")
+ 
+ 
++def add_loop_parser(subcommands) -> None:
++    parser = subcommands.add_parser("loop", help="keep a pull request out of a loop's tracked file, or let it back in")
++    commands = parser.add_subparsers(dest="loop_command", required=True)
++    for name, help_text in (("drop", "append a !owner/repo#number line that keeps the pull request out of the loop"),
++                            ("restore", "remove the pull request's !owner/repo#number lines")):
++        command = commands.add_parser(name, help=help_text)
++        command.add_argument("reference", help="the pull request, as owner/repo#number")
++        command.add_argument("--tracked", required=True, type=Path, help="the loop's tracked file")
++        add_output(command)
++
++
++def run_loop(arguments: argparse.Namespace) -> int:
++    command = arguments.loop_command
++    reference = arguments.reference
++    tracked = arguments.tracked
++    changed = (loop.drop if command == "drop" else loop.restore)(tracked, reference)
++    action = ("dropped" if command == "drop" else "restored") if changed else "unchanged"
++    if arguments.json_output:
++        print(json_text({"action": action, "pr": reference, "tracked": str(tracked)}))
++    elif command == "drop":
++        print(f"dropped {reference} from {tracked}" if changed else f"{reference} is already dropped from {tracked}")
++    else:
++        print(f"restored {reference} to {tracked}" if changed else f"{reference} is not dropped from {tracked}")
++    return 0
++
++
+ def open_editor(path: Path) -> None:
+     if not sys.stdin.isatty() or not sys.stdout.isatty():
+         raise EnvironmentError("an interactive terminal is required to open an editor")
+@@ -1695,6 +1722,8 @@ def run(arguments: argparse.Namespace) -> int:
+         return run_review(arguments)
+     if arguments.command == "inbox":
+         return run_inbox(arguments)
++    if arguments.command == "loop":
++        return run_loop(arguments)
+ 
+     # Resolved once and passed down, so configuration and the store agree on
+     # the repository without asking git for it twice.
+diff --git a/src/projector/loop.py b/src/projector/loop.py
+new file mode 100644
+index 0000000..fe713d5
+--- /dev/null
++++ b/src/projector/loop.py
+@@ -0,0 +1,66 @@
++"""Keep a pull request out of a loop's tracked file, and let it back in.
++
++A tracked file holds one `owner/repo#number` per line, and a line
++`!owner/repo#number` keeps that pull request out of the loop wherever it
++sits in the file. Both watchers and the band honor such a line, matching
++the reference without regard to case, as GitHub does.
++"""
++
++from __future__ import annotations
++
++from pathlib import Path
++
++from .core import ProjectorError, write_through
++from .inbox import PULL
++
++
++class TrackedFileNotFound(ProjectorError):
++    exit_code = 66
++
++
++def check_reference(reference: str) -> None:
++    """Refuses a reference that is not a well-formed `owner/repo#number`."""
++
++    if not PULL.match(reference):
++        raise ProjectorError(f"{reference!r} is not owner/repo#number")
++
++
++def read(tracked: Path) -> str:
++    try:
++        return tracked.read_text(encoding="utf-8")
++    except FileNotFoundError as error:
++        raise TrackedFileNotFound(f"no tracked file at {tracked}") from error
++
++
++def is_exclusion(line: str, reference: str) -> bool:
++    text = line.strip()
++    return text.startswith("!") and text[1:].lower() == reference.lower()
++
++
++def drop(tracked: Path, reference: str) -> bool:
++    """Append `!reference` to the tracked file, answering whether the file changed.
++
++    The line is appended rather than the file rewritten, because a watcher
++    may be appending a line it adopted at the same moment.
++    """
++
++    check_reference(reference)
++    text = read(tracked)
++    if any(is_exclusion(line, reference) for line in text.splitlines()):
++        return False
++    separator = "\n" if text and not text.endswith("\n") else ""
++    with tracked.open("a", encoding="utf-8") as stream:
++        stream.write(f"{separator}!{reference}\n")
++    return True
++
++
++def restore(tracked: Path, reference: str) -> bool:
++    """Remove every `!reference` line from the tracked file, answering whether the file changed."""
++
++    check_reference(reference)
++    lines = read(tracked).splitlines(keepends=True)
++    kept = [line for line in lines if not is_exclusion(line, reference)]
++    if len(kept) == len(lines):
++        return False
++    write_through(tracked, "".join(kept))
++    return True
+diff --git a/tests/test_loop.py b/tests/test_loop.py
+new file mode 100644
+index 0000000..00c20b4
+--- /dev/null
++++ b/tests/test_loop.py
+@@ -0,0 +1,109 @@
++"""The `project loop` commands, against a tracked file in a temporary directory."""
++
++from __future__ import annotations
++
++import io
++import json
++import tempfile
++import unittest
++from contextlib import redirect_stderr, redirect_stdout
++from pathlib import Path
++
++from projector import cli
++
++
++class LoopCase(unittest.TestCase):
++    def setUp(self) -> None:
++        scratch = tempfile.TemporaryDirectory()
++        self.addCleanup(scratch.cleanup)
++        self.tracked = Path(scratch.name) / "tracked"
++
++    def run_cli(self, *args: str) -> tuple[int, str, str]:
++        out, err = io.StringIO(), io.StringIO()
++        with redirect_stdout(out), redirect_stderr(err):
++            code = cli.main(["loop", *args, "--tracked", str(self.tracked)])
++        return code, out.getvalue(), err.getvalue()
++
++
++class DropTests(LoopCase):
++    def test_appends_an_exclusion_and_keeps_every_other_line(self) -> None:
++        self.tracked.write_text("# the loop's pull requests\nacme/app#1\n\nacme/app#2\n")
++
++        code, out, err = self.run_cli("drop", "acme/app#2")
++
++        self.assertEqual((0, ""), (code, err))
++        self.assertEqual(f"dropped acme/app#2 from {self.tracked}\n", out)
++        self.assertEqual("# the loop's pull requests\nacme/app#1\n\nacme/app#2\n!acme/app#2\n", self.tracked.read_text())
++
++    def test_starts_its_line_on_a_line_of_its_own(self) -> None:
++        self.tracked.write_text("acme/app#1")
++
++        self.assertEqual(0, self.run_cli("drop", "acme/app#1")[0])
++
++        self.assertEqual("acme/app#1\n!acme/app#1\n", self.tracked.read_text())
++
++    def test_changes_nothing_for_a_pull_request_already_dropped_in_any_letter_case(self) -> None:
++        self.tracked.write_text("acme/app#2\n  !ACME/App#2  \n")
++
++        code, out, err = self.run_cli("drop", "acme/app#2", "--json")
++
++        self.assertEqual((0, ""), (code, err))
++        self.assertEqual({"action": "unchanged", "pr": "acme/app#2", "schema_version": 2, "tracked": str(self.tracked)},
++                         json.loads(out))
++        self.assertEqual("acme/app#2\n  !ACME/App#2  \n", self.tracked.read_text())
++
++    def test_refuses_a_reference_that_is_not_owner_repo_number(self) -> None:
++        self.tracked.write_text("acme/app#1\n")
++        for written in ("acme/app", "acme/app#0", "#12", "acme/app#12 extra", "!acme/app#12"):
++            with self.subTest(written=written):
++                code, out, err = self.run_cli("drop", written)
++
++                self.assertEqual((65, ""), (code, out))
++                self.assertEqual(f"project: {written!r} is not owner/repo#number\n", err)
++        self.assertEqual("acme/app#1\n", self.tracked.read_text())
++
++    def test_refuses_a_tracked_file_that_does_not_exist(self) -> None:
++        code, out, err = self.run_cli("drop", "acme/app#1")
++
++        self.assertEqual((66, ""), (code, out))
++        self.assertEqual(f"project: no tracked file at {self.tracked}\n", err)
++        self.assertFalse(self.tracked.exists())
++
++
++class RestoreTests(LoopCase):
++    def test_removes_only_the_pull_requests_exclusions_in_any_letter_case(self) -> None:
++        self.tracked.write_text("acme/app#1\nacme/app#2\n!acme/app#2\n!acme/app#1\n !ACME/APP#2\n")
++        self.tracked.chmod(0o640)
++
++        code, out, err = self.run_cli("restore", "Acme/App#2")
++
++        self.assertEqual((0, ""), (code, err))
++        self.assertEqual(f"restored Acme/App#2 to {self.tracked}\n", out)
++        self.assertEqual("acme/app#1\nacme/app#2\n!acme/app#1\n", self.tracked.read_text())
++        self.assertEqual(0o640, self.tracked.stat().st_mode & 0o777)
++
++    def test_changes_nothing_for_a_pull_request_that_is_not_dropped(self) -> None:
++        self.tracked.write_text("acme/app#1\n!acme/app#3\n")
++
++        code, out, err = self.run_cli("restore", "acme/app#1", "--json")
++
++        self.assertEqual((0, ""), (code, err))
++        self.assertEqual("unchanged", json.loads(out)["action"])
++        self.assertEqual("acme/app#1\n!acme/app#3\n", self.tracked.read_text())
++
++    def test_drop_then_restore_leaves_the_file_as_it_was(self) -> None:
++        self.tracked.write_text("acme/app#1\nacme/app#2\n")
++
++        self.assertEqual(0, self.run_cli("drop", "acme/app#2")[0])
++        self.assertEqual(0, self.run_cli("restore", "acme/app#2")[0])
++
++        self.assertEqual("acme/app#1\nacme/app#2\n", self.tracked.read_text())
++
++    def test_refuses_a_malformed_reference_and_a_missing_file(self) -> None:
++        self.assertEqual(65, self.run_cli("restore", "acme/app")[0])
++        self.tracked.unlink(missing_ok=True)
++        self.assertEqual(66, self.run_cli("restore", "acme/app#1")[0])
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_watchers.py b/tests/test_watchers.py
+index 937e00f..5ada720 100644
+--- a/tests/test_watchers.py
++++ b/tests/test_watchers.py
+@@ -496,6 +496,19 @@ def test_refuses_a_line_that_is_not_owner_repo_number(self) -> None:
+         self.assertEqual("", result.stdout)
+         self.assertEqual("", self.calls())
+ 
++    def test_an_exclusion_keeps_a_pull_request_out_wherever_it_sits_and_in_any_letter_case(self) -> None:
++        self.pull_request(1, threads=[thread("T1", body="P2 off by one")])
++        self.pull_request(2, threads=[thread("T2", body="P3 typo")])
++        # The exclusion `project loop drop` would append, here above the line it excludes.
++        self.tracked.write_text("!ACME/App#2\nacme/app#1\nacme/app#2\n")
++
++        result = self.run_watcher(THREADS)
++
++        self.assert_ok(result)
++        self.assertEqual(["FINDING acme/app#1 src/x.py:3 [bugbot] — P2 off by one"], result.stdout.splitlines())
++        self.assertNotIn(" n=2 ", self.calls())
++        self.assertNotIn("pulls/2/", self.calls())
++
+     def test_refuses_a_number_that_names_no_pull_request(self) -> None:
+         self.pull_request(1)
+         self.track("acme/app#1", "acme/app#7")
