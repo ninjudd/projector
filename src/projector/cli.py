@@ -635,7 +635,7 @@ def add_inbox_parser(subcommands) -> None:
         add_output(parsed)
         return parsed
 
-    ask = command("ask", "check, number, and record a question, and print its reference")
+    ask = command("ask", "check, number, and record a question, and print its number, such as 3")
     ask.add_argument("question", help="the question, in one line of at most 120 characters")
     ask.add_argument("--recommend", required=True, help="the answer you recommend, which becomes answer a")
     ask.add_argument("--option", action="append", default=[], help="another answer; repeat for each, up to five")
@@ -645,7 +645,7 @@ def add_inbox_parser(subcommands) -> None:
     ask.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
     ask.add_argument("--agent", help="the asking subagent's id, when a subagent asks")
 
-    tell = command("tell", "check, number, and record a notice, and print its reference")
+    tell = command("tell", "check, number, and record a notice, and print its number, such as 3")
     tell.add_argument("notice", help="the notice, in one line of at most 120 characters")
     detail = tell.add_mutually_exclusive_group()
     detail.add_argument("--detail", default="", help="the rest of the notice, as Markdown")
@@ -657,10 +657,10 @@ def add_inbox_parser(subcommands) -> None:
     listing.add_argument("--all", action="store_true", help="include delivered items")
 
     show = command("show", "print one item with its detail and lettered answers")
-    show.add_argument("reference", help="such as #337.3, owner/repo#337.3, or q2")
+    show.add_argument("reference", help="the item's number, such as 3")
 
-    answer = command("answer", "record an answer, such as #337.3.a")
-    answer.add_argument("reference", help="the question's reference and the answer's letter, such as #337.3.a")
+    answer = command("answer", "record an answer, such as 3.a")
+    answer.add_argument("reference", help="the question's number and the answer's letter, such as 3.a")
     answer.add_argument("--text", help="the typed answer, for the question's last letter")
 
     dismiss = command("dismiss", "record that you dismissed a question or read a notice")
@@ -684,8 +684,6 @@ def add_inbox_parser(subcommands) -> None:
     watch = command("watch", "claim, print, and mark delivered each answer, one line an answer")
     watch.add_argument("--interval", type=seconds, default=5.0, help="seconds between passes (default: 5)")
     watch.add_argument("--once", action="store_true", help="make one pass and exit")
-
-    command("context", "print what each inbox reference in standard input means")
 
 
 def open_editor(path: Path) -> None:
@@ -1095,13 +1093,6 @@ def inbox_session(arguments: argparse.Namespace, required: bool) -> Optional[str
     return session
 
 
-def checkout_repo(checkout: Path) -> Optional[str]:
-    try:
-        return review.origin_repo(checkout)
-    except ProjectorError:
-        return None
-
-
 def wake_time(until: int) -> str:
     """When a snoozed item returns, in local time, with its day when that is not today, or the raw
     timestamp of a time too far off for the clock to show."""
@@ -1158,7 +1149,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
     if command in ("ask", "tell"):
         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
         session = inbox_session(arguments, True)
-        posted = {"detail": detail, "pr": arguments.pr, "agent": arguments.agent, "repo": checkout_repo(Path.cwd())}
+        posted = {"detail": detail, "pr": arguments.pr, "agent": arguments.agent}
         item = (inbox.ask(session, arguments.question, arguments.recommend, arguments.option, **posted)
                 if command == "ask" else inbox.tell(session, arguments.notice, **posted))
         print(json_text({"item": item}) if json_output else item["ref"])
@@ -1211,9 +1202,6 @@ def run_inbox(arguments: argparse.Namespace) -> int:
             if arguments.once:
                 return 0
             time.sleep(arguments.interval)
-    elif command == "context":
-        lines = inbox.context(inbox_session(arguments, True), sys.stdin.read())
-        print(json_text({"context": lines}) if json_output else "\n".join(lines), end="" if not lines else "\n")
     return 0
 
 

@@ -1463,18 +1463,15 @@ $ project inbox ask "Decline the finding about the retry budget?" \
     --recommend "Decline it: the total cap already bounds retries" \
     --option "Add a budget of two retries per host" \
     --pr acme/app#337 --session "$SESSION"
-#337.3
+3
 ```
 
-The command prints the question's reference at once. A question about a pull
-request in the session's repository is `#337.3`, the third question on #337
-this session; one about another repository spells it out, as
-`octo/web#337.1`; one about no pull request takes the session's own count, as
-`q2`. The session's repository is the `origin` of the first checkout the
-session runs `ask` in, and it stays the same when later questions come
-from other repositories' checkouts, so two repositories never share a
-reference. `ask` refuses, with exit code 65, a question longer than one line
-or 120 characters, a question that holds a tab, a missing recommendation, a
+The command prints the question's number at once. Each session numbers its
+items 1, 2, 3, and on, in one count that questions and notices share, so `3`
+is the third item the session posted. `--pr` records the pull request the
+item is about, as `owner/repo#number`, and does not change its number. `ask`
+refuses, with exit code 65, a question longer than one line or 120
+characters, a question that holds a tab, a missing recommendation, a
 recommendation or option longer than one line, more than five other options,
 or an option that repeats the recommendation or another option. Put what you
 need to decide in `--detail`, or `--detail-file`.
@@ -1482,33 +1479,40 @@ need to decide in `--detail`, or `--detail-file`.
 Every command names the posting session with `--session`, or reads
 `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
 every session's open items, and `show`, `answer`, `dismiss`, and `snooze`
-find the session that holds the reference. `list` prints each item's
-reference, kind, state, and subject, separated by tabs, after the session
-when it lists every session. A command waits up to five seconds while another
+find the session that holds the number. `list` prints each item's number,
+kind, state, and subject, separated by tabs, after the session when it lists
+every session. Every session counts from 1, so two sessions often hold the
+same number. A command that finds the number in more than one session exits
+67 and names them; run it again with `--session` and the session that `list`
+prints beside the item. A command waits up to five seconds while another
 command changes the same session, and then exits 75, so you can run it again.
 
 The answers are lettered. `a` is always the recommendation, the other options
 follow as `b`, `c`, and on, and the last letter is a typed answer:
 
 ```console
-$ project inbox show '#337.3'
-#337.3 Decline the finding about the retry budget?
+$ project inbox show 3
+3 Decline the finding about the retry budget?
 about acme/app#337
 a. Decline it: the total cap already bounds retries (recommended)
 b. Add a budget of two retries per host
 c. type an answer with --text
 open
-$ project inbox answer '#337.3.a'
-answered #337.3.a
+$ project inbox answer 3.a
+answered 3.a
 ```
 
 To give an answer of your own instead, use the last letter with `--text`, as
-in `project inbox answer '#337.3.c' --text "keep the cap, but log each
-retry"`. A typed answer is one line, like every answer. A question takes one
-answer; a second exits 65. `dismiss` answers it with no letter, and `list`
-then shows it as `dismissed`. Only `answer` takes a letter: every other
-command refuses a reference such as `#337.3.a` with exit code 65, so
-`dismiss` never drops the answer you meant to give.
+in `project inbox answer 3.c --text "keep the cap, but log each retry"`. A
+typed answer is one line, like every answer. A question takes one answer; a
+second exits 65. `dismiss` answers it with no letter, and `list` then shows
+it as `dismissed`. Only `answer` takes a letter: every other command refuses
+`3.a` with exit code 65, so `dismiss` never drops the answer you meant to
+give.
+
+Every command refuses any other form of reference, such as `#337.3`,
+`octo/web#12.1`, or `q2`, with exit code 65, and no command lists, delivers,
+or deletes an item stored under one.
 
 An answer reaches its agent through one deliverer, which claims it, sends it,
 and marks it delivered. `watch` is the deliverer for any host that can run a
@@ -1517,8 +1521,8 @@ loop running it hears the answer:
 
 ```console
 $ project inbox watch --session "$SESSION"
-ANSWER #337.3.a Decline the finding about the retry budget? → Decline it: the total cap already bounds retries
-DISMISSED q2 Run project init to add the publish rule?
+ANSWER 3.a Decline the finding about the retry budget? → Decline it: the total cap already bounds retries
+DISMISSED 2 Run project init to add the publish rule?
 ```
 
 `watch --once` makes one pass and exits. A view that delivers answers itself,
@@ -1526,10 +1530,10 @@ such as Projector's band in Claude Code, uses the steps `watch` takes:
 
 | Command | What it does |
 | --- | --- |
-| `claim <reference>` | Claims an answer for delivery and prints a token and the text to send; exits 65 when the answer is already claimed or delivered |
-| `claim <reference> --renew <token>` | Keeps that claim live while its delivery is pending |
-| `delivered <reference> --claim <token>` | Marks the claimed answer delivered |
-| `reopen <reference> --claim <token>` | Clears the answer when its delivery failed, so the question is open again |
+| `claim <number>` | Claims an answer for delivery and prints a token and the text to send; exits 65 when the answer is already claimed or delivered |
+| `claim <number> --renew <token>` | Keeps that claim live while its delivery is pending |
+| `delivered <number> --claim <token>` | Marks the claimed answer delivered |
+| `reopen <number> --claim <token>` | Clears the answer when its delivery failed, so the question is open again |
 
 A claim that is not renewed for a minute lapses, so a deliverer that stops
 halfway leaves the answer for the next one. A lapsed claim's token still
@@ -1541,22 +1545,20 @@ session keeps its 100 most recently delivered items, of either kind.
 An agent tells you something that needs no answer with `tell`, such as the
 answer to a question you asked it or something it did that you should know
 about. A notice takes the same one line, `--detail`, `--pr`, and `--agent` as
-a question, and the next number in the same counts, so a notice about #337
-after its third question is `#337.4`:
+a question, and the next number in the session's count:
 
 ```console
 $ project inbox tell "Force-pushed #337 to drop a stray debug file" \
     --pr acme/app#337 --session "$SESSION"
-#337.4
+4
 ```
 
 `tell` refuses, with exit code 65, an empty notice, a notice longer than one
 line or 120 characters, a notice that holds a tab, and a `--pr` that is not
-`owner/repo#number`. A
-notice has no options, so `answer` and `claim` refuse one with exit code 65.
-Once you have read it, run `project inbox dismiss '#337.4'`. Nothing goes
-back to the agent, so the dismissal also marks the notice delivered, and
-`list` shows it, as `dismissed`, only with `--all`.
+`owner/repo#number`. A notice has no options, so `answer` and `claim` refuse
+one with exit code 65. Once you have read it, run `project inbox dismiss 4`.
+Nothing goes back to the agent, so the dismissal also marks the notice
+delivered, and `list` shows it, as `dismissed`, only with `--all`.
 
 To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
 an hour, or for the whole minutes that `--for` gives, up to a day (1440
@@ -1565,28 +1567,19 @@ out until its time passes, and `list` shows it as `snoozed until <HH:MM>`, in
 local time, or as `snoozed until tomorrow <HH:MM>` when it returns tomorrow:
 
 ```console
-$ project inbox snooze '#337.3' --for 30
-#337.3 snoozed until 14:32
-$ project inbox snooze '#337.4' --for 720
-#337.4 snoozed until tomorrow 02:02
+$ project inbox snooze 3 --for 30
+3 snoozed until 14:32
+$ project inbox snooze 4 --for 720
+4 snoozed until tomorrow 02:02
 $ project inbox list --session "$SESSION"
-#337.3	question	snoozed until 14:32	Decline the finding about the retry budget?
-#337.4	notice	snoozed until tomorrow 02:02	Force-pushed #337 to drop a stray debug file
+3	question	snoozed until 14:32	Decline the finding about the retry budget?
+4	notice	snoozed until tomorrow 02:02	Force-pushed #337 to drop a stray debug file
 ```
 
 A snoozed item can still be answered or dismissed, and either one clears its
 snooze, so a resolved item never returns. `snooze` refuses, with exit code
 65, an item already answered or dismissed, a negative `--for`, and a `--for`
 longer than a day, and it changes nothing when it refuses.
-
-`project inbox context` reads text on standard input and prints what each
-reference in it means, for the items the session holds, so a prompt such as
-`go with #337.3.b.` can carry its question along. A notice's reference prints
-`#337.4 is the notice: ` and its subject, and a notice's reference with a
-letter prints nothing, since a notice has no answers. It matches a
-reference only when it stands alone: `#337.3.b` and `q2.a` match, at the end
-of a sentence too, while `#337.3.4`, `x#337.3`, and the `2` in `rerun the 2
-failing tests` do not.
 
 ## Consume JSON
 

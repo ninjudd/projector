@@ -784,3 +784,42 @@ request, merges, since both change `hooks/register.tsx`, `hooks/inbox.ts`, their
 tests, and `docs/plugins.md`. The CLI and the hooks change in that one
 pull request, and because `ref` stays a string, a band and a CLI a
 release apart still work together.
+
+### 11.10 What building it settled
+
+§ 11 is built as it reads. Building it settled these points, which the
+subsections above leave open or which the code had moved past since
+§ 11 was written:
+
+- **A third test read references.** #293 added a `context` check to
+  `test_every_command_refuses_a_file_that_is_not_an_item`, besides
+  `ContextTests` and `NoticeContextTests`, which § 11.6 names. That check
+  goes with them, and the test keeps its checks of `show`, `answer`,
+  `dismiss`, and `snooze`.
+- **The band's `project` helper takes no standard input.** Only `explain`
+  passed text to `project inbox context` on standard input, so the
+  `stdin` argument of `project` in `hooks/register.tsx` goes with it, and
+  so does the fake runner's in `hooks/band.test.tsx`.
+- **The toast names an answer it cannot quote.** The toast for a failed
+  delivery quotes the question's subject from the band's list. When the
+  list no longer holds that question, it says `an answer did not reach its
+  agent`, and still names no number.
+- **The refusal for a number two sessions hold says where to look.**
+  Every session counts from 1, so exit `67` is common now. Its message
+  says to pass `--session` with the session that `project inbox list`
+  prints beside the item.
+- **A file's name still quotes its reference.** `item_file` quotes the
+  reference into the file's name as it did, which leaves a number
+  unchanged. A reference read from a file therefore cannot name a path
+  outside the session's directory, and the band's reading of file names
+  still matches the quoted names an older CLI writes.
+- **What #293 and #295 changed stays.** The input checks, exit `75` for a
+  busy store, the refusal of a letter by every command but `answer`, and
+  #295's band, with **discuss** filling the quote and two newlines, no
+  `Type something` field, a drawer that closes when you send its answer,
+  and the 30 seconds a resolved line stays, all work as they did. § 11
+  changes none of them.
+
+Each row of § 11.8 but the last failed its test before the change. The
+main-screen row of § 4 still waits for a check by hand under tmux, so the
+project stays `in-progress`.

@@ -11,12 +11,6 @@ export const CLAIM_MS = 60_000
 
 const LIVE: ReadonlySet<AgentInfo['status']> = new Set(['pending', 'running', 'waiting', 'idle'])
 
-/**
- * Whether text holds anything shaped like a reference, `#337.3` or `q2`, so
- * that only such a prompt starts `project inbox context`, which decides.
- */
-export const mayReference = (text: string) => /#\d+\.\d|\bq\d/.test(text)
-
 export const letterAt = (index: number) => String.fromCharCode('a'.charCodeAt(0) + index)
 
 /** The letter of a typed answer: the one after the last choice. */
@@ -158,8 +152,8 @@ export const ASK_DESCRIPTION = [
   'Ask in one short line of at most 120 characters, and put what they need to decide in `detail`.',
   'Always recommend an answer, and write it and each option as a full answer they can pick as it stands.',
   'Name the pull request the question is about in `pr`, as owner/repo#number.',
-  'Keep working on anything the answer does not block. The call returns the question’s reference, such as #337.3,',
-  'and the answer arrives later as a message that starts `ANSWER #337.3.<letter>` or `DISMISSED #337.3`.',
+  'Keep working on anything the answer does not block. The call returns the question’s number, such as 3,',
+  'and the answer arrives later as a message that starts `ANSWER 3.<letter>` or `DISMISSED 3`.',
 ].join(' ')
 
 export const ASK_SCHEMA = {

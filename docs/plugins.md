@@ -323,9 +323,10 @@ read it, and nothing goes back to the agent.
 
 A snoozed item leaves the band and the divider's counts at once. When its
 hour passes, it returns to the list, and the band appears if you hid it. To
-pick another time, or to wake an item now, run
-`project inbox snooze <reference> --for <minutes>` in a terminal. An item you
-answer or dismiss from a terminal while it is snoozed does not return.
+pick another time, or to wake an item now, find the item's number with
+`project inbox list` in a terminal, then run
+`project inbox snooze <number> --for <minutes>`. An item you answer or
+dismiss from a terminal while it is snoozed does not return.
 
 A resolved item stays in the list, muted, for 30 seconds after it is
 delivered, and a dismissed one is struck through. A dismissed notice is
@@ -339,9 +340,7 @@ agent through the band of the session that asked. A subagent that is still
 running receives it directly, as a message that starts `ANSWER`, or
 `DISMISSED` for a dismissal. Otherwise the main loop receives it as a prompt
 of its own once its turn ends, with the name of the subagent that asked, and
-`sending` follows the question until it has gone. A reference to a question
-in a prompt, such as `#337.3.b`, reaches the agent with the question it
-names.
+`sending` follows the question until it has gone.
 
 Shown or hidden, the band lists the session's inbox directory every 5
 seconds and runs `project inbox` only when the directory changed since

@@ -13,7 +13,6 @@ import {
   isShownAt,
   letterAt,
   liveAgent,
-  mayReference,
   needsDelivery,
   proposalOf,
   quoteOf,
@@ -110,8 +109,8 @@ async function canonical($: Engine, path: string): Promise<string | undefined> {
 }
 
 /** Runs the `project` CLI; rejects when it cannot start or is still running at the 15-second timeout. */
-const project = ($: Engine, args: readonly string[], stdin?: string): Promise<Ran> =>
-  $.process.run(['project', ...args], { timeoutMs: 15_000, ...(stdin === undefined ? {} : { stdin }) })
+const project = ($: Engine, args: readonly string[]): Promise<Ran> =>
+  $.process.run(['project', ...args], { timeoutMs: 15_000 })
 
 /** The CLI's error, as its last line of standard error says it. */
 const errorOf = (ran: Ran) =>
@@ -320,7 +319,10 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
   )
   if (ran?.exitCode === 0) await replace($, itemOf(ran.stdout, session))
   if (outcome === 'reopen') {
-    void $.ui.toast(`projector: ${ref} did not reach its agent${reason ? ` (${reason})` : ''}; answer it again`)
+    // You never see an item's number, so the toast names the question by its subject.
+    const question = (await read($, items)).find(one => one.ref === ref && one.session === session)
+    const what = question === undefined ? 'an answer' : `the answer to ${quoteOf(question)}`
+    void $.ui.toast(`projector: ${what} did not reach its agent${reason ? ` (${reason})` : ''}; answer it again`)
   }
 }
 
@@ -455,17 +457,6 @@ async function answerFromPrompt($: Engine, question: Question, letter: string, t
     // An answer recorded but not marked delivered is the band's to deliver on a later tick.
   } finally {
     delivering.delete(ref)
-  }
-}
-
-/** What the CLI says about each item a prompt refers to, or undefined when it names none. */
-async function explain($: Engine, text: string): Promise<string | undefined> {
-  try {
-    const ran = await project($, ['inbox', 'context', '--session', await $.session.id()], text)
-    const said = ran.exitCode === 0 ? ran.stdout.trim() : ''
-    return said === '' ? undefined : said
-  } catch {
-    return undefined
   }
 }
 
@@ -606,7 +597,7 @@ export const register: Register = on => {
     const posted = await post($, askArguments(e, await $.session.id(), e.agentId), 'ask in the conversation instead')
     if ('deny' in posted) return posted
     const { ref } = posted
-    void $.ui.notify(`${ref} ${String(e.question)}`, { title: 'Projector question' }).catch(() => undefined)
+    void $.ui.notify(String(e.question), { title: 'Projector question' }).catch(() => undefined)
     return {
       result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
     }
@@ -617,7 +608,7 @@ export const register: Register = on => {
     const posted = await post($, args, 'tell the person in the conversation instead')
     if ('deny' in posted) return posted
     const { ref } = posted
-    void $.ui.notify(`${ref} ${String(e.notice)}`, { title: 'Projector notice' }).catch(() => undefined)
+    void $.ui.notify(String(e.notice), { title: 'Projector notice' }).catch(() => undefined)
     return {
       result: `Posted ${ref}. It waits in Projector’s band until the person dismisses it; nothing comes back to you.`,
     }
@@ -669,11 +660,7 @@ export const register: Register = on => {
     const asked = given.filter(one => one.question.agentId !== undefined)
     const agents = asked.length === 0 ? [] : await $.agent.list().catch(() => [])
     const notes = asked.map(one => relayNote(one.question, agents))
-
-    // A reference typed in the prompt reaches the agent with the item it names.
-    const said = mayReference(e.text) ? await explain($, e.text) : undefined
-    const added = [...(said === undefined ? [] : [said]), ...notes]
-    const entered = await next(added.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...added] })
+    const entered = await next(notes.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...notes] })
     if (entered.drop === undefined) {
       for (const one of given) {
         void closeDrawer($, one.question.ref).catch(() => undefined)
