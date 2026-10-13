@@ -1249,12 +1249,22 @@ closes. It takes these steps:
 3. It clears the locks and deletes the state. The loop's record of published
    reviews stays.
 
-Without `--force`, `finish` refuses, exiting 1 and changing nothing, while the
-state records a start comment, which means a review set up and not yet
-published. `--force` discards that review and deletes its start comment too.
-With nothing set up for the pull request on this machine, `finish` asks
-GitHub nothing, prints that there is nothing to finish, and exits 0, so
-running it twice is safe. With `--json` it prints the `repo`, `number`, and
+`finish` acts on the repository `--repo` names, or else on the `origin` of
+the checkout it runs in, as `setup` does. It never takes the repository from
+review state, so a run in one repository cannot end another repository's
+review of a pull request with the same number. Outside a checkout it needs
+`--repo`. When no review of the pull request is set up for that repository
+but a review of the same number is set up for another, it refuses until
+`--repo` names the review to finish.
+
+Without `--force`, `finish` also refuses while the state records a start
+comment. That means either a review set up and not yet published, or a
+publish that posted the review and stopped before it deleted the comment,
+which running the same `publish` command again finishes. `--force` discards
+that review and deletes its start comment too. Each refusal exits 1 before
+anything is deleted. With nothing set up for the pull request on this
+machine, `finish` asks GitHub nothing, prints that there is nothing to
+finish, and exits 0, so running it twice is safe. With `--json` it prints the `repo`, `number`, and
 `model`, the `comments` it deleted, the `worktrees` it removed, the locks it
 `released`, and whether it deleted the `state`.
 

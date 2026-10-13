@@ -1040,7 +1040,7 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
 def review_hold(arguments: argparse.Namespace) -> int:
     """`review hold`: post, extend, shrink, or end your hold on a pull request in `--repo`, or else in the
     repository of the checkout it runs in."""
-    repo = review.hold_repo(arguments.repo, Path.cwd())
+    repo = review.named_repo(arguments.repo, Path.cwd(), "to hold a pull request in")
     result = review.hold(repo, arguments.pr, arguments.add or [], arguments.drop or [])
     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.hold_lines(result)))
     return 0

@@ -519,17 +519,18 @@ def hold_listing(comments: list[dict]) -> list[str]:
     return list(dict.fromkeys(change for comment in comments for change in comment["changes"]))
 
 
-def hold_repo(repo: Optional[str], cwd: Path) -> str:
-    """The repository `review hold` acts on: `repo`, else the origin of the checkout `cwd` is in. Unlike the
-    commands that follow a review, it never takes one from review state: it posts and deletes comments, so
-    it acts only on a repository it was given or is run in."""
+def named_repo(repo: Optional[str], cwd: Path, purpose: str) -> str:
+    """The repository `review hold` and `review finish` act on: `repo`, else the origin of the checkout `cwd`
+    is in. Unlike the commands that follow a review, they never take one from review state: they delete
+    comments, so they act only on a repository they were given or are run in. `purpose` completes the
+    refusal outside a checkout, as "to hold a pull request in"."""
     if repo:
         return repo
     try:
         return origin_repo(checkout_root(cwd))
     except ReviewError as exc:
-        raise ReviewError(f"{cwd} is not in a checkout whose origin is on GitHub, so there is no repository to "
-                          "hold a pull request in; pass --repo owner/name") from exc
+        raise ReviewError(f"{cwd} is not in a checkout whose origin is on GitHub, so there is no repository "
+                          f"{purpose}; pass --repo owner/name") from exc
 
 
 def hold_changes(texts: list[str], flag: str) -> list[str]:
@@ -874,25 +875,31 @@ def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], f
     the review's start comment and every other start comment of the model's that `is_live` no longer
     counts; remove every scratch worktree the state lists; clear the locks; and delete the state, keeping
     the loop's record. Refuses while the review is unpublished unless `force`, and succeeds when there is
-    nothing to clean, so a second run changes nothing."""
+    nothing to clean, so a second run changes nothing.
+
+    The repository is `repo`, else the origin of the checkout `cwd` is in, never one taken from review state,
+    so a run in one repository cannot end another's review of a pull request with the same number. Every
+    refusal comes before anything is deleted."""
+    named = repo
+    repo = named_repo(repo, cwd, "to finish a review in")
+    model = find_model(root, repo, number, model)
     result: dict = {"repo": repo, "number": number, "model": model, "comments": [], "worktrees": [],
                     "released": [], "state": False}
-    if repo is None and not set_up_repos(root, number):
+    paths = Paths(root, repo, number, model) if model else None
+    state = stored_state(paths) if paths else None
+    elsewhere = [found for found in set_up_repos(root, number) if found.lower() != repo.lower()]
+    if state is None and named is None and elsewhere:
+        raise ReviewError(f"no review of {repo}#{number}, this checkout's origin, is set up here, and a review of "
+                          f"#{number} in {listed(elsewhere)} is; pass --repo to name the review to finish")
+    if paths is None:
         return result
-    repo = find_repo(root, number, repo, cwd)
-    model = find_model(root, repo, number, model)
-    result.update(repo=repo, model=model)
-    if model is None:
-        return result
-    paths = Paths(root, repo, number, model)
-    state = stored_state(paths)
     if state is not None:
+        if (state.get("repo") or "").lower() != repo.lower():
+            raise ReviewError(f"the review state in {paths.folder} names {state.get('repo')}, not {repo}, so "
+                              "finish leaves it alone")
         recorded = (state.get("start_comment") or {}).get("id")
         if recorded and not force:
-            raise ReviewError(f"model {model}'s review of {repo}#{number} at {state['sha'][:7]} is unpublished, "
-                              f"and its start comment {recorded} still says it is in progress; publish it first, "
-                              f"or discard it with `project review finish {number} --force`, as when the pull "
-                              "request closed")
+            raise ReviewError(unfinished(state, recorded))
         result["comments"] = finished_starts(state, recorded)
         if result["comments"]:
             token = reviewer_token(state["reviewer"])
@@ -907,6 +914,21 @@ def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], f
     with suppress(OSError):
         paths.folder.rmdir()
     return result
+
+
+def unfinished(state: dict, recorded: int) -> str:
+    """Why `finish` refuses a review whose state still records its start comment: a review set up and not
+    published, or a publish that posted the review and stopped before it deleted the comment."""
+    repo, number, model, sha = state["repo"], state["number"], state["model"], state["sha"][:7]
+    discard = f"`project review finish {number} --repo {repo} --force`"
+    published = state.get("published") or {}
+    if published.get("sha") == state["sha"]:
+        return (f"model {model}'s publish of its review of {repo}#{number} at {sha} did not finish: review "
+                f"{published['id']} is posted, and start comment {recorded} still stands; run the same "
+                f"`project review publish {number}` command again to finish it, or skip the rest with {discard}")
+    return (f"model {model}'s review of {repo}#{number} at {sha} is unpublished, and its start comment "
+            f"{recorded} still says it is in progress; publish it first, or discard it with {discard}, as when "
+            "the pull request closed")
 
 
 def finished_starts(state: dict, recorded: Optional[int]) -> list[int]:

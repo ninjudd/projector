@@ -55,8 +55,8 @@ a repository with nothing open.
    review or GitHub workflow skills.
 2. Run `project review rules` once. It reads the user's own Claude Code
    settings and Codex rules, writes nothing, and exits 1 when either lacks the
-   rules that allow `project review publish`, `project review hold`, and
-   `project summary publish`.
+   rules that allow `project review publish`, `project review hold`,
+   `project review finish`, and `project summary publish`.
    On exit 1, tell the user once, before the first review, that the host's
    automatic approval, such as Claude Code's auto mode or Codex's approval
    reviewer, can refuse the loop's publishes, a summary on another author's
@@ -99,11 +99,11 @@ a repository with nothing open.
    and with every character but a letter, a digit, `.`, `_`, and `-` made
    `-`. The loop passes `--loop <id>` and `--model <model-id>` to each
    `project review` command it runs on a pull request: `setup`, `move`,
-   `census`, `interdiff`, `gate`, `publish`, and `release`. The record of
-   which reviews this loop published lives under that id in the review state
-   directory, where `project review publish` keeps it. Give each model's loop
-   an id of its own, because two loops that write one record can lose an
-   entry.
+   `census`, `interdiff`, `gate`, `publish`, `release`, and `finish`. The
+   record of which reviews this loop published lives under that id in the
+   review state directory, where `project review publish` keeps it. Give each
+   model's loop an id of its own, because two loops that write one record can
+   lose an entry.
 7. Seed the state file with only the SHAs already reviewed, then run one
    pass:
 
@@ -192,12 +192,14 @@ reads the new head against that history instead of rediscovering it.
   `--no-describe`, so the comment alone links the summary, as `review-pr`
   describes.
 - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
-  to run `project review finish <number> --force` with the loop's `--loop`
-  and `--model`. A closed pull request takes no review, so `--force`
-  discards one still in progress. `finish` deletes the subagent's start
-  comments, clears its locks and state, and removes its scratch
-  worktrees. Then close the subagent and remove the pull request's line from
-  the tracked file with `project loop remove owner/repo#number --tracked <file>`.
+  to run `project review finish <number> --repo <owner>/<repo> --force`
+  with the loop's `--loop` and `--model`. A closed pull request takes no
+  review, so `--force` discards one still in progress, and `--repo` keeps
+  the command off another repository's review of the same number. `finish`
+  deletes the subagent's start comments, clears its locks and state, and
+  removes its scratch worktrees. Then close the subagent and remove the pull
+  request's line from the tracked file with
+  `project loop remove owner/repo#number --tracked <file>`.
 - When a subagent is lost, to a session restart for example, start a
   replacement under the same name. It rebuilds its context from GitHub: the
   pull request's Projector reviews, their finding threads, and the replies on
