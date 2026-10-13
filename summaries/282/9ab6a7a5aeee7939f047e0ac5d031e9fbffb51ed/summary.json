@@ -1,0 +1,210 @@
+{
+ "version": 1,
+ "name": "Watch loop rename",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 282,
+  "title": "Rename the fix loop to the watch loop",
+  "head": "9ab6a7a5aeee7939f047e0ac5d031e9fbffb51ed",
+  "headRef": "watch-loop",
+  "base": "eae49a56d86efa9808a9c2536f9056b6f49f4cc7",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector runs two background loops beside a conversation. The review loop reviews each new head of a pull request. The other loop, which <code>implement</code> starts on every pull request it opens, watches that pull request's review threads, verdicts, review bodies, and merge conflicts, and hands each pull request that has work to <code>fix-pr</code>. Until this change that second loop was called the fix loop, and its skill was <code>start-fix-loop</code>.",
+   "The loop itself fixes nothing: <code>fix-pr</code> does the fixing, and the loop watches. This pull request renames the loop to the watch loop everywhere Projector still describes it. The skill directory moves to <code>skills/start-watch-loop/</code>, the config key <code>fix.auto_start</code> becomes <code>watch.auto_start</code>, and the generated <code>AGENTS.md</code> block moves to template version 6.",
+   "<ul class=\"tight\"><li><b>Kept on purpose.</b> <code>fix-pr</code>, the <code>fix-&lt;number&gt;</code> and <code>fix-stack-&lt;number&gt;</code> subagents the loop starts, and the <code>fix.resolve_human_threads</code> key keep their names, because they fix. Completed plans keep their wording as a record.</li><li><b>No fallback.</b> Projector stops reading <code>fix.auto_start</code>. A repository that set it to <code>false</code> starts getting a watch loop until it sets <code>watch.auto_start</code>.</li><li><b>Adopting repositories.</b> The template change makes <code>project check</code> report the block as stale in every repository that adopted Projector, until <code>project init</code> refreshes it.</li></ul>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>One Projector review at <code>9ab6a7a</code> requested changes, with one open finding. One sentence in <code>skills/implement/SKILL.md</code> still says \"fix loop\". The phrase breaks across lines 180 and 181, so the pull request's line-based <code>git grep</code> check cannot match it.</p>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Watch loop.</b> The loop <code>start-watch-loop</code> runs. It polls the tracked pull requests with <code>watch-threads.sh</code> and starts a <code>fix-pr</code> subagent for each one with work.</li><li><b>Review loop.</b> The loop <code>start-review-loop</code> runs. It reviews each new head with <code>review-pr</code>. This change leaves its name alone.</li><li><b>AGENTS.md block.</b> The section between <code>projector:begin</code> markers that <code>project init</code> writes into a repository's <code>AGENTS.md</code>, rendered from <code>src/projector/templates/agents-block.md</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "skill",
+   "title": "The skill and its watcher move",
+   "kicker": "skills/start-fix-loop becomes skills/start-watch-loop, with its tests",
+   "intro": [
+    "The skill's directory is its published name, so moving <code>skills/start-fix-loop/</code> to <code>skills/start-watch-loop/</code> renames the skill a user invokes, as <code>/projector:start-watch-loop</code> in Claude Code or <code>$start-watch-loop</code> in Codex. The watcher script <code>watch-threads.sh</code> moves with it. Its content changes only in comments.",
+    "Tests that name the old path follow it. <code>tests/test_packaging.py</code> checks the exact set of published skills, so it fails if a manifest or a directory still uses the old name."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The Claude Code band finds a running watcher by the script's file name, not its directory: <code>hooks/parse.ts</code> maps <code>watch-threads.sh</code> to a watching kind. I read it and ran <code>claude plugin test .</code>, which ended 51 pass, 0 fail."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/start-watch-loop/SKILL.md",
+     "note": "The moved skill. Its frontmatter <code>name</code>, title, and one sentence change. The description still says it runs <code>fix-pr</code>, which stays true."
+    },
+    {
+     "path": "skills/start-watch-loop/scripts/watch-threads.sh",
+     "note": "The moved watcher. Only comments change."
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "The published skill set and the list of files that cite the stacking section now name <code>start-watch-loop</code>."
+    },
+    {
+     "path": "tests/test_watchers.py",
+     "note": "Points <code>THREADS</code> at the new script path, and renames the loop in one comment."
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "A sample process line uses the new script path."
+    },
+    {
+     "path": "hooks/parse.test.ts",
+     "note": "A sample watcher command uses the new path and tracked directory."
+    }
+   ]
+  },
+  {
+   "id": "config",
+   "title": "The implement hand-over and its setting",
+   "kicker": "implement starts a watch loop, gated by watch.auto_start",
+   "intro": [
+    "When <code>implement</code> opens a pull request, the top-level conversation starts the loop on it, or adds the pull request to the loop it already runs. The setting that turns that off was <code>fix.auto_start</code> and is now <code>watch.auto_start</code>. Projector reads the key only through <code>project config get</code> in the skill, so no Python code changes.",
+    "Projector reads no fallback, by the pull request's own choice: the author states that nobody relies on the old name yet."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "Every mention of the loop in the hand-over section, and the config key, change.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 180,
+       "text": "The sentence on lines 180 and 181 still reads \"When this conversation already runs a fix loop\". That sentence is the one that keeps <code>implement</code> from starting a second watcher, and nothing else in Projector uses the old name now. The open review finding asks to change it to \"watch loop\"."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The configuration table renames the key, and the <code>project init</code> description names the watch loop.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 536,
+       "text": "This table row is the only reference documentation for the key. A repository that set <code>fix.auto_start = false</code> must set <code>watch.auto_start = false</code> instead."
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "The plugin guide's skill list, stacking paragraph, and band description use the new name and key."
+    }
+   ]
+  },
+  {
+   "id": "block",
+   "title": "The generated AGENTS.md block",
+   "kicker": "The template names the loop, so its version moves to 6",
+   "intro": [
+    "<code>project init</code> writes a block of conventions into each adopting repository's <code>AGENTS.md</code>, and the block names the loop. A template change must bump the version in the block's opening marker, and <code>tests/test_instructions.py</code> pins a hash for every version so that an edit without a bump fails. This repository's own <code>AGENTS.md</code> carries the refreshed block."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The full unit suite passed at this head (881 tests, <code>OK</code>), including the pinned hash for version 6, and <code>project check</code> printed <code>Project plans are valid.</code>"
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The template: version 6 and \"watch loop\" in the hand-over paragraph."
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins the hash of template version 6."
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's copy of the refreshed block."
+    }
+   ]
+  },
+  {
+   "id": "mentions",
+   "title": "Other mentions of the loop",
+   "kicker": "Skills, scripts, the README, and one plan that name the loop",
+   "intro": [
+    "The remaining files change one phrase each. <code>fix-pr</code> and <code>review-pr</code> name the loop that runs them, <code>watch-prs.sh</code> mentions it in a comment, and the in-progress questions plan names the skill. The site test renames a fixture title, which changes no behavior."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Outside completed plans, no file at this head names <code>start-fix-loop</code>, <code>fix.auto_start</code>, or <code>DOCS.fixLoop</code>. I searched with <code>git grep</code>, and again with a pattern that allows a line break between \"fix\" and \"loop\". The second search found only the sentence flagged in <code>skills/implement/SKILL.md</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "README.md",
+     "note": "The skill list names <code>start-watch-loop</code>."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Names <code>start-watch-loop</code> as the skill that runs it."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "One mention of watch-loop thread replies."
+    },
+    {
+     "path": "skills/start-review-loop/scripts/watch-prs.sh",
+     "note": "One comment."
+    },
+    {
+     "path": "docs/projects/questions/readme.md",
+     "note": "The in-progress questions plan names the new skill. Its status is unchanged."
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "A fixture title changes."
+    }
+   ]
+  },
+  {
+   "id": "web",
+   "title": "The Projector website",
+   "kicker": "The site's copy and doc link name the watch loop",
+   "intro": [
+    "The marketing site under <code>web/</code> links to each loop's skill on GitHub. The link constant <code>DOCS.fixLoop</code> becomes <code>DOCS.watchLoop</code> and points at the new path, and both places that used it change with it."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The link points at <code>main</code>, so it resolves once this pull request merges. After the merge, an outside link to <code>skills/start-fix-loop/SKILL.md</code> on GitHub finds no file."
+    }
+   ],
+   "files": [
+    {
+     "path": "web/lib/links.ts",
+     "note": "Renames the link constant and its target."
+    },
+    {
+     "path": "web/components/sections/review-loop.tsx",
+     "note": "The step title, the skill list, and the doc link name the watch loop."
+    },
+    {
+     "path": "web/components/site-footer.tsx",
+     "note": "The footer link."
+    }
+   ]
+  }
+ ]
+}
