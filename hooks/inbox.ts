@@ -125,7 +125,7 @@ export function storeOf(env: Env, session: string): string | undefined {
 }
 
 /**
- * What the store's directory holds: each question file's name, size and
+ * What the store's directory holds: each item file's name, size and
  * time, leaving out the lock and any file being written. A file whose claim
  * the band itself renews counts by name alone, so the band's own renewal
  * never makes it read the store again.
@@ -138,7 +138,7 @@ export function signatureOf(entries: readonly FsEntry[], renewing: ReadonlySet<s
     .join('\n')
 }
 
-/** The reference a question file is named for, the CLI having quoted it; empty for any other file. */
+/** The reference an item file is named for, the CLI having quoted it; empty for any other file. */
 function refOf(name: string): string {
   if (!name.endsWith('.json')) return ''
   try {

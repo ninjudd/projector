@@ -574,7 +574,8 @@ async function post(
   } catch (error) {
     return { deny: `project did not finish (${messageOf(error)}); ${instead}` }
   }
-  if (ran.exitCode === 65) return { deny: errorOf(ran) }
+  // 65 refuses the post and 75 finds the store busy; any other failure is a CLI too old to post.
+  if (ran.exitCode === 65 || ran.exitCode === 75) return { deny: errorOf(ran) }
   if (ran.exitCode !== 0) return { deny: `${errorOf(ran)}; run project upgrade` }
   checkSoon($)
   return { ref: ran.stdout.trim() }

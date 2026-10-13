@@ -47,7 +47,8 @@ what it did to each:
   `implement` skill, so a watch loop starts on its pull request, open every
   pull request as a draft until a clean review marks it ready, and, where the
   `ask` and `tell` tools are available, post anything the person must not
-  miss to the inbox as well as saying it in the conversation. `init`
+  miss to the inbox as well as saying it in the conversation, and each time
+  the person writes, dismiss any item that no longer needs them. `init`
   appends the section to an existing file or creates the file
   with only that section, and refreshes the section when it falls behind the
   template this command ships. Everything outside the markers is yours and
@@ -1473,16 +1474,18 @@ this session; one about another repository spells it out, as
 session runs `ask` in, and it stays the same when later questions come
 from other repositories' checkouts, so two repositories never share a
 reference. `ask` refuses, with exit code 65, a question longer than one line
-or 120 characters, a missing recommendation, more than five other options, or
-an option that repeats the recommendation. Put what you need to decide in
-`--detail`, or `--detail-file`.
+or 120 characters, a question that holds a tab, a missing recommendation, a
+recommendation or option longer than one line, more than five other options,
+or an option that repeats the recommendation or another option. Put what you
+need to decide in `--detail`, or `--detail-file`.
 
 Every command names the posting session with `--session`, or reads
 `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
 every session's open items, and `show`, `answer`, `dismiss`, and `snooze`
 find the session that holds the reference. `list` prints each item's
 reference, kind, state, and subject, separated by tabs, after the session
-when it lists every session.
+when it lists every session. A command waits up to five seconds while another
+command changes the same session, and then exits 75, so you can run it again.
 
 The answers are lettered. `a` is always the recommendation, the other options
 follow as `b`, `c`, and on, and the last letter is a typed answer:
@@ -1501,8 +1504,11 @@ answered #337.3.a
 
 To give an answer of your own instead, use the last letter with `--text`, as
 in `project inbox answer '#337.3.c' --text "keep the cap, but log each
-retry"`. A question takes one answer; a second exits 65. `dismiss` answers it
-with no letter.
+retry"`. A typed answer is one line, like every answer. A question takes one
+answer; a second exits 65. `dismiss` answers it with no letter, and `list`
+then shows it as `dismissed`. Only `answer` takes a letter: every other
+command refuses a reference such as `#337.3.a` with exit code 65, so
+`dismiss` never drops the answer you meant to give.
 
 An answer reaches its agent through one deliverer, which claims it, sends it,
 and marks it delivered. `watch` is the deliverer for any host that can run a
@@ -1545,28 +1551,33 @@ $ project inbox tell "Force-pushed #337 to drop a stray debug file" \
 ```
 
 `tell` refuses, with exit code 65, an empty notice, a notice longer than one
-line or 120 characters, and a `--pr` that is not `owner/repo#number`. A
+line or 120 characters, a notice that holds a tab, and a `--pr` that is not
+`owner/repo#number`. A
 notice has no options, so `answer` and `claim` refuse one with exit code 65.
 Once you have read it, run `project inbox dismiss '#337.4'`. Nothing goes
 back to the agent, so the dismissal also marks the notice delivered, and
 `list` shows it, as `dismissed`, only with `--all`.
 
 To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
-an hour, or for the whole minutes that `--for` gives, and `--for 0` wakes it
-now. Projector's band leaves a snoozed item out until its time passes, and
-`list` shows it as `snoozed until <HH:MM>`, in local time:
+an hour, or for the whole minutes that `--for` gives, up to a day (1440
+minutes), and `--for 0` wakes it now. Projector's band leaves a snoozed item
+out until its time passes, and `list` shows it as `snoozed until <HH:MM>`, in
+local time, or as `snoozed until tomorrow <HH:MM>` when it returns tomorrow:
 
 ```console
 $ project inbox snooze '#337.3' --for 30
 #337.3 snoozed until 14:32
+$ project inbox snooze '#337.4' --for 720
+#337.4 snoozed until tomorrow 02:02
 $ project inbox list --session "$SESSION"
 #337.3	question	snoozed until 14:32	Decline the finding about the retry budget?
-#337.4	notice	open	Force-pushed #337 to drop a stray debug file
+#337.4	notice	snoozed until tomorrow 02:02	Force-pushed #337 to drop a stray debug file
 ```
 
 A snoozed item can still be answered or dismissed, and either one clears its
 snooze, so a resolved item never returns. `snooze` refuses, with exit code
-65, an item already answered or dismissed, and a negative `--for`.
+65, an item already answered or dismissed, a negative `--for`, and a `--for`
+longer than a day, and it changes nothing when it refuses.
 
 `project inbox context` reads text on standard input and prints what each
 reference in it means, for the items the session holds, so a prompt such as
@@ -1634,4 +1645,5 @@ Projector uses these exit codes:
 | `66` | The requested project, the projects directory, or the inbox item does not exist. |
 | `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
 | `69` | Git, the interactive editor, or the installer is unavailable. |
+| `75` | Another command held an inbox session's lock for five seconds; run the command again. |
 | `78` | A `.projector.toml` file is not valid TOML. |

@@ -120,7 +120,7 @@ because squash merges preserve that body as the commit message.
 For review findings, verify first, commit locally, reply with the commit, push,
 resolve the thread, and re-fetch it in that order.
 
-<!-- projector:begin 7 -->
+<!-- projector:begin 8 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -177,8 +177,14 @@ and `tell` tools are available, also post anything they must not miss to
 the inbox, a decision with `ask` and news with `tell`, and say it in your
 reply too. Always post it when it sits among a lot of other text, such as a
 decision in the middle of a long report, where the person could skim past
-it. Post news they need to act on, such as a pull request that is ready to
-merge or a failure that needs them, and anything that comes up while they
-are away. An item stays above their prompt until they answer or dismiss it,
-so keep the inbox for what matters, not as a log of everything you did.
+it. Post news they need to act on, such as a failure that needs them, and
+anything that comes up while they are away. Leave out what they already see
+elsewhere, such as a pull request's state, which the band lists. An item
+stays above their prompt until they answer or dismiss it, so keep the inbox
+for what matters, not as a log of everything you did. While items you posted
+are open, look over them each time the person writes to you, with
+`project inbox list --session "$CLAUDE_CODE_SESSION_ID"`, and dismiss any
+that no longer need them, such as a question they answered in the
+conversation or news that has gone stale, with
+`project inbox dismiss <reference> --session "$CLAUDE_CODE_SESSION_ID"`.
 <!-- projector:end -->
