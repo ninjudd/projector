@@ -275,12 +275,18 @@ test('`/projector` only shows or hides the band, whatever follows it', async ($,
   await ui.unmount()
 })
 
-test('leaves out a tracked file an earlier version was given by hand', async ($, on) => {
+test('leaves out a tracked file an earlier version was given by hand, until the session starts its watcher', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
-  const loops = [{ tracked: WATCH }, { kind: 'reviewing', tracked: REVIEW }]
-  on('state.get', { plugin: 'projector', key: 'seenLoops' }, () => ({ value: { value: loops as never, version: 1 } }))
+  let loops: unknown = [{ tracked: WATCH }, { kind: 'reviewing', tracked: REVIEW }]
+  let version = 1
+  on('state.get', { plugin: 'projector', key: 'seenLoops' }, () => ({ value: { value: loops as never, version } }))
+  on('state.set', { plugin: 'projector', key: 'seenLoops' }, ($, e) => {
+    loops = e.value
+    version += 1
+    return { value: { isSet: true as const, version } }
+  })
 
   await $.command.run(COMMAND)
   await clock.advance(1)
@@ -289,6 +295,15 @@ test('leaves out a tracked file an earlier version was given by hand', async ($,
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
+  expect(loops).toEqual([
+    { kind: 'reviewing', tracked: REVIEW },
+    { kind: 'watching', tracked: WATCH },
+  ])
   await ui.unmount()
 })
 

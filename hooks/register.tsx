@@ -117,12 +117,15 @@ const project = ($: Engine, args: readonly string[], stdin?: string): Promise<Ra
 const errorOf = (ran: Ran) =>
   (ran.stderr.trim().split('\n').pop() ?? '').replace(/^project: /, '') || `project exited ${ran.exitCode}`
 
-/** Records a loop, answering whether the session had not seen it before. */
+/**
+ * Records a loop, answering whether the session had not seen it before. An
+ * entry an earlier version kept with no kind gives way to the watcher's.
+ */
 async function remember($: Engine, loop: SeenLoop): Promise<boolean> {
   let isNew = false
   await update($, seen, list => {
-    isNew = !list.some(one => one.tracked === loop.tracked)
-    return isNew ? [...list, loop] : list
+    isNew = !list.some(one => one.tracked === loop.tracked && isKind(one.kind))
+    return isNew ? [...list.filter(one => one.tracked !== loop.tracked), loop] : list
   })
   return isNew
 }
