@@ -867,12 +867,12 @@ and the user sets it.
 Then follow `summarize-pr` for this head, with two differences from a
 summary a person asks for:
 
-- **Update rather than start over.** When the summaries ref already holds a
-  summary of this pull request, start from its newest version and update it
-  as the skill's "Update the page when the pull request moves" section
-  describes, so a fix-cycle head costs a revision, not a rewrite. The newest
-  version can come from another session or account, and can be at this very
-  head. Build on it all the same.
+- **Update rather than start over.** Run `project summary init` with
+  `--from-published` first. When it finds a summary of this pull request,
+  update that one as the skill's "Update the page when the pull request
+  moves" section describes, so a fix-cycle head costs a revision, not a
+  rewrite. The newest version can come from another session or account,
+  and can be at this very head. Build on it all the same.
 - **Carry the review into it.** Every finding thread still open after this
   review, from the query in § Verify earlier findings, becomes a `flag` check on its
   file at its `line`, saying what the finding says, so a reader sees what

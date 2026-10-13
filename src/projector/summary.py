@@ -2,7 +2,8 @@
 
 A summary records a pull request's merge base and head and assigns every changed
 file to a group with its explanation and checks. This module writes skeleton
-summaries, checks a summary against its diff, publishes summaries to the hidden ref
+summaries, carries a summary forward to its pull request's current head and
+base, checks a summary against its diff, publishes summaries to the hidden ref
 refs/projector/summaries, and says whether a repository hosts a site that
 serves them. Rendering summaries into pages is `projector.site`'s job.
 """
@@ -23,9 +24,10 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import urlparse
 
-from .core import FileAction, ProjectorError
+from .core import FileAction, ProjectorError, write_through
 
 SUMMARY_VERSION = 1
 CHECK_KINDS = ("context", "verify", "flag")
@@ -502,7 +504,7 @@ def gh(*args: str, input: str | None = None) -> str:
     try:
         return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, input=input).stdout
     except FileNotFoundError as exc:
-        raise SummaryError("the gh CLI is not installed; pass --diff and fill the pr fields by hand") from exc
+        raise SummaryError("the gh CLI is not installed") from exc
     except subprocess.CalledProcessError as exc:
         raise SummaryError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
 
@@ -908,7 +910,7 @@ def sanitized_check(c: dict) -> dict:
     out = {"kind": c["kind"], "text": sanitize_html(c["text"])}
     if c.get("line") is not None:
         out["line"] = int(c["line"])
-        out["side"] = "old" if c.get("side") == "old" else "new"
+        out["side"] = side_of(c)
     return out
 
 
@@ -952,14 +954,11 @@ def validate(summary: dict, files: list[dict]) -> None:
                 problems.append(f"{path} is in both {seen[path]} and {gid}")
             else:
                 seen[path] = gid
-            lines = {"new": diff_lines(by_path[path], "new"), "old": diff_lines(by_path[path], "old")}
             for c in fs.get("checks") or []:
                 if c.get("kind") not in CHECK_KINDS or not c.get("text"):
                     problems.append(f"{path}: each check needs a kind ({kinds}) and a text")
-                elif c.get("line") is not None:
-                    side = "old" if c.get("side") == "old" else "new"
-                    if not isinstance(c["line"], int) or c["line"] not in lines[side]:
-                        problems.append(f"{path}: line {c['line']} ({side} side) is not in its diff")
+            for c in unshown_lines(fs, by_path[path]):
+                problems.append(f"{path}: line {c['line']} ({side_of(c)} side) is not in its diff")
         for c in g.get("checks") or []:
             if c.get("kind") not in CHECK_KINDS or not c.get("text"):
                 problems.append(f"{gid}: each check needs a kind ({kinds}) and a text")
@@ -977,6 +976,18 @@ def diff_lines(f: dict, side: str) -> set[int]:
     context lines."""
     kinds, index = (("a", "c"), 2) if side == "new" else (("d", "c"), 1)
     return {line[index] for h in f["hunks"] for line in h["lines"] if line[0] in kinds and isinstance(line[index], int)}
+
+
+def side_of(check: dict) -> str:
+    """The side of the diff a check's `line` counts on: `old` when it says so, and `new` otherwise."""
+    return "old" if check.get("side") == "old" else "new"
+
+
+def unshown_lines(entry: dict, f: dict) -> list[dict]:
+    """The checks on a summary's file `entry` that name a `line` the diff of `f`, from `parse_diff`, does not show."""
+    lines = {"new": diff_lines(f, "new"), "old": diff_lines(f, "old")}
+    return [c for c in entry.get("checks") or [] if c.get("line") is not None
+            and (not isinstance(c["line"], int) or c["line"] not in lines[side_of(c)])]
 
 
 def stats(files: list[dict]) -> dict:
@@ -1496,22 +1507,144 @@ def default_branch(remote: str = "origin", root: Path | None = None) -> str:
     return head.split("/", 1)[1] if "/" in head else head
 
 
-def init(repo: str, number: int, summary_path: str, diff_path: str | None = None) -> None:
+UNASSIGNED = "unassigned"
+
+
+def unassigned_group(paths: list[str]) -> dict:
+    """The group that holds changed files until someone groups them: every file after `init`, and each file new to
+    the diff after `refresh`."""
+    return {"id": UNASSIGNED, "title": "Unassigned", "kicker": "", "intro": [], "checks": [],
+            "files": [{"path": path} for path in paths]}
+
+
+def write_summary(path: Path, summary: dict) -> None:
+    """Replace the summary file at `path` in one step, so a reader never finds it half written."""
+    write_through(path, json.dumps(summary, indent=2, ensure_ascii=False) + "\n")
+
+
+def file_row(f: dict) -> str:
+    """One line naming a changed file from `parse_diff`, with its line counts and its kind."""
+    flag = f" [{f['kind']}]" if f["kind"] else ""
+    return f"+{f['adds']:<5} -{f['dels']:<5} {f['path']}{flag}{' (new)' if f['new'] else ''}"
+
+
+def current_diff(repo: str, number: int, diff_path: str | None = None) -> tuple[dict, list[dict]]:
+    """Pull request `number`'s `pr` fields as GitHub reports them now, and its diff's files, classified as its head's
+    attributes mark them. The diff is read from `diff_path` when given, and fetched from `pr.base` to `pr.head`
+    otherwise."""
     meta = pr_metadata(repo, number)
     diff = Path(diff_path).read_text(encoding="utf-8") if diff_path else fetch_diff(repo, meta["base"], meta["head"])
     files = parse_diff(diff)
     classify(files, generated_attributes([f["path"] for f in files], meta["head"], repo))
+    return meta, files
+
+
+def init(repo: str, number: int, summary_path: str, diff_path: str | None = None) -> None:
+    meta, files = current_diff(repo, number, diff_path)
     summary = {
         "version": SUMMARY_VERSION,
         "name": "",
         "project": None,
         "pr": meta,
         "overview": {"summary": [], "cards": []},
-        "groups": [{"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "checks": [],
-                    "files": [{"path": f["path"]} for f in files]}],
+        "groups": [unassigned_group([f["path"] for f in files])],
     }
-    Path(summary_path).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    write_summary(Path(summary_path), summary)
     print(f"wrote {summary_path}: {meta['repo']}#{meta['number']} at {meta['head'][:9]}, {len(files)} files")
     for f in files:
-        flag = f" [{f['kind']}]" if f["kind"] else ""
-        print(f"  +{f['adds']:<5} -{f['dels']:<5} {f['path']}{flag}{' (new)' if f['new'] else ''}")
+        print(f"  {file_row(f)}")
+
+
+class Refreshed(NamedTuple):
+    """What `carry_forward` changed in a summary, and the notes it left for someone to move."""
+    changes: list[str]
+    added: list[dict]
+    dropped: list[tuple[str, dict]]
+    emptied: list[str]
+    stale: list[tuple[str, str, dict]]
+
+
+def carry_forward(summary: dict, meta: dict, files: list[dict]) -> Refreshed:
+    """Change `summary` in place to describe the pull request whose `pr` fields are `meta` and whose diff's files,
+    from `parse_diff`, are `files`.
+
+    Every `pr` field becomes its value in `meta`, and a field `meta` lacks,
+    such as the `basePr` of a pull request no longer stacked, goes. Each file
+    new to the diff joins the unassigned group, which is added last when the
+    summary has none, and each file that left the diff leaves its group with
+    its note and checks. The result lists each of those, each group the drops
+    emptied, and each note whose `line` the diff does not show, which stays.
+    """
+    old = summary.get("pr") or {}
+    changes = [f"pr.{key}: {old.get(key, 'none')} → {meta.get(key, 'none')}"
+               for key in [*meta, *(key for key in old if key not in meta)] if old.get(key) != meta.get(key)]
+    summary["pr"] = meta
+    by_path = {f["path"]: f for f in files}
+    groups = summary.setdefault("groups", [])
+    dropped: list[tuple[str, dict]] = []
+    shrunk: list[dict] = []
+    placed: set[str] = set()
+    for g in groups:
+        entries = g.get("files") or []
+        kept = [entry for entry in entries if entry.get("path") in by_path]
+        if len(kept) < len(entries):
+            dropped += [(g.get("id"), entry) for entry in entries if entry.get("path") not in by_path]
+            g["files"] = kept
+            shrunk.append(g)
+        placed.update(entry["path"] for entry in kept)
+    added = [f for f in files if f["path"] not in placed]
+    if added:
+        unassigned = next((g for g in groups if g.get("id") == UNASSIGNED), None)
+        if unassigned is None:
+            groups.append(unassigned_group([f["path"] for f in added]))
+        else:
+            unassigned["files"] = [*(unassigned.get("files") or []), *({"path": f["path"]} for f in added)]
+    stale = [(g.get("id"), entry["path"], c) for g in groups for entry in g.get("files") or []
+             if entry.get("path") in by_path for c in unshown_lines(entry, by_path[entry["path"]])]
+    return Refreshed(changes, added, dropped, [g.get("id") for g in shrunk if not g.get("files")], stale)
+
+
+def refresh(summary_path: str, diff_path: str | None = None) -> None:
+    """Bring the summary at `summary_path` up to its pull request as GitHub reports it now, and print what changed.
+
+    `carry_forward` makes the changes, and leaves every piece of prose but
+    a dropped file's as it was. The file is replaced in one step, and only
+    when something changed. `diff_path` holds the diff from the pull
+    request's current merge base to its current head, for a pull request
+    GitHub cannot serve one for.
+    """
+    path = Path(summary_path)
+    summary = json.loads(path.read_text(encoding="utf-8"))
+    pr = summary_pr(summary)
+    meta, files = current_diff(str(pr["repo"]), int(pr["number"]), diff_path)
+    done = carry_forward(summary, meta, files)
+    where = f"{meta['repo']}#{meta['number']} at {meta['head'][:9]}"
+    if done.changes or done.added or done.dropped:
+        write_summary(path, summary)
+        print(f"refreshed {summary_path} to {where}")
+    else:
+        print(f"{summary_path} already matches {where}; nothing changed")
+    for change in done.changes:
+        print(f"  {change}")
+    if done.added:
+        print(f"added {len(done.added)} {'file' if len(done.added) == 1 else 'files'} new to the diff to the "
+              f"{UNASSIGNED} group; move each into the group it belongs to:")
+        for f in done.added:
+            print(f"  {file_row(f)}")
+    if done.dropped:
+        print(f"dropped {len(done.dropped)} {'file' if len(done.dropped) == 1 else 'files'} that left the diff, with "
+              "the prose below; move what still applies:")
+        for gid, entry in done.dropped:
+            print(f"  {entry.get('path')}, from {gid}")
+            if entry.get("note"):
+                print(f"    note: {entry['note']}")
+            for c in entry.get("checks") or []:
+                at = f" on line {c['line']} ({side_of(c)} side)" if c.get("line") is not None else ""
+                print(f"    {c.get('kind')}{at}: {c.get('text')}")
+    for gid in done.emptied:
+        print(f"group {gid} has no files left; move its prose and remove it, or move files into it")
+    if done.stale:
+        print(f"{len(done.stale)} {'note names' if len(done.stale) == 1 else 'notes name'} a line the diff no longer "
+              "shows; move each to where its code now sits, or remove it:")
+        for gid, file_path, c in done.stale:
+            print(f"  {file_path} line {c['line']} ({side_of(c)} side), in {gid}: {c.get('kind')}: {c.get('text')}")

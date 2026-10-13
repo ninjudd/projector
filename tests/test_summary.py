@@ -1822,5 +1822,308 @@ class CommentSummaryTests(unittest.TestCase):
         self.assertEqual([], commented)
 
 
+def store(git_dir: Path, ref: str, path: str, text: str, when: int) -> None:
+    """Commit `text` at `path` on `ref` of the repository at `git_dir`, dated `when`, over what the ref holds."""
+    env = dict(os.environ, GIT_INDEX_FILE=str(Path(tempfile.mkdtemp()) / "index"), GIT_AUTHOR_NAME="Test",
+               GIT_AUTHOR_EMAIL="test@example.com", GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.com",
+               GIT_AUTHOR_DATE=f"{when} +0000", GIT_COMMITTER_DATE=f"{when} +0000")
+
+    def git(*args: str, stdin: str | None = None) -> str:
+        return subprocess.run(["git", *args], cwd=git_dir, env=env, input=stdin, check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    parent = subprocess.run(["git", "rev-parse", "--verify", "--quiet", ref], cwd=git_dir, capture_output=True,
+                            text=True).stdout.strip()
+    if parent:
+        git("read-tree", parent)
+    blob = git("hash-object", "-w", "--stdin", stdin=text)
+    git("update-index", "--add", "--cacheinfo", f"100644,{blob},{path}")
+    git("update-ref", ref, git("commit-tree", git("write-tree"), *(["-p", parent] if parent else []), "-m", path))
+
+
+class FromPublishedTests(unittest.TestCase):
+    """`summary init --from-published`, which copies a pull request's newest stored summary instead of a skeleton."""
+
+    def setUp(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.remote = tmp / "remote.git"
+        run(tmp, "git", "init", "--quiet", "--bare", str(self.remote))
+        self.repo = tmp / "repo"
+        run(tmp, "git", "clone", "--quiet", str(self.remote), str(self.repo))
+        self.path = tmp / "work" / "summary.json"
+        self.path.parent.mkdir()
+
+    def stored(self, head: str, when: int, name: str = "summary.json", git_dir: Path | None = None,
+               ref: str = summary.PAGES_REF, root: str = summary.PAGES_ROOT) -> dict:
+        """Store a summary of pull request 7 at `head` as `name`, dated `when`, on the remote's `ref` or `git_dir`'s."""
+        data = make_summary(GOOD_GROUPS)
+        data["pr"]["head"] = head
+        data["name"] = f"Head {head[:1]} as {name}"
+        store(git_dir or self.remote, ref, f"{root}/7/{head}/{name}", json.dumps(data), when)
+        return data
+
+    def init(self, *args: str) -> tuple[int, str, str]:
+        cwd = os.getcwd()
+        os.chdir(self.repo)
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with redirect_stdout(out), redirect_stderr(err):
+                code = cli.main(["summary", "init", "--repo", "owner/repo", "--pr", "7", "--summary", str(self.path),
+                                 *args])
+        finally:
+            os.chdir(cwd)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_copies_the_most_recently_published_summary_of_the_pull_request(self) -> None:
+        self.stored("d" * 40, 1_700_000_000)
+        newest = self.stored("c" * 40, 1_700_000_500)
+        store(self.remote, summary.PAGES_REF, f"summaries/8/{'e' * 40}/summary.json", "{}", 1_700_001_000)
+
+        code, out, err = self.init("--from-published")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(newest, json.loads(self.path.read_text()), "the newer publish, though its SHA sorts first")
+        self.assertIn(f"at {'c' * 9}, published 2023-11-14 22:21 UTC, from refs/projector/remotes/origin/summaries",
+                      out)
+        self.assertIn(f"project summary refresh --summary {self.path}", out)
+
+    def test_a_republished_old_head_does_not_outrank_a_newer_head(self) -> None:
+        # Two heads stored as spec.json by an older release, then the older one republished as summary.json.
+        self.stored("a" * 40, 1_700_000_000, "spec.json")
+        newer = self.stored("b" * 40, 1_700_000_500, "spec.json")
+        self.stored("a" * 40, 1_700_001_000)
+
+        code, out, err = self.init("--from-published")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(newer, json.loads(self.path.read_text()), "a head stored only as spec.json is read from it")
+        self.assertIn("an older release stored it as spec.json", out)
+
+    def test_a_head_stored_under_both_names_is_read_from_its_summary_json(self) -> None:
+        self.stored("a" * 40, 1_700_000_000, "spec.json")
+        republished = self.stored("a" * 40, 1_700_001_000)
+
+        code, out, err = self.init("--from-published")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(republished, json.loads(self.path.read_text()))
+        self.assertNotIn("spec.json", out)
+
+    def test_reads_the_old_walkthroughs_ref_until_the_summaries_ref_exists(self) -> None:
+        old = self.stored("a" * 40, 1_700_000_000, "spec.json", ref=summary.LEGACY_PAGES_REF,
+                          root=summary.LEGACY_PAGES_ROOT)
+
+        code, out, err = self.init("--from-published")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(old, json.loads(self.path.read_text()))
+        self.assertIn("from refs/projector/remotes/origin/walkthroughs", out)
+
+    def test_falls_back_to_a_summary_kept_in_this_checkout(self) -> None:
+        kept = self.stored("a" * 40, 1_700_000_000, git_dir=self.repo)
+
+        code, out, err = self.init("--from-published")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(kept, json.loads(self.path.read_text()))
+        self.assertIn("from refs/projector/summaries", out)
+        self.assertIn("reading the summaries this checkout already has; could not fetch origin's", err)
+
+    def test_the_newer_of_the_remotes_summary_and_this_checkouts_wins(self) -> None:
+        self.stored("a" * 40, 1_700_000_000, git_dir=self.repo)
+        published = self.stored("c" * 40, 1_700_000_500)
+
+        self.assertEqual(0, self.init("--from-published")[0])
+        self.assertEqual(published, json.loads(self.path.read_text()), "a stale local preview loses")
+
+        previewed = self.stored("d" * 40, 1_700_001_000, git_dir=self.repo)
+        self.assertEqual(0, self.init("--from-published")[0])
+        self.assertEqual(previewed, json.loads(self.path.read_text()), "a newer local preview wins")
+
+        self.stored("e" * 40, 1_700_002_000)
+        tied = self.stored("f" * 40, 1_700_002_000, git_dir=self.repo)
+        self.assertEqual(0, self.init("--from-published")[0])
+        self.assertEqual(tied, json.loads(self.path.read_text()), "this checkout's wins a tie, as on the site")
+
+    def test_head_picks_the_summary_of_one_head(self) -> None:
+        older = self.stored("d" * 40, 1_700_000_000, "spec.json")
+        self.stored("c" * 40, 1_700_000_500)
+
+        code, out, err = self.init("--from-published", "--head", "D" * 7)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(older, json.loads(self.path.read_text()))
+
+    def test_says_so_and_writes_nothing_when_no_summary_is_stored(self) -> None:
+        self.stored("c" * 40, 1_700_000_000)
+
+        code, _, err = self.init("--from-published", "--head", "e" * 7)
+
+        self.assertEqual(65, code)
+        self.assertIn(f"origin has no summary of owner/repo#7 at {'e' * 7}, and neither does this checkout", err)
+        self.assertFalse(self.path.exists())
+
+    def test_refuses_a_remote_that_is_another_repository(self) -> None:
+        run(self.repo, "git", "remote", "add", "other", "https://github.com/someone/else.git")
+
+        code, _, err = self.init("--from-published", "--remote", "other")
+
+        self.assertEqual(65, code)
+        self.assertIn("other is someone/else, but --repo is owner/repo", err)
+
+    def test_the_published_summary_options_need_each_other(self) -> None:
+        for args in (("--head", "c" * 7), ("--remote", "origin"), ("--from-published", "--diff", "pr.diff")):
+            with self.subTest(args=args):
+                self.assertEqual(2, self.init(*args)[0])
+
+
+# The pull request after a push and a merge of its base branch: src/core.go
+# moved down ten lines, src/core_test.go left the diff, and src/extra.go joined it.
+MOVED_DIFF = """diff --git a/src/core.go b/src/core.go
+index 2222222..6666666 100644
+--- a/src/core.go
++++ b/src/core.go
+@@ -10,3 +20,4 @@ func Check() {
+     a := 1
+-    b := 2
++    b := 4
++    c := 5
+     return
+diff --git a/gen/api.pb.go b/gen/api.pb.go
+index 4444444..5555555 100644
+--- a/gen/api.pb.go
++++ b/gen/api.pb.go
+@@ -1 +1 @@
+-old
++new
+\\ No newline at end of file
+diff --git a/src/extra.go b/src/extra.go
+new file mode 100644
+index 0000000..7777777
+--- /dev/null
++++ b/src/extra.go
+@@ -0,0 +1 @@
++package core
+"""
+
+
+class RefreshTests(unittest.TestCase):
+    """`summary refresh`, which carries a summary forward to its pull request's current head and base."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.path = self.tmp / "summary.json"
+        self.compared: list[str] = []
+        cwd = os.getcwd()
+        os.chdir(self.tmp)
+        self.addCleanup(os.chdir, cwd)
+
+    def gh(self, *args: str, input: str | None = None) -> str:
+        """GitHub's answers about pull request 7, now at head cccc… on main, whose merge base with it is eeee…."""
+        if args[:2] == ("pr", "view"):
+            return json.dumps({"title": "Change the core again", "headRefOid": "c" * 40, "headRefName": "feature",
+                               "baseRefName": "main"})
+        if args[:2] == ("api", "repos/owner/repo"):
+            return "main\n"
+        if args[:2] == ("api", "-H"):
+            self.compared.append(args[-1])
+            return MOVED_DIFF
+        if args[:2] == ("api", f"repos/owner/repo/compare/main...{'c' * 40}"):
+            return "e" * 40 + "\n"
+        raise AssertionError(f"unexpected gh {args}")
+
+    def published(self) -> dict:
+        """A summary published at head aaaa…, when the pull request was stacked on pull request 6."""
+        data = make_summary([
+            {"id": "core", "title": "Core", "kicker": "The check", "intro": ["Why <code>Check</code> changed."],
+             "checks": [{"kind": "context", "text": "Hold the check in mind."}],
+             "files": [{"path": "src/core.go", "note": "The change.",
+                        "checks": [{"kind": "flag", "text": "Look at <code>c</code>.", "line": 12},
+                                   {"kind": "verify", "text": "The old value is gone.", "line": 11, "side": "old"}]},
+                       {"path": "src/core_test.go", "note": "The test.",
+                        "checks": [{"kind": "context", "text": "Covers <code>Check</code>.", "line": 2}]}]},
+            {"id": "gen", "title": "Generated", "files": [{"path": "gen/api.pb.go"}]},
+        ])
+        data["pr"].update(headRef="feature", baseRef="feature-a", basePr=6)
+        return data
+
+    def refresh(self, data: dict | None, *args: str) -> tuple[int, str, str]:
+        """Refresh `data`, or the summary file as it is when `data` is None."""
+        if data is not None:
+            self.path.write_text(json.dumps(data))
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(summary, "gh", side_effect=self.gh), redirect_stdout(out), redirect_stderr(err):
+            code = cli.main(["summary", "refresh", "--summary", str(self.path), *args])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_moves_head_and_base_regroups_the_files_and_leaves_the_prose(self) -> None:
+        before = self.published()
+
+        code, out, err = self.refresh(before)
+
+        self.assertEqual(0, code, err)
+        after = json.loads(self.path.read_text())
+        self.assertEqual({"repo": "owner/repo", "number": 7, "title": "Change the core again", "head": "c" * 40,
+                          "headRef": "feature", "base": "e" * 40, "baseRef": "main"}, after["pr"],
+                         "the merged base moves pr.base, and a pull request on main is stacked on nothing")
+        self.assertEqual([f"repos/owner/repo/compare/{'e' * 40}...{'c' * 40}"], self.compared,
+                         "the diff runs from the new merge base, not the stale one")
+        expected = self.published()
+        expected["pr"] = after["pr"]
+        del expected["groups"][0]["files"][1]
+        expected["groups"].append({"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "checks": [],
+                                   "files": [{"path": "src/extra.go"}]})
+        self.assertEqual(expected, after, "the stale note stays, and every other piece of prose is as it was")
+        self.assertEqual(["summary.json"], [p.name for p in self.tmp.iterdir()], "no temporary file is left")
+        for line in (f"pr.head: {'a' * 40} → {'c' * 40}", f"pr.base: {'b' * 40} → {'e' * 40}",
+                     "pr.baseRef: feature-a → main", "pr.basePr: 6 → none", "src/extra.go (new)",
+                     "src/core_test.go, from core", "note: The test.",
+                     "context on line 2 (new side): Covers <code>Check</code>.",
+                     "1 note names a line the diff no longer shows",
+                     "src/core.go line 12 (new side), in core: flag: Look at <code>c</code>."):
+            self.assertIn(line, out)
+        self.assertNotIn("line 11", out, "the old side still shows line 11")
+
+    def test_a_group_the_drops_empty_is_kept_and_reported(self) -> None:
+        data = self.published()
+        data["groups"].insert(1, {"id": "tests", "title": "Tests", "intro": ["How it is tested."],
+                                  "files": [data["groups"][0]["files"].pop()]})
+
+        code, out, _ = self.refresh(data)
+
+        self.assertEqual(0, code)
+        tests = json.loads(self.path.read_text())["groups"][1]
+        self.assertEqual({"id": "tests", "title": "Tests", "intro": ["How it is tested."], "files": []}, tests)
+        self.assertIn("group tests has no files left", out)
+
+    def test_new_files_join_the_unassigned_group_the_summary_has(self) -> None:
+        data = self.published()
+        data["groups"].insert(0, {"id": "unassigned", "title": "Unassigned", "files": [{"path": "gen/api.pb.go"}]})
+        data["groups"][2]["files"] = []
+        (self.tmp / "pr.diff").write_text(MOVED_DIFF)
+
+        code, _, err = self.refresh(data, "--diff", str(self.tmp / "pr.diff"))
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([], self.compared, "--diff fetches no diff")
+        groups = json.loads(self.path.read_text())["groups"]
+        self.assertEqual(["unassigned", "core", "gen"], [g["id"] for g in groups], "no second unassigned group")
+        self.assertEqual([{"path": "gen/api.pb.go"}, {"path": "src/extra.go"}], groups[0]["files"])
+
+    def test_a_summary_already_at_the_head_is_left_alone(self) -> None:
+        self.assertEqual(0, self.refresh(self.published())[0])
+        written = self.path.read_bytes()
+        stamp = self.path.stat()
+
+        code, out, _ = self.refresh(None)
+
+        self.assertEqual(0, code)
+        self.assertIn(f"already matches owner/repo#7 at {'c' * 9}; nothing changed", out)
+        self.assertIn("1 note names a line the diff no longer shows", out, "a stale note is listed until it moves")
+        self.assertEqual(written, self.path.read_bytes())
+        self.assertEqual((stamp.st_ino, stamp.st_mtime_ns), (self.path.stat().st_ino, self.path.stat().st_mtime_ns),
+                         "the file is not rewritten")
+
+
 if __name__ == "__main__":
     unittest.main()
