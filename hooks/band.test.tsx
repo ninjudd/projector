@@ -50,7 +50,11 @@ const pr = (number: number, title: string, fields: Record<string, unknown> = {})
 const BY_REPO: Record<string, Record<string, unknown>> = {
   'o/r': {
     p1: pr(1, 'Signed-off change'),
-    p2: pr(2, 'Change under review', { isDraft: true, reviewThreads: { nodes: [{ isResolved: false }] } }),
+    p2: pr(2, 'Change under review', {
+      isDraft: true,
+      reviewThreads: { nodes: [{ isResolved: false }] },
+      updatedAt: new Date(NOW - 45_000).toISOString(),
+    }),
     p3: pr(3, 'Already merged', { state: 'MERGED' }),
   },
   'x/y': {
@@ -210,7 +214,15 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   const facts = await ui.find({ type: 'Text', text: /^watching · by ada · fix-branch · \+12 −3 in 2 files$/ })
   expect(facts?.props.color).toBe('subtle')
   expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: /^ · updated 5m ago$/ }))?.props.color).toBe('subtle')
+  // The pull request's age ends its line, so the drawer does not repeat it.
+  expect(await ui.find({ type: 'Text', text: /updated 5m ago/ })).toBeUndefined()
+  // The drawer starts in the row's first column, under the number.
+  const opened = await ui.find({ key: 'drawer:x/y#7' })
+  expect(opened).toBeDefined()
+  expect(opened?.props.marginLeft).toBeUndefined()
+  // Under the facts, discuss has a row, and each link a line of its own, so a terminal without hyperlinks shows the whole URL.
+  const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
+  expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'Box', 'github:x/y#7', 'projector:x/y#7'])
   expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[projector](${SUMMARY})`)
   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
@@ -222,6 +234,31 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
 
   await ui.press({ key: 'pr:x/y#7' })
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('ends each pull request’s line with its age, in one column as wide as the widest', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#1\no/r#2\n', [WATCH]: 'x/y#7\n' })
+
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  // Ages of different widths sit right-aligned in one column, so the titles and notes before them line up.
+  const ages = await Promise.all(['o/r#1', 'o/r#2', 'x/y#7'].map(key => ui.find({ key: `age:${key}` })))
+  expect(ages.map(age => [age?.props.width, age?.props.justifyContent])).toEqual([
+    [3, 'flex-end'],
+    [3, 'flex-end'],
+    [3, 'flex-end'],
+  ])
+  expect((await ui.find({ type: 'Text', text: /^45s$/ }))?.props.color).toBe('subtle')
+  expect((await ui.find({ type: 'Text', text: /^5m$/ }))?.props.color).toBe('subtle')
+  // A pull request GitHub gave no time for shows no age.
+  expect(ages[0]?.text).toBe('')
   await ui.unmount()
 })
 
