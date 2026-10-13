@@ -921,16 +921,17 @@ project stayed `in-progress` until the check that § 12 records.
 
 ## 12. Outcome
 
-The project shipped, in releases 0.7.15 through 0.7.18 and in #303, which
-is on `main` for the next release. #319 followed on `main`, and § 13
-records it: a reply leaves a question open, and the question's agent can
-revise it. An agent posts a question or a notice with `project inbox ask`
-or `project inbox tell`, or with the `ask` and `tell` tools in Claude
-Code. Projector's band lists both kinds, and each item's drawer lets you
-discuss, dismiss, or snooze it. The owner checked the main-screen row of
-§ 4 by hand under tmux. That row was the last criterion without
-evidence and the check that § 6, § 9, and § 11.10 made the gate
-for completion, and it also closes the main-screen row that the
+The project shipped, in releases 0.7.15 through 0.7.18 and in #303 and
+#305, which are on `main` for the next release. #319 followed on `main`,
+and § 13 records it: a reply leaves a question open, and the question's
+agent can revise it. An agent posts a question or a notice with
+`project inbox ask` or `project inbox tell`, or with the `ask` and `tell`
+tools in Claude Code, and takes one back with `project inbox withdraw` or
+the `withdraw` tool. Projector's band lists both kinds, and each item's
+drawer lets you discuss, dismiss, or snooze it. The owner checked the
+main-screen row of § 4 by hand under tmux. That row was the last
+criterion without evidence and the check that § 6, § 9, and § 11.10 made
+the gate for completion, and it also closes the main-screen row that the
 [questions](../questions/readme.md) plan carried into § 4. As § 7 says,
 the look of notices and snoozing that stands at this check is the design.
 
@@ -948,6 +949,7 @@ the look of notices and snoozing that stands at this check is the design.
 | 0.7.18 | #296 | The Projector section says when the inbox helps and how to clear what was answered, and `implement` asks through the `ask` tool where the tool exists |
 | 0.7.18 | #294, #299 | Per-session numbering: the plan in § 11, then the build that § 11.10 records |
 | On `main`, after 0.7.18 | #303 | More band changes of § 10: a pull request's drawer starts under its state, open review threads show as a yellow `⋮` count beside the age, and a sent reply that quotes a notice closes the notice's drawer |
+| On `main`, after 0.7.18 | #305 | An agent takes back an item it posted with `project inbox withdraw` or the `withdraw` tool: the item leaves the band at once, and nothing goes back to the agent |
 
 #319 followed #303 on `main`, and § 13 records it. Only picking an option
 answers a question. Anything else you send under a quoted question is a
@@ -1027,6 +1029,7 @@ unless the row names another file.
 | § 11.8: a number typed in a prompt | `a number or an old reference typed in the prompt reaches the agent as plain text` |
 | § 11.8: the toast for a dropped submit | `a dropped submit reopens the question and says why` |
 | § 11.8: no number in the band | `no line or drawer shows an item’s number` |
+| #305: an agent withdraws an item it posted, which § 12.2 and § 13 rely on | `WithdrawTests`, `the withdraw tool takes an item out of the band at once, and nothing goes back to the agent`, `the withdraw tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs` |
 
 § 5 and § 11.9 name no measurement. They claim that no path that runs
 often gains work, and the tests hold them to it: an idle band's tick
