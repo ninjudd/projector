@@ -950,9 +950,9 @@ costs three things:
   already resolved with `65`, a number no session holds with `66`, a number
   open in two sessions with `67`, and a busy store with `75`. `list` and
   `show` give a withdrawn item's state as `withdrawn`. When `withdraw`,
-  `dismiss`, or `snooze` refuses a resolved item, its message says how the
-  item was resolved: `3 is already withdrawn`, `3 is already dismissed`, or
-  `3 is already answered, as 3.a`.
+  `dismiss`, `snooze`, or `answer` refuses a resolved item, its message says
+  how the item was resolved: `3 is already withdrawn`, `3 is already
+  dismissed`, or `3 is already answered, as 3.a`.
 - **The `withdraw` tool.** The hooks module registers it in
   `session.start` with `ask` and `tell`, with `isDeferred: false`, so the
   model sees `mcp__projector__withdraw` from the first turn. It takes
@@ -1019,7 +1019,7 @@ version 9.
 
 | File | Change |
 | --- | --- |
-| `src/projector/inbox.py` | `dismiss` takes `withdrawn`, which records it on the answer and delivers the item at once; `resolution` names how an item was resolved in the refusals of `dismiss` and `snooze` |
+| `src/projector/inbox.py` | `dismiss` takes `withdrawn`, which records it on the answer and delivers the item at once; `resolution` names how an item was resolved in the refusals of `dismiss`, `snooze`, and `answer` |
 | `src/projector/cli.py` | `project inbox withdraw`; a withdrawn item's state is `withdrawn` |
 | `tests/test_inbox.py` | `WithdrawTests`, and `withdraw` in the tests that every lookup command shares |
 | `hooks/types.d.ts` | `Dismissal`, with an optional `withdrawn` |

@@ -358,7 +358,7 @@ def answer(session: Optional[str], ref: str, letter: Optional[str], text: Option
     def record(question: dict) -> None:
         refuse_notice(question, "takes no answer")
         if question.get("answer"):
-            raise InboxError(f"{question['ref']} is already answered, as {answer_ref(question)}")
+            raise InboxError(f"{question['ref']} is already {resolution(question)}")
         last = typed_letter(question)
         if letter is None:
             raise InboxError(f"name the answer's letter, such as {question['ref']}.a")

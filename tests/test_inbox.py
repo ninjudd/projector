@@ -189,7 +189,7 @@ class NumberingTests(InboxCase):
         with mock.patch.dict(os.environ, {"PROJECTOR_SESSION": "s1"}):
             code, _, err = self.run_cli("answer", "1.a")
         self.assertEqual(65, code)
-        self.assertIn("already answered", err)
+        self.assertIn("already dismissed", err)
         self.assertNotIn("answer", self.item(1, "s2"))
 
     def test_refuses_a_reference_in_an_old_form_with_the_new_ones(self) -> None:
@@ -650,6 +650,16 @@ class WithdrawTests(InboxCase):
             for command in ("withdraw", "dismiss"):
                 with self.subTest(ref=ref, command=command):
                     self.assertEqual((65, "", f"project: {said}"), self.run_cli(command, ref, "--session", "s1"))
+
+    def test_answering_a_withdrawn_or_dismissed_question_says_which(self) -> None:
+        self.ask("Rebase?", "--recommend", "Yes")
+        self.run_cli("withdraw", "1", "--session", "s1")
+        self.run_cli("dismiss", "3", "--session", "s1")
+        for reference, said in (("1.a", "1 is already withdrawn\n"), ("3.a", "3 is already dismissed\n")):
+            with self.subTest(reference=reference):
+                self.assertEqual((65, "", f"project: {said}"), self.run_cli("answer", reference, "--session", "s1"))
+        self.assertNotIn("letter", self.item(1)["answer"])
+        self.assertNotIn("letter", self.item(3)["answer"])
 
 
 class SnoozeTests(InboxCase):
