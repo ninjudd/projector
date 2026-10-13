@@ -32,7 +32,7 @@ from .config import (
     ConfigError,
     parse_value,
     same_value,
-    setting_type,
+    unset_value,
     user_config_path,
     write_value,
 )
@@ -418,7 +418,7 @@ def parser() -> argparse.ArgumentParser:
     add_output(config_set)
 
     config_unset = config_commands.add_parser("unset", help="remove one value from one configuration file")
-    config_unset.add_argument("key", help="a key Projector reads, for example watch.auto_start")
+    config_unset.add_argument("key", help="a key Projector reads, or any other key the file sets")
     add_config_file(config_unset)
     add_output(config_unset)
 
@@ -832,12 +832,11 @@ def report_override(arguments: argparse.Namespace, change: Change) -> None:
 
 
 def change_config(arguments: argparse.Namespace) -> int:
+    path = config_file(arguments)
     if arguments.config_command == "set":
-        value = parse_value(arguments.key, arguments.value)
+        change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value))
     else:
-        setting_type(arguments.key)
-        value = None
-    change = write_value(config_file(arguments), arguments.key, value)
+        change = unset_value(path, arguments.key)
     if arguments.json_output:
         print(json_text({"action": change.action, "key": change.key, "old": change.old, "new": change.new,
                          "file": str(change.path)}), flush=True)

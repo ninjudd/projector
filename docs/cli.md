@@ -517,8 +517,8 @@ project config get review.summarize --json
 ```
 
 `get` reads any key, so a skill or a script can keep settings of its own in
-these files. [`set` and `unset`](#change-configuration) accept only the keys
-Projector reads, which are these:
+these files. [`set`](#change-configuration) accepts only the keys Projector
+reads, which are these:
 
 | Key | Type | Default | Read by |
 | --- | --- | --- | --- |
@@ -574,10 +574,21 @@ Outside a Git repository, the default has no file to change, so `set` and
 `unset` exit 69 unless you pass `--user` or `--file`.
 
 `set` takes `true` or `false` for a boolean key and any text for a string
-key, and refuses any other value with exit code 2. Both commands refuse a
-key that the table in [Read configuration](#read-configuration) does not
-list, with exit code 2 and the list of keys. `get` still reads a key that
-is not in the table.
+key, and refuses any other value with exit code 2. It also refuses, with
+exit code 2 and the list of keys, a key that the table in
+[Read configuration](#read-configuration) does not list. `get` still reads
+a key that is not in the table.
+
+`unset` removes any key the file sets, including one the table does not
+list, such as a setting Projector no longer reads:
+
+```sh
+project config unset review.peer_wait
+```
+
+A key the table lists but the file does not set is reported as
+`unchanged`. A key outside the table that the file does not set, such as a
+misspelled one, is refused with exit code 2 and the list of keys.
 
 `set` and `unset` edit the file as text and change only the line that sets
 the key, so your comments, blank lines, and other settings stay as you wrote

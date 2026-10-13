@@ -475,6 +475,33 @@ class ConfigSetTests(unittest.TestCase):
             self.assertIn("watch.auto_start", stderr)
             self.assertFalse(self.repo_file.exists())
 
+    def test_unset_removes_a_key_outside_the_schema_that_the_file_sets(self) -> None:
+        self.repo_file.write_text(
+            '# mine\n[review]\npeer_wait = "10m"  # no longer read\nsummarize = false\n'
+            "\n[legacy]\nlimits = { retries = 3 }\nkept = true\n"
+        )
+
+        code, stdout, stderr = self.invoke("config", "unset", "review.peer_wait")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(f"unset review.peer_wait in {self.repo_file}\n", stdout)
+
+        code, _, stderr = self.invoke("config", "unset", "legacy.limits")
+        self.assertEqual(0, code, stderr)
+
+        self.assertEqual("# mine\n[review]\nsummarize = false\n\n[legacy]\nkept = true\n", self.repo_file.read_text())
+
+    def test_unset_refuses_a_misspelled_key_the_file_does_not_set(self) -> None:
+        text = '[review]\npeer_wait = "10m"\n'
+        self.repo_file.write_text(text)
+
+        code, stdout, stderr = self.invoke("config", "unset", "review.peer_wiat")
+
+        self.assertEqual(2, code)
+        self.assertEqual("", stdout)
+        self.assertIn(f"unknown key 'review.peer_wiat', which {self.repo_file} does not set", stderr)
+        self.assertIn("watch.auto_start", stderr)
+        self.assertEqual(text, self.repo_file.read_text())
+
     def test_a_value_of_the_wrong_type_is_refused(self) -> None:
         cases = [
             ("watch.auto_start", "yes", "must be true or false"),

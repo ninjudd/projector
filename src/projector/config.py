@@ -80,11 +80,15 @@ def same_value(one: Any, other: Any) -> bool:
     return type(one) is type(other) and one == other
 
 
+def _unknown_key(key: str, reason: str = "") -> UsageError:
+    return UsageError(f"unknown key {key!r}{reason}; the keys are {', '.join(sorted(SETTINGS))}")
+
+
 def setting_type(key: str) -> type:
     try:
         return SETTINGS[key]
     except KeyError:
-        raise UsageError(f"unknown key {key!r}; the keys are {', '.join(sorted(SETTINGS))}") from None
+        raise _unknown_key(key) from None
 
 
 def parse_value(key: str, text: str) -> Any:
@@ -286,7 +290,8 @@ def write_value(path: Path, key: str, value: Any) -> Change:
     if same_value(old, value):
         return Change("unchanged", key, old, value, path)
 
-    expected = {name: setting for name, setting in _flatten(before).items() if name != key}
+    expected = {name: setting for name, setting in _flatten(before).items()
+                if name != key and not name.startswith(f"{key}.")}
     if value is not None:
         expected[key] = value
     text = _edited(original or "", key, value)
@@ -303,6 +308,20 @@ def write_value(path: Path, key: str, value: Any) -> Change:
             write_through(path, original)
         raise ProjectorError(f"{path}: {key} did not read back as written, so the file was restored")
     return Change("unset" if value is None else "set", key, old, value, path)
+
+
+def unset_value(path: Path, key: str) -> Change:
+    """Remove `key` from the file at `path`.
+
+    A key outside `SETTINGS` is removed when the file sets it, so a setting
+    Projector no longer reads can be cleaned up, and refused when the file
+    does not, so a misspelled key still gets the list of keys.
+    """
+
+    change = write_value(path, key, None)
+    if change.action == "unchanged" and key not in SETTINGS:
+        raise _unknown_key(key, f", which {path} does not set")
+    return change
 
 
 def _reads_back(text: str, key: str, value: Any, expected: dict[str, Any]) -> bool:
