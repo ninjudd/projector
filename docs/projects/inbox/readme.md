@@ -960,14 +960,15 @@ one beside the old.
   option with more text after it, and a question back are replies, on
   the quote's own line or under it.
 - **Each quote speaks to one question.** When two open questions share a
-  subject, an option goes to the one whose drawer last put that option,
-  or the quote alone through **discuss**, in the prompt, and otherwise to
-  the oldest that offers it. A reply goes to the one whose drawer put the
-  quote in the prompt, and otherwise to the oldest. A prompt that answers
-  or replies to one of them says nothing to the other: it adds no note
-  for the other's subagent and leaves the other's drawer open. To know
-  which drawer put a quote there, the band records **discuss** as well as
-  each option it puts in the prompt.
+  subject, a quote that one's drawer put in the prompt, with an option or
+  alone through **discuss**, speaks to that question: one of its options
+  answers it, and any other text replies to it. A quote no drawer put
+  there goes to the oldest question that offers the option, and
+  otherwise replies to the oldest. A prompt that answers or replies to
+  one of them says nothing to the other: it adds no note for the other's
+  subagent and leaves the other's drawer open. To know which drawer put a
+  quote there, the band records **discuss** as well as each option it
+  puts in the prompt.
 - **A reply closes the drawer and posts nothing.** A sent prompt closes
   the drawer of each question it answers or replies to, as § 10 has it
   close the drawer of each notice it quotes. A replied question stays
@@ -1002,14 +1003,16 @@ one beside the old.
   `withdraw` does, puts the revised question in the band at once, and
   raises no notification.
 - **A pick made before a revision answers no question.** The band
-  remembers each answer a drawer put in the prompt with the question's
-  quote as it read then. A revision marks the question's picks stale. A
-  sent prompt that holds a stale pick, its old quote followed by its
-  option, answers nothing, not even an older question that shares the
-  old words and offers that option. It replies to the revised question
-  instead: the question stays open, its drawer closes, and the agent
-  reads the prompt. A fresh pick from the revised question's drawer
-  answers it, even when the revision kept that quote and that option.
+  remembers each answer a drawer put in the prompt, and each **discuss**,
+  with the question's quote as it read then. A revision marks the
+  question's picks stale. A sent prompt that holds a stale pick, its old
+  quote followed by its option, answers nothing, not even an older
+  question that shares the old words and offers that option. Neither does
+  an option typed under a quote that a stale **discuss** put there. Each
+  replies to the revised question instead: the question stays open, its
+  drawer closes, and the agent reads the prompt. A fresh pick or
+  **discuss** in the revised question's drawer speaks to it again, even
+  when the revision kept that quote and that option.
 
 ### 13.3 Why this design
 
@@ -1060,6 +1063,7 @@ one beside the old.
 | A sent reply leaves the question listed, closes its drawer, runs no `project inbox answer`, and names the subagent that asked | `a sent reply leaves the question listed, closes its drawer, and records no answer, naming the subagent that asked`, `discuss keeps the drawer open with the question above a blank line, a reply under it answers nothing, and dismiss resolves it`, in `hooks/band.test.tsx` |
 | The `revise` tool redraws the question with its new text under the same number, and a pick made from the old text answers nothing | `the revise tool redraws the question with its new text at once, keeping its number` |
 | A pick made before a revision answers no question, an older question with the same words included, and replies to the revised question; a fresh pick from the new drawer answers it | `a pick made before its question was revised answers no question, and replies to the revised one`, in `hooks/inbox.test.ts`; `an answer chosen before a revise answers no question, and a pick from the new drawer answers the revised one`, `an answer chosen before a revise rewords its question does not answer another question with the old words` |
+| An option typed under a quote that **discuss** put there before a revision answers no question and replies to the revised question; a pick in another question's drawer still answers that one | `an option typed under a quote discussed before its question was revised answers no question, and replies to the revised one`, in `hooks/inbox.test.ts`; `an option typed under a quote discussed before a revise answers no question, and replies to the revised one` |
 | The `revise` tool refuses what the CLI refuses | `the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs` |
 | `project inbox revise` replaces what it is given and keeps the number and everything else; refuses a resolved question, a notice, an unknown number, and bad input, changing nothing; serializes under the lock | `ReviseTests` in `tests/test_inbox.py` |
 | The Projector section's new text is pinned to begin marker 11 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |

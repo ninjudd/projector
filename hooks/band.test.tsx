@@ -1697,6 +1697,34 @@ test('an answer chosen before a revise rewords its question does not answer anot
   await ui.unmount()
 })
 
+test('an option typed under a quote discussed before a revise answers no question, and replies to the revised one', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const newer = held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000, agentId: 'agent-1' })
+  const session = questionWorld(on, clock, [held(), newer], { agents: [running('running')] })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'discuss:2' })
+  await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
+  // You type one of the options under the quote that discuss put there before the revision.
+  const typed = '"Decline the finding?"\n\nDecline it\n'
+  await $.prompt.submit({ text: typed, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
+  expect(session.store.store.get('2')?.answer).toBeUndefined()
+  expect(session.submitted.at(-1)).toEqual({
+    text: typed,
+    context: [
+      'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
+    ],
+  })
+  expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

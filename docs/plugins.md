@@ -340,16 +340,19 @@ what you asked and then settles the question. It withdraws the question if
 your reply settles it, revises it if your reply shows it was unclear or the
 choice has changed, or leaves it open while it still needs you. A revised
 question keeps its place in the list, and the band shows its new text as
-soon as the agent revises it. An option you put in your prompt before the
-revision answers no question: sent as it stands, it replies to the revised
-question. To answer, choose again in the revised question's drawer.
+soon as the agent revises it. An option that a drawer put in your prompt
+before the revision answers no question, and neither does an option you
+type under a quote that **discuss** put there before it: either one replies
+to the revised question. To answer, choose again in the revised question's
+drawer.
 
 Each quote speaks to one question. When two open questions ask the same
-thing, an option answers the one whose drawer last put that option, or the
-quote alone through **discuss**, in your prompt, or else the older one that
-offers it. A reply goes to the one whose drawer put the quote in your
-prompt, or else to the older one. A prompt that answers or replies to one
-of them says nothing to the other and leaves its drawer alone.
+thing, a quote that one's drawer put in your prompt, with an option or
+alone through **discuss**, speaks to that question: one of its options
+answers it, and anything else replies to it. A quote that no drawer put
+there, such as one you type, goes to the older question that offers the
+option, or else replies to the older one. A prompt that answers or replies
+to one of them says nothing to the other and leaves its drawer alone.
 
 Only a prompt you send, at the terminal or through Remote Control, answers
 or replies to a question. Another session's message or a notification that

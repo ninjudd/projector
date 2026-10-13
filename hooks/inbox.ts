@@ -69,16 +69,16 @@ export type Read = { answers: Given[]; replies: Question[] }
  * question. A quoted open question takes an answer only when its quote ends
  * its line and the text after it, up to the next quoted item or the prompt's
  * end, is one of its options, whatever blank lines and spaces surround it:
- * what an option's number puts in the prompt. When open questions share the
- * text, the quote goes to the one whose drawer last put that answer, or the
- * quote alone, in the prompt, `proposed` holding them oldest first, and
- * otherwise to the oldest that offers it. Any other text after a quote
- * replies to one question: the one whose drawer last put that quote in the
- * prompt, and otherwise the oldest with that text. A quote and an answer
- * that a drawer put there before its question was revised answer nothing, so
- * a pick never falls through to another question with the old text: they
- * reply to the revised question. Only questions take answers and replies,
- * snoozed ones included.
+ * what an option's number puts in the prompt. A quote that a drawer put in
+ * the prompt, with that answer or alone through discuss, speaks to that
+ * drawer's question, `proposed` holding them oldest first: one of its options
+ * answers it, and any other text replies to it. A drawer's pick from before
+ * its question was revised only replies, so text chosen from the old question
+ * never answers it or falls through to another question with the old words.
+ * A quote no drawer put there goes to the oldest question with that text that
+ * offers the option, and otherwise replies to the one whose drawer last put
+ * that quote in the prompt, or else to the oldest with that text. Only
+ * questions take answers and replies, snoozed ones included.
  */
 export function readPrompt(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Read {
   const open = items
@@ -96,32 +96,35 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
   const answers: Given[] = []
   const answered = new Set<string>()
   const replied = new Set<string>()
-  const isFree = (ref: string) => open.some(question => question.ref === ref) && !answered.has(ref) && !replied.has(ref)
+  const isOpen = (ref: string) => open.some(question => question.ref === ref) && !answered.has(ref)
+  const isFree = (ref: string) => isOpen(ref) && !replied.has(ref)
+  const answer = (question: Question, said: string) => {
+    answered.add(question.ref)
+    answers.push({ question, letter: letterAt(question.choices.indexOf(said)) })
+  }
   for (const { end, quote } of quotes) {
     const after = text.slice(end, quotes.find(next => next.at >= end)?.at)
     const said = /^[ \t]*\n/.test(after) ? after.trim() : undefined
-    const stale = proposed.findLast(one => one.isStale === true && one.quote === quote && one.answer === said)
-    if (stale !== undefined) {
-      if (isFree(stale.ref)) replied.add(stale.ref)
+    // The drawer that put this text in the prompt: the last to put this
+    // quote and this answer there, else the last to discuss this quote.
+    const source =
+      proposed.findLast(one => one.quote === quote && one.answer === said && isOpen(one.ref)) ??
+      proposed.findLast(one => one.quote === quote && one.answer === '' && isOpen(one.ref))
+    if (source !== undefined) {
+      const question = open.find(one => one.ref === source.ref)
+      if (source.isStale !== true && question !== undefined && said !== undefined && question.choices.includes(said)) {
+        answer(question, said)
+      } else if (isFree(source.ref)) {
+        replied.add(source.ref)
+      }
       continue
     }
     const offering = open.filter(
       question =>
-        quoteOf(question) === quote &&
-        !answered.has(question.ref) &&
-        said !== undefined &&
-        question.choices.includes(said),
+        quoteOf(question) === quote && isOpen(question.ref) && said !== undefined && question.choices.includes(said),
     )
-    const drawer = proposed.findLast(
-      one =>
-        one.isStale !== true &&
-        (one.answer === said || one.answer === '') &&
-        offering.some(question => question.ref === one.ref),
-    )
-    const question = offering.find(one => one.ref === drawer?.ref) ?? offering[0]
-    if (question !== undefined && said !== undefined) {
-      answered.add(question.ref)
-      answers.push({ question, letter: letterAt(question.choices.indexOf(said)) })
+    if (offering[0] !== undefined && said !== undefined) {
+      answer(offering[0], said)
       continue
     }
     const intended = proposed.findLast(one => one.quote === quote && isFree(one.ref))

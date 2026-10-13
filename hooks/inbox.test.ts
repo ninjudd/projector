@@ -220,6 +220,27 @@ test('a pick made before its question was revised answers no question, and repli
   })
 })
 
+test('an option typed under a quote discussed before its question was revised answers no question, and replies to the revised one', () => {
+  const older = question({ postedAt: NOW - 120_000 })
+  const revised = question({ ref: '2', number: 2, detail: 'The cap is three.' })
+  const reworded = question({ ref: '2', number: 2, subject: 'Decline the retry finding?' })
+  const discussed = [pick('2', '', { isStale: true })]
+  const decline = '"Decline the finding?"\n\nDecline it\n'
+  expect(readPrompt(decline, [older, revised], discussed)).toEqual({ answers: [], replies: [revised] })
+  expect(readPrompt(decline, [older, reworded], discussed)).toEqual({ answers: [], replies: [reworded] })
+  // A pick you then make in the older question's drawer still answers it.
+  const both = [...discussed, pick('1', 'Decline it')]
+  expect(readPrompt(`"Decline the finding?"\n\nwhy?\n${decline}`, [older, revised], both)).toEqual({
+    answers: [{ question: older, letter: 'a' }],
+    replies: [revised],
+  })
+  // Discussed again in the revised drawer, the quote answers the revised question.
+  expect(readPrompt(decline, [older, revised], [pick('2', '')])).toEqual({
+    answers: [{ question: revised, letter: 'a' }],
+    replies: [],
+  })
+})
+
 test('the note beside an answer or a reply names the subagent that asked', () => {
   const asked = question({ agentId: 'agent-1' })
   expect(relayNote(asked, [agent('completed')])).toBe(
