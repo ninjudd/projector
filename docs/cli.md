@@ -1998,3 +1998,4 @@ Projector uses these exit codes:
 | `69` | Git, the interactive editor, or the installer is unavailable. |
 | `75` | Another command held an inbox session's lock for five seconds; run the command again. |
 | `78` | A `.projector.toml` file is not valid TOML. |
+| `141` | The reader of the command's output closed before reading all of it, as `head` does once it has its lines. The command stops without a message, and 141 is the status a shell reports for `cat` or `git` stopped the same way. |

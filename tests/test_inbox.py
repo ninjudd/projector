@@ -454,12 +454,13 @@ class DeliveryTests(InboxCase):
         self.assertEqual("", self.run_cli("watch", "--once", "--session", "s1")[1])
 
     def test_watch_leaves_an_answer_it_could_not_print_to_the_next_deliverer(self) -> None:
-        class ClosedPipe(io.StringIO):
-            def write(self, text: str) -> int:
-                raise BrokenPipeError(32, "Broken pipe")
-
-        with contextlib.chdir(self.scratch), redirect_stdout(ClosedPipe()), redirect_stderr(io.StringIO()):
-            self.assertEqual(65, cli.main(["inbox", "watch", "--once", "--session", "s1"]))
+        read, write = os.pipe()
+        os.close(read)
+        stderr = io.StringIO()
+        with open(write, "w") as closed_pipe, contextlib.chdir(self.scratch), redirect_stdout(closed_pipe), \
+                redirect_stderr(stderr):
+            self.assertEqual(141, cli.main(["inbox", "watch", "--once", "--session", "s1"]))
+        self.assertEqual("", stderr.getvalue())
         self.assertIn("\tdelivering 1.b\t", self.run_cli("list", "--session", "s1")[1])
         later = inbox.now_ms() + inbox.CLAIM_EXPIRES_MS + 1
         with mock.patch.object(inbox, "now_ms", return_value=later):
