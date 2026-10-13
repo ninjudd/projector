@@ -1522,15 +1522,17 @@ refuses outside one; the repository is that checkout's `origin`, and `--repo`
 must name the same one. Every later command reads the checkout, worktree, and
 repository from the state file, finding it by `--repo` or by the pull request's
 number, and by `--model` or the one model with a review of the pull request
-set up on this machine, so it runs from any directory. With several models
-set up, it refuses, naming them, until `--model` picks one. State an earlier
-release wrote is not read, so a review set up before an upgrade runs `setup`
-again. A command that posts a review, or posts or deletes a start comment,
-runs `gh` as the reviewer, `--reviewer` or `review.username` or else the
-authenticated user, with `GH_TOKEN` set to `gh auth token --user <reviewer>`
-for that call alone, so the account the rest of the session uses is left
-alone. `hold` posts as the authenticated user, who must be the pull request's
-author.
+set up on this machine, so it runs from any directory. `finish` is the
+exception: it deletes comments, so it never takes the repository from the
+state file, and outside a checkout it needs `--repo`. With several models
+set up, each later command refuses, naming them, until `--model` picks one.
+State an earlier release wrote is not read, so a review set up before an
+upgrade runs `setup` again. A command that posts a review, or posts or
+deletes a start comment, runs `gh` as the reviewer, `--reviewer` or
+`review.username` or else the authenticated user, with `GH_TOKEN` set to
+`gh auth token --user <reviewer>` for that call alone, so the account the
+rest of the session uses is left alone. `hold` posts as the authenticated
+user, who must be the pull request's author.
 
 A review holds a lock for its pull request, head, and model from `setup` until
 it is published, recording the host, the loop, and when it was taken, so a
