@@ -20,14 +20,17 @@ from projector import cli, permissions
 # approval.
 DECISIONS = (
     ("project", "allow", "none"),
-    ("project review publish --loop x", "allow", "allow"),
+    ("project review publish 12 --body body.md --loop x", "allow", "allow"),
     ("project review hold 12 --drop", "allow", "allow"),
-    ("project review setup 12", "allow", "allow"),
+    ("project review setup 12 --model claude", "allow", "allow"),
+    ("project review finish 12 --force", "allow", "allow"),
+    ("project review settle 12 --thread T --result fixed --body reply.md", "allow", "allow"),
     ("project review gate 12", "allow", "none"),
     ("project summary publish --summary summary.json", "allow", "allow"),
     ("project inbox ask question --recommend yes --session s1", "allow", "allow"),
     ("project inbox tell notice --session s1", "allow", "allow"),
     ("project inbox withdraw 3 --session s1", "allow", "allow"),
+    ("project inbox revise 3 --question 'Merge it now?' --session s1", "allow", "allow"),
     ("project inbox watch --session s1", "allow", "allow"),
     ("project inbox claim 3 --session s1", "allow", "allow"),
     ("project inbox answer 3.a --session s1", "ask", "none"),
@@ -168,6 +171,17 @@ class PermissionRulesTests(unittest.TestCase):
                 else:
                     self.assertIn(command, CODEX_LEFT_OUT, "a new command is either allowed or deliberately left out")
                     self.assertIsNone(CODEX_LEFT_OUT[command])
+
+    def test_each_command_line_is_one_the_parser_runs(self) -> None:
+        incomplete = {"project", "project config", "project --version", "projector list"}
+        for command, _, _ in DECISIONS:
+            if command in incomplete:
+                continue
+            with self.subTest(command):
+                words = shlex.split(command)
+                while re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0], re.DOTALL):
+                    words.pop(0)
+                cli.parser().parse_args(words[1:])
 
     def test_site_build_and_serve_take_the_prepare_flags_only_spelled_in_full(self) -> None:
         for command in (["site", "build", "--out", "site"], ["site", "serve"]):
