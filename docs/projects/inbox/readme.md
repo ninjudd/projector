@@ -1080,9 +1080,8 @@ This section supersedes the first bullet of § 10, which made what you type
 under a quoted question its answer, and settles two items of § 7: it
 builds revising in place, and it replaces the rule § 7 set aside with a
 different one, described below. The owner took up revising in place after
-seeing replies close questions the owner had not settled, so this section
-also supersedes § 12.4, which records revising in place as deferred until
-it proves common.
+seeing replies close questions the owner had not settled, and § 12.4
+records that this section takes it up.
 
 ### 13.1 Problem
 
