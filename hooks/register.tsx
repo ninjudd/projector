@@ -724,7 +724,6 @@ export const register: Register = on => {
     const time = await read($, now)
     const opened = await read($, drawer)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
-    // The divider counts the open items of each kind it shows, leaving out a count of zero.
     const counts = (['question', 'notice'] as const).map(kind => {
       const count = shownItems.filter(item => item.kind === kind && item.answer === undefined).length
       return count === 0 ? undefined : `${count} ${kind}${count === 1 ? '' : 's'}`
@@ -876,7 +875,6 @@ export const register: Register = on => {
       const isOpen = answer === undefined
       const isDismissed = answer !== undefined && 'dismissed' in answer
       const pull = pullOf(item)
-      // A resolved item keeps only discuss.
       const actions = [
         { name: 'discuss', onPress: () => fill(`${quoteOf(item)} `) },
         ...(isOpen
@@ -926,8 +924,6 @@ export const register: Register = on => {
               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
               {item.kind === 'question' && drawAnswers(item)}
               <Text key={`before-buttons:${ref}`}> </Text>
-              {/* Each action is its label alone, a plain Button, with a dim bar
-                  between two. */}
               <Box flexDirection="row" columnGap={1}>
                 {actions.flatMap(({ name, onPress }, at) => [
                   ...(at === 0 ? [] : [<Text key={`between:${ref}.${at}`} dimColor>|</Text>]),
