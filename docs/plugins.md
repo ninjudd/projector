@@ -204,10 +204,7 @@ starts with its first row.
 
 When a poll cannot reach GitHub, the band keeps showing the pull requests
 GitHub gave last, and the divider's time shows how old they are. It shows
-GitHub's error only when it has none of them to show. When your loops track
-no open pull request and your inbox is empty, the band shows a quote of
-Osho's, dimmed: “Your mind is a projector; it uses everything as a kind of
-screen, it projects itself on the screen.”
+GitHub's error only when it has none of them to show.
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer says

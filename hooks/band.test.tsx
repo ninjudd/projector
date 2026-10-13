@@ -109,7 +109,7 @@ type Ran = ReturnType<typeof ran>
  */
 type Outcome = Ran | { deny: string }
 
-const QUOTE = '“Your mind is a projector; it uses everything as a kind of screen, it projects itself on the screen.” — Osho'
+const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
 
 /** GitHub's answer to a query, where a test needs another. */
 type Beneath = { github?: (query: string) => Ran }
@@ -333,7 +333,7 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
   await ui.unmount()
 })
 
-test('shows Osho’s quote, dimmed, when no loop tracks an open pull request', async ($, on) => {
+test('shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
   world(on, {}, '')
@@ -343,14 +343,15 @@ test('shows Osho’s quote, dimmed, when no loop tracks an open pull request', a
   await clock.settle()
 
   const ui = await $.ui.mount(BAND)
-  expect((await ui.find({ type: 'Text', text: QUOTE }))?.props.dimColor).toBe(true)
+  // `dimColor` does not dim in every terminal, so the tagline takes the theme's subtle color.
+  expect((await ui.find({ type: 'Text', text: ` ${TAGLINE}` }))?.props.color).toBe('subtle')
   expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
   await ui.unmount()
 
   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
   const texts = (await desktop.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts[0]).toBe(QUOTE)
+  expect(texts[0]).toBe(` ${TAGLINE}`)
   expect(texts.filter(text => text.includes('─'))).toEqual([])
   await desktop.unmount()
 })
@@ -409,7 +410,7 @@ test('says why GitHub failed for a loop added after the band loaded with nothing
 
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: QUOTE })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: TAGLINE })).toBeUndefined()
   await ui.unmount()
 })
 

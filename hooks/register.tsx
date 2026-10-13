@@ -38,7 +38,7 @@ const POLL_MS = 30_000
 const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
 const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
-const QUOTE = '“Your mind is a projector; it uses everything as a kind of screen, it projects itself on the screen.” — Osho'
+const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
 
 // Watching first: a pull request both loops track is listed once, where its
 // watch loop puts it.
@@ -778,8 +778,10 @@ export const register: Register = on => {
           {divider}
           {failure !== undefined ? (
             <Text color="error">{failure}</Text>
+          ) : shown.fetchedAt === null ? (
+            <Text color="subtle">Looking for pull requests…</Text>
           ) : (
-            <Text dimColor>{shown.fetchedAt === null ? 'Looking for pull requests…' : QUOTE}</Text>
+            <Text key="tagline" color="subtle">{` ${TAGLINE}`}</Text>
           )}
         </Box>
       )
