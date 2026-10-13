@@ -33,12 +33,14 @@ is someone else's, so `review-pr` reviews it in the cross-author mode and
 never moves its draft state. Adoption only adds lines, so it stays tracked
 after the request is answered, and every later push gets a review until it
 closes. A line `!owner/repo#number` keeps one pull request out when the user
-asks. Hold validated logins literally in every query you run yourself; never
-use `@me`. Under the default the two roles coincide and `@me` looks harmless,
-but its value follows whichever token is live, so under a reviewer override
-it resolves to the reviewer — an account that authors nothing here — and a
-listing by `@me` comes back empty, indistinguishable from a repository with
-nothing open.
+asks. `project loop drop owner/repo#number --tracked <file>` appends one, as
+Projector's band does when the user dismisses a pull request, and `project
+loop restore` with the same arguments removes it. Hold validated logins
+literally in every query you run yourself; never use `@me`. Under the default
+the two roles coincide and `@me` looks harmless, but its value follows
+whichever token is live, so under a reviewer override it resolves to the
+reviewer — an account that authors nothing here — and a listing by `@me` comes
+back empty, indistinguishable from a repository with nothing open.
 
 ## Establish the loop
 

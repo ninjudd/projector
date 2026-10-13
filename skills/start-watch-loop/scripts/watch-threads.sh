@@ -34,16 +34,19 @@
 #                    [--interval 60] [--renotify 900] [--once]
 #                    [--exit-when-closed]
 #
-# --tracked names the file holding the tracked set: one `owner/repo#number`
-# per line, with blank lines and lines starting with `#` ignored. The file is
-# the whole scope of the watch. Nothing is listed and nothing is discovered, so
-# a pull request absent from it produces no event however loud its threads
-# are, and every event that does arrive is the loop's to act on. The file is
-# re-read every cycle: the loop adds a pull request it opened or adopted by
-# appending a line and drops a merged one by deleting its line, without a
-# restart. Every line is checked before the watch starts, because a bad one
-# would otherwise be a watch that starts cleanly and never mentions the pull
-# request it was meant for; a bad line that appears later is announced once.
+# --tracked names the file holding the tracked set: one `owner/repo#number` per
+# line, with blank lines and lines starting with `#` ignored. A line of the
+# form `!owner/repo#number` keeps that pull request out of the watch wherever
+# it sits in the file, as `project loop drop` writes it and `project loop
+# restore` removes it. The file is the whole scope of the watch. Nothing is
+# listed and nothing is discovered, so a pull request absent from it produces
+# no event however loud its threads are, and every event that does arrive is
+# the loop's to act on. The file is re-read every cycle: the loop adds a pull
+# request it opened or adopted by appending a line and drops a merged one by
+# deleting its line, without a restart. Every line is checked before the watch
+# starts, because a bad one would otherwise be a watch that starts cleanly and
+# never mentions the pull request it was meant for; a bad line that appears
+# later is announced once.
 #
 # --renotify is how many seconds before a still-unresolved thread is announced
 # again. Set it high enough to be a reminder rather than a stream. Every line
@@ -87,22 +90,37 @@ touch "$STATE" 2>/dev/null || { echo "watch-threads.sh: cannot write state file:
 # problem with the file to stderr, one per line. Returns 1 when the file
 # cannot be read and 2 when a line is malformed; the well-formed lines are
 # still printed in that case, so a running watch can keep to them.
+#
+# A `!` line removes its pull request wherever it sits in the file, since the
+# plain line may come after it. GitHub names ignore case, so an exclusion
+# matches its pull request case-insensitively.
 ENTRY_RE='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$'
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 parse_tracked() {
-  local line lineno=0 rc=0
+  local line lineno=0 rc=0 entries="" excluded=" "
   [ -r "$TRACKED" ] || { echo "$TRACKED: cannot read the tracked file" >&2; return 1; }
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     case "$line" in ""|\#*) continue ;; esac
-    if [[ $line =~ $ENTRY_RE ]]; then
-      printf '%s %s\n' "${line%#*}" "${line##*#}"
+    if [ "${line:0:1}" = "!" ] && [[ ${line#!} =~ $ENTRY_RE ]]; then
+      excluded="$excluded$(lower "${line#!}") "
+    elif [[ $line =~ $ENTRY_RE ]]; then
+      entries="$entries$line
+"
     else
       echo "$TRACKED:$lineno is not owner/repo#number: $line" >&2
       rc=2
     fi
   done < "$TRACKED"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$excluded" in *" $(lower "$line") "*) continue ;; esac
+    printf '%s %s\n' "${line%#*}" "${line##*#}"
+  done <<EOF
+$entries
+EOF
   return $rc
 }
 

@@ -34,6 +34,8 @@ export type Row = { pr: PullRequest; kinds: LoopKind[] }
 
 export type Snapshot = {
   rows: Row[]
+  /** The login of the account the band's `gh` is signed in as; null until GitHub says. */
+  viewer: string | null
   fetchedAt: number | null
   error: string | null
 }

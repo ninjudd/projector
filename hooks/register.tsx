@@ -33,7 +33,7 @@ type Ran = { exitCode: number; stdout: string; stderr: string }
 
 const TICK_MS = 5_000
 const POLL_MS = 30_000
-const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
+const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null, error: null }
 const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
 const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
@@ -59,7 +59,8 @@ const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
 // The session keeps its state across a reload or an update of the plugin,
 // so a value an earlier version wrote can have another shape.
 const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
-const current = (value: Snapshot): Snapshot => (Array.isArray(value.rows) ? value : EMPTY)
+const current = (value: Snapshot): Snapshot =>
+  Array.isArray(value.rows) ? { ...value, viewer: value.viewer ?? null } : EMPTY
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -74,7 +75,7 @@ let listed: string | undefined
 let isChecking = false
 /** The answers this copy of the module is claiming or delivering, by reference. */
 const delivering = new Set<string>()
-/** The items the band is dismissing or snoozing, so a second press does nothing. */
+/** The items and pull requests the band is dismissing or snoozing, so a second press does nothing. */
 const acting = new Set<string>()
 /** When the last tick ran, so an item whose snooze ends between two ticks wakes once. */
 let tickedAt: number | undefined
@@ -154,7 +155,7 @@ async function adopt($: Engine, command: string): Promise<void> {
 }
 
 async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> {
-  if (prs.length === 0) return { prs: new Map(), error: null }
+  if (prs.length === 0) return { prs: new Map(), viewer: null, error: null }
   const query = buildQuery(prs)
   try {
     const result = await $.process.run(['gh', 'api', 'graphql', '-f', `query=${query.text}`], {
@@ -162,21 +163,24 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> 
     })
     return parseResponse(query, result)
   } catch (error) {
-    return { prs: new Map(), error: messageOf(error) }
+    return { prs: new Map(), viewer: null, error: messageOf(error) }
   }
 }
 
-async function load($: Engine): Promise<void> {
-  // The band lists the session's own loops: the watchers it started.
+/** The session's own loops, the watchers it started, each with the pull requests its tracked file lists. */
+async function trackedSets($: Engine): Promise<(SeenLoop & { entries: TrackedPr[] })[]> {
   const loops = (await read($, seen)).filter(loop => isKind(loop.kind))
-
   // A tracked file that is gone belongs to a loop that ended.
-  const sets = await Promise.all(
+  return Promise.all(
     loops.map(async loop => ({
-      kind: loop.kind,
+      ...loop,
       entries: await $.fs.read(loop.tracked).then(parseTracked, () => [] as TrackedPr[]),
     })),
   )
+}
+
+async function load($: Engine): Promise<void> {
+  const sets = await trackedSets($)
 
   const kindsOf = new Map<string, LoopKind[]>()
   const tracked = new Map<string, TrackedPr>()
@@ -204,6 +208,7 @@ async function load($: Engine): Promise<void> {
   const time = await $.clock.now()
   await update($, snapshot, () => ({
     rows,
+    viewer: fetched.viewer ?? last.viewer,
     fetchedAt: isFetched ? time : last.fetchedAt,
     error: fetched.error,
   }))
@@ -244,8 +249,8 @@ function refresh($: Engine, isForced = false): Promise<void> {
 const replace = ($: Engine, item: Item) =>
   update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
 
-/** Closes an item's drawer when it is the one open. */
-const closeDrawer = ($: Engine, ref: string) => update($, drawer, was => (was === `item:${ref}` ? null : was))
+/** Closes a drawer when it is the one open. */
+const closeDrawer = ($: Engine, key: string) => update($, drawer, was => (was === key ? null : was))
 
 /**
  * An item as the CLI prints it, without the session the band adds. Each kind
@@ -421,7 +426,7 @@ async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promis
     const ran = await project($, ['inbox', command, ref, '--session', session, '--json'])
     if (ran.exitCode === 0) {
       await replace($, itemOf(ran.stdout, session))
-      if (command === 'snooze') await closeDrawer($, ref)
+      if (command === 'snooze') await closeDrawer($, `item:${ref}`)
     } else if (ran.exitCode === 65) {
       // Resolved elsewhere since the band read the store: read it again.
       listed = undefined
@@ -433,6 +438,38 @@ async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promis
     void $.ui.toast(`projector: ${messageOf(error)}`)
   } finally {
     acting.delete(ref)
+  }
+}
+
+/**
+ * Dismisses a pull request from the session's loops: `project loop drop`
+ * keeps it out of each tracked file that lists it, and the band reloads
+ * without it. A failure says why, and the line stays.
+ */
+async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
+  const key = keyOf(pr)
+  const named = `${pr.repo}#${pr.number}`
+  if (acting.has(key)) return
+  acting.add(key)
+  const stopped: LoopKind[] = []
+  try {
+    for (const loop of await trackedSets($)) {
+      if (!loop.entries.some(entry => keyOf(entry) === key)) continue
+      const ran = await project($, ['loop', 'drop', named, '--tracked', loop.tracked])
+      if (ran.exitCode !== 0) {
+        void $.ui.toast(`projector: ${errorOf(ran)}`)
+        return
+      }
+      stopped.push(loop.kind)
+    }
+    await closeDrawer($, key)
+  } catch (error) {
+    void $.ui.toast(`projector: ${messageOf(error)}`)
+  } finally {
+    acting.delete(key)
+    const kinds = KINDS.filter(kind => stopped.includes(kind))
+    if (kinds.length > 0) void $.ui.toast(`projector: stopped ${kinds.join(' and ')} ${named}`)
+    await refresh($)
   }
 }
 
@@ -522,17 +559,33 @@ function notesOf(pr: PullRequest): Note[] {
   return notes
 }
 
-/** The drawer's facts, before its checks: what the loops do, who, where, and how big. */
+/** The drawer's facts, before its checks: what the loops do, where, and how big. */
 function factsOf(pr: PullRequest, kinds: readonly LoopKind[]): string {
   const files = `${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`
   return [
     kinds.join(' and '),
-    pr.author === null ? undefined : `by ${pr.author}`,
     pr.branch || undefined,
     `+${pr.additions} −${pr.deletions} in ${files}`,
   ]
     .filter(part => part !== undefined)
     .join(' · ')
+}
+
+/** Whether the account the band's `gh` is signed in as wrote a pull request. */
+const isOwn = (pr: PullRequest, viewer: string | null) => viewer !== null && pr.author === viewer
+
+/**
+ * The band's pull requests in the order it lists them: yours first, then
+ * everyone else's, each author's together and the authors by login. Within
+ * each, they keep the order they came in.
+ */
+function byAuthor(rows: readonly Row[], viewer: string | null): Row[] {
+  const loginOf = (row: Row) => (row.pr.author ?? '').toLowerCase()
+  const others = rows.filter(row => !isOwn(row.pr, viewer))
+  return [
+    ...rows.filter(row => isOwn(row.pr, viewer)),
+    ...others.sort((one, other) => loginOf(one).localeCompare(loginOf(other))),
+  ]
 }
 
 const ago = (seconds: number) => (seconds < 5 ? 'just now' : `${span(seconds)} ago`)
@@ -663,7 +716,7 @@ export const register: Register = on => {
     const entered = await next(notes.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...notes] })
     if (entered.drop === undefined) {
       for (const one of given) {
-        void closeDrawer($, one.question.ref).catch(() => undefined)
+        void closeDrawer($, `item:${one.question.ref}`).catch(() => undefined)
         void answerFromPrompt($, one.question, one.letter, one.text)
       }
     }
@@ -704,6 +757,13 @@ export const register: Register = on => {
     const label = labeler(shown.rows.map(row => row.pr))
     const reference = referencer(shown.rows.map(row => row.pr))
     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
+    // Another person's line names its author after `draft`, in a column as
+    // wide as the longest of those logins, so their titles start in one
+    // column too.
+    const authorWidth = Math.max(
+      0,
+      ...shown.rows.filter(row => !isOwn(row.pr, shown.viewer)).map(row => (row.pr.author ?? '').length),
+    )
     const heading = [
       ...counts,
       shown.fetchedAt === null ? undefined : `updated ${ago(secondsSince(time, shown.fetchedAt))}`,
@@ -793,6 +853,17 @@ export const register: Register = on => {
     const fill = (text: string) => {
       $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
     }
+    // A drawer's actions are plain Buttons on one row, `|` between them.
+    const drawActions = (id: string, actions: readonly { name: string; onPress: () => void }[]) => (
+      <Box flexDirection="row" columnGap={1}>
+        {actions.flatMap(({ name, onPress }, at) => [
+          ...(at === 0 ? [] : [<Text key={`between:${id}.${at}`} color="subtle">|</Text>]),
+          <Button key={`${name}:${id}`} plain onPress={onPress}>
+            <Text>{name}</Text>
+          </Button>,
+        ])}
+      </Box>
+    )
     const drawAnswers = (question: Question) => {
       const { ref, answer } = question
       const isOpen = answer === undefined
@@ -902,14 +973,7 @@ export const register: Register = on => {
               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
               {item.kind === 'question' && drawAnswers(item)}
               <Text key={`before-buttons:${ref}`}> </Text>
-              <Box flexDirection="row" columnGap={1}>
-                {actions.flatMap(({ name, onPress }, at) => [
-                  ...(at === 0 ? [] : [<Text key={`between:${ref}.${at}`} color="subtle">|</Text>]),
-                  <Button key={`${name}:${ref}`} plain onPress={onPress}>
-                    <Text>{name}</Text>
-                  </Button>,
-                ])}
-              </Box>
+              {drawActions(ref, actions)}
             </Box>
           )}
         </Box>
@@ -935,6 +999,11 @@ export const register: Register = on => {
             <Box flexShrink={0}>
               <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
             </Box>
+            {!isOwn(pr, shown.viewer) && (
+              <Box key={`author:${key}`} flexShrink={0} width={authorWidth}>
+                <Text color="subtle">{pr.author ?? ''}</Text>
+              </Box>
+            )}
             <Box flexGrow={1} flexShrink={1}>
               <Text wrap="truncate-end">{pr.title}</Text>
             </Box>
@@ -958,14 +1027,15 @@ export const register: Register = on => {
                 <Text color="subtle">{factsOf(pr, kinds)}</Text>
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}
               </Text>
-              <Box flexDirection="row">
-                <Button key={`discuss:${key}`} plain label="discuss" onPress={() => fill(`${reference(pr)} `)} />
-              </Box>
               {/* Each link has a line of its own: a terminal without hyperlinks
                   draws a link's URL after its text, and a shared line would
-                  cut the URL off. */}
+                  cut the URL off. The actions follow, on one row. */}
               <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
               {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
+              {drawActions(key, [
+                { name: 'discuss', onPress: () => fill(`${reference(pr)} `) },
+                { name: 'dismiss', onPress: () => void dismissPr($, pr) },
+              ])}
             </Box>
           )}
         </Box>
@@ -985,7 +1055,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {divider}
-        {shown.rows.map(drawRow)}
+        {byAuthor(shown.rows, shown.viewer).map(drawRow)}
         {failure !== undefined && <Text color="error">{failure}</Text>}
         {shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
           <Text key="before-items"> </Text>

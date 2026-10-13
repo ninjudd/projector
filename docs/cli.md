@@ -1586,10 +1586,38 @@ snooze, so a resolved item never returns. `snooze` refuses, with exit code
 65, an item already answered or dismissed, a negative `--for`, and a `--for`
 longer than a day, and it changes nothing when it refuses.
 
+## Keep a pull request out of a loop
+
+A watch or review loop reads its tracked file, one `owner/repo#number` a
+line. A line `!owner/repo#number` keeps that pull request out of the loop
+wherever it sits in the file, and both watchers and Projector's band match it
+without regard to case. `project loop drop` writes that line, and `project
+loop restore` removes it:
+
+```console
+$ project loop drop acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
+dropped acme/app#337 from /home/ada/.local/state/projector/projector-review-loop.tracked
+$ project loop restore acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
+restored acme/app#337 to /home/ada/.local/state/projector/projector-review-loop.tracked
+```
+
+`drop` appends its line rather than rewriting the file, because a watcher may
+be appending a pull request it adopted at the same moment. It changes nothing
+when the file already holds an exclusion for the pull request, in any letter
+case. `restore` removes every `!` line for the pull request, and only those,
+by writing the file anew and renaming it into place. It leaves a plain
+`owner/repo#number` line alone, so the pull request returns to the loop when
+the file names it.
+
+Both refuse, with exit code 65, a reference that is not `owner/repo#number`,
+and, with exit code 66, a tracked file that does not exist. With `--json`,
+each prints its `action`, which is `dropped`, `restored`, or `unchanged`,
+with the `pr` and the `tracked` file.
+
 ## Consume JSON
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
-`priority`, `done`, `check`, or any `inbox` command. Responses use stdout
+`priority`, `done`, `check`, or any `inbox` or `loop` command. Responses use stdout
 only for JSON and include `"schema_version": 2`. An `inbox` command that
 prints one item prints it under `item`, and `inbox list` prints `items`.
 `inbox watch --json` prints one JSON object a line, as a watcher reads it.
@@ -1639,8 +1667,8 @@ Projector uses these exit codes:
 | `0` | The command completed successfully. |
 | `2` | Command syntax or an argument is invalid. |
 | `3` | `project site status` found no Projector site for the repository. |
-| `65` | Project data is invalid, a mutation is unsafe, or an inbox item, answer, or snooze is refused. |
-| `66` | The requested project, the projects directory, or the inbox item does not exist. |
+| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, or a `loop` reference is not `owner/repo#number`. |
+| `66` | The requested project, the projects directory, the inbox item, or a `loop` command's tracked file does not exist. |
 | `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
 | `69` | Git, the interactive editor, or the installer is unavailable. |
 | `75` | Another command held an inbox session's lock for five seconds; run the command again. |

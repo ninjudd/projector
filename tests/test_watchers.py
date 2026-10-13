@@ -496,6 +496,19 @@ class WatchThreadsTests(WatcherCase):
         self.assertEqual("", result.stdout)
         self.assertEqual("", self.calls())
 
+    def test_an_exclusion_keeps_a_pull_request_out_wherever_it_sits_and_in_any_letter_case(self) -> None:
+        self.pull_request(1, threads=[thread("T1", body="P2 off by one")])
+        self.pull_request(2, threads=[thread("T2", body="P3 typo")])
+        # The exclusion `project loop drop` would append, here above the line it excludes.
+        self.tracked.write_text("!ACME/App#2\nacme/app#1\nacme/app#2\n")
+
+        result = self.run_watcher(THREADS)
+
+        self.assert_ok(result)
+        self.assertEqual(["FINDING acme/app#1 src/x.py:3 [bugbot] — P2 off by one"], result.stdout.splitlines())
+        self.assertNotIn(" n=2 ", self.calls())
+        self.assertNotIn("pulls/2/", self.calls())
+
     def test_refuses_a_number_that_names_no_pull_request(self) -> None:
         self.pull_request(1)
         self.track("acme/app#1", "acme/app#7")

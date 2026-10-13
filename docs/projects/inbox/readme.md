@@ -472,9 +472,11 @@ project stays `in-progress`.
 ## 10. The band after layer 2
 
 After using layer 2, the owner decided six changes to the band, which
-#295 builds, and three to its pull request lines and drawers, which #297
-builds. § 2.1, § 2.5, and § 4 describe the band with these changes, and
-this section gives their reasons, their files, and their evidence.
+#295 builds, three to its pull request lines and drawers, which #297
+builds, two more to its pull request lines and drawers, which #298
+builds, and a **dismiss** action for a pull request, which #300 builds.
+§ 2.1, § 2.5, and § 4 describe the band with these changes, and this
+section gives their reasons, their files, and their evidence.
 The `/projector <tracked file>` form that the questions plan describes
 goes away.
 
@@ -542,10 +544,40 @@ goes away.
   band last loaded, stays.
 - **A pull request's drawer starts under the number.** Its lines start in
   the row's first column, not where the titles start.
-- **Each drawer link has a line of its own.** **discuss** keeps its own
-  row, and **github** and **projector** each take a line, because a
-  terminal without hyperlink support draws a link's URL after its text,
-  and a line shared with another link cut that URL off.
+- **Each drawer link has a line of its own, and the actions come last.**
+  **github** and **projector** each take a line, because a terminal
+  without hyperlink support draws a link's URL after its text, and a line
+  shared with another link cut that URL off. The row with **discuss**
+  follows them, last in the drawer, so more actions can join it.
+- **Pull requests are grouped by author.** The band lists your own pull
+  requests first, then everyone else's, each author's together and the
+  authors in order of login, with nothing between the groups; within a
+  group the order is unchanged. Your own work and the reviews you owe
+  other people no longer interleave. Another person's line names its
+  author after `draft`, in the `subtle` color, in a column as wide as the
+  longest of those logins, so their titles start in one column. Your own
+  lines name no author, and the drawer's facts name none either. The band
+  tells which pull requests are yours by the login of the account its
+  `gh` is signed in as, which the query that asks for the pull requests
+  also asks for, as `viewer { login }`, so a load still makes one `gh`
+  call. The snapshot keeps the login beside the rows.
+- **Dismiss keeps a pull request out of the session's loops.** A pull
+  request's drawer has **dismiss** after **discuss**, on the actions' row
+  with `|` between them, as an item's drawer draws its actions. It runs
+  `project loop drop owner/repo#number --tracked <file>` once for each of
+  the session's tracked files that lists the pull request, then closes the
+  drawer, reloads the band so the line goes, and says which loops stopped,
+  as `stopped watching and reviewing owner/repo#number`. When the CLI
+  refuses, the band shows its error and keeps the line. `project loop drop`
+  appends a `!owner/repo#number` line rather than rewriting the file,
+  because a watcher may be appending a pull request it adopted at the same
+  moment, and it changes nothing when the file already excludes the pull
+  request in any letter case. `project loop restore` rewrites the file
+  atomically without that pull request's `!` lines, so a dismissal can be
+  undone. The CLI is the only writer, so the band and an agent edit a
+  tracked file the same way. Both watchers honor a `!` line:
+  `watch-prs.sh` already did, and `watch-threads.sh` now does instead of
+  reporting it as a malformed line.
 
 | File | Change |
 | --- | --- |
@@ -557,6 +589,8 @@ goes away.
 | `docs/plugins.md` | The drawer, **discuss**, which quotes answer, the 30 seconds, and the band without a file named by hand |
 | `hooks/register.tsx` | Each pull request's line ends with its age, in a column shared with the items' ages through one helper, and its title grows to fill the line; the drawer drops "updated … ago" and `drawerIndent`, and puts **github** and **projector** on lines of their own |
 | `docs/plugins.md` | The band examples, the age at the end of a pull request's line, and the drawer under the number with one link per line |
+| `hooks/github.ts`, `hooks/register.tsx`, `hooks/types.d.ts`, `docs/plugins.md` | The query asks for `viewer { login }`, and the snapshot keeps it; the band lists your pull requests first and then everyone else's by author, names another person's author before the title, drops "by" and the author from the drawer's facts, and draws the **discuss** row after the links |
+| `src/projector/loop.py`, `src/projector/cli.py`, `tests/test_loop.py`, `skills/start-watch-loop/scripts/watch-threads.sh`, `skills/start-watch-loop/SKILL.md`, `tests/test_watchers.py`, `hooks/register.tsx`, `docs/cli.md`, `docs/plugins.md` | `project loop drop` and `restore` add and remove a tracked file's `!` lines; `watch-threads.sh` honors them; a pull request's drawer gains **dismiss**, which drops the pull request from each of the session's loops that lists it, through the CLI, on one actions' row shared with an item's drawer |
 
 #295 also carries smaller fixes found while using the band, such as the
 pull request drawer's **discuss** becoming a plain `Button`, and its
@@ -576,7 +610,11 @@ description lists them.
 | Answer or dismiss an item | Its line stays, in the `subtle` color, for 30 seconds after `deliveredAt`, then leaves the band |
 | Run `/projector` while another session runs a loop | The band shows or hides, and lists only the loops whose watchers this session started |
 | Look at a pull request's line | It ends with how long ago the pull request changed, such as `7h`, in the `subtle` color, in the same column as the items' ages |
-| Open a pull request's drawer | Its lines start under the number; its facts end with the checks; **discuss**, **github**, and **projector** each have a line |
+| Open a pull request's drawer | Its lines start under the number; its facts name no author and end with the checks; **github** and **projector** each have a line, and the row with **discuss** comes last |
+| Track your own pull requests and someone else's | Yours come first, naming no author; then the others, each author's together and the authors in order of login, each line naming its author in the `subtle` color before the title |
+| Press **dismiss** in the drawer of a pull request both loops track | `project loop drop` runs once for each tracked file; the drawer closes, the line leaves the band, and a toast says `stopped watching and reviewing owner/repo#number` |
+| Press **dismiss** when `project loop drop` refuses | The band shows the CLI's error, keeps the line, and leaves the drawer open |
+| Run `project loop restore owner/repo#number --tracked <file>` | The `!` line goes, and the pull request returns to the loop and to the band on its next reload |
 
 Before these changes, the rows for the drawer, for **discuss** on a
 question and the two answers typed under its quote, for the two drawers
@@ -587,7 +625,12 @@ answered question's drawer stays open, and a resolved line stays a
 minute. Before #297, the rows for a pull request's line and its drawer
 fail their test too: the line ends with no age, and the drawer starts
 under the title, ends its facts with when the pull request was updated,
-and puts its links on one line.
+and puts its links on one line. Before #298, the rows for the drawer and
+for grouping by author fail their test as well: the lines come in the
+order the loops track them and name no author, and the drawer names the
+author and puts **discuss** before the links. Before #300, the rows for
+**dismiss** fail their test too, since the drawer has no **dismiss**, no
+`project loop` command exists, and `watch-threads.sh` refuses a `!` line.
 
 ## 11. Number each session's items 1, 2, 3
 
