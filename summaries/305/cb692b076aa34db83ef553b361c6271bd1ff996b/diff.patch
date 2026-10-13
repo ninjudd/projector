@@ -1,0 +1,873 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 2d686f1..954fadf 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -120,7 +120,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 9 -->
++<!-- projector:begin 10 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -181,10 +181,9 @@ it. Post news they need to act on, such as a failure that needs them, and
+ anything that comes up while they are away. Leave out what they already see
+ elsewhere, such as a pull request's state, which the band lists. An item
+ stays above their prompt until they answer or dismiss it, so keep the inbox
+-for what matters, not as a log of everything you did. While items you posted
+-are open, look over them each time the person writes to you, with
+-`project inbox list --session "$CLAUDE_CODE_SESSION_ID"`, and dismiss any
+-that no longer need them, such as a question they answered in the
+-conversation or news that has gone stale, with
+-`project inbox dismiss <number> --session "$CLAUDE_CODE_SESSION_ID"`.
++for what matters, not as a log of everything you did. Each time the person
++writes to you, look over the items you posted that are still open, and
++withdraw any that no longer need them, such as a question they answered in
++the conversation or news that has gone stale, with the `withdraw` tool and
++the number `ask` or `tell` returned.
+ <!-- projector:end -->
+diff --git a/docs/cli.md b/docs/cli.md
+index 5db801d..01f6a45 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -48,11 +48,11 @@ what it did to each:
+   pull request as a draft until a clean review marks it ready, and, where the
+   `ask` and `tell` tools are available, post anything the person must not
+   miss to the inbox as well as saying it in the conversation, and each time
+-  the person writes, dismiss any item that no longer needs them. `init`
+-  appends the section to an existing file or creates the file
+-  with only that section, and refreshes the section when it falls behind the
+-  template this command ships. Everything outside the markers is yours and
+-  is never changed.
++  the person writes, withdraw any item that no longer needs them with the
++  `withdraw` tool. `init` appends the section to an existing file or creates
++  the file with only that section, and refreshes the section when it falls
++  behind the template this command ships. Everything outside the markers is
++  yours and is never changed.
+ - `CLAUDE.md` is a symlink to `AGENTS.md`, because Claude Code reads
+   `CLAUDE.md` and Codex reads `AGENTS.md`, and one file can serve both. `init`
+   creates the link when `CLAUDE.md` is absent, or a file containing the import
+@@ -1478,12 +1478,12 @@ need to decide in `--detail`, or `--detail-file`.
+ 
+ Every command names the posting session with `--session`, or reads
+ `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
+-every session's open items, and `show`, `answer`, `dismiss`, and `snooze`
+-find the session that holds the number. `list` prints each item's number,
+-kind, state, and subject, separated by tabs, after the session when it lists
+-every session. Every session counts from 1 and keeps the items you resolved,
+-so two sessions often hold the same number. Without a session, those four
+-commands look first among open items, the ones with no answer recorded: a
++every session's open items, and `show`, `answer`, `dismiss`, `withdraw`, and
++`snooze` find the session that holds the number. `list` prints each item's
++number, kind, state, and subject, separated by tabs, after the session when it
++lists every session. Every session counts from 1 and keeps the items you
++resolved, so two sessions often hold the same number. Without a session, those
++five commands look first among open items, the ones with no answer recorded: a
+ number that one session holds open names that session's item, whatever other
+ sessions hold resolved under the same number. Only when no session holds the
+ number open do they look among every item. A command that still finds the
+@@ -1586,6 +1586,24 @@ snooze, so a resolved item never returns. `snooze` refuses, with exit code
+ 65, an item already answered or dismissed, a negative `--for`, and a `--for`
+ longer than a day, and it changes nothing when it refuses.
+ 
++An agent takes back an open item that no longer needs you with `withdraw`,
++such as a question you answered in the conversation or news that has gone
++stale:
++
++```console
++$ project inbox withdraw 3 --session "$SESSION"
++withdrew 3
++```
++
++`withdraw` takes either kind. In one write, it records the item as dismissed
++and withdrawn and marks it delivered, so nothing goes back to the agent, not
++even a `DISMISSED` line for a question. Projector's band drops the item at
++once, and `list --all` shows it as `withdrawn`. `withdraw` refuses what
++`dismiss` refuses: an answer letter, such as `3.a`, and an item already
++answered, dismissed, or withdrawn, with exit code 65, and a number no session
++holds, with exit code 66. In Claude Code, the agent withdraws an item with
++Projector's `withdraw` tool rather than from the shell.
++
+ ## Keep a pull request out of a loop
+ 
+ A watch or review loop reads its tracked file, one `owner/repo#number` a
+diff --git a/docs/plugins.md b/docs/plugins.md
+index fda5dd4..cbc0a6a 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -269,9 +269,11 @@ is shown. The skills never depend on the band, and Codex has no equivalent.
+ An agent in Claude Code asks you a question with Projector's `ask` tool,
+ which the model sees as `mcp__projector__ask`, and tells you something that
+ needs no answer with the `tell` tool, `mcp__projector__tell`. Either way it
+-keeps working. An agent that runs `project inbox ask` or `project inbox tell`
+-from the shell reaches the same inbox, as
+-[Use the inbox](cli.md#use-the-inbox) describes.
++keeps working. When an item it posted no longer needs you, such as a question
++you answered in the conversation, the agent takes it back with the `withdraw`
++tool, `mcp__projector__withdraw`, by the number `ask` or `tell` returned. An
++agent that runs `project inbox ask`, `tell`, or `withdraw` from the shell
++reaches the same inbox, as [Use the inbox](cli.md#use-the-inbox) describes.
+ 
+ The items are a list below the pull requests, oldest first. A question's
+ line starts with `-`, and a notice's with `•`, so you can tell which items
+@@ -358,7 +360,9 @@ dismiss from a terminal while it is snoozed does not return.
+ 
+ A resolved item stays in the list, muted, for 30 seconds after it is
+ delivered, and a dismissed one is struck through. A dismissed notice is
+-delivered at once, since nothing goes back to the agent. A question's drawer
++delivered at once, since nothing goes back to the agent. An item the agent
++withdrew leaves the band at once, its drawer with it, and sends nothing back,
++not even `DISMISSED` for a question. A question's drawer
+ still opens and marks the answer given with `✓`, listing an answer in your
+ own words after the options. A dismissed notice's drawer keeps only
+ **discuss**.
+@@ -613,9 +617,9 @@ marketplace files, and read upstream's new skill against the rules in
+ 
+ ## Work without MCP
+ 
+-Projector currently ships no MCP server. The `ask` and `tell` tools carry
+-the `mcp__projector__` prefix, but Projector's hooks module in Claude Code
+-serves them: no MCP server runs, and no skill depends on them. Every core
+-skill uses the public `project` CLI and ordinary Git or GitHub commands. A
+-future MCP adapter can expose the same versioned project operations without
+-becoming the package that contains the skills.
++Projector currently ships no MCP server. The `ask`, `tell`, and `withdraw`
++tools carry the `mcp__projector__` prefix, but Projector's hooks module in
++Claude Code serves them: no MCP server runs, and no skill depends on them.
++Every core skill uses the public `project` CLI and ordinary Git or GitHub
++commands. A future MCP adapter can expose the same versioned project
++operations without becoming the package that contains the skills.
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 3ef013c..e01df21 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -913,3 +913,121 @@ subsections above leave open or which the code had moved past since
+ Each row of § 11.8 but the last failed its test before the change. The
+ main-screen row of § 4 still waits for a check by hand under tmux, so the
+ project stays `in-progress`.
++
++## 12. Let an agent withdraw an item
++
++An agent takes back an item it posted that no longer needs you with
++`project inbox withdraw <number>`, or in Claude Code with a `withdraw` tool
++beside `ask` and `tell`. The owner approved giving agents a tool for this.
++
++### 12.1 Problem
++
++Version 9 of the Projector section that `project init` writes into
++`AGENTS.md` tells an agent, each time you write to it, to look over its open
++items with `project inbox list --session "$CLAUDE_CODE_SESSION_ID"` and to
++clear stale ones with
++`project inbox dismiss <number> --session "$CLAUDE_CODE_SESSION_ID"`. That
++costs three things:
++
++- **The shell and the session's id.** Both commands run in the shell and
++  need the session variable, while the tools that post an item need
++  neither.
++- **A message about the agent's own action.** Dismissing a question queues
++  a `DISMISSED <number>` line, and the band delivers it to the agent that
++  dismissed it.
++- **A line that looks like your dismissal.** A dismissed item stays in the
++  band, muted and struck through, for 30 seconds, as if you had dismissed
++  it.
++
++### 12.2 The change
++
++- **`project inbox withdraw <number> [--session <id>]`.** Finds the item as
++  `dismiss` does, and in one write under the session's lock records
++  `{ dismissed: true, withdrawn: true, answeredAt }`, sets `deliveredAt` to
++  the same moment, and clears `snoozedUntil`. It takes either kind, prints
++  `withdrew 3`, or the item under `item` with `--json`, and refuses what
++  `dismiss` refuses with the same exit codes: an answer letter and an item
++  already resolved with `65`, a number no session holds with `66`, a number
++  open in two sessions with `67`, and a busy store with `75`. `list` and
++  `show` give a withdrawn item's state as `withdrawn`. When `withdraw`,
++  `dismiss`, or `snooze` refuses a resolved item, its message says how the
++  item was resolved: `3 is already withdrawn`, `3 is already dismissed`, or
++  `3 is already answered, as 3.a`.
++- **The `withdraw` tool.** The hooks module registers it in
++  `session.start` with `ask` and `tell`, with `isDeferred: false`, so the
++  model sees `mcp__projector__withdraw` from the first turn. It takes
++  `number`, a whole number of at least 1. Its `tool.call` hook runs
++  `project inbox withdraw <number> --session <id> --json` with the id from
++  `$.session.id()`, puts the item the CLI printed in the band's list, closes
++  its drawer, and answers `Withdrew 3. It has left Projector's band, and
++  nothing comes back to you.` A refusal follows `ask`'s rules, with exit
++  `66` added to the codes whose message comes back as it stands. A `project`
++  that does not finish tells the agent to tell you in the conversation that
++  the item no longer needs you.
++- **The band.** `isShownAt` in `hooks/inbox.ts` leaves out a withdrawn
++  item, so it leaves the band at once rather than after 30 seconds.
++- **Version 10 of the `AGENTS.md` section.** Its last sentence reads: "Each
++  time the person writes to you, look over the items you posted that are
++  still open, and withdraw any that no longer need them, such as a question
++  they answered in the conversation or news that has gone stale, with the
++  `withdraw` tool and the number `ask` or `tell` returned."
++
++### 12.3 Why this design
++
++- **A withdrawal is a dismissal.** `withdraw` runs `dismiss`'s checks and
++  its write, with one more field, so everything that reads a dismissal,
++  such as the refusal of a second answer and the pruning of delivered
++  items, handles a withdrawn item unchanged.
++- **It is delivered at once.** The agent that withdrew the item already
++  knows, so a `DISMISSED` line would only repeat its own action. Being
++  delivered also keeps the item out of `list` without `--all`.
++- **It leaves the band at once.** The 30 seconds a resolved line stays show
++  you that your own answer or dismissal took. You took no action on a
++  withdrawn item, and it no longer needs you, so the band drops it, its
++  drawer included, the moment the tool returns.
++- **The agent does not list its items first.** Each item it posted came
++  back from `ask` or `tell` with its number, and each question's answer or
++  dismissal reaches it as a message, so its own conversation holds what it
++  posted and what has closed. A `list` on every message you write would
++  cost a shell command each time and need the session variable that the
++  tool removes. A notice you dismissed sends nothing back, so an agent may
++  try to withdraw one that is already gone. The tool then returns the CLI's
++  refusal and changes nothing.
++- **The tool does not check who posted the item.** `dismiss` does not
++  either. A session's numbers are shared by its main loop and its
++  subagents, and only that session's agents call its tool.
++
++### 12.4 Acceptance criteria
++
++| Do | Expect |
++| --- | --- |
++| `project inbox withdraw 1 --session s1` on an open question | Prints `withdrew 1`; `watch --once` prints nothing; `list` omits it, and `list --all` and `show` give `withdrawn` |
++| `project inbox withdraw 2 --session s1 --json` on an open notice | Prints the item, withdrawn and delivered |
++| `withdraw` on an answered question, a withdrawn one, or a dismissed notice | Exits `65`, saying `answered, as 1.a`, `withdrawn`, or `dismissed`, and changes nothing; the answered question's answer is still delivered |
++| `withdraw 2.a`, or `withdraw 3` when the session has no item 3 | Exits `65`, or `66` |
++| An agent calls `mcp__projector__withdraw` with `number: 1` while the item's drawer is open | Returns `Withdrew 1. …`; runs `project inbox withdraw 1 --session s1 --json`; the item and its drawer leave the band before the store is read again; nothing is sent to an agent or submitted |
++| The CLI refuses, finds the store busy, is too old, or does not finish | The tool returns the CLI's message, the same with `run project upgrade`, or an instruction to tell you in the conversation |
++| `project init` in a repository whose section is version 9 | Refreshes it to version 10, which names the `withdraw` tool |
++
++`tests/test_inbox.py` covers the CLI rows, `hooks/inbox.test.ts` and
++`hooks/band.test.tsx` the tool and the band, and `tests/test_instructions.py`
++pins version 10's text. Before the change, each row fails: `withdraw` exits
++`2` as an unknown command, no tool is registered, and the section is
++version 9.
++
++### 12.5 Files
++
++| File | Change |
++| --- | --- |
++| `src/projector/inbox.py` | `dismiss` takes `withdrawn`, which records it on the answer and delivers the item at once; `resolution` names how an item was resolved in the refusals of `dismiss` and `snooze` |
++| `src/projector/cli.py` | `project inbox withdraw`; a withdrawn item's state is `withdrawn` |
++| `tests/test_inbox.py` | `WithdrawTests`, and `withdraw` in the tests that every lookup command shares |
++| `hooks/types.d.ts` | `Dismissal`, with an optional `withdrawn` |
++| `hooks/inbox.ts` | `WITHDRAW_DESCRIPTION`, `WITHDRAW_SCHEMA`, and `withdrawArguments`; `isShownAt` leaves out a withdrawn item |
++| `hooks/register.tsx` | Registers the three tools in one loop; `runTool`, which `post` becomes, serves all three; the `withdraw` hook |
++| `hooks/inbox.test.ts`, `hooks/band.test.tsx` | The rows above; the fake CLI takes `withdraw` |
++| `src/projector/templates/agents-block.md`, `tests/test_instructions.py`, `AGENTS.md` | Version 10 and its hash |
++| `docs/cli.md`, `docs/plugins.md` | The command, the tool, and the section's summary |
++
++The main-screen row of § 4 still waits for a check by hand under tmux, so
++the project stays `in-progress`.
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 54f25af..a0a2374 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -643,7 +643,7 @@ const reopened = (question: HeldQuestion): HeldQuestion =>
+ function questionStore(clock: Clock, seed: readonly Held[]) {
+   const store = new Map<string, Held>()
+   const times = new Map<string, number>()
+-  /** How `ask` fails: an exit code and its message, or `rejection` when the command never finishes. */
++  /** How the tools' commands fail: an exit code and its message, or `rejection` when the command never finishes. */
+   const refusal: { code?: number; message?: string; rejection?: string } = {}
+   /**
+    * How many of the next `list` commands fail, how many run past the CLI's
+@@ -702,9 +702,11 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+         })
+         .then(() => listed)
+     }
+-    if (command === 'ask' || command === 'tell') {
++    if (command === 'ask' || command === 'tell' || command === 'withdraw') {
+       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
+       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
++    }
++    if (command === 'ask' || command === 'tell') {
+       posted += 1
+       const ref = String(posted)
+       const agentId = flag(args, 'agent')
+@@ -734,7 +736,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       failing.locks -= 1
+       return failed(75, BUSY)
+     }
+-    if (item.answer !== undefined && (command === 'answer' || command === 'dismiss' || command === 'snooze')) {
++    if (item.answer !== undefined && ['answer', 'dismiss', 'withdraw', 'snooze'].includes(command)) {
+       return failed(65, `${ref} is already answered`)
+     }
+     const { snoozedUntil: _, ...awake } = item
+@@ -742,6 +744,10 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       const answer = { dismissed: true as const, answeredAt: time }
+       return printed(put(awake.kind === 'notice' ? { ...awake, answer, deliveredAt: time } : { ...awake, answer }))
+     }
++    if (command === 'withdraw') {
++      const answer = { dismissed: true as const, withdrawn: true as const, answeredAt: time }
++      return printed(put({ ...awake, answer, deliveredAt: time }))
++    }
+     if (command === 'snooze') return printed(put({ ...item, snoozedUntil: time + HOUR }))
+     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
+     if (command === 'answer') {
+@@ -857,6 +863,7 @@ test('asks through the tool, and the band lists the question below the pull requ
+   expect(session.registered).toEqual([
+     expect.objectContaining({ name: 'ask', isDeferred: false }),
+     expect.objectContaining({ name: 'tell', isDeferred: false }),
++    expect.objectContaining({ name: 'withdraw', isDeferred: false }),
+   ])
+   expect(session.project()).toContain(
+     'inbox ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
+@@ -1411,6 +1418,67 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+   await ui.unmount()
+ })
+ 
++test('the withdraw tool takes an item out of the band at once, and nothing goes back to the agent', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held(), notice()])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'item:1' })
++  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
++
++  const called = await $.tool.call({ tool: 'mcp__projector__withdraw', number: 1 })
++  expect(String(called.text ?? called.result)).toBe(
++    'Withdrew 1. It has left Projector’s band, and nothing comes back to you.',
++  )
++  expect(session.project()).toContain('inbox withdraw 1 --session s1 --json')
++  // Before the band reads the store again, the item has gone and its drawer with it.
++  expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
++  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
++
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
++  expect(session.sent).toEqual([])
++  expect(session.submitted).toEqual([])
++  expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
++  await ui.unmount()
++})
++
++test('the withdraw tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const answered = held({ answer, deliveredAt: NOW - 1_000 })
++  const session = questionWorld(on, clock, [answered])
++  await startSession($, clock)
++  const withdraw = { tool: 'mcp__projector__withdraw' as const, number: 1 }
++
++  const resolved = await $.tool.call(withdraw)
++  expect(resolved.deny ?? resolved.text).toBe('1 is already answered')
++
++  const unknown = await $.tool.call({ ...withdraw, number: 9 })
++  expect(unknown.deny ?? unknown.text).toBe('no item 9')
++
++  session.store.failing.locks = 1
++  const busy = await $.tool.call(withdraw)
++  expect(busy.deny ?? busy.text).toBe(BUSY)
++
++  Object.assign(session.store.refusal, { code: 2, message: "error: argument inbox_command: invalid choice: 'withdraw'" })
++  const old = await $.tool.call(withdraw)
++  expect(old.deny ?? old.text).toBe("error: argument inbox_command: invalid choice: 'withdraw'; run project upgrade")
++
++  Object.assign(session.store.refusal, { code: undefined, rejection: 'project timed out after 15000 ms' })
++  const hung = await $.tool.call(withdraw)
++  expect(hung.deny ?? hung.text).toMatch(
++    /^project did not finish \(.*\); tell the person in the conversation that it no longer needs them$/,
++  )
++  expect(session.store.store.get('1')).toEqual(answered)
++})
++
+ test('snooze hides either kind for an hour, then brings a hidden band back', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index af435d6..5575afa 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -17,6 +17,7 @@ import {
+   storeOf,
+   tellArguments,
+   typedLetter,
++  withdrawArguments,
+   wokeBetween,
+ } from './inbox'
+ import type { Notice, Question } from './types'
+@@ -127,6 +128,22 @@ test('a delivered question leaves the band after 30 seconds', () => {
+   expect(isShownAt(question({ deliveredAt: NOW - 30_000 }), NOW)).toBe(false)
+ })
+ 
++test('a withdrawn item leaves the band at once', () => {
++  const dismissed = { dismissed: true as const, answeredAt: NOW }
++  const withdrawn = { ...dismissed, withdrawn: true as const }
++  expect(isShownAt(notice({ answer: dismissed, deliveredAt: NOW }), NOW)).toBe(true)
++  expect(isShownAt(notice({ answer: withdrawn, deliveredAt: NOW }), NOW)).toBe(false)
++  expect(isShownAt(question({ answer: withdrawn, deliveredAt: NOW }), NOW)).toBe(false)
++})
++
++test('a call of the withdraw tool becomes `project inbox withdraw`, and only a whole number names an item', () => {
++  expect(withdrawArguments({ number: 3 }, 's1')).toEqual(['inbox', 'withdraw', '3', '--session', 's1', '--json'])
++  const refusal = { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
++  for (const number of [undefined, '3', 0, -1, 1.5, Number.NaN]) {
++    expect(withdrawArguments({ number }, 's1')).toEqual(refusal)
++  }
++})
++
+ test('an answer waits for a deliverer until a live claim holds it', () => {
+   const answered = question({ answer: { letter: 'a', text: 'Decline it', answeredAt: NOW } })
+   expect(needsDelivery(question(), NOW)).toBe(false)
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index 0f54c20..50dbc69 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -19,12 +19,17 @@ export const typedLetter = (question: Question) => letterAt(question.choices.len
+ /** Whether an item is snoozed at a time: hidden until its `snoozedUntil`. */
+ const isSnoozedAt = (item: Item, time: number) => item.snoozedUntil !== undefined && time < item.snoozedUntil
+ 
++/** Whether the agent that posted an item withdrew it. */
++const isWithdrawn = (item: Item) => item.answer !== undefined && 'withdrawn' in item.answer
++
+ /**
+- * Whether the band shows an item: not snoozed, and open, being delivered, or
+- * delivered within the last 30 seconds.
++ * Whether the band shows an item: not withdrawn, not snoozed, and open, being
++ * delivered, or delivered within the last 30 seconds.
+  */
+ export const isShownAt = (item: Item, time: number) =>
+-  !isSnoozedAt(item, time) && (item.deliveredAt === undefined || time - item.deliveredAt < RESOLVED_MS)
++  !isWithdrawn(item) &&
++  !isSnoozedAt(item, time) &&
++  (item.deliveredAt === undefined || time - item.deliveredAt < RESOLVED_MS)
+ 
+ /** The open items whose snooze ended after `since` and by `time`, which bring a hidden band back. */
+ export const wokeBetween = (items: readonly Item[], since: number, time: number) =>
+@@ -242,7 +247,39 @@ export function tellArguments(
+   return ['inbox', 'tell', `--session=${session}`, ...postedFlags(detail, pr, agentId), '--', notice]
+ }
+ 
+-/** The flags both tools pass when they have a value: the detail, the pull request, and the subagent. */
++export const WITHDRAW_DESCRIPTION = [
++  'Withdraw a question or notice you posted that no longer needs the person,',
++  'such as a question they answered in the conversation or news that has gone stale.',
++  'Name it by the number `ask` or `tell` returned. It leaves Projector’s band at once.',
++  'Nothing comes back to you: a withdrawn question sends no `DISMISSED` message.',
++].join(' ')
++
++export const WITHDRAW_SCHEMA = {
++  type: 'object',
++  properties: {
++    number: {
++      type: 'integer',
++      minimum: 1,
++      description: 'The item’s number, as `ask` or `tell` returned it, such as 3.',
++    },
++  },
++  required: ['number'],
++  additionalProperties: false,
++}
++
++/** The arguments of `project inbox withdraw` for one call of the tool, or why the call cannot be one. */
++export function withdrawArguments(
++  input: Readonly<Record<string, unknown>>,
++  session: string,
++): string[] | { error: string } {
++  const { number } = input
++  if (typeof number !== 'number' || !Number.isInteger(number) || number < 1) {
++    return { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
++  }
++  return ['inbox', 'withdraw', String(number), '--session', session, '--json']
++}
++
++/** The flags both posting tools pass when they have a value: the detail, the pull request, and the subagent. */
+ const postedFlags = (detail: string | undefined, pr: string | undefined, agentId: string | undefined) => [
+   ...(detail === undefined || detail === '' ? [] : [`--detail=${detail}`]),
+   ...(pr === undefined || pr === '' ? [] : [`--pr=${pr}`]),
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index c2ba88d..33f3b32 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -24,6 +24,9 @@ import {
+   TELL_SCHEMA,
+   tellArguments,
+   typedLetter,
++  WITHDRAW_DESCRIPTION,
++  WITHDRAW_SCHEMA,
++  withdrawArguments,
+   wokeBetween,
+   type Proposal,
+ } from './inbox'
+@@ -36,6 +39,7 @@ const POLL_MS = 30_000
+ const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null, error: null }
+ const ASK_TOOL = 'mcp__projector__ask'
+ const TELL_TOOL = 'mcp__projector__tell'
++const WITHDRAW_TOOL = 'mcp__projector__withdraw'
+ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
+ 
+ // Watching first: a pull request both loops track is listed once, where its
+@@ -602,15 +606,15 @@ function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+ }
+ 
+ /**
+- * Runs the `project inbox` command one of the tools makes: the reference it
+- * prints, or why the tool call is refused. `instead` says where the agent
+- * turns when the command does not finish.
++ * Runs the `project inbox` command one of the tools makes: what it printed,
++ * or why the tool call is refused. `instead` says where the agent turns when
++ * the command does not finish.
+  */
+-async function post(
++async function runTool(
+   $: Engine,
+   args: string[] | { error: string },
+   instead: string,
+-): Promise<{ ref: string } | { deny: string }> {
++): Promise<{ stdout: string } | { deny: string }> {
+   if (!Array.isArray(args)) return { deny: args.error }
+   let ran: Ran
+   try {
+@@ -618,11 +622,12 @@ async function post(
+   } catch (error) {
+     return { deny: `project did not finish (${messageOf(error)}); ${instead}` }
+   }
+-  // 65 refuses the post and 75 finds the store busy; any other failure is a CLI too old to post.
+-  if (ran.exitCode === 65 || ran.exitCode === 75) return { deny: errorOf(ran) }
++  // 65 refuses the call, 66 finds no such item, and 75 finds the store busy;
++  // any other failure is a CLI too old to know the command.
++  if (ran.exitCode === 65 || ran.exitCode === 66 || ran.exitCode === 75) return { deny: errorOf(ran) }
+   if (ran.exitCode !== 0) return { deny: `${errorOf(ran)}; run project upgrade` }
+   checkSoon($)
+-  return { ref: ran.stdout.trim() }
++  return { stdout: ran.stdout }
+ }
+ 
+ export const register: Register = on => {
+@@ -632,24 +637,25 @@ export const register: Register = on => {
+       description: 'Show or hide Projector’s band of your loops’ pull requests and your inbox',
+     })
+     // A session whose engine cannot serve the tools keeps the band.
+-    await $.tool
+-      .register({ name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA, isDeferred: false })
+-      .catch(() => undefined)
+-    await $.tool
+-      .register({ name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA, isDeferred: false })
+-      .catch(() => undefined)
++    for (const tool of [
++      { name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA },
++      { name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA },
++      { name: 'withdraw', description: WITHDRAW_DESCRIPTION, inputSchema: WITHDRAW_SCHEMA },
++    ]) {
++      await $.tool.register({ ...tool, isDeferred: false }).catch(() => undefined)
++    }
+     $.clock.every(TICK_MS, () => void tick($))
+     soon($)
+     checkSoon($)
+     return next(e)
+   })
+ 
+-  // The tools post through the CLI, so an item posted here and one posted
+-  // from the shell land in the same store.
++  // The tools run the CLI, so what they post or withdraw and what the shell
++  // does land in the same store.
+   on('tool.call', { tool: ASK_TOOL }, async ($, e) => {
+-    const posted = await post($, askArguments(e, await $.session.id(), e.agentId), 'ask in the conversation instead')
++    const posted = await runTool($, askArguments(e, await $.session.id(), e.agentId), 'ask in the conversation instead')
+     if ('deny' in posted) return posted
+-    const { ref } = posted
++    const ref = posted.stdout.trim()
+     void $.ui.notify(String(e.question), { title: 'Projector question' }).catch(() => undefined)
+     return {
+       result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
+@@ -658,15 +664,30 @@ export const register: Register = on => {
+ 
+   on('tool.call', { tool: TELL_TOOL }, async ($, e) => {
+     const args = tellArguments(e, await $.session.id(), e.agentId)
+-    const posted = await post($, args, 'tell the person in the conversation instead')
++    const posted = await runTool($, args, 'tell the person in the conversation instead')
+     if ('deny' in posted) return posted
+-    const { ref } = posted
++    const ref = posted.stdout.trim()
+     void $.ui.notify(String(e.notice), { title: 'Projector notice' }).catch(() => undefined)
+     return {
+       result: `Posted ${ref}. It waits in Projector’s band until the person dismisses it; nothing comes back to you.`,
+     }
+   }).catch(() => ({ deny: 'Projector could not record the notice; tell the person in the conversation instead' }))
+ 
++  // The band takes the withdrawn item from the CLI at once, so it leaves the
++  // band before the next read of the store.
++  on('tool.call', { tool: WITHDRAW_TOOL }, async ($, e) => {
++    const session = await $.session.id()
++    const instead = 'tell the person in the conversation that it no longer needs them'
++    const ran = await runTool($, withdrawArguments(e, session), instead)
++    if ('deny' in ran) return ran
++    const item = itemOf(ran.stdout, session)
++    await replace($, item)
++    await closeDrawer($, `item:${item.ref}`)
++    return { result: `Withdrew ${item.ref}. It has left Projector’s band, and nothing comes back to you.` }
++  }).catch(() => ({
++    deny: 'Projector could not withdraw the item; tell the person in the conversation that it no longer needs them',
++  }))
++
+   // These hooks only watch: the catch hands back what the event settled to,
+   // so a failure here never runs a tool twice or refuses anything.
+   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 205a617..df39b85 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -40,8 +40,11 @@ export type Snapshot = {
+   error: string | null
+ }
+ 
++/** A dismissal, `withdrawn` when the agent that posted the item took it back. */
++export type Dismissal = { dismissed: true; withdrawn?: true; answeredAt: number }
++
+ /** How an item was resolved: dismissed, or a question answered with a lettered choice or typed text. */
+-export type Answer = { letter: string; text: string; answeredAt: number } | { dismissed: true; answeredAt: number }
++export type Answer = { letter: string; text: string; answeredAt: number } | Dismissal
+ 
+ /** What every item has, as `project inbox list --json` gives it, with the session whose store holds it. */
+ export type Posted = {
+@@ -75,7 +78,7 @@ export type Question = Posted & {
+ /** A notice, which you read and dismiss, and which sends nothing back; dismissing it delivers it. */
+ export type Notice = Posted & {
+   kind: 'notice'
+-  answer?: { dismissed: true; answeredAt: number }
++  answer?: Dismissal
+ }
+ 
+ export type Item = Question | Notice
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index c7b7bc9..30140ea 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -667,6 +667,9 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     dismiss = command("dismiss", "record that you dismissed a question or read a notice")
+     dismiss.add_argument("reference")
+ 
++    withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
++    withdraw.add_argument("reference")
++
+     snooze = command("snooze", "hide an open item for a while")
+     snooze.add_argument("reference")
+     snooze.add_argument("--for", dest="minutes", type=int, default=inbox.SNOOZE_MINUTES, metavar="MINUTES",
+@@ -1141,7 +1144,7 @@ def item_state(item: dict) -> str:
+     if not answered:
+         return "open"
+     if answered.get("dismissed"):
+-        return "dismissed"
++        return "withdrawn" if answered.get("withdrawn") else "dismissed"
+     if item.get("deliveredAt"):
+         return f"delivered {inbox.answer_ref(item)}"
+     if inbox.live_claim(item):
+@@ -1197,12 +1200,12 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+             print(json_text({"item": item}))
+         else:
+             print_item(item)
+-    elif command in ("answer", "dismiss"):
++    elif command in ("answer", "dismiss", "withdraw"):
+         session = inbox_session(arguments, False)
+         item = (inbox.answer(session, ref, letter, arguments.text) if command == "answer"
+-                else inbox.dismiss(session, ref))
+-        print(json_text({"item": item}) if json_output
+-              else f"{'answered' if command == 'answer' else 'dismissed'} {inbox.answer_ref(item)}")
++                else inbox.dismiss(session, ref, withdrawn=command == "withdraw"))
++        done = {"answer": "answered", "dismiss": "dismissed", "withdraw": "withdrew"}[command]
++        print(json_text({"item": item}) if json_output else f"{done} {inbox.answer_ref(item)}")
+     elif command == "snooze":
+         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
+         print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
+diff --git a/src/projector/inbox.py b/src/projector/inbox.py
+index ff281c5..9ea1272 100644
+--- a/src/projector/inbox.py
++++ b/src/projector/inbox.py
+@@ -1,7 +1,8 @@
+ """The items an agent puts in the person's inbox, kept per session under Projector's state directory.
+ 
+ An item is a question, which the person answers or dismisses and whose answer goes back to the
+-agent, or a notice, which the person reads and dismisses and which sends nothing back. Each
++agent, or a notice, which the person reads and dismisses and which sends nothing back. The agent
++that posted an open item can withdraw it, which dismisses it and sends nothing back. Each
+ session numbers its items 1, 2, 3, and on, in one count across both kinds. Its items are JSON
+ files in their own directory, one per item and named by its number, with `count.json` holding the
+ last number given. Every write happens under the directory's lock, an operating-system lock on
+@@ -322,6 +323,15 @@ def answer_ref(item: dict) -> str:
+     return item["ref"] if answered.get("dismissed") else f"{item['ref']}.{answered['letter']}"
+ 
+ 
++def resolution(item: dict) -> str:
++    """How a resolved item was resolved, as a refusal names it: `withdrawn`, `dismissed`, or
++    `answered, as 3.a`."""
++    answered = item["answer"]
++    if answered.get("withdrawn"):
++        return "withdrawn"
++    return "dismissed" if answered.get("dismissed") else f"answered, as {answer_ref(item)}"
++
++
+ def message(question: dict) -> str:
+     """The line that delivers an answer, as `watch` prints it and the band sends it."""
+     answered = question["answer"]
+@@ -370,17 +380,17 @@ def record(question: dict) -> None:
+     return update(session, ref, record, prefer_open=True)
+ 
+ 
+-def dismiss(session: Optional[str], ref: str) -> dict:
++def dismiss(session: Optional[str], ref: str, withdrawn: bool = False) -> dict:
+     """Dismiss an item. A dismissed question waits for its deliverer to tell the agent; a dismissed
+-    notice has nothing to send, so it is delivered at once."""
++    notice has nothing to send, so it is delivered at once. A `withdrawn` item, which the agent that
++    posted it took back, is delivered at once too, because that agent already knows."""
+     def record(item: dict) -> None:
+         if item.get("answer"):
+-            raise InboxError(f"{item['ref']} is already {'dismissed' if is_notice(item) else 'answered'}, as "
+-                             f"{answer_ref(item)}")
++            raise InboxError(f"{item['ref']} is already {resolution(item)}")
+         now = now_ms()
+-        item["answer"] = {"dismissed": True, "answeredAt": now}
++        item["answer"] = {"dismissed": True, "answeredAt": now, **({"withdrawn": True} if withdrawn else {})}
+         item.pop("snoozedUntil", None)
+-        if is_notice(item):
++        if withdrawn or is_notice(item):
+             item["deliveredAt"] = now
+ 
+     return update(session, ref, record, prefer_open=True)
+@@ -393,8 +403,7 @@ def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> d
+ 
+     def record(item: dict) -> None:
+         if item.get("answer"):
+-            raise InboxError(f"{item['ref']} is already {'dismissed' if is_notice(item) else 'answered'}, so it "
+-                             "has nothing to return for")
++            raise InboxError(f"{item['ref']} is already {resolution(item)}, so it has nothing to return for")
+         item["snoozedUntil"] = now_ms() + minutes * 60_000
+ 
+     return update(session, ref, record, prefer_open=True)
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 42a8429..58892b6 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 9 -->
++<!-- projector:begin 10 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -59,10 +59,9 @@ it. Post news they need to act on, such as a failure that needs them, and
+ anything that comes up while they are away. Leave out what they already see
+ elsewhere, such as a pull request's state, which the band lists. An item
+ stays above their prompt until they answer or dismiss it, so keep the inbox
+-for what matters, not as a log of everything you did. While items you posted
+-are open, look over them each time the person writes to you, with
+-`project inbox list --session "$CLAUDE_CODE_SESSION_ID"`, and dismiss any
+-that no longer need them, such as a question they answered in the
+-conversation or news that has gone stale, with
+-`project inbox dismiss <number> --session "$CLAUDE_CODE_SESSION_ID"`.
++for what matters, not as a log of everything you did. Each time the person
++writes to you, look over the items you posted that are still open, and
++withdraw any that no longer need them, such as a question they answered in
++the conversation or news that has gone stale, with the `withdraw` tool and
++the number `ask` or `tell` returned.
+ <!-- projector:end -->
+diff --git a/tests/test_inbox.py b/tests/test_inbox.py
+index 35ab4b0..f09133a 100644
+--- a/tests/test_inbox.py
++++ b/tests/test_inbox.py
+@@ -163,7 +163,7 @@ def test_a_number_open_in_two_sessions_needs_the_session_beside_a_resolved_one(s
+         for session in ("s1", "s2", "s3"):
+             self.ask("First?", "--recommend", "x", session=session)
+         self.run_cli("dismiss", "1", "--session", "s3")
+-        for args in (["show", "1"], ["answer", "1.a"], ["dismiss", "1"], ["snooze", "1"]):
++        for args in (["show", "1"], ["answer", "1.a"], ["dismiss", "1"], ["withdraw", "1"], ["snooze", "1"]):
+             with self.subTest(command=args[0]):
+                 code, out, err = self.run_cli(*args)
+                 self.assertEqual((67, ""), (code, out))
+@@ -327,7 +327,7 @@ def test_refuses_a_typed_answer_of_more_than_one_line(self) -> None:
+         self.assertNotIn("answer", self.item(1))
+ 
+     def test_refuses_an_answer_letter_on_every_other_command(self) -> None:
+-        for args in (["show", "1.a"], ["dismiss", "1.a"], ["snooze", "1.a"], ["claim", "1.a"],
++        for args in (["show", "1.a"], ["dismiss", "1.a"], ["withdraw", "1.a"], ["snooze", "1.a"], ["claim", "1.a"],
+                      ["delivered", "1.a", "--claim", "x"], ["reopen", "1.a", "--claim", "x"]):
+             with self.subTest(command=args[0]):
+                 code, out, err = self.run_cli(*args, "--session", "s1")
+@@ -504,7 +504,7 @@ def test_every_command_refuses_a_file_that_is_not_an_item(self) -> None:
+         (self.folder() / "7.json").write_text(json.dumps({"ref": "7", "subject": "No kind?"}))
+         (self.folder() / "8.json").write_text(json.dumps({"ref": "9", "kind": "notice", "subject": "Misnamed?"}))
+         for ref in ("7", "8"):
+-            for args in (["show", ref], ["answer", f"{ref}.a"], ["dismiss", ref], ["snooze", ref]):
++            for args in (["show", ref], ["answer", f"{ref}.a"], ["dismiss", ref], ["withdraw", ref], ["snooze", ref]):
+                 with self.subTest(args=args):
+                     code, _, err = self.run_cli(*args, "--session", "s1")
+                     self.assertEqual(66, code)
+@@ -602,6 +602,56 @@ def test_lists_and_shows_a_notice_by_its_kind(self) -> None:
+         self.assertIn("2\tnotice\tdismissed\tDropped a file", self.run_cli("list", "--all", "--session", "s1")[1])
+ 
+ 
++class WithdrawTests(InboxCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.ask("Decline it?", "--recommend", "Decline it", "--pr", "acme/app#12")
++        self.run_cli("tell", "Force-pushed #12", "--pr", "acme/app#12", "--session", "s1")
++
++    def assert_withdrawn(self, item: dict) -> None:
++        self.assertEqual({"dismissed": True, "withdrawn": True, "answeredAt": item["deliveredAt"]}, item["answer"])
++        self.assertNotIn("snoozedUntil", item)
++
++    def test_withdraws_an_open_question_and_sends_its_agent_nothing(self) -> None:
++        self.run_cli("snooze", "1", "--session", "s1")
++        self.assertEqual((0, "withdrew 1\n", ""), self.run_cli("withdraw", "1", "--session", "s1"))
++        self.assert_withdrawn(self.item(1))
++        self.assertEqual("", self.run_cli("watch", "--once", "--session", "s1")[1])
++        self.assertEqual(["2\tnotice\topen\tForce-pushed #12"], self.run_cli("list", "--session", "s1")[1].splitlines())
++        self.assertIn("1\tquestion\twithdrawn\tDecline it?", self.run_cli("list", "--all", "--session", "s1")[1])
++        self.assertTrue(self.run_cli("show", "1")[1].endswith("\nwithdrawn\n"))
++
++    def test_withdraws_an_open_notice_and_prints_it_as_json(self) -> None:
++        code, out, err = self.run_cli("withdraw", "2", "--session", "s1", "--json")
++        self.assertEqual(0, code, err)
++        self.assertEqual(self.item(2), json.loads(out)["item"])
++        self.assert_withdrawn(self.item(2))
++        self.assertEqual(["1\tquestion\topen\tDecline it?"], self.run_cli("list", "--session", "s1")[1].splitlines())
++
++    def test_refuses_what_dismiss_refuses_and_changes_nothing(self) -> None:
++        self.run_cli("answer", "1.a", "--session", "s1")
++        answered = self.item(1)
++        code, out, err = self.run_cli("withdraw", "1", "--session", "s1")
++        self.assertEqual((65, ""), (code, out))
++        self.assertIn("already answered, as 1.a", err)
++        code, out, err = self.run_cli("withdraw", "2.a", "--session", "s1")
++        self.assertEqual((65, ""), (code, out))
++        self.assertIn("2, without an answer letter", err)
++        self.assertEqual(66, self.run_cli("withdraw", "3", "--session", "s1")[0])
++        self.assertEqual(answered, self.item(1))
++        self.assertNotIn("answer", self.item(2))
++        self.assertEqual("ANSWER 1.a Decline it? → Decline it\n",
++                         self.run_cli("watch", "--once", "--session", "s1")[1])
++
++    def test_refuses_an_item_already_withdrawn_or_dismissed_and_says_which(self) -> None:
++        self.run_cli("withdraw", "1", "--session", "s1")
++        self.run_cli("dismiss", "2", "--session", "s1")
++        for ref, said in (("1", "1 is already withdrawn\n"), ("2", "2 is already dismissed\n")):
++            for command in ("withdraw", "dismiss"):
++                with self.subTest(ref=ref, command=command):
++                    self.assertEqual((65, "", f"project: {said}"), self.run_cli(command, ref, "--session", "s1"))
++
++
+ class SnoozeTests(InboxCase):
+     NOW = 1_800_000_000_000
+ 
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index d998eae..2731f10 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -21,6 +21,7 @@
+     7: "5bb17e8e2ff73a35d3d17d3c2bd9569271506811e832703c6592c0977f2e9e2e",
+     8: "b02e721cceaaed2765131919283b94f4b60a2c10fa5407dce3f25a58ecd5a097",
+     9: "c427d1e6effbc38103d89b576070ff2c7ad8b1d792e61a3fb3efb44351bb8172",
++    10: "79ad714d61653a155a8d3ea8168ceb4f72bd1bd2e247a91abc4489cf3870324d",
+ }
+ 
+ 

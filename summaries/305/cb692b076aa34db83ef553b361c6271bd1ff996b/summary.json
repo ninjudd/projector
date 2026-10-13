@@ -1,0 +1,152 @@
+{
+ "version": 1,
+ "name": "Inbox withdraw tool",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 305,
+  "title": "Let an agent withdraw an inbox item through a tool",
+  "head": "cb692b076aa34db83ef553b361c6271bd1ff996b",
+  "headRef": "inbox-withdraw",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox lets an agent post a <b>question</b> (with <code>ask</code>) or a <b>notice</b> (with <code>tell</code>) that waits for the person in <b>the band</b>, the list Projector's Claude Code plugin draws above the prompt. When the person answers or dismisses a question, a deliverer sends an <code>ANSWER</code> or <code>DISMISSED</code> line back to the agent that asked.",
+   "Agents also need to clear items that went stale, such as a question the person answered in the conversation. Until now the generated <code>AGENTS.md</code> section told them to run <code>project inbox list</code> and <code>project inbox dismiss</code> from the shell on every message. That cost a shell command each time, and a dismissal looked like the person's own: it sent a <code>DISMISSED</code> line back to the agent and stayed in the band, struck through, for 30 seconds.",
+   "This pull request adds a third action, <b>withdraw</b>. <code>project inbox withdraw &lt;number&gt;</code> runs the same locked write as <code>dismiss</code>, adds <code>withdrawn: true</code> to the answer, and marks the item delivered at once, so no deliverer sends anything back. The plugin registers a matching <code>withdraw</code> tool (<code>mcp__projector__withdraw</code>), and the band drops a withdrawn item immediately. Version 10 of the <code>AGENTS.md</code> section tells agents to use the tool."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the list of pull requests and inbox items the Claude Code plugin shows above the prompt.</li><li><b>Item</b>: a question or a notice, stored as one JSON file per number in the session's inbox directory.</li><li><b>Delivered</b>: <code>deliveredAt</code> is set, so no deliverer (<code>watch</code> or the band) sends the item's answer to the agent again.</li><li><b>Withdrawn</b>: dismissed by the agent that posted it, recorded as <code>{dismissed, withdrawn, answeredAt}</code> and delivered at once.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first Projector review of <code>cb692b0</code> is clean, with no finding threads. It suggests one optional change: <code>answer</code> still refuses a withdrawn question as <code>already answered, as 1</code>.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "store",
+   "title": "The withdraw command",
+   "kicker": "The CLI records a withdrawal as a dismissal that is already delivered",
+   "intro": [
+    "Withdrawing reuses <code>dismiss</code>, which finds the item, checks that it is still open, and writes it under the session's lock. A <code>withdrawn</code> flag adds one field to the stored answer and sets <code>deliveredAt</code> to the same moment. Because the item is delivered, <code>watch</code> and the band's deliverer skip it, and <code>list</code> without <code>--all</code> leaves it out.",
+    "Refusals now say how an item was resolved. Before, <code>dismiss</code> and <code>snooze</code> told a caller that a dismissed question was <code>already answered, as 3</code>, which would tell an agent the person had answered."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "<code>dismiss</code> takes <code>withdrawn</code>; the new <code>resolution</code> names how an item was resolved in refusals.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 393,
+       "text": "A withdrawn question is delivered at once. In a scratch store, <code>withdraw 1</code> followed by <code>watch --once</code> printed nothing, and <code>list --all</code> showed the item as <code>withdrawn</code>."
+      },
+      {
+       "kind": "context",
+       "line": 389,
+       "text": "<code>answer</code> on line 361 still refuses a withdrawn question with <code>1 is already answered, as 1</code>. The review lists switching it to <code>resolution</code> as an optional suggestion."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>withdraw</code> subcommand on <code>dismiss</code>'s code path, and shows a withdrawn item's state as <code>withdrawn</code>."
+    },
+    {
+     "path": "tests/test_inbox.py"
+    }
+   ]
+  },
+  {
+   "id": "tool",
+   "title": "The withdraw tool and the band",
+   "kicker": "Claude Code's agent withdraws through a tool, and the band drops the item at once",
+   "intro": [
+    "The plugin's hooks module registers <code>withdraw</code> beside <code>ask</code> and <code>tell</code>. A call runs <code>project inbox withdraw &lt;number&gt; --session &lt;id&gt; --json</code>, puts the printed item in the band's list, closes the item's drawer if it is open, and tells the agent nothing comes back.",
+    "The three tools now share one runner, <code>runTool</code>. It passes exit 65 (refused), 66 (no such item), and 75 (store busy) back as the CLI's message, and tells the agent to run <code>project upgrade</code> on any other failure, such as an old CLI without <code>withdraw</code>.",
+    "In the band, <code>isShownAt</code> leaves out a withdrawn item. A dismissal the person makes stays for 30 seconds, struck through, to confirm their own action; a withdrawal is not their action, so it leaves at once."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Exit 66 is new to the runner's pass-through list. <code>ask</code> and <code>tell</code> never look up an item, so they never exit 66, and their behavior is unchanged."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "A <code>Dismissal</code> type with an optional <code>withdrawn</code>, shared by questions and notices."
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "The tool's description, schema, and <code>withdrawArguments</code>; <code>isShownAt</code> leaves out a withdrawn item.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 30,
+       "text": "The band's other readers of <code>answer</code> (the new-item check in <code>setItems</code>, the open counts, and the drawers) treat a withdrawn item as a resolved dismissal, so hiding it here is the only change they need. Traced in <code>hooks/register.tsx</code>."
+      }
+     ]
+    },
+    {
+     "path": "hooks/register.tsx",
+     "note": "Registers three tools in one loop, renames <code>post</code> to <code>runTool</code>, and adds the <code>withdraw</code> hook.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 678,
+       "text": "The hook replaces the item from the CLI's output before the band reads the store again, so the line and its drawer disappear as soon as the tool returns."
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.test.ts"
+    },
+    {
+     "path": "hooks/band.test.tsx"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Instructions and documentation",
+   "kicker": "Version 10 of the AGENTS.md section, the reference docs, and plan section 12",
+   "intro": [
+    "<code>project init</code> writes a generated Projector section into each repository's <code>AGENTS.md</code>, and refreshes it when the template's version moves. Version 10 replaces the shell commands with the <code>withdraw</code> tool and drops the step that listed items on every message: the agent's own conversation already holds each number <code>ask</code> or <code>tell</code> returned.",
+    "The inbox plan's new section 12 records the design. The project stays <code>in-progress</code>, because a manual check from section 4 is still open."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The template for version 10 of the section."
+    },
+    {
+     "path": "AGENTS.md"
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins version 10's hash, so editing the text without a new version fails."
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/projects/inbox/readme.md"
+    }
+   ]
+  }
+ ]
+}
