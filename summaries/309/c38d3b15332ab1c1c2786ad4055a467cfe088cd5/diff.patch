@@ -1,0 +1,138 @@
+diff --git a/.gitignore b/.gitignore
+index ace4894..668abab 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -8,3 +8,4 @@ auth.json
+ __pycache__/
+ .DS_Store
+ node_modules/
++.claude-plugin/types/
+diff --git a/AGENTS.md b/AGENTS.md
+index 2d686f1..933a144 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -70,6 +70,7 @@ PYTHONPATH=src python3 -m projector check
+ claude plugin validate .
+ claude plugin validate skills
+ claude plugin test .
++hooks/typecheck.sh
+ git diff --check
+ ```
+ 
+@@ -79,6 +80,15 @@ Code hooks module in `hooks/`, while `claude plugin validate skills` validates
+ the skill tree. `claude plugin test .` runs the hooks module's `*.test.ts`
+ and `*.test.tsx` files. Codex has no separate public validation command.
+ 
++`hooks/typecheck.sh` type-checks the hooks module with `site/`'s TypeScript,
++through the root `tsconfig.json`. It compiles against the declarations
++Claude Code writes to `.claude-plugin/types/` each time an interactive
++session loads the checkout as a plugin. Nothing else provides them, so CI
++cannot run this check. Once per checkout, run `npm ci` in `site/` and start
++a session with `claude --plugin-dir .` from the repository root. The script
++fails with that instruction while the declarations are missing. Start such a
++session again after you update Claude Code, so the declarations match it.
++
+ The site's front end lives in `site/`: TypeScript under `site/src/`, and
+ the stylesheets, icon, and compiled JavaScript the site serves under
+ `site/assets/`, which the wheel ships as `projector.site.assets`. Commit the
+diff --git a/docs/develop.md b/docs/develop.md
+index fc650a6..d6a8e06 100644
+--- a/docs/develop.md
++++ b/docs/develop.md
+@@ -84,9 +84,19 @@ npm run dev
+ 
+ ## Validate a change
+ 
+-Run the validation gate from the repository root. Run `npm ci` once in
+-`site/` first, or the test that compares the compiled scripts with their
+-TypeScript skips:
++Run the validation gate from the repository root. Prepare each checkout once
++first:
++
++1. Run `npm ci` in `site/`. Without it, the test that compares the compiled
++   scripts with their TypeScript skips, and `hooks/typecheck.sh` has no
++   compiler.
++2. Start an interactive session with `claude --plugin-dir .` from the
++   repository root. When the session loads the checkout as a plugin, Claude
++   Code writes the declarations the hooks module compiles against to
++   `.claude-plugin/types/`, which Git ignores. They stay after you quit the
++   session. Projector loads only when its `gh-stack` dependency is installed,
++   as [Install for Claude Code](plugins.md#install-for-claude-code)
++   describes. Start such a session again after you update Claude Code.
+ 
+ ```sh
+ PYTHONPATH=src python3 -m unittest discover -v
+@@ -94,11 +104,18 @@ PYTHONPATH=src python3 -m projector check
+ claude plugin validate .
+ claude plugin validate skills
+ claude plugin test .
++hooks/typecheck.sh
+ git diff --check
+ ```
+ 
++`hooks/typecheck.sh` runs `site/`'s `tsc` over `hooks/` with the root
++`tsconfig.json`, which extends the one Claude Code writes beside its
++declarations. While the declarations are missing, the script fails and says
++how to get them.
++
+ The Check workflow runs `npm run check`, the tests, and `project check` on
+-every pull request.
++every pull request. It cannot type-check `hooks/`, because only an
++interactive Claude Code session writes the declarations.
+ 
+ ## Release
+ 
+diff --git a/docs/plugins.md b/docs/plugins.md
+index fda5dd4..713a243 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -172,8 +172,15 @@ Validate a checkout before publishing it:
+ claude plugin validate .
+ claude plugin validate skills
+ claude plugin test .
++hooks/typecheck.sh
+ ```
+ 
++`hooks/typecheck.sh` type-checks the hooks module against the declarations
++Claude Code writes to `.claude-plugin/types/` when an interactive session
++loads the checkout with `claude --plugin-dir .`. Start that session once, and
++run `npm ci` in `site/`, before the first check, as
++[Validate a change](develop.md#validate-a-change) describes.
++
+ ### See your loops' pull requests in Projector's band
+ 
+ In Claude Code, the plugin also ships a hooks module in `hooks/` that lists
+diff --git a/hooks/typecheck.sh b/hooks/typecheck.sh
+new file mode 100755
+index 0000000..adcf089
+--- /dev/null
++++ b/hooks/typecheck.sh
+@@ -0,0 +1,18 @@
++#!/bin/sh
++# Type-checks the hooks module against the declarations Claude Code writes to
++# .claude-plugin/types/ when an interactive session loads this checkout with
++# --plugin-dir. Nothing else provides them, so CI cannot run this check.
++set -eu
++cd "$(dirname "$0")/.."
++
++if [ ! -f .claude-plugin/types/tsconfig.json ]; then
++  echo "hooks/typecheck.sh: Claude Code's types are missing from .claude-plugin/types/." >&2
++  echo "Start an interactive session with \`claude --plugin-dir .\` from the repository root" >&2
++  echo "once, so Claude Code writes them, then run this again." >&2
++  exit 1
++fi
++if [ ! -x site/node_modules/.bin/tsc ]; then
++  echo "hooks/typecheck.sh: TypeScript is missing. Run \`npm ci\` in site/ first." >&2
++  exit 1
++fi
++exec site/node_modules/.bin/tsc -p .
+diff --git a/tsconfig.json b/tsconfig.json
+new file mode 100644
+index 0000000..ce600b3
+--- /dev/null
++++ b/tsconfig.json
+@@ -0,0 +1,4 @@
++{
++  "extends": "./.claude-plugin/types/tsconfig.json",
++  "include": ["hooks"]
++}
