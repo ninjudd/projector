@@ -222,10 +222,11 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
 
   await ui.press({ key: 'pr:x/y#7' })
   // The drawer's facts name no author, whoever wrote the pull request.
-  const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files$/ })
-  expect(facts?.props.color).toBe('subtle')
+  const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files · checks passing$/ })
   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
+  // The facts take the default color, and only the checks take theirs, not the `·` before them.
+  expect([facts?.props.color, facts?.props.dimColor]).toEqual([undefined, undefined])
+  expect((await ui.find({ type: 'Text', text: /^checks passing$/ }))?.props.color).toBe('success')
   // The pull request's age ends its line, so the drawer does not repeat it.
   expect(await ui.find({ type: 'Text', text: /updated 5m ago/ })).toBeUndefined()
   // The drawer starts where the state does: past the three-column labels `r#1` and `y#7` and the gap after them.
@@ -235,8 +236,8 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   // Under the facts, each link has a line of its own, so a terminal without hyperlinks shows the whole URL, and the actions' row comes last.
   const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
   expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'github:x/y#7', 'projector:x/y#7', 'Box'])
-  expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
-  expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[projector](${SUMMARY})`)
+  expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
+  expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
 
   // discuss is a plain Button, so Enter fills the prompt on the main screen too.
@@ -977,6 +978,59 @@ test('asks through the tool, and the band lists the question below the pull requ
   await ui.unmount()
 })
 
+test('every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const dismissed = { dismissed: true as const, answeredAt: NOW - 1_000 }
+  questionWorld(on, clock, [
+    held(),
+    notice(),
+    held({ ref: '3', number: 3, subject: 'Rebase first?', answer, deliveredAt: NOW - 1_000 }),
+    notice({ ref: '4', number: 4, subject: 'Pushed a fix', answer: dismissed, deliveredAt: NOW - 1_000 }),
+    notice({ ref: '5', number: 5, subject: 'Merged #6', snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR }),
+  ])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  type Part = { props: { color?: string; strikethrough?: boolean; inverse?: boolean }; children: string[] }
+  /** Each part of an item's line, the bullet then the subject: its text, color, and strikethrough. */
+  const lineOf = async (key: string) => {
+    const parts = ((await ui.find({ type: 'Button', key }))?.children ?? []) as Part[]
+    return parts.map(part => [part.children.join(''), part.props.color, part.props.strikethrough === true])
+  }
+
+  expect(await lineOf('item:1')).toEqual([
+    ['- ', 'permission', false],
+    ['Decline the finding?', 'permission', false],
+  ])
+  expect(await lineOf('item:2')).toEqual([
+    ['- ', undefined, false],
+    [FORCE_PUSHED, undefined, false],
+  ])
+  expect(await lineOf('item:3')).toEqual([
+    ['- ', 'subtle', false],
+    ['Rebase first?', 'subtle', false],
+  ])
+  expect(await lineOf('item:4')).toEqual([
+    ['- ', 'subtle', false],
+    ['Pushed a fix', 'subtle', true],
+  ])
+  expect(await lineOf('item:5')).toEqual([
+    ['- ', 'subtle', false],
+    ['Merged #6', 'subtle', false],
+  ])
+  expect((await ui.findAll({ type: 'Text' })).filter(text => text.props.dimColor !== undefined)).toEqual([])
+
+  // An open question's line stays in its color, inverted, while its drawer is open.
+  await ui.press({ key: 'item:1' })
+  const opened = ((await ui.find({ type: 'Button', key: 'close:1' }))?.children ?? []) as Part[]
+  expect(opened.map(part => [part.props.color, part.props.inverse])).toEqual([
+    ['permission', true],
+    ['permission', true],
+  ])
+  await ui.unmount()
+})
+
 test('a pull request’s age and an item’s age end in one column', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -1003,7 +1057,7 @@ test('a blank line sets GitHub’s error apart from the items under it', async (
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   const failure = texts.indexOf('GitHub: read: connection reset by peer')
   expect(failure).toBeGreaterThan(-1)
-  expect(texts.slice(failure + 1, failure + 3)).toEqual([' ', '• '])
+  expect(texts.slice(failure + 1, failure + 3)).toEqual([' ', '- '])
   await ui.unmount()
 })
 
@@ -1543,7 +1597,7 @@ test('a number or an old reference typed in the prompt reaches the agent as plai
 
 const FORCE_PUSHED = 'Force-pushed #7 to drop a stray file'
 
-test('a subagent tells through the tool, and the band lists the notice with its own bullet', async ($, on) => {
+test('a subagent tells through the tool, and the band lists the notice in the default color', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
@@ -1560,7 +1614,7 @@ test('a subagent tells through the tool, and the band lists the notice with its 
   await clock.settle()
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated (just now|\d+s ago)$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '• ' })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
   await ui.unmount()
@@ -2159,7 +2213,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
   expect(await ui.find({ key: 'answer:1.a' })).toBeDefined()
   expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
   const restored = await line()
-  expect([restored?.props.color, restored?.props.strikethrough]).toEqual([undefined, false])
+  expect([restored?.props.color, restored?.props.strikethrough]).toEqual(['permission', false])
   expect(session.store.store.get('1')).toEqual(held())
 
   // The dismissal had not gone out, so the restore sends nothing.
@@ -2260,7 +2314,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
   expect(session.project()).toContain('inbox restore 1 --session s1 --json')
   // Before the band reads the store again, the question is open in the band, and its old drawer stays closed.
   const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
-  expect([line?.props.color, line?.props.strikethrough]).toEqual([undefined, false])
+  expect([line?.props.color, line?.props.strikethrough]).toEqual(['permission', false])
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
   await clock.advance(TICK)

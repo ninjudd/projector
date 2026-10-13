@@ -197,8 +197,8 @@ session starts a loop's watcher for the first time.
 #267 draft List a loop's open pull requests above the Claude Code prompt      2h
 #258 draft grace Name the reviewed head in a review's signature conflict · ⋮5 5m
      reviewing · review-signature · +84 −12 in 5 files · checks passing
-     github
-     projector
+     open in github
+     open in projector
      d: discuss | x: dismiss
 ```
 
@@ -231,11 +231,12 @@ Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
 one column past the number, under `draft` or `ready`. It says whether your
 loops are watching or reviewing the pull request, then its branch, size, and
-checks. Below that:
+checks, in the default text color; only the checks' state takes a color of
+its own. Below that:
 
-- **github** opens the pull request on GitHub.
-- **projector** opens its Projector summary, when the pull request's
-  description links one.
+- **open in github** opens the pull request on GitHub.
+- **open in projector** opens its Projector summary, when the pull
+  request's description links one.
 - **discuss** puts the pull request's number in the prompt at the cursor,
   as `#258`, or as `owner/repo#258` when the band lists more than one
   repository.
@@ -261,8 +262,8 @@ with its drawer closed.
 On the main screen, which Claude Code uses under tmux and when
 `CLAUDE_CODE_NO_FLICKER=0` is set, use the band from the keyboard, as
 [Use the band from the keyboard](#use-the-band-from-the-keyboard)
-describes. The **github** and **projector** links take no press there; the
-terminal opens them the way it opens any other link.
+describes. The **open in github** and **open in projector** links take no
+press there; the terminal opens them the way it opens any other link.
 
 The band lists only this session's loops. It finds a loop by the
 `--tracked` file its watcher reads, and learns that file when the session
@@ -292,8 +293,11 @@ than asking again. An agent that runs `project inbox ask`, `tell`, `withdraw`,
 `revise`, or `restore` from the shell reaches the same inbox, as
 [Use the inbox](cli.md#use-the-inbox) describes.
 
-The items are a list below the pull requests, oldest first. A question's
-line starts with `-`, and a notice's with `•`, so you can tell which items
+The items are a list below the pull requests, oldest first, each line
+starting with `-`. An open question's line is drawn in the theme's
+`permission` color, the one Claude Code gives its own permission prompts,
+because an agent's question usually asks leave to do something. An open
+notice's line keeps the default text color, so you can tell which items
 want an answer and which want a read. Each line ends with the pull request
 the item is about, as the band labels it, and how long ago it was posted.
 The band appears when an item arrives or is restored, even after you hid it,
@@ -306,7 +310,7 @@ and in a terminal the divider counts the open questions and the open notices.
 
 - Run project init to add the publish rule?                             2m
 - Decline the finding about the retry budget?                     #337  5m
-• Force-pushed #337 to drop a stray debug file                    #337  1m
+- Force-pushed #337 to drop a stray debug file                    #337  1m
 ```
 
 Click anywhere on an item to open its drawer, and click it again to close

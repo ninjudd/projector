@@ -1511,3 +1511,56 @@ does: digits for the options and letters for the actions.
 | A drawer's actions take `d`, `x`, and `s` by place, **restore** and **unsnooze** included, and no line takes a letter | `a drawer’s actions take d, x and s by their place, restore and unsnooze included` |
 | Enter on a line moves the ring into the drawer it opens and back onto an item's line; a click moves nothing; a pull request's drawer closes in place | `Enter on a line moves the ring into the drawer it opens and back onto the line, and a click moves nothing` |
 | The ring on a live terminal, ctrl+x tab, the digits from an empty prompt, and the letters' drawing | Checked by hand by the owner in a preview session |
+
+## 16. Smaller changes to the band's look
+
+The owner asked for four changes to how the band draws its lines while
+previewing § 15. They are recorded apart from it so they can ship apart.
+This section supersedes the bullet of § 2.5 that gives a notice the bullet
+`•`.
+
+### 16.1 What changes
+
+- **The links read `open in github` and `open in projector`.** A pull
+  request's drawer drew them as `github` and `projector`, which read as
+  labels rather than as things to press. No other drawer draws these
+  links: an item names its pull request as text, and § 15 removed the link
+  that carried a question's options.
+- **A pull request's facts take the default color.** The line under a pull
+  request, such as `watching · fix-branch · +12 −3 in 2 files`, was drawn
+  in `subtle`, which made the drawer's main content its faintest line.
+- **Only the checks take the checks' color.** The facts line ended with
+  ` · checks pending` drawn whole in the checks' color, so the `·` turned
+  yellow while checks ran. The `·` now keeps the line's color, and only
+  `checks <state>` takes `success`, `error`, or `warning`.
+- **Questions and notices share one bullet, and an open question takes a
+  color.** Every item's line starts with `-`. An open question's line, its
+  bullet and its subject, is drawn in the theme color `permission`, and an
+  open notice's keeps the default text color. A resolved or snoozed item
+  is drawn in `subtle` as before, and a dismissed one is struck through.
+  The color lives in one constant, `QUESTION_COLOR`, in
+  `hooks/register.tsx`.
+
+### 16.2 Why this design
+
+- **A color tells the kinds apart better than a glyph.** `-` and `•` look
+  alike at a glance, and the difference between the kinds that matters is
+  that a question waits on the owner. A color draws the eye to it.
+- **`permission` is the question's color.** Claude Code draws its own
+  permission prompts in `permission`, and an agent's question usually asks
+  leave to do something, so the band reuses the color the owner already
+  reads that way. In Claude Code's built-in themes it is a lavender or
+  light blue on dark backgrounds, a stronger blue on light ones, and
+  `ansi:blue` or `ansi:blueBright` in the ANSI themes, distinct from the
+  text color and from `subtle` in every one. The owner tried `inactive`,
+  which made a question recede, and `text`, before choosing it.
+- **The notice keeps the default color.** A notice needs only a read, so
+  it stays as plain as a pull request's title.
+
+### 16.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| The drawer's links read `open in github` and `open in projector`; the facts take the default color, and only `checks <state>` takes the checks' color | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt` in `hooks/band.test.tsx` |
+| Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in the default color` |
+| A restored question's line returns to `permission` | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place`, `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` |

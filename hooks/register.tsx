@@ -62,6 +62,13 @@ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
   pending: 'warning',
 }
 
+/**
+ * The theme color of an open question's line: the one Claude Code gives its
+ * own permission prompts, since an agent's question usually asks leave to do
+ * something. A notice keeps the default color.
+ */
+const QUESTION_COLOR = 'permission'
+
 const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
 const snapshot = atom({ plugin: 'projector', key: 'bandSnapshot' } as const, EMPTY)
 const now = atom({ plugin: 'projector', key: 'bandNow' } as const, 0)
@@ -976,12 +983,13 @@ export const register: Register = on => {
       return row === undefined ? (item.pr ?? '') : label(row.pr)
     }
 
-    // The items are a list below the pull requests, oldest first: a question
-    // bulleted `-`, a notice `•`. An open question's drawer numbers its
-    // options; choosing one puts the question and that answer in the prompt as
-    // text, for you to send or change, and sending it unchanged is what
-    // answers the question. Discuss puts the question alone, for a reply in
-    // your own words, which answers nothing. A resolved question's drawer
+    // The items are a list below the pull requests, oldest first, each
+    // bulleted `-`; an open question's line takes `QUESTION_COLOR`, and a
+    // resolved or snoozed item's `subtle`. An open question's drawer numbers
+    // its options; choosing one puts the question and that answer in the
+    // prompt as text, for you to send or change, and sending it unchanged is
+    // what answers the question. Discuss puts the question alone, for a reply
+    // in your own words, which answers nothing. A resolved question's drawer
     // lists its options with nothing to press, and an answer typed with
     // `project inbox answer --text` after them.
 
@@ -1065,7 +1073,7 @@ export const register: Register = on => {
       // A snoozed item stays listed for 30 seconds, muted but not struck
       // through, so it reads as put off rather than dismissed.
       const isSnoozed = isSnoozedAt(item, time)
-      const isMuted = !isOpen || isSnoozed
+      const color = !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' ? QUESTION_COLOR : undefined
       const pull = pullOf(item)
       // A dismissed or snoozed item's drawer offers to bring it back where it
       // offered to dismiss or snooze it, on the same letter.
@@ -1111,10 +1119,10 @@ export const register: Register = on => {
             <Box flexGrow={1} flexShrink={1}>
               {/* An open drawer keeps its item inverted, as the pointer draws it. */}
               <Button key={line} plain onPress={() => toggle(key, line, isOpened ? key : first)}>
-                <Text color={isMuted ? 'subtle' : undefined} inverse={isOpened}>
-                  {item.kind === 'notice' ? '•' : '-'}{' '}
+                <Text color={color} inverse={isOpened}>
+                  -{' '}
                 </Text>
-                <Text color={isMuted ? 'subtle' : undefined} strikethrough={isDismissed} inverse={isOpened}>
+                <Text color={color} strikethrough={isDismissed} inverse={isOpened}>
                   {item.subject}
                 </Text>
               </Button>
@@ -1195,15 +1203,19 @@ export const register: Register = on => {
           {/* The drawer starts where the state does, one column past the label. */}
           {opened === key && (
             <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
+              {/* Only the checks take a color, not the `·` before them. */}
               <Text wrap="truncate-end">
-                <Text color="subtle">{factsOf(pr, kinds)}</Text>
-                {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}
+                {factsOf(pr, kinds)}
+                {pr.checks !== null && ' · '}
+                {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
               </Text>
               {/* Each link has a line of its own: a terminal without hyperlinks
                   draws a link's URL after its text, and a shared line would
                   cut the URL off. The actions follow, on one row. */}
-              <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
-              {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
+              <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
+              {pr.summaryUrl !== null && (
+                <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
+              )}
               {drawActions(key, [
                 { name: 'discuss', hotkey: 'd', onPress: () => fill(`${reference(pr)} `) },
                 { name: 'dismiss', hotkey: 'x', onPress: () => void dismissPr($, pr) },
