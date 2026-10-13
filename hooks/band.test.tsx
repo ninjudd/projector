@@ -1725,6 +1725,46 @@ test('an option typed under a quote discussed before a revise answers no questio
   await ui.unmount()
 })
 
+const DECLINE = '"Decline the finding?"\n\nDecline it\n'
+const PULL_8 = { href: 'https://github.com/x/y/pull/8' }
+
+test('a pick for a question withdrawn before you send answers no other question', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.a', link: PULL_8 })
+  await $.tool.call({ tool: 'mcp__projector__withdraw', number: 2 })
+  await $.prompt.submit({ text: DECLINE, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a pick made before a revise, for a question dismissed before you send, answers no other question', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.a', link: PULL_8 })
+  await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
+  await ui.press({ key: 'dismiss:2' })
+  await clock.settle()
+  expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ dismissed: true }))
+  await $.prompt.submit({ text: DECLINE, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
+  await ui.unmount()
+})
+
 test('the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

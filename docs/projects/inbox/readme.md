@@ -962,7 +962,10 @@ one beside the old.
 - **Each quote speaks to one question.** When two open questions share a
   subject, a quote that one's drawer put in the prompt, with an option or
   alone through **discuss**, speaks to that question: one of its options
-  answers it, and any other text replies to it. A quote no drawer put
+  answers it, and any other text replies to it. When that question was
+  answered, dismissed, or withdrawn before the prompt was sent, the quote
+  answers and replies to nothing, whether the pick is fresh or stale, so
+  it never falls through to the other question. A quote no drawer put
   there goes to the oldest question that offers the option, and
   otherwise replies to the oldest. A prompt that answers or replies to
   one of them says nothing to the other: it adds no note for the other's
@@ -1033,7 +1036,9 @@ one beside the old.
   pick at the revision would leave its text to the rule above, which
   gives it to the oldest question that shares the quote and offers the
   option. Keeping it, marked stale, lets the band recognize the text and
-  hold it back.
+  hold it back. For the same reason, the band matches a pick whatever has
+  happened to its question since, and a pick whose question was resolved
+  before you sent the prompt holds its text back from every question.
 - **`revise` is its own command, and the tool's name is `revise`.** § 7
   sketched `project inbox ask --revise <number>`. `ask` posts a new item
   and prints a new number; revising keeps the number and refuses what
@@ -1063,6 +1068,7 @@ one beside the old.
 | A sent reply leaves the question listed, closes its drawer, runs no `project inbox answer`, and names the subagent that asked | `a sent reply leaves the question listed, closes its drawer, and records no answer, naming the subagent that asked`, `discuss keeps the drawer open with the question above a blank line, a reply under it answers nothing, and dismiss resolves it`, in `hooks/band.test.tsx` |
 | The `revise` tool redraws the question with its new text under the same number, and a pick made from the old text answers nothing | `the revise tool redraws the question with its new text at once, keeping its number` |
 | A pick made before a revision answers no question, an older question with the same words included, and replies to the revised question; a fresh pick from the new drawer answers it | `a pick made before its question was revised answers no question, and replies to the revised one`, in `hooks/inbox.test.ts`; `an answer chosen before a revise answers no question, and a pick from the new drawer answers the revised one`, `an answer chosen before a revise rewords its question does not answer another question with the old words` |
+| A pick or **discuss**, fresh or stale, whose question was answered, dismissed, or withdrawn before the prompt was sent answers and replies to nothing | `a quote a drawer put in the prompt for a question resolved before you send speaks to no question`, in `hooks/inbox.test.ts`; `a pick for a question withdrawn before you send answers no other question`, `a pick made before a revise, for a question dismissed before you send, answers no other question` |
 | An option typed under a quote that **discuss** put there before a revision answers no question and replies to the revised question; a pick in another question's drawer still answers that one | `an option typed under a quote discussed before its question was revised answers no question, and replies to the revised one`, in `hooks/inbox.test.ts`; `an option typed under a quote discussed before a revise answers no question, and replies to the revised one` |
 | The `revise` tool refuses what the CLI refuses | `the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs` |
 | `project inbox revise` replaces what it is given and keeps the number and everything else; refuses a resolved question, a notice, an unknown number, and bad input, changing nothing; serializes under the lock | `ReviseTests` in `tests/test_inbox.py` |

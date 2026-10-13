@@ -73,8 +73,9 @@ export type Read = { answers: Given[]; replies: Question[] }
  * the prompt, with that answer or alone through discuss, speaks to that
  * drawer's question, `proposed` holding them oldest first: one of its options
  * answers it, and any other text replies to it. A drawer's pick from before
- * its question was revised only replies, so text chosen from the old question
- * never answers it or falls through to another question with the old words.
+ * its question was revised only replies, and one whose question was resolved
+ * before the prompt was sent does nothing, so a drawer's pick never falls
+ * through to another question with the same words.
  * A quote no drawer put there goes to the oldest question with that text that
  * offers the option, and otherwise replies to the one whose drawer last put
  * that quote in the prompt, or else to the oldest with that text. Only
@@ -106,13 +107,17 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
     const after = text.slice(end, quotes.find(next => next.at >= end)?.at)
     const said = /^[ \t]*\n/.test(after) ? after.trim() : undefined
     // The drawer that put this text in the prompt: the last to put this
-    // quote and this answer there, else the last to discuss this quote.
+    // quote and this answer there, else the last to discuss this quote,
+    // leaving out a question an earlier quote in this prompt answered.
     const source =
-      proposed.findLast(one => one.quote === quote && one.answer === said && isOpen(one.ref)) ??
-      proposed.findLast(one => one.quote === quote && one.answer === '' && isOpen(one.ref))
+      proposed.findLast(one => one.quote === quote && one.answer === said && !answered.has(one.ref)) ??
+      proposed.findLast(one => one.quote === quote && one.answer === '' && !answered.has(one.ref))
     if (source !== undefined) {
+      // A question resolved since its drawer put the quote there takes
+      // nothing, and the quote falls through to no other question.
       const question = open.find(one => one.ref === source.ref)
-      if (source.isStale !== true && question !== undefined && said !== undefined && question.choices.includes(said)) {
+      if (question === undefined) continue
+      if (source.isStale !== true && said !== undefined && question.choices.includes(said)) {
         answer(question, said)
       } else if (isFree(source.ref)) {
         replied.add(source.ref)

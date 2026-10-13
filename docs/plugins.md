@@ -349,7 +349,9 @@ drawer.
 Each quote speaks to one question. When two open questions ask the same
 thing, a quote that one's drawer put in your prompt, with an option or
 alone through **discuss**, speaks to that question: one of its options
-answers it, and anything else replies to it. A quote that no drawer put
+answers it, and anything else replies to it. When that question is
+answered, dismissed, or withdrawn before you send, the quote says nothing
+at all, so it never answers the other question. A quote that no drawer put
 there, such as one you type, goes to the older question that offers the
 option, or else replies to the older one. A prompt that answers or replies
 to one of them says nothing to the other and leaves its drawer alone.

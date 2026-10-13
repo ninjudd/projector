@@ -241,6 +241,25 @@ test('an option typed under a quote discussed before its question was revised an
   })
 })
 
+test('a quote a drawer put in the prompt for a question resolved before you send speaks to no question', () => {
+  const merge = { subject: 'Merge it?', choices: ['Yes', 'No'] }
+  const open = question({ ...merge, postedAt: NOW - 120_000 })
+  const dismissed = question({ ...merge, ref: '2', number: 2, answer: { dismissed: true, answeredAt: NOW } })
+  const withdrawn = question({ ...merge, ref: '2', number: 2, answer: { dismissed: true, withdrawn: true, answeredAt: NOW } })
+  const drawer = (answer: string, isStale: boolean): Proposal => ({ ref: '2', quote: '"Merge it?"', answer, isStale })
+  const picks = [drawer('Yes', true), drawer('Yes', false), drawer('', true), drawer('', false)]
+  for (const resolved of [[dismissed], [withdrawn], []]) {
+    for (const proposal of picks) {
+      expect(readPrompt('"Merge it?"\n\nYes\n', [open, ...resolved], [proposal])).toEqual({ answers: [], replies: [] })
+    }
+  }
+  // A quote no drawer put there still answers the open question.
+  expect(readPrompt('"Merge it?"\n\nYes\n', [open, dismissed])).toEqual({
+    answers: [{ question: open, letter: 'a' }],
+    replies: [],
+  })
+})
+
 test('the note beside an answer or a reply names the subagent that asked', () => {
   const asked = question({ agentId: 'agent-1' })
   expect(relayNote(asked, [agent('completed')])).toBe(
