@@ -22,7 +22,9 @@ When the user describes the work rather than naming a project:
    leaves a product choice open. Then stop, tell the user why, and suggest
    `spec`. Build it without a spec only when the user asks you to.
 3. Otherwise, restate the change in a sentence or two, and build it. Ask the
-   user only about a choice that the repository cannot answer.
+   user only about a choice that the repository cannot answer. When
+   Projector's `ask` tool is available, ask it there with the answer you
+   recommend, and keep building what the answer does not block.
 
 Work built from a description has no plan and no project, so skip the steps
 below that need one: the status and priority changes, the plan updates, and
@@ -35,7 +37,9 @@ handing the work over.
 2. Read the entry point, its supplemental files, relevant nested projects, and
    the code and documentation they cite.
 3. Check every open question before claiming readiness. Resolve a product
-   choice with the user when the repository cannot answer it.
+   choice with the user when the repository cannot answer it. When
+   Projector's `ask` tool is available, ask it there with the answer you
+   recommend, and keep building what the answer does not block.
 4. Run `project status <name> in-progress` only when implementation truly
    begins, and `project priority <name> now` when the work also becomes the
    current focus. Keep both changes in the implementation pull request; do not

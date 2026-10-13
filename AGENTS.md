@@ -181,5 +181,8 @@ it. Post news they need to act on, such as a failure that needs them, and
 anything that comes up while they are away. Leave out what they already see
 elsewhere, such as a pull request's state, which the band lists. An item
 stays above their prompt until they answer or dismiss it, so keep the inbox
-for what matters, not as a log of everything you did.
+for what matters, not as a log of everything you did. When the person
+answers a question in the conversation instead, dismiss its inbox item with
+`project inbox dismiss <reference> --session "$CLAUDE_CODE_SESSION_ID"`, so
+it does not wait for an answer they already gave.
 <!-- projector:end -->
