@@ -1,0 +1,150 @@
+{
+ "version": 1,
+ "name": "Inbox per-session numbering plan",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 294,
+  "title": "Plan per-session numbering for inbox items",
+  "head": "cfbfdf8e8c884005e6201cd241d1cf86a4f51d70",
+  "headRef": "inbox-plan-update",
+  "base": "82822f0140c594d5e99f84db8aeac1b5b0900f81",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The <b>inbox</b> is where an agent leaves you questions and notices. An agent posts one with the <code>ask</code> or <code>tell</code> tool in Claude Code, or with <code>project inbox ask</code> or <code>tell</code> from the shell. Projector's <b>band</b>, the strip it draws above the Claude Code prompt, lists the items so you can answer or dismiss them. The <code>inbox</code> plan in <code>docs/projects/inbox/readme.md</code> describes that system. It stays <code>in-progress</code> with priority <code>now</code>.",
+   "This pull request changes only documentation. It adds two sections to the plan. Then it brings the rest of the plan, the completed <code>questions</code> plan, the README, and <code>docs/plugins.md</code> in line with what has shipped.",
+   "<ul><li><b>§ 10, the band after layer 2.</b> It records five changes the owner decided after using the band, which #295 builds. <b>discuss</b> quotes an item and leaves a blank line under the quote. The drawer loses its <code>Type something</code> field. A quote followed by trailing spaces still counts as ending its line. A resolved item stays for 30 seconds, drawn in the <code>subtle</code> color. <code>/projector</code> takes no argument.</li><li><b>§ 11, numbering items 1, 2, 3.</b> Today an item's reference names its pull request, such as <code>#337.3</code>. § 11 replaces that with one count per session that covers both questions and notices. It removes <code>project inbox context</code>, the command that explains a reference you type in a prompt, and it migrates no old items.</li></ul>",
+   "A plan at <code>in-progress</code> claims to be ready to build, so every question these sections raise must be answered or explicitly deferred. The new § 7 entries defer three follow-ups by the owner's decision."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Item</b>: a question, which you answer or dismiss, or a notice, which you dismiss.</li><li><b>Reference</b>: the handle the CLI prints for an item today, such as <code>#337.3</code>, <code>octo/web#12.1</code>, or <code>q2</code>. § 11 replaces it with a number, such as <code>3</code>.</li><li><b>Session</b>: one Claude Code session. Its items live in their own directory under <code>~/.local/state/projector/inbox/</code>.</li><li><b>Drawer</b>: the panel that opens under an item in the band, with its detail, its options, and <code>discuss | dismiss | snooze</code>.</li><li><b>discuss</b>: the drawer button that quotes the item's subject in your prompt.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>Projector's review read two heads. At <code>5a30365</code> it found one gap. § 10 removed <code>/projector &lt;tracked file&gt;</code> but kept the toast that tells you to run it when the band cannot read a watcher's <code>--tracked</code> path. <code>cfbfdf8</code> answers that: the toast now says the band does not list the loop, and <code>runningLoops</code> and <code>expandPath</code> go. The review of <code>cfbfdf8</code> is clean, with four suggestions in its body.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "inbox-plan",
+   "title": "The inbox plan",
+   "kicker": "§ 10 and § 11 are new, and the rest of the plan catches up with what shipped",
+   "intro": [
+    "The inbox plan describes the inbox CLI, <code>project inbox</code>, and the band's view of it. Most of this diff is two new sections: § 10 for the band and § 11 for numbering. The earlier sections change only to point at them or to record what has shipped since.",
+    "<h4>§ 11 in brief</h4>",
+    "<ol><li><b>Posting.</b> <code>ask</code> and <code>tell</code> read <code>last</code> from a new <code>count.json</code>, write <code>last + 1</code>, and then write <code>&lt;number&gt;.json</code>. The per-pull-request <code>counts.json</code>, the session repository in <code>session.json</code>, and the <code>git config</code> call that finds that repository all go.</li><li><b>Reading the number.</b> The agent sees it in <code>Asked 3.</code> and in <code>ANSWER 3.a …</code> and <code>DISMISSED 3 …</code>. A shell user sees it in <code>project inbox list</code>. The band shows no number, as now.</li><li><b>Prompts.</b> Nothing reads a prompt for references any more, so the band's <code>mayReference</code> and <code>explain</code> and the CLI's <code>project inbox context</code> are removed.</li><li><b>Old items.</b> The CLI refuses an old reference with exit <code>65</code>. The item-file check skips an old file, so <code>list</code>, <code>watch</code>, the band, and pruning never see it.</li></ol>",
+    "Section 2.5 and the acceptance table in section 4 now describe the band as #295 builds it. A resolved line stays 30 seconds in the <code>subtle</code> color, where it stayed a minute, dim. <b>discuss</b> adds two newlines after the quote, where it added a space."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Two other open pull requests touch the same ground. #295 builds § 10, and § 11.9 says to build § 11 after it merges. #293 makes every command except <code>answer</code> refuse a letter, and § 11.2 step 5 relies on that. Projector's review ran <code>git merge-tree</code> against both branches, and neither reports a conflict."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "The plan. Read § 10 and § 11 in full. The other hunks are cross-references and records of what shipped.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "line": 253,
+       "text": "§ 3 records why items are keyed by session rather than by branch. Only the asking session holds the agent and the transcript, one watch loop spans many branches, and a detached head has no branch to key by."
+      },
+      {
+       "kind": "context",
+       "line": 365,
+       "text": "§ 7 gains three follow-ups the owner deferred or set aside: revising an open item in place, answering only under the band's own proposals, and finding items across sessions. Deferred items do not block an <code>in-progress</code> plan."
+      },
+      {
+       "kind": "verify",
+       "line": 444,
+       "text": "§ 9's history matches <code>git log</code>. #281, #283, #284, and layer 2 (#279) all landed between the 0.7.14 and 0.7.15 releases. The two-row claim matches the comment above <code>focused</code> in <code>hooks/register.tsx</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 503,
+       "text": "The § 10 claims about the current code hold at this head. <b>discuss</b> fills the quote and one space, <code>RESOLVED_MS</code> is <code>60_000</code>, <code>/projector</code> has the <code>[tracked file]</code> hint, and <code>expandPath</code> has one caller, the <code>/projector</code> handler. <code>adopt</code> toasts <code>run /projector &lt;tracked file&gt;</code> for a path it cannot expand, which this bullet now replaces."
+      },
+      {
+       "kind": "verify",
+       "line": 561,
+       "text": "§ 11.1's account of today's code holds. <code>post</code> keeps <code>counts.json</code> and <code>session.json</code>, <code>checkout_repo</code> calls <code>origin_repo</code>, which runs <code>git config --get remote.origin.url</code>, and the prompt hook runs <code>project inbox context</code> only when <code>mayReference</code> matches."
+      },
+      {
+       "kind": "context",
+       "line": 618,
+       "text": "Every session's first item is <code>1</code>. Session directories are never removed, and each one keeps up to 100 delivered items. So a shell command run with no <code>--session</code> and no <code>PROJECTOR_SESSION</code> will usually find the number in several sessions and exit <code>67</code>. The plan accepts that and tells you to pass <code>--session</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 656,
+       "text": "The band reads items through <code>project inbox list --all --json</code>, not from the files directly. A tighter check in <code>load_items</code> therefore hides old items from the band too. Old file names are quoted, such as <code>%23337.1.json</code>, or start with <code>q</code>, so they cannot collide with <code>1.json</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 724,
+       "text": "The mixed-version claim holds for an older band. Its prompt hook runs <code>project inbox context</code>, which the newer CLI rejects with exit <code>2</code>, and <code>explain</code> discards any output that does not exit <code>0</code>. It answers by <code>${ref}.${letter}</code>, which is <code>3.a</code> under § 11."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "questions-plan",
+   "title": "The completed questions plan",
+   "kicker": "A note that its last manual check moves to the inbox plan",
+   "intro": [
+    "The <code>questions</code> plan came before the inbox and is <code>completed</code>. Its acceptance table had a main-screen row, which is checked by hand under tmux, and nobody ran it. The new paragraph in § 9 says the inbox plan's § 4 carries that check. It also says the row's clause about the <code>Type something</code> field no longer applies, because § 10 removes the field."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/questions/readme.md",
+     "note": "One paragraph appended to § 9, Outcome."
+    }
+   ]
+  },
+  {
+   "id": "user-docs",
+   "title": "README and plugin docs",
+   "kicker": "The README mentions the band, and the plugin docs explain the mcp__projector__ prefix",
+   "intro": [
+    "The README's section on working with coding agents now mentions the band and the inbox, and links the two reference sections. <code>docs/plugins.md</code> explains why the <code>ask</code> and <code>tell</code> tools carry an <code>mcp__projector__</code> prefix even though Projector ships no MCP server: the hooks module serves them."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "README.md",
+     "note": "A new paragraph about the band, with links to the inbox sections of <code>docs/plugins.md</code> and <code>docs/cli.md</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 79,
+       "text": "Both anchors exist at this head: <code>### Read your inbox in Projector's band</code> in <code>docs/plugins.md</code> and <code>## Use the inbox</code> in <code>docs/cli.md</code>."
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "“Work without MCP” says the hooks module serves the <code>ask</code> and <code>tell</code> tools.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 581,
+       "text": "No skill depends on the tools. A search of <code>skills/</code> finds no <code>mcp__projector</code>, no <code>project inbox</code>, and no use of the <code>ask</code> or <code>tell</code> tool."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
