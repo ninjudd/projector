@@ -1,0 +1,229 @@
+{
+ "version": 1,
+ "name": "Inbox for questions and notices",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 278,
+  "title": "Rename project question to project inbox",
+  "head": "d3661d25d3aac480290e2d1a0d1e730422f1e146",
+  "headRef": "inbox-rename",
+  "base": "eae49a56d86efa9808a9c2536f9056b6f49f4cc7",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector lets an agent ask you a question without stopping its work. The agent runs <code>project question ask</code>, or calls the <code>ask</code> tool in Claude Code. The question waits in a per-session store on disk, Projector's band above the Claude Code prompt shows it, and your answer goes back to the agent that asked. Release 0.7.14 shipped this.",
+   "The <a href=\"https://github.com/ninjudd/projector/blob/main/docs/projects/inbox/readme.md\">inbox plan</a> adds a second kind of item, a <em>notice</em>: something an agent tells you that needs no answer. Once notices exist, the command and its store hold more than questions. This pull request is the plan's first layer. It renames everything now, while nobody depends on the old names, and changes no behavior. The second layer, #279, adds notices and snoozing.",
+   "Nothing migrates. <code>project question</code> becomes an unknown command that exits 2. The CLI never reads the old <code>projector/questions/</code> directory, so any such directory stays on disk untouched."
+  ],
+  "cards": [
+   {
+    "id": "renames",
+    "title": "What each name becomes",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Where</th><th>Before</th><th>After</th></tr></thead><tbody><tr><td>Command</td><td><code>project question</code></td><td class=\"r\"><code>project inbox</code></td></tr><tr><td>Python module</td><td><code>projector.questions</code></td><td class=\"r\"><code>projector.inbox</code></td></tr><tr><td>Store directory</td><td><code>projector/questions/&lt;session&gt;/</code></td><td class=\"r\"><code>projector/inbox/&lt;session&gt;/</code></td></tr><tr><td>JSON key for one record</td><td><code>question</code></td><td class=\"r\"><code>item</code></td></tr><tr><td>JSON key for <code>list</code></td><td><code>questions</code></td><td class=\"r\"><code>items</code></td></tr><tr><td>Record fields</td><td><code>askedAt</code>, <code>question</code></td><td class=\"r\"><code>postedAt</code>, <code>subject</code>, and a new <code>kind</code></td></tr><tr><td>Hooks module</td><td><code>hooks/questions.ts</code>, type <code>Question</code></td><td class=\"r\"><code>hooks/inbox.ts</code>, type <code>Item</code></td></tr><tr><td>Band state key</td><td><code>bandQuestions</code></td><td class=\"r\"><code>bandInbox</code></td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review, of <code>d3661d2</code>, found the head clean, with no finding threads.</li><li>It suggested one rename: <code>print_item</code> in <code>src/projector/cli.py</code> still calls its parameter <code>question</code>.</li><li>The full gate passed: 883 Python tests with 1 skip, plan check, both plugin validations, and 51 hook tests.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "store-and-cli",
+   "title": "The store and the CLI",
+   "kicker": "The Python module and command that keep each session's items",
+   "intro": [
+    "<code>src/projector/inbox.py</code> (formerly <code>questions.py</code>) keeps each session's items as one JSON file per item in a directory under Projector's state directory. <code>cli.py</code> exposes it as <code>project inbox</code>, with the same subcommands, flags, and exit codes as before.",
+    "The record's field names change here, so this group is the contract the band below reads. Every record this layer writes has <code>kind: \"question\"</code>; the next layer adds <code>notice</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "In a scratch <code>XDG_STATE_HOME</code>, <code>project inbox ask</code> wrote <code>q1</code> under <code>projector/inbox/s1/</code> with <code>kind</code>, <code>postedAt</code>, and <code>subject</code>, no <code>projector/questions/</code> directory appeared, and <code>project question list</code> exited 2."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "The module renamed from <code>questions.py</code>: the store root, error classes, helpers, and the record's field names.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 66,
+       "text": "The store root moves here. Nothing reads <code>projector/questions/</code> any more, so an existing session's old questions disappear from every view, and numbering restarts at 1 in the new directory. The plan accepts both."
+      },
+      {
+       "kind": "context",
+       "line": 227,
+       "text": "Every record now carries <code>kind</code>. Functions that only make sense for questions, such as <code>answer</code>, <code>claim</code>, and <code>typed_letter</code>, keep <code>question</code> as their variable name on purpose."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "The <code>question</code> command group becomes <code>inbox</code>, printing <code>item</code> and <code>items</code> in its JSON.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1101,
+       "text": "<code>print_item</code> still names its parameter <code>question</code> while <code>item_state</code> beside it takes <code>item</code>. The review suggested renaming it; the code is correct either way."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_inbox.py",
+     "note": "The existing tests under the new names, plus two new ones: the record's new shape and store directory, and the old command exiting 2.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 160,
+       "text": "This test pins the record's new fields and checks that the old store directory is never created."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "band",
+   "title": "The band in Claude Code",
+   "kicker": "The hooks module that shows items above the prompt and delivers answers",
+   "intro": [
+    "Projector's band is a strip above the Claude Code prompt, drawn by the hooks module in <code>hooks/</code>. It lists the session's items, lets you answer them, and delivers each answer to the agent that asked. It reads and changes the store only by running the CLI, so here every <code>project question</code> call becomes <code>project inbox</code> and every field read follows the renamed record.",
+    "The band keeps some state in the session across a plugin reload. The list of items moves to a new key, <code>bandInbox</code>, which starts empty after an update and fills on the next read of the store."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>claude plugin test .</code> passed all 51 hook tests at this head. The fake CLI in <code>band.test.tsx</code> refuses any command group but <code>inbox</code>, so a leftover <code>project question</code> call would fail there."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "<code>Question</code> becomes <code>Item</code>, with <code>kind</code>, <code>postedAt</code>, and <code>subject</code>; the state key becomes <code>bandInbox</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 47,
+       "text": "<code>kind</code> is the literal type <code>'question'</code> for now. The next layer widens it to include <code>'notice'</code>."
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Pure helpers, renamed from <code>questions.ts</code>: the store path, the arguments for <code>project inbox ask</code>, and the field reads.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 107,
+       "text": "This path must match the CLI's <code>store_root</code> in <code>src/projector/inbox.py</code>, since the band lists this directory to decide when to run the CLI."
+      }
+     ]
+    },
+    {
+     "path": "hooks/register.tsx",
+     "note": "Every CLI call, JSON read, state key, and drawer key under the new names.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 52,
+       "text": "A delivery the band had in flight during a plugin update stays in <code>bandSending</code> with a ref and token from the old store. Renewing or settling it fails against the new store, and the existing code ignores those failures."
+      },
+      {
+       "kind": "context",
+       "line": 755,
+       "text": "Drawer keys change from <code>question:</code> to <code>item:</code>, so a drawer open across an update closes. Nothing else reads the old prefix."
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "The helper tests under the new names and store path."
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "The band tests under the new names, with a fake CLI that now refuses any group but <code>inbox</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 355,
+       "text": "This guard is what makes a missed rename fail the tests rather than pass silently."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The CLI and plugin guides under the new names",
+   "intro": [
+    "The CLI guide's section becomes \"Use the inbox\", and the plugin guide's band section becomes \"Read your inbox in Projector's band\". Both still describe questions only, since that is all this layer stores."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "A search of the repository finds no remaining link to the old anchors <code>#ask-and-answer-questions</code> or <code>#answer-your-agents-questions-in-projectors-band</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The renamed section, the JSON keys under <b>Consume JSON</b>, and the exit-code table's wording.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1447,
+       "text": "The section heading and its anchor change here; the plugin guide's link changes with it."
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "The band section's heading, its link to the CLI guide, and the commands it names."
+    }
+   ]
+  },
+  {
+   "id": "plans",
+   "title": "The plans",
+   "kicker": "Closing the questions plan and starting the inbox plan",
+   "intro": [
+    "Projector keeps each project's plan under <code>docs/projects/</code>, with a <code>status</code> in its frontmatter. The <code>questions</code> plan, which shipped <code>project question</code>, moves to <code>completed</code> with an outcome section. The <code>inbox</code> plan moves from <code>ready</code> to <code>in-progress</code> because this pull request starts it."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Each of the five open questions in the questions plan's § 7 appears, renamed, among the first five bullets of the inbox plan's § 7, so closing the questions plan leaves none untracked."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/questions/readme.md",
+     "note": "Status <code>completed</code>, and a new § 9 recording that it shipped in #271 and #273 and continues as <code>inbox</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 547,
+       "text": "§ 9, Outcome. The plan's body above still says <code>project question</code>; this section tells a reader that the commands now run under <code>project inbox</code>."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Status <code>in-progress</code>. This pull request is the plan's layer 1 in § 2.6, which lists the files it changes.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 2,
+       "text": "The plan already claimed executable readiness at <code>ready</code>, so this flip adds no new readiness claim."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
