@@ -2,11 +2,11 @@
 
 An item is a question, which the person answers or dismisses and whose answer goes back to the
 agent, or a notice, which the person reads and dismisses and which sends nothing back. Each
-session's items are JSON files in their own directory, one per item, with `counts.json`
-holding the last number given in each count and `session.json` the session's repository, once a
-post from a checkout has recorded one. Every write happens under the directory's lock, an
-operating-system lock on its `.lock` file, and lands by renaming a temporary file into place, so
-two writers never lose each other's change and a reader never sees half a file.
+session numbers its items 1, 2, 3, and on, in one count across both kinds. Its items are JSON
+files in their own directory, one per item and named by its number, with `count.json` holding the
+last number given. Every write happens under the directory's lock, an operating-system lock on
+its `.lock` file, and lands by renaming a temporary file into place, so two writers never lose
+each other's change and a reader never sees half a file.
 """
 
 from __future__ import annotations
@@ -35,18 +35,8 @@ LOCK_WAIT_SECONDS = 5.0
 
 SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 PULL = re.compile(r"^(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>[1-9][0-9]*)$")
-REFERENCE = re.compile(
-    r"^(?P<ref>(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[1-9][0-9]*\.[1-9][0-9]*|q[1-9][0-9]*)"
-    r"(?:\.(?P<letter>[a-z]))?$"
-)
-# A reference in prose stands alone: nothing it could be part of on its left, and on its
-# right a space, punctuation other than `.`, or a `.` that ends a sentence.
-IN_TEXT = re.compile(
-    r"(?<![A-Za-z0-9/#.])"
-    r"(?P<ref>(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[1-9][0-9]*\.[1-9][0-9]*|q[1-9][0-9]*)"
-    r"(?:\.(?P<letter>[a-z]))?"
-    r"(?=$|\s|[^\w./#]|\.(?:\s|$))"
-)
+NUMBER = re.compile(r"^[1-9][0-9]*$")
+REFERENCE = re.compile(r"^(?P<ref>[1-9][0-9]*)(?:\.(?P<letter>[a-z]))?$")
 
 
 class InboxError(ProjectorError):
@@ -159,11 +149,13 @@ def read_json(path: Path) -> Optional[dict]:
 
 
 def item_in(path: Path) -> Optional[dict]:
-    """The item a file holds, or None for a file that does not parse, whose name does not match its
-    reference, or whose kind is neither `question` nor `notice`, so such a file never breaks a command."""
+    """The item a file holds, or None for a file that does not parse, whose reference is not a whole
+    number, whose name does not match its reference, or whose kind is neither `question` nor
+    `notice`, so such a file never breaks a command. An item stored under any other form of
+    reference, such as `#337.3` or `q2`, is therefore never read, listed, delivered, or pruned."""
     item = read_json(path)
-    if (item and isinstance(item.get("ref"), str) and item_file(path.parent, item["ref"]) == path
-            and item.get("kind") in KINDS):
+    if (item and isinstance(item.get("ref"), str) and NUMBER.match(item["ref"])
+            and item_file(path.parent, item["ref"]) == path and item.get("kind") in KINDS):
         return item
     return None
 
@@ -189,14 +181,6 @@ def sessions() -> list[str]:
 
 
 # Asking
-
-def reference(pull: Optional[re.Match], count: int, repo: Optional[str]) -> str:
-    if pull is None:
-        return f"q{count}"
-    if repo and pull["repo"].lower() == repo.lower():
-        return f"#{pull['number']}.{count}"
-    return f"{pull['repo']}#{pull['number']}.{count}"
-
 
 def is_one_line(text: str) -> bool:
     """Whether text keeps to one line, as `watch` prints an answer and the band reads one."""
@@ -238,37 +222,19 @@ def check(question: str, recommend: str, options: list[str], pr: Optional[str]) 
             raise InboxError(f"the option {option.strip()!r} is offered twice")
 
 
-def session_repo(folder: Path, repo: Optional[str]) -> Optional[str]:
-    """The session's repository, recording `repo` as it when the session has none yet. Only that
-    repository's pull requests take the short `#<number>` form, so two repositories never share a
-    reference."""
-    path = folder / "session.json"
-    recorded = (read_json(path) or {}).get("repo")
-    if isinstance(recorded, str):
-        return recorded
-    if repo:
-        write_json(path, {"repo": repo})
-    return repo
-
-
 def post(session: str, kind: str, subject: str, *, detail: str, pr: Optional[str], agent: Optional[str],
-         repo: Optional[str], choices: Optional[list[str]] = None) -> dict:
+         choices: Optional[list[str]] = None) -> dict:
     """Number and record an item that passed its checks; returns it. Questions and notices share
-    the counts, so each reference names one item of either kind. `repo` is the repository of the
-    checkout the command runs in, which becomes the session's repository when the session has
-    none yet."""
+    the session's one count, which only grows, so a number names one item for the whole session,
+    even after pruning deletes the item that held the largest."""
     folder = session_dir(session)
-    pull = PULL.match(pr) if pr else None
-    key = f"{pull['repo'].lower()}#{pull['number']}" if pull else "q"
     with locked(folder):
-        home = session_repo(folder, repo)
-        counts_path = folder / "counts.json"
-        counts = read_json(counts_path) or {}
-        count = int(counts.get(key, 0)) + 1
+        count_path = folder / "count.json"
+        number = int((read_json(count_path) or {}).get("last", 0)) + 1
         record = {
-            "ref": reference(pull, count, home),
+            "ref": str(number),
             "kind": kind,
-            "number": count,
+            "number": number,
             "pr": pr,
             "postedAt": now_ms(),
             "subject": subject.strip(),
@@ -278,27 +244,26 @@ def post(session: str, kind: str, subject: str, *, detail: str, pr: Optional[str
             record["choices"] = choices
         if agent:
             record["agentId"] = agent
-        counts[key] = count
         # The count lands first: a write that stops between the two then skips a
-        # number, where the other order would hand the next item this reference.
-        write_json(counts_path, counts)
+        # number, where the other order would hand the next item this number.
+        write_json(count_path, {"last": number})
         write_json(item_file(folder, record["ref"]), record)
     return record
 
 
 def ask(session: str, question: str, recommend: str, options: list[str], *, detail: str = "",
-        pr: Optional[str] = None, agent: Optional[str] = None, repo: Optional[str] = None) -> dict:
+        pr: Optional[str] = None, agent: Optional[str] = None) -> dict:
     """Check, number, and record a question; returns it."""
     check(question, recommend, options, pr)
     choices = [recommend.strip(), *(option.strip() for option in options)]
-    return post(session, "question", question, detail=detail, pr=pr, agent=agent, repo=repo, choices=choices)
+    return post(session, "question", question, detail=detail, pr=pr, agent=agent, choices=choices)
 
 
 def tell(session: str, notice: str, *, detail: str = "", pr: Optional[str] = None,
-         agent: Optional[str] = None, repo: Optional[str] = None) -> dict:
+         agent: Optional[str] = None) -> dict:
     """Check, number, and record a notice; returns it."""
     check_subject("notice", notice, pr)
-    return post(session, "notice", notice, detail=detail, pr=pr, agent=agent, repo=repo)
+    return post(session, "notice", notice, detail=detail, pr=pr, agent=agent)
 
 
 # Finding an item
@@ -306,29 +271,37 @@ def tell(session: str, notice: str, *, detail: str = "", pr: Optional[str] = Non
 def parse_reference(text: str) -> tuple[str, Optional[str]]:
     match = REFERENCE.match(text.strip())
     if not match:
-        raise InboxError(f"{text!r} is not an inbox reference, such as #337.3, owner/repo#337.3, or q2, "
-                         "with an optional answer letter, such as #337.3.a")
+        raise InboxError(f"{text!r} is not an inbox reference: name an item by its number, such as 3, "
+                         "and an answer by the number and its letter, such as 3.a")
     return match["ref"], match["letter"]
 
 
-def locate(session: Optional[str], ref: str) -> Path:
-    """The folder holding `ref`: the session's, or, without one, the one session that has it."""
+def is_open(item: Optional[dict]) -> bool:
+    return item is not None and not item.get("answer")
+
+
+def locate(session: Optional[str], ref: str, prefer_open: bool = False) -> Path:
+    """The folder holding `ref`: the session's, or, without one, the one session that has it. Every
+    session counts from 1 and keeps its resolved items, so with `prefer_open` the sessions that hold
+    `ref` open, with no answer recorded, are the candidates whenever any does."""
     if session is not None:
         folder = session_dir(session)
         if not item_file(folder, ref).is_file():
             raise ItemNotFound(f"session {session} has no item {ref}")
         return folder
     holders = [name for name in sessions() if item_file(store_root() / name, ref).is_file()]
+    if prefer_open:
+        holders = [name for name in holders if is_open(item_in(item_file(store_root() / name, ref)))] or holders
     if not holders:
         raise ItemNotFound(f"no session has an item {ref}")
     if len(holders) > 1:
         raise AmbiguousItem(f"{ref} names an item in {len(holders)} sessions: {', '.join(holders)}; "
-                            "pass --session")
+                            "pass --session with the one `project inbox list` prints beside the item")
     return store_root() / holders[0]
 
 
 def find(session: Optional[str], ref: str) -> dict:
-    return read_item(locate(session, ref), ref)
+    return read_item(locate(session, ref, prefer_open=True), ref)
 
 
 def is_notice(item: dict) -> bool:
@@ -359,9 +332,9 @@ def message(question: dict) -> str:
 
 # Answering and delivering
 
-def update(session: Optional[str], ref: str, change) -> dict:
+def update(session: Optional[str], ref: str, change, prefer_open: bool = False) -> dict:
     """Read the item under the lock, let `change` alter it, and write it back."""
-    folder = locate(session, ref)
+    folder = locate(session, ref, prefer_open)
     with locked(folder):
         item = read_item(folder, ref)
         change(item)
@@ -394,7 +367,7 @@ def answer(session: Optional[str], ref: str, letter: Optional[str], text: Option
         question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
         question.pop("snoozedUntil", None)
 
-    return update(session, ref, record)
+    return update(session, ref, record, prefer_open=True)
 
 
 def dismiss(session: Optional[str], ref: str) -> dict:
@@ -410,7 +383,7 @@ def dismiss(session: Optional[str], ref: str) -> dict:
         if is_notice(item):
             item["deliveredAt"] = now
 
-    return update(session, ref, record)
+    return update(session, ref, record, prefer_open=True)
 
 
 def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> dict:
@@ -424,7 +397,7 @@ def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> d
                              "has nothing to return for")
         item["snoozedUntil"] = now_ms() + minutes * 60_000
 
-    return update(session, ref, record)
+    return update(session, ref, record, prefer_open=True)
 
 
 def snoozed_until(item: dict) -> Optional[int]:
@@ -500,42 +473,3 @@ def deliver_pass(session: str, send: Callable[[str], None]) -> None:
             continue
         send(message(claimed))
         settle(session, claimed["ref"], claimed["claim"]["token"], delivered=True)
-
-
-# References in prose
-
-def references_in(text: str) -> list[tuple[str, Optional[str]]]:
-    seen: list[tuple[str, Optional[str]]] = []
-    for match in IN_TEXT.finditer(text):
-        found = (match["ref"], match["letter"])
-        if found not in seen:
-            seen.append(found)
-    return seen
-
-
-def context(session: str, text: str) -> list[str]:
-    """What each reference in `text` means, for the items the session holds."""
-    folder = session_dir(session)
-    lines = []
-    for ref, letter in references_in(text):
-        try:
-            item = read_item(folder, ref)
-        except ItemNotFound:
-            continue
-        subject = item["subject"]
-        if is_notice(item):
-            if letter is None:
-                lines.append(f"{ref} is the notice: {subject}")
-            continue
-        if letter is None:
-            lines.append(f"{ref} is the question: {subject}")
-            continue
-        index = ord(letter) - ord("a")
-        answered = item.get("answer") or {}
-        if index < len(item["choices"]):
-            lines.append(f"{ref}.{letter} answers {subject} with {item['choices'][index]}")
-        elif letter == typed_letter(item) and answered.get("letter") == letter:
-            lines.append(f"{ref}.{letter} answers {subject} with {answered['text']}")
-        elif letter == typed_letter(item):
-            lines.append(f"{ref}.{letter} is a typed answer to {subject}")
-    return lines

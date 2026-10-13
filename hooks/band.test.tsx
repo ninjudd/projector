@@ -118,7 +118,7 @@ type Beneath = { github?: (query: string) => Ran | Promise<Ran> }
 function world(
   on: On,
   files: Record<string, string>,
-  project?: (argv: string[], stdin: string) => Outcome | Promise<Outcome>,
+  project?: (argv: string[]) => Outcome | Promise<Outcome>,
   { github = query => ran(answer(query)) }: Beneath = {},
 ) {
   const commands: string[][] = []
@@ -131,9 +131,7 @@ function world(
     commands.push([...e.argv])
     const answered = (outcome: Outcome) => ('deny' in outcome ? outcome : { value: outcome })
     const outcome =
-      e.argv[0] === 'project' && project !== undefined
-        ? project([...e.argv], e.init?.stdin ?? '')
-        : github(e.argv.join(' '))
+      e.argv[0] === 'project' && project !== undefined ? project([...e.argv]) : github(e.argv.join(' '))
     return outcome instanceof Promise ? outcome.then(answered) : answered(outcome)
   })
   on('prompt.fill', ($, e) => {
@@ -615,7 +613,7 @@ type Clock = ReturnType<typeof mock.clock>
 const HOUR = 3_600_000
 
 const held = (fields: Partial<HeldQuestion> = {}): HeldQuestion => ({
-  ref: '#7.1',
+  ref: '1',
   kind: 'question',
   number: 1,
   pr: 'x/y#7',
@@ -627,7 +625,7 @@ const held = (fields: Partial<HeldQuestion> = {}): HeldQuestion => ({
 })
 
 const notice = (fields: Partial<HeldNotice> = {}): HeldNotice => ({
-  ref: '#7.2',
+  ref: '2',
   kind: 'notice',
   number: 2,
   pr: 'x/y#7',
@@ -678,7 +676,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       ? `ANSWER ${question.ref}.${question.answer.letter} ${question.subject} → ${question.answer.text}`
       : `DISMISSED ${question.ref} ${question.subject}`
 
-  const run = (argv: string[], stdin: string): Outcome | Promise<Outcome> => {
+  const run = (argv: string[]): Outcome | Promise<Outcome> => {
     const [, group, command = '', ...args] = argv
     const time = clock.now()
     if (group !== 'inbox') return failed(2, `invalid choice: '${group ?? ''}'`)
@@ -707,14 +705,13 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     if (command === 'ask' || command === 'tell') {
       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
-      const pr = flag(args, 'pr') ?? null
       posted += 1
-      const ref = pr === null ? `q${posted}` : `#${pr.split('#')[1] ?? ''}.${posted}`
+      const ref = String(posted)
       const agentId = flag(args, 'agent')
       const common = {
         ref,
         number: posted,
-        pr,
+        pr: flag(args, 'pr') ?? null,
         postedAt: time,
         subject: args[args.indexOf('--') + 1] ?? '',
         detail: flag(args, 'detail') ?? '',
@@ -727,9 +724,6 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
           : { ...common, kind: 'notice' },
       )
       return ran(`${ref}\n`)
-    }
-    if (command === 'context') {
-      return ran(stdin.includes('#7.1.b') ? '#7.1.b answers Decline the finding? with Add a budget\n' : '')
     }
 
     const written = args[0] ?? ''
@@ -857,7 +851,9 @@ test('asks through the tool, and the band lists the question below the pull requ
     options: ['Add a budget'],
     pr: 'x/y#7',
   })
-  expect(String(called.text ?? called.result)).toContain('Asked #7.1.')
+  expect(String(called.text ?? called.result)).toBe(
+    'Asked 1. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER 1 or DISMISSED 1.',
+  )
   expect(session.registered).toEqual([
     expect.objectContaining({ name: 'ask', isDeferred: false }),
     expect.objectContaining({ name: 'tell', isDeferred: false }),
@@ -865,7 +861,8 @@ test('asks through the tool, and the band lists the question below the pull requ
   expect(session.project()).toContain(
     'inbox ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
   )
-  expect(session.notified).toEqual(['#7.1 Decline the finding?'])
+  // You never need the number, so the notification holds the question alone.
+  expect(session.notified).toEqual(['Decline the finding?'])
 
   await clock.advance(1)
   await clock.settle()
@@ -876,7 +873,7 @@ test('asks through the tool, and the band lists the question below the pull requ
   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
   // The line names the question's pull request as the band labels it.
   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
-  expect(await ui.find({ type: 'Button', key: 'item:#7.1' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -923,7 +920,7 @@ test('refuses what the CLI refuses, asks an old CLI to upgrade, and says when it
 test('a question asked from the shell shows the hidden band within a tick', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  questionWorld(on, clock, [held({ ref: 'q1', pr: null, subject: 'Run project init?' })])
+  questionWorld(on, clock, [held({ pr: null, subject: 'Run project init?' })])
   await startSession($, clock, false)
   await clock.advance(TICK)
   await clock.settle()
@@ -951,31 +948,31 @@ test('an idle session with no questions starts no project process', async ($, on
 test('an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const later = held({ ref: '#7.2', number: 2, subject: 'Rebase first?', postedAt: NOW - 60_000 })
+  const later = held({ ref: '2', number: 2, subject: 'Rebase first?', postedAt: NOW - 60_000 })
   const session = questionWorld(on, clock, [held({ agentId: 'agent-1' }), later], { agents: [running('running')] })
   await startSession($, clock)
 
   const ui = await $.ui.mount(BAND)
-  await ui.press({ key: 'item:#7.1' })
+  await ui.press({ key: 'item:1' })
   // The open question has the band to itself, the divider included, so it is the top row.
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-  expect((await ui.find({ key: 'detail:#7.1' }))?.props.text).toBe('The loop caps retries at three.')
+  expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The loop caps retries at three.')
   expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeDefined()
   // An answer in your own words goes through discuss, so only the options are numbered.
   expect(await ui.find({ type: 'Input' })).toBeUndefined()
-  expect(await ui.find({ key: 'answer:#7.1.c' })).toBeUndefined()
-  expect(await ui.find({ type: 'Button', key: 'discuss:#7.1' })).toBeDefined()
-  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeDefined()
+  expect(await ui.find({ key: 'answer:1.c' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'discuss:1' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeDefined()
   // A digit typed first in an empty prompt presses a band Button whose hotkey it is.
   for (const button of await ui.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
 
   // Choosing an option answers nothing yet: it fills the prompt, and the drawer stays open.
-  await ui.press({ key: 'answer:#7.1.b', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nAdd a budget\n'])
-  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
-  expect(await ui.find({ key: 'detail:#7.1' })).toBeDefined()
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
+  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
 
   const text = 'Thanks.\n"Decline the finding?"\n\nAdd a budget\n'
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
@@ -986,26 +983,26 @@ test('an option puts the question and its answer in the prompt, and sending it a
       context: ['The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the answer this prompt gives.'],
     },
   ])
-  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
   // The prompt delivered it, so the band sends nothing more.
   expect(session.sent).toEqual([])
 
   // Sending the answer closed the drawer, so the band shows its list again.
-  expect(await ui.find({ key: 'detail:#7.1' })).toBeUndefined()
+  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
 
   // The resolved question still opens, its choice marked, the rest muted, and nothing left to press.
-  await ui.press({ key: 'item:#7.1' })
+  await ui.press({ key: 'item:1' })
   expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
   expect((await ui.find({ type: 'Text', text: /^2\.$/ }))?.props.color).toBe('success')
   expect((await ui.find({ type: 'Text', text: /^1\.$/ }))?.props.color).toBe('subtle')
   expect((await ui.find({ type: 'Text', text: /^Decline it/ }))?.props.color).toBe('subtle')
   expect((await ui.find({ type: 'Text', text: /^Decline the finding\?$/ }))?.props.color).toBe('subtle')
-  expect(await ui.find({ key: 'answer:#7.1.a' })).toBeUndefined()
-  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeUndefined()
+  expect(await ui.find({ key: 'answer:1.a' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeUndefined()
 
-  await ui.press({ key: 'item:#7.1' })
+  await ui.press({ key: 'item:1' })
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
   await clock.advance(30_000 + TICK)
@@ -1017,39 +1014,39 @@ test('an option puts the question and its answer in the prompt, and sending it a
 test('a question another shares the text of takes only the answer its own drawer put in the prompt', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const newer = held({ ref: '#8.1', pr: 'x/y#8', postedAt: NOW - 60_000 })
+  const newer = held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })
   const session = questionWorld(on, clock, [held(), newer])
   await startSession($, clock)
 
   const ui = await $.ui.mount(BAND)
-  await ui.press({ key: 'item:#8.1' })
-  await ui.press({ key: 'answer:#8.1.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nDecline it\n'])
   await $.prompt.submit({ text: '"Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
-  expect(session.store.store.get('#8.1')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
-  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+  expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
   await ui.unmount()
 })
 
 test('a proposal you cleared from the prompt does not take the answer you sent for another question', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const newer = held({ ref: '#8.1', pr: 'x/y#8', postedAt: NOW - 60_000 })
+  const newer = held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })
   const session = questionWorld(on, clock, [held({ postedAt: NOW - 30_000 }), newer])
   await startSession($, clock)
 
   const ui = await $.ui.mount(BAND)
-  await ui.press({ key: 'item:#8.1' })
-  await ui.press({ key: 'answer:#8.1.a', link: { href: 'https://github.com/x/y/pull/8' } })
-  // You clear that from the prompt, then choose the other answer in #7.1's drawer.
-  await ui.press({ key: 'item:#8.1' })
-  await ui.press({ key: 'item:#7.1' })
-  await ui.press({ key: 'answer:#7.1.b', link: { href: SEVEN } })
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  // You clear that from the prompt, then choose the other answer in the older question's drawer.
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
-  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
-  expect(session.store.store.get('#8.1')?.answer).toBeUndefined()
+  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+  expect(session.store.store.get('2')?.answer).toBeUndefined()
   await ui.unmount()
 })
 
@@ -1071,50 +1068,50 @@ test('only a prompt you sent answers a question', async ($, on) => {
   for (const origin of others) await $.prompt.submit({ text, wait: false, origin })
   await clock.settle()
   expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
-  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
 
   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget', wait: false, origin: { kind: 'bridge' } })
   await clock.settle()
-  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
 })
 
 test('discuss keeps the drawer open with the question above a blank line, what you type under it answers, and dismiss resolves it', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const session = questionWorld(on, clock, [held(), held({ ref: '#7.2', number: 2, subject: 'Rebase first?' })])
+  const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, subject: 'Rebase first?' })])
   await startSession($, clock)
 
   const ui = await $.ui.mount(BAND)
-  await ui.press({ key: 'item:#7.1' })
-  await ui.press({ key: 'discuss:#7.1' })
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'discuss:1' })
   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\n'])
   // The drawer stays open, so its options and detail stay in view while you type.
-  expect(await ui.find({ key: 'detail:#7.1' })).toBeDefined()
+  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
 
   // Text after the quoted question on its own line answers nothing, and leaves the drawer open.
   const discussed = '"Decline the finding?" what does the cap cover?'
   await $.prompt.submit({ text: discussed, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
-  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
-  expect(await ui.find({ key: 'detail:#7.1' })).toBeDefined()
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
+  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
 
   await $.prompt.submit({ text: '"Decline the finding?"\n\nkeep the cap', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
-  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'c', text: 'keep the cap' }))
-  expect(session.project()).toContain('inbox answer #7.1.c --text=keep the cap --session s1 --json')
+  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'c', text: 'keep the cap' }))
+  expect(session.project()).toContain('inbox answer 1.c --text=keep the cap --session s1 --json')
   // Sending the answer closed the drawer; opened again, it shows the answer you typed after the options, marked.
-  expect(await ui.find({ key: 'detail:#7.1' })).toBeUndefined()
-  await ui.press({ key: 'item:#7.1' })
+  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+  await ui.press({ key: 'item:1' })
   expect((await ui.find({ type: 'Text', text: /^3\.$/ }))?.props.color).toBe('success')
   expect(await ui.find({ type: 'Text', text: /^keep the cap/ })).toBeDefined()
 
-  await ui.press({ key: 'item:#7.1' })
-  await ui.press({ key: 'item:#7.2' })
-  await ui.press({ key: 'dismiss:#7.2' })
-  expect(session.project()).toContain('inbox dismiss #7.2 --session s1 --json')
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'dismiss:2' })
+  expect(session.project()).toContain('inbox dismiss 2 --session s1 --json')
   await clock.advance(1)
   await clock.settle()
-  expect(session.submitted.map(one => one.text)).toContain('DISMISSED #7.2 Rebase first?')
+  expect(session.submitted.map(one => one.text)).toContain('DISMISSED 2 Rebase first?')
   await ui.unmount()
 })
 
@@ -1128,10 +1125,10 @@ test('an answer from a terminal reaches the live subagent that asked', async ($,
   await clock.settle()
 
   expect(session.sent).toEqual([
-    { to: expect.stringContaining('agent-1'), text: 'ANSWER #7.1.a Decline the finding? → Decline it' },
+    { to: expect.stringContaining('agent-1'), text: 'ANSWER 1.a Decline the finding? → Decline it' },
   ])
   expect(session.submitted).toEqual([])
-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
 })
 
 test('an answer from a terminal for a subagent that ended goes to the main loop, naming it', async ($, on) => {
@@ -1144,9 +1141,9 @@ test('an answer from a terminal for a subagent that ended goes to the main loop,
   await clock.settle()
 
   expect(session.sent).toEqual([])
-  expect(session.submitted[0]?.text).toContain('ANSWER #7.1.b Decline the finding? → Add a budget')
+  expect(session.submitted[0]?.text).toContain('ANSWER 1.b Decline the finding? → Add a budget')
   expect(session.submitted[0]?.text).toContain('The subagent Fix #7 (agent-1) asked this')
-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
 })
 
 test('a dropped submit reopens the question and says why', async ($, on) => {
@@ -1158,10 +1155,12 @@ test('a dropped submit reopens the question and says why', async ($, on) => {
   await clock.advance(TICK)
   await clock.settle()
 
-  expect(session.toasts).toEqual(['projector: #7.1 did not reach its agent (a hook refused it); answer it again'])
-  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+  expect(session.toasts).toEqual([
+    'projector: the answer to "Decline the finding?" did not reach its agent (a hook refused it); answer it again',
+  ])
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Button', key: 'item:#7.1' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -1182,12 +1181,12 @@ test('an answer from a terminal waits behind a long turn on one claim, renewed w
   expect(claims.filter(command => !command.includes('--renew'))).toHaveLength(1)
   expect(claims.filter(command => command.includes('--renew')).length).toBeGreaterThanOrEqual(6)
   expect(lists()).toBe(before)
-  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER #7.1.a Decline the finding? → Decline it'])
+  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER 1.a Decline the finding? → Decline it'])
 
   session.release()
   await clock.advance(TICK)
   await clock.settle()
-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
   expect(session.submitted).toHaveLength(1)
 })
 
@@ -1202,8 +1201,8 @@ test('a store read that fails runs again on the next tick', async ($, on) => {
   await clock.settle()
 
   expect(session.project().filter(command => command.startsWith('inbox list')).length).toBeGreaterThanOrEqual(2)
-  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER #7.1.a Decline the finding? → Decline it'])
-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER 1.a Decline the finding? → Decline it'])
+  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
 })
 
 test('a store read that runs past the CLI’s timeout still renews the claim of an answer waiting to be sent', async ($, on) => {
@@ -1230,17 +1229,17 @@ test('a store read that runs past the CLI’s timeout still renews the claim of 
   await clock.settle()
   const claims = session.project().filter(command => command.startsWith('inbox claim'))
   expect(claims.filter(command => !command.includes('--renew'))).toHaveLength(1)
-  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER #7.1.a Decline the finding? → Decline it'])
-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER 1.a Decline the finding? → Decline it'])
+  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
 })
 
 test('a submit an earlier copy of the module left keeps its claim and settles when its prompt arrives', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const text = 'ANSWER #7.1.a Decline the finding? → Decline it'
+  const text = 'ANSWER 1.a Decline the finding? → Decline it'
   const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
   const session = questionWorld(on, clock, [held({ answer, claim: { token: 'old', renewedAt: NOW } })])
-  let pending: Record<string, unknown> = { '#7.1': { ref: '#7.1', session: SESSION, token: 'old', route: 'submit', text } }
+  let pending: Record<string, unknown> = { '1': { ref: '1', session: SESSION, token: 'old', route: 'submit', text } }
   let version = 1
   on('state.get', { plugin: 'projector', key: 'bandSending' }, () => ({ value: { value: pending as never, version } }))
   on('state.set', { plugin: 'projector', key: 'bandSending' }, ($, e) => {
@@ -1254,26 +1253,29 @@ test('a submit an earlier copy of the module left keeps its claim and settles wh
 
   const claims = session.project().filter(command => command.startsWith('inbox claim'))
   expect(claims.length).toBeGreaterThanOrEqual(2)
-  for (const claim of claims) expect(claim).toBe('inbox claim #7.1 --renew old --session s1')
+  for (const claim of claims) expect(claim).toBe('inbox claim 1 --renew old --session s1')
   await $.prompt.submit({ text, wait: false, origin: { kind: 'plugin', name: 'projector' } })
-  expect(session.project()).toContain('inbox delivered #7.1 --claim old --session s1 --json')
-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+  expect(session.project()).toContain('inbox delivered 1 --claim old --session s1 --json')
+  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
   expect(pending).toEqual({})
 })
 
-test('a reference typed in the prompt reaches the agent with its question', async ($, on) => {
+test('a number or an old reference typed in the prompt reaches the agent as plain text', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held()])
   await startSession($, clock)
+  const before = session.project().length
 
+  await $.prompt.submit({ text: 'go with 1.b', wait: false, origin: { kind: 'composer' } })
   await $.prompt.submit({ text: 'go with #7.1.b', wait: false, origin: { kind: 'composer' } })
-  await $.prompt.submit({ text: 'rerun the 2 failing tests', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
   expect(session.submitted).toEqual([
-    { text: 'go with #7.1.b', context: ['#7.1.b answers Decline the finding? with Add a budget'] },
-    { text: 'rerun the 2 failing tests', context: [] },
+    { text: 'go with 1.b', context: [] },
+    { text: 'go with #7.1.b', context: [] },
   ])
-  expect(session.project().filter(command => command.startsWith('inbox context'))).toHaveLength(1)
+  expect(session.project().slice(before)).toEqual([])
+  expect(session.store.store.get('1')?.answer).toBeUndefined()
 })
 
 const FORCE_PUSHED = 'Force-pushed #7 to drop a stray file'
@@ -1286,10 +1288,10 @@ test('a subagent tells through the tool, and the band lists the notice with its 
 
   const called = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, pr: 'x/y#7', agentId: 'agent-1' })
   expect(String(called.text ?? called.result)).toBe(
-    'Posted #7.1. It waits in Projector’s band until the person dismisses it; nothing comes back to you.',
+    'Posted 1. It waits in Projector’s band until the person dismisses it; nothing comes back to you.',
   )
   expect(session.project()).toContain(`inbox tell --session=s1 --pr=x/y#7 --agent=agent-1 -- ${FORCE_PUSHED}`)
-  expect(session.notified).toEqual([`#7.1 ${FORCE_PUSHED}`])
+  expect(session.notified).toEqual([FORCE_PUSHED])
 
   await clock.advance(1)
   await clock.settle()
@@ -1297,7 +1299,44 @@ test('a subagent tells through the tool, and the band lists the notice with its 
   expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated (just now|\d+s ago)$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '• ' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
-  expect(await ui.find({ type: 'Button', key: 'item:#7.1' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the tools number a session’s items in one count, and notify with the subject alone', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock)
+  await startSession($, clock)
+
+  const asked = await $.tool.call({
+    tool: 'mcp__projector__ask',
+    question: 'Decline the finding?',
+    recommendation: 'Decline it',
+    agentId: 'agent-1',
+  })
+  expect(String(asked.text ?? asked.result)).toMatch(/^Asked 1\. .*ANSWER 1 or DISMISSED 1\.$/)
+  const told = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, agentId: 'agent-1' })
+  expect(String(told.text ?? told.result)).toMatch(/^Posted 2\. /)
+  expect(session.notified).toEqual(['Decline the finding?', FORCE_PUSHED])
+})
+
+test('no line or drawer shows an item’s number', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  questionWorld(on, clock, [held({ ref: '42', number: 42 }), notice({ ref: '43', number: 43 })])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  const drawn = async () => (await ui.findAll({ type: 'Text' })).map(found => found.text).join('\n')
+  expect(await drawn()).toContain('Decline the finding?')
+  expect(await drawn()).not.toMatch(/42|43/)
+  for (const ref of ['42', '43']) {
+    await ui.press({ key: `item:${ref}` })
+    expect(await ui.find({ key: `detail:${ref}` })).toBeDefined()
+    expect(await drawn()).not.toMatch(/42|43/)
+    await ui.press({ key: `item:${ref}` })
+  }
   await ui.unmount()
 })
 
@@ -1329,31 +1368,31 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
 
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
-  await ui.press({ key: 'item:#7.2' })
+  await ui.press({ key: 'item:2' })
   // An open notice has the band to itself, the divider included, as an open question does.
   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
-  expect((await ui.find({ key: 'detail:#7.2' }))?.props.text).toBe('The file held a debug token.')
+  expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe('The file held a debug token.')
   expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeUndefined()
   for (const name of ['discuss', 'dismiss', 'snooze']) {
-    expect((await ui.find({ type: 'Button', key: `${name}:#7.2` }))?.props.plain).toBe(true)
+    expect((await ui.find({ type: 'Button', key: `${name}:2` }))?.props.plain).toBe(true)
   }
   const bars = await ui.findAll({ type: 'Text', text: '|' })
   expect(bars.map(bar => bar.props.color)).toEqual(['subtle', 'subtle'])
 
-  await ui.press({ key: 'discuss:#7.2' })
+  await ui.press({ key: 'discuss:2' })
   expect(session.filled).toEqual([`insert:"${FORCE_PUSHED}"\n\n`])
 
-  await ui.press({ key: 'dismiss:#7.2' })
+  await ui.press({ key: 'dismiss:2' })
   await clock.settle()
   expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([
-    'inbox dismiss #7.2 --session s1 --json',
+    'inbox dismiss 2 --session s1 --json',
   ])
   const line = await ui.find({ type: 'Text', text: FORCE_PUSHED })
   expect([line?.props.color, line?.props.strikethrough]).toEqual(['subtle', true])
-  expect(await ui.find({ type: 'Button', key: 'discuss:#7.2' })).toBeDefined()
-  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.2' })).toBeUndefined()
-  expect(await ui.find({ type: 'Button', key: 'snooze:#7.2' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'dismiss:2' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'snooze:2' })).toBeUndefined()
 
   await clock.advance(TICK)
   await clock.settle()
@@ -1361,7 +1400,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   expect(session.submitted).toEqual([])
   expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
 
-  await ui.press({ key: 'item:#7.2' })
+  await ui.press({ key: 'item:2' })
   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
   await clock.advance(30_000 - 2 * TICK)
   await clock.settle()
@@ -1379,14 +1418,14 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   await startSession($, clock)
 
   const ui = await $.ui.mount(BAND)
-  await ui.press({ key: 'item:#7.1' })
-  await ui.press({ key: 'snooze:#7.1' })
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'snooze:1' })
   await clock.settle()
-  await ui.press({ key: 'item:#7.2' })
-  await ui.press({ key: 'snooze:#7.2' })
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'snooze:2' })
   await clock.settle()
-  expect(session.project()).toContain('inbox snooze #7.1 --session s1 --json')
-  expect(session.project()).toContain('inbox snooze #7.2 --session s1 --json')
+  expect(session.project()).toContain('inbox snooze 1 --session s1 --json')
+  expect(session.project()).toContain('inbox snooze 2 --session s1 --json')
   expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
   await ui.unmount()
@@ -1417,15 +1456,15 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
   await startSession($, clock)
 
   const ui = await $.ui.mount(BAND)
-  await ui.press({ key: 'item:#7.1' })
+  await ui.press({ key: 'item:1' })
   session.store.failing.locks = 2
   for (const name of ['dismiss', 'snooze']) {
-    await ui.press({ key: `${name}:#7.1` })
+    await ui.press({ key: `${name}:1` })
     await clock.settle()
   }
   expect(session.toasts).toEqual([`projector: ${BUSY}`, `projector: ${BUSY}`])
-  expect(session.store.store.get('#7.1')).toEqual(held())
-  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeDefined()
+  expect(session.store.store.get('1')).toEqual(held())
+  expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -1462,13 +1501,13 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
   await startSession($, clock)
 
   const ui = await $.ui.mount(BAND)
-  await ui.press({ key: 'item:#7.2' })
-  await ui.press({ key: 'snooze:#7.2' })
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'snooze:2' })
   await clock.advance(TICK)
   await clock.settle()
   await ui.unmount()
   await $.command.run(COMMAND)
-  session.store.run(['project', 'inbox', 'dismiss', '#7.2', '--session', SESSION], '')
+  session.store.run(['project', 'inbox', 'dismiss', '2', '--session', SESSION])
 
   await clock.advance(HOUR + 2 * TICK)
   await clock.settle()
@@ -1486,7 +1525,7 @@ test('a sent prompt that quotes a notice answers nothing', async ($, on) => {
   await $.prompt.submit({ text: `"${FORCE_PUSHED}"\n\nThanks`, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.project().filter(command => /^inbox (answer|dismiss|claim)/.test(command))).toEqual([])
-  expect(session.store.store.get('#7.2')?.answer).toBeUndefined()
+  expect(session.store.store.get('2')?.answer).toBeUndefined()
 })
 
 test('a snoozed item read at the start leaves a hidden band hidden until its time', async ($, on) => {

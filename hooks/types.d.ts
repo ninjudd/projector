@@ -45,6 +45,7 @@ export type Answer = { letter: string; text: string; answeredAt: number } | { di
 
 /** What every item has, as `project inbox list --json` gives it, with the session whose store holds it. */
 export type Posted = {
+  /** The item's number in its session, as a string such as `"3"`: what the CLI prints and takes. */
   ref: string
   number: number
   /** The pull request it is about, as `owner/repo#number`; null when none. */

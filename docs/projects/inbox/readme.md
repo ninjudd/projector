@@ -239,8 +239,8 @@ session's id in every host, which § 7 leaves open.
   agent hears of it.
 - **Dismissing a notice marks it delivered.** With `deliveredAt` set at
   once, retention, `watch`, the band's deliverer, and the band's 30
-  seconds of fading all handle a dismissed notice with no new branch: it is simply a
-  delivered item.
+  seconds of fading all handle a dismissed notice with no new branch: it
+  is simply a delivered item.
 - **Snoozing hides without losing.** An item you cannot deal with yet
   should leave your way without leaving the inbox. Snoozing records a time
   rather than a state, so nothing has to run when it ends: the band and
@@ -707,9 +707,12 @@ sending its quoted subject. The forms still cost something:
    separated by tabs, with the session before them when it lists every
    session. `show 3`, `answer 3.a`, `answer 3.c --text …`, `dismiss 3`,
    and `snooze 3` name the item. Only `answer` takes a letter, and every
-   other command refuses `3.a` with exit `65`. Without `--session`, a
-   command looks the number up in every session, as it does now. Once two
-   sessions hold a `3`, it exits `67` and names both, and you pass
+   other command refuses `3.a` with exit `65`. Without `--session` or
+   `PROJECTOR_SESSION`, a command looks the number up in every session.
+   `show`, `answer`, `dismiss`, and `snooze` look first among open items,
+   those with no answer recorded, and among every item only when no
+   session holds the number open (§ 11.10). Once two sessions hold a `3`
+   that way, the command exits `67` and names both, and you pass
    `--session` with the session that `list` prints beside the item.
 6. **Nothing reads a prompt for references.** The `prompt.submit` hook
    adds no context for anything you type, and `project inbox context` is
@@ -848,7 +851,65 @@ runs for any prompt that holds text shaped like `#12.3` or `q2`. Nothing
 else changes.
 
 Build the change as one pull request after #295, § 10's band pull
-request, merges, since both change `hooks/register.tsx`, `hooks/inbox.ts`, their
-tests, and `docs/plugins.md`. The CLI and the hooks change in that one
-pull request, and because `ref` stays a string, a band and a CLI a
-release apart still work together.
+request, merges, since both change `hooks/register.tsx`,
+`hooks/inbox.ts`, their tests, and `docs/plugins.md`. The CLI and the
+hooks change in that one pull request, and because `ref` stays a string,
+a band and a CLI a release apart still work together.
+
+### 11.10 What building it settled
+
+§ 11 is built as it reads. Building it settled these points, which the
+subsections above leave open or which the code had moved past since
+§ 11 was written:
+
+- **A third test read references.** #293 added a `context` check to
+  `test_every_command_refuses_a_file_that_is_not_an_item`, besides
+  `ContextTests` and `NoticeContextTests`, which § 11.6 names. That check
+  goes with them, and the test keeps its checks of `show`, `answer`,
+  `dismiss`, and `snooze`.
+- **The band's `project` helper takes no standard input.** Only `explain`
+  passed text to `project inbox context` on standard input, so the
+  `stdin` argument of `project` in `hooks/register.tsx` goes with it, and
+  so does the fake runner's in `hooks/band.test.tsx`.
+- **The toast names an answer it cannot quote.** The toast for a failed
+  delivery quotes the question's subject from the band's list. When the
+  list no longer holds that question, it says `an answer did not reach its
+  agent`, and still names no number.
+- **The refusal for a number two sessions hold says where to look.**
+  Every session counts from 1, so two sessions often hold a number. The
+  message of exit `67` says to pass `--session` with the session that
+  `project inbox list` prints beside the item.
+- **The agents' instructions name a number.** The section `project init`
+  writes into `AGENTS.md` tells an agent to clear an item with
+  `project inbox dismiss <number>`. The text changed, so the section's
+  begin marker moves to version 9.
+- **A file's name still quotes its reference.** `item_file` quotes the
+  reference into the file's name as it did, which leaves a number
+  unchanged. A reference read from a file therefore cannot name a path
+  outside the session's directory, and the band's reading of file names
+  still matches the quoted names an older CLI writes.
+- **What #293 and #295 changed stays.** The input checks, exit `75` for a
+  busy store, the refusal of a letter by every command but `answer`, and
+  #295's band, with **discuss** filling the quote and two newlines, no
+  `Type something` field, a drawer that closes when you send its answer,
+  and the 30 seconds a resolved line stays, all work as they did. § 11
+  changes none of them.
+- **A bare number looks first among open items.** Every session holds a
+  `1`, a session's directory stays after it ends (§ 7), and each keeps up
+  to 100 delivered items. Looking a number up in every session would make
+  a bare `answer 3.a` from a shell exit `67` almost every time. So when
+  neither `--session` nor `PROJECTOR_SESSION` names a session, `show`,
+  `answer`, `dismiss`, and `snooze` consider only the sessions that hold
+  the number open, with no answer recorded, whenever any does. An open
+  item is the only kind `answer`, `dismiss`, and `snooze` can act on, and
+  the one a `show` after `list` most likely means. When no session holds
+  the number open, these commands look among every item as before, so
+  `show` still reaches a resolved item and `answer` still says the
+  question is already answered. A number open in two sessions still exits
+  `67`. `claim`, `delivered`, and `reopen` act on an answered question,
+  and the band and `watch` always pass its session, so they look among
+  every item as before.
+
+Each row of § 11.8 but the last failed its test before the change. The
+main-screen row of § 4 still waits for a check by hand under tmux, so the
+project stays `in-progress`.
