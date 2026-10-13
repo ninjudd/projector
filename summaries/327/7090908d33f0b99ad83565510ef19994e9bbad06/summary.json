@@ -1,0 +1,171 @@
+{
+ "version": 1,
+ "name": "Band keyboard control",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 327,
+  "title": "Work the band from the keyboard, and list a drawer's actions with their keys",
+  "head": "7090908d33f0b99ad83565510ef19994e9bbad06",
+  "headRef": "band-keys",
+  "base": "759ee62a2423d5aa12b81e470024e13ff4f90e50",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's band is the strip Projector draws above the Claude Code prompt. It lists the session's pull requests and the inbox items agents post: <b>questions</b>, which wait for your answer, and <b>notices</b>, which only need a read. Clicking a line opens its <b>drawer</b>, which shows the item's detail, a question's options, and actions such as discuss, dismiss, and snooze.",
+   "Before this change, a question's options were Markdown links that only a mouse click could press. On Claude Code's main screen, which runs under tmux and takes no clicks, the only way to answer was to type the question's quote and the option by hand. This change makes the band work from the keyboard, the way Claude Code's own surveys do:",
+   "<ul class=\"tight\"><li><b>Options take digits.</b> An open question's options are plain Buttons on <code>1</code> to <code>6</code>. A digit presses one while the band holds the keyboard, or when you type it first into an empty prompt. Pressing an option only fills the prompt; sending the prompt unchanged is what answers.</li><li><b>Actions take letters.</b> Each drawer action is a line of its own: <code>d: discuss question</code>, <code>x: dismiss question</code> (or <code>restore</code>), and <code>s: snooze question</code> (or <code>unsnooze</code>), each naming what it acts on. A pull request's drawer reads <code>d: discuss PR</code> and <code>x: dismiss PR</code> above its links. Letters work only while the band holds the keyboard, never from the prompt.</li><li><b>Enter carries the focus ring.</b> Enter on a line opens its drawer and moves the ring onto the first option, or onto discuss. Enter on the open line closes it and puts the ring back on the line.</li><li><b>Snooze asks how long.</b> It offers <code>15 min | 1 hour | 4 hours | 1 day | cancel</code> and snoozes nothing until you pick a length.</li></ul>",
+   "The change also restyles the band: every item takes a <code>-</code> bullet, an open question's line takes the theme color <code>permission</code>, and the pull request drawer's links read <code>open in github</code> and <code>open in projector</code>. The inbox plan's § 15 and § 16 record each decision and why."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the region Projector draws above the prompt, Claude Code's <code>AbovePrompt</code> site.</li><li><b>Drawer</b>: the detail a line opens under it. One drawer is open at a time, in the <code>bandDrawer</code> atom.</li><li><b>Focus ring</b>: Claude Code's inverted highlight on the band element that Enter presses while the band holds the keyboard.</li><li><b>Hotkey</b>: a Button's one-character key. Claude Code arms it while the band holds the keyboard, and also arms a bare digit typed into an empty prompt.</li><li><b>Proposal</b>: the band's record of what a drawer put in the prompt, which <code>readPrompt</code> uses to tell an answer from a reply.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review status",
+    "html": "<p>The Projector review of <code>7090908</code> requested changes:</p><ul class=\"tight\"><li><b>Open:</b> a test comment in <code>hooks/band.test.tsx</code> still says a pull request's links sit above its actions, which this head reversed.</li><li><b>Resolved, awaiting the owner:</b> the finding that a digit typed into an empty prompt as a reply to the agent can answer the open band question. It was resolved without a comment, after the author declined it as the owner's chosen tradeoff. The review neither accepts nor reopens it until the owner confirms the tradeoff.</li></ul><p class=\"note\">An earlier stale comment about the pull request drawer was fixed in <code>501b83a</code>.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "band",
+   "title": "The drawer's keys and the focus ring",
+   "kicker": "How the band draws options and actions as keyed lines, moves the ring, and asks how long to snooze.",
+   "intro": [
+    "All of the behavior lives in the band's render hook in <code>hooks/register.tsx</code>. A question's options become plain Buttons with a digit <code>hotkey</code>, and each action becomes a plain Button with a letter. Claude Code draws a plain Button's hotkey before its label, as <code>1: Decline it</code>, so the band draws no numbers of its own. The pull request drawer draws its two actions under its facts line and its links after them.",
+    "Claude Code's <code>ui.press</code> event does not say whether a click or Enter pressed a Button. So a new <code>ui.focus</code> hook records which element the ring last landed on, in the module variable <code>ring</code>. A press on the element under the ring counts as Enter, and the band then calls <code>$.ui.focus</code> to move the ring into the drawer or back onto the line. Nothing tells the band when it loses the keyboard, so <code>ring</code> can be stale after Esc. Claude Code refuses <code>$.ui.focus</code> for a band that no longer holds the keyboard, and the band logs the refusal to the debug log.",
+    "Snooze now sets a second atom, <code>bandSnoozing</code>, to the open drawer's key. While it is set, the drawer draws the lengths and cancel in place of its actions. A length runs <code>project inbox snooze &lt;n&gt; --for &lt;minutes&gt;</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Letters cannot fire from the prompt. Claude Code 2.1.296's declarations for <code>Button.hotkey</code> say a band hotkey presses only while the band holds the focus, never from the composer, except a bare digit in an empty one. Every action Button is drawn only inside the one open drawer, which only a press on its line opens."
+    },
+    {
+     "kind": "verify",
+     "text": "Ran <code>claude plugin test .</code> at <code>7090908</code>: 117 pass, 0 fail. Type-checked <code>hooks/</code> with <code>tsc</code> against Claude Code 2.1.296's declarations, with no errors."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The render hook: keyed option and action lines, the <code>ui.focus</code> hook and <code>carry</code>, the snooze lengths, and the restyled lines.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 73,
+       "text": "The longest length, 1440 minutes, is within the CLI's cap. <code>inbox.snooze</code> in <code>src/projector/inbox.py</code> accepts 0 to <code>MAX_SNOOZE_MINUTES</code>, which is <code>24 * 60</code>."
+      },
+      {
+       "kind": "context",
+       "line": 127,
+       "text": "<code>ring</code> is the band's only record of where the focus ring is. It is written only by the <code>ui.focus</code> hook below, and it can be stale after Esc, since Claude Code raises no event when the band loses the keyboard."
+      },
+      {
+       "kind": "verify",
+       "line": 308,
+       "text": "Every path that closes a drawer goes through <code>closeDrawer</code>, which also clears <code>bandSnoozing</code>, and only <code>toggle</code> opens one, also clearing it. So a drawer always opens on its actions, never on the lengths. Checked by finding every writer of both atoms."
+      },
+      {
+       "kind": "context",
+       "line": 962,
+       "text": "<code>carry</code> treats a press as Enter when the ring is on the pressed element. Plan § 15.3 rests this on the owner's observation that a click on a Button does not move the ring."
+      },
+      {
+       "kind": "flag",
+       "line": 1089,
+       "text": "Review finding, resolved and awaiting the owner: while a question's drawer is open, Claude Code presses this Button for a bare digit typed into an empty prompt. If you reply <code>2</code> and Enter to a question the agent asked in the transcript, the band fills the prompt with this question's option 2 first, and the send answers the band question with an option you never chose. The author declined it as the owner's tradeoff, and the thread was resolved without a comment. The review waits for the owner to confirm."
+      },
+      {
+       "kind": "verify",
+       "line": 1153,
+       "text": "The ring targets match the keys the drawer draws: <code>snooze-15:&lt;ref&gt;</code> and <code>cancel:&lt;ref&gt;</code> from <code>drawLengths</code>, <code>snooze:&lt;ref&gt;</code> and <code>discuss:&lt;ref&gt;</code> from <code>drawActions</code>, and <code>answer:&lt;ref&gt;.a</code> from <code>drawAnswers</code>."
+      },
+      {
+       "kind": "context",
+       "line": 1187,
+       "text": "An open item's line is keyed <code>close:&lt;ref&gt;</code>. Claude Code keeps the ring by position, and the open item has the band to itself, so the move back onto <code>item:&lt;ref&gt;</code> waits until the band draws the list again."
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Declares the new <code>bandSnoozing</code> atom: the drawer that is asking how long to snooze."
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "A doc comment now says an answer is what pressing an option puts in the prompt, since the option is no longer a numbered link."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Band tests for digits, letters, the ring, snooze lengths, and the restyled lines.",
+   "intro": [
+    "Existing tests press <code>answer:</code> Buttons in place of links and pick a snooze length after pressing snooze. New tests pin each new behavior. Claude Code's test kit serves no <code>$.ui.focus</code>, so <code>keyboardOf</code> raises <code>ui.focus</code> to place the ring and reads which element the band tried to move the ring onto from the debug line the band writes when the kit refuses."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "New tests for the digit options, the action letters and labels, the ring moves, snooze lengths, keyed-line colors, and bullets.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 2629,
+       "text": "<code>keyboardOf</code> stands in for Enter: it places the ring with a person-origin <code>ui.focus</code>, then the test presses the same key. A plain <code>ui.press</code> without it stands in for a click."
+      },
+      {
+       "kind": "flag",
+       "line": 2566,
+       "text": "Review finding: this comment says a pull request's drawer has its links above its actions. Since <code>f4f3cb3</code>, the actions come first and the links after them."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the inbox plan",
+   "kicker": "The band's keyboard guide, the drawer descriptions, and plan sections 15 and 16.",
+   "intro": [
+    "<code>docs/plugins.md</code> gains a \"Use the band from the keyboard\" section and redraws each drawer example with keyed lines. <code>docs/cli.md</code> changes one phrase about how an option fills the prompt. The inbox plan, already <code>completed</code>, appends § 15 on the keyboard and § 16 on the smaller visual changes and snooze lengths, each with its reasons and the tests that back it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The keyboard section, the redrawn drawers with labels that name what they act on, and the snooze lengths.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 497,
+       "text": "This is where the docs promise that a digit typed into an empty prompt fills the prompt and sends nothing. The open review finding is about a digit followed by Enter."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "One phrase: an option is pressed in its drawer rather than by clicking its number."
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "§ 15 (keyboard) and § 16 (visual changes and snooze lengths), each with what changes, why, and its evidence table.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1426,
+       "text": "§ 15.2 states the design choice behind the open digit finding: the digits are set whenever an open question's drawer is open, and a stray digit only fills the prompt."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
