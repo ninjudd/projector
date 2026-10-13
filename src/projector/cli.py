@@ -753,11 +753,11 @@ def add_inbox_parser(subcommands) -> None:
 
     snooze = command("snooze", "hide an open item for a while")
     snooze.add_argument("reference")
+    snooze.add_argument("--for", dest="minutes", type=int, default=inbox.SNOOZE_MINUTES, metavar="MINUTES",
+                        help="minutes until it returns, at most 1440 (default: 60); 0 wakes it now")
 
     restore = command("restore", "reopen an item the person dismissed or snoozed, keeping its number")
     restore.add_argument("reference", help="the item's number, such as 3")
-    snooze.add_argument("--for", dest="minutes", type=int, default=inbox.SNOOZE_MINUTES, metavar="MINUTES",
-                        help="minutes until it returns, at most 1440 (default: 60); 0 wakes it now")
 
     claim = command("claim", "claim a recorded answer for delivery and print its token and text")
     claim.add_argument("reference")
