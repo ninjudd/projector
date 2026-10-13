@@ -113,10 +113,15 @@ what it did to each:
   variables, such as `LANG`, that holds neither of those, nor `PATH` or
   `HOME`. A command such as `VISUAL='sh -c …' project edit plan`, which picks
   the program Projector runs, therefore falls to Claude Code's usual
-  approval. `project review gate` runs the checks that `review.gate`
-  configures, as a review loop does on every review, and is allowed. The ask
-  rules match the command text an agent writes, so they keep an agent from
-  running these commands unasked, not from spelling one another way.
+  approval.
+
+  `project review gate` runs the checkout's `review.gate` command, and stays
+  allowed so a review loop runs unattended. An agent that edits `review.gate`
+  and then runs the gate therefore runs that command without a prompt, the
+  same edit-then-run pattern as any allowed test runner. Codex leaves the gate
+  to its usual approval, as the next entry describes. The ask rules match the
+  command text an agent writes, so they keep an agent from running these
+  commands unasked, not from spelling one another way.
 
   When `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that
   directory instead. Without the allow rule, Claude Code asks before each

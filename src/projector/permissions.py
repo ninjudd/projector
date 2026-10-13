@@ -51,8 +51,13 @@ Code lets an allow rule match past a leading variable assignment only for a
 fixed list of variables, such as `LANG`, that holds neither of those, nor
 `PATH` or `HOME`. So `VISUAL='sh -c …' project edit x` is not allowed by
 `Bash(project *)`, and neither is any command that picks a program Projector
-runs. `project review gate` runs the checks `review.gate` configures, as a
-review loop does on every review, and is allowed. Claude Code matches these
+runs.
+
+`project review gate` runs the checkout's `review.gate` command, and stays
+allowed so a review loop runs unattended. An agent that edits `review.gate`
+and then runs the gate therefore runs that command without a prompt, the
+same edit-then-run pattern as any allowed test runner. Codex leaves the gate
+to its usual approval, as the last paragraph says. Claude Code matches these
 rules against the command text an agent writes, so they keep an agent from
 running a command unasked, not from spelling it another way, such as with a
 quoted command name.
