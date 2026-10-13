@@ -844,8 +844,7 @@ def change_config(arguments: argparse.Namespace) -> int:
     else:
         shown = "" if change.new is None else f" = {format_value(change.new)}"
         print(f"{change.action} {change.key}{shown} in {change.path}", flush=True)
-    if change.action != "unchanged":
-        report_override(arguments, change)
+    report_override(arguments, change)
     return 0
 
 

@@ -533,6 +533,16 @@ class ConfigSetTests(unittest.TestCase):
 
         self.assertIn(f"{elsewhere} is not read here", stderr)
 
+    def test_an_override_is_reported_when_the_file_already_held_the_value(self) -> None:
+        self.user_file.write_text("[watch]\nauto_start = false\n")
+        self.repo_file.write_text("[watch]\nauto_start = true\n")
+
+        code, stdout, stderr = self.invoke("config", "set", "watch.auto_start", "false", "--user")
+
+        self.assertEqual(0, code)
+        self.assertEqual(f"unchanged watch.auto_start = false in {self.user_file}\n", stdout)
+        self.assertIn(f"{self.repo_file} sets watch.auto_start = true, which applies here", stderr)
+
     def test_outside_a_repository_the_default_file_is_refused(self) -> None:
         outside = Path(self.temporary.name) / "outside"
         outside.mkdir()
