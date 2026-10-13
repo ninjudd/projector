@@ -17,8 +17,10 @@ Read `docs/projects/README.md` before changing project plans.
 - Treat `ready` as the executable-readiness claim. A plan at `ready` or
   `in-progress` must answer or deliberately defer every question that blocks
   implementation. Priority makes no readiness claim.
-- Change status and priority in frontmatter. Never move a project, create a
-  shared queue file, or generate a tracked index.
+- Start a project with `project create`. Change its status, priority, and
+  owner with `project status`, `project priority`, `project done`, and
+  `project owner`, never by editing the frontmatter. Never move a project,
+  create a shared queue file, or generate a tracked index.
 - Allow supplemental files and recursively nested projects. A directory is a
   project only when it has its own lowercase `readme.md`.
 - Number plan sections and append new sections without renumbering cited
@@ -32,9 +34,14 @@ frontmatter parsing in a skill:
 
 ```sh
 project list --json
+project search <query> --json
 project show <name> --json
+project create <name>
 project status <name> <status>
 project priority <name> <priority>
+project owner <name> <login>
+project owner <name> --clear
+project done <name>
 project check
 project config get <key>
 ```
