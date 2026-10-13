@@ -7,6 +7,7 @@ const HOME = '/home/ada'
 const REVIEW = `${HOME}/loops/review/tracked`
 const WATCH = `${HOME}/loops/watch/tracked`
 const REVIEW_COMMAND = 'scripts/watch-prs.sh --tracked ~/loops/review/tracked --state ~/loops/review/state'
+const WATCH_COMMAND = 'bash /plugin/skills/start-fix-loop/scripts/watch-threads.sh --tracked ~/loops/watch/tracked --state s'
 
 // The Bash tool's own shell shows the command single-quoted; the watcher it
 // started shows its arguments expanded. The watch loop runs in another session.
@@ -138,7 +139,7 @@ function world(on: On, files: Record<string, string>, ps = PS, project?: (argv: 
   return { commands, filled }
 }
 
-test('draws one line per open pull request, with no section labels', async ($, on) => {
+test('draws one line per open pull request of the session’s own loops', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const { commands } = world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#3\n', [WATCH]: 'x/y#7\n' })
@@ -147,53 +148,55 @@ test('draws one line per open pull request, with no section labels', async ($, o
   await clock.advance(1)
   await clock.settle()
 
+  // The watch loop runs in another session, so the band neither lists it nor looks for it.
   const gh = commands.filter(argv => argv[0] === 'gh')
   expect(gh.length).toBe(1)
-  expect(gh[0]?.join(' ')).toContain('repository(owner: "x", name: "y") { p7: pullRequest(number: 7)')
+  expect(gh[0]?.join(' ')).not.toContain('repository(owner: "x", name: "y")')
+  expect(commands.filter(argv => argv[0] === 'ps')).toEqual([])
 
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '1 open thread' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
-  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+  expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('a click on a pull request opens its drawer, and discuss puts it in the prompt', async ($, on) => {
+test('a press on a pull request’s number opens its drawer, and discuss puts it in the prompt', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const { filled } = world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
 
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
   await clock.advance(1)
   await clock.settle()
 
   const ui = await $.ui.mount(BAND)
-  // A ctrl, alt or cmd click opens what the label links: the summary when
-  // there is one, the pull request otherwise.
-  expect((await ui.find({ key: 'pr:x/y#7' }))?.props.text).toBe(`[y#7](${SUMMARY})`)
-  expect((await ui.find({ key: 'pr:o/r#1' }))?.props.text).toBe('[r#1](https://github.com/o/r/pull/1)')
+  // The number is a plain button, so no terminal draws a URL beside it.
+  expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
+  expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
+  expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
 
-  await ui.press({ key: 'pr:x/y#7', link: { href: SUMMARY } })
+  await ui.press({ key: 'pr:x/y#7' })
   expect(
     await ui.find({ type: 'Text', text: 'watching · by ada · fix-branch · +12 −3 in 2 files' }),
   ).toBeDefined()
   expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: ' · updated 5m ago' })).toBeDefined()
   expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
-  expect(await ui.find({ key: 'projector:x/y#7' })).toBeDefined()
+  expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[projector](${SUMMARY})`)
   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
 
   await ui.press({ key: 'discuss:x/y#7', link: { href: SEVEN } })
   expect(filled).toEqual(['insert:x/y#7 '])
 
-  await ui.press({ key: 'pr:x/y#7', link: { href: SUMMARY } })
+  await ui.press({ key: 'pr:x/y#7' })
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
   await ui.unmount()
 })
@@ -204,12 +207,13 @@ test('opening one drawer closes the one that was open', async ($, on) => {
   world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'x/y#7\n' })
 
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
   await clock.advance(1)
   await clock.settle()
 
   const ui = await $.ui.mount(BAND)
-  await ui.press({ key: 'pr:x/y#7', link: { href: SUMMARY } })
-  await ui.press({ key: 'pr:o/r#1', link: { href: 'https://github.com/o/r/pull/1' } })
+  await ui.press({ key: 'pr:x/y#7' })
+  await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ key: 'github:o/r#1' })).toBeDefined()
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
   await ui.unmount()
@@ -221,12 +225,29 @@ test('lists a pull request both loops track once, as watched and reviewed', asyn
   world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'o/r#1\n' })
 
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
   await clock.advance(1)
   await clock.settle()
 
   const ui = await $.ui.mount(BAND)
-  await ui.press({ key: 'pr:o/r#1', link: { href: 'https://github.com/o/r/pull/1' } })
+  await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a tracked file named by hand takes its kind from the watcher reading it', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const { commands } = world(on, { [WATCH]: 'x/y#7\n' })
+
+  await $.command.run({ ...COMMAND, args: '~/loops/watch/tracked' })
+  await clock.advance(1)
+  await clock.settle()
+
+  expect(commands.filter(argv => argv[0] === 'ps').length).toBeGreaterThanOrEqual(1)
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'pr:x/y#7' })
+  expect(await ui.find({ type: 'Text', text: /^watching · by ada/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -475,7 +496,8 @@ function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options
 
 async function startSession($: Engine, clock: Clock, isShown = true) {
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
-  if (isShown) await $.command.run(COMMAND)
+  // A shown band belongs to a session that started its review loop's watcher.
+  if (isShown) await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
 }
@@ -508,6 +530,7 @@ test('asks through the tool, and the band lists the question below the pull requ
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated (just now|\d+s ago)$/ })).toBeDefined()
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  expect(texts).toContain('Conflicting change')
   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
   // The line names the question's pull request as the band labels it.
   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()

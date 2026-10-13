@@ -323,11 +323,6 @@ them untracked.
   its session, `fix-pr` and the loops can ask and tell through `project
   inbox` instead of handing everything to the main loop. Deferred until the
   question above is settled.
-- **Opening a pull request's drawer on the main screen.** A pull request's
-  number is a `Markdown` link, which takes no press there. Switching pull
-  request lines to `Button`s, as inbox items use, would fix it but loses
-  the ctrl-click that opens the Projector summary. Owner: ninjudd, after
-  trying item lines on the main screen.
 - **Views for Codex and Paseo.** Codex has no band, and Paseo's clients
   could list and clear items through `project inbox list --json`,
   `answer`, and `dismiss`. Deferred until `project inbox` ships.
