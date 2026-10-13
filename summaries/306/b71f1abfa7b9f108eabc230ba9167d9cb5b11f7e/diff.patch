@@ -1,0 +1,489 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 5db801de..f9d50592 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1586,33 +1586,49 @@ snooze, so a resolved item never returns. `snooze` refuses, with exit code
+ 65, an item already answered or dismissed, a negative `--for`, and a `--for`
+ longer than a day, and it changes nothing when it refuses.
+ 
+-## Keep a pull request out of a loop
++## Change a loop's tracked file
+ 
+ A watch or review loop reads its tracked file, one `owner/repo#number` a
+-line. A line `!owner/repo#number` keeps that pull request out of the loop
+-wherever it sits in the file, and both watchers and Projector's band match it
+-without regard to case. `project loop drop` writes that line, and `project
+-loop restore` removes it:
++line, and acts only on the pull requests the file lists. A line
++`!owner/repo#number` keeps that pull request out of the loop wherever it sits
++in the file, and both watchers and Projector's band match it without regard
++to case. Change the file with `project loop`, whose three commands each
++change one kind of line:
++
++| Command | What it changes | When to run it |
++| --- | --- | --- |
++| `drop` | Appends a `!owner/repo#number` line. | To keep an open pull request out of the loop. |
++| `restore` | Removes the pull request's `!` lines. | To let a dropped pull request back in. |
++| `remove` | Removes the lines that list the pull request, and leaves its `!` lines. | To forget a pull request that merged or closed. |
+ 
+ ```console
+ $ project loop drop acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
+ dropped acme/app#337 from /home/ada/.local/state/projector/projector-review-loop.tracked
+ $ project loop restore acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
+ restored acme/app#337 to /home/ada/.local/state/projector/projector-review-loop.tracked
++$ project loop remove acme/app#337 --tracked ~/.local/state/projector/projector-review-loop.tracked
++removed acme/app#337 from /home/ada/.local/state/projector/projector-review-loop.tracked
+ ```
+ 
++Each command matches the reference without regard to case.
++
+ `drop` appends its line rather than rewriting the file, because a watcher may
+ be appending a pull request it adopted at the same moment. It changes nothing
+-when the file already holds an exclusion for the pull request, in any letter
+-case. `restore` removes every `!` line for the pull request, and only those,
+-by writing the file anew and renaming it into place. It leaves a plain
+-`owner/repo#number` line alone, so the pull request returns to the loop when
+-the file names it.
+-
+-Both refuse, with exit code 65, a reference that is not `owner/repo#number`,
+-and, with exit code 66, a tracked file that does not exist. With `--json`,
+-each prints its `action`, which is `dropped`, `restored`, or `unchanged`,
+-with the `pr` and the `tracked` file.
++when the file already holds an exclusion for the pull request. `restore`
++removes every `!` line for the pull request, and only those, by writing the
++file anew and renaming it into place. It leaves a plain `owner/repo#number`
++line alone, so the pull request returns to the loop when the file lists it.
++
++`remove` removes every plain line for the pull request by the same rewrite,
++and changes nothing when the file does not list it. A loop runs it when a
++pull request merges or closes. It leaves the pull request's `!` lines alone,
++so a pull request you dropped stays out even if it reopens and a review loop
++would otherwise adopt it again.
++
++Each command refuses, with exit code 65, a reference that is not
++`owner/repo#number`, and, with exit code 66, a tracked file that does not
++exist. With `--json`, each prints its `action`, which is `dropped`,
++`restored`, `removed`, or `unchanged`, with the `pr` and the `tracked` file.
+ 
+ ## Consume JSON
+ 
+@@ -1667,8 +1683,8 @@ Projector uses these exit codes:
+ | `0` | The command completed successfully. |
+ | `2` | Command syntax or an argument is invalid. |
+ | `3` | `project site status` found no Projector site for the repository. |
+-| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, or a `loop` reference is not `owner/repo#number`. |
+-| `66` | The requested project, the projects directory, the inbox item, or a `loop` command's tracked file does not exist. |
++| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, or a `loop drop`, `loop restore`, or `loop remove` reference is not `owner/repo#number`. |
++| `66` | The requested project, the projects directory, the inbox item, or the tracked file of a `loop drop`, `loop restore`, or `loop remove` command does not exist. |
+ | `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
+ | `69` | Git, the interactive editor, or the installer is unavailable. |
+ | `75` | Another command held an inbox session's lock for five seconds; run the command again. |
+diff --git a/docs/plugins.md b/docs/plugins.md
+index fda5dd40..eb97c16a 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -242,7 +242,7 @@ the pull request, which appends a `!owner/repo#number` line that both
+ watchers honor, so the loops stop acting on it. When the command fails, the
+ band shows its error and keeps the line. To bring a dismissed pull request
+ back, run `project loop restore` with the same reference and tracked file,
+-as [Keep a pull request out of a loop](cli.md#keep-a-pull-request-out-of-a-loop)
++as [Change a loop's tracked file](cli.md#change-a-loops-tracked-file)
+ describes.
+ 
+ On the main screen, which Claude Code uses under tmux and when
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 2b356a4e..64cbebd9 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -35,12 +35,17 @@ after the request is answered, and every later push gets a review until it
+ closes. A line `!owner/repo#number` keeps one pull request out when the user
+ asks. `project loop drop owner/repo#number --tracked <file>` appends one, as
+ Projector's band does when the user dismisses a pull request, and `project
+-loop restore` with the same arguments removes it. Hold validated logins
+-literally in every query you run yourself; never use `@me`. Under the default
+-the two roles coincide and `@me` looks harmless, but its value follows
+-whichever token is live, so under a reviewer override it resolves to the
+-reviewer — an account that authors nothing here — and a listing by `@me` comes
+-back empty, indistinguishable from a repository with nothing open.
++loop restore` with the same arguments removes it. `project loop remove` with
++the same arguments removes the pull request's own line once it closes. The
++three commands change different lines: `drop` keeps an open pull request
++out, `restore` lets it back in, and `remove` forgets one that merged or
++closed and leaves any `!` line for it in place, so adoption never brings a
++dropped pull request back. Hold validated logins literally in every query you
++run yourself; never use `@me`. Under the default the two roles coincide and
++`@me` looks harmless, but its value follows whichever token is live, so under
++a reviewer override it resolves to the reviewer — an account that authors
++nothing here — and a listing by `@me` comes back empty, indistinguishable from
++a repository with nothing open.
+ 
+ ## Establish the loop
+ 
+@@ -79,9 +84,10 @@ back empty, indistinguishable from a repository with nothing open.
+    per line, kept beside the state file and outside any checkout. That file
+    is the watcher's whole scope and the record of the set. The watcher
+    appends the operator's pull requests and the requested ones itself;
+-   append one the user assigns, and delete a line when its pull request
+-   closes. Start or reuse a persistent recurring goal that records the
+-   repository, operator, the tracked file's path, the model ID the host
++   append one the user assigns, and when a pull request closes, remove its
++   line with `project loop remove owner/repo#number --tracked <file>`.
++   Start or reuse a persistent recurring goal that records the repository,
++   operator, the tracked file's path, the model ID the host
+    reports for this session, and this loop's id: a name chosen once for this
+    model, such as `<repo>-review-<model-key>`, where the model key is the
+    model ID lowercased, without a trailing bracketed variant such as `[1m]`,
+@@ -180,8 +186,8 @@ reads the new head against that history instead of rediscovering it.
+   describes.
+ - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
+   to finish: delete any start comment it still holds and remove its scratch
+-  worktrees. Then close the subagent and delete the pull request's line from
+-  the tracked file.
++  worktrees. Then close the subagent and remove the pull request's line from
++  the tracked file with `project loop remove owner/repo#number --tracked <file>`.
+ - When a subagent is lost, to a session restart for example, start a
+   replacement under the same name. It rebuilds its context from GitHub: the
+   pull request's Projector reviews, their finding threads, and the replies on
+@@ -218,7 +224,8 @@ a verdict published on that SHA, full or incremental. `review-pr` decides
+ which: a head that changed little since this loop's last full review can get
+ an incremental review, and every other head gets a full one. Green CI and
+ resolved threads are evidence about state, not substitutes for review. When a
+-pull request closes or merges, close its subagent and delete its line from the
+-tracked file. The watcher adopts the operator's new pull requests and new
+-requests for the operator's review itself; append one the user assigns, and
+-continue until the user stops the loop.
++pull request closes or merges, close its subagent and remove its line from the
++tracked file with `project loop remove owner/repo#number --tracked <file>`.
++The watcher adopts the operator's new pull requests and new requests for the
++operator's review itself; append one the user assigns, and continue until the
++user stops the loop.
+diff --git a/skills/start-review-loop/scripts/watch-prs.sh b/skills/start-review-loop/scripts/watch-prs.sh
+index 6ad7766e..6cc47b2f 100755
+--- a/skills/start-review-loop/scripts/watch-prs.sh
++++ b/skills/start-review-loop/scripts/watch-prs.sh
+@@ -38,10 +38,10 @@
+ # shared repository every push by anyone is one, and every line is a Monitor
+ # notification counting toward the limit that stops a watcher. The file is
+ # re-read every cycle: the loop adds a pull request by appending a line and
+-# drops a merged one by deleting its line, without a restart. Every line is
+-# checked before the watch starts, because a bad one would otherwise be a
+-# watch that starts cleanly and never mentions the pull request it was meant
+-# for; a bad line that appears later is announced once.
++# removes a merged one with `project loop remove`, without a restart. Every
++# line is checked before the watch starts, because a bad one would otherwise
++# be a watch that starts cleanly and never mentions the pull request it was
++# meant for; a bad line that appears later is announced once.
+ #
+ # --repo with --author adopts that author's pull requests: each cycle lists
+ # the author's open pull requests in the repository and appends every one the
+@@ -342,7 +342,7 @@ EOF
+     [ "$flag" = "$sha" ] && flag="$sha:-"
+ 
+     if [ "$pstate" != "OPEN" ]; then
+-      [ -n "$known" ] && echo "CLOSED $slug#$n (${kref:-$ref}) — no longer open; drop it from the tracked file"
++      [ -n "$known" ] && echo "CLOSED $slug#$n (${kref:-$ref}) — no longer open; remove it from the tracked file"
+       continue
+     fi
+ 
+diff --git a/skills/start-watch-loop/SKILL.md b/skills/start-watch-loop/SKILL.md
+index 6d315940..a7ec9774 100644
+--- a/skills/start-watch-loop/SKILL.md
++++ b/skills/start-watch-loop/SKILL.md
+@@ -58,14 +58,18 @@ adopted it. Never list a pull request you would not push to.
+ 4. Write the tracked set to a durable tracked file, one `owner/repo#number`
+    per line, kept beside the state file and outside any checkout. That file
+    is the record of the set. Append a pull request when this conversation
+-   creates or adopts one, delete its line when it closes or merges, and
+-   record the file's path in a persistent recurring goal so a later turn
+-   edits the same file. The watcher re-reads it every cycle, so neither
+-   change needs a restart. A line `!owner/repo#number` keeps that pull
+-   request out of the watch wherever it sits in the file, matched without
+-   regard to case. `project loop drop owner/repo#number --tracked <file>`
+-   appends one, as Projector's band does when the user dismisses a pull
+-   request, and `project loop restore` with the same arguments removes it.
++   creates or adopts one, remove its line with
++   `project loop remove owner/repo#number --tracked <file>` when it closes
++   or merges, and record the file's path in a persistent recurring goal so
++   a later turn edits the same file. The watcher re-reads it every cycle,
++   so neither change needs a restart. A line `!owner/repo#number` keeps
++   that pull request out of the watch wherever it sits in the file,
++   matched without regard to case. `project loop drop` with the same
++   arguments appends one, as Projector's band does when the user dismisses
++   a pull request, and `project loop restore` removes it. The three
++   commands change different lines: `drop` keeps an open pull request out,
++   `restore` lets it back in, and `remove` forgets one that merged or
++   closed and leaves any `!` line for it in place.
+ 5. Run one pass first:
+ 
+    ```sh
+@@ -165,14 +169,15 @@ the recurrence it is instead of as new work.
+   from, or ended, and the validation results. A question for the user
+   comes back to the main loop to ask, and the subagent goes on with the
+   pull request's unrelated work meanwhile.
+-- When a pull request merges or closes, delete its line from the tracked
+-  file at once. Tell its subagent to finish, remove its worktrees, and close
+-  only when no layer it owns is still open. The user merges a stack as a
+-  unit, the whole of it or any number of layers from the bottom up, so when
+-  only the bottom layers merge, the `fix-stack-<number>` subagent keeps its
+-  name and goes on fixing the layers left open. It starts with the update
+-  the lowest of them needs onto its new base, as `../fix-pr/SKILL.md`
+-  describes under "Preserve stacked ownership".
++- When a pull request merges or closes, remove its line from the tracked
++  file at once with `project loop remove owner/repo#number --tracked <file>`.
++  Tell its subagent to finish, remove its worktrees, and close only when
++  no layer it owns is still open. The user merges a stack as a unit, the
++  whole of it or any number of layers from the bottom up, so when only the
++  bottom layers merge, the `fix-stack-<number>` subagent keeps its name and
++  goes on fixing the layers left open. It starts with the update the lowest
++  of them needs onto its new base, as `../fix-pr/SKILL.md` describes under
++  "Preserve stacked ownership".
+ - When a subagent is lost, to a session restart for example, start a
+   replacement under the same name. It rebuilds its context from GitHub: each
+   open layer's review threads, the replies on them, and its review bodies.
+@@ -209,7 +214,8 @@ stack by the number GitHub's stacks API gives it, or by its bottom pull
+ request for a chain of base branches that GitHub does not record as a
+ stack.
+ 
+-Delete closed or merged pull requests from the tracked file. An empty file is
++Remove closed or merged pull requests from the tracked file with
++`project loop remove owner/repo#number --tracked <file>`. An empty file is
+ idle, not an instruction to stop; remain ready to append pull requests this
+ conversation creates or adopts later. A loop `implement` started is the
+ exception: its watcher reports `DONE` and exits once every pull request it
+@@ -222,11 +228,12 @@ pull request the tracked file names:
+ gh pr view <number> --repo <owner>/<repo> --json state --jq .state
+ ```
+ 
+-Delete the line of each one that merged or closed. When one is still open,
+-or a check fails, start the watcher again with `--exit-when-closed`; it ends
+-the watch itself once they have all closed. Otherwise finish each subagent
+-as a merged pull request's subagent finishes, report that the loop stopped
+-because its work is done, and leave the next `implement` to start a new one.
++Run `project loop remove owner/repo#number --tracked <file>` for each one
++that merged or closed. When one is still open, or a check fails, start the
++watcher again with `--exit-when-closed`; it ends the watch itself once they
++have all closed. Otherwise finish each subagent as a merged pull request's
++subagent finishes, report that the loop stopped because its work is done,
++and leave the next `implement` to start a new one.
+ 
+ Beyond that, stop a loop only when the user asks, a required user decision
+ blocks one finding, validation cannot be restored, or every remaining
+diff --git a/skills/start-watch-loop/scripts/watch-threads.sh b/skills/start-watch-loop/scripts/watch-threads.sh
+index df0353da..39c14032 100755
+--- a/skills/start-watch-loop/scripts/watch-threads.sh
++++ b/skills/start-watch-loop/scripts/watch-threads.sh
+@@ -42,11 +42,11 @@
+ # listed and nothing is discovered, so a pull request absent from it produces
+ # no event however loud its threads are, and every event that does arrive is
+ # the loop's to act on. The file is re-read every cycle: the loop adds a pull
+-# request it opened or adopted by appending a line and drops a merged one by
+-# deleting its line, without a restart. Every line is checked before the watch
+-# starts, because a bad one would otherwise be a watch that starts cleanly and
+-# never mentions the pull request it was meant for; a bad line that appears
+-# later is announced once.
++# request it opened or adopted by appending a line and removes a merged one
++# with `project loop remove`, without a restart. Every line is checked before
++# the watch starts, because a bad one would otherwise be a watch that starts
++# cleanly and never mentions the pull request it was meant for; a bad line
++# that appears later is announced once.
+ #
+ # --renotify is how many seconds before a still-unresolved thread is announced
+ # again. Set it high enough to be a reminder rather than a stream. Every line
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index c7b7bc9b..8f34d779 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -688,10 +688,12 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+ 
+ 
+ def add_loop_parser(subcommands) -> None:
+-    parser = subcommands.add_parser("loop", help="keep a pull request out of a loop's tracked file, or let it back in")
++    parser = subcommands.add_parser("loop", help="change a loop's tracked file: keep a pull request out, let it back "
++                                                 "in, or forget one that merged or closed")
+     commands = parser.add_subparsers(dest="loop_command", required=True)
+     for name, help_text in (("drop", "append a !owner/repo#number line that keeps the pull request out of the loop"),
+-                            ("restore", "remove the pull request's !owner/repo#number lines")):
++                            ("restore", "remove the pull request's !owner/repo#number lines"),
++                            ("remove", "remove the pull request's owner/repo#number lines, leaving its ! lines")):
+         command = commands.add_parser(name, help=help_text)
+         command.add_argument("reference", help="the pull request, as owner/repo#number")
+         command.add_argument("--tracked", required=True, type=Path, help="the loop's tracked file")
+@@ -699,17 +701,21 @@ def add_loop_parser(subcommands) -> None:
+ 
+ 
+ def run_loop(arguments: argparse.Namespace) -> int:
+-    command = arguments.loop_command
+     reference = arguments.reference
+     tracked = arguments.tracked
+-    changed = (loop.drop if command == "drop" else loop.restore)(tracked, reference)
+-    action = ("dropped" if command == "drop" else "restored") if changed else "unchanged"
++    change, action, changed_text, unchanged_text = {
++        "drop": (loop.drop, "dropped", f"dropped {reference} from {tracked}",
++                 f"{reference} is already dropped from {tracked}"),
++        "restore": (loop.restore, "restored", f"restored {reference} to {tracked}",
++                    f"{reference} is not dropped from {tracked}"),
++        "remove": (loop.remove, "removed", f"removed {reference} from {tracked}",
++                   f"{reference} is not listed in {tracked}"),
++    }[arguments.loop_command]
++    changed = change(tracked, reference)
+     if arguments.json_output:
+-        print(json_text({"action": action, "pr": reference, "tracked": str(tracked)}))
+-    elif command == "drop":
+-        print(f"dropped {reference} from {tracked}" if changed else f"{reference} is already dropped from {tracked}")
++        print(json_text({"action": action if changed else "unchanged", "pr": reference, "tracked": str(tracked)}))
+     else:
+-        print(f"restored {reference} to {tracked}" if changed else f"{reference} is not dropped from {tracked}")
++        print(changed_text if changed else unchanged_text)
+     return 0
+ 
+ 
+diff --git a/src/projector/loop.py b/src/projector/loop.py
+index fe713d5c..5c691332 100644
+--- a/src/projector/loop.py
++++ b/src/projector/loop.py
+@@ -1,4 +1,4 @@
+-"""Keep a pull request out of a loop's tracked file, and let it back in.
++"""Change a loop's tracked file: keep a pull request out, let it back in, or forget a finished one.
+ 
+ A tracked file holds one `owner/repo#number` per line, and a line
+ `!owner/repo#number` keeps that pull request out of the loop wherever it
+@@ -8,6 +8,7 @@
+ 
+ from __future__ import annotations
+ 
++from collections.abc import Callable
+ from pathlib import Path
+ 
+ from .core import ProjectorError, write_through
+@@ -32,9 +33,13 @@ def read(tracked: Path) -> str:
+         raise TrackedFileNotFound(f"no tracked file at {tracked}") from error
+ 
+ 
++def is_entry(line: str, reference: str) -> bool:
++    return line.strip().lower() == reference.lower()
++
++
+ def is_exclusion(line: str, reference: str) -> bool:
+     text = line.strip()
+-    return text.startswith("!") and text[1:].lower() == reference.lower()
++    return text.startswith("!") and is_entry(text[1:], reference)
+ 
+ 
+ def drop(tracked: Path, reference: str) -> bool:
+@@ -54,13 +59,27 @@ def drop(tracked: Path, reference: str) -> bool:
+     return True
+ 
+ 
+-def restore(tracked: Path, reference: str) -> bool:
+-    """Remove every `!reference` line from the tracked file, answering whether the file changed."""
+-
++def rewrite_without(tracked: Path, reference: str, matches: Callable[[str, str], bool]) -> bool:
+     check_reference(reference)
+     lines = read(tracked).splitlines(keepends=True)
+-    kept = [line for line in lines if not is_exclusion(line, reference)]
++    kept = [line for line in lines if not matches(line, reference)]
+     if len(kept) == len(lines):
+         return False
+     write_through(tracked, "".join(kept))
+     return True
++
++
++def restore(tracked: Path, reference: str) -> bool:
++    """Remove every `!reference` line from the tracked file, answering whether the file changed."""
++
++    return rewrite_without(tracked, reference, is_exclusion)
++
++
++def remove(tracked: Path, reference: str) -> bool:
++    """Remove every plain `reference` line from the tracked file, answering whether the file changed.
++
++    A `!reference` line stays, so a pull request kept out of the loop stays
++    out, even from a review loop that would adopt it again if it reopened.
++    """
++
++    return rewrite_without(tracked, reference, is_entry)
+diff --git a/tests/test_loop.py b/tests/test_loop.py
+index 00c20b41..053a58e0 100644
+--- a/tests/test_loop.py
++++ b/tests/test_loop.py
+@@ -105,5 +105,67 @@ def test_refuses_a_malformed_reference_and_a_missing_file(self) -> None:
+         self.assertEqual(66, self.run_cli("restore", "acme/app#1")[0])
+ 
+ 
++class RemoveTests(LoopCase):
++    def test_removes_the_pull_requests_lines_in_any_letter_case_and_keeps_every_other_line(self) -> None:
++        self.tracked.write_text("# the loop's pull requests\nacme/app#1\n\n  ACME/App#2  \nacme/app#3\nacme/app#2\n"
++                                "!acme/app#1\n")
++        self.tracked.chmod(0o640)
++
++        code, out, err = self.run_cli("remove", "Acme/app#2")
++
++        self.assertEqual((0, ""), (code, err))
++        self.assertEqual(f"removed Acme/app#2 from {self.tracked}\n", out)
++        self.assertEqual("# the loop's pull requests\nacme/app#1\n\nacme/app#3\n!acme/app#1\n", self.tracked.read_text())
++        self.assertEqual(0o640, self.tracked.stat().st_mode & 0o777)
++
++    def test_leaves_the_pull_requests_exclusion_in_place(self) -> None:
++        self.tracked.write_text("acme/app#2\n!ACME/app#2\n")
++
++        self.assertEqual(0, self.run_cli("remove", "acme/app#2")[0])
++
++        self.assertEqual("!ACME/app#2\n", self.tracked.read_text())
++
++    def test_changes_nothing_for_a_pull_request_the_file_does_not_list(self) -> None:
++        self.tracked.write_text("acme/app#1\n!acme/app#2\n# acme/app#2\n")
++        inode = self.tracked.stat().st_ino
++
++        code, out, err = self.run_cli("remove", "acme/app#2")
++
++        self.assertEqual((0, ""), (code, err))
++        self.assertEqual(f"acme/app#2 is not listed in {self.tracked}\n", out)
++        self.assertEqual("acme/app#1\n!acme/app#2\n# acme/app#2\n", self.tracked.read_text())
++        self.assertEqual(inode, self.tracked.stat().st_ino)
++
++    def test_reports_its_action_as_json(self) -> None:
++        self.tracked.write_text("acme/app#1\nacme/app#2\n")
++
++        removed = self.run_cli("remove", "acme/app#2", "--json")
++        unchanged = self.run_cli("remove", "acme/app#2", "--json")
++
++        for (code, out, err), action in ((removed, "removed"), (unchanged, "unchanged")):
++            with self.subTest(action=action):
++                self.assertEqual((0, ""), (code, err))
++                self.assertEqual({"action": action, "pr": "acme/app#2", "schema_version": 2,
++                                  "tracked": str(self.tracked)}, json.loads(out))
++        self.assertEqual("acme/app#1\n", self.tracked.read_text())
++
++    def test_refuses_a_reference_that_is_not_owner_repo_number(self) -> None:
++        self.tracked.write_text("acme/app#1\n")
++        for written in ("acme/app", "acme/app#0", "#12", "acme/app#1 extra", "!acme/app#1"):
++            with self.subTest(written=written):
++                code, out, err = self.run_cli("remove", written)
++
++                self.assertEqual((65, ""), (code, out))
++                self.assertEqual(f"project: {written!r} is not owner/repo#number\n", err)
++        self.assertEqual("acme/app#1\n", self.tracked.read_text())
++
++    def test_refuses_a_tracked_file_that_does_not_exist(self) -> None:
++        code, out, err = self.run_cli("remove", "acme/app#1")
++
++        self.assertEqual((66, ""), (code, out))
++        self.assertEqual(f"project: no tracked file at {self.tracked}\n", err)
++        self.assertFalse(self.tracked.exists())
++
++
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tests/test_watchers.py b/tests/test_watchers.py
+index 5ada720c..dc0a2fe4 100644
+--- a/tests/test_watchers.py
++++ b/tests/test_watchers.py
+@@ -795,7 +795,7 @@ def test_reports_a_tracked_pull_request_that_closed_once(self) -> None:
+ 
+         self.assert_ok(closed)
+         self.assertEqual(
+-            ["CLOSED acme/app#1 (feature) — no longer open; drop it from the tracked file"],
++            ["CLOSED acme/app#1 (feature) — no longer open; remove it from the tracked file"],
+             closed.stdout.splitlines(),
+         )
+         self.assertEqual([], self.state_rows())

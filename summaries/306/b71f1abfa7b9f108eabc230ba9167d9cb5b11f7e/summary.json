@@ -1,0 +1,155 @@
+{
+ "version": 1,
+ "name": "Loop remove command",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 306,
+  "title": "Remove a finished pull request from a loop through the CLI",
+  "head": "b71f1abfa7b9f108eabc230ba9167d9cb5b11f7e",
+  "headRef": "loop-remove",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A watch loop or a review loop keeps the pull requests it works on in a <b>tracked file</b>: a plain text file the loop's watcher script re-reads every cycle, with one <code>owner/repo#number</code> per line. A line that starts with <code>!</code>, such as <code>!acme/app#12</code>, is an <b>exclusion</b>: it keeps that pull request out of the loop wherever it sits in the file. Two CLI commands already changed the file: <code>project loop drop</code> appends an exclusion, and <code>project loop restore</code> deletes one.",
+   "One write was still done by hand. When a pull request merged or closed, the loop skills told the agent running the loop to delete the pull request's line from the file itself. This change adds <code>project loop remove owner/repo#number --tracked &lt;file&gt;</code> for that step, and points every skill instruction, watcher comment, and document at it.",
+   "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Command</th><th>Lines it changes</th><th>When a loop runs it</th></tr></thead><tbody><tr><td><code>drop</code></td><td>Appends <code>!owner/repo#number</code></td><td>To keep an open pull request out</td></tr><tr><td><code>restore</code></td><td>Deletes the <code>!</code> lines</td><td>To let a dropped pull request back in</td></tr><tr><td class=\"r\"><code>remove</code> (new)</td><td>Deletes the plain lines, keeps the <code>!</code> lines</td><td>When a pull request merges or closes</td></tr></tbody></table></div>",
+   "<code>remove</code> leaves exclusions alone on purpose. The review loop's watcher adopts the operator's open pull requests by appending any that the file does not name, and it treats an exclusion as naming one. If <code>remove</code> also deleted the exclusion, a pull request the user had dropped would be adopted again if it ever reopened."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review, at <code>b71f1ab</code>, found the head clean with no finding threads.</li><li>The unit suite (928 tests, 1 skipped), <code>project check</code>, both <code>claude plugin validate</code> commands, and <code>git diff --check</code> passed on this head.</li></ul>"
+   },
+   {
+    "id": "left",
+    "title": "What the change leaves for later",
+    "html": "<ul class=\"tight\"><li>Appending a pull request to a tracked file still has no command; the <code>implement</code> skill tells the loop to append the line itself.</li><li>Exclusions for closed pull requests stay in the file. Only <code>restore</code> deletes them.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "command",
+   "title": "The remove command",
+   "kicker": "A third project loop command that forgets a finished pull request",
+   "intro": [
+    "<code>src/projector/loop.py</code> holds the tracked-file commands. Before this change, <code>restore</code> read the file, kept every line that was not an exclusion for the pull request, and wrote the rest back through <code>write_through</code>, the repository's atomic rewrite that swaps in a temporary file and keeps the original's mode and any symlink. That body is now <code>rewrite_without</code>, which takes the line test as an argument, and <code>restore</code> and <code>remove</code> each pass their own test: <code>is_exclusion</code> for <code>!</code> lines, and the new <code>is_entry</code> for plain lines.",
+    "<code>is_entry</code> trims the line and compares it to the reference without regard to case. That matches how both watcher scripts read an entry, so <code>remove</code> deletes exactly the lines a watcher would have tracked. When no line matches, the file is not rewritten at all.",
+    "In <code>src/projector/cli.py</code>, <code>run_loop</code> replaces its <code>drop</code>-or-<code>restore</code> branches with one table keyed by the subcommand, giving each command its function, its <code>--json</code> action, and its two messages."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The six new <code>RemoveTests</code> and the existing <code>drop</code> and <code>restore</code> tests all pass on this head. A manual run against a symlinked tracked file rewrote the link's target and kept the link."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/loop.py",
+     "note": "Adds <code>is_entry</code> and <code>remove</code>, and turns <code>restore</code>'s body into the shared <code>rewrite_without</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A watcher may append a line it adopted while this rewrite runs, and the rename would then lose that line. <code>restore</code> had the same window at the base, and the hand edit this replaces had it too. The review watcher re-adopts a lost line on its next cycle, because it appends every open pull request the file does not name.",
+       "line": 68
+      },
+      {
+       "kind": "context",
+       "text": "The docstring states why exclusions survive: a review loop would otherwise adopt a dropped pull request again if it reopened.",
+       "line": 78
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Registers <code>remove</code> and folds the three commands' output into one table in <code>run_loop</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>drop</code> and <code>restore</code> print the same text and the same <code>--json</code> actions as at the base; <code>unchanged</code> still replaces the action when nothing changed.",
+       "line": 716
+      }
+     ]
+    },
+    {
+     "path": "tests/test_loop.py",
+     "note": "Covers case-insensitive removal with mode kept, exclusions left in place, an unlisted pull request leaving the file untouched (same inode), <code>--json</code> for both actions, and exit codes 65 and 66."
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "Loop skills and watchers",
+   "kicker": "Every place that told a loop to delete a line by hand now runs the command",
+   "intro": [
+    "Two skills run loops over a tracked file: <code>start-watch-loop</code>, which fixes review findings on pull requests, and <code>start-review-loop</code>, which reviews each new head. Both told the agent to delete a merged or closed pull request's line from the file. Each of those instructions now runs <code>project loop remove owner/repo#number --tracked &lt;file&gt;</code>, and each skill's description of the tracked file names all three commands and says how they differ.",
+    "The watcher scripts change only in comments and one message. Their header comments say the loop removes a merged pull request with <code>project loop remove</code>. The review watcher's <code>CLOSED</code> event, which reports a tracked pull request that is no longer open, now ends \"remove it from the tracked file\" instead of \"drop it\", because <code>drop</code> is the command that keeps an open pull request out."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "A search of the head finds no remaining instruction to delete a tracked line by hand or to drop a closed pull request."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "The scope paragraph, step 6, the <code>CLOSED</code> bullet, and \"Continue after fixes\" run <code>project loop remove</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The claim that adoption never brings a dropped pull request back holds: <code>adopt</code> in <code>watch-prs.sh</code> skips any pull request a <code>!</code> line names.",
+       "line": 42
+      }
+     ]
+    },
+    {
+     "path": "skills/start-watch-loop/SKILL.md",
+     "note": "Step 4, the merged-pull-request bullet, the idle-file paragraph, and the <code>DONE</code> check run <code>project loop remove</code>."
+    },
+    {
+     "path": "skills/start-review-loop/scripts/watch-prs.sh",
+     "note": "Header comment and the <code>CLOSED</code> message.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The loop skills read this text as an instruction, so the wording now names the action that matches <code>remove</code>.",
+       "line": 345
+      }
+     ]
+    },
+    {
+     "path": "skills/start-watch-loop/scripts/watch-threads.sh",
+     "note": "Header comment only."
+    },
+    {
+     "path": "tests/test_watchers.py",
+     "note": "Follows the new <code>CLOSED</code> wording."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The CLI reference covers all three tracked-file commands",
+   "intro": [
+    "<code>docs/cli.md</code> retitles its section \"Change a loop's tracked file\", adds a table of the three commands, documents <code>remove</code>, and adds it to the exit-code rows and the <code>--json</code> actions. <code>docs/plugins.md</code> follows the renamed anchor."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The loop section, its table, and the exit-code rows."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Link to the renamed section."
+    }
+   ]
+  }
+ ]
+}
