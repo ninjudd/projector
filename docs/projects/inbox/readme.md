@@ -950,12 +950,7 @@ the look of notices and snoozing that stands at this check is the design.
 | 0.7.18 | #294, #299 | Per-session numbering: the plan in § 11, then the build that § 11.10 records |
 | On `main`, after 0.7.18 | #303 | More band changes of § 10: a pull request's drawer starts under its state, open review threads show as a yellow `⋮` count beside the age, and a sent reply that quotes a notice closes the notice's drawer |
 | On `main`, after 0.7.18 | #305 | An agent takes back an item it posted with `project inbox withdraw` or the `withdraw` tool: the item leaves the band at once, and nothing goes back to the agent |
-
-#319 followed #303 on `main`, and § 13 records it. Only picking an option
-answers a question. Anything else you send under a quoted question is a
-reply, which leaves the question open, and the question's agent withdraws
-it, revises it with `project inbox revise` or the `revise` tool, or leaves
-it open.
+| On `main`, after #303 and #305 | #319 | § 13: only picking an option answers a question, a reply leaves the question open, and its agent withdraws it, revises it with `project inbox revise` or the `revise` tool, or leaves it open |
 
 ### 12.2 How the result differs from § 2
 
