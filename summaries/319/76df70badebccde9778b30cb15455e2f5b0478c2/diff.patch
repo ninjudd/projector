@@ -1,0 +1,1960 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 2143cc35..127aeafd 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -129,7 +129,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 10 -->
++<!-- projector:begin 11 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -190,9 +190,15 @@ it. Post news they need to act on, such as a failure that needs them, and
+ anything that comes up while they are away. Leave out what they already see
+ elsewhere, such as a pull request's state, which the band lists. An item
+ stays above their prompt until they answer or dismiss it, so keep the inbox
+-for what matters, not as a log of everything you did. Each time the person
+-writes to you, look over the items you posted that are still open, and
+-withdraw any that no longer need them, such as a question they answered in
+-the conversation or news that has gone stale, with the `withdraw` tool and
++for what matters, not as a log of everything you did.
++
++When the person picks one of a question's options, the answer reaches you
++as a message that starts `ANSWER`. When they reply to a question you asked
++instead, answer what they asked. Then withdraw the question with the
++`withdraw` tool if the reply settles it, revise it with the `revise` tool
++if the reply shows it was unclear or the choice has changed, or leave it
++open while it still needs them. Each time the person writes to you, also
++look over the other items you posted that are still open, and withdraw any
++that no longer need them, such as news that has gone stale. Name an item by
+ the number `ask` or `tell` returned.
+ <!-- projector:end -->
+diff --git a/docs/cli.md b/docs/cli.md
+index 89808647..6e906c91 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -47,9 +47,12 @@ what it did to each:
+   `implement` skill, so a watch loop starts on its pull request, open every
+   pull request as a draft until a clean review marks it ready, and, where the
+   `ask` and `tell` tools are available, post anything the person must not
+-  miss to the inbox as well as saying it in the conversation, and each time
+-  the person writes, withdraw any item that no longer needs them with the
+-  `withdraw` tool. `init` appends the section to an existing file or creates
++  miss to the inbox as well as saying it in the conversation. It tells an
++  agent whose question the person replied to, rather than picking an option,
++  to answer what they asked and then withdraw the question with the
++  `withdraw` tool, revise it with the `revise` tool, or leave it open, and to
++  withdraw any other item that no longer needs them each time the person
++  writes. `init` appends the section to an existing file or creates
+   the file with only that section, and refreshes the section when it falls
+   behind the template this command ships. Everything outside the markers is
+   yours and is never changed.
+@@ -1530,19 +1533,19 @@ need to decide in `--detail`, or `--detail-file`.
+ 
+ Every command names the posting session with `--session`, or reads
+ `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
+-every session's open items, and `show`, `answer`, `dismiss`, `withdraw`, and
+-`snooze` find the session that holds the number. `list` prints each item's
+-number, kind, state, and subject, separated by tabs, after the session when it
+-lists every session. Every session counts from 1 and keeps the items you
+-resolved, so two sessions often hold the same number. Without a session, those
+-five commands look first among open items, the ones with no answer recorded: a
+-number that one session holds open names that session's item, whatever other
+-sessions hold resolved under the same number. Only when no session holds the
+-number open do they look among every item. A command that still finds the
+-number in more than one session exits 67 and names them; run it again with
+-`--session` and the session that `list` prints beside the item. A command
+-waits up to five seconds while another command changes the same session, and
+-then exits 75, so you can run it again.
++every session's open items, and `show`, `answer`, `dismiss`, `withdraw`,
++`revise`, and `snooze` find the session that holds the number. `list` prints
++each item's number, kind, state, and subject, separated by tabs, after the
++session when it lists every session. Every session counts from 1 and keeps the
++items you resolved, so two sessions often hold the same number. Without a
++session, those six commands look first among open items, the ones with no
++answer recorded: a number that one session holds open names that session's
++item, whatever other sessions hold resolved under the same number. Only when
++no session holds the number open do they look among every item. A command that
++still finds the number in more than one session exits 67 and names them; run
++it again with `--session` and the session that `list` prints beside the item.
++A command waits up to five seconds while another command changes the same
++session, and then exits 75, so you can run it again.
+ 
+ The answers are lettered. `a` is always the recommendation, the other options
+ follow as `b`, `c`, and on, and the last letter is a typed answer:
+@@ -1567,6 +1570,16 @@ it as `dismissed`. Only `answer` takes a letter: every other command refuses
+ `3.a` with exit code 65, so `dismiss` never drops the answer you meant to
+ give.
+ 
++In Projector's band, only an option answers a question. The band records an
++answer when a prompt you send quotes the question and follows the quote with
++one of its options' text and nothing else, as clicking the option's number
++fills it in. Anything else you send under a quoted question, such as your own
++words, an option with more after it, or a question back, is a reply. The band
++records nothing, the question stays open, and the reply reaches the agent as
++your prompt. The agent then withdraws the question if the reply settles it,
++revises it if the reply shows it was unclear, or leaves it open while it still
++needs you.
++
+ Every command refuses any other form of reference, such as `#337.3`,
+ `octo/web#12.1`, or `q2`, with exit code 65, and no command lists, delivers,
+ or deletes an item stored under one.
+@@ -1639,8 +1652,7 @@ snooze, so a resolved item never returns. `snooze` refuses, with exit code
+ longer than a day, and it changes nothing when it refuses.
+ 
+ An agent takes back an open item that no longer needs you with `withdraw`,
+-such as a question you answered in the conversation or news that has gone
+-stale:
++such as a question your reply settled or news that has gone stale:
+ 
+ ```console
+ $ project inbox withdraw 3 --session "$SESSION"
+@@ -1656,6 +1668,33 @@ answered, dismissed, or withdrawn, with exit code 65, and a number no session
+ holds, with exit code 66. In Claude Code, the agent withdraws an item with
+ Projector's `withdraw` tool rather than from the shell.
+ 
++When your reply shows that an open question was unclear, or that the choice
++has changed, the agent rewrites the question in place with `revise`. Only the
++parts it names change:
++
++```console
++$ project inbox revise 3 --session "$SESSION" \
++    --question "Decline the finding about the per-host retry budget?" \
++    --option "Add a budget of two retries per host" \
++    --option "Ask the reviewer which hosts they mean"
++revised 3
++```
++
++`--question` replaces the line, and `--recommend` replaces answer `a`. The
++`--option` flags replace every other option, lettered `b`, `c`, and on in the
++order given, and `--no-options` drops them all, which leaves only the
++recommendation. `--detail`, or `--detail-file`, replaces the detail, and
++`--detail ""` clears it. The question keeps its number, the pull request it is
++about, when it was posted, the subagent that asked, and any snooze, so its
++answer reaches the same agent as before. Only a question can be revised:
++`revise` refuses a notice with exit code 65. It also refuses, with exit code
++65, a revision that fails a check `ask` makes, such as a line of 121
++characters or a sixth option, a revision with nothing to change, an answer
++letter such as `3.a`, and a question already answered, dismissed, or
++withdrawn, and it changes nothing when it refuses. A number no session holds
++exits 66. In Claude Code, the agent revises a question with Projector's
++`revise` tool, and the band redraws it at once.
++
+ ## Change a loop's tracked file
+ 
+ A watch or review loop reads its tracked file, one `owner/repo#number` a
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 30a6c0d4..d865039b 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -271,10 +271,12 @@ An agent in Claude Code asks you a question with Projector's `ask` tool,
+ which the model sees as `mcp__projector__ask`, and tells you something that
+ needs no answer with the `tell` tool, `mcp__projector__tell`. Either way it
+ keeps working. When an item it posted no longer needs you, such as a question
+-you answered in the conversation, the agent takes it back with the `withdraw`
+-tool, `mcp__projector__withdraw`, by the number `ask` or `tell` returned. An
+-agent that runs `project inbox ask`, `tell`, or `withdraw` from the shell
+-reaches the same inbox, as [Use the inbox](cli.md#use-the-inbox) describes.
++your reply settled, the agent takes it back with the `withdraw` tool,
++`mcp__projector__withdraw`, by the number `ask` or `tell` returned. When your
++reply shows that a question was unclear, the agent rewrites the question in
++place with the `revise` tool, `mcp__projector__revise`. An agent that runs
++`project inbox ask`, `tell`, `withdraw`, or `revise` from the shell reaches
++the same inbox, as [Use the inbox](cli.md#use-the-inbox) describes.
+ 
+ The items are a list below the pull requests, oldest first. A question's
+ line starts with `-`, and a notice's with `•`, so you can tell which items
+@@ -323,27 +325,52 @@ you to send as it stands or change first:
+ Add a budget of two retries per host, and keep the total cap
+ ```
+ 
+-The drawer stays open until you send. Sending that prompt answers the
+-question and closes its drawer, so the band shows its list again. The band
+-finds each quoted question whose quote ends its line, and takes the next
+-line that is not blank as its answer: the option with that text, or else an
+-answer in your own words. Each quote answers one question: when two open
+-questions ask the same thing, it answers the one whose drawer last put that
+-same answer in your prompt, or else the older one.
+-
+-Only a prompt you send, at the terminal or through Remote Control, answers a
+-question. Another session's message or a notification that quotes one
+-answers nothing. Your prompt is what carries the answer to the main loop,
+-and when a subagent asked, the main loop also reads a note naming it, so it
+-can pass the answer on.
++The drawer stays open until you send. Sending the prompt as the option
++filled it in answers the question and closes its drawer, so the band shows
++its list again. The band finds each quoted question whose quote ends its
++line, and reads the text after the quote, up to the next quoted item or the
++end of the prompt. When that text is one of the question's options, whatever
++blank lines and spaces surround it, that option answers the question.
++
++Anything else you send under a quoted question is a reply, not an answer:
++your own words, an option with more text after it, or a question back. The
++band records nothing and closes the question's drawer, and the question
++stays in the list. Your prompt carries the reply to the agent, which answers
++what you asked and then settles the question. It withdraws the question if
++your reply settles it, revises it if your reply shows it was unclear or the
++choice has changed, or leaves it open while it still needs you. A revised
++question keeps its place in the list, and the band shows its new text as
++soon as the agent revises it. An option that a drawer put in your prompt
++before the revision answers no question, and neither does an option you
++type under a quote that **discuss** put there before it: either one replies
++to the revised question. To answer, choose again in the revised question's
++drawer.
++
++Each quote speaks to one question. When two open questions ask the same
++thing, a quote that one's drawer put in your prompt, with an option or
++alone through **discuss**, speaks to that question: one of its options
++answers it, and anything else replies to it. When both drawers put the
++quote there, the one you acted in last wins, unless it put a different
++option there than the one you send. When that question is
++answered, dismissed, or withdrawn before you send, the quote says nothing
++at all, so it never answers the other question. A quote that no drawer put
++there, such as one you type, goes to the older question that offers the
++option, or else replies to the older one. A prompt that answers or replies
++to one of them says nothing to the other and leaves its drawer alone.
++
++Only a prompt you send, at the terminal or through Remote Control, answers
++or replies to a question. Another session's message or a notification that
++quotes one does neither. Your prompt is what carries the answer or the reply
++to the main loop, and when a subagent asked, the main loop also reads a note
++naming it, so it can pass the answer or the reply on.
+ 
+ Under the options, a question's drawer has three actions:
+ 
+ - **discuss** puts the quoted question in the prompt, followed by a blank
+   line, and leaves the drawer open, so the options and detail stay in view
+-  while you type. Type an answer in your own words under the quote and send
+-  the prompt, and that answers the question. Text you add on the quote's own
+-  line talks the question over and answers nothing.
++  while you type. Type your reply under the quote, or on the quote's own
++  line, and send the prompt. The reply reaches the agent and answers
++  nothing.
+ - **dismiss** sets the question aside without an answer.
+ - **snooze** hides the question for an hour.
+ 
+@@ -365,9 +392,9 @@ delivered, and a dismissed one is struck through. A dismissed notice is
+ delivered at once, since nothing goes back to the agent. An item the agent
+ withdrew leaves the band at once, its drawer with it, and sends nothing back,
+ not even `DISMISSED` for a question. A question's drawer
+-still opens and marks the answer given with `✓`, listing an answer in your
+-own words after the options. A dismissed notice's drawer keeps only
+-**discuss**.
++still opens and marks the answer given with `✓`, listing an answer typed in
++a terminal with `project inbox answer --text` after the options. A dismissed
++notice's drawer keeps only **discuss**.
+ 
+ An answer you give from a terminal with `project inbox answer` reaches the
+ agent through the band of the session that asked. A subagent that is still
+@@ -646,9 +673,9 @@ marketplace files, and read upstream's new skill against the rules in
+ 
+ ## Work without MCP
+ 
+-Projector currently ships no MCP server. The `ask`, `tell`, and `withdraw`
+-tools carry the `mcp__projector__` prefix, but Projector's hooks module in
+-Claude Code serves them: no MCP server runs, and no skill depends on them.
+-Every core skill uses the public `project` CLI and ordinary Git or GitHub
+-commands. A future MCP adapter can expose the same versioned project
++Projector currently ships no MCP server. The `ask`, `tell`, `withdraw`, and
++`revise` tools carry the `mcp__projector__` prefix, but Projector's hooks
++module in Claude Code serves them: no MCP server runs, and no skill depends
++on them. Every core skill uses the public `project` CLI and ordinary Git or
++GitHub commands. A future MCP adapter can expose the same versioned project
+ operations without becoming the package that contains the skills.
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 8e53f560..d5b6a3bd 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -918,3 +918,160 @@ subsections above leave open or which the code had moved past since
+ Each row of § 11.8 but the last failed its test before the change. The
+ main-screen row of § 4 still waits for a check by hand under tmux, so the
+ project stays `in-progress`.
++
++## 13. A reply leaves a question open
++
++Only picking an option answers a question. Anything else you send under a
++quoted question is a reply: the band records nothing, the question stays
++in the band, and the reply reaches the agent as your prompt. The agent
++answers what you asked and then settles the question itself: it withdraws
++the question when your reply settles it, revises the question in place
++when your reply shows it was unclear or the choice has changed, and
++otherwise leaves it open while it still needs you. `project inbox revise`
++and a `revise` tool beside `ask`, `tell`, and `withdraw` do the revising.
++This section supersedes the first bullet of § 10, which made what you type
++under a quoted question its answer, and settles two items of § 7: it
++builds revising in place, and it replaces the rule § 7 set aside with a
++different one, described below. The owner took up revising in place after
++seeing replies close questions the owner had not settled, so this section
++also supersedes § 12.4, which records revising in place as deferred until
++it proves common.
++
++### 13.1 Problem
++
++Under § 10, the first line you typed under a quoted question was recorded
++as its answer, under the question's last letter, and the question left the
++band 30 seconds later. In daily use the owner found that wrong: "we should
++not automatically remove a question when i reply to it. if i ask another
++question, it may not be resolved. the correct response may be to edit or
++clarify the question." A reply is often a question back, or a remark that
++leaves the choice open. Recording it as the answer resolves a question
++that still needs you, sends the agent `ANSWER` as if you had decided, and
++leaves the agent no way to ask the question better except to post a new
++one beside the old.
++
++### 13.2 What changes
++
++- **Only an option answers.** The band reads a sent prompt as § 10 does,
++  but a quoted question takes an answer only when the text after its
++  quote, up to the next quoted item or the end of the prompt, is one of
++  its options, whatever blank lines, spaces, or tabs surround it. That is
++  what pressing an option's number puts in the prompt. Free text, an
++  option with more text after it, and a question back are replies, on
++  the quote's own line or under it.
++- **Each quote speaks to one question.** When two open questions share a
++  subject, a quote that one's drawer put in the prompt, with an option or
++  alone through **discuss**, speaks to that question: one of its options
++  answers it, and any other text replies to it. When both drawers put the
++  quote there, the last drawer action wins among those whose recorded
++  answer is the text sent or empty, as **discuss** records it. When that
++  question was answered, dismissed, or withdrawn before the prompt was
++  sent, the quote answers and replies to nothing, whether the pick is
++  fresh or stale, so it never falls through to the other question. A
++  quote no drawer put there goes to the oldest question that offers the
++  option, and otherwise replies to the oldest. A prompt that answers or
++  replies to one of them says nothing to the other: it adds no note for
++  the other's subagent and leaves the other's drawer open. To know which
++  drawer put a quote there, the band records **discuss** as well as each
++  option it puts in the prompt.
++- **A reply closes the drawer and posts nothing.** A sent prompt closes
++  the drawer of each question it answers or replies to, as § 10 has it
++  close the drawer of each notice it quotes. A replied question stays
++  open and in the band, and the band runs no `project inbox` command for
++  it. When a subagent asked, the main loop reads a note beside the prompt
++  that names the subagent and says to send it the reply, as it reads one
++  for an answer. Once you send a prompt, the band forgets what a drawer
++  put in it for each question the prompt answers or replies to, and for
++  each quote the prompt holds.
++- **The agent settles a replied question.** The Projector section of
++  `AGENTS.md`, at begin marker 11, and the `ask` tool's description tell
++  the agent that a picked option arrives as `ANSWER <number>.<letter>`,
++  and that a reply arrives as the person's prompt and leaves the question
++  open. The agent answers what the person asked, then withdraws the
++  question, revises it, or leaves it open. The `withdraw` tool's
++  description gives a question that a reply settled as its example.
++- **`project inbox revise` replaces an open question's text in place.**
++  `--question`, `--recommend`, `--option` (repeated, replacing every
++  option but the recommendation), `--no-options`, and `--detail` or
++  `--detail-file` each replace one part, and a part not named keeps its
++  text. The question keeps its number, `pr`, `postedAt`, `agentId`, and
++  `snoozedUntil`, so its answer still reaches the agent that asked. The
++  revised question passes the checks `ask` makes. `revise` refuses, with
++  exit `65`, a notice, a resolved question, an answer letter, a revision
++  with nothing to change, and one that fails a check; a number no session
++  holds exits `66`, and a busy store exits `75`. The write happens under
++  the session's lock, as every other write does.
++- **The `revise` tool runs it.** It takes the question's `number` and any
++  of `question`, `recommendation`, `options`, and `detail`, where an empty
++  `options` list drops every other option and an empty `detail` clears
++  it. It runs `project inbox revise` through the band's `runTool`, as
++  `withdraw` does, puts the revised question in the band at once, and
++  raises no notification.
++- **A pick made before a revision answers no question.** The band
++  remembers each answer a drawer put in the prompt, and each **discuss**,
++  with the question's quote as it read then. A revision marks the
++  question's picks stale. A sent prompt that holds a stale pick, its old
++  quote followed by its option, answers nothing, not even an older
++  question that shares the old words and offers that option. Neither does
++  an option typed under a quote that a stale **discuss** put there. Each
++  replies to the revised question instead: the question stays open, its
++  drawer closes, and the agent reads the prompt. A fresh pick or
++  **discuss** in the revised question's drawer speaks to it again, even
++  when the revision kept that quote and that option.
++
++### 13.3 Why this design
++
++- **A reply is not a decision.** An option is a full answer that the
++  agent wrote and the person chose. Free text may decide, ask, or object,
++  and the band cannot tell which. Leaving the question open and letting
++  the agent, which reads the reply, settle it puts the judgment where the
++  understanding is. A reply that does decide costs the agent one
++  `withdraw` call.
++- **The rule keys on an option's text, not on the band's proposal.** § 7
++  set aside a rule under which a quote answered only while the band held a
++  proposal for it, because § 10 meant typed text to answer. The rule here
++  answers whenever the text is an option's, proposal or not, so an option
++  you type by hand, or send through Remote Control, still answers, and a
++  proposal only decides between questions that share a subject.
++- **A stale pick is kept, not dropped.** An option you picked in one
++  question's drawer must never answer a different question. Dropping the
++  pick at the revision would leave its text to the rule above, which
++  gives it to the oldest question that shares the quote and offers the
++  option. Keeping it, marked stale, lets the band recognize the text and
++  hold it back. For the same reason, the band matches a pick whatever has
++  happened to its question since, and a pick whose question was resolved
++  before you sent the prompt holds its text back from every question.
++- **`revise` is its own command, and the tool's name is `revise`.** § 7
++  sketched `project inbox ask --revise <number>`. `ask` posts a new item
++  and prints a new number; revising keeps the number and refuses what
++  `ask` never meets, a resolved item and an unknown number, with the exit
++  codes `withdraw` uses, so it reads as a command beside `withdraw`.
++  `edit` would collide with `project edit`, which opens a plan in an
++  editor.
++- **Notices are not revised.** The need is a question that a reply showed
++  to be unclear. A notice that has gone stale is withdrawn, and the agent
++  tells again; revising one would need its own flag for the notice's line
++  and its own tool field, for no case anyone has met.
++- **Neither `revisedAt` nor `pr` changes.** § 7's sketch recorded
++  `revisedAt` and let a revision change `pr`. Nothing reads a revision
++  time, and the reply that prompts a revision is about the question's
++  wording, not its pull request, so both wait until something needs them.
++- **A typed answer stays in the CLI.** `project inbox answer <number>.<last
++  letter> --text` still records an answer in your own words from a
++  terminal, where nothing mistakes a reply for an answer, and the drawer
++  still shows such an answer after the options, marked `✓`.
++
++### 13.4 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| Free text, an option with more text after it, a question back, and another question's option answer nothing; an exact option answers, whitespace and a following quoted item included | `a sent prompt answers each question whose quote an option follows`, `anything after a quoted question but one of its options replies to it without answering`, `a quote two questions share goes to the oldest that offers the option it is followed by`, in `hooks/inbox.test.ts` |
++| A quote two open questions share speaks to one of them: an answer to one is no reply to the other, a reply goes to the question whose drawer put the quote there, and the drawer acted in last wins | `a quote two questions share speaks to one of them: an answer replies to neither, and a reply goes where its drawer put it`, in `hooks/inbox.test.ts`; `a prompt about one of two questions that share a subject leaves the other alone`, `a quote two questions share goes to the one whose drawer you acted in last`, in `hooks/band.test.tsx` |
++| A sent reply leaves the question listed, closes its drawer, runs no `project inbox answer`, and names the subagent that asked | `a sent reply leaves the question listed, closes its drawer, and records no answer, naming the subagent that asked`, `discuss keeps the drawer open with the question above a blank line, a reply under it answers nothing, and dismiss resolves it`, in `hooks/band.test.tsx` |
++| The `revise` tool redraws the question with its new text under the same number, and a pick made from the old text answers nothing | `the revise tool redraws the question with its new text at once, keeping its number` |
++| A pick made before a revision answers no question, an older question with the same words included, and replies to the revised question; a fresh pick from the new drawer answers it | `a pick made before its question was revised answers no question, and replies to the revised one`, in `hooks/inbox.test.ts`; `an answer chosen before a revise answers no question, and a pick from the new drawer answers the revised one`, `an answer chosen before a revise rewords its question does not answer another question with the old words` |
++| A pick or **discuss**, fresh or stale, whose question was answered, dismissed, or withdrawn before the prompt was sent answers and replies to nothing | `a quote a drawer put in the prompt for a question resolved before you send speaks to no question`, in `hooks/inbox.test.ts`; `a pick for a question withdrawn before you send answers no other question`, `a pick made before a revise, for a question dismissed before you send, answers no other question` |
++| An option typed under a quote that **discuss** put there before a revision answers no question and replies to the revised question; a pick in another question's drawer still answers that one | `an option typed under a quote discussed before its question was revised answers no question, and replies to the revised one`, in `hooks/inbox.test.ts`; `an option typed under a quote discussed before a revise answers no question, and replies to the revised one` |
++| The `revise` tool refuses what the CLI refuses | `the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs` |
++| `project inbox revise` replaces what it is given and keeps the number and everything else; refuses a resolved question, a notice, an unknown number, and bad input, changing nothing; serializes under the lock | `ReviseTests` in `tests/test_inbox.py` |
++| The Projector section's new text is pinned to begin marker 11 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index ba07e088..7dd16df5 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -707,7 +707,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+         })
+         .then(() => listed)
+     }
+-    if (command === 'ask' || command === 'tell' || command === 'withdraw') {
++    if (command === 'ask' || command === 'tell' || command === 'withdraw' || command === 'revise') {
+       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
+       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
+     }
+@@ -741,7 +741,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       failing.locks -= 1
+       return failed(75, BUSY)
+     }
+-    if (item.answer !== undefined && ['answer', 'dismiss', 'withdraw', 'snooze'].includes(command)) {
++    if (item.answer !== undefined && ['answer', 'dismiss', 'withdraw', 'revise', 'snooze'].includes(command)) {
+       return failed(65, `${ref} is already answered`)
+     }
+     const { snoozedUntil: _, ...awake } = item
+@@ -755,6 +755,19 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+     }
+     if (command === 'snooze') return printed(put({ ...item, snoozedUntil: time + HOUR }))
+     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
++    if (command === 'revise') {
++      const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
++      const [recommended = '', ...others] = item.choices
++      const kept = args.includes('--no-options') ? [] : options.length > 0 ? options : others
++      return printed(
++        put({
++          ...item,
++          subject: flag(args, 'question') ?? item.subject,
++          detail: flag(args, 'detail') ?? item.detail,
++          choices: [flag(args, 'recommend') ?? recommended, ...kept],
++        }),
++      )
++    }
+     if (command === 'answer') {
+       const letter = written.slice(written.lastIndexOf('.') + 1)
+       const text = flag(args, 'text') ?? item.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''
+@@ -869,6 +882,7 @@ test('asks through the tool, and the band lists the question below the pull requ
+     expect.objectContaining({ name: 'ask', isDeferred: false }),
+     expect.objectContaining({ name: 'tell', isDeferred: false }),
+     expect.objectContaining({ name: 'withdraw', isDeferred: false }),
++    expect.objectContaining({ name: 'revise', isDeferred: false }),
+   ])
+   expect(session.project()).toContain(
+     'inbox ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
+@@ -1087,10 +1101,12 @@ test('only a prompt you sent answers a question', async ($, on) => {
+   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+ })
+ 
+-test('discuss keeps the drawer open with the question above a blank line, what you type under it answers, and dismiss resolves it', async ($, on) => {
++test('discuss keeps the drawer open with the question above a blank line, a reply under it answers nothing, and dismiss resolves it', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, subject: 'Rebase first?' })])
++  const typed = { letter: 'c', text: 'keep the cap', answeredAt: NOW - 1_000 }
++  const squashed = held({ ref: '3', number: 3, subject: 'Squash the fixups?', answer: typed, deliveredAt: NOW - 1_000 })
++  const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, subject: 'Rebase first?' }), squashed])
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+@@ -1100,24 +1116,26 @@ test('discuss keeps the drawer open with the question above a blank line, what y
+   // The drawer stays open, so its options and detail stay in view while you type.
+   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
+ 
+-  // Text after the quoted question on its own line answers nothing, and leaves the drawer open.
+-  const discussed = '"Decline the finding?" what does the cap cover?'
+-  await $.prompt.submit({ text: discussed, wait: false, origin: { kind: 'composer' } })
+-  await clock.settle()
+-  expect(session.store.store.get('1')?.answer).toBeUndefined()
+-  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
+-
+-  await $.prompt.submit({ text: '"Decline the finding?"\n\nkeep the cap', wait: false, origin: { kind: 'composer' } })
+-  await clock.settle()
+-  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'c', text: 'keep the cap' }))
+-  expect(session.project()).toContain('inbox answer 1.c --text=keep the cap --session s1 --json')
+-  // Sending the answer closed the drawer; opened again, it shows the answer you typed after the options, marked.
+-  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
++  // What you type under the quote, or on its line, replies: the prompt carries it, and the question stays open.
++  for (const reply of ['"Decline the finding?"\n\nkeep the cap', '"Decline the finding?" what does the cap cover?']) {
++    await $.prompt.submit({ text: reply, wait: false, origin: { kind: 'composer' } })
++    await clock.settle()
++    expect(session.submitted.at(-1)).toEqual({ text: reply, context: [] })
++    expect(session.store.store.get('1')).toEqual(held())
++    // Sending the reply closed the drawer, and the question is still listed.
++    expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
++    expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
++    await ui.press({ key: 'item:1' })
++  }
++  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
+   await ui.press({ key: 'item:1' })
++
++  // An answer typed from a terminal shows after the options, marked.
++  await ui.press({ key: 'item:3' })
+   expect((await ui.find({ type: 'Text', text: /^3\.$/ }))?.props.color).toBe('success')
+   expect(await ui.find({ type: 'Text', text: /^keep the cap/ })).toBeDefined()
+ 
+-  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'item:3' })
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'dismiss:2' })
+   expect(session.project()).toContain('inbox dismiss 2 --session s1 --json')
+@@ -1127,6 +1145,114 @@ test('discuss keeps the drawer open with the question above a blank line, what y
+   await ui.unmount()
+ })
+ 
++test('a sent reply leaves the question listed, closes its drawer, and records no answer, naming the subagent that asked', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const asked = held({ agentId: 'agent-1' })
++  const session = questionWorld(on, clock, [asked], { agents: [running('running')] })
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'item:1' })
++  // You choose an option, then add to it before you send.
++  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
++  const text = '"Decline the finding?"\n\nAdd a budget\n\nBut what does the cap cover?\n'
++  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.submitted).toEqual([
++    {
++      text,
++      context: [
++        'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
++      ],
++    },
++  ])
++  expect(session.project().filter(command => /^inbox (answer|dismiss|claim|delivered)/.test(command))).toEqual([])
++  expect(session.store.store.get('1')).toEqual(asked)
++  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
++
++  // The question waits for its agent to settle it, and the band sends nothing.
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(session.sent).toEqual([])
++  expect(session.submitted).toHaveLength(1)
++  expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('a prompt about one of two questions that share a subject leaves the other alone', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const fixer = (id: string, description: string) =>
++    ({ id, description, type: 'general-purpose', status: 'running' }) as AgentInfo
++  const merge = { subject: 'Merge it?', choices: ['Yes', 'No'] }
++  const first = held({ ...merge, agentId: 'agent-a' })
++  const second = held({ ...merge, ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000, agentId: 'agent-b' })
++  const agents = [fixer('agent-a', 'Fix #7'), fixer('agent-b', 'Fix #8')]
++  const session = questionWorld(on, clock, [first, second], { agents })
++  await startSession($, clock)
++  const pull8 = { href: 'https://github.com/x/y/pull/8' }
++
++  const ui = await $.ui.mount(BAND)
++  // You discuss the second question: your reply goes to its subagent alone.
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'discuss:2' })
++  const reply = '"Merge it?"\n\nwhy now?'
++  await $.prompt.submit({ text: reply, wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.submitted.at(-1)).toEqual({
++    text: reply,
++    context: ['The subagent Fix #8 (agent-b) asked "Merge it?"; send it the reply this prompt gives, which leaves the question open.'],
++  })
++  expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
++
++  // Then you pick No in its drawer and open the first question's drawer before you send. The
++  // prompt answers the second question, and the first hears nothing and keeps its drawer open.
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'answer:2.b', link: pull8 })
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'item:1' })
++  const answer = '"Merge it?"\n\nNo\n'
++  await $.prompt.submit({ text: answer, wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.submitted.at(-1)).toEqual({
++    text: answer,
++    context: ['The subagent Fix #8 (agent-b) asked "Merge it?"; send it the answer this prompt gives.'],
++  })
++  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([
++    'inbox answer 2.b --session s1 --json',
++  ])
++  expect(session.store.store.get('1')).toEqual(first)
++  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('a quote two questions share goes to the one whose drawer you acted in last', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const merge = { subject: 'Merge it?', choices: ['Yes', 'No'] }
++  const second = held({ ...merge, ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })
++  const session = questionWorld(on, clock, [held(merge), second])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  // You pick Yes in the second question's drawer, think better of it, and discuss the first instead.
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'discuss:1' })
++  await $.prompt.submit({ text: '"Merge it?"\n\nYes\n', wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([
++    'inbox answer 1.a --session s1 --json',
++  ])
++  expect(session.store.store.get('2')).toEqual(second)
++  await ui.unmount()
++})
++
+ test('an answer from a terminal reaches the live subagent that asked', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -1484,6 +1610,217 @@ test('the withdraw tool refuses what the CLI refuses, asks an old CLI to upgrade
+   expect(session.store.store.get('1')).toEqual(answered)
+ })
+ 
++test('the revise tool redraws the question with its new text at once, keeping its number', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held()])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'item:1' })
++  // You choose an option from the question as it reads now, and have not sent it yet.
++  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
++
++  const options = ['Add a budget of two per host', 'Ask the reviewer']
++  const called = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, options, detail: 'The cap is three.' })
++  expect(String(called.text ?? called.result)).toBe(
++    'Revised 1. Projector’s band shows the new text, and its answer still arrives as a message that starts ANSWER 1 or DISMISSED 1.',
++  )
++  expect(session.project()).toContain(
++    'inbox revise 1 --session s1 --option=Add a budget of two per host --option=Ask the reviewer --detail=The cap is three. --json',
++  )
++  // Before the band reads the store again, the open drawer shows the new text.
++  expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The cap is three.')
++  expect(await ui.find({ type: 'Text', text: /^Add a budget of two per host/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^Ask the reviewer/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^Add a budget$/ })).toBeUndefined()
++  expect(await ui.find({ key: 'answer:1.c' })).toBeDefined()
++
++  await ui.press({ key: 'item:1' })
++  await $.tool.call({ tool: 'mcp__projector__revise', number: 1, question: 'Decline the retry finding?' })
++  expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
++  expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
++
++  // The answer you chose from the old text answers nothing.
++  await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
++
++  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'answer:1.c', link: { href: SEVEN } })
++  expect(session.filled.at(-1)).toBe('insert:"Decline the retry finding?"\n\nAsk the reviewer\n')
++  await $.prompt.submit({ text: '"Decline the retry finding?"\n\nAsk the reviewer\n', wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'c', text: 'Ask the reviewer' }))
++  expect(session.store.store.get('1')?.ref).toBe('1')
++  await ui.unmount()
++})
++
++test('an answer chosen before a revise answers no question, and a pick from the new drawer answers the revised one', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const newer = held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000, agentId: 'agent-1' })
++  const session = questionWorld(on, clock, [held(), newer], { agents: [running('running')] })
++  await startSession($, clock)
++  const decline = '"Decline the finding?"\n\nDecline it\n'
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
++  await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
++  expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe('The cap is three.')
++
++  // You chose that answer from the text the question had: sent, it answers neither question, though
++  // the older one shares the text and offers the option. It replies to the revised question.
++  await $.prompt.submit({ text: decline, wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
++  expect(session.store.store.get('2')?.answer).toBeUndefined()
++  expect(session.submitted.at(-1)).toEqual({
++    text: decline,
++    context: [
++      'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
++    ],
++  })
++  expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
++  expect(await ui.findAll({ type: 'Text', text: /^Decline the finding\?$/ })).toHaveLength(2)
++
++  // The same option, picked again in the revised question's drawer, answers it.
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
++  await $.prompt.submit({ text: decline, wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
++  await ui.unmount()
++})
++
++test('an answer chosen before a revise rewords its question does not answer another question with the old words', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const newer = held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })
++  const session = questionWorld(on, clock, [held(), newer])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
++  await $.tool.call({ tool: 'mcp__projector__revise', number: 2, question: 'Decline the retry finding?' })
++  expect(await ui.find({ key: 'detail:2' })).toBeDefined()
++
++  await $.prompt.submit({ text: '"Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
++  // The reply was to the revised question, so its drawer closes though the prompt no longer quotes it.
++  expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('an option typed under a quote discussed before a revise answers no question, and replies to the revised one', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const newer = held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000, agentId: 'agent-1' })
++  const session = questionWorld(on, clock, [held(), newer], { agents: [running('running')] })
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'discuss:2' })
++  await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
++  // You type one of the options under the quote that discuss put there before the revision.
++  const typed = '"Decline the finding?"\n\nDecline it\n'
++  await $.prompt.submit({ text: typed, wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
++  expect(session.store.store.get('2')?.answer).toBeUndefined()
++  expect(session.submitted.at(-1)).toEqual({
++    text: typed,
++    context: [
++      'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
++    ],
++  })
++  expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
++  await ui.unmount()
++})
++
++const DECLINE = '"Decline the finding?"\n\nDecline it\n'
++const PULL_8 = { href: 'https://github.com/x/y/pull/8' }
++
++test('a pick for a question withdrawn before you send answers no other question', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'answer:2.a', link: PULL_8 })
++  await $.tool.call({ tool: 'mcp__projector__withdraw', number: 2 })
++  await $.prompt.submit({ text: DECLINE, wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
++  await ui.unmount()
++})
++
++test('a pick made before a revise, for a question dismissed before you send, answers no other question', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'answer:2.a', link: PULL_8 })
++  await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
++  await ui.press({ key: 'dismiss:2' })
++  await clock.settle()
++  expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ dismissed: true }))
++  await $.prompt.submit({ text: DECLINE, wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
++  await ui.unmount()
++})
++
++test('the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const answered = held({ answer, deliveredAt: NOW - 1_000 })
++  const session = questionWorld(on, clock, [answered])
++  await startSession($, clock)
++  const revise = { tool: 'mcp__projector__revise' as const, number: 1, question: 'Decline the retry finding?' }
++
++  const resolved = await $.tool.call(revise)
++  expect(resolved.deny ?? resolved.text).toBe('1 is already answered')
++
++  const unknown = await $.tool.call({ ...revise, number: 9 })
++  expect(unknown.deny ?? unknown.text).toBe('no item 9')
++
++  const empty = await $.tool.call({ tool: 'mcp__projector__revise', number: 1 })
++  expect(empty.deny ?? empty.text).toBe('give what changes: `question`, `detail`, `recommendation`, or `options`')
++
++  session.store.failing.locks = 1
++  const busy = await $.tool.call(revise)
++  expect(busy.deny ?? busy.text).toBe(BUSY)
++
++  Object.assign(session.store.refusal, { code: 2, message: "error: argument inbox_command: invalid choice: 'revise'" })
++  const old = await $.tool.call(revise)
++  expect(old.deny ?? old.text).toBe("error: argument inbox_command: invalid choice: 'revise'; run project upgrade")
++
++  Object.assign(session.store.refusal, { code: undefined, rejection: 'project timed out after 15000 ms' })
++  const hung = await $.tool.call(revise)
++  expect(hung.deny ?? hung.text).toMatch(/^project did not finish \(.*\); ask the revised question in the conversation instead$/)
++  expect(session.store.store.get('1')).toEqual(answered)
++})
++
+ test('snooze hides either kind for an hour, then brings a hidden band back', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index 5575afa2..48a7515d 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -3,7 +3,6 @@ import { expect, test } from 'claude-code/testing'
+ 
+ import {
+   ASK_DESCRIPTION,
+-  answersIn,
+   askArguments,
+   forMainLoop,
+   isShownAt,
+@@ -11,7 +10,10 @@ import {
+   needsDelivery,
+   proposalOf,
+   quoteOf,
++  readPrompt,
+   relayNote,
++  replyNote,
++  reviseArguments,
+   signatureOf,
+   span,
+   storeOf,
+@@ -19,8 +21,9 @@ import {
+   typedLetter,
+   withdrawArguments,
+   wokeBetween,
++  type Proposal,
+ } from './inbox'
+-import type { Notice, Question } from './types'
++import type { Item, Notice, Question } from './types'
+ 
+ const NOW = Date.UTC(2026, 9, 12, 12, 0)
+ 
+@@ -52,12 +55,27 @@ const notice = (fields: Partial<Notice> = {}): Notice => ({
+ const agent = (status: AgentInfo['status']): AgentInfo =>
+   ({ id: 'agent-1', description: 'Fix #7', type: 'general-purpose', status }) as AgentInfo
+ 
++/** An answer a drawer put in the prompt under the question `question()` asks. */
++const pick = (ref: string, answer: string, fields: Partial<Proposal> = {}): Proposal => ({
++  ref,
++  quote: '"Decline the finding?"',
++  answer,
++  ...fields,
++})
++
++const answersIn = (text: string, items: readonly Item[], proposed: readonly Proposal[] = []) =>
++  readPrompt(text, items, proposed).answers
++
++const repliesIn = (text: string, items: readonly Item[]) => readPrompt(text, items).replies
++
+ const file = (name: string, mtimeMs: number) => ({ name, kind: 'file' as const, size: 10, mtimeMs, isLink: false })
+ 
+-test('the ask tool tells the agent that a question’s number names its answer', () => {
+-  expect(ASK_DESCRIPTION).toMatch(
+-    /The call returns the question’s number, such as 3, and the answer arrives later as a message that starts `ANSWER 3\.<letter>` or `DISMISSED 3`\.$/,
++test('the ask tool tells the agent that a pick arrives by number and a reply as the person’s prompt', () => {
++  expect(ASK_DESCRIPTION).toContain(
++    'The call returns the question’s number, such as 3. When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
+   )
++  expect(ASK_DESCRIPTION).toContain('the reply arrives as their prompt, quoting the question, and the question stays open')
++  expect(ASK_DESCRIPTION).toMatch(/withdraw the question if the reply settles it, revise it if it was unclear/)
+ })
+ 
+ test('letters run from the recommendation to the typed answer', () => {
+@@ -69,42 +87,81 @@ test('the prompt carries a question in quotes, and an answer on a line of its ow
+   expect(proposalOf(question(), 'Add a budget')).toBe('"Decline the finding?"\n\nAdd a budget')
+ })
+ 
+-test('a sent prompt answers each question whose quote ends its line', () => {
++test('a sent prompt answers each question whose quote an option follows', () => {
+   const open = [question(), question({ ref: '2', number: 2, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
+   expect(answersIn('"Decline the finding?"\n\nAdd a budget\n', open)).toEqual([{ question: open[0], letter: 'b' }])
+-  expect(answersIn('Both:\n"Decline the finding?"\nDecline it\n"Rebase first?"\n\nkeep it', open)).toEqual([
++  expect(answersIn('Both:\n"Decline the finding?"\nDecline it\n"Rebase first?"\n\nRebase', open)).toEqual([
+     { question: open[0], letter: 'a' },
+-    { question: open[1], letter: 'c', text: 'keep it' },
++    { question: open[1], letter: 'b' },
+   ])
+-  // Spaces or tabs after the quote still end its line.
++  // Spaces, tabs, and blank lines around the quote and the option change nothing.
+   expect(answersIn('"Decline the finding?" \nAdd a budget', open)).toEqual([{ question: open[0], letter: 'b' }])
+-  expect(answersIn('"Rebase first?"\t\n\nkeep it', open)).toEqual([{ question: open[1], letter: 'c', text: 'keep it' }])
+-  // Discussing a question, or leaving its answer empty, answers nothing.
+-  expect(answersIn('"Decline the finding?" what does the cap cover?', open)).toEqual([])
++  expect(answersIn('"Rebase first?"\t\n\n\n  Rebase \t\n\n', open)).toEqual([{ question: open[1], letter: 'b' }])
++  // A quoted notice ends the text that answers the question above it.
++  const told = notice({ ref: '3', number: 3 })
++  expect(answersIn(`"Decline the finding?"\n\nDecline it\n"${told.subject}"\n\nThanks`, [...open, told])).toEqual([
++    { question: open[0], letter: 'a' },
++  ])
++  // Leaving the answer empty answers nothing.
+   expect(answersIn('"Decline the finding?"\n\n', open)).toEqual([])
+   const answered = question({ answer: { letter: 'a', text: 'Decline it', answeredAt: NOW } })
+   expect(answersIn('"Decline the finding?"\n\nAdd a budget', [answered])).toEqual([])
+ })
+ 
++test('anything after a quoted question but one of its options replies to it without answering', () => {
++  const open = [question(), question({ ref: '2', number: 2, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
++  const replies = [
++    // Free text, as discuss leaves room for.
++    '"Rebase first?"\t\n\nkeep it',
++    // An option with more text after it, on its line or on the next.
++    '"Decline the finding?"\n\nAdd a budget of two per host',
++    '"Decline the finding?"\n\nAdd a budget\n\nand log each retry',
++    // A question back, under the quote or on its line.
++    '"Decline the finding?"\n\nWhat does the cap cover?',
++    '"Decline the finding?" what does the cap cover?',
++    // Another question's option.
++    '"Rebase first?"\n\nDecline it',
++  ]
++  for (const text of replies) {
++    expect(answersIn(text, open)).toEqual([])
++    expect(repliesIn(text, open)).toEqual(open.filter(one => text.includes(quoteOf(one))))
++  }
++  const text = '"Decline the finding?"\n\nDecline it\n"Rebase first?"\n\nwhy rebase?'
++  expect(readPrompt(text, open)).toEqual({ answers: [{ question: open[0], letter: 'a' }], replies: [open[1]] })
++  // A notice or a resolved question takes no reply.
++  const answered = question({ answer: { letter: 'a', text: 'Decline it', answeredAt: NOW } })
++  expect(repliesIn(`"${notice().subject}"\n\nThanks`, [notice()])).toEqual([])
++  expect(repliesIn('"Decline the finding?"\n\nwhy?', [answered])).toEqual([])
++})
++
++test('a quote two questions share goes to the oldest that offers the option it is followed by', () => {
++  const older = question({ postedAt: NOW - 120_000, choices: ['Decline it', 'Add a budget'] })
++  const newer = question({ ref: '2', number: 2, choices: ['Decline it', 'Add a budget per host'] })
++  expect(answersIn('"Decline the finding?"\n\nAdd a budget per host', [older, newer])).toEqual([
++    { question: newer, letter: 'b' },
++  ])
++  expect(answersIn('"Decline the finding?"\n\nDecline it', [older, newer])).toEqual([{ question: older, letter: 'a' }])
++})
++
+ test('a quote two questions share answers one: the one whose drawer put that answer there, else the oldest', () => {
+   const newer = question({ ref: '2', number: 2, pr: 'o/r#8' })
+   const older = question({ postedAt: NOW - 120_000 })
+   const budget = '"Decline the finding?"\n\nAdd a budget'
+   const decline = '"Decline the finding?"\n\nDecline it'
+   expect(answersIn(budget, [newer, older])).toEqual([{ question: older, letter: 'b' }])
+-  expect(answersIn(budget, [newer, older], [{ ref: '2', answer: 'Add a budget' }])).toEqual([
++  expect(answersIn(budget, [newer, older], [pick('2', 'Add a budget')])).toEqual([
+     { question: newer, letter: 'b' },
+   ])
+   // A proposal whose answer the prompt no longer holds, as when you cleared it, decides nothing.
+   const both = [
+-    { ref: '2', answer: 'Decline it' },
+-    { ref: '1', answer: 'Add a budget' },
++    pick('2', 'Decline it'),
++    pick('1', 'Add a budget'),
+   ]
+   expect(answersIn(budget, [newer, older], both)).toEqual([{ question: older, letter: 'b' }])
+-  expect(answersIn(decline, [newer, older], [{ ref: '2', answer: 'Decline it' }])).toEqual([
++  expect(answersIn(decline, [newer, older], [pick('2', 'Decline it')])).toEqual([
+     { question: newer, letter: 'a' },
+   ])
+-  expect(answersIn(budget, [newer, older], [{ ref: '2', answer: 'Decline it' }])).toEqual([
++  expect(answersIn(budget, [newer, older], [pick('2', 'Decline it')])).toEqual([
+     { question: older, letter: 'b' },
+   ])
+   // Quoted twice, each quote answers its own question, in the order the quotes appear.
+@@ -114,12 +171,113 @@ test('a quote two questions share answers one: the one whose drawer put that ans
+   ])
+ })
+ 
+-test('the note beside an answer names the subagent that asked', () => {
++test('a quote two questions share speaks to one of them: an answer replies to neither, and a reply goes where its drawer put it', () => {
++  const first = question({ postedAt: NOW - 120_000, agentId: 'agent-a', subject: 'Merge it?', choices: ['Yes', 'No'] })
++  const second = question({ ref: '2', number: 2, agentId: 'agent-b', subject: 'Merge it?', choices: ['Yes', 'No'] })
++  const both = [first, second]
++  const merge = (ref: string, answer: string): Proposal => ({ ref, quote: '"Merge it?"', answer })
++  // You pick No in the second question's drawer: it answers the second, and says nothing to the first.
++  expect(readPrompt('"Merge it?"\n\nNo\n', both, [merge('2', 'No')])).toEqual({
++    answers: [{ question: second, letter: 'b' }],
++    replies: [],
++  })
++  expect(readPrompt('"Merge it?"\n\nNo\n', both)).toEqual({ answers: [{ question: first, letter: 'b' }], replies: [] })
++  // A reply goes to the question whose drawer put the quote there, by discuss or by a pick you added to, else the oldest.
++  expect(readPrompt('"Merge it?"\n\nwhy now?', both, [merge('2', '')])).toEqual({ answers: [], replies: [second] })
++  expect(readPrompt('"Merge it?"\n\nNo, not yet', both, [merge('2', 'No')])).toEqual({ answers: [], replies: [second] })
++  expect(readPrompt('"Merge it?"\n\nwhy now?', both)).toEqual({ answers: [], replies: [first] })
++  // An option typed under discuss answers the question you discussed.
++  expect(readPrompt('"Merge it?"\n\nYes', both, [merge('2', '')])).toEqual({
++    answers: [{ question: second, letter: 'a' }],
++    replies: [],
++  })
++  // The drawer you acted in last wins: a pick in the second, then a discuss in the first.
++  expect(readPrompt('"Merge it?"\n\nYes', both, [merge('2', 'Yes'), merge('1', '')])).toEqual({
++    answers: [{ question: first, letter: 'a' }],
++    replies: [],
++  })
++  expect(readPrompt('"Merge it?"\n\nYes', both, [merge('1', ''), merge('2', 'Yes')])).toEqual({
++    answers: [{ question: second, letter: 'a' }],
++    replies: [],
++  })
++  // Quoted twice, each quote speaks to its own question.
++  expect(readPrompt('"Merge it?"\n\nYes\n"Merge it?"\n\nwhy now?', both)).toEqual({
++    answers: [{ question: first, letter: 'a' }],
++    replies: [second],
++  })
++})
++
++test('a pick made before its question was revised answers no question, and replies to the revised one', () => {
++  const older = question({ postedAt: NOW - 120_000 })
++  const revised = question({ ref: '2', number: 2, detail: 'The cap is three.' })
++  const stale = [pick('2', 'Decline it', { isStale: true })]
++  const decline = '"Decline the finding?"\n\nDecline it\n'
++  // The older question shares the text and offers the option, and still does not take the pick.
++  expect(readPrompt(decline, [older, revised], stale)).toEqual({ answers: [], replies: [revised] })
++  // Revised to new words, the question is still the one the pick replies to.
++  const reworded = question({ ref: '2', number: 2, subject: 'Decline the retry finding?' })
++  expect(readPrompt(decline, [older, reworded], stale)).toEqual({ answers: [], replies: [reworded] })
++  // Text the stale pick does not hold answers as before.
++  expect(readPrompt('"Decline the finding?"\n\nAdd a budget\n', [older, revised], stale)).toEqual({
++    answers: [{ question: older, letter: 'b' }],
++    replies: [],
++  })
++  // A pick from the revised question's new drawer answers it.
++  expect(readPrompt(decline, [older, revised], [pick('2', 'Decline it')])).toEqual({
++    answers: [{ question: revised, letter: 'a' }],
++    replies: [],
++  })
++})
++
++test('an option typed under a quote discussed before its question was revised answers no question, and replies to the revised one', () => {
++  const older = question({ postedAt: NOW - 120_000 })
++  const revised = question({ ref: '2', number: 2, detail: 'The cap is three.' })
++  const reworded = question({ ref: '2', number: 2, subject: 'Decline the retry finding?' })
++  const discussed = [pick('2', '', { isStale: true })]
++  const decline = '"Decline the finding?"\n\nDecline it\n'
++  expect(readPrompt(decline, [older, revised], discussed)).toEqual({ answers: [], replies: [revised] })
++  expect(readPrompt(decline, [older, reworded], discussed)).toEqual({ answers: [], replies: [reworded] })
++  // A pick you then make in the older question's drawer still answers it.
++  const both = [...discussed, pick('1', 'Decline it')]
++  expect(readPrompt(`"Decline the finding?"\n\nwhy?\n${decline}`, [older, revised], both)).toEqual({
++    answers: [{ question: older, letter: 'a' }],
++    replies: [revised],
++  })
++  // Discussed again in the revised drawer, the quote answers the revised question.
++  expect(readPrompt(decline, [older, revised], [pick('2', '')])).toEqual({
++    answers: [{ question: revised, letter: 'a' }],
++    replies: [],
++  })
++})
++
++test('a quote a drawer put in the prompt for a question resolved before you send speaks to no question', () => {
++  const merge = { subject: 'Merge it?', choices: ['Yes', 'No'] }
++  const open = question({ ...merge, postedAt: NOW - 120_000 })
++  const dismissed = question({ ...merge, ref: '2', number: 2, answer: { dismissed: true, answeredAt: NOW } })
++  const withdrawn = question({ ...merge, ref: '2', number: 2, answer: { dismissed: true, withdrawn: true, answeredAt: NOW } })
++  const drawer = (answer: string, isStale: boolean): Proposal => ({ ref: '2', quote: '"Merge it?"', answer, isStale })
++  const picks = [drawer('Yes', true), drawer('Yes', false), drawer('', true), drawer('', false)]
++  for (const resolved of [[dismissed], [withdrawn], []]) {
++    for (const proposal of picks) {
++      expect(readPrompt('"Merge it?"\n\nYes\n', [open, ...resolved], [proposal])).toEqual({ answers: [], replies: [] })
++    }
++  }
++  // A quote no drawer put there still answers the open question.
++  expect(readPrompt('"Merge it?"\n\nYes\n', [open, dismissed])).toEqual({
++    answers: [{ question: open, letter: 'a' }],
++    replies: [],
++  })
++})
++
++test('the note beside an answer or a reply names the subagent that asked', () => {
+   const asked = question({ agentId: 'agent-1' })
+   expect(relayNote(asked, [agent('completed')])).toBe(
+     'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the answer this prompt gives.',
+   )
+   expect(relayNote(asked, [])).toBe('The subagent agent-1 asked "Decline the finding?"; send it the answer this prompt gives.')
++  expect(replyNote(asked, [agent('running')])).toBe(
++    'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
++  )
+ })
+ 
+ test('a delivered question leaves the band after 30 seconds', () => {
+@@ -144,6 +302,44 @@ test('a call of the withdraw tool becomes `project inbox withdraw`, and only a w
+   }
+ })
+ 
++test('a call of the revise tool becomes `project inbox revise` with only what changes, text kept as text', () => {
++  expect(
++    reviseArguments(
++      { number: 3, question: '-Decline it?', recommendation: '--yes', options: ['no', 'later'], detail: '' },
++      's1',
++    ),
++  ).toEqual([
++    'inbox',
++    'revise',
++    '3',
++    '--session',
++    's1',
++    '--question=-Decline it?',
++    '--recommend=--yes',
++    '--option=no',
++    '--option=later',
++    '--detail=',
++    '--json',
++  ])
++  expect(reviseArguments({ number: 3, options: [] }, 's1')).toEqual([
++    'inbox',
++    'revise',
++    '3',
++    '--session',
++    's1',
++    '--no-options',
++    '--json',
++  ])
++  expect(reviseArguments({ number: 3 }, 's1')).toEqual({
++    error: 'give what changes: `question`, `detail`, `recommendation`, or `options`',
++  })
++  expect(reviseArguments({ number: '3', detail: 'x' }, 's1')).toEqual({
++    error: '`number` must be the whole number `ask` returned, such as 3',
++  })
++  expect(reviseArguments({ number: 3, options: 'no' }, 's1')).toEqual({ error: '`options` must be a list of strings' })
++  expect(reviseArguments({ number: 3, question: 7 }, 's1')).toEqual({ error: '`question` must be a string' })
++})
++
+ test('an answer waits for a deliverer until a live claim holds it', () => {
+   const answered = question({ answer: { letter: 'a', text: 'Decline it', answeredAt: NOW } })
+   expect(needsDelivery(question(), NOW)).toBe(false)
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index 50dbc69c..4169ce63 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -51,47 +51,93 @@ export const quoteOf = (item: Item) => `"${item.subject}"`
+ /** What the band puts in the prompt for an answer: the quoted question, a blank line, and the answer's text. */
+ export const proposalOf = (question: Question, answer: string) => `${quoteOf(question)}\n\n${answer}`
+ 
+-/** One answer a sent prompt gives: a choice's letter, or the typed letter and its text. */
+-export type Given = { question: Question; letter: string; text?: string }
++/** One answer a sent prompt gives: the letter of the option it picks. */
++export type Given = { question: Question; letter: string }
+ 
+-/** An answer a question's drawer put in the prompt. */
+-export type Proposal = { ref: string; answer: string }
++/**
++ * What a question's drawer put in the prompt: the question's quote as it read
++ * then, and the option chosen, or an empty answer for discuss. `isStale`
++ * marks one put there before the question was revised.
++ */
++export type Proposal = { ref: string; quote: string; answer: string; isStale?: boolean }
++
++/** What a sent prompt says to the open questions: the answers it gives, and the questions it replies to. */
++export type Read = { answers: Given[]; replies: Question[] }
+ 
+ /**
+- * The answers a sent prompt gives, as the band wrote them. Each quoted
+- * question that ends its line, as an option and discuss both leave it,
+- * answers one open question with that text: the choice whose text is the
+- * next line that is not blank, or else that line as a typed answer. Spaces
+- * or tabs after the quote still end its line; any other text after it on
+- * that line answers nothing. When open questions share the text, the quote
+- * goes to the one whose drawer last put that same answer in the prompt,
+- * `proposed` holding them oldest first, and otherwise to the oldest, so two
+- * questions never take one answer. Only questions take answers, snoozed ones
+- * included, so a quoted notice answers nothing either.
++ * Reads a sent prompt as the band writes it, each quote speaking to one
++ * question. A quoted open question takes an answer only when its quote ends
++ * its line and the text after it, up to the next quoted item or the prompt's
++ * end, is one of its options, whatever blank lines and spaces surround it:
++ * what an option's number puts in the prompt. A quote that a drawer put in
++ * the prompt, with that answer or alone through discuss, speaks to the
++ * question of the drawer that did so last, `proposed` holding them oldest
++ * first: one of its options answers it, and any other text replies to it.
++ * A drawer's pick from before
++ * its question was revised only replies, and one whose question was resolved
++ * before the prompt was sent does nothing, so a drawer's pick never falls
++ * through to another question with the same words.
++ * A quote no drawer put there goes to the oldest question with that text that
++ * offers the option, and otherwise replies to the one whose drawer last put
++ * that quote in the prompt, or else to the oldest with that text. Only
++ * questions take answers and replies, snoozed ones included.
+  */
+-export function answersIn(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Given[] {
++export function readPrompt(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Read {
+   const open = items
+     .filter((item): item is Question => item.kind === 'question' && item.answer === undefined)
+     .sort((one, other) => one.postedAt - other.postedAt)
+-  const found: { at: number; given: Given }[] = []
+-  const taken = new Set<string>()
+-  for (const quote of new Set(open.map(quoteOf))) {
+-    for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at + 1)) {
+-      const after = text.slice(at + quote.length)
+-      if (!/^[ \t]*\n/.test(after)) continue
+-      const said = (after.replace(/^\s*\n/, '').split('\n')[0] ?? '').trim()
+-      const asking = open.filter(question => quoteOf(question) === quote && !taken.has(question.ref))
+-      if (said === '') continue
+-      const drawer = proposed.findLast(one => one.answer === said && asking.some(question => question.ref === one.ref))
+-      const question = asking.find(one => one.ref === drawer?.ref) ?? asking[0]
++  const quotes = [...new Set([...items.map(quoteOf), ...proposed.map(one => one.quote)])]
++    .flatMap(quote => {
++      const found: { at: number; end: number; quote: string }[] = []
++      for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at + 1)) {
++        found.push({ at, end: at + quote.length, quote })
++      }
++      return found
++    })
++    .sort((one, other) => one.at - other.at)
++  const answers: Given[] = []
++  const answered = new Set<string>()
++  const replied = new Set<string>()
++  const isOpen = (ref: string) => open.some(question => question.ref === ref) && !answered.has(ref)
++  const isFree = (ref: string) => isOpen(ref) && !replied.has(ref)
++  const answer = (question: Question, said: string) => {
++    answered.add(question.ref)
++    answers.push({ question, letter: letterAt(question.choices.indexOf(said)) })
++  }
++  for (const { end, quote } of quotes) {
++    const after = text.slice(end, quotes.find(next => next.at >= end)?.at)
++    const said = /^[ \t]*\n/.test(after) ? after.trim() : undefined
++    // The drawer that put this text in the prompt: the last to put this
++    // quote there with this answer or alone, through discuss, leaving out a
++    // question an earlier quote in this prompt answered.
++    const source = proposed.findLast(
++      one => one.quote === quote && (one.answer === said || one.answer === '') && !answered.has(one.ref),
++    )
++    if (source !== undefined) {
++      // A question resolved since its drawer put the quote there takes
++      // nothing, and the quote falls through to no other question.
++      const question = open.find(one => one.ref === source.ref)
+       if (question === undefined) continue
+-      taken.add(question.ref)
+-      const index = question.choices.indexOf(said)
+-      const letter = index === -1 ? typedLetter(question) : letterAt(index)
+-      found.push({ at, given: index === -1 ? { question, letter, text: said } : { question, letter } })
++      if (source.isStale !== true && said !== undefined && question.choices.includes(said)) {
++        answer(question, said)
++      } else if (isFree(source.ref)) {
++        replied.add(source.ref)
++      }
++      continue
++    }
++    const offering = open.filter(
++      question =>
++        quoteOf(question) === quote && isOpen(question.ref) && said !== undefined && question.choices.includes(said),
++    )
++    if (offering[0] !== undefined && said !== undefined) {
++      answer(offering[0], said)
++      continue
+     }
++    const intended = proposed.findLast(one => one.quote === quote && isFree(one.ref))
++    const replying = intended?.ref ?? open.find(one => quoteOf(one) === quote && isFree(one.ref))?.ref
++    if (replying !== undefined) replied.add(replying)
+   }
+-  return found.sort((one, other) => one.at - other.at).map(one => one.given)
++  return { answers, replies: open.filter(question => replied.has(question.ref) && !answered.has(question.ref)) }
+ }
+ 
+ /** Names the subagent that asked, by its description and id when the session still lists it. */
+@@ -104,6 +150,10 @@ function whoAsked(question: Question, agents: readonly AgentInfo[]): string {
+ export const relayNote = (question: Question, agents: readonly AgentInfo[]) =>
+   `The subagent ${whoAsked(question, agents)} asked ${quoteOf(question)}; send it the answer this prompt gives.`
+ 
++/** What the main loop reads beside a prompt that replies to a subagent's question: whom to send the reply to. */
++export const replyNote = (question: Question, agents: readonly AgentInfo[]) =>
++  `The subagent ${whoAsked(question, agents)} asked ${quoteOf(question)}; send it the reply this prompt gives, which leaves the question open.`
++
+ /** The subagent that asked, while it can still read a message; undefined sends the answer to the main loop. */
+ export function liveAgent(question: Question, agents: readonly AgentInfo[]): string | undefined {
+   const agent = agents.find(one => one.id === question.agentId)
+@@ -157,8 +207,11 @@ export const ASK_DESCRIPTION = [
+   'Ask in one short line of at most 120 characters, and put what they need to decide in `detail`.',
+   'Always recommend an answer, and write it and each option as a full answer they can pick as it stands.',
+   'Name the pull request the question is about in `pr`, as owner/repo#number.',
+-  'Keep working on anything the answer does not block. The call returns the question’s number, such as 3,',
+-  'and the answer arrives later as a message that starts `ANSWER 3.<letter>` or `DISMISSED 3`.',
++  'Keep working on anything the answer does not block. The call returns the question’s number, such as 3.',
++  'When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
++  'When they reply in their own words instead, the reply arrives as their prompt, quoting the question, and the question stays open:',
++  'answer what they asked, then withdraw the question if the reply settles it, revise it if it was unclear or the choice has changed,',
++  'or leave it open while it still needs them.',
+ ].join(' ')
+ 
+ export const ASK_SCHEMA = {
+@@ -249,7 +302,7 @@ export function tellArguments(
+ 
+ export const WITHDRAW_DESCRIPTION = [
+   'Withdraw a question or notice you posted that no longer needs the person,',
+-  'such as a question they answered in the conversation or news that has gone stale.',
++  'such as a question their reply settled or news that has gone stale.',
+   'Name it by the number `ask` or `tell` returned. It leaves Projector’s band at once.',
+   'Nothing comes back to you: a withdrawn question sends no `DISMISSED` message.',
+ ].join(' ')
+@@ -267,18 +320,86 @@ export const WITHDRAW_SCHEMA = {
+   additionalProperties: false,
+ }
+ 
++/** Whether a tool's `number` names an item: a whole number from 1. */
++const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 1
++
+ /** The arguments of `project inbox withdraw` for one call of the tool, or why the call cannot be one. */
+ export function withdrawArguments(
+   input: Readonly<Record<string, unknown>>,
+   session: string,
+ ): string[] | { error: string } {
+   const { number } = input
+-  if (typeof number !== 'number' || !Number.isInteger(number) || number < 1) {
+-    return { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
+-  }
++  if (!isNumber(number)) return { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
+   return ['inbox', 'withdraw', String(number), '--session', session, '--json']
+ }
+ 
++export const REVISE_DESCRIPTION = [
++  'Revise a question you asked that is still open, keeping its number, when the person’s reply shows it was unclear',
++  'or the choice has changed. Name it by the number `ask` returned, and give only what changes:',
++  'the question, its detail, the recommendation, or the other options, which `options` replaces as a whole.',
++  'Projector’s band redraws it at once, and its answer still arrives as a message that starts',
++  '`ANSWER 3.<letter>` or `DISMISSED 3`.',
++].join(' ')
++
++export const REVISE_SCHEMA = {
++  type: 'object',
++  properties: {
++    number: { type: 'integer', minimum: 1, description: 'The question’s number, as `ask` returned it, such as 3.' },
++    question: { type: 'string', description: 'The new question, in one line of at most 120 characters.' },
++    recommendation: {
++      type: 'string',
++      description: 'The new answer you recommend, written in full; it is answer a.',
++    },
++    options: {
++      type: 'array',
++      items: { type: 'string' },
++      maxItems: 5,
++      description:
++        'Every other answer, up to five, each written in full and lettered b, c, and on in this order; an empty list leaves only the recommendation.',
++    },
++    detail: {
++      type: 'string',
++      description: 'The new detail, as Markdown; an empty string clears it.',
++    },
++  },
++  required: ['number'],
++  additionalProperties: false,
++}
++
++/**
++ * The arguments of `project inbox revise` for one call of the tool, or why
++ * the call cannot be one. Each value rides in its flag's `=` form, so text
++ * that starts with `-` stays text, and an empty `detail` clears the detail.
++ */
++export function reviseArguments(
++  input: Readonly<Record<string, unknown>>,
++  session: string,
++): string[] | { error: string } {
++  const { number, question, recommendation, options, detail } = input
++  if (!isNumber(number)) return { error: '`number` must be the whole number `ask` returned, such as 3' }
++  if (question !== undefined && !isText(question)) return { error: '`question` must be a string' }
++  if (recommendation !== undefined && !isText(recommendation)) return { error: '`recommendation` must be a string' }
++  if (options !== undefined && (!Array.isArray(options) || !options.every(isText))) {
++    return { error: '`options` must be a list of strings' }
++  }
++  if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
++  if ([question, recommendation, options, detail].every(value => value === undefined)) {
++    return { error: 'give what changes: `question`, `detail`, `recommendation`, or `options`' }
++  }
++  return [
++    'inbox',
++    'revise',
++    String(number),
++    '--session',
++    session,
++    ...(question === undefined ? [] : [`--question=${question}`]),
++    ...(recommendation === undefined ? [] : [`--recommend=${recommendation}`]),
++    ...(options === undefined ? [] : options.length === 0 ? ['--no-options'] : options.map(option => `--option=${option}`)),
++    ...(detail === undefined ? [] : [`--detail=${detail}`]),
++    '--json',
++  ]
++}
++
+ /** The flags both posting tools pass when they have a value: the detail, the pull request, and the subagent. */
+ const postedFlags = (detail: string | undefined, pr: string | undefined, agentId: string | undefined) => [
+   ...(detail === undefined || detail === '' ? [] : [`--detail=${detail}`]),
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 1a247f33..c25edde9 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -7,7 +7,6 @@ import { findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './p
+ import {
+   ASK_DESCRIPTION,
+   ASK_SCHEMA,
+-  answersIn,
+   askArguments,
+   forMainLoop,
+   isShownAt,
+@@ -16,7 +15,12 @@ import {
+   needsDelivery,
+   proposalOf,
+   quoteOf,
++  readPrompt,
+   relayNote,
++  replyNote,
++  REVISE_DESCRIPTION,
++  REVISE_SCHEMA,
++  reviseArguments,
+   signatureOf,
+   span,
+   storeOf,
+@@ -40,6 +44,7 @@ const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null, error: null }
+ const ASK_TOOL = 'mcp__projector__ask'
+ const TELL_TOOL = 'mcp__projector__tell'
+ const WITHDRAW_TOOL = 'mcp__projector__withdraw'
++const REVISE_TOOL = 'mcp__projector__revise'
+ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
+ 
+ // Watching first: a pull request both loops track is listed once, where its
+@@ -85,10 +90,26 @@ const acting = new Set<string>()
+ let tickedAt: number | undefined
+ /**
+  * The answers questions' drawers put in the prompt, oldest first, so a sent
+- * quote answers the question you chose when another shares its text.
++ * quote answers the question you chose when another shares its text. A
++ * revision marks its question's proposals stale, so an answer chosen from the
++ * old text answers nothing. A proposal lasts until a prompt you send quotes
++ * its question or holds the quote it was chosen under.
+  */
+ let proposed: Proposal[] = []
+ 
++/**
++ * Records what a question's drawer put in the prompt: an option, or an empty
++ * answer for discuss. It takes the place of the question's last fresh pick,
++ * and of any stale pick that put the same text in the prompt, since a sent
++ * prompt cannot tell the two apart.
++ */
++function propose(question: Question, answer: string): void {
++  const quote = quoteOf(question)
++  const isKept = (one: Proposal) =>
++    one.isStale === true ? one.quote !== quote || one.answer !== answer : one.ref !== question.ref
++  proposed = [...proposed.filter(isKept), { ref: question.ref, quote, answer }]
++}
++
+ /** The few variables a tracked path is written with, read once per load. */
+ function envOf($: Engine): Promise<Env> {
+   envLoad ??= (async () => {
+@@ -482,12 +503,11 @@ async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
+  * prompt itself carries it to the main loop. The band's own deliverer leaves
+  * the question alone meanwhile, so the agent hears the answer once.
+  */
+-async function answerFromPrompt($: Engine, question: Question, letter: string, text?: string): Promise<void> {
++async function answerFromPrompt($: Engine, question: Question, letter: string): Promise<void> {
+   const { ref, session } = question
+   delivering.add(ref)
+   try {
+-    const typed = text === undefined ? [] : [`--text=${text}`]
+-    const answered = await project($, ['inbox', 'answer', `${ref}.${letter}`, ...typed, '--session', session, '--json'])
++    const answered = await project($, ['inbox', 'answer', `${ref}.${letter}`, '--session', session, '--json'])
+     if (answered.exitCode !== 0) return
+     const claimed = await project($, ['inbox', 'claim', ref, '--session', session, '--json'])
+     if (claimed.exitCode !== 0) return
+@@ -640,6 +660,7 @@ export const register: Register = on => {
+       { name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA },
+       { name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA },
+       { name: 'withdraw', description: WITHDRAW_DESCRIPTION, inputSchema: WITHDRAW_SCHEMA },
++      { name: 'revise', description: REVISE_DESCRIPTION, inputSchema: REVISE_SCHEMA },
+     ]) {
+       await $.tool.register({ ...tool, isDeferred: false }).catch(() => undefined)
+     }
+@@ -649,8 +670,8 @@ export const register: Register = on => {
+     return next(e)
+   })
+ 
+-  // The tools run the CLI, so what they post or withdraw and what the shell
+-  // does land in the same store.
++  // The tools run the CLI, so what they post, withdraw, or revise and what
++  // the shell does land in the same store.
+   on('tool.call', { tool: ASK_TOOL }, async ($, e) => {
+     const posted = await runTool($, askArguments(e, await $.session.id(), e.agentId), 'ask in the conversation instead')
+     if ('deny' in posted) return posted
+@@ -687,6 +708,24 @@ export const register: Register = on => {
+     deny: 'Projector could not withdraw the item; tell the person in the conversation that it no longer needs them',
+   }))
+ 
++  // The band takes the revised question from the CLI at once, so it redraws
++  // before the next read of the store. An answer a drawer put in the prompt
++  // was chosen from the old text, so it turns stale: sent, it answers no
++  // question, this one or another that shares the old text.
++  on('tool.call', { tool: REVISE_TOOL }, async ($, e) => {
++    const session = await $.session.id()
++    const ran = await runTool($, reviseArguments(e, session), 'ask the revised question in the conversation instead')
++    if ('deny' in ran) return ran
++    const item = itemOf(ran.stdout, session)
++    await replace($, item)
++    proposed = proposed.map(proposal => (proposal.ref === item.ref ? { ...proposal, isStale: true } : proposal))
++    return {
++      result: `Revised ${item.ref}. Projector’s band shows the new text, and its answer still arrives as a message that starts ANSWER ${item.ref} or DISMISSED ${item.ref}.`,
++    }
++  }).catch(() => ({
++    deny: 'Projector could not revise the question; ask the revised question in the conversation instead',
++  }))
++
+   // These hooks only watch: the catch hands back what the event settled to,
+   // so a failure here never runs a tool twice or refuses anything.
+   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+@@ -718,29 +757,39 @@ export const register: Register = on => {
+       return entered
+     }
+ 
+-    // An answer the band put in the prompt, now sent: the prompt carries it to
+-    // the main loop, with a note naming the subagent that asked when one did,
+-    // and once the prompt has entered, the band records it and closes the
+-    // question's drawer. Only a prompt you sent, at the terminal or through
+-    // Remote Control, answers: an agent's message or a notification can quote
+-    // a question it is still waiting on.
++    // An option the band put in the prompt answers its question: the prompt
++    // carries the answer to the main loop, and once the prompt has entered,
++    // the band records it. Any other text under a quoted question replies to
++    // it, and the prompt carries the reply while the question stays open.
++    // Either way the prompt is done with the question's drawer. A subagent's
++    // question gets a note naming it, so the main loop can pass the answer or
++    // the reply on. Only a prompt you sent, at the terminal or through Remote
++    // Control, counts: an agent's message or a notification can quote a
++    // question it is still waiting on.
+     const session = await $.session.id()
+     const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+     const mine = isYours ? (await read($, items)).filter(item => item.session === session) : []
+-    const given = answersIn(e.text, mine, proposed)
+-    // A reply to a notice answers nothing, but it is done with the notice's drawer.
+-    const replied = mine.filter(item => item.kind === 'notice' && e.text.includes(quoteOf(item)))
+-    proposed = proposed.filter(proposal => !given.some(one => one.question.ref === proposal.ref))
+-    const asked = given.filter(one => one.question.agentId !== undefined)
+-    const agents = asked.length === 0 ? [] : await $.agent.list().catch(() => [])
+-    const notes = asked.map(one => relayNote(one.question, agents))
++    const { answers, replies } = readPrompt(e.text, mine, isYours ? proposed : [])
++    // An open question is done only when the prompt answers or replies to
++    // it, so a quote two questions share closes one drawer, not both.
++    const isOpenQuestion = (item: Item) => item.kind === 'question' && item.answer === undefined
++    const done = new Set([
++      ...mine.filter(item => !isOpenQuestion(item) && e.text.includes(quoteOf(item))).map(item => item.ref),
++      ...answers.map(one => one.question.ref),
++      ...replies.map(question => question.ref),
++    ])
++    if (isYours) proposed = proposed.filter(proposal => !done.has(proposal.ref) && !e.text.includes(proposal.quote))
++    const answered = answers.map(one => one.question).filter(question => question.agentId !== undefined)
++    const replied = replies.filter(question => question.agentId !== undefined)
++    const agents = answered.length + replied.length === 0 ? [] : await $.agent.list().catch(() => [])
++    const notes = [
++      ...answered.map(question => relayNote(question, agents)),
++      ...replied.map(question => replyNote(question, agents)),
++    ]
+     const entered = await next(notes.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...notes] })
+     if (entered.drop === undefined) {
+-      for (const one of given) {
+-        void closeDrawer($, `item:${one.question.ref}`).catch(() => undefined)
+-        void answerFromPrompt($, one.question, one.letter, one.text)
+-      }
+-      for (const notice of replied) void closeDrawer($, `item:${notice.ref}`).catch(() => undefined)
++      for (const ref of done) void closeDrawer($, `item:${ref}`).catch(() => undefined)
++      for (const one of answers) void answerFromPrompt($, one.question, one.letter)
+     }
+     return entered
+   }).catch(($, e, next) => next(e))
+@@ -853,9 +902,10 @@ export const register: Register = on => {
+     // The items are a list below the pull requests, oldest first: a question
+     // bulleted `-`, a notice `•`. A question's drawer numbers its options;
+     // choosing one puts the question and that answer in the prompt as text,
+-    // for you to send or change, and sending it is what answers the question.
+-    // Discuss puts the question alone, for an answer in your own words, which
+-    // a resolved question's drawer shows after its options.
++    // for you to send or change, and sending it unchanged is what answers the
++    // question. Discuss puts the question alone, for a reply in your own words,
++    // which answers nothing. A resolved question's drawer shows an answer typed
++    // with `project inbox answer --text` after its options.
+ 
+     // A pull request's line and an item's line each end with an age, in one
+     // column as wide as the widest age in the band, so what comes before the
+@@ -891,8 +941,8 @@ export const register: Register = on => {
+       const isOpen = answer === undefined
+       const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
+       const href = hrefOf(question)
+-      const propose = (answer: string) => {
+-        proposed = [...proposed.filter(proposal => proposal.ref !== ref), { ref, answer }]
++      const pick = (answer: string) => {
++        propose(question, answer)
+         fill(`${proposalOf(question, answer)}\n`)
+       }
+       const option = (index: number, content: JSX.Element) => {
+@@ -906,7 +956,7 @@ export const register: Register = on => {
+                 <Markdown
+                   key={`answer:${ref}.${letter}`}
+                   text={`[${number}](${href})`}
+-                  onLinkPress={() => propose(choice)}
++                  onLinkPress={() => pick(choice)}
+                 />
+               ) : (
+                 <Text color={letter === chosen ? 'success' : 'subtle'}>{number}</Text>
+@@ -949,7 +999,13 @@ export const register: Register = on => {
+       const isDismissed = answer !== undefined && 'dismissed' in answer
+       const pull = pullOf(item)
+       const actions = [
+-        { name: 'discuss', onPress: () => fill(`${quoteOf(item)}\n\n`) },
++        {
++          name: 'discuss',
++          onPress: () => {
++            if (item.kind === 'question') propose(item, '')
++            fill(`${quoteOf(item)}\n\n`)
++          },
++        },
+         ...(isOpen
+           ? [
+               { name: 'dismiss', onPress: () => void act($, item, 'dismiss') },
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 421607b4..a02ba1d3 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -687,6 +687,18 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
+     withdraw.add_argument("reference")
+ 
++    revise = command("revise", "replace an open question's text, keeping its number")
++    revise.add_argument("reference", help="the question's number, such as 3")
++    revise.add_argument("--question", help="the new question, in one line of at most 120 characters")
++    revise.add_argument("--recommend", help="the new recommended answer, which becomes answer a")
++    options = revise.add_mutually_exclusive_group()
++    options.add_argument("--option", action="append",
++                         help="another answer; repeat for each, up to five, to replace every option but answer a")
++    options.add_argument("--no-options", action="store_true", help="drop every option but answer a")
++    detail = revise.add_mutually_exclusive_group()
++    detail.add_argument("--detail", help="the new detail, as Markdown; an empty one clears it")
++    detail.add_argument("--detail-file", type=Path, help="read the new detail from this file")
++
+     snooze = command("snooze", "hide an open item for a while")
+     snooze.add_argument("reference")
+     snooze.add_argument("--for", dest="minutes", type=int, default=inbox.SNOOZE_MINUTES, metavar="MINUTES",
+@@ -1232,6 +1244,12 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+                 else inbox.dismiss(session, ref, withdrawn=command == "withdraw"))
+         done = {"answer": "answered", "dismiss": "dismissed", "withdraw": "withdrew"}[command]
+         print(json_text({"item": item}) if json_output else f"{done} {inbox.answer_ref(item)}")
++    elif command == "revise":
++        detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
++        options = [] if arguments.no_options else arguments.option
++        item = inbox.revise(inbox_session(arguments, False), ref, question=arguments.question, detail=detail,
++                            recommend=arguments.recommend, options=options)
++        print(json_text({"item": item}) if json_output else f"revised {item['ref']}")
+     elif command == "snooze":
+         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
+         print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
+diff --git a/src/projector/inbox.py b/src/projector/inbox.py
+index 3f971481..b98c9f53 100644
+--- a/src/projector/inbox.py
++++ b/src/projector/inbox.py
+@@ -2,12 +2,13 @@
+ 
+ An item is a question, which the person answers or dismisses and whose answer goes back to the
+ agent, or a notice, which the person reads and dismisses and which sends nothing back. The agent
+-that posted an open item can withdraw it, which dismisses it and sends nothing back. Each
+-session numbers its items 1, 2, 3, and on, in one count across both kinds. Its items are JSON
+-files in their own directory, one per item and named by its number, with `count.json` holding the
+-last number given. Every write happens under the directory's lock, an operating-system lock on
+-its `.lock` file, and lands by renaming a temporary file into place, so two writers never lose
+-each other's change and a reader never sees half a file.
++that posted an open item can withdraw it, which dismisses it and sends nothing back, and can
++revise an open question's text in place. Each session numbers its items 1, 2, 3, and on, in one
++count across both kinds. Its items are JSON files in their own directory, one per item and named
++by its number, with `count.json` holding the last number given. Every write happens under the
++directory's lock, an operating-system lock on its `.lock` file, and lands by renaming a temporary
++file into place, so two writers never lose each other's change and a reader never sees half a
++file.
+ """
+ 
+ from __future__ import annotations
+@@ -396,6 +397,33 @@ def record(item: dict) -> None:
+     return update(session, ref, record, prefer_open=True)
+ 
+ 
++def revise(session: Optional[str], ref: str, *, question: Optional[str] = None, detail: Optional[str] = None,
++           recommend: Optional[str] = None, options: Optional[list[str]] = None) -> dict:
++    """Replace an open question's text in place, keeping its number, its place in the list, and its
++    snooze. Each part left as None keeps its text; `options` replaces every option but the
++    recommendation. The revised question passes the checks `ask` makes."""
++    if question is None and detail is None and recommend is None and options is None:
++        raise InboxError("give the question's new text with --question, --detail, --recommend, or --option")
++
++    def record(item: dict) -> None:
++        if is_notice(item):
++            raise InboxError(f"{item['ref']} is a notice, and only a question can be revised; withdraw it and "
++                             "tell again")
++        if item.get("answer"):
++            raise InboxError(f"{item['ref']} is already {resolution(item)}")
++        subject = item["subject"] if question is None else question
++        first, *others = item["choices"]
++        chosen = first if recommend is None else recommend
++        rest = others if options is None else options
++        check(subject, chosen, rest, item.get("pr"))
++        item["subject"] = subject.strip()
++        item["choices"] = [chosen.strip(), *(option.strip() for option in rest)]
++        if detail is not None:
++            item["detail"] = detail.strip()
++
++    return update(session, ref, record, prefer_open=True)
++
++
+ def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> dict:
+     """Hide an open item until `minutes` from now, a day at most, or wake it now with 0."""
+     if not 0 <= minutes <= MAX_SNOOZE_MINUTES:
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 58892b63..95eec2a4 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 10 -->
++<!-- projector:begin 11 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -59,9 +59,15 @@ it. Post news they need to act on, such as a failure that needs them, and
+ anything that comes up while they are away. Leave out what they already see
+ elsewhere, such as a pull request's state, which the band lists. An item
+ stays above their prompt until they answer or dismiss it, so keep the inbox
+-for what matters, not as a log of everything you did. Each time the person
+-writes to you, look over the items you posted that are still open, and
+-withdraw any that no longer need them, such as a question they answered in
+-the conversation or news that has gone stale, with the `withdraw` tool and
++for what matters, not as a log of everything you did.
++
++When the person picks one of a question's options, the answer reaches you
++as a message that starts `ANSWER`. When they reply to a question you asked
++instead, answer what they asked. Then withdraw the question with the
++`withdraw` tool if the reply settles it, revise it with the `revise` tool
++if the reply shows it was unclear or the choice has changed, or leave it
++open while it still needs them. Each time the person writes to you, also
++look over the other items you posted that are still open, and withdraw any
++that no longer need them, such as news that has gone stale. Name an item by
+ the number `ask` or `tell` returned.
+ <!-- projector:end -->
+diff --git a/tests/test_inbox.py b/tests/test_inbox.py
+index 3673b29d..be305676 100644
+--- a/tests/test_inbox.py
++++ b/tests/test_inbox.py
+@@ -96,6 +96,18 @@ def folder(self, session: str = "s1") -> Path:
+     def item(self, number: int | str, session: str = "s1") -> dict:
+         return json.loads((self.folder(session) / f"{number}.json").read_text())
+ 
++    def hold_lock(self, then: str) -> subprocess.Popen:
++        """Start a process that takes the session's lock and, once it holds it, either waits for its
++        standard input to close (`wait`) or exits without unlocking (`exit`)."""
++        holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, str(self.folder()), then],
++                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
++                                  env={**os.environ, "PYTHONPATH": str(Path(inbox.__file__).parents[1])})
++        self.addCleanup(holder.stdout.close)
++        self.addCleanup(holder.wait)
++        self.addCleanup(holder.stdin.close)
++        self.assertEqual("held\n", holder.stdout.readline())
++        return holder
++
+ 
+ class NumberingTests(InboxCase):
+     def test_numbers_every_item_from_one_in_one_count_across_pull_requests_and_kinds(self) -> None:
+@@ -358,18 +370,6 @@ def test_two_answers_at_once_record_one(self) -> None:
+                                                       lambda: inbox.answer("s1", "1", "b")))
+         self.assertIn(self.item(1)["answer"]["letter"], "ab")
+ 
+-    def hold_lock(self, then: str) -> subprocess.Popen:
+-        """Start a process that takes the session's lock and, once it holds it, either waits for its
+-        standard input to close (`wait`) or exits without unlocking (`exit`)."""
+-        holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, str(self.folder()), then],
+-                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+-                                  env={**os.environ, "PYTHONPATH": str(Path(inbox.__file__).parents[1])})
+-        self.addCleanup(holder.stdout.close)
+-        self.addCleanup(holder.wait)
+-        self.addCleanup(holder.stdin.close)
+-        self.assertEqual("held\n", holder.stdout.readline())
+-        return holder
+-
+     def test_a_lock_another_process_holds_makes_a_command_wait_then_exit_75(self) -> None:
+         holder = self.hold_lock("wait")
+         with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
+@@ -662,6 +662,113 @@ def test_answering_a_withdrawn_or_dismissed_question_says_which(self) -> None:
+         self.assertNotIn("letter", self.item(3)["answer"])
+ 
+ 
++class ReviseTests(InboxCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--detail", "Why.",
++                 "--pr", "acme/app#12", "--agent", "agent-7")
++        self.run_cli("tell", "Force-pushed #12", "--pr", "acme/app#12", "--session", "s1")
++
++    def revise(self, *args: str) -> tuple[int, str, str]:
++        return self.run_cli("revise", "1", "--session", "s1", *args)
++
++    def test_replaces_an_open_questions_text_and_keeps_its_number(self) -> None:
++        self.run_cli("snooze", "1", "--session", "s1")
++        before = self.item(1)
++        self.assertEqual((0, "revised 1\n", ""),
++                         self.revise("--question", "Decline the retry finding?", "--recommend", " Decline it: capped ",
++                                     "--option", "Add a budget per host", "--option", "Ask the reviewer",
++                                     "--detail", "The cap is three in total."))
++        after = self.item(1)
++        self.assertEqual("Decline the retry finding?", after["subject"])
++        self.assertEqual(["Decline it: capped", "Add a budget per host", "Ask the reviewer"], after["choices"])
++        self.assertEqual("The cap is three in total.", after["detail"])
++        for key in ("ref", "number", "kind", "pr", "postedAt", "agentId", "snoozedUntil"):
++            with self.subTest(key=key):
++                self.assertEqual(before[key], after[key])
++        self.assertEqual({"last": 2}, json.loads((self.folder() / "count.json").read_text()))
++        self.assertEqual("answered 1.c\n", self.run_cli("answer", "1.c", "--session", "s1")[1])
++        self.assertEqual("Ask the reviewer", self.item(1)["answer"]["text"])
++
++    def test_keeps_each_part_it_is_not_given(self) -> None:
++        self.assertEqual(0, self.revise("--option", "Add a budget per host")[0])
++        self.assertEqual(("Decline it?", ["Decline it", "Add a budget per host"], "Why."),
++                         (self.item(1)["subject"], self.item(1)["choices"], self.item(1)["detail"]))
++        self.assertEqual(0, self.revise("--detail", "")[0])
++        self.assertEqual(("", ["Decline it", "Add a budget per host"]), (self.item(1)["detail"], self.item(1)["choices"]))
++        self.assertEqual(0, self.revise("--no-options")[0])
++        self.assertEqual(["Decline it"], self.item(1)["choices"])
++        detail = self.scratch / "detail.md"
++        detail.write_text("From a file.\n")
++        self.assertEqual(0, self.revise("--detail-file", str(detail))[0])
++        self.assertEqual("From a file.", self.item(1)["detail"])
++
++    def test_prints_the_revised_question_as_json(self) -> None:
++        code, out, err = self.revise("--question", "Decline the retry finding?", "--json")
++        self.assertEqual(0, code, err)
++        self.assertEqual(self.item(1), json.loads(out)["item"])
++
++    def test_refuses_a_resolved_question_a_notice_and_an_unknown_number_and_changes_nothing(self) -> None:
++        self.ask("Rebase?", "--recommend", "Yes")
++        self.run_cli("answer", "1.a", "--session", "s1")
++        self.run_cli("withdraw", "3", "--session", "s1")
++        items = [self.item(ref) for ref in (1, 2, 3)]
++        for ref, said in (("1", "1 is already answered, as 1.a"), ("3", "3 is already withdrawn"),
++                          ("2", "2 is a notice, and only a question can be revised")):
++            with self.subTest(ref=ref):
++                code, out, err = self.run_cli("revise", ref, "--detail", "x", "--session", "s1")
++                self.assertEqual((65, ""), (code, out))
++                self.assertIn(said, err)
++        self.assertEqual(66, self.run_cli("revise", "4", "--detail", "x", "--session", "s1")[0])
++        self.assertEqual(66, self.run_cli("revise", "4", "--detail", "x")[0])
++        self.assertEqual([self.item(ref) for ref in (1, 2, 3)], items)
++
++    def test_refuses_a_revision_that_fails_a_check_and_changes_nothing(self) -> None:
++        before = self.item(1)
++        for args in ([],
++                     ["--question", "x" * 121],
++                     ["--question", "Two\nlines?"],
++                     ["--question", " "],
++                     ["--recommend", "line one\nline two"],
++                     ["--recommend", "Add a budget"],
++                     ["--option", "Decline it"],
++                     ["--option", " "],
++                     ["--option", "x", "--option", " x "],
++                     [arg for n in "abcdef" for arg in ("--option", n)]):
++            with self.subTest(args=args[:2]):
++                code, out, _ = self.revise(*args)
++                self.assertEqual((65, ""), (code, out))
++        self.assertEqual(65, self.run_cli("revise", "1.a", "--detail", "x", "--session", "s1")[0])
++        with self.assertRaises(SystemExit) as stop, redirect_stderr(io.StringIO()):
++            self.revise("--option", "x", "--no-options")
++        self.assertEqual(2, stop.exception.code)
++        self.assertEqual(before, self.item(1))
++
++    def test_accepts_five_other_options_and_a_question_of_120_characters(self) -> None:
++        options = [arg for n in "bcdef" for arg in ("--option", n)]
++        self.assertEqual(0, self.revise("--question", "x" * 120, *options)[0])
++        self.assertEqual(6, len(self.item(1)["choices"]))
++
++    def test_two_revisions_at_once_both_land(self) -> None:
++        self.assertEqual(["done", "done"],
++                         at_once(lambda: inbox.revise("s1", "1", question="Decline the retry finding?"),
++                                 lambda: inbox.revise("s1", "1", options=["Add a budget per host"])))
++        self.assertEqual(("Decline the retry finding?", ["Decline it", "Add a budget per host"]),
++                         (self.item(1)["subject"], self.item(1)["choices"]))
++
++    def test_a_lock_another_process_holds_makes_a_revision_wait_then_exit_75(self) -> None:
++        before = self.item(1)
++        holder = self.hold_lock("wait")
++        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
++            code, _, err = self.revise("--question", "Decline the retry finding?")
++        self.assertEqual(75, code)
++        self.assertIn("another command holds", err)
++        self.assertEqual(before, self.item(1))
++        holder.stdin.close()
++        self.assertEqual(0, holder.wait())
++        self.assertEqual(0, self.revise("--question", "Decline the retry finding?")[0])
++
++
+ class SnoozeTests(InboxCase):
+     NOW = 1_800_000_000_000
+ 
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 2731f103..570b6a97 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -22,6 +22,7 @@
+     8: "b02e721cceaaed2765131919283b94f4b60a2c10fa5407dce3f25a58ecd5a097",
+     9: "c427d1e6effbc38103d89b576070ff2c7ad8b1d792e61a3fb3efb44351bb8172",
+     10: "79ad714d61653a155a8d3ea8168ceb4f72bd1bd2e247a91abc4489cf3870324d",
++    11: "76b426bb38c4943dfcf471b3b9aa958f36b988d766f153df5a120aa325a7db05",
+ }
+ 
+ 
