@@ -472,19 +472,24 @@ class ConfigSetTests(unittest.TestCase):
             self.assertFalse(self.repo_file.exists())
 
     def test_unset_removes_a_key_outside_the_schema_that_the_file_sets(self) -> None:
-        self.repo_file.write_text(
-            '# mine\n[review]\npeer_wait = "10m"  # no longer read\nsummarize = false\n'
-            "\n[legacy]\nlimits = { retries = 3 }\nkept = true\n"
-        )
+        self.repo_file.write_text('# mine\n[review]\npeer_wait = "10m"  # no longer read\nsummarize = false\n')
 
         code, stdout, stderr = self.invoke("config", "unset", "review.peer_wait")
+
         self.assertEqual(0, code, stderr)
         self.assertEqual(f"unset review.peer_wait in {self.repo_file}\n", stdout)
+        self.assertEqual("# mine\n[review]\nsummarize = false\n", self.repo_file.read_text())
 
-        code, _, stderr = self.invoke("config", "unset", "legacy.limits")
-        self.assertEqual(0, code, stderr)
+    def test_unset_refuses_a_key_that_names_a_table(self) -> None:
+        text = "legacy.kept = true\n\n[review]\nsummarize = false\n\n[site]\nlimits = { retries = 3 }\n"
+        self.repo_file.write_text(text)
 
-        self.assertEqual("# mine\n[review]\nsummarize = false\n\n[legacy]\nkept = true\n", self.repo_file.read_text())
+        for key in ("review", "legacy", "site.limits"):
+            code, _, stderr = self.invoke("config", "unset", key)
+
+            self.assertEqual(65, code, key)
+            self.assertIn(f"{key} is a table, and unset removes one setting, not a table", stderr)
+            self.assertEqual(text, self.repo_file.read_text())
 
     def test_unset_refuses_a_misspelled_key_the_file_does_not_set(self) -> None:
         text = '[review]\npeer_wait = "10m"\n'

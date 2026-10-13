@@ -604,7 +604,9 @@ them:
   written the same way, beside them.
 - **A table the file lacks** is added at the end of the file, and a missing
   file is created.
-- **`unset`** removes the key's line and leaves its table header.
+- **`unset`** removes the key's line and leaves its table header. It
+  removes one setting, not a table, so it refuses a key that names a
+  table, such as `review`, with exit code 65 and the file unchanged.
 
 Each command refuses a file that is not valid TOML with exit code 78, and a
 key it cannot change on its own line, such as one in an inline table

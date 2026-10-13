@@ -278,9 +278,11 @@ def write_value(path: Path, key: str, value: Any) -> Change:
     old = Config(before, {}, []).get(key)
     if same_value(old, value):
         return Change("unchanged", key, old, value, path)
+    if isinstance(old, dict):
+        command = "unset removes" if value is None else "set changes"
+        raise ProjectorError(f"{path}: {key} is a table, and {command} one setting, not a table; the file is unchanged")
 
-    expected = {name: setting for name, setting in _flatten(before).items()
-                if name != key and not name.startswith(f"{key}.")}
+    expected = {name: setting for name, setting in _flatten(before).items() if name != key}
     if value is not None:
         expected[key] = value
     text = _edited(original or "", key, value)
