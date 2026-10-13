@@ -1,0 +1,82 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index d397ca7..aa9f14e 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -120,7 +120,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 6 -->
++<!-- projector:begin 7 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -171,4 +171,14 @@ loop marks a pull request ready when its head reviews clean, so a draft says
+ the work has not been signed off yet. Never mark your own draft ready, even
+ once the reason you drafted it is resolved, because only a clean review
+ clears it.
++
++Talk with the person in the conversation as usual. When Projector's `ask`
++and `tell` tools are available, also post anything they must not miss to
++the inbox, a decision with `ask` and news with `tell`, and say it in your
++reply too. Always post it when it sits among a lot of other text, such as a
++decision in the middle of a long report, where the person could skim past
++it. Post news they need to act on, such as a pull request that is ready to
++merge or a failure that needs them, and anything that comes up while they
++are away. An item stays above their prompt until they answer or dismiss it,
++so keep the inbox for what matters, not as a log of everything you did.
+ <!-- projector:end -->
+diff --git a/docs/cli.md b/docs/cli.md
+index 0e3e3d2..f9a755d 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -44,8 +44,10 @@ what it did to each:
+   `gh stack` is unavailable, and keep every layer on the current head of the
+   one below so the stack can merge as a unit. Its last part applies only
+   where the Projector plugin is installed: build every change with the
+-  `implement` skill, so a watch loop starts on its pull request, and open every
+-  pull request as a draft until a clean review marks it ready. `init`
++  `implement` skill, so a watch loop starts on its pull request, open every
++  pull request as a draft until a clean review marks it ready, and, where the
++  `ask` and `tell` tools are available, post anything the person must not
++  miss to the inbox as well as saying it in the conversation. `init`
+   appends the section to an existing file or creates the file
+   with only that section, and refreshes the section when it falls behind the
+   template this command ships. Everything outside the markers is yours and
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 5cf7a57..5d25085 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 6 -->
++<!-- projector:begin 7 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -49,4 +49,14 @@ loop marks a pull request ready when its head reviews clean, so a draft says
+ the work has not been signed off yet. Never mark your own draft ready, even
+ once the reason you drafted it is resolved, because only a clean review
+ clears it.
++
++Talk with the person in the conversation as usual. When Projector's `ask`
++and `tell` tools are available, also post anything they must not miss to
++the inbox, a decision with `ask` and news with `tell`, and say it in your
++reply too. Always post it when it sits among a lot of other text, such as a
++decision in the middle of a long report, where the person could skim past
++it. Post news they need to act on, such as a pull request that is ready to
++merge or a failure that needs them, and anything that comes up while they
++are away. An item stays above their prompt until they answer or dismiss it,
++so keep the inbox for what matters, not as a log of everything you did.
+ <!-- projector:end -->
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index a3f04d6..57bd662 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -18,6 +18,7 @@
+     4: "8a5be21b0a353027b2193aa0eafc1f89ff4c619f9340ed7edf24795217771445",
+     5: "b149c63490732eae4ea0f70ef4985642828298910c16070079ff07f0933af74a",
+     6: "0b5e821b044698e0c71d5c50c54557f02f9dd005a2026c839672c278d2bae62e",
++    7: "5bb17e8e2ff73a35d3d17d3c2bd9569271506811e832703c6592c0977f2e9e2e",
+ }
+ 
+ 

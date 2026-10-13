@@ -1,0 +1,107 @@
+{
+ "version": 1,
+ "name": "Inbox posting guidance",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 291,
+  "title": "Tell agents to post what the person must not miss to the inbox",
+  "head": "e8fdc3c1e9e3825a9cbe337fde88d62a1bf4f60c",
+  "headRef": "agents-inbox",
+  "base": "f16a6fbfd7b8b4ff2258ee2cc63f4227e0bb3ede",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox is the list of items shown in Projector's band, the strip above the Claude Code prompt. An agent adds a question to it with the <code>ask</code> tool, or a notice that needs no answer with the <code>tell</code> tool. An item stays there until the person answers or dismisses it. The tools' descriptions say how to post an item, but nothing told an agent when to post one. So an agent tends to put a decision in the middle of a long reply, where the person skims past it.",
+   "This pull request adds one paragraph to the section that <code>project init</code> writes into a repository's <code>AGENTS.md</code>. The paragraph tells the agent to keep talking in the conversation, and also to post anything the person must not miss: a decision with <code>ask</code> and news with <code>tell</code>. It tells the agent to always post an item that sits among a lot of other text, and to keep the inbox for what matters rather than as a log.",
+   "The section carries a version number in its opening marker. Changing the text moves it from version 6 to 7, so <code>project check</code> in a repository that adopted Projector reports the old section as behind the template, and <code>project init</code> refreshes it. No Python or TypeScript behavior changes."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Projector section.</b> The text between <code>&lt;!-- projector:begin N --&gt;</code> and <code>&lt;!-- projector:end --&gt;</code> in <code>AGENTS.md</code>. Projector generates it from <code>src/projector/templates/agents-block.md</code>.</li><li><b>Pin.</b> The SHA-256 hash of each template version, kept in <code>tests/test_instructions.py</code>, so the text cannot change without a version bump.</li><li><b>Band.</b> Projector's strip above the Claude Code prompt that lists open inbox items.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One automated review, at <code>e8fdc3c</code>, found the head clean and opened no finding threads.</li><li>The full unit suite, <code>project check</code>, both <code>claude plugin validate</code> runs, and <code>git diff --check</code> pass at this head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "template",
+   "title": "The new paragraph in the generated section",
+   "kicker": "The text that every adopting repository's AGENTS.md receives, and its version pin",
+   "intro": [
+    "The template is the single source of the Projector section. <code>project init</code> copies it into each adopting repository's <code>AGENTS.md</code>, and <code>project check</code> compares the copy with it. The new paragraph goes at the end of the \"Projector skills\" part, whose rules apply only where the Projector plugin is installed.",
+    "Because the template text changed, its opening marker moves to version 7, and the test file pins the new text's hash. The pin test fails when the text changes without both."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Adds the paragraph on when to post to the inbox, and bumps the marker to version 7.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The paragraph applies only when the <code>ask</code> and <code>tell</code> tools are available. Codex has no band, so a Codex session is not told to post. No core skill or CLI command depends on the tools.",
+       "line": 53
+      },
+      {
+       "kind": "verify",
+       "text": "The claim that an item stays until the person answers or dismisses it matches <code>src/projector/inbox.py</code>: <code>prune</code> removes only items that were answered or dismissed and then delivered, and an open item has neither.",
+       "line": 60
+      }
+     ]
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins the version-7 hash beside the earlier versions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The full unit suite passes at this head, so this hash matches the template text.",
+       "line": 21
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "This repository's copy and the CLI guide",
+   "kicker": "The refreshed AGENTS.md and the docs line that lists what the section says",
+   "intro": [
+    "This repository adopts its own template, so its <code>AGENTS.md</code>, which <code>CLAUDE.md</code> links to, receives the same paragraph and marker. <code>docs/cli.md</code> lists the rules in the section's plugin-only part, and now names the new rule."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "AGENTS.md",
+     "note": "The Projector section refreshed to version 7.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>project check</code> prints no <code>instructions-outdated</code> warning at this head, so this section matches the template exactly."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Adds the inbox rule to the list of plugin-only rules in the section.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "No other document lists the section's contents, so this is the one description to keep in step with the template.",
+       "line": 49
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
