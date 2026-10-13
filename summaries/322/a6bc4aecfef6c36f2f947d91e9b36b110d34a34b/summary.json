@@ -1,0 +1,50 @@
+{
+ "version": 1,
+ "name": "Ignore setuptools build output",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 322,
+  "title": "Ignore the build directory setuptools writes at the root",
+  "head": "a6bc4aecfef6c36f2f947d91e9b36b110d34a34b",
+  "headRef": "ignore-build",
+  "base": "510f098e35f264eff4bec14a501770b723e0f6d7",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>.gitignore</code> tells Git which untracked files to leave out of <code>git status</code> and <code>git add</code>. Installing the Projector CLI from a checkout with <code>pip install .</code> makes setuptools, the Python build tool, write its build output to a <code>build/</code> directory at the repository root: a copy of the package under <code>build/lib/</code> and an empty <code>build/bdist.&lt;platform&gt;/</code>. The file already ignored setuptools' other output, <code>*.egg-info/</code>, but not <code>build/</code>, so every checkout that ever installed itself listed <code>build/</code> as untracked.",
+   "This pull request adds one rule, <code>/build/</code>. The leading slash anchors it to the repository root. An unanchored <code>build/</code> would match a directory of that name at any depth, and would silently hide a Projector plan named <code>build</code>, which would live at <code>docs/projects/build/readme.md</code>."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "ignore",
+   "title": "Ignore the root build directory",
+   "kicker": "One anchored ignore rule beside the other setuptools output",
+   "intro": [
+    "The new line sits beside <code>*.egg-info/</code>, under the file's opening comment that credentials and local build output never belong in the repository. It changes only what Git reports as untracked. Nothing in the repository reads <code>.gitignore</code> to decide what to package or publish."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".gitignore",
+     "note": "Adds <code>/build/</code>, anchored to the root, so only setuptools' output directory is ignored.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 8,
+       "text": "<code>git check-ignore -v</code> at this head matches <code>build/lib/projector/cli.py</code> and <code>build/bdist.linux-x86_64/x</code> to this line, and matches none of <code>docs/projects/build/readme.md</code>, <code>site/build/x.js</code> and <code>hooks/build/x</code>."
+      },
+      {
+       "kind": "verify",
+       "text": "No tracked file sits under any <code>build/</code> directory, so the rule hides nothing the repository commits. The wheel's contents do not depend on <code>.gitignore</code>: <code>pyproject.toml</code> lists its packages and package data explicitly. The full test suite, <code>project check</code>, and both <code>claude plugin validate</code> runs pass at this head."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

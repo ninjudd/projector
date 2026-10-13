@@ -1,0 +1,12 @@
+# Credentials and local build output never belong here.
+auth.json
+.credentials.json
+*.bak
+*.bak.*
+.venv/
+*.egg-info/
+/build/
+__pycache__/
+.DS_Store
+node_modules/
+.claude-plugin/types/
