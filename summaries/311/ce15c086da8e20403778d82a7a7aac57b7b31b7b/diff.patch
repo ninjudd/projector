@@ -1,0 +1,1038 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 5db801de..f7bfd0cb 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -629,6 +629,8 @@ else:
+ 
+ ```sh
+ project summary init --repo OWNER/NAME --pr 66 --summary summary.json
++project summary init --repo OWNER/NAME --pr 66 --summary summary.json --from-published
++project summary refresh --summary summary.json
+ project summary publish --summary summary.json
+ project site page --summary summary.json --out site
+ project site build --out _site --summaries summaries-ref/summaries
+@@ -646,6 +648,50 @@ one project the pull request carries out, as `project list` names it, or to
+ `""` for none, and `name` to a short title for the stack. A project the
+ checkout does not have yet publishes, because a pull request can add the
+ plan it carries out. `site page` does not check either field.
++
++`summary init --from-published` starts from the pull request's newest
++published summary instead of a skeleton, so a summary carries forward from
++one head to the next. It fetches `refs/projector/summaries` from `--remote`,
++`origin` by default, and copies the summary the site shows as the pull
++request's newest. That is the summary published last, dated by the
++`spec.json` an older release stored beside it when there is one, so a
++republished old head never outranks a newer head. A summary this checkout
++keeps in its own `refs/projector/summaries` counts too, and wins when it is
++newer, so a summary previewed with `--local` carries forward. When the
++fetch fails, it reads the copy of the remote's ref that this checkout
++already has. It reads a head stored only as `spec.json` from that file, and
++reads `refs/projector/walkthroughs` while neither the remote nor this
++checkout has `refs/projector/summaries`, as `site serve` does. `--head`
++copies the summary of the head whose SHA starts with the value you pass
++instead. It refuses a `--remote` whose GitHub repository is not `--repo`,
++and fails when no summary of the pull request is stored.
++
++`summary refresh` brings a summary up to its pull request's current head
++and base. It sets every `pr` field to what GitHub reports now. That
++includes `pr.base`, the merge base the page's diff starts from, which moves
++when you merge the base branch into the pull request, and `pr.basePr`,
++which it removes once the pull request is no longer stacked. It puts each
++file new to the diff in the `unassigned` group, adding that group last when
++the summary has none, and drops each file that left the diff, printing that
++file's note and checks so you can move what still applies. It lists each
++note whose `line` the new diff does not show, leaves that note as it is,
++and changes no other prose. It replaces the file in one step, and only when
++something changed:
++
++```console
++$ project summary refresh --summary summary.json
++refreshed summary.json to owner/example#66 at 9c1d07e2a
++  pr.head: 4f2a9c107 → 9c1d07e2a
++  pr.base: 0b7e3d4c8 → 61aa2f05e
++added 1 file new to the diff to the unassigned group; move each into the group it belongs to:
++  +40    -0     src/check/name.go (new)
++1 note names a line the diff no longer shows; move each to where its code now sits, or remove it:
++  src/check/card.go line 88 (new side), in core: flag: The retry ignores the timeout.
++```
++
++Pass `--diff` to `summary refresh` when GitHub cannot serve the diff. It
++must run from the pull request's current merge base to its current head.
++
+ `summary publish` then fetches the pull request's diff, checks
+ that the summary builds against it, commits the summary and the diff to the
+ hidden ref without touching the checkout, and starts the repository's site
+@@ -1074,9 +1120,10 @@ A Markdown, MDX, reStructuredText, or AsciiDoc file is documentation, except a
+ skill's `SKILL.md`. A skill is instructions an agent follows, so its
+ `SKILL.md` counts as hand-written and starts expanded.
+ 
+-`summary init` and `site page` read the attributes with `git check-attr` in
+-the checkout they run in. `site build` and `site serve` read them in the
+-checkout `--repo-root` names, for each summary stored without them:
++`summary init`, `summary refresh`, and `site page` read the attributes with
++`git check-attr` in the checkout they run in. `site build` and `site serve`
++read them in the checkout `--repo-root` names, for each summary stored
++without them:
+ 
+ - **The checkout has the pull request's head commit.** The head's own
+   `.gitattributes` files answer, so a pull request that changes them is
+diff --git a/docs/site.md b/docs/site.md
+index d9bd0147..74a64e6b 100644
+--- a/docs/site.md
++++ b/docs/site.md
+@@ -167,19 +167,20 @@ path with `404.html`.
+ Older releases stored each summary as `spec.json`, and the site reads only
+ `summary.json`. The site leaves out each summary stored only as `spec.json`,
+ and the deploy reports it as skipped. To show one again, upgrade Projector,
+-then publish the stored summary under the new name:
++then copy the stored summary and publish it under the new name:
+ 
+ ```sh
+ project upgrade
+-git fetch origin refs/projector/summaries
+-git show FETCH_HEAD:summaries/<number>/<head>/spec.json > summary.json
++project summary init --repo <owner>/<repo> --pr <number> --head <head> \
++  --summary summary.json --from-published
+ project summary publish --summary summary.json
+ ```
+ 
+-`publish` stores `summary.json` beside the old file, and the next deploy
+-shows the summary. The site dates a republished summary by its `spec.json`,
+-when its head was first published, so you can republish a pull request's
+-heads in any order.
++`init --from-published` reads the head's `spec.json` when no `summary.json`
++is beside it. `publish` stores `summary.json` beside the old file, and the
++next deploy shows the summary. The site dates a republished summary by its
++`spec.json`, when its head was first published, so you can republish a pull
++request's heads in any order.
+ 
+ ## Update a site set up for walkthroughs
+ 
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 86e8c40c..cc65982d 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -867,12 +867,12 @@ and the user sets it.
+ Then follow `summarize-pr` for this head, with two differences from a
+ summary a person asks for:
+ 
+-- **Update rather than start over.** When the summaries ref already holds a
+-  summary of this pull request, start from its newest version and update it
+-  as the skill's "Update the page when the pull request moves" section
+-  describes, so a fix-cycle head costs a revision, not a rewrite. The newest
+-  version can come from another session or account, and can be at this very
+-  head. Build on it all the same.
++- **Update rather than start over.** Run `project summary init` with
++  `--from-published` first. When it finds a summary of this pull request,
++  update that one as the skill's "Update the page when the pull request
++  moves" section describes, so a fix-cycle head costs a revision, not a
++  rewrite. The newest version can come from another session or account,
++  and can be at this very head. Build on it all the same.
+ - **Carry the review into it.** Every finding thread still open after this
+   review, from the query in § Verify earlier findings, becomes a `flag` check on its
+   file at its `line`, saying what the finding says, so a reader sees what
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index df672769..78a12535 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -120,8 +120,10 @@ push to, or approve the pull request unless the user asks.
+       beneath. A layer that starts the work of another plan records that
+       plan, and the site starts a new header there.
+       `gh api repos/OWNER/NAME/stacks?pull_request=NUMBER` lists the stack's
+-      pull requests on GitHub, and the summaries ref holds what each
+-      summarized layer chose. When that request answers 404 or fails, follow
++      pull requests on GitHub. To read what a summarized layer chose, copy
++      its newest summary with `project summary init --repo OWNER/NAME --pr
++      LAYER --summary WORKDIR/LAYER.json --from-published` and read its
++      `project`. When that request answers 404 or fails, follow
+       the summary's `pr.basePr` down the stack instead, as the site falls
+       back to base branches. Record the project's name as `project list`
+       gives it, such as `"stack-header"` or `"payments/invoices"`, or `""`
+@@ -310,14 +312,15 @@ summary rather than the deployment. The site's Reviews section lists
+ every summary at `reviews/`, serves each pull request's newest head at
+ `reviews/<number>/` and each head at `reviews/<number>/<head>/`, and links the
+ older heads and every pull request in the same stack from each page. The
+-summary on the ref is the durable copy: to update a summary later, fetch it
+-with `git fetch origin refs/projector/summaries` and start from it rather
+-than from a fresh `init`. A summary that an older release stored there as
+-`spec.json` does not appear on the site, and the deploy reports it as
+-skipped. To update one, start from its `spec.json` and publish it as
+-`summary.json`. A repository that has not published since summaries were
+-called walkthroughs has its summaries on `refs/projector/walkthroughs`, under
+-`walkthroughs/`, instead, all stored as `spec.json`. Its next `publish`
++summary on the ref is the durable copy: to update a summary later, start
++from it with `project summary init --from-published`, as "Update the page
++when the pull request moves" describes, rather than from a fresh skeleton.
++A summary that an older release stored there as `spec.json` does not
++appear on the site, and the deploy reports it as skipped.
++`init --from-published` reads a `spec.json` too, and `publish` stores the
++copy as `summary.json`. A repository that has not published since summaries
++were called walkthroughs has its summaries on `refs/projector/walkthroughs`,
++under `walkthroughs/`, instead, all stored as `spec.json`. Its next `publish`
+ carries them over to the new ref, where they stay off the site until each is
+ published again.
+ 
+@@ -355,41 +358,61 @@ The workflow calls `ninjudd/projector/actions/site@v0`. Pass
+ 
+ ## Update the page when the pull request moves
+ 
+-Start from the newest version of the summary on the summaries ref, whoever
++Start from the newest version of the pull request's summary, whoever
+ published it. Another session or account can have summarized the pull
+-request already, at an earlier head or at this one. To get that version,
+-fetch the ref, find the folder most recently written for the pull request,
+-and copy its summary. `HEAD_SHA` is the head that folder names:
++request already, at an earlier head or at this one. From a checkout whose
++`origin` is the repository, copy that version:
+ 
+ ```sh
+-git fetch origin refs/projector/summaries
+-git log -1 --name-only --format= FETCH_HEAD -- summaries/NUMBER/
+-git show FETCH_HEAD:summaries/NUMBER/HEAD_SHA/summary.json > WORKDIR/summary.json
++project summary init --from-published \
++  --repo OWNER/NAME --pr NUMBER --summary WORKDIR/summary.json
+ ```
+ 
+-When that folder is already this head, revise its summary in place of
+-starting a new one, and skip step 1.
++`--from-published` fetches the summaries ref and copies the summary the
++site shows as the pull request's newest. A summary an earlier `publish`
++kept in this checkout counts too, when it is newer. It also reads a summary
++that an older release stored as `spec.json`. It names the head the copy
++describes, `OLD_HEAD`. When it finds no summary, build one as "Build the
++summary" describes instead. Write the prose and choose the groups
++yourself, and let the CLI change everything else:
+ 
+-1. List what changed since the summary's head:
++1. Bring the summary up to the pull request's current head:
++
++   ```sh
++   project summary refresh --summary WORKDIR/summary.json
++   ```
++
++   `refresh` sets every `pr` field to what GitHub reports now, and prints
++   each one it changes, such as `pr.head: OLD_HEAD → NEW_HEAD`. That
++   includes `pr.base`, the merge base the page's diff starts from, which
++   moves when the base branch is merged in. It puts each file new to the
++   diff in the `unassigned` group, drops each file that left the diff and
++   prints that file's note and checks, and lists each note whose `line` the
++   new diff no longer shows. It changes no other prose. When `pr.head` did
++   not change, the summary already describes this head: skip step 2 and
++   revise it in place. Pass `--diff` only when `refresh` reports that
++   GitHub could not serve the diff, with the local diff from the new
++   `pr.base` to `pr.head`, as for `page`.
++2. List what changed since the summary's old head:
+    `git log --oneline OLD_HEAD..NEW_HEAD` and
+    `git diff OLD_HEAD NEW_HEAD`. A rebase makes the old head unreachable;
+    compare against the new merge base instead.
+-2. Read the new commits and any new review threads, then revise the summary:
+-   set `pr.head`, move new files into groups, drop files that left the diff,
+-   and rewrite every note, check and overview card the change made untrue.
++3. Read the new commits and any new review threads, then revise the prose.
++   Move each file in the `unassigned` group into the group it belongs to,
++   and remove that group once it is empty. Carry over what still applies of
++   a dropped file's prose, such as the note of a file the change renamed.
++   Rewrite every note, check and overview card the change made untrue.
+    Make the two choices at the end of step 4 of "Build the summary" again: a
+    summary published before summaries recorded a project has no `project`,
+    and `publish` refuses it until you set one, and a `name` must still title
+    the stack in at most 60 characters.
+    Move each note that has a `line` to where its code sits in the new diff,
+-   using step 1's diff, and remove a note whose code is gone: `build` checks
+-   only that a line is still in its file's diff, not that it still holds the
+-   code the note is about. Resolve or remove `flag` checks the new commits
+-   fixed.
+-3. `publish` the revised summary, which becomes a new version beside the old
++   using step 2's diff, starting with the notes `refresh` listed, and remove
++   a note whose code is gone: `build` checks only that a line is still in
++   its file's diff, not that it still holds the code the note is about.
++   Resolve or remove `flag` checks the new commits fixed.
++4. `publish` the revised summary, which becomes a new version beside the old
+    one, pushed to a hosted site or kept in the checkout as the first time.
+-   A summary kept in the checkout is found there later with
+-   `git show refs/projector/summaries:summaries/NUMBER/OLD_HEAD/summary.json`.
+    For an artifact the user asked for, rebuild and republish to the same
+    one: publish the same file path again in the conversation that created
+    it, or pass the artifact's URL as `url` after reading it from any other
+diff --git a/skills/summarize-pr/format.md b/skills/summarize-pr/format.md
+index b236dc8f..a6139b2f 100644
+--- a/skills/summarize-pr/format.md
++++ b/skills/summarize-pr/format.md
+@@ -1,7 +1,8 @@
+ # Summary format
+ 
+-`project summary init` writes the skeleton and `project site page` reads
+-it. The summary is JSON:
++`project summary init` writes the skeleton, `project summary refresh`
++brings it up to the pull request's current head, and `project site page`
++reads it. The summary is JSON:
+ 
+ ```json
+ {
+@@ -63,11 +64,11 @@ it. The summary is JSON:
+   row on the Reviews index take the pull request's title.
+ - `pr.head` is the commit the page describes. `build` stops when the pull
+   request has moved past it, unless `--at-head` asks for that head exactly.
+-- `pr.base` is the merge base the diff is taken from. `init` records it; the
+-  page shows the diff from `pr.base` to `pr.head`.
++- `pr.base` is the merge base the diff is taken from. The page shows the
++  diff from `pr.base` to `pr.head`.
+ - `pr.headRef`, and `pr.basePr` when the base branch is another open pull
+   request's head, are what the site's review list uses to mark a stacked pull
+-  request. `init` records both; keep them when you edit a summary by hand.
++  request.
+   Each file's **View file on GitHub** link opens the file on `pr.headRef`, so
+   it shows the current version. Once the site's last build found the pull
+   request merged, it opens the file on the branch it merged into, since the
+@@ -78,6 +79,10 @@ it. The summary is JSON:
+   request was closed without merging, or has not merged and the summary has
+   no `headRef`. It opens a file the pull request deleted at `pr.base`, the
+   last commit that has it.
++- `init` records every `pr` field, and `refresh` sets each again from the
++  pull request as GitHub reports it. So `pr.base` moves once the base
++  branch is merged into the pull request, and `pr.basePr` goes once the pull
++  request is no longer stacked.
+ - `overview.summary` is what the pull request does, in a few paragraphs.
+   The page adds the line counts and the list of files itself.
+ - Each item of `overview.summary` and of a group's `intro` renders as a
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index c7b7bc9b..cdc659e9 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -419,11 +419,28 @@ def parser() -> argparse.ArgumentParser:
+ 
+     summary_parser = subcommands.add_parser("summary", help="write and publish pull request summaries")
+     summary_commands = summary_parser.add_subparsers(dest="summary_command", required=True)
+-    summary_init = summary_commands.add_parser("init", help="write a skeleton summary for a pull request")
++    summary_init = summary_commands.add_parser(
++        "init", help="write a skeleton summary for a pull request, or copy its newest published summary"
++    )
+     summary_init.add_argument("--repo", required=True, help="OWNER/NAME")
+     summary_init.add_argument("--pr", required=True, type=int)
+     summary_init.add_argument("--summary", required=True)
+     summary_init.add_argument("--diff", help="read the diff from this file instead of GitHub")
++    summary_init.add_argument(
++        "--from-published", action="store_true",
++        help="copy the pull request's newest summary from the summaries ref instead of writing a skeleton",
++    )
++    summary_init.add_argument(
++        "--remote", help="with --from-published, the remote whose summaries ref to fetch (default: origin)"
++    )
++    summary_init.add_argument(
++        "--head", help="with --from-published, copy the summary of the head whose SHA starts with this"
++    )
++    summary_refresh = summary_commands.add_parser(
++        "refresh", help="bring a summary up to its pull request's current head and base, and say what changed"
++    )
++    summary_refresh.add_argument("--summary", required=True)
++    summary_refresh.add_argument("--diff", help="read the diff from this file instead of GitHub")
+     summary_publish = summary_commands.add_parser(
+         "publish", help="commit a summary to the hidden summaries ref and start a site build"
+     )
+@@ -1232,9 +1249,58 @@ def send(line: str) -> None:
+     return 0
+ 
+ 
++def init_from_published(arguments: argparse.Namespace) -> None:
++    """Copy pull request `--pr`'s newest published summary to `--summary`, as `serve.newest_summary` chooses it.
++
++    The remote's summaries ref is fetched first. When that fails, the copy
++    this checkout already has answers, with this checkout's own ref.
++    """
++    from .site import serve
++
++    if arguments.diff:
++        raise UsageError("--from-published copies a summary and reads no diff; pass --diff to `summary refresh`")
++    remote = arguments.remote or "origin"
++    root = summary.checkout_root()
++    if root is None:
++        raise summary.SummaryError(f"--from-published reads the summaries ref, so run it in a checkout of "
++                                   f"{arguments.repo}")
++    slug = summary.repo_slug(summary.git("-C", str(root), "remote", "get-url", remote))
++    if slug and slug.lower() != arguments.repo.lower():
++        raise summary.SummaryError(f"{remote} is {slug}, but --repo is {arguments.repo}")
++    reason = serve.fetch_summaries(root, remote)
++    if reason:
++        print(f"reading the summaries this checkout already has; could not fetch {remote}'s: {reason}",
++              file=sys.stderr)
++    head = (arguments.head or "").lower()
++    found = serve.newest_summary(root, remote, arguments.pr, head)
++    if found is None:
++        raise summary.SummaryError(f"{remote} has no summary of {arguments.repo}#{arguments.pr}"
++                                   f"{f' at {head}' if head else ''}, and neither does this checkout; run "
++                                   "`project summary init` without --from-published to start one")
++    try:
++        stored = json.loads(summary.git("-C", str(root), "show", f"{found.ref}:{found.path}"))
++    except ValueError as error:
++        raise summary.SummaryError(f"{found.path} on {found.ref} is not JSON: {error}") from error
++    summary.write_summary(Path(arguments.summary), stored)
++    when = datetime.datetime.fromtimestamp(found.when, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
++    print(f"wrote {arguments.summary}: the summary of {arguments.repo}#{arguments.pr} at "
++          f"{found.path.split('/')[-2][:9]}, published {when}, from {found.ref}")
++    if found.path.endswith(summary.LEGACY_SUMMARY_FILE):
++        print(f"an older release stored it as {summary.LEGACY_SUMMARY_FILE}; `project summary publish` stores it as "
++              "summary.json, which the site reads")
++    print(f"`project summary refresh --summary {arguments.summary}` brings it up to the pull request's current head")
++
++
+ def run_summary(arguments: argparse.Namespace) -> int:
+     if arguments.summary_command == "init":
+-        summary.init(arguments.repo, arguments.pr, arguments.summary, arguments.diff)
++        if arguments.from_published:
++            init_from_published(arguments)
++        elif arguments.remote or arguments.head:
++            raise UsageError("--remote and --head choose a published summary; pass them with --from-published")
++        else:
++            summary.init(arguments.repo, arguments.pr, arguments.summary, arguments.diff)
++    elif arguments.summary_command == "refresh":
++        summary.refresh(arguments.summary, arguments.diff)
+     else:
+         pr = summary.summary_pr(json.loads(Path(arguments.summary).read_text(encoding="utf-8")))
+         site, reason = (None, "--local asked for a local preview") if arguments.local \
+diff --git a/src/projector/site/serve.py b/src/projector/site/serve.py
+index ed723eae..5292410c 100644
+--- a/src/projector/site/serve.py
++++ b/src/projector/site/serve.py
+@@ -6,6 +6,8 @@
+ site and no workflow. While it runs it watches the files the site is built
+ from and the summaries ref, fetching the ref again every minute, and
+ rebuilds when either changes, as each publish redeploys a Pages site.
++`summary init --from-published` reads a pull request's newest summary from
++the same refs.
+ """
+ 
+ from __future__ import annotations
+@@ -19,10 +21,10 @@
+ import tempfile
+ import threading
+ from pathlib import Path
+-from typing import Callable
++from typing import Callable, NamedTuple
+ from urllib.parse import urlsplit
+ 
+-from ..summary import LEGACY_PAGES_REF, LEGACY_PAGES_ROOT, PAGES_REF, PAGES_ROOT
++from ..summary import LEGACY_PAGES_REF, LEGACY_PAGES_ROOT, LEGACY_SUMMARY_FILE, PAGES_REF, PAGES_ROOT
+ 
+ ThreadingHTTPServer = http.server.ThreadingHTTPServer
+ LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+@@ -116,18 +118,60 @@ def extract_summaries(root: Path, ref: str, dest: Path, folder: str = PAGES_ROOT
+             tar.extractall(dest, filter="data")
+         else:
+             tar.extractall(dest)
++    for name, when in commit_times(root, ref, folder).items():
++        path = dest / name
++        if path.is_file():
++            os.utime(path, (when, when))
++    return dest / folder
++
++
++def commit_times(root: Path, ref: str, folder: str) -> dict[str, int]:
++    """When the commit that last changed each path under `folder` on `ref` was made, as a Unix time, by path."""
+     log = run_git(root, "log", "--format=%x01%ct", "--name-only", ref, "--", folder).stdout.decode()
+-    dated: set[str] = set()
++    dated: dict[str, int] = {}
+     when = 0
+     for line in log.splitlines():
+         if line.startswith("\x01"):
+             when = int(line[1:])
+-        elif line and line not in dated:
+-            dated.add(line)
+-            path = dest / line
+-            if path.is_file():
+-                os.utime(path, (when, when))
+-    return dest / folder
++        elif line:
++            dated.setdefault(line, when)
++    return dated
++
++
++class StoredSummary(NamedTuple):
++    """A summary on a summaries ref: the ref, the path of its file there, and when it was published, as a Unix time."""
++    ref: str
++    path: str
++    when: int
++
++
++def newest_summary(root: Path, remote: str, number: int, head: str = "") -> StoredSummary | None:
++    """The newest summary of pull request `number` on the refs `summaries_refs` reads, or None when none holds one.
++
++    `head` limits the choice to the heads whose SHA starts with it. A
++    summary is as new as the site dates it: by the commit that last changed
++    the `spec.json` an older release stored for its head, when there is one,
++    so a republished old head never outranks a newer one, and by its
++    `summary.json` otherwise. A head stored only as `spec.json` is read from
++    that file. When the remote's copy and this checkout's own ref date their
++    newest alike, this checkout's wins, as it does on the site.
++    """
++    newest: tuple[int, int, StoredSummary] | None = None
++    for rank, (ref, folder) in enumerate(summaries_refs(root, remote)):
++        prefix = f"{folder}/{number}/"
++        listed = run_git(root, "ls-tree", "-r", "--name-only", ref, "--", prefix).stdout.decode().splitlines()
++        heads: dict[str, dict[str, str]] = {}
++        for path in listed:
++            stored_head, _, name = path.removeprefix(prefix).partition("/")
++            if stored_head.startswith(head) and name in ("summary.json", LEGACY_SUMMARY_FILE):
++                heads.setdefault(stored_head, {})[name] = path
++        times = commit_times(root, ref, prefix) if heads else {}
++        for files in heads.values():
++            read = files.get("summary.json") or files[LEGACY_SUMMARY_FILE]
++            when = times.get(files.get(LEGACY_SUMMARY_FILE) or read, 0)
++            if newest is None or (when, rank) > newest[:2]:
++                newest = (when, rank, StoredSummary(ref, read, when))
++    return None if newest is None else newest[2]
+ 
+ 
+ class Summaries:
+diff --git a/src/projector/summary.py b/src/projector/summary.py
+index 0b0fd30e..a0508c51 100644
+--- a/src/projector/summary.py
++++ b/src/projector/summary.py
+@@ -2,7 +2,8 @@
+ 
+ A summary records a pull request's merge base and head and assigns every changed
+ file to a group with its explanation and checks. This module writes skeleton
+-summaries, checks a summary against its diff, publishes summaries to the hidden ref
++summaries, carries a summary forward to its pull request's current head and
++base, checks a summary against its diff, publishes summaries to the hidden ref
+ refs/projector/summaries, and says whether a repository hosts a site that
+ serves them. Rendering summaries into pages is `projector.site`'s job.
+ """
+@@ -23,9 +24,10 @@
+ import tempfile
+ import time
+ from pathlib import Path
++from typing import NamedTuple
+ from urllib.parse import urlparse
+ 
+-from .core import FileAction, ProjectorError
++from .core import FileAction, ProjectorError, write_through
+ 
+ SUMMARY_VERSION = 1
+ CHECK_KINDS = ("context", "verify", "flag")
+@@ -502,7 +504,7 @@ def gh(*args: str, input: str | None = None) -> str:
+     try:
+         return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, input=input).stdout
+     except FileNotFoundError as exc:
+-        raise SummaryError("the gh CLI is not installed; pass --diff and fill the pr fields by hand") from exc
++        raise SummaryError("the gh CLI is not installed") from exc
+     except subprocess.CalledProcessError as exc:
+         raise SummaryError(f"gh {' '.join(args)} failed: {exc.stderr.strip()}") from exc
+ 
+@@ -908,7 +910,7 @@ def sanitized_check(c: dict) -> dict:
+     out = {"kind": c["kind"], "text": sanitize_html(c["text"])}
+     if c.get("line") is not None:
+         out["line"] = int(c["line"])
+-        out["side"] = "old" if c.get("side") == "old" else "new"
++        out["side"] = side_of(c)
+     return out
+ 
+ 
+@@ -952,14 +954,11 @@ def validate(summary: dict, files: list[dict]) -> None:
+                 problems.append(f"{path} is in both {seen[path]} and {gid}")
+             else:
+                 seen[path] = gid
+-            lines = {"new": diff_lines(by_path[path], "new"), "old": diff_lines(by_path[path], "old")}
+             for c in fs.get("checks") or []:
+                 if c.get("kind") not in CHECK_KINDS or not c.get("text"):
+                     problems.append(f"{path}: each check needs a kind ({kinds}) and a text")
+-                elif c.get("line") is not None:
+-                    side = "old" if c.get("side") == "old" else "new"
+-                    if not isinstance(c["line"], int) or c["line"] not in lines[side]:
+-                        problems.append(f"{path}: line {c['line']} ({side} side) is not in its diff")
++            for c in unshown_lines(fs, by_path[path]):
++                problems.append(f"{path}: line {c['line']} ({side_of(c)} side) is not in its diff")
+         for c in g.get("checks") or []:
+             if c.get("kind") not in CHECK_KINDS or not c.get("text"):
+                 problems.append(f"{gid}: each check needs a kind ({kinds}) and a text")
+@@ -979,6 +978,18 @@ def diff_lines(f: dict, side: str) -> set[int]:
+     return {line[index] for h in f["hunks"] for line in h["lines"] if line[0] in kinds and isinstance(line[index], int)}
+ 
+ 
++def side_of(check: dict) -> str:
++    """The side of the diff a check's `line` counts on: `old` when it says so, and `new` otherwise."""
++    return "old" if check.get("side") == "old" else "new"
++
++
++def unshown_lines(entry: dict, f: dict) -> list[dict]:
++    """The checks on a summary's file `entry` that name a `line` the diff of `f`, from `parse_diff`, does not show."""
++    lines = {"new": diff_lines(f, "new"), "old": diff_lines(f, "old")}
++    return [c for c in entry.get("checks") or [] if c.get("line") is not None
++            and (not isinstance(c["line"], int) or c["line"] not in lines[side_of(c)])]
++
++
+ def stats(files: list[dict]) -> dict:
+     out = {"files": len(files), "adds": 0, "dels": 0, "hand": 0, "test": 0, "generated": 0, "docs": 0}
+     for f in files:
+@@ -1496,22 +1507,151 @@ def default_branch(remote: str = "origin", root: Path | None = None) -> str:
+     return head.split("/", 1)[1] if "/" in head else head
+ 
+ 
+-def init(repo: str, number: int, summary_path: str, diff_path: str | None = None) -> None:
++UNASSIGNED = "unassigned"
++
++
++def unassigned_group(paths: list[str]) -> dict:
++    """The group that holds changed files until someone groups them: every file after `init`, and each file new to
++    the diff after `refresh`."""
++    return {"id": UNASSIGNED, "title": "Unassigned", "kicker": "", "intro": [], "checks": [],
++            "files": [{"path": path} for path in paths]}
++
++
++def write_summary(path: Path, summary: dict) -> None:
++    """Replace the summary file at `path` in one step, so a reader never finds it half written."""
++    write_through(path, json.dumps(summary, indent=2, ensure_ascii=False) + "\n")
++
++
++def file_row(f: dict) -> str:
++    """One line naming a changed file from `parse_diff`, with its line counts and its kind."""
++    flag = f" [{f['kind']}]" if f["kind"] else ""
++    return f"+{f['adds']:<5} -{f['dels']:<5} {f['path']}{flag}{' (new)' if f['new'] else ''}"
++
++
++def current_diff(repo: str, number: int, diff_path: str | None = None) -> tuple[dict, list[dict]]:
++    """Pull request `number`'s `pr` fields as GitHub reports them now, and its diff's files, classified as its head's
++    attributes mark them. The diff is read from `diff_path` when given, and fetched from `pr.base` to `pr.head`
++    otherwise."""
+     meta = pr_metadata(repo, number)
+     diff = Path(diff_path).read_text(encoding="utf-8") if diff_path else fetch_diff(repo, meta["base"], meta["head"])
+     files = parse_diff(diff)
+     classify(files, generated_attributes([f["path"] for f in files], meta["head"], repo))
++    return meta, files
++
++
++def init(repo: str, number: int, summary_path: str, diff_path: str | None = None) -> None:
++    meta, files = current_diff(repo, number, diff_path)
+     summary = {
+         "version": SUMMARY_VERSION,
+         "name": "",
+         "project": None,
+         "pr": meta,
+         "overview": {"summary": [], "cards": []},
+-        "groups": [{"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "checks": [],
+-                    "files": [{"path": f["path"]} for f in files]}],
++        "groups": [unassigned_group([f["path"] for f in files])],
+     }
+-    Path(summary_path).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
++    write_summary(Path(summary_path), summary)
+     print(f"wrote {summary_path}: {meta['repo']}#{meta['number']} at {meta['head'][:9]}, {len(files)} files")
+     for f in files:
+-        flag = f" [{f['kind']}]" if f["kind"] else ""
+-        print(f"  +{f['adds']:<5} -{f['dels']:<5} {f['path']}{flag}{' (new)' if f['new'] else ''}")
++        print(f"  {file_row(f)}")
++
++
++def shown_field(value: object) -> str:
++    """A `pr` field's value as `refresh` prints it: a commit SHA shortened to nine characters, as it prints a head,
++    and a missing field as `none`."""
++    text = "none" if value is None else str(value)
++    return text[:9] if FULL_SHA.fullmatch(text) else text
++
++
++class Refreshed(NamedTuple):
++    """What `carry_forward` changed in a summary, and the notes it left for someone to move."""
++    changes: list[str]
++    added: list[dict]
++    dropped: list[tuple[str, dict]]
++    emptied: list[str]
++    stale: list[tuple[str, str, dict]]
++
++
++def carry_forward(summary: dict, meta: dict, files: list[dict]) -> Refreshed:
++    """Change `summary` in place to describe the pull request whose `pr` fields are `meta` and whose diff's files,
++    from `parse_diff`, are `files`.
++
++    Every `pr` field becomes its value in `meta`, and a field `meta` lacks,
++    such as the `basePr` of a pull request no longer stacked, goes. Each file
++    new to the diff joins the unassigned group, which is added last when the
++    summary has none, and each file that left the diff leaves its group with
++    its note and checks. The result lists each of those, each group the drops
++    emptied, and each note whose `line` the diff does not show, which stays.
++    """
++    old = summary.get("pr") or {}
++    changes = [f"pr.{key}: {shown_field(old.get(key))} → {shown_field(meta.get(key))}"
++               for key in [*meta, *(key for key in old if key not in meta)] if old.get(key) != meta.get(key)]
++    summary["pr"] = meta
++    by_path = {f["path"]: f for f in files}
++    groups = summary.setdefault("groups", [])
++    dropped: list[tuple[str, dict]] = []
++    shrunk: list[dict] = []
++    placed: set[str] = set()
++    for g in groups:
++        entries = g.get("files") or []
++        kept = [entry for entry in entries if entry.get("path") in by_path]
++        if len(kept) < len(entries):
++            dropped += [(g.get("id"), entry) for entry in entries if entry.get("path") not in by_path]
++            g["files"] = kept
++            shrunk.append(g)
++        placed.update(entry["path"] for entry in kept)
++    added = [f for f in files if f["path"] not in placed]
++    if added:
++        unassigned = next((g for g in groups if g.get("id") == UNASSIGNED), None)
++        if unassigned is None:
++            groups.append(unassigned_group([f["path"] for f in added]))
++        else:
++            unassigned["files"] = [*(unassigned.get("files") or []), *({"path": f["path"]} for f in added)]
++    stale = [(g.get("id"), entry["path"], c) for g in groups for entry in g.get("files") or []
++             if entry.get("path") in by_path for c in unshown_lines(entry, by_path[entry["path"]])]
++    return Refreshed(changes, added, dropped, [g.get("id") for g in shrunk if not g.get("files")], stale)
++
++
++def refresh(summary_path: str, diff_path: str | None = None) -> None:
++    """Bring the summary at `summary_path` up to its pull request as GitHub reports it now, and print what changed.
++
++    `carry_forward` makes the changes, and leaves every piece of prose but
++    a dropped file's as it was. The file is replaced in one step, and only
++    when something changed. `diff_path` holds the diff from the pull
++    request's current merge base to its current head, for a pull request
++    GitHub cannot serve one for.
++    """
++    path = Path(summary_path)
++    summary = json.loads(path.read_text(encoding="utf-8"))
++    pr = summary_pr(summary)
++    meta, files = current_diff(str(pr["repo"]), int(pr["number"]), diff_path)
++    done = carry_forward(summary, meta, files)
++    where = f"{meta['repo']}#{meta['number']} at {meta['head'][:9]}"
++    if done.changes or done.added or done.dropped:
++        write_summary(path, summary)
++        print(f"refreshed {summary_path} to {where}")
++    else:
++        print(f"{summary_path} already matches {where}; nothing changed")
++    for change in done.changes:
++        print(f"  {change}")
++    if done.added:
++        print(f"added {len(done.added)} {'file' if len(done.added) == 1 else 'files'} new to the diff to the "
++              f"{UNASSIGNED} group; move each into the group it belongs to:")
++        for f in done.added:
++            print(f"  {file_row(f)}")
++    if done.dropped:
++        print(f"dropped {len(done.dropped)} {'file' if len(done.dropped) == 1 else 'files'} that left the diff, with "
++              "the prose below; move what still applies:")
++        for gid, entry in done.dropped:
++            print(f"  {entry.get('path')}, from {gid}")
++            if entry.get("note"):
++                print(f"    note: {entry['note']}")
++            for c in entry.get("checks") or []:
++                at = f" on line {c['line']} ({side_of(c)} side)" if c.get("line") is not None else ""
++                print(f"    {c.get('kind')}{at}: {c.get('text')}")
++    for gid in done.emptied:
++        print(f"group {gid} has no files left; move its prose and remove it, or move files into it")
++    if done.stale:
++        print(f"{len(done.stale)} {'note names' if len(done.stale) == 1 else 'notes name'} a line the diff no longer "
++              "shows; move each to where its code now sits, or remove it:")
++        for gid, file_path, c in done.stale:
++            print(f"  {file_path} line {c['line']} ({side_of(c)} side), in {gid}: {c.get('kind')}: {c.get('text')}")
+diff --git a/tests/test_summary.py b/tests/test_summary.py
+index c3339ab2..ddfc5419 100644
+--- a/tests/test_summary.py
++++ b/tests/test_summary.py
+@@ -1822,5 +1822,310 @@ def test_summary_publish_local_previews_even_where_the_site_is_hosted(self) -> N
+         self.assertEqual([], commented)
+ 
+ 
++def store(git_dir: Path, ref: str, path: str, text: str, when: int) -> None:
++    """Commit `text` at `path` on `ref` of the repository at `git_dir`, dated `when`, over what the ref holds."""
++    env = dict(os.environ, GIT_INDEX_FILE=str(Path(tempfile.mkdtemp()) / "index"), GIT_AUTHOR_NAME="Test",
++               GIT_AUTHOR_EMAIL="test@example.com", GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.com",
++               GIT_AUTHOR_DATE=f"{when} +0000", GIT_COMMITTER_DATE=f"{when} +0000")
++
++    def git(*args: str, stdin: str | None = None) -> str:
++        return subprocess.run(["git", *args], cwd=git_dir, env=env, input=stdin, check=True, capture_output=True,
++                              text=True).stdout.strip()
++
++    parent = subprocess.run(["git", "rev-parse", "--verify", "--quiet", ref], cwd=git_dir, capture_output=True,
++                            text=True).stdout.strip()
++    if parent:
++        git("read-tree", parent)
++    blob = git("hash-object", "-w", "--stdin", stdin=text)
++    git("update-index", "--add", "--cacheinfo", f"100644,{blob},{path}")
++    git("update-ref", ref, git("commit-tree", git("write-tree"), *(["-p", parent] if parent else []), "-m", path))
++
++
++class FromPublishedTests(unittest.TestCase):
++    """`summary init --from-published`, which copies a pull request's newest stored summary instead of a skeleton."""
++
++    def setUp(self) -> None:
++        tmp = Path(tempfile.mkdtemp())
++        self.remote = tmp / "remote.git"
++        run(tmp, "git", "init", "--quiet", "--bare", str(self.remote))
++        self.repo = tmp / "repo"
++        run(tmp, "git", "clone", "--quiet", str(self.remote), str(self.repo))
++        self.path = tmp / "work" / "summary.json"
++        self.path.parent.mkdir()
++
++    def stored(self, head: str, when: int, name: str = "summary.json", git_dir: Path | None = None,
++               ref: str = summary.PAGES_REF, root: str = summary.PAGES_ROOT) -> dict:
++        """Store a summary of pull request 7 at `head` as `name`, dated `when`, on the remote's `ref` or `git_dir`'s."""
++        data = make_summary(GOOD_GROUPS)
++        data["pr"]["head"] = head
++        data["name"] = f"Head {head[:1]} as {name}"
++        store(git_dir or self.remote, ref, f"{root}/7/{head}/{name}", json.dumps(data), when)
++        return data
++
++    def init(self, *args: str) -> tuple[int, str, str]:
++        cwd = os.getcwd()
++        os.chdir(self.repo)
++        out, err = io.StringIO(), io.StringIO()
++        try:
++            with redirect_stdout(out), redirect_stderr(err):
++                code = cli.main(["summary", "init", "--repo", "owner/repo", "--pr", "7", "--summary", str(self.path),
++                                 *args])
++        finally:
++            os.chdir(cwd)
++        return code, out.getvalue(), err.getvalue()
++
++    def test_copies_the_most_recently_published_summary_of_the_pull_request(self) -> None:
++        self.stored("d" * 40, 1_700_000_000)
++        newest = self.stored("c" * 40, 1_700_000_500)
++        store(self.remote, summary.PAGES_REF, f"summaries/8/{'e' * 40}/summary.json", "{}", 1_700_001_000)
++
++        code, out, err = self.init("--from-published")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(newest, json.loads(self.path.read_text()), "the newer publish, though its SHA sorts first")
++        self.assertIn(f"at {'c' * 9}, published 2023-11-14 22:21 UTC, from refs/projector/remotes/origin/summaries",
++                      out)
++        self.assertIn(f"project summary refresh --summary {self.path}", out)
++
++    def test_a_republished_old_head_does_not_outrank_a_newer_head(self) -> None:
++        # Two heads stored as spec.json by an older release, then the older one republished as summary.json.
++        self.stored("a" * 40, 1_700_000_000, "spec.json")
++        newer = self.stored("b" * 40, 1_700_000_500, "spec.json")
++        self.stored("a" * 40, 1_700_001_000)
++
++        code, out, err = self.init("--from-published")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(newer, json.loads(self.path.read_text()), "a head stored only as spec.json is read from it")
++        self.assertIn("an older release stored it as spec.json", out)
++
++    def test_a_head_stored_under_both_names_is_read_from_its_summary_json(self) -> None:
++        self.stored("a" * 40, 1_700_000_000, "spec.json")
++        republished = self.stored("a" * 40, 1_700_001_000)
++
++        code, out, err = self.init("--from-published")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(republished, json.loads(self.path.read_text()))
++        self.assertNotIn("spec.json", out)
++
++    def test_reads_the_old_walkthroughs_ref_until_the_summaries_ref_exists(self) -> None:
++        old = self.stored("a" * 40, 1_700_000_000, "spec.json", ref=summary.LEGACY_PAGES_REF,
++                          root=summary.LEGACY_PAGES_ROOT)
++
++        code, out, err = self.init("--from-published")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(old, json.loads(self.path.read_text()))
++        self.assertIn("from refs/projector/remotes/origin/walkthroughs", out)
++
++    def test_falls_back_to_a_summary_kept_in_this_checkout(self) -> None:
++        kept = self.stored("a" * 40, 1_700_000_000, git_dir=self.repo)
++
++        code, out, err = self.init("--from-published")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(kept, json.loads(self.path.read_text()))
++        self.assertIn("from refs/projector/summaries", out)
++        self.assertIn("reading the summaries this checkout already has; could not fetch origin's", err)
++
++    def test_the_newer_of_the_remotes_summary_and_this_checkouts_wins(self) -> None:
++        self.stored("a" * 40, 1_700_000_000, git_dir=self.repo)
++        published = self.stored("c" * 40, 1_700_000_500)
++
++        self.assertEqual(0, self.init("--from-published")[0])
++        self.assertEqual(published, json.loads(self.path.read_text()), "a stale local preview loses")
++
++        previewed = self.stored("d" * 40, 1_700_001_000, git_dir=self.repo)
++        self.assertEqual(0, self.init("--from-published")[0])
++        self.assertEqual(previewed, json.loads(self.path.read_text()), "a newer local preview wins")
++
++        self.stored("e" * 40, 1_700_002_000)
++        tied = self.stored("f" * 40, 1_700_002_000, git_dir=self.repo)
++        self.assertEqual(0, self.init("--from-published")[0])
++        self.assertEqual(tied, json.loads(self.path.read_text()), "this checkout's wins a tie, as on the site")
++
++    def test_head_picks_the_summary_of_one_head(self) -> None:
++        older = self.stored("d" * 40, 1_700_000_000, "spec.json")
++        self.stored("c" * 40, 1_700_000_500)
++
++        code, out, err = self.init("--from-published", "--head", "D" * 7)
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(older, json.loads(self.path.read_text()))
++
++    def test_says_so_and_writes_nothing_when_no_summary_is_stored(self) -> None:
++        self.stored("c" * 40, 1_700_000_000)
++
++        code, _, err = self.init("--from-published", "--head", "e" * 7)
++
++        self.assertEqual(65, code)
++        self.assertIn(f"origin has no summary of owner/repo#7 at {'e' * 7}, and neither does this checkout", err)
++        self.assertFalse(self.path.exists())
++
++    def test_refuses_a_remote_that_is_another_repository(self) -> None:
++        run(self.repo, "git", "remote", "add", "other", "https://github.com/someone/else.git")
++
++        code, _, err = self.init("--from-published", "--remote", "other")
++
++        self.assertEqual(65, code)
++        self.assertIn("other is someone/else, but --repo is owner/repo", err)
++
++    def test_the_published_summary_options_need_each_other(self) -> None:
++        for args in (("--head", "c" * 7), ("--remote", "origin"), ("--from-published", "--diff", "pr.diff")):
++            with self.subTest(args=args):
++                self.assertEqual(2, self.init(*args)[0])
++
++
++# The pull request after a push and a merge of its base branch: src/core.go
++# moved down ten lines, src/core_test.go left the diff, and src/extra.go joined it.
++MOVED_DIFF = """diff --git a/src/core.go b/src/core.go
++index 2222222..6666666 100644
++--- a/src/core.go
+++++ b/src/core.go
++@@ -10,3 +20,4 @@ func Check() {
++     a := 1
++-    b := 2
+++    b := 4
+++    c := 5
++     return
++diff --git a/gen/api.pb.go b/gen/api.pb.go
++index 4444444..5555555 100644
++--- a/gen/api.pb.go
+++++ b/gen/api.pb.go
++@@ -1 +1 @@
++-old
+++new
++\\ No newline at end of file
++diff --git a/src/extra.go b/src/extra.go
++new file mode 100644
++index 0000000..7777777
++--- /dev/null
+++++ b/src/extra.go
++@@ -0,0 +1 @@
+++package core
++"""
++
++
++class RefreshTests(unittest.TestCase):
++    """`summary refresh`, which carries a summary forward to its pull request's current head and base."""
++
++    def setUp(self) -> None:
++        self.tmp = Path(tempfile.mkdtemp())
++        self.path = self.tmp / "summary.json"
++        self.compared: list[str] = []
++        cwd = os.getcwd()
++        os.chdir(self.tmp)
++        self.addCleanup(os.chdir, cwd)
++
++    def gh(self, *args: str, input: str | None = None) -> str:
++        """GitHub's answers about pull request 7, now at head cccc… on main, whose merge base with it is eeee…."""
++        if args[:2] == ("pr", "view"):
++            return json.dumps({"title": "Change the core again", "headRefOid": "c" * 40, "headRefName": "feature",
++                               "baseRefName": "main"})
++        if args[:2] == ("api", "repos/owner/repo"):
++            return "main\n"
++        if args[:2] == ("api", "-H"):
++            self.compared.append(args[-1])
++            return MOVED_DIFF
++        if args[:2] == ("api", f"repos/owner/repo/compare/main...{'c' * 40}"):
++            return "e" * 40 + "\n"
++        raise AssertionError(f"unexpected gh {args}")
++
++    def published(self) -> dict:
++        """A summary published at head aaaa…, when the pull request was stacked on pull request 6."""
++        data = make_summary([
++            {"id": "core", "title": "Core", "kicker": "The check", "intro": ["Why <code>Check</code> changed."],
++             "checks": [{"kind": "context", "text": "Hold the check in mind."}],
++             "files": [{"path": "src/core.go", "note": "The change.",
++                        "checks": [{"kind": "flag", "text": "Look at <code>c</code>.", "line": 12},
++                                   {"kind": "verify", "text": "The old value is gone.", "line": 11, "side": "old"}]},
++                       {"path": "src/core_test.go", "note": "The test.",
++                        "checks": [{"kind": "context", "text": "Covers <code>Check</code>.", "line": 2}]}]},
++            {"id": "gen", "title": "Generated", "files": [{"path": "gen/api.pb.go"}]},
++        ])
++        data["pr"].update(headRef="feature", baseRef="feature-a", basePr=6)
++        return data
++
++    def refresh(self, data: dict | None, *args: str) -> tuple[int, str, str]:
++        """Refresh `data`, or the summary file as it is when `data` is None."""
++        if data is not None:
++            self.path.write_text(json.dumps(data))
++        out, err = io.StringIO(), io.StringIO()
++        with mock.patch.object(summary, "gh", side_effect=self.gh), redirect_stdout(out), redirect_stderr(err):
++            code = cli.main(["summary", "refresh", "--summary", str(self.path), *args])
++        return code, out.getvalue(), err.getvalue()
++
++    def test_moves_head_and_base_regroups_the_files_and_leaves_the_prose(self) -> None:
++        before = self.published()
++
++        code, out, err = self.refresh(before)
++
++        self.assertEqual(0, code, err)
++        after = json.loads(self.path.read_text())
++        self.assertEqual({"repo": "owner/repo", "number": 7, "title": "Change the core again", "head": "c" * 40,
++                          "headRef": "feature", "base": "e" * 40, "baseRef": "main"}, after["pr"],
++                         "the merged base moves pr.base, and a pull request on main is stacked on nothing")
++        self.assertEqual([f"repos/owner/repo/compare/{'e' * 40}...{'c' * 40}"], self.compared,
++                         "the diff runs from the new merge base, not the stale one")
++        expected = self.published()
++        expected["pr"] = after["pr"]
++        del expected["groups"][0]["files"][1]
++        expected["groups"].append({"id": "unassigned", "title": "Unassigned", "kicker": "", "intro": [], "checks": [],
++                                   "files": [{"path": "src/extra.go"}]})
++        self.assertEqual(expected, after, "the stale note stays, and every other piece of prose is as it was")
++        self.assertEqual(["summary.json"], [p.name for p in self.tmp.iterdir()], "no temporary file is left")
++        for full in ("a" * 40, "b" * 40, "c" * 40, "e" * 40):
++            self.assertNotIn(full, out, "a SHA prints shortened, as the head on the first line is")
++        for line in (f"at {'c' * 9}\n", f"pr.head: {'a' * 9} → {'c' * 9}\n", f"pr.base: {'b' * 9} → {'e' * 9}\n",
++                     "pr.baseRef: feature-a → main", "pr.basePr: 6 → none", "src/extra.go (new)",
++                     "src/core_test.go, from core", "note: The test.",
++                     "context on line 2 (new side): Covers <code>Check</code>.",
++                     "1 note names a line the diff no longer shows",
++                     "src/core.go line 12 (new side), in core: flag: Look at <code>c</code>."):
++            self.assertIn(line, out)
++        self.assertNotIn("line 11", out, "the old side still shows line 11")
++
++    def test_a_group_the_drops_empty_is_kept_and_reported(self) -> None:
++        data = self.published()
++        data["groups"].insert(1, {"id": "tests", "title": "Tests", "intro": ["How it is tested."],
++                                  "files": [data["groups"][0]["files"].pop()]})
++
++        code, out, _ = self.refresh(data)
++
++        self.assertEqual(0, code)
++        tests = json.loads(self.path.read_text())["groups"][1]
++        self.assertEqual({"id": "tests", "title": "Tests", "intro": ["How it is tested."], "files": []}, tests)
++        self.assertIn("group tests has no files left", out)
++
++    def test_new_files_join_the_unassigned_group_the_summary_has(self) -> None:
++        data = self.published()
++        data["groups"].insert(0, {"id": "unassigned", "title": "Unassigned", "files": [{"path": "gen/api.pb.go"}]})
++        data["groups"][2]["files"] = []
++        (self.tmp / "pr.diff").write_text(MOVED_DIFF)
++
++        code, _, err = self.refresh(data, "--diff", str(self.tmp / "pr.diff"))
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([], self.compared, "--diff fetches no diff")
++        groups = json.loads(self.path.read_text())["groups"]
++        self.assertEqual(["unassigned", "core", "gen"], [g["id"] for g in groups], "no second unassigned group")
++        self.assertEqual([{"path": "gen/api.pb.go"}, {"path": "src/extra.go"}], groups[0]["files"])
++
++    def test_a_summary_already_at_the_head_is_left_alone(self) -> None:
++        self.assertEqual(0, self.refresh(self.published())[0])
++        written = self.path.read_bytes()
++        stamp = self.path.stat()
++
++        code, out, _ = self.refresh(None)
++
++        self.assertEqual(0, code)
++        self.assertIn(f"already matches owner/repo#7 at {'c' * 9}; nothing changed", out)
++        self.assertIn("1 note names a line the diff no longer shows", out, "a stale note is listed until it moves")
++        self.assertEqual(written, self.path.read_bytes())
++        self.assertEqual((stamp.st_ino, stamp.st_mtime_ns), (self.path.stat().st_ino, self.path.stat().st_mtime_ns),
++                         "the file is not rewritten")
++
++
+ if __name__ == "__main__":
+     unittest.main()
