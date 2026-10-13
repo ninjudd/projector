@@ -419,11 +419,28 @@ def parser() -> argparse.ArgumentParser:
 
     summary_parser = subcommands.add_parser("summary", help="write and publish pull request summaries")
     summary_commands = summary_parser.add_subparsers(dest="summary_command", required=True)
-    summary_init = summary_commands.add_parser("init", help="write a skeleton summary for a pull request")
+    summary_init = summary_commands.add_parser(
+        "init", help="write a skeleton summary for a pull request, or copy its newest published summary"
+    )
     summary_init.add_argument("--repo", required=True, help="OWNER/NAME")
     summary_init.add_argument("--pr", required=True, type=int)
     summary_init.add_argument("--summary", required=True)
     summary_init.add_argument("--diff", help="read the diff from this file instead of GitHub")
+    summary_init.add_argument(
+        "--from-published", action="store_true",
+        help="copy the pull request's newest summary from the summaries ref instead of writing a skeleton",
+    )
+    summary_init.add_argument(
+        "--remote", help="with --from-published, the remote whose summaries ref to fetch (default: origin)"
+    )
+    summary_init.add_argument(
+        "--head", help="with --from-published, copy the summary of the head whose SHA starts with this"
+    )
+    summary_refresh = summary_commands.add_parser(
+        "refresh", help="bring a summary up to its pull request's current head and base, and say what changed"
+    )
+    summary_refresh.add_argument("--summary", required=True)
+    summary_refresh.add_argument("--diff", help="read the diff from this file instead of GitHub")
     summary_publish = summary_commands.add_parser(
         "publish", help="commit a summary to the hidden summaries ref and start a site build"
     )
@@ -666,6 +683,9 @@ def add_inbox_parser(subcommands) -> None:
 
     dismiss = command("dismiss", "record that you dismissed a question or read a notice")
     dismiss.add_argument("reference")
+
+    withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
+    withdraw.add_argument("reference")
 
     snooze = command("snooze", "hide an open item for a while")
     snooze.add_argument("reference")
@@ -1141,7 +1161,7 @@ def item_state(item: dict) -> str:
     if not answered:
         return "open"
     if answered.get("dismissed"):
-        return "dismissed"
+        return "withdrawn" if answered.get("withdrawn") else "dismissed"
     if item.get("deliveredAt"):
         return f"delivered {inbox.answer_ref(item)}"
     if inbox.live_claim(item):
@@ -1197,12 +1217,12 @@ def run_inbox(arguments: argparse.Namespace) -> int:
             print(json_text({"item": item}))
         else:
             print_item(item)
-    elif command in ("answer", "dismiss"):
+    elif command in ("answer", "dismiss", "withdraw"):
         session = inbox_session(arguments, False)
         item = (inbox.answer(session, ref, letter, arguments.text) if command == "answer"
-                else inbox.dismiss(session, ref))
-        print(json_text({"item": item}) if json_output
-              else f"{'answered' if command == 'answer' else 'dismissed'} {inbox.answer_ref(item)}")
+                else inbox.dismiss(session, ref, withdrawn=command == "withdraw"))
+        done = {"answer": "answered", "dismiss": "dismissed", "withdraw": "withdrew"}[command]
+        print(json_text({"item": item}) if json_output else f"{done} {inbox.answer_ref(item)}")
     elif command == "snooze":
         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
         print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
@@ -1232,9 +1252,58 @@ def run_inbox(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def init_from_published(arguments: argparse.Namespace) -> None:
+    """Copy pull request `--pr`'s newest published summary to `--summary`, as `serve.newest_summary` chooses it.
+
+    The remote's summaries ref is fetched first. When that fails, the copy
+    this checkout already has answers, with this checkout's own ref.
+    """
+    from .site import serve
+
+    if arguments.diff:
+        raise UsageError("--from-published copies a summary and reads no diff; pass --diff to `summary refresh`")
+    remote = arguments.remote or "origin"
+    root = summary.checkout_root()
+    if root is None:
+        raise summary.SummaryError(f"--from-published reads the summaries ref, so run it in a checkout of "
+                                   f"{arguments.repo}")
+    slug = summary.repo_slug(summary.git("-C", str(root), "remote", "get-url", remote))
+    if slug and slug.lower() != arguments.repo.lower():
+        raise summary.SummaryError(f"{remote} is {slug}, but --repo is {arguments.repo}")
+    reason = serve.fetch_summaries(root, remote)
+    if reason:
+        print(f"reading the summaries this checkout already has; could not fetch {remote}'s: {reason}",
+              file=sys.stderr)
+    head = (arguments.head or "").lower()
+    found = serve.newest_summary(root, remote, arguments.pr, head)
+    if found is None:
+        raise summary.SummaryError(f"{remote} has no summary of {arguments.repo}#{arguments.pr}"
+                                   f"{f' at {head}' if head else ''}, and neither does this checkout; run "
+                                   "`project summary init` without --from-published to start one")
+    try:
+        stored = json.loads(summary.git("-C", str(root), "show", f"{found.ref}:{found.path}"))
+    except ValueError as error:
+        raise summary.SummaryError(f"{found.path} on {found.ref} is not JSON: {error}") from error
+    summary.write_summary(Path(arguments.summary), stored)
+    when = datetime.datetime.fromtimestamp(found.when, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    print(f"wrote {arguments.summary}: the summary of {arguments.repo}#{arguments.pr} at "
+          f"{found.path.split('/')[-2][:9]}, published {when}, from {found.ref}")
+    if found.path.endswith(summary.LEGACY_SUMMARY_FILE):
+        print(f"an older release stored it as {summary.LEGACY_SUMMARY_FILE}; `project summary publish` stores it as "
+              "summary.json, which the site reads")
+    print(f"`project summary refresh --summary {arguments.summary}` brings it up to the pull request's current head")
+
+
 def run_summary(arguments: argparse.Namespace) -> int:
     if arguments.summary_command == "init":
-        summary.init(arguments.repo, arguments.pr, arguments.summary, arguments.diff)
+        if arguments.from_published:
+            init_from_published(arguments)
+        elif arguments.remote or arguments.head:
+            raise UsageError("--remote and --head choose a published summary; pass them with --from-published")
+        else:
+            summary.init(arguments.repo, arguments.pr, arguments.summary, arguments.diff)
+    elif arguments.summary_command == "refresh":
+        summary.refresh(arguments.summary, arguments.diff)
     else:
         pr = summary.summary_pr(json.loads(Path(arguments.summary).read_text(encoding="utf-8")))
         site, reason = (None, "--local asked for a local preview") if arguments.local \

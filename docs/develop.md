@@ -108,5 +108,7 @@ the Release workflow from the Actions page, or with
 opens. The workflow dispatches the Check workflow on that pull request, because
 GitHub runs no workflow for a pull request that a workflow's own token opened.
 Merging tags the release and moves `v0`, which is what the installer,
-`project upgrade`, and every repository's site workflow use. See
+`project upgrade`, and every repository's site workflow use. When the publish
+job fails partway, re-run it from the Actions page. It finishes the steps the
+failed run left undone. See
 [Release an update](plugins.md#release-an-update).

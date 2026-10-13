@@ -6,6 +6,8 @@ checkout's copy of the hidden summaries ref, so it needs no GitHub Pages
 site and no workflow. While it runs it watches the files the site is built
 from and the summaries ref, fetching the ref again every minute, and
 rebuilds when either changes, as each publish redeploys a Pages site.
+`summary init --from-published` reads a pull request's newest summary from
+the same refs.
 """
 
 from __future__ import annotations
@@ -19,10 +21,10 @@ import tarfile
 import tempfile
 import threading
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NamedTuple
 from urllib.parse import urlsplit
 
-from ..summary import LEGACY_PAGES_REF, LEGACY_PAGES_ROOT, PAGES_REF, PAGES_ROOT
+from ..summary import LEGACY_PAGES_REF, LEGACY_PAGES_ROOT, LEGACY_SUMMARY_FILE, PAGES_REF, PAGES_ROOT
 
 ThreadingHTTPServer = http.server.ThreadingHTTPServer
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
@@ -116,18 +118,60 @@ def extract_summaries(root: Path, ref: str, dest: Path, folder: str = PAGES_ROOT
             tar.extractall(dest, filter="data")
         else:
             tar.extractall(dest)
+    for name, when in commit_times(root, ref, folder).items():
+        path = dest / name
+        if path.is_file():
+            os.utime(path, (when, when))
+    return dest / folder
+
+
+def commit_times(root: Path, ref: str, folder: str) -> dict[str, int]:
+    """When the commit that last changed each path under `folder` on `ref` was made, as a Unix time, by path."""
     log = run_git(root, "log", "--format=%x01%ct", "--name-only", ref, "--", folder).stdout.decode()
-    dated: set[str] = set()
+    dated: dict[str, int] = {}
     when = 0
     for line in log.splitlines():
         if line.startswith("\x01"):
             when = int(line[1:])
-        elif line and line not in dated:
-            dated.add(line)
-            path = dest / line
-            if path.is_file():
-                os.utime(path, (when, when))
-    return dest / folder
+        elif line:
+            dated.setdefault(line, when)
+    return dated
+
+
+class StoredSummary(NamedTuple):
+    """A summary on a summaries ref: the ref, the path of its file there, and when it was published, as a Unix time."""
+    ref: str
+    path: str
+    when: int
+
+
+def newest_summary(root: Path, remote: str, number: int, head: str = "") -> StoredSummary | None:
+    """The newest summary of pull request `number` on the refs `summaries_refs` reads, or None when none holds one.
+
+    `head` limits the choice to the heads whose SHA starts with it. A
+    summary is as new as the site dates it: by the commit that last changed
+    the `spec.json` an older release stored for its head, when there is one,
+    so a republished old head never outranks a newer one, and by its
+    `summary.json` otherwise. A head stored only as `spec.json` is read from
+    that file. When the remote's copy and this checkout's own ref date their
+    newest alike, this checkout's wins, as it does on the site.
+    """
+    newest: tuple[int, int, StoredSummary] | None = None
+    for rank, (ref, folder) in enumerate(summaries_refs(root, remote)):
+        prefix = f"{folder}/{number}/"
+        listed = run_git(root, "ls-tree", "-r", "--name-only", ref, "--", prefix).stdout.decode().splitlines()
+        heads: dict[str, dict[str, str]] = {}
+        for path in listed:
+            stored_head, _, name = path.removeprefix(prefix).partition("/")
+            if stored_head.startswith(head) and name in ("summary.json", LEGACY_SUMMARY_FILE):
+                heads.setdefault(stored_head, {})[name] = path
+        times = commit_times(root, ref, prefix) if heads else {}
+        for files in heads.values():
+            read = files.get("summary.json") or files[LEGACY_SUMMARY_FILE]
+            when = times.get(files.get(LEGACY_SUMMARY_FILE) or read, 0)
+            if newest is None or (when, rank) > newest[:2]:
+                newest = (when, rank, StoredSummary(ref, read, when))
+    return None if newest is None else newest[2]
 
 
 class Summaries:

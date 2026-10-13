@@ -163,7 +163,7 @@ class NumberingTests(InboxCase):
         for session in ("s1", "s2", "s3"):
             self.ask("First?", "--recommend", "x", session=session)
         self.run_cli("dismiss", "1", "--session", "s3")
-        for args in (["show", "1"], ["answer", "1.a"], ["dismiss", "1"], ["snooze", "1"]):
+        for args in (["show", "1"], ["answer", "1.a"], ["dismiss", "1"], ["withdraw", "1"], ["snooze", "1"]):
             with self.subTest(command=args[0]):
                 code, out, err = self.run_cli(*args)
                 self.assertEqual((67, ""), (code, out))
@@ -189,7 +189,7 @@ class NumberingTests(InboxCase):
         with mock.patch.dict(os.environ, {"PROJECTOR_SESSION": "s1"}):
             code, _, err = self.run_cli("answer", "1.a")
         self.assertEqual(65, code)
-        self.assertIn("already answered", err)
+        self.assertIn("already dismissed", err)
         self.assertNotIn("answer", self.item(1, "s2"))
 
     def test_refuses_a_reference_in_an_old_form_with_the_new_ones(self) -> None:
@@ -327,7 +327,7 @@ class AnswerTests(InboxCase):
         self.assertNotIn("answer", self.item(1))
 
     def test_refuses_an_answer_letter_on_every_other_command(self) -> None:
-        for args in (["show", "1.a"], ["dismiss", "1.a"], ["snooze", "1.a"], ["claim", "1.a"],
+        for args in (["show", "1.a"], ["dismiss", "1.a"], ["withdraw", "1.a"], ["snooze", "1.a"], ["claim", "1.a"],
                      ["delivered", "1.a", "--claim", "x"], ["reopen", "1.a", "--claim", "x"]):
             with self.subTest(command=args[0]):
                 code, out, err = self.run_cli(*args, "--session", "s1")
@@ -504,7 +504,7 @@ class ListTests(InboxCase):
         (self.folder() / "7.json").write_text(json.dumps({"ref": "7", "subject": "No kind?"}))
         (self.folder() / "8.json").write_text(json.dumps({"ref": "9", "kind": "notice", "subject": "Misnamed?"}))
         for ref in ("7", "8"):
-            for args in (["show", ref], ["answer", f"{ref}.a"], ["dismiss", ref], ["snooze", ref]):
+            for args in (["show", ref], ["answer", f"{ref}.a"], ["dismiss", ref], ["withdraw", ref], ["snooze", ref]):
                 with self.subTest(args=args):
                     code, _, err = self.run_cli(*args, "--session", "s1")
                     self.assertEqual(66, code)
@@ -600,6 +600,66 @@ class NoticeTests(InboxCase):
         self.run_cli("dismiss", "2", "--session", "s1")
         self.assertEqual(["1\tquestion\topen\tDecline it?"], self.run_cli("list", "--session", "s1")[1].splitlines())
         self.assertIn("2\tnotice\tdismissed\tDropped a file", self.run_cli("list", "--all", "--session", "s1")[1])
+
+
+class WithdrawTests(InboxCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.ask("Decline it?", "--recommend", "Decline it", "--pr", "acme/app#12")
+        self.run_cli("tell", "Force-pushed #12", "--pr", "acme/app#12", "--session", "s1")
+
+    def assert_withdrawn(self, item: dict) -> None:
+        self.assertEqual({"dismissed": True, "withdrawn": True, "answeredAt": item["deliveredAt"]}, item["answer"])
+        self.assertNotIn("snoozedUntil", item)
+
+    def test_withdraws_an_open_question_and_sends_its_agent_nothing(self) -> None:
+        self.run_cli("snooze", "1", "--session", "s1")
+        self.assertEqual((0, "withdrew 1\n", ""), self.run_cli("withdraw", "1", "--session", "s1"))
+        self.assert_withdrawn(self.item(1))
+        self.assertEqual("", self.run_cli("watch", "--once", "--session", "s1")[1])
+        self.assertEqual(["2\tnotice\topen\tForce-pushed #12"], self.run_cli("list", "--session", "s1")[1].splitlines())
+        self.assertIn("1\tquestion\twithdrawn\tDecline it?", self.run_cli("list", "--all", "--session", "s1")[1])
+        self.assertTrue(self.run_cli("show", "1")[1].endswith("\nwithdrawn\n"))
+
+    def test_withdraws_an_open_notice_and_prints_it_as_json(self) -> None:
+        code, out, err = self.run_cli("withdraw", "2", "--session", "s1", "--json")
+        self.assertEqual(0, code, err)
+        self.assertEqual(self.item(2), json.loads(out)["item"])
+        self.assert_withdrawn(self.item(2))
+        self.assertEqual(["1\tquestion\topen\tDecline it?"], self.run_cli("list", "--session", "s1")[1].splitlines())
+
+    def test_refuses_what_dismiss_refuses_and_changes_nothing(self) -> None:
+        self.run_cli("answer", "1.a", "--session", "s1")
+        answered = self.item(1)
+        code, out, err = self.run_cli("withdraw", "1", "--session", "s1")
+        self.assertEqual((65, ""), (code, out))
+        self.assertIn("already answered, as 1.a", err)
+        code, out, err = self.run_cli("withdraw", "2.a", "--session", "s1")
+        self.assertEqual((65, ""), (code, out))
+        self.assertIn("2, without an answer letter", err)
+        self.assertEqual(66, self.run_cli("withdraw", "3", "--session", "s1")[0])
+        self.assertEqual(answered, self.item(1))
+        self.assertNotIn("answer", self.item(2))
+        self.assertEqual("ANSWER 1.a Decline it? → Decline it\n",
+                         self.run_cli("watch", "--once", "--session", "s1")[1])
+
+    def test_refuses_an_item_already_withdrawn_or_dismissed_and_says_which(self) -> None:
+        self.run_cli("withdraw", "1", "--session", "s1")
+        self.run_cli("dismiss", "2", "--session", "s1")
+        for ref, said in (("1", "1 is already withdrawn\n"), ("2", "2 is already dismissed\n")):
+            for command in ("withdraw", "dismiss"):
+                with self.subTest(ref=ref, command=command):
+                    self.assertEqual((65, "", f"project: {said}"), self.run_cli(command, ref, "--session", "s1"))
+
+    def test_answering_a_withdrawn_or_dismissed_question_says_which(self) -> None:
+        self.ask("Rebase?", "--recommend", "Yes")
+        self.run_cli("withdraw", "1", "--session", "s1")
+        self.run_cli("dismiss", "3", "--session", "s1")
+        for reference, said in (("1.a", "1 is already withdrawn\n"), ("3.a", "3 is already dismissed\n")):
+            with self.subTest(reference=reference):
+                self.assertEqual((65, "", f"project: {said}"), self.run_cli("answer", reference, "--session", "s1"))
+        self.assertNotIn("letter", self.item(1)["answer"])
+        self.assertNotIn("letter", self.item(3)["answer"])
 
 
 class SnoozeTests(InboxCase):

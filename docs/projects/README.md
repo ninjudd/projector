@@ -28,8 +28,9 @@ notes, or other files when the work needs them; none are required.
 
 Use the exact lowercase name. Uppercase `README.md` remains the conventional
 entry point for the documentation root and non-project directories; lowercase
-`readme.md` identifies a Projector project. `project check` will enforce this
-distinction once the CLI ships. Until then, maintain the casing by hand.
+`readme.md` identifies a Projector project. `project create` writes the
+lowercase name, and `project check` reports an entry point with any other
+casing.
 
 The path relative to `docs/projects/` is the project's name. In the example,
 the two project names are `cool-new-feature` and
@@ -43,7 +44,7 @@ index instead.
 
 ## Set project status and priority
 
-Begin every `readme.md` with YAML frontmatter containing a `status` field and
+Every `readme.md` begins with YAML frontmatter containing a `status` field and
 a `priority` field:
 
 ```yaml
@@ -52,6 +53,10 @@ status: draft
 priority: later
 ---
 ```
+
+Prefer `project create <project>` to writing that frontmatter yourself. It
+writes `draft` and `later` unless you pass `--status` or `--priority`. Write
+the frontmatter by hand when you author a new plan without the command.
 
 `status` records where the work is in its lifecycle:
 
@@ -92,11 +97,27 @@ Set it with `project owner <project> <login>` and remove it with
 workflow needs it. The file path already supplies the project name, so do not
 duplicate it in frontmatter.
 
-Change status and priority in the pull request that makes the change true. For
-example, the pull request that begins implementation changes the status from
-`ready` to `in-progress`. The pull request that completes the final
-implementation changes it to `completed`. A stale status is worse than a
-missing status.
+Change status and priority in the pull request that makes the change true.
+Run a `project` command rather than editing the frontmatter, because the
+command checks the value, keeps the rest of the file as it was, and refuses to
+write over a change it did not read:
+
+```sh
+project status cool-new-feature in-progress
+project priority cool-new-feature now
+project done cool-new-feature
+```
+
+For example, the pull request that begins implementation runs
+`project status` to move the project from `ready` to `in-progress`. The pull
+request that completes the final implementation runs `project done`, which
+sets the status to `completed`. A stale status is worse than a missing
+status.
+
+The commands load the plan before they write, so they refuse a plan whose
+frontmatter `project check` rejects. A plan with `status: blocked`, for
+example, makes even `project status` fail. To repair such a plan, fix by hand
+what the error or `project check` names, then go back to the commands.
 
 ## Write a project plan
 
@@ -117,16 +138,22 @@ Write the smallest plan that makes those clear. Keep the reason for a status
 or priority change in the body rather than adding more field values. Split
 material into a supplemental file when it obscures the main plan.
 
-## Find projects before the CLI exists
+## Find projects
 
-Projector will provide commands for listing, searching, editing, and validating
-projects. Until that CLI ships, use repository-local searches:
+List projects with `project list`, and search them with `project search`:
 
 ```sh
-find docs/projects -name readme.md -print
-rg -l '^priority: now$' docs/projects -g readme.md
-rg -n 'search term' docs/projects
+project list
+project list --priority now
+project list --status ready --owner octocat
+project search 'search term'
 ```
+
+`project list` groups projects by priority. Its `--status`, `--priority`, and
+`--owner` options narrow the list, and together they keep only the projects
+that match every option. `project search` matches project names, frontmatter
+values, plans, and supplemental Markdown files, ignoring case. Add `--json` to
+either command when a script reads the result.
 
 These commands generate a view from the project files. They do not write an
 index that can become stale or conflict with another branch.
@@ -134,7 +161,7 @@ index that can become stale or conflict with another branch.
 ## Rename a project deliberately
 
 Changing status or priority never changes a project path. If the project
-itself needs a new name or parent, use `git mv` and update every inbound
-reference in the same change. Start the sweep with `rg`, then confirm it with
-`command grep -rl` so a binary-classified text file cannot hide a stale
-reference.
+itself needs a new name or parent, move it with `git mv`, because Projector
+has no command for a rename. Update every inbound reference in the same
+change. Start the sweep with `rg`, then confirm it with `command grep -rl` so
+a binary-classified text file cannot hide a stale reference.

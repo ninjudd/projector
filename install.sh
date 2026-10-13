@@ -136,6 +136,20 @@ install_venv() {
 run_claude() { CLAUDE_CONFIG_DIR="$CLAUDE_DIR" "$CLAUDE_COMMAND" "$@"; }
 run_codex() { CODEX_HOME="$CODEX_DIR" "$CODEX_COMMAND" "$@"; }
 
+# Codex clones a Git marketplace under a time limit of its own, and a slow
+# connection fails a clone that works when run again. So a marketplace command
+# that clones gets one more try after a pause, and a second failure stops the
+# installer with Codex's status, as the first would have.
+run_codex_with_retry() {
+  local status=0 delay=5
+  run_codex "$@" || status=$?
+  [ "$status" -ne 0 ] || return 0
+  printf '%-14s %s\n' "retrying" \
+    "codex $* exited $status -- trying once more in ${delay}s, since a slow connection can time out Codex's Git clone"
+  sleep "$delay"
+  run_codex "$@"
+}
+
 # The version this install should leave, from the plugin manifest, which
 # carries the same version as the CLI: the checkout's, or the release's,
 # fetched from GitHub. Offline, or when GitHub cannot answer, there is none to
@@ -335,13 +349,13 @@ install_codex() {
   marketplace="$(host_marketplace codex)"
   source="$(plugin_source codex)"
   if [ -z "$marketplace" ]; then
-    run_codex plugin marketplace add "$source"
+    add_codex_marketplace "$source"
   elif marketplace_is_local "$marketplace" && [ "$source" != "$REPO" ]; then
     run_codex plugin marketplace remove projector
-    run_codex plugin marketplace add "$source"
+    add_codex_marketplace "$source"
     printf '%-14s %s\n' "moved" "codex marketplace ${marketplace#* } -> $source"
   else
-    case "$marketplace" in git*) run_codex plugin marketplace upgrade projector ;; esac
+    case "$marketplace" in git*) run_codex_with_retry plugin marketplace upgrade projector ;; esac
   fi
   run_codex plugin add projector@projector
   # Codex has no plugin dependencies, so GitHub's gh-stack skill is a plugin
@@ -349,6 +363,16 @@ install_codex() {
   # not serve it yet is reported rather than fatal.
   run_codex plugin add gh-stack@projector ||
     warn_row "gh-stack" "codex could not install gh-stack@projector"
+}
+
+# Codex reads a directory on this machine in place and clones anything else,
+# so only a remote source has a clone to retry.
+add_codex_marketplace() {
+  if [ -d "$1" ]; then
+    run_codex plugin marketplace add "$1"
+  else
+    run_codex_with_retry plugin marketplace add "$1"
+  fi
 }
 
 # The `gh stack` extension the stack workflow runs, at least at the release

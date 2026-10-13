@@ -166,7 +166,9 @@ test('draws one line per open pull request of the session’s own loops', async 
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '1 open thread' })).toBeDefined()
+  // Open threads show as their count after a `⋮`, in yellow.
+  expect((await ui.findAll({ type: 'Text', text: '⋮1' })).map(found => found.props.color)).toContain('warning')
+  expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
@@ -213,6 +215,9 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
   expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
+  // The threads' count comes after the other notes, beside the age.
+  const notes = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  expect(notes.indexOf(' · ⋮2')).toBeGreaterThan(notes.indexOf('conflict'))
 
   await ui.press({ key: 'pr:x/y#7' })
   // The drawer's facts name no author, whoever wrote the pull request.
@@ -222,10 +227,10 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
   // The pull request's age ends its line, so the drawer does not repeat it.
   expect(await ui.find({ type: 'Text', text: /updated 5m ago/ })).toBeUndefined()
-  // The drawer starts in the row's first column, under the number.
+  // The drawer starts where the state does: past the three-column labels `r#1` and `y#7` and the gap after them.
   const opened = await ui.find({ key: 'drawer:x/y#7' })
   expect(opened).toBeDefined()
-  expect(opened?.props.marginLeft).toBeUndefined()
+  expect(opened?.props.marginLeft).toBe(4)
   // Under the facts, each link has a line of its own, so a terminal without hyperlinks shows the whole URL, and the actions' row comes last.
   const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
   expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'github:x/y#7', 'projector:x/y#7', 'Box'])
@@ -643,7 +648,7 @@ const reopened = (question: HeldQuestion): HeldQuestion =>
 function questionStore(clock: Clock, seed: readonly Held[]) {
   const store = new Map<string, Held>()
   const times = new Map<string, number>()
-  /** How `ask` fails: an exit code and its message, or `rejection` when the command never finishes. */
+  /** How the tools' commands fail: an exit code and its message, or `rejection` when the command never finishes. */
   const refusal: { code?: number; message?: string; rejection?: string } = {}
   /**
    * How many of the next `list` commands fail, how many run past the CLI's
@@ -702,9 +707,11 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         })
         .then(() => listed)
     }
-    if (command === 'ask' || command === 'tell') {
+    if (command === 'ask' || command === 'tell' || command === 'withdraw') {
       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
+    }
+    if (command === 'ask' || command === 'tell') {
       posted += 1
       const ref = String(posted)
       const agentId = flag(args, 'agent')
@@ -734,13 +741,17 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       failing.locks -= 1
       return failed(75, BUSY)
     }
-    if (item.answer !== undefined && (command === 'answer' || command === 'dismiss' || command === 'snooze')) {
+    if (item.answer !== undefined && ['answer', 'dismiss', 'withdraw', 'snooze'].includes(command)) {
       return failed(65, `${ref} is already answered`)
     }
     const { snoozedUntil: _, ...awake } = item
     if (command === 'dismiss') {
       const answer = { dismissed: true as const, answeredAt: time }
       return printed(put(awake.kind === 'notice' ? { ...awake, answer, deliveredAt: time } : { ...awake, answer }))
+    }
+    if (command === 'withdraw') {
+      const answer = { dismissed: true as const, withdrawn: true as const, answeredAt: time }
+      return printed(put({ ...awake, answer, deliveredAt: time }))
     }
     if (command === 'snooze') return printed(put({ ...item, snoozedUntil: time + HOUR }))
     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
@@ -857,6 +868,7 @@ test('asks through the tool, and the band lists the question below the pull requ
   expect(session.registered).toEqual([
     expect.objectContaining({ name: 'ask', isDeferred: false }),
     expect.objectContaining({ name: 'tell', isDeferred: false }),
+    expect.objectContaining({ name: 'withdraw', isDeferred: false }),
   ])
   expect(session.project()).toContain(
     'inbox ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
@@ -1427,6 +1439,67 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   await ui.unmount()
 })
 
+test('the withdraw tool takes an item out of the band at once, and nothing goes back to the agent', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held(), notice()])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'item:1' })
+  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
+
+  const called = await $.tool.call({ tool: 'mcp__projector__withdraw', number: 1 })
+  expect(String(called.text ?? called.result)).toBe(
+    'Withdrew 1. It has left Projector’s band, and nothing comes back to you.',
+  )
+  expect(session.project()).toContain('inbox withdraw 1 --session s1 --json')
+  // Before the band reads the store again, the item has gone and its drawer with it.
+  expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
+  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
+  expect(session.sent).toEqual([])
+  expect(session.submitted).toEqual([])
+  expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
+  await ui.unmount()
+})
+
+test('the withdraw tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const answered = held({ answer, deliveredAt: NOW - 1_000 })
+  const session = questionWorld(on, clock, [answered])
+  await startSession($, clock)
+  const withdraw = { tool: 'mcp__projector__withdraw' as const, number: 1 }
+
+  const resolved = await $.tool.call(withdraw)
+  expect(resolved.deny ?? resolved.text).toBe('1 is already answered')
+
+  const unknown = await $.tool.call({ ...withdraw, number: 9 })
+  expect(unknown.deny ?? unknown.text).toBe('no item 9')
+
+  session.store.failing.locks = 1
+  const busy = await $.tool.call(withdraw)
+  expect(busy.deny ?? busy.text).toBe(BUSY)
+
+  Object.assign(session.store.refusal, { code: 2, message: "error: argument inbox_command: invalid choice: 'withdraw'" })
+  const old = await $.tool.call(withdraw)
+  expect(old.deny ?? old.text).toBe("error: argument inbox_command: invalid choice: 'withdraw'; run project upgrade")
+
+  Object.assign(session.store.refusal, { code: undefined, rejection: 'project timed out after 15000 ms' })
+  const hung = await $.tool.call(withdraw)
+  expect(hung.deny ?? hung.text).toMatch(
+    /^project did not finish \(.*\); tell the person in the conversation that it no longer needs them$/,
+  )
+  expect(session.store.store.get('1')).toEqual(answered)
+})
+
 test('snooze hides either kind for an hour, then brings a hidden band back', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -1532,16 +1605,23 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
   await hidden.unmount()
 })
 
-test('a sent prompt that quotes a notice answers nothing', async ($, on) => {
+test('a sent prompt that quotes a notice answers nothing, and closes its drawer', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [notice()])
   await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'item:2' })
+  expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeDefined()
 
   await $.prompt.submit({ text: `"${FORCE_PUSHED}"\n\nThanks`, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.project().filter(command => /^inbox (answer|dismiss|claim)/.test(command))).toEqual([])
   expect(session.store.store.get('2')?.answer).toBeUndefined()
+  // The notice stays in the band, but the reply is done with its drawer.
+  expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+  await ui.unmount()
 })
 
 test('a snoozed item read at the start leaves a hidden band hidden until its time', async ($, on) => {
