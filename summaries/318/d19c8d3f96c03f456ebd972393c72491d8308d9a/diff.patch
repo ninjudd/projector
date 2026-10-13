@@ -1,0 +1,1102 @@
+diff --git a/README.md b/README.md
+index 8ec38694..2b856fc0 100644
+--- a/README.md
++++ b/README.md
+@@ -38,9 +38,11 @@ project check
+ conventions into `AGENTS.md`, linked as `CLAUDE.md`, so every agent session in
+ the repository follows them. Run at a terminal, it adds rules to your own
+ Claude Code settings, `~/.claude/settings.json`, and to your Codex rules,
+-`~/.codex/rules/projector.rules`, that let an agent publish a review or a pull
+-request summary without being refused. It sets those up outside a repository
+-too. When `origin` is on
++`~/.codex/rules/projector.rules`, that let an agent run `project` commands, such
++as publishing a review or a pull request summary, without being asked or
++refused. `project init`, `project upgrade`, `project config set`, and a site
++build that runs a `--prepare` command still ask.
++It sets those up outside a repository too. When `origin` is on
+ GitHub, it also sets up the [Projector site](docs/site.md). `create` writes
+ the plan at
+ `docs/projects/cool-new-feature/readme.md`. A project can hold supporting
+diff --git a/docs/cli.md b/docs/cli.md
+index 89808647..083bea5b 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -65,13 +65,62 @@ what it did to each:
+   an import. When the two are genuinely distinct files, each with its own
+   content and no import between them, each gets the section, because an import
+   would change everything Claude Code reads rather than only Projector's part.
+-- `~/.claude/settings.json`, your own Claude Code settings, gains the
+-  permission rules `Bash(project review publish *)`,
+-  `Bash(project review hold *)`, and `Bash(project summary publish *)` in
+-  `permissions.allow`. When `CLAUDE_CONFIG_DIR` is set, the file is
+-  `settings.json` in that directory instead. Claude Code's auto mode
+-  otherwise can refuse a review loop's clean review of your own pull request
+-  as self-approval, although the review is a `COMMENT` that moves no
++- `~/.claude/settings.json`, your own Claude Code settings, gains
++  `Bash(project *)` in `permissions.allow`, which allows every `project`
++  command, and these entries in `permissions.ask`, which still ask before the
++  few commands that reach outside Projector's own state:
++
++  ```json
++  "ask": [
++    "Bash(project init *)",
++    "Bash(project upgrade *)",
++    "Bash(project config set *)",
++    "Bash(project config unset *)",
++    "Bash(project site *prepare*)",
++    "Bash(project inbox answer *)",
++    "Bash(project inbox dismiss *)",
++    "Bash(project inbox snooze *)",
++    "Bash(project -*)"
++  ]
++  ```
++
++  `project upgrade` runs an installer it downloads, `project init` writes
++  these rules, and `project config set` and `unset` can change a setting that
++  widens an agent's authority, such as `review.allow_approve`.
++  `project site build` and `serve` run the shell command `--prepare` names, or
++  the checkout's own `site.prepare` once `--allow-prepare` allows it, so
++  `Bash(project site *prepare*)` asks before either flag, as `--prepare x` or
++  `--prepare=x`, and before `--no-prepare` too. Those two commands refuse an
++  abbreviated option such as `--prep`, so no shorter spelling slips past the
++  rule. `project inbox answer`, `dismiss`, and `snooze` record your answer to
++  an item an agent posted, or your choice to dismiss or put it off, so an
++  agent running one could answer its own question. Projector's band runs
++  them itself, not through an agent's shell, so answering from the band never
++  asks. Claude Code checks ask rules before allow rules, so an ask rule
++  prompts for a command that `Bash(project *)` also allows, and a trailing
++  ` *` matches the command with no arguments too. `Bash(project -*)` covers an
++  option before the command, as in `project --root . init`, which no
++  command's own ask rule matches; it asks before `project --version` and
++  `project --help` as well.
++
++  `project edit`, and `project create` without `--no-edit`, open your
++  `$VISUAL` or `$EDITOR`, and need no ask rule. They open it only at a
++  terminal, which Claude Code gives no command, and Claude Code lets an allow
++  rule match past a leading variable assignment only for a fixed list of
++  variables, such as `LANG`, that holds neither of those, nor `PATH` or
++  `HOME`. A command such as `VISUAL='sh -c …' project edit plan`, which picks
++  the program Projector runs, therefore falls to Claude Code's usual
++  approval. `project review gate` runs the checks that `review.gate`
++  configures, as a review loop does on every review, and is allowed. The ask
++  rules match the command text an agent writes, so they keep an agent from
++  running these commands unasked, not from spelling one another way.
++
++  When `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that
++  directory instead. Without the allow rule, Claude Code asks before each
++  Projector command an agent runs, which pushes the agent toward editing
++  Projector's files by hand or calling `gh api` itself. Its auto mode can
++  refuse a review loop's clean review of your own pull request as
++  self-approval, although the review is a `COMMENT` that moves no
+   `reviewDecision` and a person still merges. It can refuse the deletion of
+   the comment that holds your pull request in draft, as a write to an
+   external system, which leaves a clean pull request stuck in draft. It can
+@@ -88,15 +137,16 @@ what it did to each:
+   `review.publish_rule = true` does not change that. Pass `--no-publish-rule`
+   to leave the file alone for one run. To check the rules without `init`, run
+   `project review rules`, which writes nothing. `init` adds the rules to the
+-  file's existing settings, keeps every other setting, writes through a
+-  symlink such as one into a dotfiles repository, and writes the file back as
+-  two-space JSON. It keeps a file that is not valid UTF-8 JSON, holds settings
+-  of an unexpected shape, sits under a `.claude` that is not a directory, or
+-  cannot be written, as one linked into a read-only directory such as the Nix
+-  store cannot, and says on stderr how to add the rules yourself. `init`
+-  still exits 0.
+-- `~/.codex/rules/projector.rules`, a Codex rules file, allows the same three
+-  commands, for Codex's approval reviewer, which otherwise can refuse
++  file's existing settings, removes from `permissions.allow` the narrower
++  rules `Bash(project *)` replaces, such as `Bash(project review publish *)`,
++  keeps every other setting, writes through a symlink such as one into a
++  dotfiles repository, and writes the file back as two-space JSON. It keeps a
++  file that is not valid UTF-8 JSON, holds settings of an unexpected shape,
++  sits under a `.claude` that is not a directory, or cannot be written, as one
++  linked into a read-only directory such as the Nix store cannot, and says on
++  stderr how to add the rules yourself. `init` still exits 0.
++- `~/.codex/rules/projector.rules`, a Codex rules file, allows the same
++  commands for Codex, whose approval reviewer otherwise can refuse
+   `project summary publish` as sending repository content to another host.
+   When `CODEX_HOME` is set, the file is `rules/projector.rules` in that
+   directory instead. `init` writes it only where that directory exists, so it
+@@ -105,22 +155,47 @@ what it did to each:
+   grant to `default.rules`, so `init` rewrites `projector.rules` whole and
+   leaves your other rules alone. The terminal, `--publish-rule`, and
+   `review.publish_rule` decide it exactly as they decide the Claude Code
+-  rules. The file holds two rules:
++  rules.
++
++  A Codex rule matches exact words with no wildcard, so an ask rule for
++  `init` would miss an option before it, as in `project --root=. init`.
++  Instead, the file allows commands by name. Codex runs a command that an
++  `allow` rule matches without asking, and outside its sandbox, so a publish
++  reaches GitHub and the site. Codex can also give a command a terminal that
++  the agent types into, so the file leaves out every command that can run
++  another program, as well as those that reach outside Projector's own state:
+ 
+   ```text
+   prefix_rule(
+-      pattern = ["project", ["review", "summary"], "publish"],
++      pattern = ["project", ["check", "done", "list", "loop", "owner", "priority", "search", "show", "status", "summary"]],
+       decision = "allow",
+   )
+   prefix_rule(
+-      pattern = ["project", "review", "hold"],
++      pattern = ["project", "config", ["get", "list", "paths"]],
++      decision = "allow",
++  )
++  prefix_rule(
++      pattern = ["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "show", "tell", "watch", "withdraw"]],
++      decision = "allow",
++  )
++  prefix_rule(
++      pattern = ["project", "review", ["census", "hold", "interdiff", "move", "publish", "release", "rules", "setup", "status"]],
++      decision = "allow",
++  )
++  prefix_rule(
++      pattern = ["project", "site", ["page", "status", "workflow"]],
+       decision = "allow",
+   )
+   ```
+ 
+-  Codex runs a command that an `allow` rule matches without asking, and
+-  outside its sandbox, so a publish reaches GitHub and the site. To see what
+-  the rules allow, run
++  No rule matches `project init`, `project upgrade`, `project config set` or
++  `unset`, `project create` or `project edit`, whose editor an agent could
++  drive, `project review gate`, `project site build` or `serve`,
++  `project inbox answer`, `dismiss`, or `snooze`, which record your choice,
++  or a command line that starts with an option, so Codex's usual approval
++  decides them, in its sandbox. A command added to Projector later reaches Codex once
++  Projector names it and you run `init` again. To see what the rules allow,
++  run
+   `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
+   `init` keeps the file, and says on stderr how to add the rules yourself, when
+   the file is not valid UTF-8, cannot be read, or cannot be written, as one in
+@@ -536,7 +611,7 @@ These are the keys Projector reads today:
+ | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
+ | `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
+ | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
+-| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing `project review publish`, `project review hold`, and `project summary publish` to your Claude Code settings and Codex rules |
++| `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing every `project` command but the few that reach outside Projector's own state to your Claude Code settings and Codex rules |
+ | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
+ | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+@@ -1037,6 +1112,11 @@ the command's text, not the files it runs: once `make explorer` is allowed, a
+ branch that changes the Makefile's `explorer` target runs that change, as
+ running `make` there would.
+ 
++`site build` and `site serve` take each option only spelled in full, so
++`--prep` is refused rather than read as `--prepare`. The ask rule `init` adds
++for these flags, `Bash(project site *prepare*)`, then matches every spelling
++an agent can use.
++
+ `site serve` builds the site from a checkout, as `site build` does, into a
+ temporary directory and serves it over HTTP until you press Ctrl-C, or it
+ receives SIGTERM or SIGHUP, which removes the directory. It needs no GitHub
+@@ -1452,10 +1532,11 @@ head's code, so `gate` refuses, exiting 1 without running anything, on a head
+ `setup` recorded as untrusted, whether or not `review.gate` is set, and when
+ `review.gate` is unset.
+ 
+-`rules` checks whether your own settings allow `project review publish`,
+-`project review hold`, and `project summary publish`: the rules `init` adds to
++`rules` checks whether your own settings hold the rules `init` adds to
+ `~/.claude/settings.json`, and to `~/.codex/rules/projector.rules` where Codex
+-is installed. It prints
++is installed, which allow Projector's commands, such as
++`project review publish`, `project review hold`, and `project summary publish`,
++and ask before the few that reach outside Projector's own state. It prints
+ each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
+ whole check and for each file. It writes nothing, takes no pull request, and
+ runs from any directory. It exits 0 when every file has the rules. It exits 1
+@@ -1567,6 +1648,11 @@ it as `dismissed`. Only `answer` takes a letter: every other command refuses
+ `3.a` with exit code 65, so `dismiss` never drops the answer you meant to
+ give.
+ 
++`answer`, `dismiss`, and `snooze` record your choice, so the permission rules
++`project init` adds ask you before an agent runs one, in Claude Code, and
++leave them to Codex's usual approval. Otherwise an agent could answer its own
++question. Projector's band runs them itself, so answering there never asks.
++
+ Every command refuses any other form of reference, such as `#337.3`,
+ `octo/web#12.1`, or `q2`, with exit code 65, and no command lists, delivers,
+ or deletes an item stored under one.
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index f2dd02ad..d3ffe97d 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -238,14 +238,14 @@ run it in, and refuses outside one.
+ Each run prints what it did, the comment's id and URL, the changes the hold
+ lists, and the draft state; `--json` prints the same as one object.
+ 
+-Run `project review hold` as a command of its own, because it is the one
+-narrow command a session can allow for the hold. Claude Code's auto mode can
+-refuse a raw `gh api` call that deletes a comment, as a write to an external
+-system, which leaves a clean pull request stuck in draft. `project init`
+-adds `Bash(project review hold *)` to the user's Claude Code settings, and
+-the same allowance to their Codex rules, so the command runs where the raw
+-call is refused. If the host refuses the command anyway, do not retry it as
+-a raw `gh api` call. Leave the hold as it is, and ask the user to run
++Run `project review hold` as a command of its own, so the rule that allows
++it matches, rather than making its calls with `gh api`. Claude Code's auto
++mode can refuse a raw `gh api` call that deletes a comment, as a write to an
++external system, which leaves a clean pull request stuck in draft.
++`project init` adds `Bash(project *)` to the user's Claude Code settings,
++which allows every Projector command, and the same allowance to their Codex
++rules, so the command runs where the raw call is refused. If the host
++refuses the command anyway, do not retry it as a raw `gh api` call. Leave the hold as it is, and ask the user to run
+ `project init` in a terminal, which adds the rules, or to run the command
+ themselves.
+ 
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index cc65982d..d5e0da45 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -805,9 +805,9 @@ verdict as one.
+ 
+ Claude Code's auto mode refuses a clean self-review's publish as
+ self-approval unless the user's Claude Code settings, or the repository's,
+-allow `Bash(project review publish *)`, a rule `project init` adds to the
+-user's `~/.claude/settings.json`. For Codex, `init` adds the same allowance to
+-the user's Codex rules. Run `publish` as a command of its own so the rule
++allow it, as `Bash(project *)` does, a rule `project init` adds to the user's
++`~/.claude/settings.json`. For Codex, `init` adds the same allowance to the
++user's Codex rules. Run `publish` as a command of its own so the rule
+ matches it. If the host refuses it anyway, do not retry it in another form:
+ keep the lock and the body, and ask the user to run `project init` in a
+ terminal, which adds the rules to their own settings, or to run the publish
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 1bad62a3..18c8ec47 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -55,8 +55,8 @@ a repository with nothing open.
+    review or GitHub workflow skills.
+ 2. Run `project review rules` once. It reads the user's own Claude Code
+    settings and Codex rules, writes nothing, and exits 1 when either lacks the
+-   rules that allow `project review publish`, `project review hold`, and
+-   `project summary publish`.
++   rules that allow Projector's commands, `project review publish`,
++   `project review hold`, and `project summary publish` among them.
+    On exit 1, tell the user once, before the first review, that the host's
+    automatic approval, such as Claude Code's auto mode or Codex's approval
+    reviewer, can refuse the loop's publishes, a summary on another author's
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 421607b4..2a7244bb 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -24,7 +24,7 @@
+ from urllib.request import url2pathname, urlopen
+ 
+ from . import inbox, loop, permissions, review, site, summary
+-from .permissions import allow_publish
++from .permissions import allow_commands
+ from .summary import WORKFLOW_PATH
+ from .config import ConfigError
+ from .config import load as load_config
+@@ -335,7 +335,7 @@ def parser() -> argparse.ArgumentParser:
+         "--publish-rule",
+         action="store_true",
+         default=None,
+-        help=f"add the rules allowing {permissions.COMMANDS} to your Claude Code settings and Codex rules even "
++        help=f"add rules allowing {permissions.COMMANDS} to your Claude Code settings and Codex rules, even "
+         "without a terminal (default: add them when run at a terminal)",
+     )
+     rule_choice.add_argument(
+@@ -555,8 +555,10 @@ def parser() -> argparse.ArgumentParser:
+ 
+     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
+     site_commands = site.add_subparsers(dest="site_command", required=True)
++    # Without abbreviations, --prepare and --allow-prepare are always spelled in
++    # full, so the ask rule `init` adds for them matches every spelling.
+     site_build = site_commands.add_parser(
+-        "build", help="build the site from the projects, the published reviews, and the docs"
++        "build", help="build the site from the projects, the published reviews, and the docs", allow_abbrev=False
+     )
+     site_build.add_argument("--out", required=True)
+     site_build.add_argument("--summaries", help="directory holding <number>/<head>/summary.json files")
+@@ -593,7 +595,7 @@ def parser() -> argparse.ArgumentParser:
+     site_status.add_argument("--repo", required=True, help="OWNER/NAME")
+     site_status.add_argument("--pr", type=int, help="print the URL of this pull request's review")
+     site_serve = site_commands.add_parser(
+-        "serve", help="build the site and serve it over HTTP, rebuilding as its sources change"
++        "serve", help="build the site and serve it over HTTP, rebuilding as its sources change", allow_abbrev=False
+     )
+     site_serve.add_argument("--port", type=int, default=8000, help="the port to listen on (default: 8000; 0 picks one)")
+     site_serve.add_argument(
+@@ -969,7 +971,7 @@ def review_rules(json_output: bool) -> int:
+     """`review rules`: whether the user's settings allow every command Projector's permission rules name,
+     exiting 1 when one may not.
+ 
+-    It asks `allow_publish` only to report, so it writes nothing, and a review
++    It asks `allow_commands` only to report, so it writes nothing, and a review
+     loop can run it before its first publish rather than learn of a refusal on
+     one pull request mid-loop. The rules belong in the person's own settings,
+     which only a person at a terminal adds, so the closing line asks for them
+@@ -978,7 +980,7 @@ def review_rules(json_output: bool) -> int:
+ 
+     # Without the hint, a missing rule's note names no command, since the
+     # agent that runs this check must not add the rules itself.
+-    files = allow_publish(apply=False, hint=False)
++    files = allow_commands(apply=False, hint=False)
+     allowed = all(entry.action == "unchanged" for entry in files)
+     if json_output:
+         print(json.dumps({"allowed": allowed,
+@@ -993,8 +995,9 @@ def review_rules(json_output: bool) -> int:
+         if entry.note:
+             print(f"project: {entry.note}", file=sys.stderr)
+     if not allowed:
+-        print(f"project: without these rules, the host's automatic approval can refuse {permissions.COMMANDS}, "
+-              "unless the repository's own or managed settings allow them; ask the user to run `project init` "
++        print("project: without these rules, the host can ask before, or its automatic approval refuse, Projector's "
++              "commands, such as a review's publish, unless the repository's own or managed settings allow them; "
++              "ask the user to run `project init` "
+               "in a terminal, or to add the rules above, and do not run `project init --publish-rule` to add them "
+               "yourself", file=sys.stderr)
+     return 0 if allowed else 1
+@@ -1730,8 +1733,8 @@ def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[st
+     """Whether `init` adds Projector's permission rules ("add"), only reports them ("report"), or leaves them
+     (None).
+ 
+-    The rules exempt three commands from each host's automatic approval in the
+-    person's own settings, so `init` adds them only when a person runs it at a
++    The rules exempt Projector's commands from each host's automatic approval in
++    the person's own settings, so `init` adds them only when a person runs it at a
+     terminal or names --publish-rule; an agent refreshing the instructions gets
+     a note instead. Configuration can only turn them off.
+     """
+@@ -1749,7 +1752,7 @@ def init_permissions_only(arguments: argparse.Namespace) -> int:
+     if arguments.site or arguments.url:
+         raise UsageError("--site and --url set up a repository's site; run `project init` inside that repository")
+     publish_rule = publish_rule_mode(arguments, Path.cwd())
+-    files = allow_publish(apply=publish_rule == "add") if publish_rule else []
++    files = allow_commands(apply=publish_rule == "add") if publish_rule else []
+     emit_files(files, arguments.json_output, readme=False)
+     # Said from what was written, because an agent relays this line: a rule
+     # only reported is a rule the next publish still lacks.
+@@ -1818,7 +1821,7 @@ def run(arguments: argparse.Namespace) -> int:
+         try:
+             files = store.init(instructions_enabled(root))
+             if publish_rule:
+-                files.extend(allow_publish(apply=publish_rule == "add"))
++                files.extend(allow_commands(apply=publish_rule == "add"))
+             pages = None
+             if wanted:
+                 try:
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 42f63e2e..83a05d0c 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -1,18 +1,71 @@
+ """The permission rules `init` adds to the user's Claude Code settings and Codex rules.
+ 
+-Each host's automatic approval can refuse a Projector command that the user
+-asked for. Claude Code's auto mode refuses a session's clean review of a pull
++The `project` command is how an agent is meant to change Projector's state:
++plans, the inbox, loops, holds, reviews, and summaries. Each host's automatic
++approval can refuse such a command that the user asked for, and a prompt for
++one pushes an agent back toward editing the files by hand or calling `gh api`
++itself. Claude Code's auto mode refuses a session's clean review of a pull
+ request its own GitHub account opened, as self-approval, although the review
+ is a COMMENT that moves no reviewDecision and a person still merges. It also
+ refuses the deletion of the comment that holds a pull request in draft, as a
+ write to an external system, which leaves a clean pull request stuck in draft.
+ Codex's approval reviewer refuses `project summary publish`, which sends a
+ pull request's diff to the repository's own site, as sending repository
+-content to another host. A rule that allows `project review publish`,
+-`project review hold`, and `project summary publish` resolves each command
+-before that review runs. The rules go in the person's own settings, so they
+-hold in every repository, clone, and worktree they open, and no repository has
+-to carry a permission for everyone who opens it.
++content to another host.
++
++So the rules allow every `project` command, and a new command needs no new
++rule, except the few that reach outside Projector's own state, which still
++ask: `project upgrade` runs an installer it downloads, `project init` writes
++these rules, `project config set` and `unset` can change a setting that
++widens an agent's authority, such as `review.allow_approve`, and
++`project site build` and `serve` run the shell command `--prepare` names, or
++the checkout's own `site.prepare` once `--allow-prepare` allows it. Ask rules
++also cover what only the person may record: `project inbox answer`,
++`dismiss`, and `snooze` record the person's answer to an item an agent
++posted, or their choice to dismiss or put it off, so an agent running one
++could answer its own question. Projector's band runs those commands itself,
++not through an agent's shell, so the person answering from the band is never
++asked. The rules go in the person's own settings, so they hold in every
++repository, clone, and worktree they open, and no repository has to carry a
++permission for everyone who opens it.
++
++Claude Code evaluates deny rules, then ask rules, then allow rules, and the
++first match decides, so an ask rule prompts for a command that `Bash(project *)`
++also allows. A trailing ` *` matches the bare command too, so
++`Bash(project init *)` asks for `project init` with or without arguments.
++The CLI's own options, such as `--root`, come before its command, so
++`project --root . init` matches the allow rule and no command's ask rule;
++`Bash(project -*)` asks for every command line that starts with an option,
++`project --version` included. `Bash(project site *prepare*)` asks for both
++`--prepare` flags in either spelling, `--prepare x` or `--prepare=x`, and
++`site build` and `serve` refuse an abbreviated option such as `--prep`, so
++no shorter spelling slips past it; it asks for `--no-prepare` too.
++
++Two commands open the person's editor, `$VISUAL` or `$EDITOR`: `project edit`,
++and `project create` without `--no-edit`. They need not ask. Each opens the
++editor only at a terminal, which Claude Code gives no command, and Claude
++Code lets an allow rule match past a leading variable assignment only for a
++fixed list of variables, such as `LANG`, that holds neither of those, nor
++`PATH` or `HOME`. So `VISUAL='sh -c …' project edit x` is not allowed by
++`Bash(project *)`, and neither is any command that picks a program Projector
++runs. `project review gate` runs the checks `review.gate` configures, as a
++review loop does on every review, and is allowed. Claude Code matches these
++rules against the command text an agent writes, so they keep an agent from
++running a command unasked, not from spelling it another way, such as with a
++quoted command name.
++
++Codex's `prefix_rule` matches exact tokens with no wildcard, so no rule can
++match an option such as `--root=.` before the command. Codex applies the
++strictest decision when several rules match, but a `prompt` rule for
++`["project", "init"]` would miss `project --root=. init` under a rule allowing
++`["project"]`. The Codex rules therefore allow commands by name, and anything
++else, a command line that starts with an option included, falls through to
++Codex's usual approval. Codex runs an allowed command outside its sandbox,
++and can give it a terminal the agent types into, so the rules also leave out
++every command that can run another program: `create` and `edit`, whose
++editor an agent could drive, `review gate`, and `site build` and `serve`.
++They leave out `inbox answer`, `dismiss`, and `snooze` too. A new command
++reaches Codex once it is added here and `init` rewrites the file.
+ """
+ 
+ from __future__ import annotations
+@@ -25,28 +78,49 @@
+ 
+ from .core import FileAction, write_through
+ 
+-RULES = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project summary publish *)")
+-
++ALLOW = ("Bash(project *)",)
++ASK = ("Bash(project init *)", "Bash(project upgrade *)", "Bash(project config set *)",
++       "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
++       "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project -*)")
++# The narrower rules Projector wrote before `Bash(project *)` covered them,
++# which `init` removes from `permissions.allow`.
++SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
++              "Bash(project review settle *)", "Bash(project summary publish *)")
++
++ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
++         "`--prepare` or `--allow-prepare`, and `project inbox answer`, `dismiss`, and `snooze`")
++COMMANDS = "every `project` command but the few that reach outside Projector's own state"
++
++# Each pattern Codex may run without asking, and outside its sandbox, with the
++# justification Codex shows for it.
++CODEX_ALLOW = (
++    (["project", ["check", "done", "list", "loop", "owner", "priority", "search", "show", "status", "summary"]],
++     "Runs a Projector command that works on plans, loops, or pull request summaries."),
++    (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
++    (["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "show", "tell", "watch", "withdraw"]],
++     "Posts, reads, withdraws, or delivers an inbox item, but never records the person's answer to one."),
++    (["project", "review", ["census", "hold", "interdiff", "move", "publish", "release", "rules", "setup",
++                            "status"]],
++     "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),
++    (["project", "site", ["page", "status", "workflow"]],
++     "Builds a summary page, says where the site is hosted, or writes the site's workflow file."),
++)
++CODEX_PREFIX_RULES = tuple(f'prefix_rule(pattern = {json.dumps(pattern)}, decision = "allow")'
++                           for pattern, _ in CODEX_ALLOW)
+ # Codex loads every `.rules` file in its rules directory, and writes the
+ # approvals a person saves to `default.rules`, so Projector keeps its rules in
+ # a file of its own and rewrites that file whole.
+-CODEX_PREFIX_RULES = ('prefix_rule(pattern = ["project", ["review", "summary"], "publish"], decision = "allow")',
+-                      'prefix_rule(pattern = ["project", "review", "hold"], decision = "allow")')
+-CODEX_RULES = """\
+-# Written by `project init`, which replaces this file. Put your own rules in another file.
+-prefix_rule(
+-    pattern = ["project", ["review", "summary"], "publish"],
+-    decision = "allow",
+-    justification = "Publishes a Projector review or pull request summary that the user asked for.",
+-)
+-prefix_rule(
+-    pattern = ["project", "review", "hold"],
+-    decision = "allow",
+-    justification = "Holds the user's own pull request in draft while changes are built, or ends the hold.",
++CODEX_RULES = (
++    "# Written by `project init`, which replaces this file. Put your own rules in another file.\n"
++    "# Codex's usual approval decides every command these rules leave out: `project init`, `project upgrade`,\n"
++    "# `project config set` and `unset`, `project create` and `project edit`, which can open an editor,\n"
++    "# `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
++    "# the command line names, `project inbox answer`, `dismiss`, and `snooze`, which record the person's\n"
++    "# choice, and a command line that starts with an option.\n"
++    + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
++              f'    justification = "{justification}",\n)\n'
++              for pattern, justification in CODEX_ALLOW)
+ )
+-"""
+-
+-COMMANDS = "`project review publish`, `project review hold`, and `project summary publish`"
+ 
+ 
+ def settings_path(environ: Mapping[str, str] = os.environ) -> Path:
+@@ -89,8 +163,8 @@ def read_user_file(path: Path, environ: Mapping[str, str] = os.environ) -> tuple
+         return "", f"could not be read ({error.strerror})"
+ 
+ 
+-def allow_publish(apply: bool = True, environ: Mapping[str, str] = os.environ,
+-                  hint: bool = True) -> list[FileAction]:
++def allow_commands(apply: bool = True, environ: Mapping[str, str] = os.environ,
++                   hint: bool = True) -> list[FileAction]:
+     """Add Projector's permission rules for Claude Code, and for Codex where Codex is installed.
+ 
+     Without `apply`, a file that lacks the rules is only reported, with how to
+@@ -105,11 +179,13 @@ def allow_publish(apply: bool = True, environ: Mapping[str, str] = os.environ,
+ 
+ 
+ def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ, hint: bool = True) -> FileAction:
+-    """Add the rules to `permissions.allow` in the user's Claude Code settings.
++    """Add `ALLOW` to `permissions.allow` and `ASK` to `permissions.ask` in the user's Claude Code settings.
+ 
+-    Everything else in the file is kept, and a file linked into a dotfiles
+-    repository is written through its link. A file `init` cannot read as
+-    settings is left alone with a note.
++    The `SUPERSEDED` rules leave `permissions.allow`, and everything else in
++    the file is kept. A file linked into a dotfiles repository is written
++    through its link. A file `init` cannot read as settings is left alone with
++    a note. Without `apply`, only a missing rule is reported, because a
++    superseded rule left in place allows nothing that `ALLOW` does not.
+     """
+ 
+     path = settings_path(environ)
+@@ -117,7 +193,8 @@ def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ,
+ 
+     def kept(reason: str) -> FileAction:
+         return FileAction(name, "kept", f"{name} {reason}, so the rules allowing {COMMANDS} were not added; add "
+-                                        f"{' and '.join(RULES)} to permissions.allow yourself")
++                                        f"{', '.join(ALLOW)} to permissions.allow and {', '.join(ASK)} to "
++                                        "permissions.ask yourself")
+ 
+     existed = path.exists()
+     text, unreadable = read_user_file(path, environ)
+@@ -132,20 +209,26 @@ def kept(reason: str) -> FileAction:
+     permissions = settings.setdefault("permissions", {})
+     if not isinstance(permissions, dict):
+         return kept("has a `permissions` that is not an object")
+-    allow = permissions.setdefault("allow", [])
+-    if not isinstance(allow, list):
+-        return kept("has a `permissions.allow` that is not a list")
+-    missing = [rule for rule in RULES if rule not in allow]
+-    if not missing:
++    for key in ("allow", "ask"):
++        if not isinstance(permissions.setdefault(key, []), list):
++            return kept(f"has a `permissions.{key}` that is not a list")
++    allow, ask = permissions["allow"], permissions["ask"]
++    missing_allow = [rule for rule in ALLOW if rule not in allow]
++    missing_ask = [rule for rule in ASK if rule not in ask]
++    superseded = any(rule in SUPERSEDED for rule in allow)
++    if not missing_allow and not missing_ask and not (apply and superseded):
+         return FileAction(name, "unchanged")
+     if not apply:
+-        return FileAction(name, "kept", f"{name} lacks {' and '.join(missing)}, without which Claude Code's auto "
+-                                        "mode can refuse a review loop's clean review of your own pull request, "
+-                                        "the end of a hold on it, or the publish of a summary, unless the "
+-                                        "repository's own settings allow it"
++        consequence = ("Claude Code can ask before, or its auto mode refuse, a Projector command an agent runs, such "
++                       "as a review loop's clean review of your own pull request, the end of a hold on it, or the "
++                       "publish of a summary, unless the repository's own settings allow it"
++                       if missing_allow else f"an agent can run {ASKED} without asking you")
++        return FileAction(name, "kept", f"{name} lacks {', '.join(missing_allow + missing_ask)}, without which "
++                                        f"{consequence}"
+                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
+                                            "add them" if hint else ""))
+-    allow.extend(missing)
++    allow[:] = [rule for rule in allow if rule not in SUPERSEDED] + missing_allow
++    ask.extend(missing_ask)
+     try:
+         write_through(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+     except OSError as error:
+@@ -181,8 +264,9 @@ def kept(reason: str) -> FileAction:
+     if text == CODEX_RULES:
+         return FileAction(name, "unchanged")
+     if not apply:
+-        return FileAction(name, "kept", f"{name} lacks Projector's rules, without which Codex's approval reviewer "
+-                                        f"can refuse {COMMANDS}"
++        return FileAction(name, "kept", f"{name} lacks Projector's current rules, without which Codex can ask "
++                                        "before, or its approval reviewer refuse, a Projector command an agent runs, "
++                                        "such as `project summary publish`"
+                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
+                                            "add it" if hint else ""))
+     try:
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+new file mode 100644
+index 00000000..b7193b62
+--- /dev/null
++++ b/tests/test_permissions.py
+@@ -0,0 +1,181 @@
++from __future__ import annotations
++
++import argparse
++import json
++import os
++import re
++import shlex
++import shutil
++import subprocess
++import tempfile
++import unittest
++from contextlib import redirect_stderr
++from io import StringIO
++from pathlib import Path
++
++from projector import cli, permissions
++
++# Each command line with the decision Claude Code and then Codex reach under
++# the rules `init` writes, where "none" leaves the command to the host's usual
++# approval.
++DECISIONS = (
++    ("project", "allow", "none"),
++    ("project review publish --loop x", "allow", "allow"),
++    ("project review hold 12 --drop", "allow", "allow"),
++    ("project review setup 12", "allow", "allow"),
++    ("project review gate 12", "allow", "none"),
++    ("project summary publish --summary summary.json", "allow", "allow"),
++    ("project inbox ask question --recommend yes --session s1", "allow", "allow"),
++    ("project inbox tell notice --session s1", "allow", "allow"),
++    ("project inbox withdraw 3 --session s1", "allow", "allow"),
++    ("project inbox watch --session s1", "allow", "allow"),
++    ("project inbox claim 3 --session s1", "allow", "allow"),
++    ("project inbox answer 3.a --session s1", "ask", "none"),
++    ("project inbox answer 3.c --text yes", "ask", "none"),
++    ("PROJECTOR_SESSION=s1 project inbox answer 3.a", "ask", "none"),
++    ("project inbox dismiss 3 --session s1", "ask", "none"),
++    ("project inbox snooze 3 --for 30", "ask", "none"),
++    ("project list --json", "allow", "allow"),
++    ("project config get review.username", "allow", "allow"),
++    ("project config list", "allow", "allow"),
++    ("project config paths", "allow", "allow"),
++    ("project config", "allow", "none"),
++    ("project init", "ask", "none"),
++    ("project init --publish-rule", "ask", "none"),
++    ("project upgrade", "ask", "none"),
++    ("project upgrade status", "ask", "none"),
++    ("project config set review.allow_approve true", "ask", "none"),
++    ("project config unset review.allow_approve", "ask", "none"),
++    ("project --root . init", "ask", "none"),
++    ("project --root=. upgrade", "ask", "none"),
++    ("project --projects-dir=plans config set review.allow_approve true", "ask", "none"),
++    ("project --root=. list", "ask", "none"),
++    ("project --version", "ask", "none"),
++    ("project site page --summary summary.json --out page", "allow", "allow"),
++    ("project site status --repo owner/name", "allow", "allow"),
++    ("project site workflow --write", "allow", "allow"),
++    ("project site build --out site", "allow", "none"),
++    ("project site serve", "allow", "none"),
++    ("project site build --out site --prepare 'make docs'", "ask", "none"),
++    ("project site build --out site --prepare=make", "ask", "none"),
++    ("project site serve --prepare make", "ask", "none"),
++    ("project site serve --allow-prepare", "ask", "none"),
++    ("project site build --out site --no-prepare", "ask", "none"),
++    ("project --root . site serve --prepare make", "ask", "none"),
++    ("project edit plan", "allow", "none"),
++    ("project create plan --no-edit", "allow", "none"),
++    ("VISUAL='sh -c make' project edit plan", "none", "none"),
++    ("EDITOR=make project create plan", "none", "none"),
++    ("PATH=/tmp/bin:/usr/bin project list", "none", "none"),
++    ("XDG_STATE_HOME=/tmp/state project site build --out site", "none", "none"),
++    ("LANG=C project list", "allow", "none"),
++    ("HOME=/tmp project init --publish-rule", "ask", "none"),
++    ("projector list", "none", "none"),
++)
++
++# What the Codex rules leave to Codex's usual approval: each command with the
++# subcommands left out, or None where the whole command is.
++CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None,
++                  "config": {"set", "unset"}, "inbox": {"answer", "dismiss", "snooze"}, "review": {"gate"},
++                  "site": {"build", "serve"}}
++
++# Some of the variables Claude Code lets an allow rule match past. Its list is
++# fixed, and holds none of VISUAL, EDITOR, PATH, HOME, or XDG_STATE_HOME.
++SAFE_VARIABLES = {"LANG", "NODE_ENV", "TZ"}
++
++
++def claude_decision(command: str) -> str:
++    """The decision Claude Code's permissions documentation gives `command` under Projector's rules.
++
++    Ask rules come before allow rules and the first match decides. A `*`
++    stands for any text, and a trailing ` *` that is a rule's only wildcard
++    also matches the bare command. An ask rule matches past any leading
++    variable assignment, and an allow rule only past one of a few variables.
++    """
++
++    words = shlex.split(command)
++    assigned = set()
++    while words and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0], re.DOTALL):
++        assigned.add(words.pop(0).split("=", 1)[0])
++    text = " ".join(words)
++    for decision, rules in (("ask", permissions.ASK), ("allow", permissions.ALLOW)):
++        if decision == "allow" and not assigned <= SAFE_VARIABLES:
++            continue
++        for rule in rules:
++            pattern = rule.removeprefix("Bash(").removesuffix(")")
++            if pattern.endswith(" *") and pattern.count("*") == 1 and text == pattern[:-2]:
++                return decision
++            if re.fullmatch(".*".join(map(re.escape, pattern.split("*"))), text, re.DOTALL):
++                return decision
++    return "none"
++
++
++def codex_decision(command: str) -> str:
++    """The decision Codex's rules documentation gives `command`: a pattern matches a prefix of its tokens, where a
++    list matches any one of its tokens."""
++
++    tokens = shlex.split(command)
++    for pattern, _ in permissions.CODEX_ALLOW:
++        if len(tokens) >= len(pattern) and all(
++                token in (part if isinstance(part, list) else [part]) for token, part in zip(tokens, pattern)):
++            return "allow"
++    return "none"
++
++
++def subcommands(parser: argparse.ArgumentParser) -> dict[str, argparse.ArgumentParser]:
++    return next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction)).choices
++
++
++class PermissionRulesTests(unittest.TestCase):
++    def test_claude_code_allows_projector_commands_and_asks_before_the_rest(self) -> None:
++        for command, claude, _ in DECISIONS:
++            with self.subTest(command):
++                self.assertEqual(claude, claude_decision(command))
++
++    def test_codex_allows_projector_commands_by_name(self) -> None:
++        for command, _, codex in DECISIONS:
++            with self.subTest(command):
++                self.assertEqual(codex, codex_decision(command))
++
++    @unittest.skipUnless(shutil.which("codex"), "checking the Codex rules needs the codex CLI")
++    def test_codex_itself_reaches_the_same_decisions(self) -> None:
++        home = tempfile.TemporaryDirectory()
++        self.addCleanup(home.cleanup)
++        rules = Path(home.name) / "projector.rules"
++        rules.write_text(permissions.CODEX_RULES)
++        for command, _, codex in DECISIONS:
++            with self.subTest(command):
++                result = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules),
++                                         *shlex.split(command)],
++                                        check=True, capture_output=True, text=True,
++                                        env={**os.environ, "CODEX_HOME": home.name})
++                self.assertEqual(codex, json.loads(result.stdout).get("decision", "none"))
++
++    def test_the_codex_rules_name_every_command_or_leave_it_out(self) -> None:
++        (_, whole), *rest = (pattern for pattern, _ in permissions.CODEX_ALLOW)
++        partial = {command: set(names) for _, command, names in rest}
++        commands = subcommands(cli.parser())
++        self.assertLessEqual(set(whole) | set(partial), set(commands))
++        for command, parser in commands.items():
++            with self.subTest(command):
++                if command in whole:
++                    self.assertNotIn(command, CODEX_LEFT_OUT)
++                elif command in partial:
++                    names = set(subcommands(parser))
++                    self.assertLessEqual(partial[command], names)
++                    self.assertEqual(CODEX_LEFT_OUT[command] & names, names - partial[command],
++                                     "a new subcommand is either allowed by name or deliberately left out")
++                else:
++                    self.assertIn(command, CODEX_LEFT_OUT, "a new command is either allowed or deliberately left out")
++                    self.assertIsNone(CODEX_LEFT_OUT[command])
++
++    def test_site_build_and_serve_take_the_prepare_flags_only_spelled_in_full(self) -> None:
++        for command in (["site", "build", "--out", "site"], ["site", "serve"]):
++            for abbreviated in (["--prep", "make"], ["--allow"], ["--allow-prep"], ["--no-prep"]):
++                with self.subTest(command=command[1], flag=abbreviated[0]):
++                    with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as stop:
++                        cli.parser().parse_args([*command, *abbreviated])
++                    self.assertEqual(2, stop.exception.code)
++            self.assertEqual("make", cli.parser().parse_args([*command, "--prepare=make"]).prepare)
++            self.assertEqual("make", cli.parser().parse_args([*command, "--prepare", "make"]).prepare)
++            self.assertTrue(cli.parser().parse_args([*command, "--allow-prepare"]).allow_prepare)
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 8bd88a4c..7498e82b 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -3,7 +3,6 @@
+ import json
+ import os
+ import shlex
+-import shutil
+ import stat
+ import subprocess
+ import tempfile
+@@ -39,6 +38,11 @@ def priority_line(priority: str | None) -> str:
+     return f"priority: {priority}\n" if priority else ""
+ 
+ 
++def granted(*allow: str, ask: tuple[str, ...] = ()) -> dict:
++    """Claude Code settings as `init` leaves them: the given rules, then Projector's own."""
++    return {"permissions": {"allow": [*allow, *permissions.ALLOW], "ask": [*ask, *permissions.ASK]}}
++
++
+ class RepositoryTestCase(unittest.TestCase):
+     def setUp(self) -> None:
+         self.temporary = tempfile.TemporaryDirectory()
+@@ -68,7 +72,7 @@ def setUp(self) -> None:
+         os.environ.pop("CODEX_HOME", None)
+         self.settings().parent.mkdir()
+         self.settings().write_text(
+-            json.dumps({"permissions": {"allow": list(permissions.RULES)}}, indent=2) + "\n", encoding="utf-8"
++            json.dumps(granted(), indent=2) + "\n", encoding="utf-8"
+         )
+         # Commands run as an agent would, without a terminal, whatever runs the
+         # tests; a test that stands for a person at a terminal says so.
+@@ -706,7 +710,7 @@ def test_init_adopts_an_empty_repository_and_is_idempotent(self) -> None:
+         modes = {stat.S_IMODE((self.root / name).stat().st_mode) for name in self.ADOPTED}
+         self.assertEqual(1, len(modes), modes)
+         self.assertTrue(modes.pop() & stat.S_IRGRP)
+-        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}}, json.loads(self.settings().read_text()))
++        self.assertEqual(granted(), json.loads(self.settings().read_text()))
+         self.assertFalse((self.root / ".claude").exists(), "the rule is the user's, not the repository's")
+ 
+         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+@@ -1054,29 +1058,83 @@ def test_init_json_keeps_action_and_path_and_adds_files(self) -> None:
+             payload["files"],
+         )
+ 
+-    def test_init_adds_the_publish_rule_to_existing_settings_and_keeps_the_rest(self) -> None:
++    def test_init_adds_the_rules_to_existing_settings_and_keeps_the_rest(self) -> None:
+         self.at_a_terminal()
+-        existing = {"env": {"A": "1"}, "permissions": {"allow": ["Bash(npm test)"], "deny": ["Read(.env)"]}}
++        existing = {"env": {"A": "1"},
++                    "permissions": {"allow": ["Bash(npm test)"], "ask": ["Bash(rm *)"], "deny": ["Read(.env)"]}}
+         self.settings().write_text(json.dumps(existing), encoding="utf-8")
+ 
+         code, stdout, stderr = self.invoke("init")
+ 
+         self.assertEqual(0, code, stderr)
+         self.assertIn("updated ~/.claude/settings.json\n", stdout)
+-        self.assertEqual(
+-            {"env": {"A": "1"}, "permissions": {"allow": ["Bash(npm test)", *permissions.RULES], "deny": ["Read(.env)"]}},
+-            json.loads(self.settings().read_text()),
+-        )
++        self.assertEqual({"env": {"A": "1"},
++                          "permissions": {**granted("Bash(npm test)", ask=("Bash(rm *)",))["permissions"],
++                                          "deny": ["Read(.env)"]}},
++                         json.loads(self.settings().read_text()))
++        before = self.settings().read_bytes()
++        self.assertIn("unchanged ~/.claude/settings.json\n", self.invoke("init")[1])
++        self.assertEqual(before, self.settings().read_bytes())
++
++    def test_init_replaces_the_narrower_rules_projector_wrote_before(self) -> None:
++        self.at_a_terminal()
++        self.settings().write_text(json.dumps({"permissions": {
++            "allow": ["Bash(npm test)", "Bash(project review publish *)", "Bash(project review hold *)",
++                      "Bash(git status)", "Bash(project summary publish *)", "Bash(project review finish *)",
++                      "Bash(project review settle *)", "Bash(project review publish *)"],
++            "deny": ["Bash(project review hold *)"],
++        }}), encoding="utf-8")
++
++        code, stdout, stderr = self.invoke("init")
++
++        self.assertEqual(0, code, stderr)
++        self.assertIn("updated ~/.claude/settings.json\n", stdout)
++        self.assertEqual({"permissions": {**granted("Bash(npm test)", "Bash(git status)")["permissions"],
++                                          "deny": ["Bash(project review hold *)"]}},
++                         json.loads(self.settings().read_text()), "only allow rules Projector wrote are removed")
+         before = self.settings().read_bytes()
+         self.assertIn("unchanged ~/.claude/settings.json\n", self.invoke("init")[1])
+         self.assertEqual(before, self.settings().read_bytes())
+ 
++    def test_init_removes_a_leftover_narrower_rule_only_when_it_writes(self) -> None:
++        leftover = granted("Bash(project review hold *)")
++        self.settings().write_text(json.dumps(leftover), encoding="utf-8")
++
++        code, stdout, stderr = self.invoke("init")
++        self.assertEqual(0, code, stderr)
++        self.assertIn("unchanged ~/.claude/settings.json\n", stdout,
++                      "a leftover rule allows nothing the broad one does not, so a report has nothing to say")
++        self.assertEqual(leftover, json.loads(self.settings().read_text()))
++
++        self.at_a_terminal()
++        code, stdout, stderr = self.invoke("init")
++        self.assertEqual(0, code, stderr)
++        self.assertIn("updated ~/.claude/settings.json\n", stdout)
++        self.assertEqual(granted(), json.loads(self.settings().read_text()))
++
++    def test_init_adds_the_ask_rules_beside_an_allow_rule_already_there(self) -> None:
++        self.settings().write_text(json.dumps({"permissions": {"allow": list(permissions.ALLOW)}}), encoding="utf-8")
++
++        code, stdout, stderr = self.invoke("init")
++        self.assertEqual(0, code, stderr)
++        self.assertIn("kept ~/.claude/settings.json\n", stdout)
++        self.assertIn(", ".join(permissions.ASK), stderr)
++        self.assertIn(f"an agent can run {permissions.ASKED} without asking you", stderr)
++        self.assertIn("`project site` with `--prepare` or `--allow-prepare`", permissions.ASKED)
++
++        self.at_a_terminal()
++        code, stdout, stderr = self.invoke("init")
++        self.assertEqual(0, code, stderr)
++        self.assertIn("updated ~/.claude/settings.json\n", stdout)
++        self.assertEqual(granted(), json.loads(self.settings().read_text()))
++
+     def test_init_keeps_settings_it_cannot_read_and_says_why(self) -> None:
+         for text, reason in (
+             ("{not json", "is not valid JSON"),
+             ("[]", "does not hold a JSON object"),
+             ('{"permissions": []}', "`permissions` that is not an object"),
+             ('{"permissions": {"allow": "Bash(ls)"}}', "`permissions.allow` that is not a list"),
++            ('{"permissions": {"ask": {}}}', "`permissions.ask` that is not a list"),
+         ):
+             with self.subTest(text=text):
+                 self.settings().write_text(text, encoding="utf-8")
+@@ -1086,7 +1144,8 @@ def test_init_keeps_settings_it_cannot_read_and_says_why(self) -> None:
+                 self.assertEqual(0, code, stderr)
+                 self.assertIn("kept ~/.claude/settings.json\n", stdout)
+                 self.assertIn(reason, stderr)
+-                self.assertTrue(all(rule in stderr for rule in permissions.RULES), stderr)
++                self.assertIn(f"add {', '.join(permissions.ALLOW)} to permissions.allow and "
++                              f"{', '.join(permissions.ASK)} to permissions.ask yourself", stderr)
+                 self.assertEqual(text, self.settings().read_text())
+ 
+     def test_init_writes_through_a_settings_link_into_a_dotfiles_repository(self) -> None:
+@@ -1103,7 +1162,7 @@ def test_init_writes_through_a_settings_link_into_a_dotfiles_repository(self) ->
+         self.assertEqual(0, code, stderr)
+         self.assertIn("updated ~/.claude/settings.json\n", stdout)
+         self.assertTrue(self.settings().is_symlink())
+-        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}}, json.loads(shared.read_text()))
++        self.assertEqual(granted(), json.loads(shared.read_text()))
+ 
+     @unittest.skipIf(getattr(os, "geteuid", lambda: -1)() == 0, "root writes a read-only directory anyway")
+     def test_init_keeps_settings_it_cannot_write_and_reports_the_rest(self) -> None:
+@@ -1126,7 +1185,7 @@ def test_init_keeps_settings_it_cannot_write_and_reports_the_rest(self) -> None:
+         self.assertIn("created CLAUDE.md\n", stdout, "the files init did write are still reported")
+         self.assertIn("kept ~/.claude/settings.json\n", stdout)
+         self.assertIn("could not be written", stderr)
+-        self.assertTrue(all(rule in stderr for rule in permissions.RULES), stderr)
++        self.assertTrue(all(rule in stderr for rule in permissions.ALLOW + permissions.ASK), stderr)
+         self.assertEqual("{}\n", shared.read_text())
+ 
+     def test_init_adds_the_publish_rule_where_claude_config_dir_points(self) -> None:
+@@ -1140,8 +1199,7 @@ def test_init_adds_the_publish_rule_where_claude_config_dir_points(self) -> None
+ 
+         self.assertEqual(0, code, stderr)
+         self.assertIn(f"created {Path(configured.name) / 'settings.json'}\n", stdout)
+-        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}},
+-                         json.loads((Path(configured.name) / "settings.json").read_text()))
++        self.assertEqual(granted(), json.loads((Path(configured.name) / "settings.json").read_text()))
+         self.assertEqual(before, self.settings().read_bytes())
+ 
+     def test_init_leaves_the_repositorys_own_claude_settings_alone(self) -> None:
+@@ -1150,7 +1208,7 @@ def test_init_leaves_the_repositorys_own_claude_settings_alone(self) -> None:
+         repository = self.root / ".claude" / "settings.json"
+         repository.parent.mkdir()
+         for text in ('{"permissions": {"allow": ["Bash(npm test)"]}}\n',
+-                     json.dumps({"permissions": {"allow": list(permissions.RULES)}}) + "\n"):
++                     json.dumps(granted()) + "\n"):
+             with self.subTest(text=text):
+                 repository.write_text(text, encoding="utf-8")
+ 
+@@ -1178,7 +1236,7 @@ def test_init_adds_the_publish_rule_only_at_a_terminal_or_when_asked(self) -> No
+         code, stdout, stderr = self.invoke("init", "--publish-rule")
+         self.assertEqual(0, code, stderr)
+         self.assertIn("created ~/.claude/settings.json\n", stdout)
+-        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}}, json.loads(self.settings().read_text()))
++        self.assertEqual(granted(), json.loads(self.settings().read_text()))
+ 
+         self.settings().unlink()
+         self.at_a_terminal()
+@@ -1204,31 +1262,6 @@ def test_the_publish_rule_can_be_disabled_in_configuration(self) -> None:
+         self.assertIn("review.publish_rule must be true or false", stderr)
+         self.assertFalse((self.root / "AGENTS.md").exists(), "a bad value refuses before any file is written")
+ 
+-    def test_init_adds_the_hold_and_summary_rules_beside_an_existing_review_rule(self) -> None:
+-        self.at_a_terminal()
+-        self.settings().write_text(json.dumps({"permissions": {"allow": ["Bash(project review publish *)"]}}))
+-
+-        code, stdout, stderr = self.invoke("init")
+-
+-        self.assertEqual(0, code, stderr)
+-        self.assertIn("updated ~/.claude/settings.json\n", stdout)
+-        self.assertEqual({"permissions": {"allow": ["Bash(project review publish *)",
+-                                                    "Bash(project review hold *)",
+-                                                    "Bash(project summary publish *)"]}},
+-                         json.loads(self.settings().read_text()))
+-
+-    def test_init_adds_the_hold_rule_to_settings_that_allow_both_publish_commands(self) -> None:
+-        self.at_a_terminal()
+-        published = ["Bash(project review publish *)", "Bash(project summary publish *)"]
+-        self.settings().write_text(json.dumps({"permissions": {"allow": published}}))
+-
+-        code, stdout, stderr = self.invoke("init")
+-
+-        self.assertEqual(0, code, stderr)
+-        self.assertIn("updated ~/.claude/settings.json\n", stdout)
+-        self.assertEqual({"permissions": {"allow": [*published, "Bash(project review hold *)"]}},
+-                         json.loads(self.settings().read_text()))
+-
+     def codex_rules(self) -> Path:
+         """Projector's rules file in the user's Codex configuration."""
+         return self.home / ".codex" / "rules" / "projector.rules"
+@@ -1280,24 +1313,6 @@ def test_init_only_reports_missing_codex_rules_without_a_terminal(self) -> None:
+         self.assertIn("run `project init` yourself in a terminal, or pass --publish-rule", stderr)
+         self.assertFalse(self.codex_rules().exists())
+ 
+-    @unittest.skipUnless(shutil.which("codex"), "checking the Codex rule needs the codex CLI")
+-    def test_codex_allows_exactly_the_publish_and_hold_commands_under_the_rules(self) -> None:
+-        rules = self.home / "projector.rules"
+-        rules.write_text(permissions.CODEX_RULES)
+-
+-        def decision(*command: str) -> str:
+-            result = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules), *command],
+-                                    check=True, capture_output=True, text=True)
+-            return json.loads(result.stdout).get("decision", "none")
+-
+-        self.assertEqual("allow", decision("project", "review", "publish", "--loop", "x"))
+-        self.assertEqual("allow", decision("project", "summary", "publish", "--summary", "summary.json"))
+-        self.assertEqual("allow", decision("project", "review", "hold", "12", "--drop"))
+-        self.assertEqual("none", decision("project", "summary", "hold", "12", "--drop"))
+-        self.assertEqual("none", decision("project", "review", "release", "12"))
+-        self.assertEqual("none", decision("project", "site", "serve"))
+-        self.assertEqual("none", decision("project", "summary", "init"))
+-
+     def test_init_outside_a_repository_sets_up_only_the_permission_rules(self) -> None:
+         self.at_a_terminal()
+         self.settings().unlink()
+@@ -1308,7 +1323,7 @@ def test_init_outside_a_repository_sets_up_only_the_permission_rules(self) -> No
+         self.assertEqual(0, code, stderr)
+         self.assertEqual("created ~/.claude/settings.json\ncreated ~/.codex/rules/projector.rules\n", stdout)
+         self.assertIn("not inside a Git repository, so init set up only the permission rules", stderr)
+-        self.assertEqual({"permissions": {"allow": list(permissions.RULES)}}, json.loads(self.settings().read_text()))
++        self.assertEqual(granted(), json.loads(self.settings().read_text()))
+         self.assertFalse((self.home / "docs").exists(), "init adopts no convention outside a repository")
+ 
+         code, stdout, _ = self.invoke("init", "--json", cwd=self.home)
+@@ -1439,16 +1454,23 @@ def test_rules_present_exits_0_and_writes_nothing(self) -> None:
+         self.assertEqual({"allowed": True, "files": [{"path": "~/.claude/settings.json", "allowed": True}]},
+                          json.loads(stdout))
+ 
++        self.settings().write_text(json.dumps(granted("Bash(project review hold *)")))
++        before = self.home_tree()
++        self.assertEqual((0, "allows ~/.claude/settings.json\n", ""), self.invoke("review", "rules"),
++                         "a narrower rule left beside the broad one takes nothing away")
++        self.assertEqual(before, self.home_tree())
++
+     def test_missing_rules_exit_1_and_ask_for_init_without_writing(self) -> None:
+-        def allow(*rules: str) -> None:
+-            self.settings().write_text(json.dumps({"permissions": {"allow": list(rules)}}))
++        def write(permissions: dict) -> None:
++            self.settings().write_text(json.dumps({"permissions": permissions}))
+ 
++        narrower = ["Bash(project review publish *)", "Bash(project review hold *)", "Bash(project summary publish *)"]
+         cases = {
+-            "hold rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project summary publish *)"),
+-                                  "Bash(project review hold *)"),
+-            "summary rule missing": (lambda: allow("Bash(project review publish *)", "Bash(project review hold *)"),
+-                                     "Bash(project summary publish *)"),
+-            "settings absent": (self.settings().unlink, "Bash(project review hold *)"),
++            "only the narrower rules": (lambda: write({"allow": narrower}), "Bash(project *)"),
++            "ask rules missing": (lambda: write({"allow": list(permissions.ALLOW)}), "Bash(project -*)"),
++            "one ask rule missing": (lambda: write(granted()["permissions"] | {"ask": list(permissions.ASK[:-1])}),
++                                     "Bash(project -*)"),
++            "settings absent": (self.settings().unlink, "Bash(project *)"),
+         }
+         for name, (arrange, missing) in cases.items():
+             with self.subTest(name):
+@@ -1481,7 +1503,7 @@ def test_a_codex_directory_without_projectors_rules_exits_1(self) -> None:
+ 
+         self.assertEqual(1, code, stderr)
+         self.assertEqual("allows ~/.claude/settings.json\nlacks ~/.codex/rules/projector.rules\n", stdout)
+-        self.assertIn("Codex's approval reviewer", stderr)
++        self.assertIn("its approval reviewer refuse, a Projector command an agent runs", stderr)
+         self.assertNotIn("or pass --publish-rule", stderr)
+         self.assertEqual(before, self.home_tree())
+ 
