@@ -921,16 +921,16 @@ project stayed `in-progress` until the check that § 12 records.
 
 ## 12. Outcome
 
-The project shipped, in releases 0.7.15 through 0.7.18. An agent posts a
-question or a notice with `project inbox ask` or `project inbox tell`, or
-with the `ask` and `tell` tools in Claude Code. Projector's band lists both
-kinds, and each item's drawer lets you discuss, dismiss, or snooze it. The
-owner checked the main-screen row of § 4 by hand under tmux. That row was
-the last criterion without evidence and the check that § 6, § 9, and
-§ 11.10 made the gate for completion, and it also closes the main-screen
-row that the [questions](../questions/readme.md) plan carried into § 4.
-As § 7 says, the look of notices and snoozing that stands at this check
-is the design.
+The project shipped, in releases 0.7.15 through 0.7.18 and in #303, which
+is on `main` for the next release. An agent posts a question or a notice
+with `project inbox ask` or `project inbox tell`, or with the `ask` and
+`tell` tools in Claude Code. Projector's band lists both kinds, and each
+item's drawer lets you discuss, dismiss, or snooze it. The owner checked
+the main-screen row of § 4 by hand under tmux. That row was the last
+criterion without evidence and the check that § 6, § 9, and § 11.10 made
+the gate for completion, and it also closes the main-screen row that the
+[questions](../questions/readme.md) plan carried into § 4. As § 7 says,
+the look of notices and snoozing that stands at this check is the design.
 
 ### 12.1 What shipped
 
@@ -945,6 +945,7 @@ is the design.
 | 0.7.18 | #295, #297, #298, #300 | The band changes of § 10 |
 | 0.7.18 | #296 | The Projector section says when the inbox helps and how to clear what was answered, and `implement` asks through the `ask` tool where the tool exists |
 | 0.7.18 | #294, #299 | Per-session numbering: the plan in § 11, then the build that § 11.10 records |
+| On `main`, after 0.7.18 | #303 | More band changes of § 10: a pull request's drawer starts under its state, open review threads show as a yellow `⋮` count beside the age, and a sent reply that quotes a notice closes the notice's drawer |
 
 ### 12.2 How the result differs from § 2
 
@@ -955,8 +956,9 @@ you use the inbox:
   blank line in the prompt, and the first line you type under a quoted
   question is your answer. A question's drawer has no `Type something`
   field (§ 10).
-- **Sending an answer closes its drawer.** A resolved line then stays 30
-  seconds, not a minute (§ 10).
+- **Sending an answer closes its drawer.** A sent reply that quotes a
+  notice closes the notice's drawer too. A resolved line stays 30 seconds,
+  not a minute (§ 10).
 - **Items take numbers, not references.** Each session numbers its items
   `1`, `2`, `3` across both kinds and every pull request. `project inbox
   context` and the band's reading of references in a prompt are gone, and
@@ -967,8 +969,10 @@ you use the inbox:
   divider appears only in a terminal, and an open drawer has the band to
   itself (§ 9, § 10).
 - **The band changed beyond the inbox.** A pull request's line ends with
-  its age, the lines group by author, and **dismiss** drops a pull request
-  from the session's loops through `project loop drop` (§ 10).
+  its age, after a yellow `⋮` count of its open threads, and its drawer
+  starts under its state. The lines group by author, and **dismiss** drops
+  a pull request from the session's loops through `project loop drop`
+  (§ 10).
 - **Agents learn the inbox from their instructions.** § 2.6 changes no
   skill. The Projector section that `project init` writes tells an agent
   when to post and how to clear what was answered, and `implement` asks
@@ -993,7 +997,7 @@ unless the row names another file.
 | § 4: the `tell` tool, the notice's line, the divider's count, and one notification | `a subagent tells through the tool, and the band lists the notice with its own bullet` |
 | § 4: a notice's drawer, **discuss**, and **dismiss** | `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
 | § 4: **snooze** in either drawer, and a snoozed item dismissed from a terminal | `snooze hides either kind for an hour, then brings a hidden band back`, `an item dismissed from a terminal while snoozed does not return` |
-| § 4, § 10: a sent prompt that quotes a notice | `a sent prompt that quotes a notice answers nothing`, `a sent prompt answers snoozed questions and never a notice` |
+| § 4, § 10: a sent prompt that quotes a notice answers nothing, and since #303 closes the notice's drawer and leaves the notice listed | `a sent prompt that quotes a notice answers nothing, and closes its drawer`, `a sent prompt answers snoozed questions and never a notice` |
 | § 4: the band with no items | `an idle session with no questions starts no project process` |
 | § 4: the main screen under tmux | Checked by hand by the owner |
 | § 10: a question's drawer, **discuss**, a typed answer, an option's text, text on the quote's own line, and the drawer that closes on send | `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `discuss keeps the drawer open with the question above a blank line, what you type under it answers, and dismiss resolves it` |
@@ -1001,7 +1005,8 @@ unless the row names another file.
 | § 10: a resolved line stays 30 seconds | `a delivered question leaves the band after 30 seconds`, and the test of a notice's drawer above |
 | § 10: `/projector`, and a loop that another session runs | `` `/projector` only shows or hides the band, whatever follows it ``, `draws one line per open pull request of the session’s own loops` |
 | § 10: a pull request's age, in the column the items' ages share | `ends each pull request’s line with its age, in one column as wide as the widest`, `a pull request’s age and an item’s age end in one column` |
-| § 10: a pull request's drawer | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt` |
+| § 10: a pull request's drawer, which since #303 starts under `draft` or `ready` | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt` |
+| § 10: open review threads as a yellow `⋮` count, the last note before the age, from #303 | `draws one line per open pull request of the session’s own loops`, `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt` |
 | § 10: grouping by author | `lists your pull requests first, then everyone else’s by author, naming theirs before the title` |
 | § 10: **dismiss** for a pull request, its refusal, and `project loop restore` | `dismiss drops a pull request from each loop that tracks it, and its line goes`, `a dismiss the CLI refuses says why and keeps the line`, and `DropTests` and `RestoreTests` in `tests/test_loop.py` |
 | § 11.8: every CLI row | `NumberingTests` |
