@@ -1103,8 +1103,12 @@ def checkout_repo(checkout: Path) -> Optional[str]:
 
 
 def wake_time(until: int) -> str:
-    """When a snoozed item returns, in local time, with its day when that is not today."""
-    wake = datetime.datetime.fromtimestamp(until / 1000)
+    """When a snoozed item returns, in local time, with its day when that is not today, or the raw
+    timestamp of a time too far off for the clock to show."""
+    try:
+        wake = datetime.datetime.fromtimestamp(until / 1000)
+    except (OverflowError, OSError, ValueError):
+        return str(until)
     days = (wake.date() - datetime.datetime.fromtimestamp(inbox.now_ms() / 1000).date()).days
     if days == 0:
         return f"{wake:%H:%M}"

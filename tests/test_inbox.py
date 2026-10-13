@@ -576,6 +576,14 @@ class SnoozeTests(InboxCase):
         self.assertEqual({"#12.1": f"snoozed until tomorrow {tomorrow}", "#12.2": f"snoozed until {later}"},
                          self.states())
 
+    def test_prints_the_raw_time_of_a_snooze_too_far_off_to_show(self) -> None:
+        path = self.folder() / "%2312.1.json"
+        for until in (self.NOW + 10**18, 2**70):
+            with self.subTest(until=until):
+                path.write_text(json.dumps({**json.loads(path.read_text()), "snoozedUntil": until}))
+                self.assertEqual({"#12.1": f"snoozed until {until}", "#12.2": "open"}, self.states())
+                self.assertTrue(self.run_cli("show", "#12.1")[1].endswith(f"\nsnoozed until {until}\n"))
+
     def test_answering_a_snoozed_question_clears_its_snooze(self) -> None:
         self.run_cli("snooze", "#12.1", "--session", "s1")
         self.assertEqual(0, self.run_cli("answer", "#12.1.a", "--session", "s1")[0])
