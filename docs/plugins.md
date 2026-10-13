@@ -228,12 +228,12 @@ when a turn ends, and every 30 seconds otherwise. Each reload asks GitHub
 for every pull request in one `gh api graphql` call, and only while the band
 is shown. The skills never depend on the band, and Codex has no equivalent.
 
-### Answer your agents' questions in Projector's band
+### Read your inbox in Projector's band
 
 An agent in Claude Code asks you a question with Projector's `ask` tool,
 which the model sees as `mcp__projector__ask`, and keeps working. An agent
-that runs `project question ask` from the shell reaches the same questions,
-as [Ask and answer questions](cli.md#ask-and-answer-questions) describes.
+that runs `project inbox ask` from the shell reaches the same inbox, as
+[Use the inbox](cli.md#use-the-inbox) describes.
 The questions are a bulleted list below the pull requests, oldest first.
 Each line ends with the pull request the question is
 about, as the band labels it, and how long ago it was asked. The band appears
@@ -296,7 +296,7 @@ An answered question stays in the list, dim, for a minute after its answer is
 delivered; a dismissed one is struck through. Its drawer still opens and
 marks the answer given with `✓`.
 
-An answer you give from a terminal with `project question answer` reaches the
+An answer you give from a terminal with `project inbox answer` reaches the
 agent through the band of the session that asked. A subagent that is still
 running receives it directly, as a message that starts `ANSWER`, or
 `DISMISSED` for a dismissal. Otherwise the main loop receives it as a prompt
@@ -305,8 +305,8 @@ of its own once its turn ends, with the name of the subagent that asked, and
 in a prompt, such as `#337.3.b`, reaches the agent with the question it
 names.
 
-Shown or hidden, the band lists the session's question directory every 5
-seconds and runs `project question` only when the directory changed since
+Shown or hidden, the band lists the session's inbox directory every 5
+seconds and runs `project inbox` only when the directory changed since
 its last successful read or an answer is on its way, so a session with no
 questions starts no process. A read that fails runs again 5 seconds later.
 

@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -539,3 +539,12 @@ Paseo plugin that runs the same actions in Paseo's daemon. Projector's
 version differs where its hosts and loops do: it serves Codex as well as
 Claude Code, it delivers through a watcher as its loops already do, and it
 raises a notification when a question arrives.
+
+## 9. Outcome
+
+The project shipped in two pull requests, #271 for the CLI and #273 for the
+band and the `ask` tool, both released in 0.7.14. It continues as the
+[inbox](../inbox/readme.md) project, which renames `project question` to
+`project inbox`, so each command this plan names now runs under
+`project inbox`. The inbox plan's § 7 carries every open question in § 7
+here.

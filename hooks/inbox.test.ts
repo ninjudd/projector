@@ -16,17 +16,18 @@ import {
   span,
   storeOf,
   typedLetter,
-} from './questions'
-import type { Question } from './types'
+} from './inbox'
+import type { Item } from './types'
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0)
 
-const question = (fields: Partial<Question> = {}): Question => ({
+const question = (fields: Partial<Item> = {}): Item => ({
   ref: '#7.1',
   number: 1,
   pr: 'o/r#7',
-  askedAt: NOW - 60_000,
-  question: 'Decline the finding?',
+  postedAt: NOW - 60_000,
+  kind: 'question',
+  subject: 'Decline the finding?',
   detail: '',
   choices: ['Decline it', 'Add a budget'],
   session: 's1',
@@ -53,7 +54,7 @@ test('the prompt carries a question in quotes, and an answer on a line of its ow
 })
 
 test('a sent prompt answers each question whose quote ends its line', () => {
-  const open = [question(), question({ ref: '#7.2', question: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
+  const open = [question(), question({ ref: '#7.2', subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
   expect(answersIn('"Decline the finding?"\n\nAdd a budget\n', open)).toEqual([{ question: open[0], letter: 'b' }])
   expect(answersIn('Both:\n"Decline the finding?"\nDecline it\n"Rebase first?"\n\nkeep it', open)).toEqual([
     { question: open[0], letter: 'a' },
@@ -68,7 +69,7 @@ test('a sent prompt answers each question whose quote ends its line', () => {
 
 test('a quote two questions share answers one: the one whose drawer put that answer there, else the oldest', () => {
   const newer = question({ ref: '#8.1', pr: 'o/r#8' })
-  const older = question({ askedAt: NOW - 120_000 })
+  const older = question({ postedAt: NOW - 120_000 })
   const budget = '"Decline the finding?"\n\nAdd a budget'
   const decline = '"Decline the finding?"\n\nDecline it'
   expect(answersIn(budget, [newer, older])).toEqual([{ question: older, letter: 'b' }])
@@ -139,8 +140,8 @@ test('the main loop is told which subagent asked', () => {
 
 test('the store is where the CLI keeps it', () => {
   const env = (values: Record<string, string>) => (name: string) => values[name]
-  expect(storeOf(env({ HOME: '/home/ada' }), 's1')).toBe('/home/ada/.local/state/projector/questions/s1')
-  expect(storeOf(env({ HOME: '/home/ada', XDG_STATE_HOME: '/state' }), 's1')).toBe('/state/projector/questions/s1')
+  expect(storeOf(env({ HOME: '/home/ada' }), 's1')).toBe('/home/ada/.local/state/projector/inbox/s1')
+  expect(storeOf(env({ HOME: '/home/ada', XDG_STATE_HOME: '/state' }), 's1')).toBe('/state/projector/inbox/s1')
   expect(storeOf(env({}), 's1')).toBeUndefined()
 })
 
@@ -160,7 +161,7 @@ test('ages are short', () => {
   expect([span(40), span(300), span(7200), span(3 * 86_400)]).toEqual(['40s', '5m', '2h', '3d'])
 })
 
-test('a call of the tool becomes `project question ask`, text kept as text', () => {
+test('a call of the tool becomes `project inbox ask`, text kept as text', () => {
   expect(
     askArguments(
       { question: '-Ship it?', recommendation: '--yes', options: ['no'], detail: 'Why', pr: 'o/r#7' },
@@ -168,7 +169,7 @@ test('a call of the tool becomes `project question ask`, text kept as text', () 
       'agent-1',
     ),
   ).toEqual([
-    'question',
+    'inbox',
     'ask',
     '--session=s1',
     '--recommend=--yes',
@@ -180,7 +181,7 @@ test('a call of the tool becomes `project question ask`, text kept as text', () 
     '-Ship it?',
   ])
   expect(askArguments({ question: 'Ship it?', recommendation: 'Yes' }, 's1', undefined)).toEqual([
-    'question',
+    'inbox',
     'ask',
     '--session=s1',
     '--recommend=Yes',

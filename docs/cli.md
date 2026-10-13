@@ -1444,20 +1444,18 @@ such as `a/b` and `a-b`, cannot both be set up for one pull request on one
 machine: the second `setup` refuses. Every refusal exits 1 and says what to
 do.
 
-## Ask and answer questions
+## Use the inbox
 
-`project question` keeps the questions an agent asks you, so the agent can
-keep working while it waits and you can answer from any host. Each session's
-questions live in their own directory under
-`$XDG_STATE_HOME/projector/questions/`, or under
-`~/.local/state/projector/questions/` when `XDG_STATE_HOME` is unset, and
-every command reaches them the same way from Claude Code, Codex, or a
-terminal.
+`project inbox` keeps the questions an agent asks you, so the agent can keep
+working while it waits and you can answer from any host. Each session's
+inbox is its own directory under `$XDG_STATE_HOME/projector/inbox/`, or under
+`~/.local/state/projector/inbox/` when `XDG_STATE_HOME` is unset, and every
+command reaches it the same way from Claude Code, Codex, or a terminal.
 
 An agent asks with one line, the answer it recommends, and any other options:
 
 ```console
-$ project question ask "Decline the finding about the retry budget?" \
+$ project inbox ask "Decline the finding about the retry budget?" \
     --recommend "Decline it: the total cap already bounds retries" \
     --option "Add a budget of two retries per host" \
     --pr acme/app#337 --session "$SESSION"
@@ -1485,19 +1483,19 @@ The answers are lettered. `a` is always the recommendation, the other options
 follow as `b`, `c`, and on, and the last letter is a typed answer:
 
 ```console
-$ project question show '#337.3'
+$ project inbox show '#337.3'
 #337.3 Decline the finding about the retry budget?
 about acme/app#337
 a. Decline it: the total cap already bounds retries (recommended)
 b. Add a budget of two retries per host
 c. type an answer with --text
 open
-$ project question answer '#337.3.a'
+$ project inbox answer '#337.3.a'
 answered #337.3.a
 ```
 
 To give an answer of your own instead, use the last letter with `--text`, as
-in `project question answer '#337.3.c' --text "keep the cap, but log each
+in `project inbox answer '#337.3.c' --text "keep the cap, but log each
 retry"`. A question takes one answer; a second exits 65. `dismiss` answers it
 with no letter.
 
@@ -1507,7 +1505,7 @@ watcher: it prints one line for each answer and marks it delivered, so the
 loop running it hears the answer:
 
 ```console
-$ project question watch --session "$SESSION"
+$ project inbox watch --session "$SESSION"
 ANSWER #337.3.a Decline the finding about the retry budget? → Decline it: the total cap already bounds retries
 DISMISSED q2 Run project init to add the publish rule?
 ```
@@ -1529,7 +1527,7 @@ delivered only after its line prints, so when nothing reads the watcher any
 more, the answer waits for the next deliverer rather than being lost. Each
 session keeps its 100 most recently delivered questions.
 
-`project question context` reads text on standard input and prints what each
+`project inbox context` reads text on standard input and prints what each
 question reference in it means, for the questions the session holds, so a
 prompt such as `go with #337.3.b.` can carry its question along. It matches a
 reference only when it stands alone: `#337.3.b` and `q2.a` match, at the end
@@ -1539,9 +1537,10 @@ failing tests` do not.
 ## Consume JSON
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
-`priority`, `done`, `check`, or any `question` command. Responses use stdout
-only for JSON and include `"schema_version": 2`. `question watch --json`
-prints one JSON object a line, as a watcher reads it.
+`priority`, `done`, `check`, or any `inbox` command. Responses use stdout
+only for JSON and include `"schema_version": 2`. An `inbox` command that
+prints one item prints it under `item`, and `inbox list` prints `items`.
+`inbox watch --json` prints one JSON object a line, as a watcher reads it.
 
 `init --json` keeps the `action` and `path` of the projects README at the top
 level, as it always has, and adds `files` with every file it manages:
@@ -1589,7 +1588,7 @@ Projector uses these exit codes:
 | `2` | Command syntax or an argument is invalid. |
 | `3` | `project site status` found no Projector site for the repository. |
 | `65` | Project data is invalid, a mutation is unsafe, or a question or answer is refused. |
-| `66` | The requested project, the projects directory, or the question does not exist. |
-| `67` | The requested project is ambiguous, or a question reference names questions in more than one session. |
+| `66` | The requested project, the projects directory, or the inbox item does not exist. |
+| `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
 | `69` | Git, the interactive editor, or the installer is unavailable. |
 | `78` | A `.projector.toml` file is not valid TOML. |
