@@ -172,8 +172,9 @@ test('draws one line per open pull request of the session’s own loops', async 
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
-  // `dimColor` does not dim in every terminal, so muted text takes the theme's subtle color.
-  expect(divider?.props.color).toBe('subtle')
+  // The divider is drawn at full strength, not muted like the rows' details.
+  expect(divider?.props.color).toBeUndefined()
+  expect(divider?.props.dimColor).toBeUndefined()
   // A blank line sets the divider apart from the rows under it.
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts[texts.indexOf(divider?.text ?? '') + 1]).toBe(' ')
