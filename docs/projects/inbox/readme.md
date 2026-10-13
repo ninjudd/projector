@@ -1396,8 +1396,10 @@ Enter on a line opens its drawer and moves the focus ring into it, and
 Enter on the open line closes the drawer with the ring on the line.
 `docs/plugins.md` gains a section on the band's keys. This section
 supersedes the bullets of § 2.5 that draw a drawer's actions on one row,
-`discuss | dismiss | snooze`, and the last row of § 4's table, under which
-an option's number takes no press on the main screen.
+`discuss | dismiss | snooze`; the bullet of § 10, "Each drawer link has a
+line of its own, and the actions come last", for a pull request's drawer,
+whose actions now come before its links; and the last row of § 4's table,
+under which an option's number takes no press on the main screen.
 
 ### 15.1 Problem
 
