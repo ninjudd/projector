@@ -1,0 +1,188 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index fda5dd4..d38d446 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -440,11 +440,14 @@ The same command upgrades what it installed. A marketplace that reads a local
+ path is moved to the repository, removed and added again from that source,
+ and a `moved` row names the old path and the new source. One that already
+ reads a remote is refreshed from wherever it points rather than added again.
+-An installed plugin is updated rather than installed again, because a host
+-asked to install a plugin it already has leaves it as it is; the update is
+-what moves it. Claude Code applies the update on its next start. A plugin
+-moves only when its manifest version does, because a host caches a plugin by
+-that version.
++Codex's Git clone of a marketplace can time out on a slow connection, so the
++installer runs a failed Codex `marketplace add` or `marketplace upgrade` once
++more after five seconds, with a `retrying` row, and stops with Codex's exit
++status only when the second try fails too. An installed plugin is updated
++rather than installed again, because a host asked to install a plugin it
++already has leaves it as it is; the update is what moves it. Claude Code
++applies the update on its next start. A plugin moves only when its manifest
++version does, because a host caches a plugin by that version.
+ 
+ `pipx` installs a copy of the source rather than a link to your checkout, so
+ pulling new commits does not update the command. Ask which one you have:
+diff --git a/install.sh b/install.sh
+index 46a60d2..b68ae50 100755
+--- a/install.sh
++++ b/install.sh
+@@ -136,6 +136,20 @@ install_venv() {
+ run_claude() { CLAUDE_CONFIG_DIR="$CLAUDE_DIR" "$CLAUDE_COMMAND" "$@"; }
+ run_codex() { CODEX_HOME="$CODEX_DIR" "$CODEX_COMMAND" "$@"; }
+ 
++# Codex clones a Git marketplace under a time limit of its own, and a slow
++# connection fails a clone that works when run again. So the marketplace
++# commands that can clone get one more try after a pause, and a second failure
++# stops the installer with Codex's status, as the first would have.
++run_codex_with_retry() {
++  local status=0 delay=5
++  run_codex "$@" || status=$?
++  [ "$status" -ne 0 ] || return 0
++  printf '%-14s %s\n' "retrying" \
++    "codex $* exited $status -- trying once more in ${delay}s, since a slow connection can time out Codex's Git clone"
++  sleep "$delay"
++  run_codex "$@"
++}
++
+ # The version this install should leave, from the plugin manifest, which
+ # carries the same version as the CLI: the checkout's, or the release's,
+ # fetched from GitHub. Offline, or when GitHub cannot answer, there is none to
+@@ -335,13 +349,13 @@ install_codex() {
+   marketplace="$(host_marketplace codex)"
+   source="$(plugin_source codex)"
+   if [ -z "$marketplace" ]; then
+-    run_codex plugin marketplace add "$source"
++    run_codex_with_retry plugin marketplace add "$source"
+   elif marketplace_is_local "$marketplace" && [ "$source" != "$REPO" ]; then
+     run_codex plugin marketplace remove projector
+-    run_codex plugin marketplace add "$source"
++    run_codex_with_retry plugin marketplace add "$source"
+     printf '%-14s %s\n' "moved" "codex marketplace ${marketplace#* } -> $source"
+   else
+-    case "$marketplace" in git*) run_codex plugin marketplace upgrade projector ;; esac
++    case "$marketplace" in git*) run_codex_with_retry plugin marketplace upgrade projector ;; esac
+   fi
+   run_codex plugin add projector@projector
+   # Codex has no plugin dependencies, so GitHub's gh-stack skill is a plugin
+diff --git a/tests/test_install.py b/tests/test_install.py
+index fdfdcb6..97987c7 100644
+--- a/tests/test_install.py
++++ b/tests/test_install.py
+@@ -37,12 +37,18 @@ def setUp(self) -> None:
+         # answers from state files a test writes; no file means nothing yet.
+         self.state = self.user_root / "host-state"
+         self.state.mkdir()
+-        # A command line written to `<command>-fails` makes that host fail it.
++        # A command line written to `<command>-fails` makes that host fail it
++        # every time, and one written to `<command>-fails-once` only the first
++        # time. The host fails with status 3, which the installer never exits
++        # with itself, so a test can tell the host's status from the
++        # installer's.
+         for command, executable in (("claude", "host-a"), ("codex", "host-b")):
++            once = f'"$PROJECTOR_TEST_STATE/{command}-fails-once"'
+             (self.fake_bin / executable).write_text(
+                 "#!/bin/sh\n"
+                 f"printf '%s %s\\n' '{command}' \"$*\" >> \"$PROJECTOR_TEST_LOG\"\n"
+-                f'[ "$*" = "$(cat "$PROJECTOR_TEST_STATE/{command}-fails" 2>/dev/null)" ] && exit 1\n'
++                f'[ "$*" = "$(cat "$PROJECTOR_TEST_STATE/{command}-fails" 2>/dev/null)" ] && exit 3\n'
++                f'if [ "$*" = "$(cat {once} 2>/dev/null)" ]; then rm {once}; exit 3; fi\n'
+                 'case "$*" in\n'
+                 f'  "plugin marketplace list --json") cat "$PROJECTOR_TEST_STATE/{command}-marketplaces.json" 2>/dev/null ;;\n'
+                 f'  "plugin list --json") cat "$PROJECTOR_TEST_STATE/{command}-plugins.json" 2>/dev/null ;;\n'
+@@ -60,6 +66,13 @@ def setUp(self) -> None:
+             "exit 0\n"
+         )
+         (self.fake_bin / "host-c").chmod(0o755)
++        # The installer pauses before it retries a command; the fake records
++        # the pause rather than taking it.
++        (self.fake_bin / "sleep").write_text(
++            "#!/bin/sh\n"
++            "printf '%s %s\\n' sleep \"$*\" >> \"$PROJECTOR_TEST_LOG\"\n"
++        )
++        (self.fake_bin / "sleep").chmod(0o755)
+         # pipx is asked where its venvs live and is handed an interpreter when
+         # one of them already holds this package; the fake reports both.
+         (self.fake_bin / "pipx").write_text(
+@@ -482,6 +495,63 @@ def test_a_marketplace_without_gh_stack_leaves_projector_installed(self) -> None
+         self.assertIn("gh-stack       ⚠️  claude could not install gh-stack@projector", claude.stdout)
+         self.assertIn("gh-stack       ⚠️  codex could not install gh-stack@projector", codex.stdout)
+ 
++    def has_git_codex_marketplace(self) -> None:
++        self.host_has("codex", marketplace="git", version="0.2.0",
++                      source="https://github.com/acme/projector.git")
++
++    def test_codex_upgrades_its_marketplace_without_a_retry_when_the_first_try_works(self) -> None:
++        self.has_git_codex_marketplace()
++
++        result = self.install("codex")
++
++        self.assertEqual(0, result.returncode, result.stderr)
++        log = self.log.read_text()
++        self.assertEqual(1, log.count("codex plugin marketplace upgrade projector\n"))
++        self.assertNotIn("sleep", log)
++        self.assertNotIn("retrying", result.stdout)
++
++    def test_codex_retries_a_failed_marketplace_upgrade_once(self) -> None:
++        self.has_git_codex_marketplace()
++        (self.state / "codex-fails-once").write_text("plugin marketplace upgrade projector")
++
++        result = self.install("codex")
++
++        self.assertEqual(0, result.returncode, result.stderr)
++        self.assertIn(
++            "retrying       codex plugin marketplace upgrade projector exited 3 -- "
++            "trying once more in 5s, since a slow connection can time out Codex's Git clone\n",
++            result.stdout,
++        )
++        log = self.log.read_text().splitlines()
++        upgrade = "codex plugin marketplace upgrade projector"
++        self.assertEqual(2, log.count(upgrade))
++        first = log.index(upgrade)
++        self.assertEqual([upgrade, "sleep 5", upgrade], log[first:first + 3])
++        self.assertIn("codex plugin add projector@projector", log[first + 3:])
++
++    def test_codex_reports_a_marketplace_upgrade_that_fails_twice(self) -> None:
++        self.has_git_codex_marketplace()
++        (self.state / "codex-fails").write_text("plugin marketplace upgrade projector")
++
++        result = self.install("codex")
++
++        self.assertEqual(3, result.returncode)
++        self.assertEqual(1, result.stdout.count("retrying"))
++        log = self.log.read_text()
++        self.assertEqual(2, log.count("codex plugin marketplace upgrade projector\n"))
++        self.assertEqual(1, log.count("sleep 5\n"))
++        self.assertNotIn("codex plugin add", log)
++
++    def test_only_codex_marketplace_commands_are_retried(self) -> None:
++        self.host_has("claude", marketplace="github", version="0.2.0", source="acme/projector")
++        (self.state / "claude-fails").write_text("plugin marketplace update projector")
++
++        result = self.install("claude")
++
++        self.assertEqual(3, result.returncode)
++        self.assertEqual(1, self.log.read_text().count("claude plugin marketplace update projector\n"))
++        self.assertNotIn("retrying", result.stdout)
++
+     def test_all_installs_the_gh_stack_extension_when_it_is_absent(self) -> None:
+         result = self.install("all")
+ 
+@@ -767,6 +837,18 @@ def test_the_plugins_install_from_the_github_marketplace(self) -> None:
+         self.assertIn("codex plugin marketplace add https://github.com/ninjudd/projector.git", log)
+         self.assertIn("codex plugin add projector@projector", log)
+ 
++    def test_codex_retries_a_failed_marketplace_add_once(self) -> None:
++        add = "plugin marketplace add https://github.com/ninjudd/projector.git"
++        (self.state / "codex-fails-once").write_text(add)
++
++        result = self.piped("codex")
++
++        self.assertEqual(0, result.returncode, result.stderr)
++        self.assertIn(f"retrying       codex {add} exited 3", result.stdout)
++        log = self.logged()
++        self.assertEqual(2, log.count(f"codex {add}"))
++        self.assertIn("codex plugin add projector@projector", log)
++
+     def test_a_marketplace_left_reading_a_checkout_moves_to_github(self) -> None:
+         (self.state / "claude-marketplaces.json").write_text(json.dumps(
+             [{"name": "projector", "source": "directory", "path": "/old/projector"}]))

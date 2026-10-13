@@ -1,0 +1,117 @@
+{
+ "version": 1,
+ "name": "Codex marketplace retry",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 304,
+  "title": "Retry the Codex marketplace once when its clone fails",
+  "head": "d876ba8475aba0414416a7a1f555bd0e7a35e975",
+  "headRef": "upgrade-retry-codex",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>install.sh</code> installs Projector's CLI and its plugins for Claude Code and Codex, and <code>project upgrade</code> runs it to upgrade an existing install. The installer stops at the first host command that fails.",
+   "Codex keeps a Git marketplace as a clone, and it gives that clone a 30-second time limit of its own. On a slow connection, <code>codex plugin marketplace upgrade projector</code> can fail with <code>git clone marketplace source timed out after 30s</code>, and the whole upgrade fails with it. Running the upgrade again usually works.",
+   "This pull request makes the installer try again by itself. The two Codex commands that clone a marketplace, <code>marketplace add</code> and <code>marketplace upgrade</code>, now go through a wrapper. When the command fails, the wrapper prints a <code>retrying</code> row, waits five seconds, and runs the command once more. If the second try fails too, the installer stops with Codex's exit status, as it did before after the first failure."
+  ],
+  "cards": [
+   {
+    "id": "scope",
+    "title": "What is retried",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Command</th><th>Retried</th></tr></thead><tbody><tr><td><code>codex plugin marketplace add</code></td><td class=\"r\">Yes</td></tr><tr><td><code>codex plugin marketplace upgrade projector</code></td><td class=\"r\">Yes</td></tr><tr><td><code>codex plugin marketplace remove</code>, <code>codex plugin add</code></td><td class=\"r\">No</td></tr><tr><td>Every Claude Code command, the CLI install</td><td class=\"r\">No</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review at <code>d876ba8</code>, clean, with no finding threads.</li><li>One suggestion, not blocking: a local-path <code>marketplace add</code> clones nothing, but a failure there still gets the retry and its message about a Git clone.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "retry",
+   "title": "The installer retries a failed Codex marketplace command once",
+   "kicker": "A new wrapper in install.sh, used at the three call sites that clone",
+   "intro": [
+    "<code>run_codex</code> runs a Codex command with the installer's Codex home directory. The new <code>run_codex_with_retry</code> runs it the same way, and on a failure runs it a second time after a five-second pause.",
+    "The installer runs under <code>set -euo pipefail</code>, so a failed command stops the script. The first try sits behind <code>||</code>, which keeps its failure from stopping the script. The second try's status becomes the wrapper's return value, so a second failure stops the installer with Codex's own exit status."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "install.sh",
+     "note": "Adds <code>run_codex_with_retry</code> and calls it from <code>install_codex</code> for both <code>marketplace add</code> branches and the Git <code>marketplace upgrade</code> branch.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 150,
+       "text": "A second failure stops the installer with Codex's status. The test whose fake Codex fails every time sees the installer exit 3, the fake's status, and run no <code>plugin add</code>. A manual run with a fake Codex that exits 1 ended with <code>exit 1</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 358,
+       "text": "Only the three marketplace commands that can clone are wrapped. <code>marketplace remove</code> and both <code>plugin add</code> calls still use <code>run_codex</code>, and a test confirms a failed Claude Code <code>marketplace update</code> runs once."
+      },
+      {
+       "kind": "context",
+       "line": 352,
+       "text": "When a checkout has no <code>origin</code> remote, <code>plugin_source</code> returns the checkout's own path, so this <code>add</code> reads a local directory and clones nothing. A failure here still waits five seconds and blames a Git clone timeout. The review lists this as a suggestion rather than a finding, because the retry does no harm."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Fake hosts that fail once, and a fake sleep",
+   "kicker": "Five installer tests for the retry, on fakes that can fail only the first time",
+   "intro": [
+    "The installer tests put fake <code>claude</code> and <code>codex</code> commands on <code>PATH</code>, and a test makes a fake fail a command by writing it to a state file. A command written to the new <code>&lt;host&gt;-fails-once</code> file fails only the first time. Both kinds of failure now exit 3, a status the installer never uses, so a test can tell Codex's status from the installer's.",
+    "A fake <code>sleep</code> logs the pause instead of taking it, so the tests run without waiting."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_install.py",
+     "collapsed": false,
+     "note": "Four tests cover the Codex upgrade: it works on the first try, works on the second, or fails twice, and Claude Code is not retried. A fifth, in <code>ReleaseInstallTests</code>, retries a failed <code>marketplace add</code> from a piped install.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 513,
+       "text": "Against <code>install.sh</code> from <code>main</code>, the tests at lines 513, 532 and 840 fail, and at this head all 48 installer tests pass. The full suite, 927 tests with 1 skipped, passes too."
+      },
+      {
+       "kind": "verify",
+       "line": 50,
+       "text": "The installer never exits 3 itself: every literal <code>exit</code> and <code>return</code> in <code>install.sh</code> uses 0, 1, 64 or 69."
+      },
+      {
+       "kind": "context",
+       "line": 840,
+       "text": "<code>ReleaseInstallTests</code> reuses <code>InstallTests.setUp</code>, so this piped test gets the fake <code>sleep</code> too and never pauses."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The plugin guide describes the retry",
+   "kicker": "One sentence in the paragraph on upgrades",
+   "intro": [
+    "The paragraph on how the installer upgrades what it installed gains one sentence. It names the two retried commands, the five-second pause, the <code>retrying</code> row, and the exit status after a second failure."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The new sentence matches <code>run_codex_with_retry</code>. The rest of the paragraph is rewrapped, not changed."
+    }
+   ]
+  }
+ ]
+}
