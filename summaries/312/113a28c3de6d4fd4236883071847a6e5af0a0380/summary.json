@@ -1,0 +1,151 @@
+{
+ "version": 1,
+ "name": "Review watcher baseline",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 312,
+  "title": "Baseline already-reviewed heads in the review watcher",
+  "head": "113a28c3de6d4fd4236883071847a6e5af0a0380",
+  "headRef": "review-baseline",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A Projector review loop runs a shell watcher, <code>watch-prs.sh</code>, that polls the pull requests the loop tracks and prints one line per event, such as <code>NEW PR</code> for a pull request it has not seen or <code>NEW HEAD</code> when a push moves a head. The watcher remembers what it has seen in a <em>state file</em>, one row per pull request holding the head SHA it last saw. A pull request with no row is announced as <code>NEW PR</code>, which tells the loop to review that head.",
+   "Before this change, a loop starting on pull requests that already had reviews told the agent to write rows into that state file by hand, for heads already reviewed, so the watcher would stay quiet about them. The hand-written format had drifted from what the watcher writes, and a head seeded by mistake skipped its review without a word.",
+   "Now the watcher does the baselining itself. Given <code>--model &lt;id&gt;</code>, it reads which models gave each pull request's current head a Projector <em>verdict</em>, the review whose body carries a <code>projector-review</code> marker line naming the model and the head SHA. A pull request with no row whose head carries this model's verdict gets its row silently. The skills stop asking for hand-written rows. A second commit makes both watchers refuse a flag given last with no value, which used to spin forever."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Where the review stands",
+    "html": "<ul class=\"tight\"><li>One open P2 finding: the watcher counts a verdict by <em>any</em> owner, member, or collaborator whose loop runs the same model, so a teammate's own review can silently swallow a review they requested of the operator. See the note on <code>watch-prs.sh</code> line 383.</li><li>Two suggestions, noted on the skill files.</li><li>The full gate passes at this head: 928 tests, 1 skipped.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Operator</b>: the GitHub account the loop tracks pull requests for, its own and those that request its review.</li><li><b>Reviewer</b>: the account a review posts as, by default the operator.</li><li><b>Verdict</b>: a Projector review's outcome, <code>clean</code> or <code>changes-requested</code>, recorded in a marker line in its body.</li><li><b>Adoption</b>: the watcher appending a pull request to its tracked file because the operator wrote it or was asked to review it.</li><li><b><code>RESPONDED</code></b>: the event asking for a re-review when an author answers without pushing.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "watcher-baseline",
+   "title": "The review watcher records reviewed heads itself",
+   "kicker": "watch-prs.sh learns which models reviewed each head and stays quiet about this model's",
+   "intro": [
+    "The watcher already ran one GraphQL query per pull request and read the newest Projector verdict on the head, for its <code>RESPONDED</code> check. This group extends that query's jq to also collect every model whose verdict names the current head, lowercased and without a trailing bracketed variant such as <code>[1m]</code>, the same way <code>project review</code> compares models. The list rides in a new field of the per-pull-request row.",
+    "With <code>--model</code>, a pull request with no state row whose head appears in that list counts as already seen, so it gets no <code>NEW PR</code>. It still goes through the <code>RESPONDED</code> check, so an author who answered that review while no watcher ran gets a re-review on the first pass. Without <code>--model</code>, nothing changes.",
+    "A verdict counts as it does for <code>RESPONDED</code>: in a public repository only from an owner, a member, or a collaborator; in a private one from anyone. The model ID is validated so that it cannot match the wrong heads: <code>-</code>, which the row uses for no verdict, and an ID with a comma or whitespace are refused."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The head's watcher ran one <code>--once</code> pass against live pull requests #310 and #311 through <code>gh</code>'s own jq, with temporary tracked and state files. Under <code>--model 'claude-opus-5-5[1m]'</code> it recorded #310, which carries that model's verdict, without a word and announced #311; under <code>--model gpt-6</code> it announced both."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/start-review-loop/scripts/watch-prs.sh",
+     "note": "Adds <code>--model</code>, collects verdict models in the review query, and baselines a row-less pull request this model reviewed. Also refuses a flag given last with no value.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 82,
+       "text": "<code>takes_value</code> exits when a value-taking flag is the last argument. Before, <code>shift 2</code> failed without shifting and the argument loop never ended. <code>watch-threads.sh</code> gets the same guard."
+      },
+      {
+       "kind": "context",
+       "line": 114,
+       "text": "The model ID must start with a letter or digit and hold no whitespace or comma, because it is matched inside a comma-separated list where <code>-</code> means no verdict."
+      },
+      {
+       "kind": "context",
+       "line": 219,
+       "text": "The optional <code>model=</code> group lets a marker from an earlier release, which names no model, still count as a verdict for <code>RESPONDED</code>; such a verdict never baselines a head."
+      },
+      {
+       "kind": "flag",
+       "line": 383,
+       "text": "Open P2 finding. <code>$models</code> holds the model of every counted verdict, and a counted verdict can come from any owner, member, or collaborator, not only the reviewer's account. When a teammate whose own loop runs the same model reviews their pull request and then requests the operator's review, adoption appends it, this line marks its head as seen, and no <code>NEW PR</code> prints, so the requested review never happens. Fix: pass the reviewer's login, read each review's <code>author{login}</code>, and build <code>$models</code> only from that login's verdicts."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watchers.py",
+     "note": "Fixture tests for the baseline, the re-review on a baselined head, rows that already exist, the model ID refusals, and the flag-without-value refusal in both watchers.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 798,
+       "text": "The full suite passes at this head (928 tests, 1 skipped). This test covers this model's verdict, another model's, none, an older head's, a marker without a model, and a passerby's in a public repository. It has no case for a collaborator's same-model verdict, which is the open finding."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "threads-flags",
+   "title": "The thread watcher refuses a flag with no value",
+   "kicker": "The same argument guard in the watch loop's watcher",
+   "intro": [
+    "<code>watch-threads.sh</code> is the watcher the fix loop runs, which reports unresolved review threads. It parsed its flags the same way as <code>watch-prs.sh</code>, so a flag given last with no value spun forever. It now prints <code>&lt;flag&gt; needs a value</code> and exits 2."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/start-watch-loop/scripts/watch-threads.sh",
+     "note": "Adds <code>takes_value</code> before each value-taking flag.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 72,
+       "text": "<code>test_refuses_a_last_flag_without_its_value</code> runs each flag last with a 10-second timeout and gets exit 2 with the message; it passes at this head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "The loop skills stop asking for hand-written state",
+   "kicker": "start-review-loop finds reviewed heads with project review status; start-watch-loop drops its state-file checks",
+   "intro": [
+    "<code>start-review-loop</code> is the instruction file an agent follows to run a review loop. Step 5 now finds the heads this model already reviewed with <code>project review status &lt;n&gt; --json</code>, whose <code>models</code> list holds each model's newest verdict on the head. Step 7 starts the watcher with <code>--model</code> and leaves the state file to it. When adopting a running watcher, the agent reviews every head step 5 finds unreviewed instead of checking the watcher's state file, because a row says only that the watcher saw a head, not that its review finished.",
+    "<code>start-watch-loop</code>, the fix loop's instructions, drops its wording about baselining threads, which its watcher cannot do, and its state-file check when adopting a watcher."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "Step 5 reads reviewed heads from <code>project review status</code>, step 7 passes <code>--model</code>, and adoption reruns step 5.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 73,
+       "text": "Step 5 counts any <code>models</code> entry, and <code>project review status</code> includes verdicts from other trusted accounts, so the open finding on <code>watch-prs.sh</code> applies here too: the fix counts only an entry whose <code>login</code> is the reviewer."
+      },
+      {
+       "kind": "context",
+       "line": 113,
+       "text": "Suggestion: a restarted loop that reuses an earlier state file can hold a row for a head step 5 found unreviewed. That head never comes back as <code>NEW PR</code>, and this check then misreads it as missing from the tracked file. Naming a new state file, or limiting the check to pull requests with no row, avoids the false alarm."
+      }
+     ]
+    },
+    {
+     "path": "skills/start-watch-loop/SKILL.md",
+     "note": "Drops the instruction to baseline threads and the state-file check when adopting a watcher.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 97,
+       "text": "Suggestion: <code>watch-threads.sh</code> repeats <code>FINDING</code>, <code>VERDICT</code>, <code>DRAFT</code>, and <code>CONFLICT</code> until resolved, but announces each <code>REVIEW</code> once and never again. Body-only reviews are covered only because this paragraph has the adopting session dispatch them at once."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
