@@ -1,0 +1,127 @@
+{
+ "version": 1,
+ "name": "Hooks module type check",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 309,
+  "title": "Type-check the hooks module in the local gate",
+  "head": "2a5af53163bf85daa8008233dacf8dffad3f41c8",
+  "headRef": "hooks-typecheck",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector ships a Claude Code hooks module in <code>hooks/</code>: TypeScript that draws Projector's band above the prompt and reads the inbox. Claude Code compiles and runs it, but the validation gate never type-checked it. <code>claude plugin validate .</code> and <code>claude plugin test .</code> both pass code that <code>tsc</code> rejects, which is how the type error that #287 fixed reached <code>main</code>.",
+   "This change adds <code>hooks/typecheck.sh</code> to the local gate. The script runs the TypeScript compiler that <code>site/</code> already installs, through a new root <code>tsconfig.json</code> that covers only <code>hooks/</code>.",
+   "The compiler needs Claude Code's own declarations: the <code>claude-code</code> module, its <code>claude-code/testing</code> kit, and the inputs of the built-in tools. Claude Code writes them to <code>.claude-plugin/types/</code> when an interactive session loads a checkout with <code>claude --plugin-dir .</code>, and nothing else provides them. So the check runs only in the local gate, and the Check workflow in CI does not run it. A linked worktree with no declarations of its own borrows the main checkout's. When neither checkout has them, the step fails with a setup message."
+  ],
+  "cards": [
+   {
+    "id": "setup",
+    "title": "Set up a checkout once",
+    "html": "<ol><li>Run <code>npm ci</code> in <code>site/</code>, which installs <code>tsc</code>.</li><li>Start <code>claude --plugin-dir .</code> from the repository root and quit at the prompt. Claude Code writes the declarations to <code>.claude-plugin/types/</code>, which Git ignores. A linked worktree can skip this step when the main checkout has them.</li><li>Run <code>hooks/typecheck.sh</code>. Repeat step 2 after you update Claude Code.</li></ol>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>Two Projector reviews, of <code>c38d3b1</code> and of <code>2a5af53</code>, found each head clean, with no finding threads.</li><li><code>2a5af53</code> added the borrow from the main checkout. Its review tested the borrow in a throwaway clone with a linked worktree.</li><li>Neither review could get declarations that Claude Code wrote. Both ran the check against a copy rebuilt from the declarations Claude Code 2.1.296 bundles with its <code>plugin-authoring</code> skill.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "check",
+   "title": "The type check and its configuration",
+   "kicker": "A gate script, the root tsconfig it compiles with, and the ignore rule for the declarations",
+   "intro": [
+    "<code>hooks/typecheck.sh</code> first checks that <code>site/</code> has <code>tsc</code>. When this checkout has the declarations, the script runs <code>tsc -p .</code> from the repository root. When it has none, the script takes the main checkout, the first entry <code>git worktree list</code> prints, and borrows the declarations from there. To borrow them, it writes a <code>tsconfig.json</code> to a temporary directory that extends the main checkout's declarations and includes this worktree's <code>hooks/</code>. It deletes that directory on exit. The script exits 1 with a setup instruction when the compiler or the declarations are missing, and otherwise exits with the compiler's status, 2 on a type error.",
+    "The root <code>tsconfig.json</code> extends the <code>tsconfig.json</code> Claude Code writes in <code>.claude-plugin/types/</code>. That file carries the compiler options a hooks module needs, such as JSX compiled to <code>h</code>, and makes the folder the type root. The root file only narrows <code>include</code> to <code>hooks</code>. It sits at the root because Claude Code writes its own root <code>tsconfig.json</code> into a plugin that has none, and a committed one stops that untracked file from appearing."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The check catches the errors it exists for. With declarations rebuilt from Claude Code 2.1.296's bundled copy, the head exits 0. A deliberate error in <code>hooks/parse.ts</code> exits 2 with <code>TS2322</code>, and the <code>hooks/</code> tree from <code>7e0a5e0</code> exits 2 with the one <code>hooks/register.tsx(282,60)</code> error that #287 fixed."
+    },
+    {
+     "kind": "verify",
+     "text": "The root <code>tsconfig.json</code> does not change how Claude Code loads the plugin. With <code>.claude-plugin/types/</code> removed, as in an installed copy, <code>claude plugin test .</code> passes all 78 tests. A root <code>tsconfig.json</code> with a bogus <code>jsxFactory</code> also passes them, so the engine does not read the file at load time."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/typecheck.sh",
+     "note": "The gate step: checks for <code>tsc</code>, then type-checks <code>hooks/</code> against this checkout's declarations or, failing that, the main checkout's.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The script tests only that a <code>tsconfig.json</code> exists in <code>.claude-plugin/types/</code>. Declarations written by an older Claude Code pass this test, which is why the documentation says to start a session again after an update.",
+       "line": 17
+      },
+      {
+       "kind": "context",
+       "text": "This comment says the declarations depend only on the Claude Code version. The engine's reference says the folder also holds the MCP tools connected when the session loaded and the contracts of the plugins in <code>dependencies</code>. A borrowed copy reflects the main checkout's versions of those, though no code in <code>hooks/</code> reads either one today. The review listed this as a suggestion.",
+       "line": 5
+      },
+      {
+       "kind": "verify",
+       "text": "With no declarations in either checkout, the script exits 1 with this message. The review's scratch worktree reproduced it.",
+       "line": 23
+      },
+      {
+       "kind": "verify",
+       "text": "The borrow works and checks the right code. In a throwaway clone with a linked worktree, the script names the main checkout and exits 0. An error added to the worktree's <code>hooks/parse.ts</code> exits 2, so the status survives the <code>EXIT</code> trap. The same error added only to the main checkout passes. The temporary directory is gone after both runs, and a worktree path with a space and a double quote still works.",
+       "line": 40
+      }
+     ]
+    },
+    {
+     "path": "tsconfig.json",
+     "note": "Extends Claude Code's generated <code>tsconfig.json</code> and limits the program to <code>hooks/</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>site/</code> keeps its own <code>tsconfig.json</code>, so <code>npm run check</code> in <code>site/</code> still passes with this file at the root.",
+       "line": 3
+      }
+     ]
+    },
+    {
+     "path": ".gitignore",
+     "note": "Ignores <code>.claude-plugin/types/</code>, which Claude Code writes into the checkout."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Gate documentation",
+   "kicker": "Where contributors learn about the new step and its one-time setup",
+   "intro": [
+    "Three documents list the gate, and each now lists <code>hooks/typecheck.sh</code> and says that a linked worktree borrows the main checkout's declarations. <code>AGENTS.md</code> is the file agents follow, and <code>CLAUDE.md</code> is a symlink to it. <code>docs/develop.md</code> turns the old one-line <code>npm ci</code> reminder into two setup steps. <code>docs/plugins.md</code> adds the step to the checks a plugin author runs before publishing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "AGENTS.md",
+     "note": "Adds the step to the gate and explains why CI cannot run it."
+    },
+    {
+     "path": "docs/develop.md",
+     "note": "Two setup steps before the gate, and a note that the Check workflow cannot type-check <code>hooks/</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The claim that Projector loads only with <code>gh-stack</code> installed matches <code>dependencies</code> in <code>.claude-plugin/plugin.json</code>, and the <code>plugins.md#install-for-claude-code</code> anchor resolves.",
+       "line": 97
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Adds the step to the plugin checks, linking to the setup in <code>docs/develop.md</code>."
+    }
+   ]
+  }
+ ]
+}

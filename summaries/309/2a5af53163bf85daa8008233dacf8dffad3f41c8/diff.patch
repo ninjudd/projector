@@ -1,0 +1,168 @@
+diff --git a/.gitignore b/.gitignore
+index ace4894..668abab 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -8,3 +8,4 @@ auth.json
+ __pycache__/
+ .DS_Store
+ node_modules/
++.claude-plugin/types/
+diff --git a/AGENTS.md b/AGENTS.md
+index 2d686f1..884f6d1 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -70,6 +70,7 @@ PYTHONPATH=src python3 -m projector check
+ claude plugin validate .
+ claude plugin validate skills
+ claude plugin test .
++hooks/typecheck.sh
+ git diff --check
+ ```
+ 
+@@ -79,6 +80,17 @@ Code hooks module in `hooks/`, while `claude plugin validate skills` validates
+ the skill tree. `claude plugin test .` runs the hooks module's `*.test.ts`
+ and `*.test.tsx` files. Codex has no separate public validation command.
+ 
++`hooks/typecheck.sh` type-checks the hooks module with `site/`'s TypeScript,
++through the root `tsconfig.json`. It compiles against the declarations
++Claude Code writes to `.claude-plugin/types/` each time an interactive
++session loads the checkout as a plugin. Nothing else provides them, so CI
++cannot run this check. Once per checkout, run `npm ci` in `site/`, and start
++a session with `claude --plugin-dir .` from the repository root. The
++declarations depend only on the Claude Code version, so a linked worktree
++that has none uses the main checkout's, and the script says so. The script
++fails with the setup instruction when neither checkout has them. Start such
++a session again after you update Claude Code, so the declarations match it.
++
+ The site's front end lives in `site/`: TypeScript under `site/src/`, and
+ the stylesheets, icon, and compiled JavaScript the site serves under
+ `site/assets/`, which the wheel ships as `projector.site.assets`. Commit the
+diff --git a/docs/develop.md b/docs/develop.md
+index fc650a6..248b640 100644
+--- a/docs/develop.md
++++ b/docs/develop.md
+@@ -84,9 +84,21 @@ npm run dev
+ 
+ ## Validate a change
+ 
+-Run the validation gate from the repository root. Run `npm ci` once in
+-`site/` first, or the test that compares the compiled scripts with their
+-TypeScript skips:
++Run the validation gate from the repository root. Prepare each checkout once
++first:
++
++1. Run `npm ci` in `site/`. Without it, the test that compares the compiled
++   scripts with their TypeScript skips, and `hooks/typecheck.sh` has no
++   compiler.
++2. Start an interactive session with `claude --plugin-dir .` from the
++   repository root. When the session loads the checkout as a plugin, Claude
++   Code writes the declarations the hooks module compiles against to
++   `.claude-plugin/types/`, which Git ignores. They stay after you quit the
++   session. Projector loads only when its `gh-stack` dependency is installed,
++   as [Install for Claude Code](plugins.md#install-for-claude-code)
++   describes. Start such a session again after you update Claude Code. A
++   linked worktree can skip this step when the main checkout has the
++   declarations.
+ 
+ ```sh
+ PYTHONPATH=src python3 -m unittest discover -v
+@@ -94,11 +106,21 @@ PYTHONPATH=src python3 -m projector check
+ claude plugin validate .
+ claude plugin validate skills
+ claude plugin test .
++hooks/typecheck.sh
+ git diff --check
+ ```
+ 
++`hooks/typecheck.sh` runs `site/`'s `tsc` over `hooks/` with the root
++`tsconfig.json`, which extends the one Claude Code writes beside its
++declarations. The declarations depend only on the Claude Code version, so in
++a linked worktree that has none, the script uses the main checkout's, the
++first one `git worktree list` prints, and names it. It writes nothing to
++either checkout. When neither has the declarations, the script fails and says
++how to get them.
++
+ The Check workflow runs `npm run check`, the tests, and `project check` on
+-every pull request.
++every pull request. It cannot type-check `hooks/`, because only an
++interactive Claude Code session writes the declarations.
+ 
+ ## Release
+ 
+diff --git a/docs/plugins.md b/docs/plugins.md
+index fda5dd4..783c94a 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -172,8 +172,16 @@ Validate a checkout before publishing it:
+ claude plugin validate .
+ claude plugin validate skills
+ claude plugin test .
++hooks/typecheck.sh
+ ```
+ 
++`hooks/typecheck.sh` type-checks the hooks module against the declarations
++Claude Code writes to `.claude-plugin/types/` when an interactive session
++loads the checkout with `claude --plugin-dir .`. A linked worktree without
++them uses the main checkout's. Start that session once, and run `npm ci` in
++`site/`, before the first check, as
++[Validate a change](develop.md#validate-a-change) describes.
++
+ ### See your loops' pull requests in Projector's band
+ 
+ In Claude Code, the plugin also ships a hooks module in `hooks/` that lists
+diff --git a/hooks/typecheck.sh b/hooks/typecheck.sh
+new file mode 100755
+index 0000000..ad81723
+--- /dev/null
++++ b/hooks/typecheck.sh
+@@ -0,0 +1,40 @@
++#!/bin/sh
++# Type-checks the hooks module against the declarations Claude Code writes to
++# .claude-plugin/types/ when an interactive session loads a checkout with
++# --plugin-dir. Nothing else provides them, so CI cannot run this check. They
++# depend only on the Claude Code version, so a worktree that has none borrows
++# the main checkout's.
++set -eu
++cd "$(dirname "$0")/.."
++
++types=.claude-plugin/types/tsconfig.json
++tsc=site/node_modules/.bin/tsc
++
++if [ ! -x "$tsc" ]; then
++  echo "hooks/typecheck.sh: TypeScript is missing. Run \`npm ci\` in site/ first." >&2
++  exit 1
++fi
++if [ -f "$types" ]; then
++  exec "$tsc" -p .
++fi
++
++main=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
++if [ -z "$main" ] || [ ! -f "$main/$types" ]; then
++  echo "hooks/typecheck.sh: Claude Code's types are missing from .claude-plugin/types/." >&2
++  echo "Start an interactive session with \`claude --plugin-dir .\` once, from the root of" >&2
++  echo "this checkout or of the main checkout, so Claude Code writes them, then run this again." >&2
++  exit 1
++fi
++
++echo "hooks/typecheck.sh: using Claude Code's types from $main" >&2
++config=$(mktemp -d)
++trap 'rm -rf "$config"' EXIT
++trap 'exit 1' HUP INT TERM
++json() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
++cat > "$config/tsconfig.json" <<EOF
++{
++  "extends": "$(json "$main/$types")",
++  "include": ["$(json "$(pwd -P)/hooks")"]
++}
++EOF
++"$tsc" -p "$config"
+diff --git a/tsconfig.json b/tsconfig.json
+new file mode 100644
+index 0000000..ce600b3
+--- /dev/null
++++ b/tsconfig.json
+@@ -0,0 +1,4 @@
++{
++  "extends": "./.claude-plugin/types/tsconfig.json",
++  "include": ["hooks"]
++}
