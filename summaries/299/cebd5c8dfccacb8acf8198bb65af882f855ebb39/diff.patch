@@ -1,0 +1,2357 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 8e8aa1f..2d686f1 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -120,7 +120,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 8 -->
++<!-- projector:begin 9 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -186,5 +186,5 @@ are open, look over them each time the person writes to you, with
+ `project inbox list --session "$CLAUDE_CODE_SESSION_ID"`, and dismiss any
+ that no longer need them, such as a question they answered in the
+ conversation or news that has gone stale, with
+-`project inbox dismiss <reference> --session "$CLAUDE_CODE_SESSION_ID"`.
++`project inbox dismiss <number> --session "$CLAUDE_CODE_SESSION_ID"`.
+ <!-- projector:end -->
+diff --git a/docs/cli.md b/docs/cli.md
+index 6e599a8..f021056 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1463,18 +1463,15 @@ $ project inbox ask "Decline the finding about the retry budget?" \
+     --recommend "Decline it: the total cap already bounds retries" \
+     --option "Add a budget of two retries per host" \
+     --pr acme/app#337 --session "$SESSION"
+-#337.3
++3
+ ```
+ 
+-The command prints the question's reference at once. A question about a pull
+-request in the session's repository is `#337.3`, the third question on #337
+-this session; one about another repository spells it out, as
+-`octo/web#337.1`; one about no pull request takes the session's own count, as
+-`q2`. The session's repository is the `origin` of the first checkout the
+-session runs `ask` in, and it stays the same when later questions come
+-from other repositories' checkouts, so two repositories never share a
+-reference. `ask` refuses, with exit code 65, a question longer than one line
+-or 120 characters, a question that holds a tab, a missing recommendation, a
++The command prints the question's number at once. Each session numbers its
++items 1, 2, 3, and on, in one count that questions and notices share, so `3`
++is the third item the session posted. `--pr` records the pull request the
++item is about, as `owner/repo#number`, and does not change its number. `ask`
++refuses, with exit code 65, a question longer than one line or 120
++characters, a question that holds a tab, a missing recommendation, a
+ recommendation or option longer than one line, more than five other options,
+ or an option that repeats the recommendation or another option. Put what you
+ need to decide in `--detail`, or `--detail-file`.
+@@ -1482,33 +1479,45 @@ need to decide in `--detail`, or `--detail-file`.
+ Every command names the posting session with `--session`, or reads
+ `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
+ every session's open items, and `show`, `answer`, `dismiss`, and `snooze`
+-find the session that holds the reference. `list` prints each item's
+-reference, kind, state, and subject, separated by tabs, after the session
+-when it lists every session. A command waits up to five seconds while another
+-command changes the same session, and then exits 75, so you can run it again.
++find the session that holds the number. `list` prints each item's number,
++kind, state, and subject, separated by tabs, after the session when it lists
++every session. Every session counts from 1 and keeps the items you resolved,
++so two sessions often hold the same number. Without a session, those four
++commands look first among open items, the ones with no answer recorded: a
++number that one session holds open names that session's item, whatever other
++sessions hold resolved under the same number. Only when no session holds the
++number open do they look among every item. A command that still finds the
++number in more than one session exits 67 and names them; run it again with
++`--session` and the session that `list` prints beside the item. A command
++waits up to five seconds while another command changes the same session, and
++then exits 75, so you can run it again.
+ 
+ The answers are lettered. `a` is always the recommendation, the other options
+ follow as `b`, `c`, and on, and the last letter is a typed answer:
+ 
+ ```console
+-$ project inbox show '#337.3'
+-#337.3 Decline the finding about the retry budget?
++$ project inbox show 3
++3 Decline the finding about the retry budget?
+ about acme/app#337
+ a. Decline it: the total cap already bounds retries (recommended)
+ b. Add a budget of two retries per host
+ c. type an answer with --text
+ open
+-$ project inbox answer '#337.3.a'
+-answered #337.3.a
++$ project inbox answer 3.a
++answered 3.a
+ ```
+ 
+ To give an answer of your own instead, use the last letter with `--text`, as
+-in `project inbox answer '#337.3.c' --text "keep the cap, but log each
+-retry"`. A typed answer is one line, like every answer. A question takes one
+-answer; a second exits 65. `dismiss` answers it with no letter, and `list`
+-then shows it as `dismissed`. Only `answer` takes a letter: every other
+-command refuses a reference such as `#337.3.a` with exit code 65, so
+-`dismiss` never drops the answer you meant to give.
++in `project inbox answer 3.c --text "keep the cap, but log each retry"`. A
++typed answer is one line, like every answer. A question takes one answer; a
++second exits 65. `dismiss` answers it with no letter, and `list` then shows
++it as `dismissed`. Only `answer` takes a letter: every other command refuses
++`3.a` with exit code 65, so `dismiss` never drops the answer you meant to
++give.
++
++Every command refuses any other form of reference, such as `#337.3`,
++`octo/web#12.1`, or `q2`, with exit code 65, and no command lists, delivers,
++or deletes an item stored under one.
+ 
+ An answer reaches its agent through one deliverer, which claims it, sends it,
+ and marks it delivered. `watch` is the deliverer for any host that can run a
+@@ -1517,8 +1526,8 @@ loop running it hears the answer:
+ 
+ ```console
+ $ project inbox watch --session "$SESSION"
+-ANSWER #337.3.a Decline the finding about the retry budget? → Decline it: the total cap already bounds retries
+-DISMISSED q2 Run project init to add the publish rule?
++ANSWER 3.a Decline the finding about the retry budget? → Decline it: the total cap already bounds retries
++DISMISSED 2 Run project init to add the publish rule?
+ ```
+ 
+ `watch --once` makes one pass and exits. A view that delivers answers itself,
+@@ -1526,10 +1535,10 @@ such as Projector's band in Claude Code, uses the steps `watch` takes:
+ 
+ | Command | What it does |
+ | --- | --- |
+-| `claim <reference>` | Claims an answer for delivery and prints a token and the text to send; exits 65 when the answer is already claimed or delivered |
+-| `claim <reference> --renew <token>` | Keeps that claim live while its delivery is pending |
+-| `delivered <reference> --claim <token>` | Marks the claimed answer delivered |
+-| `reopen <reference> --claim <token>` | Clears the answer when its delivery failed, so the question is open again |
++| `claim <number>` | Claims an answer for delivery and prints a token and the text to send; exits 65 when the answer is already claimed or delivered |
++| `claim <number> --renew <token>` | Keeps that claim live while its delivery is pending |
++| `delivered <number> --claim <token>` | Marks the claimed answer delivered |
++| `reopen <number> --claim <token>` | Clears the answer when its delivery failed, so the question is open again |
+ 
+ A claim that is not renewed for a minute lapses, so a deliverer that stops
+ halfway leaves the answer for the next one. A lapsed claim's token still
+@@ -1541,22 +1550,20 @@ session keeps its 100 most recently delivered items, of either kind.
+ An agent tells you something that needs no answer with `tell`, such as the
+ answer to a question you asked it or something it did that you should know
+ about. A notice takes the same one line, `--detail`, `--pr`, and `--agent` as
+-a question, and the next number in the same counts, so a notice about #337
+-after its third question is `#337.4`:
++a question, and the next number in the session's count:
+ 
+ ```console
+ $ project inbox tell "Force-pushed #337 to drop a stray debug file" \
+     --pr acme/app#337 --session "$SESSION"
+-#337.4
++4
+ ```
+ 
+ `tell` refuses, with exit code 65, an empty notice, a notice longer than one
+ line or 120 characters, a notice that holds a tab, and a `--pr` that is not
+-`owner/repo#number`. A
+-notice has no options, so `answer` and `claim` refuse one with exit code 65.
+-Once you have read it, run `project inbox dismiss '#337.4'`. Nothing goes
+-back to the agent, so the dismissal also marks the notice delivered, and
+-`list` shows it, as `dismissed`, only with `--all`.
++`owner/repo#number`. A notice has no options, so `answer` and `claim` refuse
++one with exit code 65. Once you have read it, run `project inbox dismiss 4`.
++Nothing goes back to the agent, so the dismissal also marks the notice
++delivered, and `list` shows it, as `dismissed`, only with `--all`.
+ 
+ To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
+ an hour, or for the whole minutes that `--for` gives, up to a day (1440
+@@ -1565,13 +1572,13 @@ out until its time passes, and `list` shows it as `snoozed until <HH:MM>`, in
+ local time, or as `snoozed until tomorrow <HH:MM>` when it returns tomorrow:
+ 
+ ```console
+-$ project inbox snooze '#337.3' --for 30
+-#337.3 snoozed until 14:32
+-$ project inbox snooze '#337.4' --for 720
+-#337.4 snoozed until tomorrow 02:02
++$ project inbox snooze 3 --for 30
++3 snoozed until 14:32
++$ project inbox snooze 4 --for 720
++4 snoozed until tomorrow 02:02
+ $ project inbox list --session "$SESSION"
+-#337.3	question	snoozed until 14:32	Decline the finding about the retry budget?
+-#337.4	notice	snoozed until tomorrow 02:02	Force-pushed #337 to drop a stray debug file
++3	question	snoozed until 14:32	Decline the finding about the retry budget?
++4	notice	snoozed until tomorrow 02:02	Force-pushed #337 to drop a stray debug file
+ ```
+ 
+ A snoozed item can still be answered or dismissed, and either one clears its
+@@ -1579,15 +1586,6 @@ snooze, so a resolved item never returns. `snooze` refuses, with exit code
+ 65, an item already answered or dismissed, a negative `--for`, and a `--for`
+ longer than a day, and it changes nothing when it refuses.
+ 
+-`project inbox context` reads text on standard input and prints what each
+-reference in it means, for the items the session holds, so a prompt such as
+-`go with #337.3.b.` can carry its question along. A notice's reference prints
+-`#337.4 is the notice: ` and its subject, and a notice's reference with a
+-letter prints nothing, since a notice has no answers. It matches a
+-reference only when it stands alone: `#337.3.b` and `q2.a` match, at the end
+-of a sentence too, while `#337.3.4`, `x#337.3`, and the `2` in `rerun the 2
+-failing tests` do not.
+-
+ ## Consume JSON
+ 
+ Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
+diff --git a/docs/plugins.md b/docs/plugins.md
+index f2b9d03..c3a6cfe 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -330,9 +330,10 @@ read it, and nothing goes back to the agent.
+ 
+ A snoozed item leaves the band and the divider's counts at once. When its
+ hour passes, it returns to the list, and the band appears if you hid it. To
+-pick another time, or to wake an item now, run
+-`project inbox snooze <reference> --for <minutes>` in a terminal. An item you
+-answer or dismiss from a terminal while it is snoozed does not return.
++pick another time, or to wake an item now, find the item's number with
++`project inbox list` in a terminal, then run
++`project inbox snooze <number> --for <minutes>`. An item you answer or
++dismiss from a terminal while it is snoozed does not return.
+ 
+ A resolved item stays in the list, muted, for 30 seconds after it is
+ delivered, and a dismissed one is struck through. A dismissed notice is
+@@ -346,9 +347,7 @@ agent through the band of the session that asked. A subagent that is still
+ running receives it directly, as a message that starts `ANSWER`, or
+ `DISMISSED` for a dismissal. Otherwise the main loop receives it as a prompt
+ of its own once its turn ends, with the name of the subagent that asked, and
+-`sending` follows the question until it has gone. A reference to a question
+-in a prompt, such as `#337.3.b`, reaches the agent with the question it
+-names.
++`sending` follows the question until it has gone.
+ 
+ Shown or hidden, the band lists the session's inbox directory every 5
+ seconds and runs `project inbox` only when the directory changed since
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index afc0044..694896a 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -239,8 +239,8 @@ session's id in every host, which § 7 leaves open.
+   agent hears of it.
+ - **Dismissing a notice marks it delivered.** With `deliveredAt` set at
+   once, retention, `watch`, the band's deliverer, and the band's 30
+-  seconds of fading all handle a dismissed notice with no new branch: it is simply a
+-  delivered item.
++  seconds of fading all handle a dismissed notice with no new branch: it
++  is simply a delivered item.
+ - **Snoozing hides without losing.** An item you cannot deal with yet
+   should leave your way without leaving the inbox. Snoozing records a time
+   rather than a state, so nothing has to run when it ends: the band and
+@@ -664,9 +664,12 @@ sending its quoted subject. The forms still cost something:
+    separated by tabs, with the session before them when it lists every
+    session. `show 3`, `answer 3.a`, `answer 3.c --text …`, `dismiss 3`,
+    and `snooze 3` name the item. Only `answer` takes a letter, and every
+-   other command refuses `3.a` with exit `65`. Without `--session`, a
+-   command looks the number up in every session, as it does now. Once two
+-   sessions hold a `3`, it exits `67` and names both, and you pass
++   other command refuses `3.a` with exit `65`. Without `--session` or
++   `PROJECTOR_SESSION`, a command looks the number up in every session.
++   `show`, `answer`, `dismiss`, and `snooze` look first among open items,
++   those with no answer recorded, and among every item only when no
++   session holds the number open (§ 11.10). Once two sessions hold a `3`
++   that way, the command exits `67` and names both, and you pass
+    `--session` with the session that `list` prints beside the item.
+ 6. **Nothing reads a prompt for references.** The `prompt.submit` hook
+    adds no context for anything you type, and `project inbox context` is
+@@ -805,7 +808,65 @@ runs for any prompt that holds text shaped like `#12.3` or `q2`. Nothing
+ else changes.
+ 
+ Build the change as one pull request after #295, § 10's band pull
+-request, merges, since both change `hooks/register.tsx`, `hooks/inbox.ts`, their
+-tests, and `docs/plugins.md`. The CLI and the hooks change in that one
+-pull request, and because `ref` stays a string, a band and a CLI a
+-release apart still work together.
++request, merges, since both change `hooks/register.tsx`,
++`hooks/inbox.ts`, their tests, and `docs/plugins.md`. The CLI and the
++hooks change in that one pull request, and because `ref` stays a string,
++a band and a CLI a release apart still work together.
++
++### 11.10 What building it settled
++
++§ 11 is built as it reads. Building it settled these points, which the
++subsections above leave open or which the code had moved past since
++§ 11 was written:
++
++- **A third test read references.** #293 added a `context` check to
++  `test_every_command_refuses_a_file_that_is_not_an_item`, besides
++  `ContextTests` and `NoticeContextTests`, which § 11.6 names. That check
++  goes with them, and the test keeps its checks of `show`, `answer`,
++  `dismiss`, and `snooze`.
++- **The band's `project` helper takes no standard input.** Only `explain`
++  passed text to `project inbox context` on standard input, so the
++  `stdin` argument of `project` in `hooks/register.tsx` goes with it, and
++  so does the fake runner's in `hooks/band.test.tsx`.
++- **The toast names an answer it cannot quote.** The toast for a failed
++  delivery quotes the question's subject from the band's list. When the
++  list no longer holds that question, it says `an answer did not reach its
++  agent`, and still names no number.
++- **The refusal for a number two sessions hold says where to look.**
++  Every session counts from 1, so two sessions often hold a number. The
++  message of exit `67` says to pass `--session` with the session that
++  `project inbox list` prints beside the item.
++- **The agents' instructions name a number.** The section `project init`
++  writes into `AGENTS.md` tells an agent to clear an item with
++  `project inbox dismiss <number>`. The text changed, so the section's
++  begin marker moves to version 9.
++- **A file's name still quotes its reference.** `item_file` quotes the
++  reference into the file's name as it did, which leaves a number
++  unchanged. A reference read from a file therefore cannot name a path
++  outside the session's directory, and the band's reading of file names
++  still matches the quoted names an older CLI writes.
++- **What #293 and #295 changed stays.** The input checks, exit `75` for a
++  busy store, the refusal of a letter by every command but `answer`, and
++  #295's band, with **discuss** filling the quote and two newlines, no
++  `Type something` field, a drawer that closes when you send its answer,
++  and the 30 seconds a resolved line stays, all work as they did. § 11
++  changes none of them.
++- **A bare number looks first among open items.** Every session holds a
++  `1`, a session's directory stays after it ends (§ 7), and each keeps up
++  to 100 delivered items. Looking a number up in every session would make
++  a bare `answer 3.a` from a shell exit `67` almost every time. So when
++  neither `--session` nor `PROJECTOR_SESSION` names a session, `show`,
++  `answer`, `dismiss`, and `snooze` consider only the sessions that hold
++  the number open, with no answer recorded, whenever any does. An open
++  item is the only kind `answer`, `dismiss`, and `snooze` can act on, and
++  the one a `show` after `list` most likely means. When no session holds
++  the number open, these commands look among every item as before, so
++  `show` still reaches a resolved item and `answer` still says the
++  question is already answered. A number open in two sessions still exits
++  `67`. `claim`, `delivered`, and `reopen` act on an answered question,
++  and the band and `watch` always pass its session, so they look among
++  every item as before.
++
++Each row of § 11.8 but the last failed its test before the change. The
++main-screen row of § 4 still waits for a check by hand under tmux, so the
++project stays `in-progress`.
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 0dc04c6..0a906f9 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -112,7 +112,7 @@ type Beneath = { github?: (query: string) => Ran | Promise<Ran> }
+ function world(
+   on: On,
+   files: Record<string, string>,
+-  project?: (argv: string[], stdin: string) => Outcome | Promise<Outcome>,
++  project?: (argv: string[]) => Outcome | Promise<Outcome>,
+   { github = query => ran(answer(query)) }: Beneath = {},
+ ) {
+   const commands: string[][] = []
+@@ -125,9 +125,7 @@ function world(
+     commands.push([...e.argv])
+     const answered = (outcome: Outcome) => ('deny' in outcome ? outcome : { value: outcome })
+     const outcome =
+-      e.argv[0] === 'project' && project !== undefined
+-        ? project([...e.argv], e.init?.stdin ?? '')
+-        : github(e.argv.join(' '))
++      e.argv[0] === 'project' && project !== undefined ? project([...e.argv]) : github(e.argv.join(' '))
+     return outcome instanceof Promise ? outcome.then(answered) : answered(outcome)
+   })
+   on('prompt.fill', ($, e) => {
+@@ -507,7 +505,7 @@ type Clock = ReturnType<typeof mock.clock>
+ const HOUR = 3_600_000
+ 
+ const held = (fields: Partial<HeldQuestion> = {}): HeldQuestion => ({
+-  ref: '#7.1',
++  ref: '1',
+   kind: 'question',
+   number: 1,
+   pr: 'x/y#7',
+@@ -519,7 +517,7 @@ const held = (fields: Partial<HeldQuestion> = {}): HeldQuestion => ({
+ })
+ 
+ const notice = (fields: Partial<HeldNotice> = {}): HeldNotice => ({
+-  ref: '#7.2',
++  ref: '2',
+   kind: 'notice',
+   number: 2,
+   pr: 'x/y#7',
+@@ -570,7 +568,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       ? `ANSWER ${question.ref}.${question.answer.letter} ${question.subject} → ${question.answer.text}`
+       : `DISMISSED ${question.ref} ${question.subject}`
+ 
+-  const run = (argv: string[], stdin: string): Outcome | Promise<Outcome> => {
++  const run = (argv: string[]): Outcome | Promise<Outcome> => {
+     const [, group, command = '', ...args] = argv
+     const time = clock.now()
+     if (group !== 'inbox') return failed(2, `invalid choice: '${group ?? ''}'`)
+@@ -599,14 +597,13 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+     if (command === 'ask' || command === 'tell') {
+       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
+       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
+-      const pr = flag(args, 'pr') ?? null
+       posted += 1
+-      const ref = pr === null ? `q${posted}` : `#${pr.split('#')[1] ?? ''}.${posted}`
++      const ref = String(posted)
+       const agentId = flag(args, 'agent')
+       const common = {
+         ref,
+         number: posted,
+-        pr,
++        pr: flag(args, 'pr') ?? null,
+         postedAt: time,
+         subject: args[args.indexOf('--') + 1] ?? '',
+         detail: flag(args, 'detail') ?? '',
+@@ -620,9 +617,6 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       )
+       return ran(`${ref}\n`)
+     }
+-    if (command === 'context') {
+-      return ran(stdin.includes('#7.1.b') ? '#7.1.b answers Decline the finding? with Add a budget\n' : '')
+-    }
+ 
+     const written = args[0] ?? ''
+     const ref = command === 'answer' ? written.slice(0, written.lastIndexOf('.')) : written
+@@ -749,7 +743,9 @@ test('asks through the tool, and the band lists the question below the pull requ
+     options: ['Add a budget'],
+     pr: 'x/y#7',
+   })
+-  expect(String(called.text ?? called.result)).toContain('Asked #7.1.')
++  expect(String(called.text ?? called.result)).toBe(
++    'Asked 1. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER 1 or DISMISSED 1.',
++  )
+   expect(session.registered).toEqual([
+     expect.objectContaining({ name: 'ask', isDeferred: false }),
+     expect.objectContaining({ name: 'tell', isDeferred: false }),
+@@ -757,7 +753,8 @@ test('asks through the tool, and the band lists the question below the pull requ
+   expect(session.project()).toContain(
+     'inbox ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
+   )
+-  expect(session.notified).toEqual(['#7.1 Decline the finding?'])
++  // You never need the number, so the notification holds the question alone.
++  expect(session.notified).toEqual(['Decline the finding?'])
+ 
+   await clock.advance(1)
+   await clock.settle()
+@@ -768,7 +765,7 @@ test('asks through the tool, and the band lists the question below the pull requ
+   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
+   // The line names the question's pull request as the band labels it.
+   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
+-  expect(await ui.find({ type: 'Button', key: 'item:#7.1' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -815,7 +812,7 @@ test('refuses what the CLI refuses, asks an old CLI to upgrade, and says when it
+ test('a question asked from the shell shows the hidden band within a tick', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  questionWorld(on, clock, [held({ ref: 'q1', pr: null, subject: 'Run project init?' })])
++  questionWorld(on, clock, [held({ pr: null, subject: 'Run project init?' })])
+   await startSession($, clock, false)
+   await clock.advance(TICK)
+   await clock.settle()
+@@ -843,31 +840,31 @@ test('an idle session with no questions starts no project process', async ($, on
+ test('an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  const later = held({ ref: '#7.2', number: 2, subject: 'Rebase first?', postedAt: NOW - 60_000 })
++  const later = held({ ref: '2', number: 2, subject: 'Rebase first?', postedAt: NOW - 60_000 })
+   const session = questionWorld(on, clock, [held({ agentId: 'agent-1' }), later], { agents: [running('running')] })
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'item:#7.1' })
++  await ui.press({ key: 'item:1' })
+   // The open question has the band to itself, the divider included, so it is the top row.
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+-  expect((await ui.find({ key: 'detail:#7.1' }))?.props.text).toBe('The loop caps retries at three.')
++  expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The loop caps retries at three.')
+   expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeDefined()
+   // An answer in your own words goes through discuss, so only the options are numbered.
+   expect(await ui.find({ type: 'Input' })).toBeUndefined()
+-  expect(await ui.find({ key: 'answer:#7.1.c' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Button', key: 'discuss:#7.1' })).toBeDefined()
+-  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeDefined()
++  expect(await ui.find({ key: 'answer:1.c' })).toBeUndefined()
++  expect(await ui.find({ type: 'Button', key: 'discuss:1' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeDefined()
+   // A digit typed first in an empty prompt presses a band Button whose hotkey it is.
+   for (const button of await ui.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
+ 
+   // Choosing an option answers nothing yet: it fills the prompt, and the drawer stays open.
+-  await ui.press({ key: 'answer:#7.1.b', link: { href: SEVEN } })
++  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nAdd a budget\n'])
+-  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+-  expect(await ui.find({ key: 'detail:#7.1' })).toBeDefined()
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
++  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
+ 
+   const text = 'Thanks.\n"Decline the finding?"\n\nAdd a budget\n'
+   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+@@ -878,26 +875,26 @@ test('an option puts the question and its answer in the prompt, and sending it a
+       context: ['The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the answer this prompt gives.'],
+     },
+   ])
+-  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
++  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
+   // The prompt delivered it, so the band sends nothing more.
+   expect(session.sent).toEqual([])
+ 
+   // Sending the answer closed the drawer, so the band shows its list again.
+-  expect(await ui.find({ key: 'detail:#7.1' })).toBeUndefined()
++  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
+ 
+   // The resolved question still opens, its choice marked, the rest muted, and nothing left to press.
+-  await ui.press({ key: 'item:#7.1' })
++  await ui.press({ key: 'item:1' })
+   expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
+   expect((await ui.find({ type: 'Text', text: /^2\.$/ }))?.props.color).toBe('success')
+   expect((await ui.find({ type: 'Text', text: /^1\.$/ }))?.props.color).toBe('subtle')
+   expect((await ui.find({ type: 'Text', text: /^Decline it/ }))?.props.color).toBe('subtle')
+   expect((await ui.find({ type: 'Text', text: /^Decline the finding\?$/ }))?.props.color).toBe('subtle')
+-  expect(await ui.find({ key: 'answer:#7.1.a' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeUndefined()
++  expect(await ui.find({ key: 'answer:1.a' })).toBeUndefined()
++  expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeUndefined()
+ 
+-  await ui.press({ key: 'item:#7.1' })
++  await ui.press({ key: 'item:1' })
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
+   await clock.advance(30_000 + TICK)
+@@ -909,39 +906,39 @@ test('an option puts the question and its answer in the prompt, and sending it a
+ test('a question another shares the text of takes only the answer its own drawer put in the prompt', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  const newer = held({ ref: '#8.1', pr: 'x/y#8', postedAt: NOW - 60_000 })
++  const newer = held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })
+   const session = questionWorld(on, clock, [held(), newer])
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'item:#8.1' })
+-  await ui.press({ key: 'answer:#8.1.a', link: { href: 'https://github.com/x/y/pull/8' } })
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nDecline it\n'])
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+-  expect(session.store.store.get('#8.1')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
+-  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
++  expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
+   await ui.unmount()
+ })
+ 
+ test('a proposal you cleared from the prompt does not take the answer you sent for another question', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  const newer = held({ ref: '#8.1', pr: 'x/y#8', postedAt: NOW - 60_000 })
++  const newer = held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })
+   const session = questionWorld(on, clock, [held({ postedAt: NOW - 30_000 }), newer])
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'item:#8.1' })
+-  await ui.press({ key: 'answer:#8.1.a', link: { href: 'https://github.com/x/y/pull/8' } })
+-  // You clear that from the prompt, then choose the other answer in #7.1's drawer.
+-  await ui.press({ key: 'item:#8.1' })
+-  await ui.press({ key: 'item:#7.1' })
+-  await ui.press({ key: 'answer:#7.1.b', link: { href: SEVEN } })
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
++  // You clear that from the prompt, then choose the other answer in the older question's drawer.
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+-  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+-  expect(session.store.store.get('#8.1')?.answer).toBeUndefined()
++  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
++  expect(session.store.store.get('2')?.answer).toBeUndefined()
+   await ui.unmount()
+ })
+ 
+@@ -963,50 +960,50 @@ test('only a prompt you sent answers a question', async ($, on) => {
+   for (const origin of others) await $.prompt.submit({ text, wait: false, origin })
+   await clock.settle()
+   expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
+-  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
+ 
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget', wait: false, origin: { kind: 'bridge' } })
+   await clock.settle()
+-  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
++  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+ })
+ 
+ test('discuss keeps the drawer open with the question above a blank line, what you type under it answers, and dismiss resolves it', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  const session = questionWorld(on, clock, [held(), held({ ref: '#7.2', number: 2, subject: 'Rebase first?' })])
++  const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, subject: 'Rebase first?' })])
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'item:#7.1' })
+-  await ui.press({ key: 'discuss:#7.1' })
++  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'discuss:1' })
+   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\n'])
+   // The drawer stays open, so its options and detail stay in view while you type.
+-  expect(await ui.find({ key: 'detail:#7.1' })).toBeDefined()
++  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
+ 
+   // Text after the quoted question on its own line answers nothing, and leaves the drawer open.
+   const discussed = '"Decline the finding?" what does the cap cover?'
+   await $.prompt.submit({ text: discussed, wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+-  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+-  expect(await ui.find({ key: 'detail:#7.1' })).toBeDefined()
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
++  expect(await ui.find({ key: 'detail:1' })).toBeDefined()
+ 
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nkeep the cap', wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+-  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'c', text: 'keep the cap' }))
+-  expect(session.project()).toContain('inbox answer #7.1.c --text=keep the cap --session s1 --json')
++  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'c', text: 'keep the cap' }))
++  expect(session.project()).toContain('inbox answer 1.c --text=keep the cap --session s1 --json')
+   // Sending the answer closed the drawer; opened again, it shows the answer you typed after the options, marked.
+-  expect(await ui.find({ key: 'detail:#7.1' })).toBeUndefined()
+-  await ui.press({ key: 'item:#7.1' })
++  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
++  await ui.press({ key: 'item:1' })
+   expect((await ui.find({ type: 'Text', text: /^3\.$/ }))?.props.color).toBe('success')
+   expect(await ui.find({ type: 'Text', text: /^keep the cap/ })).toBeDefined()
+ 
+-  await ui.press({ key: 'item:#7.1' })
+-  await ui.press({ key: 'item:#7.2' })
+-  await ui.press({ key: 'dismiss:#7.2' })
+-  expect(session.project()).toContain('inbox dismiss #7.2 --session s1 --json')
++  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'dismiss:2' })
++  expect(session.project()).toContain('inbox dismiss 2 --session s1 --json')
+   await clock.advance(1)
+   await clock.settle()
+-  expect(session.submitted.map(one => one.text)).toContain('DISMISSED #7.2 Rebase first?')
++  expect(session.submitted.map(one => one.text)).toContain('DISMISSED 2 Rebase first?')
+   await ui.unmount()
+ })
+ 
+@@ -1020,10 +1017,10 @@ test('an answer from a terminal reaches the live subagent that asked', async ($,
+   await clock.settle()
+ 
+   expect(session.sent).toEqual([
+-    { to: expect.stringContaining('agent-1'), text: 'ANSWER #7.1.a Decline the finding? → Decline it' },
++    { to: expect.stringContaining('agent-1'), text: 'ANSWER 1.a Decline the finding? → Decline it' },
+   ])
+   expect(session.submitted).toEqual([])
+-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
+ })
+ 
+ test('an answer from a terminal for a subagent that ended goes to the main loop, naming it', async ($, on) => {
+@@ -1036,9 +1033,9 @@ test('an answer from a terminal for a subagent that ended goes to the main loop,
+   await clock.settle()
+ 
+   expect(session.sent).toEqual([])
+-  expect(session.submitted[0]?.text).toContain('ANSWER #7.1.b Decline the finding? → Add a budget')
++  expect(session.submitted[0]?.text).toContain('ANSWER 1.b Decline the finding? → Add a budget')
+   expect(session.submitted[0]?.text).toContain('The subagent Fix #7 (agent-1) asked this')
+-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
+ })
+ 
+ test('a dropped submit reopens the question and says why', async ($, on) => {
+@@ -1050,10 +1047,12 @@ test('a dropped submit reopens the question and says why', async ($, on) => {
+   await clock.advance(TICK)
+   await clock.settle()
+ 
+-  expect(session.toasts).toEqual(['projector: #7.1 did not reach its agent (a hook refused it); answer it again'])
+-  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
++  expect(session.toasts).toEqual([
++    'projector: the answer to "Decline the finding?" did not reach its agent (a hook refused it); answer it again',
++  ])
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
+   const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Button', key: 'item:#7.1' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -1074,12 +1073,12 @@ test('an answer from a terminal waits behind a long turn on one claim, renewed w
+   expect(claims.filter(command => !command.includes('--renew'))).toHaveLength(1)
+   expect(claims.filter(command => command.includes('--renew')).length).toBeGreaterThanOrEqual(6)
+   expect(lists()).toBe(before)
+-  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER #7.1.a Decline the finding? → Decline it'])
++  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER 1.a Decline the finding? → Decline it'])
+ 
+   session.release()
+   await clock.advance(TICK)
+   await clock.settle()
+-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
+   expect(session.submitted).toHaveLength(1)
+ })
+ 
+@@ -1094,8 +1093,8 @@ test('a store read that fails runs again on the next tick', async ($, on) => {
+   await clock.settle()
+ 
+   expect(session.project().filter(command => command.startsWith('inbox list')).length).toBeGreaterThanOrEqual(2)
+-  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER #7.1.a Decline the finding? → Decline it'])
+-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER 1.a Decline the finding? → Decline it'])
++  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
+ })
+ 
+ test('a store read that runs past the CLI’s timeout still renews the claim of an answer waiting to be sent', async ($, on) => {
+@@ -1122,17 +1121,17 @@ test('a store read that runs past the CLI’s timeout still renews the claim of
+   await clock.settle()
+   const claims = session.project().filter(command => command.startsWith('inbox claim'))
+   expect(claims.filter(command => !command.includes('--renew'))).toHaveLength(1)
+-  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER #7.1.a Decline the finding? → Decline it'])
+-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++  expect(session.submitted.map(one => one.text)).toEqual(['ANSWER 1.a Decline the finding? → Decline it'])
++  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
+ })
+ 
+ test('a submit an earlier copy of the module left keeps its claim and settles when its prompt arrives', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  const text = 'ANSWER #7.1.a Decline the finding? → Decline it'
++  const text = 'ANSWER 1.a Decline the finding? → Decline it'
+   const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+   const session = questionWorld(on, clock, [held({ answer, claim: { token: 'old', renewedAt: NOW } })])
+-  let pending: Record<string, unknown> = { '#7.1': { ref: '#7.1', session: SESSION, token: 'old', route: 'submit', text } }
++  let pending: Record<string, unknown> = { '1': { ref: '1', session: SESSION, token: 'old', route: 'submit', text } }
+   let version = 1
+   on('state.get', { plugin: 'projector', key: 'bandSending' }, () => ({ value: { value: pending as never, version } }))
+   on('state.set', { plugin: 'projector', key: 'bandSending' }, ($, e) => {
+@@ -1146,26 +1145,29 @@ test('a submit an earlier copy of the module left keeps its claim and settles wh
+ 
+   const claims = session.project().filter(command => command.startsWith('inbox claim'))
+   expect(claims.length).toBeGreaterThanOrEqual(2)
+-  for (const claim of claims) expect(claim).toBe('inbox claim #7.1 --renew old --session s1')
++  for (const claim of claims) expect(claim).toBe('inbox claim 1 --renew old --session s1')
+   await $.prompt.submit({ text, wait: false, origin: { kind: 'plugin', name: 'projector' } })
+-  expect(session.project()).toContain('inbox delivered #7.1 --claim old --session s1 --json')
+-  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
++  expect(session.project()).toContain('inbox delivered 1 --claim old --session s1 --json')
++  expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
+   expect(pending).toEqual({})
+ })
+ 
+-test('a reference typed in the prompt reaches the agent with its question', async ($, on) => {
++test('a number or an old reference typed in the prompt reaches the agent as plain text', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [held()])
+   await startSession($, clock)
++  const before = session.project().length
+ 
++  await $.prompt.submit({ text: 'go with 1.b', wait: false, origin: { kind: 'composer' } })
+   await $.prompt.submit({ text: 'go with #7.1.b', wait: false, origin: { kind: 'composer' } })
+-  await $.prompt.submit({ text: 'rerun the 2 failing tests', wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
+   expect(session.submitted).toEqual([
+-    { text: 'go with #7.1.b', context: ['#7.1.b answers Decline the finding? with Add a budget'] },
+-    { text: 'rerun the 2 failing tests', context: [] },
++    { text: 'go with 1.b', context: [] },
++    { text: 'go with #7.1.b', context: [] },
+   ])
+-  expect(session.project().filter(command => command.startsWith('inbox context'))).toHaveLength(1)
++  expect(session.project().slice(before)).toEqual([])
++  expect(session.store.store.get('1')?.answer).toBeUndefined()
+ })
+ 
+ const FORCE_PUSHED = 'Force-pushed #7 to drop a stray file'
+@@ -1178,10 +1180,10 @@ test('a subagent tells through the tool, and the band lists the notice with its
+ 
+   const called = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, pr: 'x/y#7', agentId: 'agent-1' })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Posted #7.1. It waits in Projector’s band until the person dismisses it; nothing comes back to you.',
++    'Posted 1. It waits in Projector’s band until the person dismisses it; nothing comes back to you.',
+   )
+   expect(session.project()).toContain(`inbox tell --session=s1 --pr=x/y#7 --agent=agent-1 -- ${FORCE_PUSHED}`)
+-  expect(session.notified).toEqual([`#7.1 ${FORCE_PUSHED}`])
++  expect(session.notified).toEqual([FORCE_PUSHED])
+ 
+   await clock.advance(1)
+   await clock.settle()
+@@ -1189,7 +1191,44 @@ test('a subagent tells through the tool, and the band lists the notice with its
+   expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated (just now|\d+s ago)$/ })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: '• ' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
+-  expect(await ui.find({ type: 'Button', key: 'item:#7.1' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('the tools number a session’s items in one count, and notify with the subject alone', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock)
++  await startSession($, clock)
++
++  const asked = await $.tool.call({
++    tool: 'mcp__projector__ask',
++    question: 'Decline the finding?',
++    recommendation: 'Decline it',
++    agentId: 'agent-1',
++  })
++  expect(String(asked.text ?? asked.result)).toMatch(/^Asked 1\. .*ANSWER 1 or DISMISSED 1\.$/)
++  const told = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, agentId: 'agent-1' })
++  expect(String(told.text ?? told.result)).toMatch(/^Posted 2\. /)
++  expect(session.notified).toEqual(['Decline the finding?', FORCE_PUSHED])
++})
++
++test('no line or drawer shows an item’s number', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  questionWorld(on, clock, [held({ ref: '42', number: 42 }), notice({ ref: '43', number: 43 })])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  const drawn = async () => (await ui.findAll({ type: 'Text' })).map(found => found.text).join('\n')
++  expect(await drawn()).toContain('Decline the finding?')
++  expect(await drawn()).not.toMatch(/42|43/)
++  for (const ref of ['42', '43']) {
++    await ui.press({ key: `item:${ref}` })
++    expect(await ui.find({ key: `detail:${ref}` })).toBeDefined()
++    expect(await drawn()).not.toMatch(/42|43/)
++    await ui.press({ key: `item:${ref}` })
++  }
+   await ui.unmount()
+ })
+ 
+@@ -1221,31 +1260,31 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+ 
+   const ui = await $.ui.mount(BAND)
+   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
+-  await ui.press({ key: 'item:#7.2' })
++  await ui.press({ key: 'item:2' })
+   // An open notice has the band to itself, the divider included, as an open question does.
+   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
+-  expect((await ui.find({ key: 'detail:#7.2' }))?.props.text).toBe('The file held a debug token.')
++  expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe('The file held a debug token.')
+   expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeUndefined()
+   for (const name of ['discuss', 'dismiss', 'snooze']) {
+-    expect((await ui.find({ type: 'Button', key: `${name}:#7.2` }))?.props.plain).toBe(true)
++    expect((await ui.find({ type: 'Button', key: `${name}:2` }))?.props.plain).toBe(true)
+   }
+   const bars = await ui.findAll({ type: 'Text', text: '|' })
+   expect(bars.map(bar => bar.props.color)).toEqual(['subtle', 'subtle'])
+ 
+-  await ui.press({ key: 'discuss:#7.2' })
++  await ui.press({ key: 'discuss:2' })
+   expect(session.filled).toEqual([`insert:"${FORCE_PUSHED}"\n\n`])
+ 
+-  await ui.press({ key: 'dismiss:#7.2' })
++  await ui.press({ key: 'dismiss:2' })
+   await clock.settle()
+   expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([
+-    'inbox dismiss #7.2 --session s1 --json',
++    'inbox dismiss 2 --session s1 --json',
+   ])
+   const line = await ui.find({ type: 'Text', text: FORCE_PUSHED })
+   expect([line?.props.color, line?.props.strikethrough]).toEqual(['subtle', true])
+-  expect(await ui.find({ type: 'Button', key: 'discuss:#7.2' })).toBeDefined()
+-  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.2' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Button', key: 'snooze:#7.2' })).toBeUndefined()
++  expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'dismiss:2' })).toBeUndefined()
++  expect(await ui.find({ type: 'Button', key: 'snooze:2' })).toBeUndefined()
+ 
+   await clock.advance(TICK)
+   await clock.settle()
+@@ -1253,7 +1292,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+   expect(session.submitted).toEqual([])
+   expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
+ 
+-  await ui.press({ key: 'item:#7.2' })
++  await ui.press({ key: 'item:2' })
+   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+   await clock.advance(30_000 - 2 * TICK)
+   await clock.settle()
+@@ -1271,14 +1310,14 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'item:#7.1' })
+-  await ui.press({ key: 'snooze:#7.1' })
++  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'snooze:1' })
+   await clock.settle()
+-  await ui.press({ key: 'item:#7.2' })
+-  await ui.press({ key: 'snooze:#7.2' })
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'snooze:2' })
+   await clock.settle()
+-  expect(session.project()).toContain('inbox snooze #7.1 --session s1 --json')
+-  expect(session.project()).toContain('inbox snooze #7.2 --session s1 --json')
++  expect(session.project()).toContain('inbox snooze 1 --session s1 --json')
++  expect(session.project()).toContain('inbox snooze 2 --session s1 --json')
+   expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
+   await ui.unmount()
+@@ -1309,15 +1348,15 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'item:#7.1' })
++  await ui.press({ key: 'item:1' })
+   session.store.failing.locks = 2
+   for (const name of ['dismiss', 'snooze']) {
+-    await ui.press({ key: `${name}:#7.1` })
++    await ui.press({ key: `${name}:1` })
+     await clock.settle()
+   }
+   expect(session.toasts).toEqual([`projector: ${BUSY}`, `projector: ${BUSY}`])
+-  expect(session.store.store.get('#7.1')).toEqual(held())
+-  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeDefined()
++  expect(session.store.store.get('1')).toEqual(held())
++  expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -1354,13 +1393,13 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  await ui.press({ key: 'item:#7.2' })
+-  await ui.press({ key: 'snooze:#7.2' })
++  await ui.press({ key: 'item:2' })
++  await ui.press({ key: 'snooze:2' })
+   await clock.advance(TICK)
+   await clock.settle()
+   await ui.unmount()
+   await $.command.run(COMMAND)
+-  session.store.run(['project', 'inbox', 'dismiss', '#7.2', '--session', SESSION], '')
++  session.store.run(['project', 'inbox', 'dismiss', '2', '--session', SESSION])
+ 
+   await clock.advance(HOUR + 2 * TICK)
+   await clock.settle()
+@@ -1378,7 +1417,7 @@ test('a sent prompt that quotes a notice answers nothing', async ($, on) => {
+   await $.prompt.submit({ text: `"${FORCE_PUSHED}"\n\nThanks`, wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+   expect(session.project().filter(command => /^inbox (answer|dismiss|claim)/.test(command))).toEqual([])
+-  expect(session.store.store.get('#7.2')?.answer).toBeUndefined()
++  expect(session.store.store.get('2')?.answer).toBeUndefined()
+ })
+ 
+ test('a snoozed item read at the start leaves a hidden band hidden until its time', async ($, on) => {
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index 6bdef57..af435d6 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -2,12 +2,12 @@ import type { AgentInfo } from 'claude-code'
+ import { expect, test } from 'claude-code/testing'
+ 
+ import {
++  ASK_DESCRIPTION,
+   answersIn,
+   askArguments,
+   forMainLoop,
+   isShownAt,
+   liveAgent,
+-  mayReference,
+   needsDelivery,
+   proposalOf,
+   quoteOf,
+@@ -24,7 +24,7 @@ import type { Notice, Question } from './types'
+ const NOW = Date.UTC(2026, 9, 12, 12, 0)
+ 
+ const question = (fields: Partial<Question> = {}): Question => ({
+-  ref: '#7.1',
++  ref: '1',
+   number: 1,
+   pr: 'o/r#7',
+   postedAt: NOW - 60_000,
+@@ -37,7 +37,7 @@ const question = (fields: Partial<Question> = {}): Question => ({
+ })
+ 
+ const notice = (fields: Partial<Notice> = {}): Notice => ({
+-  ref: '#7.2',
++  ref: '2',
+   number: 2,
+   pr: 'o/r#7',
+   postedAt: NOW - 30_000,
+@@ -53,9 +53,10 @@ const agent = (status: AgentInfo['status']): AgentInfo =>
+ 
+ const file = (name: string, mtimeMs: number) => ({ name, kind: 'file' as const, size: 10, mtimeMs, isLink: false })
+ 
+-test('only text shaped like a reference starts the CLI', () => {
+-  for (const text of ['go with #337.3.b', 'Let’s do q2.a.', 'o/r#12.1', 'q1']) expect(mayReference(text)).toBe(true)
+-  for (const text of ['rerun the 2 failing tests', 'see #337', 'eq2 holds', 'Q2']) expect(mayReference(text)).toBe(false)
++test('the ask tool tells the agent that a question’s number names its answer', () => {
++  expect(ASK_DESCRIPTION).toMatch(
++    /The call returns the question’s number, such as 3, and the answer arrives later as a message that starts `ANSWER 3\.<letter>` or `DISMISSED 3`\.$/,
++  )
+ })
+ 
+ test('letters run from the recommendation to the typed answer', () => {
+@@ -68,7 +69,7 @@ test('the prompt carries a question in quotes, and an answer on a line of its ow
+ })
+ 
+ test('a sent prompt answers each question whose quote ends its line', () => {
+-  const open = [question(), question({ ref: '#7.2', subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
++  const open = [question(), question({ ref: '2', number: 2, subject: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
+   expect(answersIn('"Decline the finding?"\n\nAdd a budget\n', open)).toEqual([{ question: open[0], letter: 'b' }])
+   expect(answersIn('Both:\n"Decline the finding?"\nDecline it\n"Rebase first?"\n\nkeep it', open)).toEqual([
+     { question: open[0], letter: 'a' },
+@@ -85,24 +86,24 @@ test('a sent prompt answers each question whose quote ends its line', () => {
+ })
+ 
+ test('a quote two questions share answers one: the one whose drawer put that answer there, else the oldest', () => {
+-  const newer = question({ ref: '#8.1', pr: 'o/r#8' })
++  const newer = question({ ref: '2', number: 2, pr: 'o/r#8' })
+   const older = question({ postedAt: NOW - 120_000 })
+   const budget = '"Decline the finding?"\n\nAdd a budget'
+   const decline = '"Decline the finding?"\n\nDecline it'
+   expect(answersIn(budget, [newer, older])).toEqual([{ question: older, letter: 'b' }])
+-  expect(answersIn(budget, [newer, older], [{ ref: '#8.1', answer: 'Add a budget' }])).toEqual([
++  expect(answersIn(budget, [newer, older], [{ ref: '2', answer: 'Add a budget' }])).toEqual([
+     { question: newer, letter: 'b' },
+   ])
+   // A proposal whose answer the prompt no longer holds, as when you cleared it, decides nothing.
+   const both = [
+-    { ref: '#8.1', answer: 'Decline it' },
+-    { ref: '#7.1', answer: 'Add a budget' },
++    { ref: '2', answer: 'Decline it' },
++    { ref: '1', answer: 'Add a budget' },
+   ]
+   expect(answersIn(budget, [newer, older], both)).toEqual([{ question: older, letter: 'b' }])
+-  expect(answersIn(decline, [newer, older], [{ ref: '#8.1', answer: 'Decline it' }])).toEqual([
++  expect(answersIn(decline, [newer, older], [{ ref: '2', answer: 'Decline it' }])).toEqual([
+     { question: newer, letter: 'a' },
+   ])
+-  expect(answersIn(budget, [newer, older], [{ ref: '#8.1', answer: 'Decline it' }])).toEqual([
++  expect(answersIn(budget, [newer, older], [{ ref: '2', answer: 'Decline it' }])).toEqual([
+     { question: older, letter: 'b' },
+   ])
+   // Quoted twice, each quote answers its own question, in the order the quotes appear.
+@@ -148,11 +149,11 @@ test('the subagent’s status decides where an answer goes', () => {
+ })
+ 
+ test('the main loop is told which subagent asked', () => {
+-  expect(forMainLoop('ANSWER #7.1.a', question(), [])).toBe('ANSWER #7.1.a')
+-  expect(forMainLoop('ANSWER #7.1.a', question({ agentId: 'agent-1' }), [agent('completed')])).toContain(
++  expect(forMainLoop('ANSWER 1.a', question(), [])).toBe('ANSWER 1.a')
++  expect(forMainLoop('ANSWER 1.a', question({ agentId: 'agent-1' }), [agent('completed')])).toContain(
+     'The subagent Fix #7 (agent-1) asked this',
+   )
+-  expect(forMainLoop('ANSWER #7.1.a', question({ agentId: 'gone' }), [])).toContain('The subagent gone asked this')
++  expect(forMainLoop('ANSWER 1.a', question({ agentId: 'gone' }), [])).toContain('The subagent gone asked this')
+ })
+ 
+ test('the store is where the CLI keeps it', () => {
+@@ -163,14 +164,14 @@ test('the store is where the CLI keeps it', () => {
+ })
+ 
+ test('the band’s own renewal leaves the store’s signature alone', () => {
+-  const before = [file('%237.1.json', 1), file('counts.json', 1), file('.lock', 1)]
+-  const renewed = [file('%237.1.json', 2), file('counts.json', 1)]
+-  const asked = [...renewed, file('q1.json', 3)]
+-  const renewing = new Set(['#7.1'])
++  const before = [file('1.json', 1), file('count.json', 1), file('.lock', 1)]
++  const renewed = [file('1.json', 2), file('count.json', 1)]
++  const asked = [...renewed, file('2.json', 3)]
++  const renewing = new Set(['1'])
+   expect(signatureOf(renewed, renewing)).toBe(signatureOf(before, renewing))
+   expect(signatureOf(renewed, new Set())).not.toBe(signatureOf(before, new Set()))
+   expect(signatureOf(asked, renewing)).not.toBe(signatureOf(renewed, renewing))
+-  expect(signatureOf([file('.%237.1.json.abc', 1)], new Set())).toBe('')
++  expect(signatureOf([file('.1.json.abc', 1)], new Set())).toBe('')
+   expect(signatureOf([file('100%.json', 1)], renewing)).toBe('100%.json 10 1')
+ })
+ 
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index 67b3b70..0f54c20 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -11,12 +11,6 @@ export const CLAIM_MS = 60_000
+ 
+ const LIVE: ReadonlySet<AgentInfo['status']> = new Set(['pending', 'running', 'waiting', 'idle'])
+ 
+-/**
+- * Whether text holds anything shaped like a reference, `#337.3` or `q2`, so
+- * that only such a prompt starts `project inbox context`, which decides.
+- */
+-export const mayReference = (text: string) => /#\d+\.\d|\bq\d/.test(text)
+-
+ export const letterAt = (index: number) => String.fromCharCode('a'.charCodeAt(0) + index)
+ 
+ /** The letter of a typed answer: the one after the last choice. */
+@@ -158,8 +152,8 @@ export const ASK_DESCRIPTION = [
+   'Ask in one short line of at most 120 characters, and put what they need to decide in `detail`.',
+   'Always recommend an answer, and write it and each option as a full answer they can pick as it stands.',
+   'Name the pull request the question is about in `pr`, as owner/repo#number.',
+-  'Keep working on anything the answer does not block. The call returns the question’s reference, such as #337.3,',
+-  'and the answer arrives later as a message that starts `ANSWER #337.3.<letter>` or `DISMISSED #337.3`.',
++  'Keep working on anything the answer does not block. The call returns the question’s number, such as 3,',
++  'and the answer arrives later as a message that starts `ANSWER 3.<letter>` or `DISMISSED 3`.',
+ ].join(' ')
+ 
+ export const ASK_SCHEMA = {
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 6495881..88e8ca5 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -13,7 +13,6 @@ import {
+   isShownAt,
+   letterAt,
+   liveAgent,
+-  mayReference,
+   needsDelivery,
+   proposalOf,
+   quoteOf,
+@@ -110,8 +109,8 @@ async function canonical($: Engine, path: string): Promise<string | undefined> {
+ }
+ 
+ /** Runs the `project` CLI; rejects when it cannot start or is still running at the 15-second timeout. */
+-const project = ($: Engine, args: readonly string[], stdin?: string): Promise<Ran> =>
+-  $.process.run(['project', ...args], { timeoutMs: 15_000, ...(stdin === undefined ? {} : { stdin }) })
++const project = ($: Engine, args: readonly string[]): Promise<Ran> =>
++  $.process.run(['project', ...args], { timeoutMs: 15_000 })
+ 
+ /** The CLI's error, as its last line of standard error says it. */
+ const errorOf = (ran: Ran) =>
+@@ -320,7 +319,10 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
+   )
+   if (ran?.exitCode === 0) await replace($, itemOf(ran.stdout, session))
+   if (outcome === 'reopen') {
+-    void $.ui.toast(`projector: ${ref} did not reach its agent${reason ? ` (${reason})` : ''}; answer it again`)
++    // You never see an item's number, so the toast names the question by its subject.
++    const question = (await read($, items)).find(one => one.ref === ref && one.session === session)
++    const what = question === undefined ? 'an answer' : `the answer to ${quoteOf(question)}`
++    void $.ui.toast(`projector: ${what} did not reach its agent${reason ? ` (${reason})` : ''}; answer it again`)
+   }
+ }
+ 
+@@ -458,17 +460,6 @@ async function answerFromPrompt($: Engine, question: Question, letter: string, t
+   }
+ }
+ 
+-/** What the CLI says about each item a prompt refers to, or undefined when it names none. */
+-async function explain($: Engine, text: string): Promise<string | undefined> {
+-  try {
+-    const ran = await project($, ['inbox', 'context', '--session', await $.session.id()], text)
+-    const said = ran.exitCode === 0 ? ran.stdout.trim() : ''
+-    return said === '' ? undefined : said
+-  } catch {
+-    return undefined
+-  }
+-}
+-
+ /**
+  * Reads the inbox whether or not the band is shown, and brings a hidden band
+  * back for an item whose snooze ended since the last tick. A shown band moves
+@@ -606,7 +597,7 @@ export const register: Register = on => {
+     const posted = await post($, askArguments(e, await $.session.id(), e.agentId), 'ask in the conversation instead')
+     if ('deny' in posted) return posted
+     const { ref } = posted
+-    void $.ui.notify(`${ref} ${String(e.question)}`, { title: 'Projector question' }).catch(() => undefined)
++    void $.ui.notify(String(e.question), { title: 'Projector question' }).catch(() => undefined)
+     return {
+       result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
+     }
+@@ -617,7 +608,7 @@ export const register: Register = on => {
+     const posted = await post($, args, 'tell the person in the conversation instead')
+     if ('deny' in posted) return posted
+     const { ref } = posted
+-    void $.ui.notify(`${ref} ${String(e.notice)}`, { title: 'Projector notice' }).catch(() => undefined)
++    void $.ui.notify(String(e.notice), { title: 'Projector notice' }).catch(() => undefined)
+     return {
+       result: `Posted ${ref}. It waits in Projector’s band until the person dismisses it; nothing comes back to you.`,
+     }
+@@ -669,11 +660,7 @@ export const register: Register = on => {
+     const asked = given.filter(one => one.question.agentId !== undefined)
+     const agents = asked.length === 0 ? [] : await $.agent.list().catch(() => [])
+     const notes = asked.map(one => relayNote(one.question, agents))
+-
+-    // A reference typed in the prompt reaches the agent with the item it names.
+-    const said = mayReference(e.text) ? await explain($, e.text) : undefined
+-    const added = [...(said === undefined ? [] : [said]), ...notes]
+-    const entered = await next(added.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...added] })
++    const entered = await next(notes.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...notes] })
+     if (entered.drop === undefined) {
+       for (const one of given) {
+         void closeDrawer($, one.question.ref).catch(() => undefined)
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 05825c0..fd26370 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -43,6 +43,7 @@ export type Answer = { letter: string; text: string; answeredAt: number } | { di
+ 
+ /** What every item has, as `project inbox list --json` gives it, with the session whose store holds it. */
+ export type Posted = {
++  /** The item's number in its session, as a string such as `"3"`: what the CLI prints and takes. */
+   ref: string
+   number: number
+   /** The pull request it is about, as `owner/repo#number`; null when none. */
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 7a08a37..497bcad 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -635,7 +635,7 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+         add_output(parsed)
+         return parsed
+ 
+-    ask = command("ask", "check, number, and record a question, and print its reference")
++    ask = command("ask", "check, number, and record a question, and print its number, such as 3")
+     ask.add_argument("question", help="the question, in one line of at most 120 characters")
+     ask.add_argument("--recommend", required=True, help="the answer you recommend, which becomes answer a")
+     ask.add_argument("--option", action="append", default=[], help="another answer; repeat for each, up to five")
+@@ -645,7 +645,7 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     ask.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
+     ask.add_argument("--agent", help="the asking subagent's id, when a subagent asks")
+ 
+-    tell = command("tell", "check, number, and record a notice, and print its reference")
++    tell = command("tell", "check, number, and record a notice, and print its number, such as 3")
+     tell.add_argument("notice", help="the notice, in one line of at most 120 characters")
+     detail = tell.add_mutually_exclusive_group()
+     detail.add_argument("--detail", default="", help="the rest of the notice, as Markdown")
+@@ -657,10 +657,10 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     listing.add_argument("--all", action="store_true", help="include delivered items")
+ 
+     show = command("show", "print one item with its detail and lettered answers")
+-    show.add_argument("reference", help="such as #337.3, owner/repo#337.3, or q2")
++    show.add_argument("reference", help="the item's number, such as 3")
+ 
+-    answer = command("answer", "record an answer, such as #337.3.a")
+-    answer.add_argument("reference", help="the question's reference and the answer's letter, such as #337.3.a")
++    answer = command("answer", "record an answer, such as 3.a")
++    answer.add_argument("reference", help="the question's number and the answer's letter, such as 3.a")
+     answer.add_argument("--text", help="the typed answer, for the question's last letter")
+ 
+     dismiss = command("dismiss", "record that you dismissed a question or read a notice")
+@@ -685,8 +685,6 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     watch.add_argument("--interval", type=seconds, default=5.0, help="seconds between passes (default: 5)")
+     watch.add_argument("--once", action="store_true", help="make one pass and exit")
+ 
+-    command("context", "print what each inbox reference in standard input means")
+-
+ 
+ def open_editor(path: Path) -> None:
+     if not sys.stdin.isatty() or not sys.stdout.isatty():
+@@ -1095,13 +1093,6 @@ def inbox_session(arguments: argparse.Namespace, required: bool) -> Optional[str
+     return session
+ 
+ 
+-def checkout_repo(checkout: Path) -> Optional[str]:
+-    try:
+-        return review.origin_repo(checkout)
+-    except ProjectorError:
+-        return None
+-
+-
+ def wake_time(until: int) -> str:
+     """When a snoozed item returns, in local time, with its day when that is not today, or the raw
+     timestamp of a time too far off for the clock to show."""
+@@ -1158,7 +1149,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+     if command in ("ask", "tell"):
+         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
+         session = inbox_session(arguments, True)
+-        posted = {"detail": detail, "pr": arguments.pr, "agent": arguments.agent, "repo": checkout_repo(Path.cwd())}
++        posted = {"detail": detail, "pr": arguments.pr, "agent": arguments.agent}
+         item = (inbox.ask(session, arguments.question, arguments.recommend, arguments.option, **posted)
+                 if command == "ask" else inbox.tell(session, arguments.notice, **posted))
+         print(json_text({"item": item}) if json_output else item["ref"])
+@@ -1211,9 +1202,6 @@ def send(line: str) -> None:
+             if arguments.once:
+                 return 0
+             time.sleep(arguments.interval)
+-    elif command == "context":
+-        lines = inbox.context(inbox_session(arguments, True), sys.stdin.read())
+-        print(json_text({"context": lines}) if json_output else "\n".join(lines), end="" if not lines else "\n")
+     return 0
+ 
+ 
+diff --git a/src/projector/inbox.py b/src/projector/inbox.py
+index 303e843..ff281c5 100644
+--- a/src/projector/inbox.py
++++ b/src/projector/inbox.py
+@@ -2,11 +2,11 @@
+ 
+ An item is a question, which the person answers or dismisses and whose answer goes back to the
+ agent, or a notice, which the person reads and dismisses and which sends nothing back. Each
+-session's items are JSON files in their own directory, one per item, with `counts.json`
+-holding the last number given in each count and `session.json` the session's repository, once a
+-post from a checkout has recorded one. Every write happens under the directory's lock, an
+-operating-system lock on its `.lock` file, and lands by renaming a temporary file into place, so
+-two writers never lose each other's change and a reader never sees half a file.
++session numbers its items 1, 2, 3, and on, in one count across both kinds. Its items are JSON
++files in their own directory, one per item and named by its number, with `count.json` holding the
++last number given. Every write happens under the directory's lock, an operating-system lock on
++its `.lock` file, and lands by renaming a temporary file into place, so two writers never lose
++each other's change and a reader never sees half a file.
+ """
+ 
+ from __future__ import annotations
+@@ -35,18 +35,8 @@
+ 
+ SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+ PULL = re.compile(r"^(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>[1-9][0-9]*)$")
+-REFERENCE = re.compile(
+-    r"^(?P<ref>(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[1-9][0-9]*\.[1-9][0-9]*|q[1-9][0-9]*)"
+-    r"(?:\.(?P<letter>[a-z]))?$"
+-)
+-# A reference in prose stands alone: nothing it could be part of on its left, and on its
+-# right a space, punctuation other than `.`, or a `.` that ends a sentence.
+-IN_TEXT = re.compile(
+-    r"(?<![A-Za-z0-9/#.])"
+-    r"(?P<ref>(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[1-9][0-9]*\.[1-9][0-9]*|q[1-9][0-9]*)"
+-    r"(?:\.(?P<letter>[a-z]))?"
+-    r"(?=$|\s|[^\w./#]|\.(?:\s|$))"
+-)
++NUMBER = re.compile(r"^[1-9][0-9]*$")
++REFERENCE = re.compile(r"^(?P<ref>[1-9][0-9]*)(?:\.(?P<letter>[a-z]))?$")
+ 
+ 
+ class InboxError(ProjectorError):
+@@ -159,11 +149,13 @@ def read_json(path: Path) -> Optional[dict]:
+ 
+ 
+ def item_in(path: Path) -> Optional[dict]:
+-    """The item a file holds, or None for a file that does not parse, whose name does not match its
+-    reference, or whose kind is neither `question` nor `notice`, so such a file never breaks a command."""
++    """The item a file holds, or None for a file that does not parse, whose reference is not a whole
++    number, whose name does not match its reference, or whose kind is neither `question` nor
++    `notice`, so such a file never breaks a command. An item stored under any other form of
++    reference, such as `#337.3` or `q2`, is therefore never read, listed, delivered, or pruned."""
+     item = read_json(path)
+-    if (item and isinstance(item.get("ref"), str) and item_file(path.parent, item["ref"]) == path
+-            and item.get("kind") in KINDS):
++    if (item and isinstance(item.get("ref"), str) and NUMBER.match(item["ref"])
++            and item_file(path.parent, item["ref"]) == path and item.get("kind") in KINDS):
+         return item
+     return None
+ 
+@@ -190,14 +182,6 @@ def sessions() -> list[str]:
+ 
+ # Asking
+ 
+-def reference(pull: Optional[re.Match], count: int, repo: Optional[str]) -> str:
+-    if pull is None:
+-        return f"q{count}"
+-    if repo and pull["repo"].lower() == repo.lower():
+-        return f"#{pull['number']}.{count}"
+-    return f"{pull['repo']}#{pull['number']}.{count}"
+-
+-
+ def is_one_line(text: str) -> bool:
+     """Whether text keeps to one line, as `watch` prints an answer and the band reads one."""
+     return "\n" not in text and "\r" not in text
+@@ -238,37 +222,19 @@ def check(question: str, recommend: str, options: list[str], pr: Optional[str])
+             raise InboxError(f"the option {option.strip()!r} is offered twice")
+ 
+ 
+-def session_repo(folder: Path, repo: Optional[str]) -> Optional[str]:
+-    """The session's repository, recording `repo` as it when the session has none yet. Only that
+-    repository's pull requests take the short `#<number>` form, so two repositories never share a
+-    reference."""
+-    path = folder / "session.json"
+-    recorded = (read_json(path) or {}).get("repo")
+-    if isinstance(recorded, str):
+-        return recorded
+-    if repo:
+-        write_json(path, {"repo": repo})
+-    return repo
+-
+-
+ def post(session: str, kind: str, subject: str, *, detail: str, pr: Optional[str], agent: Optional[str],
+-         repo: Optional[str], choices: Optional[list[str]] = None) -> dict:
++         choices: Optional[list[str]] = None) -> dict:
+     """Number and record an item that passed its checks; returns it. Questions and notices share
+-    the counts, so each reference names one item of either kind. `repo` is the repository of the
+-    checkout the command runs in, which becomes the session's repository when the session has
+-    none yet."""
++    the session's one count, which only grows, so a number names one item for the whole session,
++    even after pruning deletes the item that held the largest."""
+     folder = session_dir(session)
+-    pull = PULL.match(pr) if pr else None
+-    key = f"{pull['repo'].lower()}#{pull['number']}" if pull else "q"
+     with locked(folder):
+-        home = session_repo(folder, repo)
+-        counts_path = folder / "counts.json"
+-        counts = read_json(counts_path) or {}
+-        count = int(counts.get(key, 0)) + 1
++        count_path = folder / "count.json"
++        number = int((read_json(count_path) or {}).get("last", 0)) + 1
+         record = {
+-            "ref": reference(pull, count, home),
++            "ref": str(number),
+             "kind": kind,
+-            "number": count,
++            "number": number,
+             "pr": pr,
+             "postedAt": now_ms(),
+             "subject": subject.strip(),
+@@ -278,27 +244,26 @@ def post(session: str, kind: str, subject: str, *, detail: str, pr: Optional[str
+             record["choices"] = choices
+         if agent:
+             record["agentId"] = agent
+-        counts[key] = count
+         # The count lands first: a write that stops between the two then skips a
+-        # number, where the other order would hand the next item this reference.
+-        write_json(counts_path, counts)
++        # number, where the other order would hand the next item this number.
++        write_json(count_path, {"last": number})
+         write_json(item_file(folder, record["ref"]), record)
+     return record
+ 
+ 
+ def ask(session: str, question: str, recommend: str, options: list[str], *, detail: str = "",
+-        pr: Optional[str] = None, agent: Optional[str] = None, repo: Optional[str] = None) -> dict:
++        pr: Optional[str] = None, agent: Optional[str] = None) -> dict:
+     """Check, number, and record a question; returns it."""
+     check(question, recommend, options, pr)
+     choices = [recommend.strip(), *(option.strip() for option in options)]
+-    return post(session, "question", question, detail=detail, pr=pr, agent=agent, repo=repo, choices=choices)
++    return post(session, "question", question, detail=detail, pr=pr, agent=agent, choices=choices)
+ 
+ 
+ def tell(session: str, notice: str, *, detail: str = "", pr: Optional[str] = None,
+-         agent: Optional[str] = None, repo: Optional[str] = None) -> dict:
++         agent: Optional[str] = None) -> dict:
+     """Check, number, and record a notice; returns it."""
+     check_subject("notice", notice, pr)
+-    return post(session, "notice", notice, detail=detail, pr=pr, agent=agent, repo=repo)
++    return post(session, "notice", notice, detail=detail, pr=pr, agent=agent)
+ 
+ 
+ # Finding an item
+@@ -306,29 +271,37 @@ def tell(session: str, notice: str, *, detail: str = "", pr: Optional[str] = Non
+ def parse_reference(text: str) -> tuple[str, Optional[str]]:
+     match = REFERENCE.match(text.strip())
+     if not match:
+-        raise InboxError(f"{text!r} is not an inbox reference, such as #337.3, owner/repo#337.3, or q2, "
+-                         "with an optional answer letter, such as #337.3.a")
++        raise InboxError(f"{text!r} is not an inbox reference: name an item by its number, such as 3, "
++                         "and an answer by the number and its letter, such as 3.a")
+     return match["ref"], match["letter"]
+ 
+ 
+-def locate(session: Optional[str], ref: str) -> Path:
+-    """The folder holding `ref`: the session's, or, without one, the one session that has it."""
++def is_open(item: Optional[dict]) -> bool:
++    return item is not None and not item.get("answer")
++
++
++def locate(session: Optional[str], ref: str, prefer_open: bool = False) -> Path:
++    """The folder holding `ref`: the session's, or, without one, the one session that has it. Every
++    session counts from 1 and keeps its resolved items, so with `prefer_open` the sessions that hold
++    `ref` open, with no answer recorded, are the candidates whenever any does."""
+     if session is not None:
+         folder = session_dir(session)
+         if not item_file(folder, ref).is_file():
+             raise ItemNotFound(f"session {session} has no item {ref}")
+         return folder
+     holders = [name for name in sessions() if item_file(store_root() / name, ref).is_file()]
++    if prefer_open:
++        holders = [name for name in holders if is_open(item_in(item_file(store_root() / name, ref)))] or holders
+     if not holders:
+         raise ItemNotFound(f"no session has an item {ref}")
+     if len(holders) > 1:
+         raise AmbiguousItem(f"{ref} names an item in {len(holders)} sessions: {', '.join(holders)}; "
+-                            "pass --session")
++                            "pass --session with the one `project inbox list` prints beside the item")
+     return store_root() / holders[0]
+ 
+ 
+ def find(session: Optional[str], ref: str) -> dict:
+-    return read_item(locate(session, ref), ref)
++    return read_item(locate(session, ref, prefer_open=True), ref)
+ 
+ 
+ def is_notice(item: dict) -> bool:
+@@ -359,9 +332,9 @@ def message(question: dict) -> str:
+ 
+ # Answering and delivering
+ 
+-def update(session: Optional[str], ref: str, change) -> dict:
++def update(session: Optional[str], ref: str, change, prefer_open: bool = False) -> dict:
+     """Read the item under the lock, let `change` alter it, and write it back."""
+-    folder = locate(session, ref)
++    folder = locate(session, ref, prefer_open)
+     with locked(folder):
+         item = read_item(folder, ref)
+         change(item)
+@@ -394,7 +367,7 @@ def record(question: dict) -> None:
+         question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
+         question.pop("snoozedUntil", None)
+ 
+-    return update(session, ref, record)
++    return update(session, ref, record, prefer_open=True)
+ 
+ 
+ def dismiss(session: Optional[str], ref: str) -> dict:
+@@ -410,7 +383,7 @@ def record(item: dict) -> None:
+         if is_notice(item):
+             item["deliveredAt"] = now
+ 
+-    return update(session, ref, record)
++    return update(session, ref, record, prefer_open=True)
+ 
+ 
+ def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> dict:
+@@ -424,7 +397,7 @@ def record(item: dict) -> None:
+                              "has nothing to return for")
+         item["snoozedUntil"] = now_ms() + minutes * 60_000
+ 
+-    return update(session, ref, record)
++    return update(session, ref, record, prefer_open=True)
+ 
+ 
+ def snoozed_until(item: dict) -> Optional[int]:
+@@ -500,42 +473,3 @@ def deliver_pass(session: str, send: Callable[[str], None]) -> None:
+             continue
+         send(message(claimed))
+         settle(session, claimed["ref"], claimed["claim"]["token"], delivered=True)
+-
+-
+-# References in prose
+-
+-def references_in(text: str) -> list[tuple[str, Optional[str]]]:
+-    seen: list[tuple[str, Optional[str]]] = []
+-    for match in IN_TEXT.finditer(text):
+-        found = (match["ref"], match["letter"])
+-        if found not in seen:
+-            seen.append(found)
+-    return seen
+-
+-
+-def context(session: str, text: str) -> list[str]:
+-    """What each reference in `text` means, for the items the session holds."""
+-    folder = session_dir(session)
+-    lines = []
+-    for ref, letter in references_in(text):
+-        try:
+-            item = read_item(folder, ref)
+-        except ItemNotFound:
+-            continue
+-        subject = item["subject"]
+-        if is_notice(item):
+-            if letter is None:
+-                lines.append(f"{ref} is the notice: {subject}")
+-            continue
+-        if letter is None:
+-            lines.append(f"{ref} is the question: {subject}")
+-            continue
+-        index = ord(letter) - ord("a")
+-        answered = item.get("answer") or {}
+-        if index < len(item["choices"]):
+-            lines.append(f"{ref}.{letter} answers {subject} with {item['choices'][index]}")
+-        elif letter == typed_letter(item) and answered.get("letter") == letter:
+-            lines.append(f"{ref}.{letter} answers {subject} with {answered['text']}")
+-        elif letter == typed_letter(item):
+-            lines.append(f"{ref}.{letter} is a typed answer to {subject}")
+-    return lines
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 39dee74..42a8429 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 8 -->
++<!-- projector:begin 9 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -64,5 +64,5 @@ are open, look over them each time the person writes to you, with
+ `project inbox list --session "$CLAUDE_CODE_SESSION_ID"`, and dismiss any
+ that no longer need them, such as a question they answered in the
+ conversation or news that has gone stale, with
+-`project inbox dismiss <reference> --session "$CLAUDE_CODE_SESSION_ID"`.
++`project inbox dismiss <number> --session "$CLAUDE_CODE_SESSION_ID"`.
+ <!-- projector:end -->
+diff --git a/tests/test_inbox.py b/tests/test_inbox.py
+index 76faa03..35ab4b0 100644
+--- a/tests/test_inbox.py
++++ b/tests/test_inbox.py
+@@ -1,8 +1,8 @@
+ """The `project inbox` commands, against a temporary state directory.
+ 
+ Each test points `XDG_STATE_HOME` at its own directory and runs the CLI from a temporary
+-Git checkout whose origin is `acme/app`, so a question about `acme/app` takes the short
+-`#<number>.<count>` form and one about any other repository spells the repository out.
++directory. A test that shows the checkout's repository does not shape a number runs the CLI from
++a temporary Git checkout instead.
+ """
+ 
+ from __future__ import annotations
+@@ -20,7 +20,6 @@
+ from contextlib import redirect_stderr, redirect_stdout
+ from pathlib import Path
+ from typing import Callable
+-from urllib.parse import quote
+ from unittest import mock
+ 
+ from projector import cli, inbox
+@@ -66,7 +65,6 @@ def setUp(self) -> None:
+         self.addCleanup(scratch.cleanup)
+         self.scratch = Path(scratch.name)
+         self.state = self.scratch / "state"
+-        self.checkout = self.repository("app", "acme/app")
+         environ = mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.state)})
+         environ.start()
+         self.addCleanup(environ.stop)
+@@ -80,10 +78,9 @@ def repository(self, name: str, origin: str) -> Path:
+                        check=True)
+         return checkout
+ 
+-    def run_cli(self, *args: str, stdin: str = "", cwd: Path | None = None) -> tuple[int, str, str]:
++    def run_cli(self, *args: str, cwd: Path | None = None) -> tuple[int, str, str]:
+         out, err = io.StringIO(), io.StringIO()
+-        with contextlib.chdir(cwd or self.checkout), mock.patch("sys.stdin", io.StringIO(stdin)), \
+-                redirect_stdout(out), redirect_stderr(err):
++        with contextlib.chdir(cwd or self.scratch), redirect_stdout(out), redirect_stderr(err):
+             code = cli.main(["inbox", *args])
+         return code, out.getvalue(), err.getvalue()
+ 
+@@ -96,31 +93,156 @@ def ask(self, question: str = "Decline the finding?", *args: str, session: str =
+     def folder(self, session: str = "s1") -> Path:
+         return self.state / "projector" / "inbox" / session
+ 
++    def item(self, number: int | str, session: str = "s1") -> dict:
++        return json.loads((self.folder(session) / f"{number}.json").read_text())
++
++
++class NumberingTests(InboxCase):
++    def test_numbers_every_item_from_one_in_one_count_across_pull_requests_and_kinds(self) -> None:
++        app = self.repository("app", "acme/app")
++        self.assertEqual("1", self.ask("First?", "--recommend", "x", "--pr", "acme/app#337", cwd=app))
++        code, out, err = self.run_cli("tell", "Pushed", "--pr", "octo/web#12", "--session", "s1", cwd=app)
++        self.assertEqual((0, "2\n"), (code, out), err)
++        self.assertEqual("3", self.ask("No pull?", "--recommend", "x", cwd=app))
++        self.assertEqual(["1.json", "2.json", "3.json", "count.json"],
++                         sorted(path.name for path in self.folder().glob("*.json")))
++        self.assertEqual({"last": 3}, json.loads((self.folder() / "count.json").read_text()))
++        self.assertEqual((3, "3", None), (self.item(3)["number"], self.item(3)["ref"], self.item(3)["pr"]))
++        self.assertEqual("octo/web#12", self.item(2)["pr"])
++
++    def test_a_checkout_of_another_repository_takes_the_next_number_in_the_same_count(self) -> None:
++        app, web = self.repository("app", "acme/app"), self.repository("web", "octo/web")
++        self.assertEqual("1", self.ask("First?", "--recommend", "x", "--pr", "acme/app#337", cwd=app))
++        self.assertEqual("2", self.ask("First?", "--recommend", "x", "--pr", "acme/app#337", cwd=web))
++
++    def test_each_session_counts_from_one(self) -> None:
++        self.assertEqual("1", self.ask("First?", "--recommend", "x", session="s1"))
++        self.assertEqual("2", self.ask("Second?", "--recommend", "x", session="s1"))
++        self.assertEqual("1", self.ask("Other?", "--recommend", "x", session="s2"))
++
++    def test_lists_each_item_by_its_number(self) -> None:
++        self.ask("First?", "--recommend", "x", "--pr", "acme/app#337")
++        self.run_cli("tell", "Pushed", "--pr", "octo/web#12", "--session", "s1")
++        self.ask("No pull?", "--recommend", "x")
++        self.assertEqual(["1\tquestion\topen\tFirst?", "2\tnotice\topen\tPushed", "3\tquestion\topen\tNo pull?"],
++                         self.run_cli("list", "--session", "s1")[1].splitlines())
+ 
+-class AskTests(InboxCase):
+-    def test_numbers_each_pull_request_and_the_session_count_apart(self) -> None:
+-        recommend = ["--recommend", "Decline it"]
+-        self.assertEqual("#337.1", self.ask("First?", *recommend, "--pr", "acme/app#337"))
+-        self.assertEqual("#337.2", self.ask("Second?", *recommend, "--pr", "ACME/App#337"))
+-        self.assertEqual("#12.1", self.ask("Other pull?", *recommend, "--pr", "acme/app#12"))
+-        self.assertEqual("octo/web#337.1", self.ask("Elsewhere?", *recommend, "--pr", "octo/web#337"))
+-        self.assertEqual("q1", self.ask("No pull?", *recommend))
+-        self.assertEqual("q2", self.ask("Another?", *recommend))
+-        self.assertEqual("q1", self.ask("Other session?", *recommend, session="s2"))
+-
+-    def test_shortens_only_the_repository_of_the_sessions_first_ask(self) -> None:
+-        web = self.repository("web", "octo/web")
+-        recommend = ["--recommend", "x"]
+-        self.assertEqual("#271.1", self.ask("About app?", *recommend, "--pr", "acme/app#271"))
+-        self.assertEqual("octo/web#271.1", self.ask("About web?", *recommend, "--pr", "octo/web#271", cwd=web))
+-        self.assertEqual("#271.2", self.ask("App again?", *recommend, "--pr", "acme/app#271", cwd=web))
+-        self.assertCountEqual(["#271.1\tquestion\topen\tAbout app?", "octo/web#271.1\tquestion\topen\tAbout web?",
+-                               "#271.2\tquestion\topen\tApp again?"], self.run_cli("list", "--session", "s1")[1].splitlines())
++    def test_watch_delivers_an_answer_named_by_its_number(self) -> None:
++        self.ask("First?", "--recommend", "x", "--pr", "acme/app#337")
++        self.assertEqual((0, "answered 1.a\n", ""), self.run_cli("answer", "1.a", "--session", "s1"))
++        self.assertEqual("ANSWER 1.a First? → x\n", self.run_cli("watch", "--once", "--session", "s1")[1])
++
++    def test_a_number_two_sessions_hold_needs_the_session(self) -> None:
++        self.ask("First?", "--recommend", "x", session="s1")
++        self.ask("Other?", "--recommend", "x", session="s2")
++        code, out, err = self.run_cli("answer", "1.a")
++        self.assertEqual((67, ""), (code, out))
++        self.assertIn("s1, s2", err)
++        self.assertIn("--session", err)
++        self.assertEqual((0, "answered 1.a\n"), self.run_cli("answer", "1.a", "--session", "s2")[:2])
++
++    def test_a_bare_number_names_the_one_session_that_holds_it_open(self) -> None:
++        self.ask("Delivered?", "--recommend", "x", session="s1")
++        self.run_cli("answer", "1.a", "--session", "s1")
++        self.run_cli("watch", "--once", "--session", "s1")
++        self.run_cli("tell", "Read", "--session", "s1")
++        self.run_cli("dismiss", "2", "--session", "s1")
++        resolved = [self.item(1, "s1"), self.item(2, "s1")]
++        self.ask("Open?", "--recommend", "x", session="s2")
++        self.run_cli("tell", "Unread", "--session", "s2")
++
++        self.assertTrue(self.run_cli("show", "1")[1].startswith("1 Open?\n"))
++        self.assertEqual(0, self.run_cli("snooze", "1")[0])
++        self.assertEqual((0, "answered 1.a\n"), self.run_cli("answer", "1.a")[:2])
++        self.assertEqual((0, "dismissed 2\n"), self.run_cli("dismiss", "2")[:2])
++        self.assertEqual(("a", True), (self.item(1, "s2")["answer"]["letter"], self.item(2, "s2")["answer"]["dismissed"]))
++        self.assertNotIn("snoozedUntil", self.item(1, "s2"))
++        self.assertEqual(resolved, [self.item(1, "s1"), self.item(2, "s1")])
++
++    def test_a_number_open_in_two_sessions_needs_the_session_beside_a_resolved_one(self) -> None:
++        for session in ("s1", "s2", "s3"):
++            self.ask("First?", "--recommend", "x", session=session)
++        self.run_cli("dismiss", "1", "--session", "s3")
++        for args in (["show", "1"], ["answer", "1.a"], ["dismiss", "1"], ["snooze", "1"]):
++            with self.subTest(command=args[0]):
++                code, out, err = self.run_cli(*args)
++                self.assertEqual((67, ""), (code, out))
++                self.assertIn("2 sessions: s1, s2;", err)
++
++    def test_a_number_no_session_holds_open_is_looked_up_among_every_item(self) -> None:
++        self.ask("First?", "--recommend", "x", session="s1")
++        self.run_cli("answer", "1.a", "--session", "s1")
++        code, _, err = self.run_cli("answer", "1.b")
++        self.assertEqual(65, code)
++        self.assertIn("already answered, as 1.a", err)
++        self.assertTrue(self.run_cli("show", "1")[1].startswith("1 First?\n"))
++        self.ask("Other?", "--recommend", "x", session="s2")
++        self.run_cli("dismiss", "1", "--session", "s2")
++        code, _, err = self.run_cli("show", "1")
++        self.assertEqual(67, code)
++        self.assertIn("2 sessions: s1, s2;", err)
++
++    def test_a_session_from_the_environment_is_the_only_one_looked_in(self) -> None:
++        self.ask("First?", "--recommend", "x", session="s1")
++        self.run_cli("dismiss", "1", "--session", "s1")
++        self.ask("Open?", "--recommend", "x", session="s2")
++        with mock.patch.dict(os.environ, {"PROJECTOR_SESSION": "s1"}):
++            code, _, err = self.run_cli("answer", "1.a")
++        self.assertEqual(65, code)
++        self.assertIn("already answered", err)
++        self.assertNotIn("answer", self.item(1, "s2"))
++
++    def test_refuses_a_reference_in_an_old_form_with_the_new_ones(self) -> None:
++        self.ask("First?", "--recommend", "x", "--pr", "acme/app#337")
++        for args in (["show", "#337.1"], ["answer", "q1.a"], ["dismiss", "octo/web#12.1"], ["snooze", "#337.1.a"],
++                     ["show", "0"], ["show", "01"]):
++            with self.subTest(args=args):
++                code, out, err = self.run_cli(*args, "--session", "s1")
++                self.assertEqual((65, ""), (code, out))
++                self.assertIn("such as 3,", err)
++                self.assertIn("such as 3.a", err)
++        self.assertNotIn("answer", self.item(1))
++
++    def test_leaves_items_stored_under_old_references_unread_in_place(self) -> None:
++        folder = self.folder()
++        folder.mkdir(parents=True)
++        old = {
++            "q1.json": {"ref": "q1", "kind": "question", "number": 1, "pr": None, "postedAt": 1, "subject": "Old?",
++                        "detail": "", "choices": ["x"], "answer": {"letter": "a", "text": "x", "answeredAt": 2}},
++            "%23337.1.json": {"ref": "#337.1", "kind": "notice", "number": 1, "pr": "acme/app#337", "postedAt": 1,
++                              "subject": "Old notice", "detail": "", "answer": {"dismissed": True, "answeredAt": 2},
++                              "deliveredAt": 2},
++            "counts.json": {"q": 1, "acme/app#337": 1},
++            "session.json": {"repo": "acme/app"},
++        }
++        for name, value in old.items():
++            (folder / name).write_text(json.dumps(value))
++        self.assertEqual("", self.run_cli("list", "--all", "--session", "s1")[1])
++        self.assertEqual("", self.run_cli("watch", "--once", "--session", "s1")[1])
++
++        self.assertEqual("1", self.ask("New?", "--recommend", "x"))
++        self.assertEqual(("New?", {"last": 1}),
++                         (self.item(1)["subject"], json.loads((folder / "count.json").read_text())))
++        # Pruning every delivered item removes the new one and leaves the old ones.
++        with mock.patch.object(inbox, "KEEP_DELIVERED", 0):
++            self.run_cli("answer", "1.a", "--session", "s1")
++            self.assertEqual("ANSWER 1.a New? → x\n", self.run_cli("watch", "--once", "--session", "s1")[1])
++        self.assertFalse((folder / "1.json").exists())
++        for name, value in old.items():
++            with self.subTest(old=name):
++                self.assertEqual(value, json.loads((folder / name).read_text()))
++
++    def test_the_context_command_is_gone(self) -> None:
++        with self.assertRaises(SystemExit) as stop, redirect_stderr(io.StringIO()):
++            cli.main(["inbox", "context", "--session", "s1"])
++        self.assertEqual(2, stop.exception.code)
+ 
++
++class AskTests(InboxCase):
+     def test_letters_the_recommendation_a_and_records_the_question(self) -> None:
+         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--detail", "Why.",
+                  "--pr", "acme/app#337", "--agent", "agent-7")
+-        question = json.loads((self.folder() / "%23337.1.json").read_text())
++        question = self.item(1)
+         self.assertEqual(["Decline it", "Add a budget"], question["choices"])
+         self.assertEqual("agent-7", question["agentId"])
+         self.assertEqual("Why.", question["detail"])
+@@ -140,18 +262,18 @@ def test_refuses_a_question_that_fails_a_check_and_writes_nothing(self) -> None:
+             with self.subTest(args=args[0][:16]):
+                 code, _, err = self.run_cli("ask", *args, "--session", "s1")
+                 self.assertEqual(65, code, err)
+-        self.assertFalse((self.folder() / "counts.json").exists())
++        self.assertFalse((self.folder() / "count.json").exists())
+ 
+     def test_accepts_five_other_options_and_a_question_of_120_characters(self) -> None:
+-        self.assertEqual("q1", self.ask("x" * 120, "--recommend", "a", *[f"--option={n}" for n in "bcdef"]))
++        self.assertEqual("1", self.ask("x" * 120, "--recommend", "a", *[f"--option={n}" for n in "bcdef"]))
+ 
+     def test_needs_a_session_and_takes_it_from_the_environment(self) -> None:
+         code, _, err = self.run_cli("ask", "Who?", "--recommend", "x")
+         self.assertEqual(2, code, err)
+         with mock.patch.dict(os.environ, {"PROJECTOR_SESSION": "s9"}):
+             code, out, _ = self.run_cli("ask", "Who?", "--recommend", "x")
+-        self.assertEqual((0, "q1"), (code, out.strip()))
+-        self.assertTrue((self.folder("s9") / "q1.json").exists())
++        self.assertEqual((0, "1"), (code, out.strip()))
++        self.assertTrue((self.folder("s9") / "1.json").exists())
+ 
+     def test_refuses_a_session_id_that_is_not_a_plain_name(self) -> None:
+         code, _, _ = self.run_cli("ask", "Where?", "--recommend", "x", "--session", "../escape")
+@@ -160,11 +282,11 @@ def test_refuses_a_session_id_that_is_not_a_plain_name(self) -> None:
+     def test_prints_the_question_as_json(self) -> None:
+         code, out, _ = self.run_cli("ask", "Json?", "--recommend", "x", "--session", "s1", "--json")
+         self.assertEqual(0, code)
+-        self.assertEqual("q1", json.loads(out)["item"]["ref"])
++        self.assertEqual(("1", 1), (json.loads(out)["item"]["ref"], json.loads(out)["item"]["number"]))
+ 
+     def test_records_the_question_in_the_inbox_store(self) -> None:
+         self.ask("Where?", "--recommend", "x")
+-        item = json.loads((self.folder() / "q1.json").read_text())
++        item = self.item(1)
+         self.assertEqual(("question", "Where?"), (item["kind"], item["subject"]))
+         self.assertIsInstance(item["postedAt"], int)
+         self.assertNotIn("question", item)
+@@ -182,60 +304,59 @@ def setUp(self) -> None:
+         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--pr", "acme/app#337")
+ 
+     def test_records_a_letter_once(self) -> None:
+-        self.assertEqual((0, "answered #337.1.a\n", ""), self.run_cli("answer", "#337.1.a", "--session", "s1"))
+-        code, _, err = self.run_cli("answer", "#337.1.b", "--session", "s1")
++        self.assertEqual((0, "answered 1.a\n", ""), self.run_cli("answer", "1.a", "--session", "s1"))
++        code, _, err = self.run_cli("answer", "1.b", "--session", "s1")
+         self.assertEqual(65, code)
+-        self.assertIn("already answered, as #337.1.a", err)
++        self.assertIn("already answered, as 1.a", err)
+ 
+     def test_records_a_typed_answer_under_the_last_letter(self) -> None:
+-        code, _, _ = self.run_cli("answer", "#337.1.c", "--text", "keep the cap", "--session", "s1")
++        code, _, _ = self.run_cli("answer", "1.c", "--text", "keep the cap", "--session", "s1")
+         self.assertEqual(0, code)
+-        question = json.loads((self.folder() / "%23337.1.json").read_text())
+         self.assertEqual({"letter": "c", "text": "keep the cap"},
+-                         {key: question["answer"][key] for key in ("letter", "text")})
++                         {key: self.item(1)["answer"][key] for key in ("letter", "text")})
+ 
+     def test_refuses_a_letter_the_question_does_not_have(self) -> None:
+-        for args in (["#337.1.d"], ["#337.1.c"], ["#337.1.a", "--text", "x"], ["#337.1"]):
++        for args in (["1.d"], ["1.c"], ["1.a", "--text", "x"], ["1"]):
+             with self.subTest(args=args):
+                 self.assertEqual(65, self.run_cli("answer", *args, "--session", "s1")[0])
+ 
+     def test_refuses_a_typed_answer_of_more_than_one_line(self) -> None:
+-        code, _, err = self.run_cli("answer", "#337.1.c", "--text", "line one\nline two", "--session", "s1")
++        code, _, err = self.run_cli("answer", "1.c", "--text", "line one\nline two", "--session", "s1")
+         self.assertEqual(65, code)
+         self.assertIn("one line", err)
+-        self.assertNotIn("answer", json.loads((self.folder() / "%23337.1.json").read_text()))
++        self.assertNotIn("answer", self.item(1))
+ 
+     def test_refuses_an_answer_letter_on_every_other_command(self) -> None:
+-        for args in (["show", "#337.1.a"], ["dismiss", "#337.1.a"], ["snooze", "#337.1.a"], ["claim", "#337.1.a"],
+-                     ["delivered", "#337.1.a", "--claim", "x"], ["reopen", "#337.1.a", "--claim", "x"]):
++        for args in (["show", "1.a"], ["dismiss", "1.a"], ["snooze", "1.a"], ["claim", "1.a"],
++                     ["delivered", "1.a", "--claim", "x"], ["reopen", "1.a", "--claim", "x"]):
+             with self.subTest(command=args[0]):
+                 code, out, err = self.run_cli(*args, "--session", "s1")
+                 self.assertEqual((65, ""), (code, out))
+-                self.assertIn("#337.1, without an answer letter", err)
+-        question = json.loads((self.folder() / "%23337.1.json").read_text())
+-        self.assertEqual([], [key for key in ("answer", "snoozedUntil", "claim") if key in question])
+-
+-    def test_finds_the_session_without_one_and_refuses_an_ambiguous_reference(self) -> None:
+-        self.assertEqual(0, self.run_cli("answer", "#337.1.a")[0])
+-        self.ask("Same reference?", "--recommend", "x", "--pr", "acme/app#337", session="s2")
+-        self.ask("Again?", "--recommend", "x", "--pr", "acme/app#338", session="s2")
+-        self.ask("Again?", "--recommend", "x", "--pr", "acme/app#338", session="s3")
+-        code, _, err = self.run_cli("answer", "#338.1.a")
++                self.assertIn("1, without an answer letter", err)
++        self.assertEqual([], [key for key in ("answer", "snoozedUntil", "claim") if key in self.item(1)])
++
++    def test_finds_the_session_without_one_and_refuses_an_ambiguous_number(self) -> None:
++        self.assertEqual(0, self.run_cli("answer", "1.a")[0])
++        self.ask("Same number?", "--recommend", "x", session="s2")
++        self.ask("Again?", "--recommend", "x", session="s2")
++        self.ask("Again?", "--recommend", "x", session="s3")
++        self.ask("Again?", "--recommend", "x", session="s3")
++        code, _, err = self.run_cli("answer", "2.a")
+         self.assertEqual(67, code)
+         self.assertIn("s2, s3", err)
+ 
+-    def test_an_unknown_reference_exits_66(self) -> None:
+-        self.assertEqual(66, self.run_cli("answer", "#999.1.a")[0])
+-        self.assertEqual(66, self.run_cli("answer", "q4.a", "--session", "s1")[0])
++    def test_an_unknown_number_exits_66(self) -> None:
++        self.assertEqual(66, self.run_cli("answer", "999.a")[0])
++        self.assertEqual(66, self.run_cli("answer", "4.a", "--session", "s1")[0])
+ 
+     def test_dismisses_once(self) -> None:
+-        self.assertEqual((0, "dismissed #337.1\n", ""), self.run_cli("dismiss", "#337.1", "--session", "s1"))
+-        self.assertEqual(65, self.run_cli("answer", "#337.1.a", "--session", "s1")[0])
++        self.assertEqual((0, "dismissed 1\n", ""), self.run_cli("dismiss", "1", "--session", "s1"))
++        self.assertEqual(65, self.run_cli("answer", "1.a", "--session", "s1")[0])
+ 
+     def test_two_answers_at_once_record_one(self) -> None:
+-        self.assertEqual(["done", "refused"], at_once(lambda: inbox.answer("s1", "#337.1", "a"),
+-                                                      lambda: inbox.answer("s1", "#337.1", "b")))
+-        self.assertIn(json.loads((self.folder() / "%23337.1.json").read_text())["answer"]["letter"], "ab")
++        self.assertEqual(["done", "refused"], at_once(lambda: inbox.answer("s1", "1", "a"),
++                                                      lambda: inbox.answer("s1", "1", "b")))
++        self.assertIn(self.item(1)["answer"]["letter"], "ab")
+ 
+     def hold_lock(self, then: str) -> subprocess.Popen:
+         """Start a process that takes the session's lock and, once it holds it, either waits for its
+@@ -253,40 +374,40 @@ def test_a_lock_another_process_holds_makes_a_command_wait_then_exit_75(self) ->
+         holder = self.hold_lock("wait")
+         with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
+             started = time.monotonic()
+-            code, _, err = self.run_cli("answer", "#337.1.a", "--session", "s1")
++            code, _, err = self.run_cli("answer", "1.a", "--session", "s1")
+         self.assertGreaterEqual(time.monotonic() - started, 0.3)
+         self.assertEqual(75, code)
+         self.assertIn("another command holds", err)
+         holder.stdin.close()
+         self.assertEqual(0, holder.wait())
+-        self.assertEqual(0, self.run_cli("answer", "#337.1.a", "--session", "s1")[0])
++        self.assertEqual(0, self.run_cli("answer", "1.a", "--session", "s1")[0])
+ 
+     def test_a_holder_that_exits_without_unlocking_leaves_the_lock_free_at_once(self) -> None:
+         holder = self.hold_lock("exit")
+         self.assertEqual(0, holder.wait())
+         with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0):
+-            self.assertEqual(0, self.run_cli("answer", "#337.1.a", "--session", "s1")[0])
++            self.assertEqual(0, self.run_cli("answer", "1.a", "--session", "s1")[0])
+ 
+ 
+ class DeliveryTests(InboxCase):
+     def setUp(self) -> None:
+         super().setUp()
+         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--pr", "acme/app#337")
+-        self.run_cli("answer", "#337.1.b", "--session", "s1")
++        self.run_cli("answer", "1.b", "--session", "s1")
+ 
+     def claim(self, *args: str) -> tuple[int, str]:
+-        code, out, _ = self.run_cli("claim", "#337.1", "--session", "s1", *args)
++        code, out, _ = self.run_cli("claim", "1", "--session", "s1", *args)
+         return code, out.split("\t")[0]
+ 
+     def test_claims_once_and_prints_the_text_to_deliver(self) -> None:
+-        code, out, _ = self.run_cli("claim", "#337.1", "--session", "s1")
++        code, out, _ = self.run_cli("claim", "1", "--session", "s1")
+         self.assertEqual(0, code)
+-        self.assertTrue(out.endswith("\tANSWER #337.1.b Decline it? → Add a budget\n"), out)
++        self.assertTrue(out.endswith("\tANSWER 1.b Decline it? → Add a budget\n"), out)
+         self.assertEqual(65, self.claim()[0])
+ 
+     def test_two_claims_at_once_take_one(self) -> None:
+-        self.assertEqual(["done", "refused"], at_once(lambda: inbox.claim("s1", "#337.1"),
+-                                                      lambda: inbox.claim("s1", "#337.1")))
++        self.assertEqual(["done", "refused"], at_once(lambda: inbox.claim("s1", "1"),
++                                                      lambda: inbox.claim("s1", "1")))
+ 
+     def test_renews_only_with_the_claims_token(self) -> None:
+         _, token = self.claim()
+@@ -300,8 +421,8 @@ def test_a_claim_not_renewed_for_a_minute_is_taken_by_a_new_claim(self) -> None:
+             code, fresh = self.claim()
+             self.assertEqual(0, code)
+             self.assertNotEqual(token, fresh)
+-            self.assertEqual(65, self.run_cli("delivered", "#337.1", "--claim", token, "--session", "s1")[0])
+-            self.assertEqual(0, self.run_cli("delivered", "#337.1", "--claim", fresh, "--session", "s1")[0])
++            self.assertEqual(65, self.run_cli("delivered", "1", "--claim", token, "--session", "s1")[0])
++            self.assertEqual(0, self.run_cli("delivered", "1", "--claim", fresh, "--session", "s1")[0])
+ 
+     def test_a_lapsed_claims_token_settles_it_until_a_new_claim_replaces_it(self) -> None:
+         _, token = self.claim()
+@@ -309,27 +430,27 @@ def test_a_lapsed_claims_token_settles_it_until_a_new_claim_replaces_it(self) ->
+         with mock.patch.object(inbox, "now_ms", return_value=later):
+             self.assertEqual(0, self.claim("--renew", token)[0])
+         with mock.patch.object(inbox, "now_ms", return_value=later + inbox.CLAIM_EXPIRES_MS + 1):
+-            self.assertEqual(0, self.run_cli("delivered", "#337.1", "--claim", token, "--session", "s1")[0])
++            self.assertEqual(0, self.run_cli("delivered", "1", "--claim", token, "--session", "s1")[0])
+ 
+     def test_delivered_hides_the_question_from_the_open_list(self) -> None:
+         _, token = self.claim()
+-        self.assertEqual(0, self.run_cli("delivered", "#337.1", "--claim", token, "--session", "s1")[0])
++        self.assertEqual(0, self.run_cli("delivered", "1", "--claim", token, "--session", "s1")[0])
+         self.assertEqual("", self.run_cli("list", "--session", "s1")[1])
+-        self.assertIn("delivered #337.1.b", self.run_cli("list", "--all", "--session", "s1")[1])
++        self.assertIn("delivered 1.b", self.run_cli("list", "--all", "--session", "s1")[1])
+         self.assertEqual(65, self.claim()[0])
+ 
+     def test_reopen_clears_the_answer(self) -> None:
+         _, token = self.claim()
+-        self.assertEqual(0, self.run_cli("reopen", "#337.1", "--claim", token, "--session", "s1")[0])
++        self.assertEqual(0, self.run_cli("reopen", "1", "--claim", token, "--session", "s1")[0])
+         self.assertIn("\topen\t", self.run_cli("list", "--session", "s1")[1])
+-        self.assertEqual(0, self.run_cli("answer", "#337.1.a", "--session", "s1")[0])
++        self.assertEqual(0, self.run_cli("answer", "1.a", "--session", "s1")[0])
+ 
+     def test_watch_delivers_each_answer_once_and_skips_a_live_claim(self) -> None:
+         self.ask("Run init?", "--recommend", "Yes")
+-        self.run_cli("dismiss", "q1", "--session", "s1")
++        self.run_cli("dismiss", "2", "--session", "s1")
+         self.assertEqual(0, self.claim()[0])
+         code, out, _ = self.run_cli("watch", "--once", "--session", "s1")
+-        self.assertEqual((0, "DISMISSED q1 Run init?\n"), (code, out))
++        self.assertEqual((0, "DISMISSED 2 Run init?\n"), (code, out))
+         self.assertEqual("", self.run_cli("watch", "--once", "--session", "s1")[1])
+ 
+     def test_watch_leaves_an_answer_it_could_not_print_to_the_next_deliverer(self) -> None:
+@@ -337,12 +458,12 @@ class ClosedPipe(io.StringIO):
+             def write(self, text: str) -> int:
+                 raise BrokenPipeError(32, "Broken pipe")
+ 
+-        with contextlib.chdir(self.checkout), redirect_stdout(ClosedPipe()), redirect_stderr(io.StringIO()):
++        with contextlib.chdir(self.scratch), redirect_stdout(ClosedPipe()), redirect_stderr(io.StringIO()):
+             self.assertEqual(65, cli.main(["inbox", "watch", "--once", "--session", "s1"]))
+-        self.assertIn("\tdelivering #337.1.b\t", self.run_cli("list", "--session", "s1")[1])
++        self.assertIn("\tdelivering 1.b\t", self.run_cli("list", "--session", "s1")[1])
+         later = inbox.now_ms() + inbox.CLAIM_EXPIRES_MS + 1
+         with mock.patch.object(inbox, "now_ms", return_value=later):
+-            self.assertEqual("ANSWER #337.1.b Decline it? → Add a budget\n",
++            self.assertEqual("ANSWER 1.b Decline it? → Add a budget\n",
+                              self.run_cli("watch", "--once", "--session", "s1")[1])
+ 
+     def test_watch_refuses_an_interval_that_is_not_a_positive_number(self) -> None:
+@@ -354,14 +475,15 @@ def test_watch_refuses_an_interval_that_is_not_a_positive_number(self) -> None:
+                 self.assertEqual(2, stop.exception.code)
+                 self.assertIn("--interval", err.getvalue())
+ 
+-    def test_keeps_the_newest_delivered_questions(self) -> None:
++    def test_keeps_the_newest_delivered_items_and_never_reuses_a_number(self) -> None:
+         with mock.patch.object(inbox, "KEEP_DELIVERED", 2):
+             for number in range(3):
+                 ref = self.ask(f"Q{number}?", "--recommend", "x")
+                 self.run_cli("answer", f"{ref}.a", "--session", "s1")
+                 self.run_cli("watch", "--once", "--session", "s1")
+-        names = sorted(path.name for path in self.folder().glob("q*.json"))
+-        self.assertEqual(["q2.json", "q3.json"], names)
++        names = sorted(path.name for path in self.folder().glob("[0-9]*.json"))
++        self.assertEqual(["3.json", "4.json"], names)
++        self.assertEqual("5", self.ask("Next?", "--recommend", "x"))
+ 
+ 
+ class ListTests(InboxCase):
+@@ -369,83 +491,47 @@ def test_lists_every_sessions_open_questions_without_a_session(self) -> None:
+         self.ask("One?", "--recommend", "x", session="s1")
+         self.ask("Two?", "--recommend", "x", session="s2")
+         out = self.run_cli("list")[1]
+-        self.assertEqual(["s1\tq1\tquestion\topen\tOne?", "s2\tq1\tquestion\topen\tTwo?"], out.splitlines())
++        self.assertEqual(["s1\t1\tquestion\topen\tOne?", "s2\t1\tquestion\topen\tTwo?"], out.splitlines())
+ 
+     def test_skips_a_file_that_is_not_an_item(self) -> None:
+         self.ask("One?", "--recommend", "x")
+-        (self.folder() / "q7.json").write_text("{not json")
+-        (self.folder() / "misnamed.json").write_text(json.dumps({"ref": "q8", "subject": "?"}))
+-        self.assertEqual(["q1\tquestion\topen\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
++        (self.folder() / "7.json").write_text("{not json")
++        (self.folder() / "misnamed.json").write_text(json.dumps({"ref": "8", "kind": "question", "subject": "?"}))
++        self.assertEqual(["1\tquestion\topen\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
+ 
+     def test_every_command_refuses_a_file_that_is_not_an_item(self) -> None:
+         self.ask("One?", "--recommend", "x")
+-        (self.folder() / "q7.json").write_text(json.dumps({"ref": "q7", "subject": "No kind?"}))
+-        (self.folder() / "q8.json").write_text(json.dumps({"ref": "q9", "kind": "notice", "subject": "Misnamed?"}))
+-        for ref in ("q7", "q8"):
++        (self.folder() / "7.json").write_text(json.dumps({"ref": "7", "subject": "No kind?"}))
++        (self.folder() / "8.json").write_text(json.dumps({"ref": "9", "kind": "notice", "subject": "Misnamed?"}))
++        for ref in ("7", "8"):
+             for args in (["show", ref], ["answer", f"{ref}.a"], ["dismiss", ref], ["snooze", ref]):
+                 with self.subTest(args=args):
+                     code, _, err = self.run_cli(*args, "--session", "s1")
+                     self.assertEqual(66, code)
+                     self.assertIn("is not an inbox item", err)
+-            with self.subTest(context=ref):
+-                self.assertEqual((0, ""), self.run_cli("context", "--session", "s1", stdin=f"see {ref}")[:2])
+-        self.assertEqual({"ref": "q7", "subject": "No kind?"}, json.loads((self.folder() / "q7.json").read_text()))
++        self.assertEqual({"ref": "7", "subject": "No kind?"}, self.item(7))
+ 
+     def test_lists_every_session_past_a_directory_that_is_not_one(self) -> None:
+         self.ask("One?", "--recommend", "x")
+         (self.folder().parent / "not a session").mkdir()
+-        self.assertEqual((0, "s1\tq1\tquestion\topen\tOne?\n", ""), self.run_cli("list"))
++        self.assertEqual((0, "s1\t1\tquestion\topen\tOne?\n", ""), self.run_cli("list"))
+ 
+     def test_lists_and_shows_a_dismissed_question_as_dismissed(self) -> None:
+         self.ask("One?", "--recommend", "x")
+-        self.run_cli("dismiss", "q1", "--session", "s1")
+-        self.assertEqual(["q1\tquestion\tdismissed\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
+-        self.assertEqual("DISMISSED q1 One?\n", self.run_cli("watch", "--once", "--session", "s1")[1])
+-        self.assertEqual(["q1\tquestion\tdismissed\tOne?"],
++        self.run_cli("dismiss", "1", "--session", "s1")
++        self.assertEqual(["1\tquestion\tdismissed\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
++        self.assertEqual("DISMISSED 1 One?\n", self.run_cli("watch", "--once", "--session", "s1")[1])
++        self.assertEqual(["1\tquestion\tdismissed\tOne?"],
+                          self.run_cli("list", "--all", "--session", "s1")[1].splitlines())
+-        self.assertTrue(self.run_cli("show", "q1")[1].endswith("\ndismissed\n"))
++        self.assertTrue(self.run_cli("show", "1")[1].endswith("\ndismissed\n"))
+ 
+     def test_show_prints_the_lettered_answers(self) -> None:
+         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget")
+-        out = self.run_cli("show", "q1")[1]
++        out = self.run_cli("show", "1")[1]
++        self.assertTrue(out.startswith("1 Decline it?\n"), out)
+         self.assertIn("a. Decline it (recommended)\nb. Add a budget\nc. type an answer with --text\nopen", out)
+ 
+ 
+-class ContextTests(InboxCase):
+-    def setUp(self) -> None:
+-        super().setUp()
+-        self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--pr", "acme/app#337")
+-        self.ask("Run init?", "--recommend", "Yes")
+-        self.ask("Rebase?", "--recommend", "Yes")
+-        self.ask("Other?", "--recommend", "Yes", "--pr", "octo/web#337")
+-
+-    def context(self, text: str) -> list[str]:
+-        code, out, _ = self.run_cli("context", "--session", "s1", stdin=text)
+-        self.assertEqual(0, code)
+-        return out.splitlines()
+-
+-    def test_matches_each_form_standing_alone(self) -> None:
+-        self.assertEqual(["#337.1.b answers Decline it? with Add a budget"], self.context("Go with #337.1.b."))
+-        self.assertEqual(["q2.a answers Rebase? with Yes"], self.context("Let's do q2.a."))
+-        self.assertEqual(["octo/web#337.1 is the question: Other?"], self.context("see octo/web#337.1, then"))
+-        self.assertEqual(["q1 is the question: Run init?", "q2 is the question: Rebase?"],
+-                         self.context("q1 then q2\nand q1 again"))
+-
+-    def test_leaves_text_that_only_looks_like_a_reference(self) -> None:
+-        for text in ("#337", "#337.1.4", "x#337.1", "web#337.1", "rerun the 2 failing tests", "Q2", "eq2", "q2.4",
+-                     "#337.1.z", "q9"):
+-            with self.subTest(text=text):
+-                self.assertEqual([], self.context(text))
+-
+-    def test_finds_references_in_text_by_the_plans_table(self) -> None:
+-        self.assertEqual([("#337.3", "b")], inbox.references_in("Go with #337.3.b."))
+-        self.assertEqual([("octo/app#337.3", "b")], inbox.references_in("octo/app#337.3.b"))
+-        self.assertEqual([("q2", "a")], inbox.references_in("Let's do q2.a."))
+-        for text in ("#337", "#337.3.4", "x#337.3", "2", "Q2", "eq2", "q2.4"):
+-            with self.subTest(text=text):
+-                self.assertEqual([], inbox.references_in(text))
+-
+-
+ class NoticeTests(InboxCase):
+     def setUp(self) -> None:
+         super().setUp()
+@@ -456,53 +542,50 @@ def tell(self, notice: str = "Force-pushed #12 to drop a stray file", *args: str
+         self.assertEqual(0, code, err)
+         return out.strip()
+ 
+-    def item(self, ref: str) -> dict:
+-        return json.loads((self.folder() / f"{quote(ref, safe='')}.json").read_text())
+-
+-    def test_numbers_a_notice_in_the_counts_questions_use(self) -> None:
+-        self.assertEqual("#12.2", self.tell())
+-        notice = self.item("#12.2")
++    def test_numbers_a_notice_in_the_count_questions_use(self) -> None:
++        self.assertEqual("2", self.tell())
++        notice = self.item(2)
+         self.assertEqual(("notice", "Force-pushed #12 to drop a stray file"), (notice["kind"], notice["subject"]))
+         self.assertNotIn("choices", notice)
+-        self.assertEqual("#12.3", self.ask("Rebase?", "--recommend", "Yes", "--pr", "acme/app#12"))
++        self.assertEqual("3", self.ask("Rebase?", "--recommend", "Yes", "--pr", "acme/app#12"))
+         code, out, _ = self.run_cli("tell", "No pull", "--session", "s1", "--json")
+-        self.assertEqual((0, "q1"), (code, json.loads(out)["item"]["ref"]))
++        self.assertEqual((0, "4"), (code, json.loads(out)["item"]["ref"]))
+ 
+     def test_records_the_detail_and_the_posting_subagent(self) -> None:
+         detail = self.scratch / "detail.md"
+         detail.write_text("The file held a token.\n")
+         self.tell("Dropped a file", "--detail-file", str(detail), "--agent", "agent-7")
+-        notice = self.item("#12.2")
++        notice = self.item(2)
+         self.assertEqual(("The file held a token.", "agent-7"), (notice["detail"], notice["agentId"]))
+ 
+     def test_refuses_a_notice_that_fails_a_check_and_writes_nothing(self) -> None:
+-        counts = (self.folder() / "counts.json").read_text()
++        count = (self.folder() / "count.json").read_text()
+         for args in (["Two\nlines"], ["A\ttab"], ["x" * 121], [" "], ["Bad pull", "--pr", "12"]):
+             with self.subTest(args=args[0][:12]):
+                 code, _, err = self.run_cli("tell", *args, "--session", "s1")
+                 self.assertEqual(65, code, err)
+-        self.assertEqual(counts, (self.folder() / "counts.json").read_text())
+-        self.assertEqual(["#12.1"], [item["ref"] for item in inbox.load_items(self.folder())])
++        self.assertEqual(count, (self.folder() / "count.json").read_text())
++        self.assertEqual(["1"], [item["ref"] for item in inbox.load_items(self.folder())])
+ 
+     def test_dismissing_a_notice_delivers_it_at_once(self) -> None:
+         self.tell()
+-        self.assertEqual((0, "dismissed #12.2\n", ""), self.run_cli("dismiss", "#12.2", "--session", "s1"))
+-        notice = self.item("#12.2")
++        self.assertEqual((0, "dismissed 2\n", ""), self.run_cli("dismiss", "2", "--session", "s1"))
++        notice = self.item(2)
+         self.assertTrue(notice["answer"]["dismissed"])
+         self.assertEqual(notice["answer"]["answeredAt"], notice["deliveredAt"])
+-        code, _, err = self.run_cli("dismiss", "#12.2", "--session", "s1")
++        code, _, err = self.run_cli("dismiss", "2", "--session", "s1")
+         self.assertEqual(65, code)
+         self.assertIn("already dismissed", err)
+         self.assertEqual("", self.run_cli("watch", "--once", "--session", "s1")[1])
+ 
+     def test_dismissing_a_question_still_waits_for_its_deliverer(self) -> None:
+-        self.run_cli("dismiss", "#12.1", "--session", "s1")
+-        self.assertNotIn("deliveredAt", self.item("#12.1"))
+-        self.assertEqual("DISMISSED #12.1 Decline it?\n", self.run_cli("watch", "--once", "--session", "s1")[1])
++        self.run_cli("dismiss", "1", "--session", "s1")
++        self.assertNotIn("deliveredAt", self.item(1))
++        self.assertEqual("DISMISSED 1 Decline it?\n", self.run_cli("watch", "--once", "--session", "s1")[1])
+ 
+     def test_a_notice_takes_no_answer_and_no_claim(self) -> None:
+         self.tell()
+-        for args in (["answer", "#12.2.a"], ["claim", "#12.2"]):
++        for args in (["answer", "2.a"], ["claim", "2"]):
+             with self.subTest(command=args[0]):
+                 code, _, err = self.run_cli(*args, "--session", "s1")
+                 self.assertEqual(65, code)
+@@ -510,13 +593,13 @@ def test_a_notice_takes_no_answer_and_no_claim(self) -> None:
+ 
+     def test_lists_and_shows_a_notice_by_its_kind(self) -> None:
+         self.tell("Dropped a file", "--detail", "It held a token.")
+-        self.assertEqual(["#12.1\tquestion\topen\tDecline it?", "#12.2\tnotice\topen\tDropped a file"],
++        self.assertEqual(["1\tquestion\topen\tDecline it?", "2\tnotice\topen\tDropped a file"],
+                          self.run_cli("list", "--session", "s1")[1].splitlines())
+-        self.assertEqual("#12.2 Dropped a file\nabout acme/app#12\n\nIt held a token.\n\nopen\n",
+-                         self.run_cli("show", "#12.2")[1])
+-        self.run_cli("dismiss", "#12.2", "--session", "s1")
+-        self.assertEqual(["#12.1\tquestion\topen\tDecline it?"], self.run_cli("list", "--session", "s1")[1].splitlines())
+-        self.assertIn("#12.2\tnotice\tdismissed\tDropped a file", self.run_cli("list", "--all", "--session", "s1")[1])
++        self.assertEqual("2 Dropped a file\nabout acme/app#12\n\nIt held a token.\n\nopen\n",
++                         self.run_cli("show", "2")[1])
++        self.run_cli("dismiss", "2", "--session", "s1")
++        self.assertEqual(["1\tquestion\topen\tDecline it?"], self.run_cli("list", "--session", "s1")[1].splitlines())
++        self.assertIn("2\tnotice\tdismissed\tDropped a file", self.run_cli("list", "--all", "--session", "s1")[1])
+ 
+ 
+ class SnoozeTests(InboxCase):
+@@ -536,76 +619,63 @@ def states(self, *args: str) -> dict[str, str]:
+ 
+     def test_snoozes_an_item_for_an_hour_and_wakes_it_with_zero(self) -> None:
+         later = time.strftime("%H:%M", time.localtime((self.NOW + 3_600_000) / 1000))
+-        self.assertEqual((0, f"#12.1 snoozed until {later}\n", ""), self.run_cli("snooze", "#12.1", "--session", "s1"))
+-        self.assertEqual({"#12.1": f"snoozed until {later}", "#12.2": "open"}, self.states())
+-        self.assertEqual(0, self.run_cli("snooze", "#12.1", "--for", "0", "--session", "s1")[0])
+-        self.assertEqual({"#12.1": "open", "#12.2": "open"}, self.states())
++        self.assertEqual((0, f"1 snoozed until {later}\n", ""), self.run_cli("snooze", "1", "--session", "s1"))
++        self.assertEqual({"1": f"snoozed until {later}", "2": "open"}, self.states())
++        self.assertEqual(0, self.run_cli("snooze", "1", "--for", "0", "--session", "s1")[0])
++        self.assertEqual({"1": "open", "2": "open"}, self.states())
+ 
+     def test_wakes_an_item_by_ending_its_snooze_now(self) -> None:
+-        self.run_cli("snooze", "#12.1", "--session", "s1")
+-        self.run_cli("snooze", "#12.1", "--for", "0", "--session", "s1")
+-        self.assertEqual(self.NOW, json.loads((self.folder() / "%2312.1.json").read_text())["snoozedUntil"])
++        self.run_cli("snooze", "1", "--session", "s1")
++        self.run_cli("snooze", "1", "--for", "0", "--session", "s1")
++        self.assertEqual(self.NOW, self.item(1)["snoozedUntil"])
+ 
+     def test_takes_the_minutes_and_returns_the_item_once_they_pass(self) -> None:
+-        self.run_cli("snooze", "#12.2", "--for", "5", "--session", "s1")
+-        self.assertEqual(self.NOW + 300_000, json.loads((self.folder() / "%2312.2.json").read_text())["snoozedUntil"])
++        self.run_cli("snooze", "2", "--for", "5", "--session", "s1")
++        self.assertEqual(self.NOW + 300_000, self.item(2)["snoozedUntil"])
+         with mock.patch.object(inbox, "now_ms", return_value=self.NOW + 300_000):
+-            self.assertEqual("open", self.states()["#12.2"])
++            self.assertEqual("open", self.states()["2"])
+ 
+     def test_refuses_a_resolved_item_and_a_negative_time(self) -> None:
+-        self.run_cli("dismiss", "#12.2", "--session", "s1")
+-        self.assertEqual(65, self.run_cli("snooze", "#12.2", "--session", "s1")[0])
+-        self.assertEqual(65, self.run_cli("snooze", "#12.1", "--for", "-1", "--session", "s1")[0])
++        self.run_cli("dismiss", "2", "--session", "s1")
++        self.assertEqual(65, self.run_cli("snooze", "2", "--session", "s1")[0])
++        self.assertEqual(65, self.run_cli("snooze", "1", "--for", "-1", "--session", "s1")[0])
+ 
+     def test_refuses_a_snooze_longer_than_a_day_and_writes_nothing(self) -> None:
+         for minutes in ("1441", "99999999999999"):
+             with self.subTest(minutes=minutes):
+-                code, out, err = self.run_cli("snooze", "#12.1", "--for", minutes, "--session", "s1")
++                code, out, err = self.run_cli("snooze", "1", "--for", minutes, "--session", "s1")
+                 self.assertEqual((65, ""), (code, out))
+                 self.assertIn("1440", err)
+-        self.assertNotIn("snoozedUntil", json.loads((self.folder() / "%2312.1.json").read_text()))
+-        self.assertEqual({"#12.1": "open", "#12.2": "open"}, self.states())
++        self.assertNotIn("snoozedUntil", self.item(1))
++        self.assertEqual({"1": "open", "2": "open"}, self.states())
+ 
+     def test_names_the_day_of_a_snooze_that_ends_after_today(self) -> None:
+         tomorrow = time.strftime("%H:%M", time.localtime(self.NOW / 1000 + 86_400))
+-        self.assertEqual((0, f"#12.1 snoozed until tomorrow {tomorrow}\n", ""),
+-                         self.run_cli("snooze", "#12.1", "--for", "1440", "--session", "s1"))
+-        path = self.folder() / "%2312.2.json"
++        self.assertEqual((0, f"1 snoozed until tomorrow {tomorrow}\n", ""),
++                         self.run_cli("snooze", "1", "--for", "1440", "--session", "s1"))
++        path = self.folder() / "2.json"
+         path.write_text(json.dumps({**json.loads(path.read_text()), "snoozedUntil": self.NOW + 3 * 86_400_000}))
+         later = time.strftime("%Y-%m-%d %H:%M", time.localtime(self.NOW / 1000 + 3 * 86_400))
+-        self.assertEqual({"#12.1": f"snoozed until tomorrow {tomorrow}", "#12.2": f"snoozed until {later}"},
+-                         self.states())
++        self.assertEqual({"1": f"snoozed until tomorrow {tomorrow}", "2": f"snoozed until {later}"}, self.states())
+ 
+     def test_prints_the_raw_time_of_a_snooze_too_far_off_to_show(self) -> None:
+-        path = self.folder() / "%2312.1.json"
++        path = self.folder() / "1.json"
+         for until in (self.NOW + 10**18, 2**70):
+             with self.subTest(until=until):
+                 path.write_text(json.dumps({**json.loads(path.read_text()), "snoozedUntil": until}))
+-                self.assertEqual({"#12.1": f"snoozed until {until}", "#12.2": "open"}, self.states())
+-                self.assertTrue(self.run_cli("show", "#12.1")[1].endswith(f"\nsnoozed until {until}\n"))
++                self.assertEqual({"1": f"snoozed until {until}", "2": "open"}, self.states())
++                self.assertTrue(self.run_cli("show", "1")[1].endswith(f"\nsnoozed until {until}\n"))
+ 
+     def test_answering_a_snoozed_question_clears_its_snooze(self) -> None:
+-        self.run_cli("snooze", "#12.1", "--session", "s1")
+-        self.assertEqual(0, self.run_cli("answer", "#12.1.a", "--session", "s1")[0])
+-        self.assertNotIn("snoozedUntil", json.loads((self.folder() / "%2312.1.json").read_text()))
++        self.run_cli("snooze", "1", "--session", "s1")
++        self.assertEqual(0, self.run_cli("answer", "1.a", "--session", "s1")[0])
++        self.assertNotIn("snoozedUntil", self.item(1))
+ 
+     def test_dismissing_a_snoozed_item_clears_its_snooze(self) -> None:
+-        for ref in ("#12.1", "#12.2"):
++        for ref in ("1", "2"):
+             self.run_cli("snooze", ref, "--session", "s1")
+             self.assertEqual(0, self.run_cli("dismiss", ref, "--session", "s1")[0])
+-        self.assertEqual({"#12.1": "dismissed", "#12.2": "dismissed"}, self.states("--all"))
+-
+-
+-class NoticeContextTests(InboxCase):
+-    def setUp(self) -> None:
+-        super().setUp()
+-        self.ask("Decline it?", "--recommend", "Decline it", "--pr", "acme/app#12")
+-        self.run_cli("tell", "Force-pushed #12 to drop a stray file", "--pr", "acme/app#12", "--session", "s1")
+-
+-    def test_names_a_notice_and_gives_no_answer_for_its_letter(self) -> None:
+-        self.assertEqual((0, "#12.2 is the notice: Force-pushed #12 to drop a stray file\n", ""),
+-                         self.run_cli("context", "--session", "s1", stdin="see #12.2"))
+-        self.assertEqual((0, "", ""), self.run_cli("context", "--session", "s1", stdin="see #12.2.a"))
++        self.assertEqual({"1": "dismissed", "2": "dismissed"}, self.states("--all"))
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 246ca53..d998eae 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -20,6 +20,7 @@
+     6: "0b5e821b044698e0c71d5c50c54557f02f9dd005a2026c839672c278d2bae62e",
+     7: "5bb17e8e2ff73a35d3d17d3c2bd9569271506811e832703c6592c0977f2e9e2e",
+     8: "b02e721cceaaed2765131919283b94f4b60a2c10fa5407dce3f25a58ecd5a097",
++    9: "c427d1e6effbc38103d89b576070ff2c7ad8b1d792e61a3fb3efb44351bb8172",
+ }
+ 
+ 
