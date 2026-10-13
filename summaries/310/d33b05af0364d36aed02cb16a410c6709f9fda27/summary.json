@@ -1,0 +1,133 @@
+{
+ "version": 1,
+ "name": "Plan docs point at commands",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 310,
+  "title": "Point the plan docs at the project commands",
+  "head": "d33b05af0364d36aed02cb16a410c6709f9fda27",
+  "headRef": "plan-docs-cli",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector keeps each project plan in <code>docs/projects/&lt;name&gt;/readme.md</code>, with YAML frontmatter that records the plan's <code>status</code>, <code>priority</code>, and optional <code>owner</code>. The <code>project</code> command line tool (the CLI) reads and changes those fields. The plan documentation still told you to edit the frontmatter by hand, and this repository's <code>docs/projects/README.md</code> still said the CLI had not shipped and searched plans with <code>find</code> and <code>rg</code>.",
+   "This pull request rewrites those passages to name the commands. You start a plan with <code>project create</code>, change its fields with <code>project status</code>, <code>project priority</code>, <code>project owner</code>, and <code>project done</code>, and find plans with <code>project list</code> and <code>project search</code>. The change touches three documents, each read by a different audience:",
+   "<ul><li><b>The template.</b> <code>src/projector/templates/project-readme.md</code> is the <code>docs/projects/README.md</code> that <code>project init</code> writes into a repository that adopts Projector. <code>init</code> writes it once and never rewrites it, so only new adopters get the new text.</li><li><b>This repository's plan guide.</b> <code>docs/projects/README.md</code> explains the plan format to people who write plans here.</li><li><b>This repository's agent rules.</b> <code>AGENTS.md</code>, which <code>CLAUDE.md</code> links to, holds the rules coding agents follow here. The edit stays above the section that <code>project init</code> generates.</li></ul>",
+   "No code changes. Each document also lets you edit by hand a plan whose frontmatter stops the commands from loading it, because a hand edit is the only repair for such a plan. The review checked every command and option the new text names against the CLI at this head, and found nothing open."
+  ],
+  "cards": [
+   {
+    "id": "commands",
+    "title": "Commands the new text names",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Command</th><th>What it does</th></tr></thead><tbody><tr><td><code>project create &lt;name&gt;</code></td><td>Writes the directory and a <code>readme.md</code> with <code>status: draft</code> and <code>priority: later</code>, unless you pass <code>--status</code> or <code>--priority</code>.</td></tr><tr><td><code>project status</code>, <code>project priority</code></td><td>Replace one frontmatter value and leave the rest of the file as it was.</td></tr><tr><td><code>project owner</code></td><td>Sets the <code>owner</code> field, or removes it with <code>--clear</code>.</td></tr><tr><td><code>project done</code></td><td>Shorthand for <code>project status &lt;name&gt; completed</code>.</td></tr><tr><td><code>project list</code></td><td>Groups plans by priority. <code>--status</code>, <code>--priority</code>, and <code>--owner</code> filter it, and apply together.</td></tr><tr><td><code>project search</code></td><td>Matches names, titles, frontmatter values, and every Markdown file under a project, ignoring case.</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, of <code>af4bf20</code>, found that <code>AGENTS.md</code> said \"never\" edit the frontmatter, which left no repair for a plan the commands refuse to load. <code>86c98c5</code> adds that exception in all three documents, and the review of this head found the finding fixed.</li><li>The unit suite, <code>project check</code>, both plugin validations, and <code>git diff --check</code> pass at this head.</li><li><code>d33b05a</code> changes the example in the repair paragraph of <code>docs/projects/README.md</code> to a plan with <code>status: blocked</code>, and the review of that push found it accurate.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "template",
+   "title": "The plan guide that new adopters get",
+   "kicker": "The template project init writes into an adopting repository",
+   "intro": [
+    "When a repository adopts Projector, <code>project init</code> copies this template to <code>docs/projects/README.md</code>. The template said \"Status and priority changes edit frontmatter\". It now tells the reader to start a plan with <code>project create</code> and to change the frontmatter with the four field commands rather than by hand. A plan whose frontmatter stops those commands from loading it is the exception: you fix by hand what the error or <code>project check</code> names. The template also names <code>project search</code> beside <code>project list</code> and <code>project check</code>.",
+    "<code>init</code> never rewrites the file once it exists, so a repository that already adopted Projector keeps its old text."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/templates/project-readme.md",
+     "collapsed": false,
+     "note": "The second and third paragraphs now name the commands.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 13,
+       "text": "<code>project create</code> writes the directory, a lowercase <code>readme.md</code>, and <code>status</code> and <code>priority</code> frontmatter in the format the first paragraph describes. Checked in <code>ProjectStore.create</code> in <code>src/projector/core.py</code>."
+      },
+      {
+       "kind": "context",
+       "line": 16,
+       "text": "The hand-repair exception here matches the one in <code>AGENTS.md</code> and <code>docs/projects/README.md</code>, so new adopters get the same rule as this repository."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "guide",
+   "title": "This repository's plan guide",
+   "kicker": "docs/projects/README.md drops the pre-CLI workarounds",
+   "intro": [
+    "<code>docs/projects/README.md</code> explains this repository's plan format. Four passages change:",
+    "<ul><li><b>Casing.</b> <code>project check</code> already reports an entry point named other than lowercase <code>readme.md</code>, so the note that it would \"once the CLI ships\" goes.</li><li><b>New plans.</b> The guide recommends <code>project create</code>, and keeps hand-written frontmatter for a plan written without it.</li><li><b>Field changes.</b> The guide tells you to run <code>project status</code>, <code>project priority</code>, or <code>project done</code> rather than edit the frontmatter. A new paragraph covers the one case the commands cannot handle: they load the plan before they write, so you repair by hand a plan whose frontmatter <code>project check</code> rejects.</li><li><b>Finding plans.</b> \"Find projects before the CLI exists\" becomes \"Find projects\", built on <code>project list</code> and <code>project search</code>. The rename section says Projector has no rename command, so you use <code>git mv</code>.</li></ul>"
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/README.md",
+     "collapsed": false,
+     "note": "Each passage that described the CLI as missing now names the command.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 102,
+       "text": "The commands keep the rest of the file and refuse to write when the file changes after they read it. <code>_set_field</code> and <code>set_owner</code> in <code>src/projector/core.py</code> compare the file's inode, size, and modification time before the write and again inside <code>_atomic_write</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 118,
+       "text": "The commands refuse such a plan, and the paragraph's example holds. In a scratch repository, a plan with <code>status: blocked</code> made <code>project status demo ready</code> exit 65 with \"status must be one of draft|ready|in-progress|completed\". A plan with an empty <code>owner:</code> line, or with merge-conflict markers in its frontmatter, fails the same way."
+      },
+      {
+       "kind": "verify",
+       "line": 153,
+       "text": "<code>--status</code>, <code>--priority</code>, and <code>--owner</code> filter one after another in the <code>list</code> branch of <code>src/projector/cli.py</code>, so a project must match every option. <code>--owner</code> ignores case. <code>project list --priority now</code> ran cleanly."
+      },
+      {
+       "kind": "verify",
+       "line": 164,
+       "text": "The CLI has no rename or move command. Checked against <code>project --help</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "agents",
+   "title": "This repository's agent rules",
+   "kicker": "AGENTS.md tells agents to use the commands",
+   "intro": [
+    "<code>AGENTS.md</code> holds the rules coding agents follow in this repository, and <code>CLAUDE.md</code> is a link to it. The project-model rule said \"Change status and priority in frontmatter\". It now says to start a project with <code>project create</code> and to change its status, priority, and owner with the commands, \"never by editing the frontmatter\", except to repair a plan the commands cannot load. The command list below it adds <code>search</code>, <code>create</code>, <code>owner</code>, and <code>done</code>.",
+    "The edit stays above the Projector section between the generated markers, which <code>project init</code> renders from <code>agents-block.md</code>. <code>project check</code> reports no edited section at this head."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "AGENTS.md",
+     "collapsed": false,
+     "note": "The project-model rule and the command list now name the commands.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 22,
+       "text": "The exception is what lets an agent repair a broken plan. Without it, \"never\" would forbid the only fix for a plan the commands refuse to load, such as one with an empty <code>owner:</code> line."
+      },
+      {
+       "kind": "verify",
+       "line": 45,
+       "text": "Each listed form parses: <code>project owner &lt;name&gt; --clear</code>, <code>project search &lt;query&gt; --json</code>, <code>project create &lt;name&gt;</code>, and <code>project done &lt;name&gt;</code>. Checked against each command's <code>--help</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
