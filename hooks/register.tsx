@@ -857,7 +857,7 @@ export const register: Register = on => {
     const divider =
       e.surface === 'terminal'
         ? [
-            <Text key="divider" color="subtle">
+            <Text key="divider">
               {'─'.repeat(Math.max(0, e.props.bodyColumns - updated.length))}
               {updated}
             </Text>,
