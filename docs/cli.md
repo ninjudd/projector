@@ -1481,11 +1481,16 @@ Every command names the posting session with `--session`, or reads
 every session's open items, and `show`, `answer`, `dismiss`, and `snooze`
 find the session that holds the number. `list` prints each item's number,
 kind, state, and subject, separated by tabs, after the session when it lists
-every session. Every session counts from 1, so two sessions often hold the
-same number. A command that finds the number in more than one session exits
-67 and names them; run it again with `--session` and the session that `list`
-prints beside the item. A command waits up to five seconds while another
-command changes the same session, and then exits 75, so you can run it again.
+every session. Every session counts from 1 and keeps the items you resolved,
+so two sessions often hold the same number. Without a session, those four
+commands look first among open items, the ones with no answer recorded: a
+number that one session holds open names that session's item, whatever other
+sessions hold resolved under the same number. Only when no session holds the
+number open do they look among every item. A command that still finds the
+number in more than one session exits 67 and names them; run it again with
+`--session` and the session that `list` prints beside the item. A command
+waits up to five seconds while another command changes the same session, and
+then exits 75, so you can run it again.
 
 The answers are lettered. `a` is always the recommendation, the other options
 follow as `b`, `c`, and on, and the last letter is a typed answer:

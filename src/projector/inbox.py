@@ -276,14 +276,22 @@ def parse_reference(text: str) -> tuple[str, Optional[str]]:
     return match["ref"], match["letter"]
 
 
-def locate(session: Optional[str], ref: str) -> Path:
-    """The folder holding `ref`: the session's, or, without one, the one session that has it."""
+def is_open(item: Optional[dict]) -> bool:
+    return item is not None and not item.get("answer")
+
+
+def locate(session: Optional[str], ref: str, prefer_open: bool = False) -> Path:
+    """The folder holding `ref`: the session's, or, without one, the one session that has it. Every
+    session counts from 1 and keeps its resolved items, so with `prefer_open` the sessions that hold
+    `ref` open, with no answer recorded, are the candidates whenever any does."""
     if session is not None:
         folder = session_dir(session)
         if not item_file(folder, ref).is_file():
             raise ItemNotFound(f"session {session} has no item {ref}")
         return folder
     holders = [name for name in sessions() if item_file(store_root() / name, ref).is_file()]
+    if prefer_open:
+        holders = [name for name in holders if is_open(item_in(item_file(store_root() / name, ref)))] or holders
     if not holders:
         raise ItemNotFound(f"no session has an item {ref}")
     if len(holders) > 1:
@@ -293,7 +301,7 @@ def locate(session: Optional[str], ref: str) -> Path:
 
 
 def find(session: Optional[str], ref: str) -> dict:
-    return read_item(locate(session, ref), ref)
+    return read_item(locate(session, ref, prefer_open=True), ref)
 
 
 def is_notice(item: dict) -> bool:
@@ -324,9 +332,9 @@ def message(question: dict) -> str:
 
 # Answering and delivering
 
-def update(session: Optional[str], ref: str, change) -> dict:
+def update(session: Optional[str], ref: str, change, prefer_open: bool = False) -> dict:
     """Read the item under the lock, let `change` alter it, and write it back."""
-    folder = locate(session, ref)
+    folder = locate(session, ref, prefer_open)
     with locked(folder):
         item = read_item(folder, ref)
         change(item)
@@ -359,7 +367,7 @@ def answer(session: Optional[str], ref: str, letter: Optional[str], text: Option
         question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
         question.pop("snoozedUntil", None)
 
-    return update(session, ref, record)
+    return update(session, ref, record, prefer_open=True)
 
 
 def dismiss(session: Optional[str], ref: str) -> dict:
@@ -375,7 +383,7 @@ def dismiss(session: Optional[str], ref: str) -> dict:
         if is_notice(item):
             item["deliveredAt"] = now
 
-    return update(session, ref, record)
+    return update(session, ref, record, prefer_open=True)
 
 
 def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> dict:
@@ -389,7 +397,7 @@ def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> d
                              "has nothing to return for")
         item["snoozedUntil"] = now_ms() + minutes * 60_000
 
-    return update(session, ref, record)
+    return update(session, ref, record, prefer_open=True)
 
 
 def snoozed_until(item: dict) -> Optional[int]:

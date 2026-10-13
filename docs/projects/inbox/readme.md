@@ -664,9 +664,12 @@ sending its quoted subject. The forms still cost something:
    separated by tabs, with the session before them when it lists every
    session. `show 3`, `answer 3.a`, `answer 3.c --text …`, `dismiss 3`,
    and `snooze 3` name the item. Only `answer` takes a letter, and every
-   other command refuses `3.a` with exit `65`. Without `--session`, a
-   command looks the number up in every session, as it does now. Once two
-   sessions hold a `3`, it exits `67` and names both, and you pass
+   other command refuses `3.a` with exit `65`. Without `--session` or
+   `PROJECTOR_SESSION`, a command looks the number up in every session.
+   `show`, `answer`, `dismiss`, and `snooze` look first among open items,
+   those with no answer recorded, and among every item only when no
+   session holds the number open (§ 11.10). Once two sessions hold a `3`
+   that way, the command exits `67` and names both, and you pass
    `--session` with the session that `list` prints beside the item.
 6. **Nothing reads a prompt for references.** The `prompt.submit` hook
    adds no context for anything you type, and `project inbox context` is
@@ -830,9 +833,13 @@ subsections above leave open or which the code had moved past since
   list no longer holds that question, it says `an answer did not reach its
   agent`, and still names no number.
 - **The refusal for a number two sessions hold says where to look.**
-  Every session counts from 1, so exit `67` is common now. Its message
-  says to pass `--session` with the session that `project inbox list`
-  prints beside the item.
+  Every session counts from 1, so two sessions often hold a number. The
+  message of exit `67` says to pass `--session` with the session that
+  `project inbox list` prints beside the item.
+- **The agents' instructions name a number.** The section `project init`
+  writes into `AGENTS.md` tells an agent to clear an item with
+  `project inbox dismiss <number>`. The text changed, so the section's
+  begin marker moves to version 9.
 - **A file's name still quotes its reference.** `item_file` quotes the
   reference into the file's name as it did, which leaves a number
   unchanged. A reference read from a file therefore cannot name a path
@@ -844,6 +851,21 @@ subsections above leave open or which the code had moved past since
   `Type something` field, a drawer that closes when you send its answer,
   and the 30 seconds a resolved line stays, all work as they did. § 11
   changes none of them.
+- **A bare number looks first among open items.** Every session holds a
+  `1`, a session's directory stays after it ends (§ 7), and each keeps up
+  to 100 delivered items. Looking a number up in every session would make
+  a bare `answer 3.a` from a shell exit `67` almost every time. So when
+  neither `--session` nor `PROJECTOR_SESSION` names a session, `show`,
+  `answer`, `dismiss`, and `snooze` consider only the sessions that hold
+  the number open, with no answer recorded, whenever any does. An open
+  item is the only kind `answer`, `dismiss`, and `snooze` can act on, and
+  the one a `show` after `list` most likely means. When no session holds
+  the number open, these commands look among every item as before, so
+  `show` still reaches a resolved item and `answer` still says the
+  question is already answered. A number open in two sessions still exits
+  `67`. `claim`, `delivered`, and `reopen` act on an answered question,
+  and the band and `watch` always pass its session, so they look among
+  every item as before.
 
 Each row of § 11.8 but the last failed its test before the change. The
 main-screen row of § 4 still waits for a check by hand under tmux, so the

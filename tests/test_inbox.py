@@ -141,6 +141,57 @@ class NumberingTests(InboxCase):
         self.assertIn("--session", err)
         self.assertEqual((0, "answered 1.a\n"), self.run_cli("answer", "1.a", "--session", "s2")[:2])
 
+    def test_a_bare_number_names_the_one_session_that_holds_it_open(self) -> None:
+        self.ask("Delivered?", "--recommend", "x", session="s1")
+        self.run_cli("answer", "1.a", "--session", "s1")
+        self.run_cli("watch", "--once", "--session", "s1")
+        self.run_cli("tell", "Read", "--session", "s1")
+        self.run_cli("dismiss", "2", "--session", "s1")
+        resolved = [self.item(1, "s1"), self.item(2, "s1")]
+        self.ask("Open?", "--recommend", "x", session="s2")
+        self.run_cli("tell", "Unread", "--session", "s2")
+
+        self.assertTrue(self.run_cli("show", "1")[1].startswith("1 Open?\n"))
+        self.assertEqual(0, self.run_cli("snooze", "1")[0])
+        self.assertEqual((0, "answered 1.a\n"), self.run_cli("answer", "1.a")[:2])
+        self.assertEqual((0, "dismissed 2\n"), self.run_cli("dismiss", "2")[:2])
+        self.assertEqual(("a", True), (self.item(1, "s2")["answer"]["letter"], self.item(2, "s2")["answer"]["dismissed"]))
+        self.assertNotIn("snoozedUntil", self.item(1, "s2"))
+        self.assertEqual(resolved, [self.item(1, "s1"), self.item(2, "s1")])
+
+    def test_a_number_open_in_two_sessions_needs_the_session_beside_a_resolved_one(self) -> None:
+        for session in ("s1", "s2", "s3"):
+            self.ask("First?", "--recommend", "x", session=session)
+        self.run_cli("dismiss", "1", "--session", "s3")
+        for args in (["show", "1"], ["answer", "1.a"], ["dismiss", "1"], ["snooze", "1"]):
+            with self.subTest(command=args[0]):
+                code, out, err = self.run_cli(*args)
+                self.assertEqual((67, ""), (code, out))
+                self.assertIn("2 sessions: s1, s2;", err)
+
+    def test_a_number_no_session_holds_open_is_looked_up_among_every_item(self) -> None:
+        self.ask("First?", "--recommend", "x", session="s1")
+        self.run_cli("answer", "1.a", "--session", "s1")
+        code, _, err = self.run_cli("answer", "1.b")
+        self.assertEqual(65, code)
+        self.assertIn("already answered, as 1.a", err)
+        self.assertTrue(self.run_cli("show", "1")[1].startswith("1 First?\n"))
+        self.ask("Other?", "--recommend", "x", session="s2")
+        self.run_cli("dismiss", "1", "--session", "s2")
+        code, _, err = self.run_cli("show", "1")
+        self.assertEqual(67, code)
+        self.assertIn("2 sessions: s1, s2;", err)
+
+    def test_a_session_from_the_environment_is_the_only_one_looked_in(self) -> None:
+        self.ask("First?", "--recommend", "x", session="s1")
+        self.run_cli("dismiss", "1", "--session", "s1")
+        self.ask("Open?", "--recommend", "x", session="s2")
+        with mock.patch.dict(os.environ, {"PROJECTOR_SESSION": "s1"}):
+            code, _, err = self.run_cli("answer", "1.a")
+        self.assertEqual(65, code)
+        self.assertIn("already answered", err)
+        self.assertNotIn("answer", self.item(1, "s2"))
+
     def test_refuses_a_reference_in_an_old_form_with_the_new_ones(self) -> None:
         self.ask("First?", "--recommend", "x", "--pr", "acme/app#337")
         for args in (["show", "#337.1"], ["answer", "q1.a"], ["dismiss", "octo/web#12.1"], ["snooze", "#337.1.a"],
