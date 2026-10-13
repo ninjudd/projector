@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -10,8 +11,9 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
+from projector import config as config_module
 from projector.cli import main
-from projector.config import ConfigError, config_paths, load, merge, user_config_path
+from projector.config import SETTINGS, ConfigError, config_paths, load, merge, user_config_path
 from projector.core import json_scalar
 
 
@@ -294,3 +296,341 @@ class ConfigCommandTests(unittest.TestCase):
 
         self.assertEqual(78, code)
         self.assertIn("invalid TOML", stderr)
+
+
+class ConfigSetTests(unittest.TestCase):
+    """`project config set` and `unset`, which change one line of one file."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.home = Path(self.temporary.name).resolve() / "home"
+        self.root = self.home / "work" / "repo"
+        self.root.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        environment = mock.patch.dict(os.environ, {"HOME": str(self.home)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.repo_file = self.root / ".projector.toml"
+        self.user_file = self.home / ".projector.toml"
+
+    def invoke(self, *arguments: str) -> tuple[int, str, str]:
+        stdout, stderr = StringIO(), StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(["--root", str(self.root), *arguments])
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def assert_set(self, key: str, value: str, *scope: str) -> str:
+        code, stdout, stderr = self.invoke("config", "set", key, value, *scope)
+        self.assertEqual(0, code, stderr)
+        return stdout
+
+    def test_each_type_lands_in_its_table_in_a_new_file(self) -> None:
+        self.assert_set("watch.auto_start", "false")
+        self.assert_set("review.username", 'mi"n\\judd')
+
+        self.assertEqual(
+            "[watch]\nauto_start = false\n\n"
+            '[review]\nusername = "mi\\"n\\\\judd"\n',
+            self.repo_file.read_text(),
+        )
+        config = load(self.root)
+        self.assertIs(False, config.get("watch.auto_start"))
+        self.assertEqual('mi"n\\judd', config.get("review.username"))
+
+    def test_only_the_changed_line_differs_in_a_file_a_person_wrote(self) -> None:
+        original = (
+            "# Settings for this repository.\n"
+            "\n"
+            "[review]\n"
+            "# Who posts reviews.\n"
+            'username = "review-bot"\n'
+            "summarize = true\n"
+            "\n"
+            "# The site.\n"
+            "[site]\n"
+            'prepare = "make docs"\n'
+        )
+        self.repo_file.write_bytes(original.encode())
+
+        self.assert_set("review.username", "minjudd")
+
+        self.assertEqual(original.replace('"review-bot"', '"minjudd"'), self.repo_file.read_text())
+
+    def test_a_new_key_joins_its_table_after_the_last_setting(self) -> None:
+        self.repo_file.write_text(
+            "[review]\n"
+            '  username = "review-bot"  # indented\n'
+            "\n"
+            "# The site comes next.\n"
+            "[site]\n"
+            "enabled = true\n"
+        )
+
+        self.assert_set("review.summarize", "false")
+
+        self.assertEqual(
+            "[review]\n"
+            '  username = "review-bot"  # indented\n'
+            "  summarize = false\n"
+            "\n"
+            "# The site comes next.\n"
+            "[site]\n"
+            "enabled = true\n",
+            self.repo_file.read_text(),
+        )
+
+    def test_a_replaced_value_keeps_its_trailing_comment(self) -> None:
+        self.repo_file.write_text('[review]\nallow_approve = false   # off # for now\ngate = "make # all"  # gate\n')
+
+        self.assert_set("review.allow_approve", "true")
+        self.assert_set("review.gate", "make check")
+
+        self.assertEqual(
+            '[review]\nallow_approve = true   # off # for now\ngate = "make check"  # gate\n',
+            self.repo_file.read_text(),
+        )
+
+    def test_a_dotted_top_level_key_is_changed_where_it_is_written(self) -> None:
+        self.repo_file.write_text('watch.auto_start = true\nreview.username = "bot"\n\n[site]\nenabled = true\n')
+
+        self.assert_set("watch.auto_start", "false")
+        self.assert_set("review.summarize", "false")
+
+        self.assertEqual(
+            'watch.auto_start = false\nreview.username = "bot"\nreview.summarize = false\n\n'
+            "[site]\nenabled = true\n",
+            self.repo_file.read_text(),
+        )
+
+    def test_a_multi_line_value_is_replaced_whole(self) -> None:
+        self.repo_file.write_text('[review]\ngate = """\nmake test # all\n"""  # the gate\nsummarize = true\n')
+
+        self.assert_set("review.gate", "make check")
+
+        self.assertEqual('[review]\ngate = "make check"  # the gate\nsummarize = true\n', self.repo_file.read_text())
+
+    def test_windows_line_endings_survive(self) -> None:
+        self.repo_file.write_bytes(b"[watch]\r\nauto_start = true\r\n")
+
+        self.assert_set("watch.auto_start", "false")
+        self.assert_set("review.summarize", "false")
+
+        self.assertEqual(
+            b"[watch]\r\nauto_start = false\r\n\r\n[review]\r\nsummarize = false\r\n",
+            self.repo_file.read_bytes(),
+        )
+
+    def test_unset_removes_the_line_and_leaves_the_table(self) -> None:
+        self.repo_file.write_text("# keep\n[watch]\nauto_start = false  # mine\n\n[site]\nenabled = false\n")
+
+        code, stdout, _ = self.invoke("config", "unset", "watch.auto_start")
+
+        self.assertEqual(0, code)
+        self.assertEqual(f"unset watch.auto_start in {self.repo_file}\n", stdout)
+        self.assertEqual("# keep\n[watch]\n\n[site]\nenabled = false\n", self.repo_file.read_text())
+
+    def test_an_unset_key_or_a_missing_file_is_left_unchanged(self) -> None:
+        code, stdout, _ = self.invoke("config", "unset", "watch.auto_start")
+
+        self.assertEqual(0, code)
+        self.assertEqual(f"unchanged watch.auto_start in {self.repo_file}\n", stdout)
+        self.assertFalse(self.repo_file.exists())
+
+        self.repo_file.write_text("[watch]\nauto_start = false\n")
+        before = self.repo_file.stat().st_mtime_ns
+        code, stdout, _ = self.invoke("config", "set", "watch.auto_start", "false")
+
+        self.assertEqual(0, code)
+        self.assertEqual(f"unchanged watch.auto_start = false in {self.repo_file}\n", stdout)
+        self.assertEqual(before, self.repo_file.stat().st_mtime_ns)
+
+    def test_json_names_the_action_both_values_and_the_file(self) -> None:
+        self.repo_file.write_text("[watch]\nauto_start = true\n")
+
+        code, stdout, _ = self.invoke("config", "set", "watch.auto_start", "false", "--json")
+
+        self.assertEqual(0, code)
+        self.assertEqual(
+            {"action": "set", "key": "watch.auto_start", "old": True, "new": False,
+             "file": str(self.repo_file), "schema_version": 2},
+            json.loads(stdout),
+        )
+
+        _, stdout, _ = self.invoke("config", "unset", "watch.auto_start", "--json")
+
+        self.assertEqual({"action": "unset", "old": False, "new": None},
+                         {key: json.loads(stdout)[key] for key in ("action", "old", "new")})
+
+    def test_an_unknown_key_is_refused_with_the_known_ones(self) -> None:
+        for command in (["set", "watch.autostart", "true"], ["unset", "watch.autostart"]):
+            code, _, stderr = self.invoke("config", *command)
+
+            self.assertEqual(2, code)
+            self.assertIn("unknown key 'watch.autostart'", stderr)
+            self.assertIn("watch.auto_start", stderr)
+            self.assertFalse(self.repo_file.exists())
+
+    def test_unset_removes_a_key_outside_the_schema_that_the_file_sets(self) -> None:
+        self.repo_file.write_text('# mine\n[review]\npeer_wait = "10m"  # no longer read\nsummarize = false\n')
+
+        code, stdout, stderr = self.invoke("config", "unset", "review.peer_wait")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(f"unset review.peer_wait in {self.repo_file}\n", stdout)
+        self.assertEqual("# mine\n[review]\nsummarize = false\n", self.repo_file.read_text())
+
+    def test_unset_refuses_a_key_that_names_a_table(self) -> None:
+        text = "legacy.kept = true\n\n[review]\nsummarize = false\n\n[site]\nlimits = { retries = 3 }\n"
+        self.repo_file.write_text(text)
+
+        for key in ("review", "legacy", "site.limits"):
+            code, _, stderr = self.invoke("config", "unset", key)
+
+            self.assertEqual(65, code, key)
+            self.assertIn(f"{key} is a table, and unset removes one setting, not a table", stderr)
+            self.assertEqual(text, self.repo_file.read_text())
+
+    def test_unset_refuses_a_misspelled_key_the_file_does_not_set(self) -> None:
+        text = '[review]\npeer_wait = "10m"\n'
+        self.repo_file.write_text(text)
+
+        code, stdout, stderr = self.invoke("config", "unset", "review.peer_wiat")
+
+        self.assertEqual(2, code)
+        self.assertEqual("", stdout)
+        self.assertIn(f"unknown key 'review.peer_wiat', which {self.repo_file} does not set", stderr)
+        self.assertIn("watch.auto_start", stderr)
+        self.assertEqual(text, self.repo_file.read_text())
+
+    def test_a_value_of_the_wrong_type_is_refused(self) -> None:
+        cases = [
+            ("watch.auto_start", "yes", "must be true or false"),
+            ("watch.auto_start", "True", "must be true or false"),
+            ("review.username", "\udcff", "must be text that UTF-8 can encode"),
+        ]
+        for key, value, message in cases:
+            code, _, stderr = self.invoke("config", "set", key, value)
+
+            self.assertEqual(2, code)
+            self.assertIn(message, stderr)
+        self.assertFalse(self.repo_file.exists())
+
+    def test_a_file_that_is_not_valid_toml_is_refused_untouched(self) -> None:
+        self.repo_file.write_bytes(b"# mine\nreviewer = \n")
+
+        code, _, stderr = self.invoke("config", "set", "watch.auto_start", "false")
+
+        self.assertEqual(78, code)
+        self.assertIn("invalid TOML", stderr)
+        self.assertEqual(b"# mine\nreviewer = \n", self.repo_file.read_bytes())
+
+    def test_a_key_in_an_inline_table_is_refused_untouched(self) -> None:
+        for text in ("watch = { auto_start = true }\n", "watch = { other = 1 }\n", "[[watch]]\nauto_start = true\n"):
+            self.repo_file.write_text(text)
+
+            code, _, stderr = self.invoke("config", "set", "watch.auto_start", "false")
+
+            self.assertEqual(65, code, text)
+            self.assertIn("the file is unchanged", stderr)
+            self.assertEqual(text, self.repo_file.read_text())
+
+    def test_user_and_file_scopes_write_their_own_files(self) -> None:
+        parent = self.home / "work" / ".projector.toml"
+
+        self.assert_set("review.username", "minjudd", "--user")
+        self.assert_set("review.summarize", "false", "--file", str(parent))
+        self.assert_set("watch.auto_start", "false")
+
+        self.assertEqual('[review]\nusername = "minjudd"\n', self.user_file.read_text())
+        self.assertEqual("[review]\nsummarize = false\n", parent.read_text())
+        self.assertEqual("[watch]\nauto_start = false\n", self.repo_file.read_text())
+
+    def test_a_file_in_a_missing_directory_is_refused(self) -> None:
+        missing = Path(self.temporary.name).resolve() / "typo"
+
+        code, _, stderr = self.invoke("config", "set", "watch.auto_start", "false",
+                                      "--file", str(missing / "nested" / ".projector.toml"))
+
+        self.assertEqual(2, code)
+        self.assertIn(f"{missing / 'nested'} is not a directory", stderr)
+        self.assertFalse(missing.exists())
+
+    def test_a_value_a_nearer_file_overrides_is_reported(self) -> None:
+        self.repo_file.write_text("[watch]\nauto_start = true\n")
+
+        code, _, stderr = self.invoke("config", "set", "watch.auto_start", "false", "--user")
+
+        self.assertEqual(0, code)
+        self.assertIn(f"{self.repo_file} sets watch.auto_start = true, which applies here", stderr)
+
+        elsewhere = Path(self.temporary.name).resolve() / "elsewhere.toml"
+        _, _, stderr = self.invoke("config", "set", "review.summarize", "false", "--file", str(elsewhere))
+
+        self.assertIn(f"{elsewhere} is not read here", stderr)
+
+    def test_an_override_is_reported_when_the_file_already_held_the_value(self) -> None:
+        self.user_file.write_text("[watch]\nauto_start = false\n")
+        self.repo_file.write_text("[watch]\nauto_start = true\n")
+
+        code, stdout, stderr = self.invoke("config", "set", "watch.auto_start", "false", "--user")
+
+        self.assertEqual(0, code)
+        self.assertEqual(f"unchanged watch.auto_start = false in {self.user_file}\n", stdout)
+        self.assertIn(f"{self.repo_file} sets watch.auto_start = true, which applies here", stderr)
+
+    def test_outside_a_repository_the_default_file_is_refused(self) -> None:
+        outside = Path(self.temporary.name) / "outside"
+        outside.mkdir()
+        previous = Path.cwd()
+        os.chdir(outside)
+        self.addCleanup(os.chdir, previous)
+        stderr = StringIO()
+
+        with redirect_stdout(StringIO()), redirect_stderr(stderr):
+            code = main(["config", "set", "watch.auto_start", "false"])
+
+        self.assertEqual(69, code)
+        self.assertIn("pass --user or --file", stderr.getvalue())
+
+    def test_a_write_that_does_not_read_back_restores_the_file(self) -> None:
+        real_write = config_module.write_through
+
+        def corrupt_first_write(path: Path, text: str) -> None:
+            nonlocal corrupted
+            real_write(path, text if corrupted else text.replace("false", "true"))
+            corrupted = True
+
+        for original in ("# mine\n[watch]\nauto_start = true  # on\n", None):
+            if original is None:
+                self.repo_file.unlink()
+            else:
+                self.repo_file.write_text(original)
+            corrupted = False
+            with mock.patch.object(config_module, "write_through", corrupt_first_write):
+                code, _, stderr = self.invoke("config", "set", "watch.auto_start", "false")
+
+            self.assertEqual(65, code)
+            self.assertIn("did not read back as written, so the file was restored", stderr)
+            if original is None:
+                self.assertFalse(self.repo_file.exists())
+            else:
+                self.assertEqual(original, self.repo_file.read_text())
+
+    def test_a_symlinked_user_file_stays_a_link(self) -> None:
+        dotfiles = self.home / "dotfiles" / "projector.toml"
+        dotfiles.parent.mkdir()
+        dotfiles.write_text("[review]\nsummarize = true\n")
+        self.user_file.symlink_to(dotfiles)
+
+        self.assert_set("review.summarize", "false", "--user")
+
+        self.assertTrue(self.user_file.is_symlink())
+        self.assertEqual("[review]\nsummarize = false\n", dotfiles.read_text())
+
+    def test_the_documented_keys_are_the_known_keys(self) -> None:
+        documentation = (Path(__file__).resolve().parents[1] / "docs" / "cli.md").read_text()
+        rows = re.findall(r"^\| `([a-z_.]+)` \| (boolean|string) \|", documentation, re.MULTILINE)
+        names = {bool: "boolean", str: "string"}
+
+        self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))

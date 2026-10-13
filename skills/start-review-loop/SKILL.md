@@ -56,7 +56,8 @@ a repository with nothing open.
 2. Run `project review rules` once. It reads the user's own Claude Code
    settings and Codex rules, writes nothing, and exits 1 when either lacks the
    rules that allow Projector's commands, `project review publish`,
-   `project review hold`, and `project summary publish` among them.
+   `project review hold`, `project review finish`, `project review settle`,
+   and `project summary publish` among them.
    On exit 1, tell the user once, before the first review, that the host's
    automatic approval, such as Claude Code's auto mode or Codex's approval
    reviewer, can refuse the loop's publishes, a summary on another author's
@@ -99,11 +100,11 @@ a repository with nothing open.
    and with every character but a letter, a digit, `.`, `_`, and `-` made
    `-`. The loop passes `--loop <id>` and `--model <model-id>` to each
    `project review` command it runs on a pull request: `setup`, `move`,
-   `census`, `interdiff`, `gate`, `publish`, and `release`. The record of
-   which reviews this loop published lives under that id in the review state
-   directory, where `project review publish` keeps it. Give each model's loop
-   an id of its own, because two loops that write one record can lose an
-   entry.
+   `census`, `settle`, `interdiff`, `gate`, `publish`, `release`, and
+   `finish`. The record of which reviews this loop published lives under
+   that id in the review state directory, where `project review publish`
+   keeps it. Give each model's loop an id of its own, because two loops that
+   write one record can lose an entry.
 7. Seed the state file with only the SHAs already reviewed, then run one
    pass:
 
@@ -184,7 +185,8 @@ reads the new head against that history instead of rediscovering it.
 - Each subagent summarizes every pull request it reviews, as `review-pr`
   describes, another author's included. The loop never pauses or holds
   summaries on its own judgment. The one off switch is `review.summarize =
-  false` in `.projector.toml`, which the user sets. A brief that
+  false`, which the user sets, or asks you to set with
+  `project config set review.summarize false`. A brief that
   forbids editing the pull request body names the summary's link block as
   an exception, because `project summary publish` writes that block at the
   end of every description on purpose. Where the repository's own
@@ -192,9 +194,14 @@ reads the new head against that history instead of rediscovering it.
   `--no-describe`, so the comment alone links the summary, as `review-pr`
   describes.
 - Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
-  to finish: delete any start comment it still holds and remove its scratch
-  worktrees. Then close the subagent and remove the pull request's line from
-  the tracked file with `project loop remove owner/repo#number --tracked <file>`.
+  to run `project review finish <number> --repo <owner>/<repo> --force`
+  with the loop's `--loop` and `--model`. A closed pull request takes no
+  review, so `--force` discards one still in progress, and `--repo` keeps
+  the command off another repository's review of the same number. `finish`
+  deletes the subagent's start comments, clears its locks and state, and
+  removes its scratch worktrees. Then close the subagent and remove the pull
+  request's line from the tracked file with
+  `project loop remove owner/repo#number --tracked <file>`.
 - When a subagent is lost, to a session restart for example, start a
   replacement under the same name. It rebuilds its context from GitHub: the
   pull request's Projector reviews, their finding threads, and the replies on

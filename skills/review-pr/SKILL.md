@@ -239,11 +239,11 @@ copied from this file. It names the start comment and keys the review's
 state, so each model reviewing the pull request keeps its own state, lock,
 and scratch worktree, as
 [Review as one model among several](#review-as-one-model-among-several)
-describes. Each later command, `move`, `census`, `interdiff`, `gate`,
-`publish`, and `release`, takes `--model` too. Every one but `census` finds
-the review by the pull request and the model, and refuses, naming the models,
-when more than one model has a review of the pull request set up on this
-machine and `--model` does not pick one.
+describes. Each later command, `move`, `census`, `settle`, `interdiff`,
+`gate`, `publish`, `release`, and `finish`, takes `--model` too. Every one
+but `census` finds the review by the pull request and the model, and
+refuses, naming the models, when more than one model has a review of the
+pull request set up on this machine and `--model` does not pick one.
 
 The review holds a lock for the pull request, head, and model from `setup`
 until it is published, so a second instance of the same model for the same
@@ -252,8 +252,12 @@ a day is stale and cleared; `project review release <number>` clears one left
 by a session that stopped, and only when no review of that pull request by
 that model is running. `setup` also refuses while a live start comment shows
 the same model reviewing the pull request in another session, on this
-machine or another, and names the comment; delete it only once you know that
-session has stopped.
+machine or another, and names the comment. Once you know that session has
+stopped, run `setup` again with `--replace <comment-id>`. It checks that the
+comment is this model's start comment on this pull request, and deletes it
+once this review's start comment is posted. Never delete a start comment
+through `gh api`, which a host's automatic approval can refuse as a write to
+an external system.
 
 Under `start-review-loop`, run `project review interdiff <number>` next. A head
 that changed little since the loop's last full review can get an incremental
@@ -356,7 +360,8 @@ session resuming mid-review looks for one on GitHub rather than in memory and
 edits it instead of posting a second one. The exception is a leftover from a
 session that stopped between publishing and deleting: a comment whose
 `created_at` is earlier than the `submitted_at` of a Projector review by the
-same model on its `sha=`. Delete that one. Compare the timestamps rather than
+same model on its `sha=`. It means no review in progress, so leave it to
+`project review finish`, which deletes it. Compare the timestamps rather than
 testing for the review's presence, because a re-review of an unmoved head,
 such as the one `start-review-loop` runs on `RESPONDED`, has a live start
 comment that shares its `sha=` with the verdict that preceded it. Compare the
@@ -652,24 +657,37 @@ keeps `originalLine`. Outdated says the code changed, not that the finding was
 addressed, so verify it like any other.
 
 Read each thread's replies with the finding, verify by `method.md` § 5 against
-this head, and settle it in one of these ways. Every reply you post opens with
-`<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> -->`,
-naming the model running this review, so neither loop reads it back as a new
-finding or as the author answering:
+this head, and settle it in one of the ways below. Write the reply's text to a
+file, and settle the thread with one command, passing the thread's `id` from
+the census:
 
-- **Fixed:** the head addresses the finding. Resolve an open thread with
-  `resolveReviewThread`, replying `result=fixed` with what at this head
-  settles it. A thread already resolved and fixed needs nothing more.
+```sh
+project review settle <number> --thread <thread-id> --result <result> --body <file>
+```
+
+The command opens the reply with
+`<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> -->`,
+filled from the review's state with the head under review and the model
+running it, so neither loop reads the reply back as a new finding or as the
+author answering. It posts the reply as the reviewer, resolves or unresolves
+the thread as the result asks, and reads both back. It refuses a thread that
+is not a Projector finding thread on this pull request. Never write the
+marker yourself or resolve a thread through `gh api`: a reply whose marker
+is mistyped reads to the review loop as the author answering.
+
+- **Fixed:** the head addresses the finding. Run `--result fixed` on an open
+  thread, saying what at this head settles it; the command resolves the
+  thread. A thread already resolved and fixed needs nothing more.
 - **Accepted:** the author declined in a reply and the reasoning holds, or the
-  finding was wrong. Resolve it, replying `result=accepted` or
-  `result=withdrawn` with the guard or behavior that settles it.
-- **Kept:** the author declined and the reasoning does not hold. Leave the
-  thread open and reply `result=kept` once, saying what still fails and why.
-  Do not repeat the reply on a later head unless something changed; an open
-  disagreement is the user's merge decision.
+  finding was wrong. Run `--result accepted` or `--result withdrawn` with the
+  guard or behavior that settles it; the command resolves the thread.
+- **Kept:** the author declined and the reasoning does not hold. Run
+  `--result kept` once, saying what still fails and why; the thread stays
+  open. Do not repeat the reply on a later head unless something changed; an
+  open disagreement is the user's merge decision.
 - **Reopened:** the thread is resolved but the finding is not addressed at
-  this head. Unresolve it with `unresolveReviewThread`, and reply
-  `result=reopened` with what still fails.
+  this head. Run `--result reopened` with what still fails; the command
+  unresolves the thread.
 - **Still open:** open, not fixed, and not answered. Leave it; the finding
   already says what to do.
 
@@ -836,10 +854,14 @@ publishes one. Before a `clean` verdict, settle every earlier finding first;
 reviewer's thread, resolve a finding you have not verified at this head,
 claim a newer SHA was reviewed, or merge.
 
-Once the summary below has run or been skipped, remove the scratch worktree,
-which a summary reads for context. A `start-review-loop` subagent may instead
-keep it for the pull request's next head and remove it when the pull request
-closes.
+Once the summary below has run or been skipped, run
+`project review finish <number>`, which removes the scratch worktree a
+summary reads for context. It also deletes every start comment of this
+model's that no longer means a review in progress, clears the locks, and
+deletes the review's state, keeping the loop's record. It refuses while the
+review is unpublished. A `start-review-loop` subagent may instead keep the
+worktree for the pull request's next head and run `finish` when the pull
+request closes.
 
 ## Summarize the pull request
 
@@ -861,8 +883,8 @@ While both hold, the summary is not optional. Summarize every pull request
 you review, whoever opened it. A summary matters most on another author's
 pull request, because that is how its reviewers read the change. Neither
 the author, a brief, nor your own judgment is a reason to skip or hold one.
-The one off switch is `review.summarize = false` in `.projector.toml`,
-and the user sets it.
+The one off switch is `review.summarize = false`, and the user sets it, or
+asks you to set it with `project config set review.summarize false`.
 
 Then follow `summarize-pr` for this head, with two differences from a
 summary a person asks for:

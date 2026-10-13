@@ -7,9 +7,12 @@ one pushes an agent back toward editing the files by hand or calling `gh api`
 itself. Claude Code's auto mode refuses a session's clean review of a pull
 request its own GitHub account opened, as self-approval, although the review
 is a COMMENT that moves no reviewDecision and a person still merges. It also
-refuses the deletion of the comment that holds a pull request in draft, as a
-write to an external system, which leaves a clean pull request stuck in draft.
-Codex's approval reviewer refuses `project summary publish`, which sends a
+refuses the deletion of a comment, as a write to an external system: the
+comment that holds a pull request in draft, which leaves a clean pull request
+stuck in draft, and a finished review's start comment, which leaves the pull
+request saying a review is in progress. The reply and resolution that settle
+a finding thread are writes of the same kind. Codex's approval reviewer
+refuses `project summary publish`, which sends a
 pull request's diff to the repository's own site, as sending repository
 content to another host.
 
@@ -220,8 +223,9 @@ def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ,
         return FileAction(name, "unchanged")
     if not apply:
         consequence = ("Claude Code can ask before, or its auto mode refuse, a Projector command an agent runs, such "
-                       "as a review loop's clean review of your own pull request, the end of a hold on it, or the "
-                       "publish of a summary, unless the repository's own settings allow it"
+                       "as a review loop's clean review of your own pull request, the end of a hold on it, the "
+                       "settling of a finding, the cleanup after a review, or the publish of a summary, unless the "
+                       "repository's own settings allow it"
                        if missing_allow else f"an agent can run {ASKED} without asking you")
         return FileAction(name, "kept", f"{name} lacks {', '.join(missing_allow + missing_ask)}, without which "
                                         f"{consequence}"
