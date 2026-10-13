@@ -1239,19 +1239,22 @@ class ModelTests(PublishCase):
         sentence = re.search(r"passes `--loop <id>` and `--model <model-id>` to each\s+`project review` command it "
                              r"runs on a pull request: (.*?)\. ", skill, re.S)
         commands = re.findall(r"`(\w+)`", sentence.group(1))
-        self.assertEqual(["setup", "move", "census", "interdiff", "gate", "publish", "release", "finish"], commands)
+        self.assertEqual(["setup", "move", "census", "settle", "interdiff", "gate", "publish", "release", "finish"],
+                         commands)
         flags = ("--loop", "l1", "--model", "claude-opus-5-5")
         # Each command, as the loop runs it on one pull request: a refusal is fine, an unknown flag is not.
         self.assertEqual(0, self.project("setup", "1", "--state-dir", str(self.state), *flags)[0])
         self.github.pr["head"]["sha"] = self.push_head("second head")
+        extras = {"publish": ("--verdict", "clean", "--body", str(self.body()), "--covered", "3/3"),
+                  "settle": ("--thread", "PRRT_none", "--result", "fixed", "--body", str(self.body()))}
         ran = {"setup": 0}
         for command in commands[1:]:
-            extra = ("--verdict", "clean", "--body", str(self.body()), "--covered", "3/3") if command == "publish" else ()
-            ran[command] = self.later(command, *flags, *extra)[0]
+            ran[command] = self.later(command, *flags, *extras.get(command, ()))[0]
 
-        self.assertEqual({"setup": 0, "move": 0, "census": 0, "interdiff": 1, "gate": 1, "publish": 0, "release": 0,
-                          "finish": 0},
-                         ran, "interdiff refuses with no full review to build on, and gate with review.gate unset")
+        self.assertEqual({"setup": 0, "move": 0, "census": 0, "settle": 1, "interdiff": 1, "gate": 1, "publish": 0,
+                          "release": 0, "finish": 0},
+                         ran, "settle refuses a thread that is not on the pull request, interdiff with no full review "
+                              "to build on, and gate with review.gate unset")
 
     def test_move_keeps_the_model_in_the_start_comment(self) -> None:
         self.assertEqual(0, self.setup_review()[0])

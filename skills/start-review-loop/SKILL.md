@@ -56,7 +56,8 @@ a repository with nothing open.
 2. Run `project review rules` once. It reads the user's own Claude Code
    settings and Codex rules, writes nothing, and exits 1 when either lacks the
    rules that allow `project review publish`, `project review hold`,
-   `project review finish`, and `project summary publish`.
+   `project review finish`, `project review settle`, and
+   `project summary publish`.
    On exit 1, tell the user once, before the first review, that the host's
    automatic approval, such as Claude Code's auto mode or Codex's approval
    reviewer, can refuse the loop's publishes, a summary on another author's
@@ -99,11 +100,11 @@ a repository with nothing open.
    and with every character but a letter, a digit, `.`, `_`, and `-` made
    `-`. The loop passes `--loop <id>` and `--model <model-id>` to each
    `project review` command it runs on a pull request: `setup`, `move`,
-   `census`, `interdiff`, `gate`, `publish`, `release`, and `finish`. The
-   record of which reviews this loop published lives under that id in the
-   review state directory, where `project review publish` keeps it. Give each
-   model's loop an id of its own, because two loops that write one record can
-   lose an entry.
+   `census`, `settle`, `interdiff`, `gate`, `publish`, `release`, and
+   `finish`. The record of which reviews this loop published lives under
+   that id in the review state directory, where `project review publish`
+   keeps it. Give each model's loop an id of its own, because two loops that
+   write one record can lose an entry.
 7. Seed the state file with only the SHAs already reviewed, then run one
    pass:
 
