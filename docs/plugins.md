@@ -580,18 +580,28 @@ change, whether there is anything to release:
 unmerged bump cannot name a release. It does only the steps the remote still
 lacks: it pushes an immutable `v0.6.0` tag, force-moves `v0` to the same
 commit, and creates the GitHub release for `v0.6.0` with generated notes. It
-prints what it did and what it found already done. Both commands need an
-authenticated `gh`, because both look for the GitHub release. Pass
-`--no-release` to `tag` to push only the tags.
+prints what it did and what it found already done. `released` needs an
+authenticated `gh`, because it looks for the GitHub release, and so does `tag`
+unless you pass `--no-release`, which pushes only the tags and never calls
+`gh`.
 
 When a release stops partway, for example because GitHub rejects the push of
-`v0`, re-run the failed Release workflow job, or run `tag` again from a
-checkout. It finds the steps that already happened and does the rest. Once
-`v0.6.0` exists, its commit is the release's commit, so `tag` moves `v0` there
-even after `main` has moved past it. Both commands exit 1 rather than move a
-tag when `v0.6.0` cannot belong to this release: when `main` does not contain
-the tagged commit, or when `main` named a different version at any point
-between that commit and its head. Set a new version instead.
+`v0`, re-run the failed Release workflow job. The job's `tag` finds the steps
+that already happened and does the rest, and then the job asks the site
+workflow to rebuild with the released action. You can instead run `tag` again
+from a checkout. That finishes the tags and the GitHub release, but only the
+job asks for the rebuild, so the site stays as the previous action built it
+until you send the request yourself:
+
+```sh
+gh api repos/ninjudd/projector/dispatches -f event_type=projector-summaries
+```
+
+Once `v0.6.0` exists, its commit is the release's commit, so `tag` moves `v0`
+there even after `main` has moved past it. Both commands exit 1 rather than
+move a tag when `v0.6.0` cannot belong to this release: when `main` does not
+contain the tagged commit, or when `main` named a different version at any
+point between that commit and its head. Set a new version instead.
 
 The immutable tag names an exact release; the major tag
 is the channel that follows compatible releases, the convention GitHub's own
