@@ -80,7 +80,7 @@ back empty, indistinguishable from a repository with nothing open.
    Another model's verdict is that model's review, and a verdict by the
    same model from a teammate's account is a review by the teammate, not
    by this loop. Review any current head without a completed exact-head
-   review by this model immediately; do not baseline it away.
+   review by this model immediately.
 6. Write the tracked set to a durable tracked file, one `owner/repo#number`
    per line, kept beside the state file and outside any checkout. That file
    is the watcher's whole scope and the record of the set. The watcher
