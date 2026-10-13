@@ -378,6 +378,12 @@ sections above leave open or state loosely:
 - **`--for 0` ends a snooze now rather than removing it.** It sets
   `snoozedUntil` to the current time, so the band's next tick sees the item
   wake and brings back a band you hid, as it does when a snooze runs out.
+- **A notice's drawer drops the divider too.** #281 made an open
+  question's drawer the band's top row, with no divider above it, so the
+  drawer gets one more row before the engine scrolls the band. Every item's
+  drawer, a notice's included, has the band to itself the same way. The
+  divider and its counts return when the drawer closes or the item leaves
+  the list, as a snooze makes it do.
 
 The main-screen row of § 4 waits for a check by hand under tmux, so the
 project stays `in-progress`.
