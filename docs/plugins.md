@@ -197,8 +197,8 @@ session starts a loop's watcher for the first time.
 #267 draft List a loop's open pull requests above the Claude Code prompt      2h
 #258 draft grace Name the reviewed head in a review's signature conflict · ⋮5 5m
      reviewing · review-signature · +84 −12 in 5 files · checks passing
-     d: discuss this
-     x: dismiss pull request
+     d: discuss PR
+     x: dismiss PR
      open in github
      open in projector
 ```
@@ -237,11 +237,11 @@ its own. Below that come two actions, a line each, on the letters `d` and
 `x`, as [Use the band from the keyboard](#use-the-band-from-the-keyboard)
 describes, and then two links:
 
-- **discuss this** puts the pull request's number in the prompt at the
+- **discuss PR** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` when the band lists more than
   one repository.
-- **dismiss pull request** keeps the pull request out of every loop of this
-  session that tracks it, and the band drops its line and says which loops
+- **dismiss PR** keeps the pull request out of every loop of this session
+  that tracks it, and the band drops its line and says which loops
   stopped, such as `stopped watching and reviewing acme/app#258`.
 - **open in github** opens the pull request on GitHub.
 - **open in projector** opens its Projector summary, when the pull
@@ -332,7 +332,7 @@ band scrolls:
   (recommended)
   2: Add a budget of two retries per host, and keep the total cap
 
-  d: discuss this
+  d: discuss question
   x: dismiss question
   s: snooze question
 ```
@@ -393,8 +393,8 @@ Claude Code's own `: ` after the key always takes, so under the pointer or
 the focus ring the line inverts as the key and one block after it. A
 question's drawer has three actions:
 
-- **discuss this** puts the quoted question in the prompt, followed by a
-  blank line, and leaves the drawer open, so the options and detail stay in
+- **discuss question** puts the quoted question in the prompt, followed
+  by a blank line, and leaves the drawer open, so the options and detail stay in
   view while you type. Type your reply under the quote, or on the quote's
   own line, and send the prompt. The reply reaches the agent and answers
   nothing.
@@ -404,8 +404,8 @@ question's drawer has three actions:
   paragraph but one describes.
 
 A notice's drawer shows its detail, then the same three actions:
-**discuss this**, **dismiss notice**, and **snooze notice**. **discuss
-this** puts the quoted notice in the prompt. A prompt you send that quotes
+**discuss notice**, **dismiss notice**, and **snooze notice**. **discuss
+notice** puts the quoted notice in the prompt. A prompt you send that quotes
 a notice answers nothing, but it closes the notice's drawer; the notice
 stays in the band until you dismiss it. **dismiss notice** clears the
 notice once you have read it and closes its drawer, and nothing goes back
@@ -502,13 +502,13 @@ have no digits.
 
 A drawer's actions follow its options, a line each, with the letter that
 presses it before the label in the accent color, such as
-`d: discuss this`:
+`d: discuss question`. Each label ends with what the action acts on:
+`question`, `notice`, or `PR`.
 
-- **d** presses **discuss this**.
-- **x** presses **dismiss**, or **restore** in its place, followed by what
-  it acts on: `question`, `notice`, or `pull request`.
-- **s** presses **snooze**, or **unsnooze** in its place, followed by
-  `question` or `notice`.
+- **d** presses **discuss**.
+- **x** presses **dismiss**, or **restore** in its place.
+- **s** presses **snooze**, or **unsnooze** in its place, which a pull
+  request's drawer does not offer.
 
 A letter presses its action only while the band has the keyboard. Typed in
 the prompt, it is text.

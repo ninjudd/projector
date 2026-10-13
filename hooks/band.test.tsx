@@ -1703,7 +1703,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
     expect((await ui.find({ type: 'Button', key: `${name}:2` }))?.props.plain).toBe(true)
   }
   expect(await actionLinesOf(ui)).toEqual([
-    'discuss:2 d discuss this',
+    'discuss:2 d discuss notice',
     'dismiss:2 x dismiss notice',
     'snooze:2 s snooze notice',
   ])
@@ -2505,7 +2505,7 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
     'snooze:1',
   ])
   expect(await actionLinesOf(ui)).toEqual([
-    'discuss:1 d discuss this',
+    'discuss:1 d discuss question',
     'dismiss:1 x dismiss question',
     'snooze:1 s snooze question',
   ])
@@ -2532,7 +2532,7 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
   await clock.settle()
   await ui.press({ key: 'item:1' })
   expect(await actionLinesOf(ui)).toEqual([
-    'discuss:1 d discuss this',
+    'discuss:1 d discuss question',
     'dismiss:1 x dismiss question',
     'unsnooze:1 s unsnooze question',
   ])
@@ -2541,7 +2541,7 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
   await ui.press({ key: 'dismiss:1' })
   await clock.settle()
   await ui.press({ key: 'item:1' })
-  expect(await actionLinesOf(ui)).toEqual(['discuss:1 d discuss this', 'restore:1 x restore question'])
+  expect(await actionLinesOf(ui)).toEqual(['discuss:1 d discuss question', 'restore:1 x restore question'])
   // A resolved question still lists its options, with the blank line under them.
   expect((await drawerRowsOf(ui)).slice(2)).toEqual([
     'text: ',
@@ -2556,7 +2556,7 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
   // A notice's actions name a notice.
   await ui.press({ key: 'item:2' })
   expect(await actionLinesOf(ui)).toEqual([
-    'discuss:2 d discuss this',
+    'discuss:2 d discuss notice',
     'dismiss:2 x dismiss notice',
     'snooze:2 s snooze notice',
   ])
@@ -2565,7 +2565,7 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
 
   // A pull request's drawer has its links above its actions, the links with no letters.
   await ui.press({ key: 'pr:x/y#7' })
-  expect(await actionLinesOf(ui)).toEqual(['discuss:x/y#7 d discuss this', 'dismiss:x/y#7 x dismiss pull request'])
+  expect(await actionLinesOf(ui)).toEqual(['discuss:x/y#7 d discuss PR', 'dismiss:x/y#7 x dismiss PR'])
   await ui.unmount()
 })
 
@@ -2615,7 +2615,7 @@ test('a keyed line’s label takes the color of the `: ` before it, so it invert
     key: 'd',
     plain: true,
     line: [undefined, undefined, undefined],
-    label: ['discuss this', []],
+    label: ['discuss PR', []],
   })
   await ui.unmount()
 })
@@ -2701,7 +2701,7 @@ test('snooze asks how long, and only a length it offers snoozes the item', async
     (await ui.findAll({ type: 'Button' }))
       .filter(button => /^(?!close:|item:).*:2$/.test(button.key ?? ''))
       .map(button => `${button.key ?? ''} ${button.text}`)
-  const actions = ['discuss:2 discuss this', 'dismiss:2 dismiss notice', 'snooze:2 snooze notice']
+  const actions = ['discuss:2 discuss notice', 'dismiss:2 dismiss notice', 'snooze:2 snooze notice']
   const snoozes = () => session.project().filter(command => command.startsWith('inbox snooze'))
 
   // Snooze puts the lengths and cancel where the actions were, with no digits, and snoozes nothing yet.

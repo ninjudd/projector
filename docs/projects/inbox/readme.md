@@ -1449,14 +1449,16 @@ does: digits for the options and letters for the actions.
   second place takes `x`, whether it holds **dismiss** or **restore**, and
   the third takes `s`, whether it holds **snooze** or **unsnooze**.
 - **Each label names what it acts on.** A question's drawer reads
-  `d: discuss this`, `x: dismiss question`, and `s: snooze question`, and a
-  notice's reads `notice` in place of `question`. A dismissed item's `x`
+  `d: discuss question`, `x: dismiss question`, and `s: snooze question`,
+  and a notice's reads `notice` in place of `question`. A dismissed item's `x`
   line reads `x: restore question` or `x: restore notice`, and it has no
   `s` line, since the CLI refuses to snooze a resolved item. A snoozed
   item's `s` line reads `s: unsnooze question` or `s: unsnooze notice`. A
-  pull request's drawer reads `d: discuss this` and
-  `x: dismiss pull request` under its facts line, with its links, which
-  take no keys, below the actions.
+  pull request's drawer reads `d: discuss PR` and `x: dismiss PR` under
+  its facts line, with its links, which take no keys, below the actions.
+  The owner first had `d: discuss this` on every drawer, then asked for
+  `d` to name what it discusses, as `x` and `s` do, and for `PR` in place
+  of `pull request` to keep the pull request's lines short.
 - **The letters always show.** A letter presses its action only while the
   band holds the keyboard; typed in the prompt, it is text.
 - **Enter takes the ring into the drawer.** A `ui.focus` hook records the
@@ -1540,7 +1542,7 @@ does: digits for the options and letters for the actions.
 | --- | --- |
 | An open question's options are plain Buttons on `1` to `6` with no number of the band's; the digits are set only while its drawer is open; pressing the sixth fills the prompt and sending it answers; a resolved question's options have no digits | `an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open`, `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer` in `hooks/band.test.tsx` |
 | A pick through a Button speaks to its question as a pick through the link did | The tests § 13.4 lists, which now press the Buttons |
-| A drawer's actions follow its options a line each, after a blank line and with no `|`, the blank line kept above snooze's lengths and under a resolved question's options; they take `d`, `x`, and `s` by place, labelled by kind, **restore** and **unsnooze** included, with no `s` line on a dismissed item; a pull request's drawer reads `discuss this` and `dismiss pull request` between its facts line and its links; no line of the band takes a letter | `a drawer’s actions follow its options a line each, on d, x and s, named for what they act on`, `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
+| A drawer's actions follow its options a line each, after a blank line and with no `|`, the blank line kept above snooze's lengths and under a resolved question's options; they take `d`, `x`, and `s` by place, labelled by kind, **restore** and **unsnooze** included, with no `s` line on a dismissed item; a pull request's drawer reads `discuss PR` and `dismiss PR` between its facts line and its links; no line of the band takes a letter | `a drawer’s actions follow its options a line each, on d, x and s, named for what they act on`, `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
 | A keyed line's label is a plain string with no color, `hover`, or `dimColor`, so it takes the `: `'s color | `` a keyed line’s label takes the color of the `: ` before it, so it inverts as one block `` |
 | Enter on a line moves the ring into the drawer it opens and back onto an item's line; a click moves nothing; a pull request's drawer closes in place | `Enter on a line moves the ring into the drawer it opens and back onto the line, and a click moves nothing` |
 | The ring on a live terminal, ctrl+x tab, the digits from an empty prompt, and the drawer's lines | Checked by hand by the owner in a preview session |

@@ -1043,8 +1043,8 @@ export const register: Register = on => {
     // as one block after the key.
     //
     // A drawer's actions follow its options, a line each: a plain Button on
-    // its letter, as `d: discuss this`. A letter presses its action while the
-    // band holds the keyboard: `d` discusses, `x` sets the line aside or
+    // its letter, as `d: discuss question`. A letter presses its action while
+    // the band holds the keyboard: `d` discusses, `x` sets the line aside or
     // brings it back, and `s` puts it off or ends the snooze.
     type Action = { name: string; label: string; hotkey: 'd' | 'x' | 's'; onPress: () => void }
     const drawActions = (id: string, actions: readonly Action[]) =>
@@ -1127,7 +1127,7 @@ export const register: Register = on => {
       const actions: Action[] = [
         {
           name: 'discuss',
-          label: 'discuss this',
+          label: `discuss ${item.kind}`,
           hotkey: 'd',
           onPress: () => {
             if (item.kind === 'question') propose(item, '')
@@ -1292,8 +1292,8 @@ export const register: Register = on => {
                   hyperlinks draws a link's URL after its text, and a shared
                   line would cut the URL off. */}
               {drawActions(key, [
-                { name: 'discuss', label: 'discuss this', hotkey: 'd', onPress: () => fill(`${reference(pr)} `) },
-                { name: 'dismiss', label: 'dismiss pull request', hotkey: 'x', onPress: () => void dismissPr($, pr) },
+                { name: 'discuss', label: 'discuss PR', hotkey: 'd', onPress: () => fill(`${reference(pr)} `) },
+                { name: 'dismiss', label: 'dismiss PR', hotkey: 'x', onPress: () => void dismissPr($, pr) },
               ])}
               <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
               {pr.summaryUrl !== null && (
