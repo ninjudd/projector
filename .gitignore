@@ -5,6 +5,7 @@ auth.json
 *.bak.*
 .venv/
 *.egg-info/
+/build/
 __pycache__/
 .DS_Store
 node_modules/
