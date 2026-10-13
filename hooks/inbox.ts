@@ -27,7 +27,7 @@ const isSnoozedAt = (item: Item, time: number) => item.snoozedUntil !== undefine
 
 /**
  * Whether the band shows an item: not snoozed, and open, being delivered, or
- * delivered under a minute ago.
+ * delivered within the last 30 seconds.
  */
 export const isShownAt = (item: Item, time: number) =>
   !isSnoozedAt(item, time) && (item.deliveredAt === undefined || time - item.deliveredAt < RESOLVED_MS)
@@ -60,13 +60,14 @@ export type Proposal = { ref: string; answer: string }
 
 /**
  * The answers a sent prompt gives, as the band wrote them. Each quoted
- * question that ends its line answers one open question with that text: the
- * choice whose text is the next line that is not blank, or else that line as
- * a typed answer. When open questions share the text, the quote goes to the
- * one whose drawer last put that same answer in the prompt, `proposed`
- * holding them oldest first, and otherwise to the oldest, so two questions
- * never take one answer. A quoted question with more on its line, as discuss
- * leaves it, answers nothing. Only questions take answers, snoozed ones
+ * question that ends its line, as an option and discuss both leave it,
+ * answers one open question with that text: the choice whose text is the
+ * next line that is not blank, or else that line as a typed answer. Spaces
+ * or tabs after the quote still end its line; any other text after it on
+ * that line answers nothing. When open questions share the text, the quote
+ * goes to the one whose drawer last put that same answer in the prompt,
+ * `proposed` holding them oldest first, and otherwise to the oldest, so two
+ * questions never take one answer. Only questions take answers, snoozed ones
  * included, so a quoted notice answers nothing either.
  */
 export function answersIn(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Given[] {
