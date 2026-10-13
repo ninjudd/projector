@@ -1098,16 +1098,16 @@ def item_state(item: dict) -> str:
     return f"answered {inbox.answer_ref(item)}"
 
 
-def print_item(question: dict) -> None:
-    print(f"{question['ref']} {question['subject']}")
-    if question.get("pr"):
-        print(f"about {question['pr']}")
-    if question.get("detail"):
-        print(f"\n{question['detail']}\n")
-    for index, choice in enumerate(question["choices"]):
+def print_item(item: dict) -> None:
+    print(f"{item['ref']} {item['subject']}")
+    if item.get("pr"):
+        print(f"about {item['pr']}")
+    if item.get("detail"):
+        print(f"\n{item['detail']}\n")
+    for index, choice in enumerate(item["choices"]):
         print(f"{chr(ord('a') + index)}. {choice}{' (recommended)' if index == 0 else ''}")
-    print(f"{inbox.typed_letter(question)}. type an answer with --text")
-    print(item_state(question))
+    print(f"{inbox.typed_letter(item)}. type an answer with --text")
+    print(item_state(item))
 
 
 def run_inbox(arguments: argparse.Namespace) -> int:
