@@ -999,16 +999,15 @@ export const register: Register = on => {
     }
 
     // An open item's drawer has the band to itself, until it is closed or the
-    // item leaves the band. The divider steps aside too, so the item is the
-    // top row and the drawer has one more row before the engine, which caps
-    // the band below half the terminal, starts to scroll.
+    // item leaves the band. The divider and the blank line under it step
+    // aside too, so the item is the top row and the drawer has two more rows
+    // before the engine, which caps the band below half the terminal, starts
+    // to scroll.
     const focused = shownItems.find(item => opened === `item:${item.ref}`)
     if (focused !== undefined) {
       return <Box flexDirection="column">{drawItem(focused)}</Box>
     }
 
-    // Otherwise the divider and a blank line come first, then the pull requests,
-    // another blank line, and the items.
     return (
       <Box flexDirection="column">
         {divider}
