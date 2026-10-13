@@ -13,7 +13,7 @@ instructions and supporting scripts without a generated copy or host-specific
 fork.
 
 The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
-`start-review-loop`, `start-fix-loop`, `summarize-pr`, and `write`.
+`start-review-loop`, `start-watch-loop`, `summarize-pr`, and `write`.
 `summarize-pr` summarizes a pull request's changes as a guided review page.
 Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
 `$<skill>`.
@@ -26,7 +26,7 @@ install docs`.
 `start-review-loop` runs it on every new head of your pull requests and of
 those that request your review. `fix-pr` answers one pull request's
 findings, verifying each by the same protocol, and merges the base into a
-branch that conflicts with it; `start-fix-loop` runs it, one subagent per
+branch that conflicts with it; `start-watch-loop` runs it, one subagent per
 pull request, whenever its watcher reports work on one this conversation
 owns. `implement` starts that loop on every pull request it opens, or adds
 the pull request to the loop the conversation already runs,
@@ -36,7 +36,7 @@ running as a subagent hands its pull request up, through every subagent
 above it, to that conversation, which starts or joins the loop on it, and a
 subagent asked to start the loop hands that request up the same way. Where
 the host cannot keep the loop running, `implement` says so when it hands the
-pull request over. Set `fix.auto_start = false` in `.projector.toml` to
+pull request over. Set `watch.auto_start = false` in `.projector.toml` to
 start the loop yourself instead. `fix-pr` also implements or defers each
 suggestion a review lists. While it builds a change that no review has read,
 such as a
@@ -65,11 +65,11 @@ When dependent work needs more than one pull request to stay reviewable,
 GitHub CLI extension, and `fix-pr` carries a fix on a lower layer up through
 the layers above it right away. Every layer stays on the current head of the
 layer below it, so you can merge the whole stack, or any number of layers
-from the bottom up, in one step from GitHub, and `start-fix-loop` reports
+from the bottom up, in one step from GitHub, and `start-watch-loop` reports
 which of them are ready to merge together. The extension is optional.
 Without it, or in a repository that does not have stacks enabled,
 `implement` chains the pull requests by base branch and tells you once, and
-`fix-pr` and `start-fix-loop` find a stack's layers from those base
+`fix-pr` and `start-watch-loop` find a stack's layers from those base
 branches. Install it with `gh extension install github/gh-stack` to get
 real stacks.
 
@@ -191,7 +191,7 @@ session starts a loop's watcher for the first time.
 
 Each line is the pull request's number, `draft` or `ready`, the title, and,
 when the pull request has them, a merge conflict, a change request, or
-unresolved review threads. A pull request that both a `start-fix-loop`
+unresolved review threads. A pull request that both a `start-watch-loop`
 watcher, `watch-threads.sh`, and a `start-review-loop` watcher,
 `watch-prs.sh`, track is listed once. Only the title shortens on a narrow
 terminal. The divider says how long ago the band reloaded, and Claude Code's

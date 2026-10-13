@@ -1,4 +1,4 @@
-<!-- projector:begin 5 -->
+<!-- projector:begin 6 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -40,7 +40,7 @@ the plugin, the rest of this section still applies.
 Build each change you will open a pull request for with the `implement`
 skill, `/projector:implement` in Claude Code or `$implement` in Codex,
 whether it follows a plan under `{projects_dir}` or only a description,
-however small. Its hand-over opens the pull request and starts a fix loop on
+however small. Its hand-over opens the pull request and starts a watch loop on
 it, so review findings are fixed as they arrive rather than waiting for
 someone to notice that nothing is fixing them.
 

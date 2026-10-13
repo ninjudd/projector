@@ -15,7 +15,7 @@ PUBLISHED_SKILLS = {
     "review-pr",
     "fix-pr",
     "start-review-loop",
-    "start-fix-loop",
+    "start-watch-loop",
     "summarize-pr",
     "write",
 }
@@ -142,7 +142,7 @@ class PackagingTests(unittest.TestCase):
         for citing in (
             ROOT / "src" / "projector" / "templates" / "agents-block.md",
             ROOT / "skills" / "fix-pr" / "SKILL.md",
-            ROOT / "skills" / "start-fix-loop" / "SKILL.md",
+            ROOT / "skills" / "start-watch-loop" / "SKILL.md",
         ):
             prose = " ".join(citing.read_text().split())
             self.assertIn('under "Stack dependent work"', prose, str(citing.relative_to(ROOT)))

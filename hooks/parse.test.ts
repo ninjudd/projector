@@ -15,9 +15,9 @@ describe('findWatchers', () => {
 
   test('reads a fix watcher behind cd, quotes and a variable script path', () => {
     const command =
-      'cd /repo && "$ROOT/skills/start-fix-loop/scripts/watch-threads.sh" --tracked "$HOME/fix loop/tracked" --state s'
+      'cd /repo && "$ROOT/skills/start-watch-loop/scripts/watch-threads.sh" --tracked "$HOME/watch loop/tracked" --state s'
     expect(findWatchers(command, env)).toEqual([
-      { kind: 'watching', tracked: '/home/ada/fix loop/tracked', written: '$HOME/fix loop/tracked' },
+      { kind: 'watching', tracked: '/home/ada/watch loop/tracked', written: '$HOME/watch loop/tracked' },
     ])
   })
 

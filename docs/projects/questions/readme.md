@@ -19,7 +19,7 @@ beside the pull request it is about. The implementation follows #269.
 ## 1. Problem
 
 When a loop's subagent needs a decision from you, it has nowhere to put it
-but the conversation. `start-fix-loop` and `start-review-loop` both say "a
+but the conversation. `start-watch-loop` and `start-review-loop` both say "a
 question for the user comes back to the main loop to ask", and the subagent
 goes on with other work meanwhile. The main loop then asks in the transcript,
 as a line of text. `review-pr` and `summarize-pr` do the same when they need

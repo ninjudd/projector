@@ -36,7 +36,7 @@ export function SiteFooter() {
           <FooterLink href={DOCS.cli}>CLI reference</FooterLink>
           <FooterLink href={DOCS.plugins}>Plugin guide</FooterLink>
           <FooterLink href={DOCS.reviewLoop}>Review loop</FooterLink>
-          <FooterLink href={DOCS.fixLoop}>Fix loop</FooterLink>
+          <FooterLink href={DOCS.watchLoop}>Watch loop</FooterLink>
         </div>
         <div className="flex flex-col gap-3">
           <h3 className="text-sm font-medium text-fg">Project</h3>

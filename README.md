@@ -64,7 +64,7 @@ query time. Projector never writes a tracked status index.
 The plugin gives Claude Code and Codex the same skills: `spec`, `implement`,
 and `finish` a project, where `implement` also builds a small change from a
 description; `review-pr` to review a pull request once; `fix-pr` to fix its
-findings and merge conflicts once; `start-review-loop` and `start-fix-loop`
+findings and merge conflicts once; `start-review-loop` and `start-watch-loop`
 to run those two on every pull request continuously; `summarize-pr`, which
 summarizes a pull request's changes as a guided review page; and `write`,
 which writes or revises any prose so that it follows Projector's writing

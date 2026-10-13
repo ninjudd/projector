@@ -13,7 +13,7 @@ const REVIEW_COMMAND = 'scripts/watch-prs.sh --tracked ~/loops/review/tracked --
 const PS = [
   `/bin/zsh -c eval 'scripts/watch-prs.sh --tracked "$HOME/loops/review/tracked"'`,
   `bash scripts/watch-prs.sh --tracked ${REVIEW} --state ${HOME}/loops/review/state`,
-  `bash /plugin/skills/start-fix-loop/scripts/watch-threads.sh --tracked ${WATCH} --state s`,
+  `bash /plugin/skills/start-watch-loop/scripts/watch-threads.sh --tracked ${WATCH} --state s`,
   '',
 ].join('\n')
 
