@@ -466,8 +466,8 @@ points, which the sections above leave open or state loosely:
 - **A command that waits out the store's lock exits 75,** not 65, so the
   band shows the failure instead of reading it as an item resolved elsewhere.
 
-The main-screen row of § 4 waits for a check by hand under tmux, so the
-project stays `in-progress`.
+The main-screen row of § 4 waited for a check by hand under tmux, so the
+project stayed `in-progress` until the check that § 12 records.
 
 ## 10. The band after layer 2
 
@@ -911,10 +911,10 @@ subsections above leave open or which the code had moved past since
   every item as before.
 
 Each row of § 11.8 but the last failed its test before the change. The
-main-screen row of § 4 still waits for a check by hand under tmux, so the
-project stays `in-progress`.
+main-screen row of § 4 still waited for a check by hand under tmux, so the
+project stayed `in-progress` until the check that § 12 records.
 
-## 13. Outcome
+## 12. Outcome
 
 The project shipped, in releases 0.7.15 through 0.7.18. An agent posts a
 question or a notice with `project inbox ask` or `project inbox tell`, or
@@ -922,11 +922,11 @@ with the `ask` and `tell` tools in Claude Code. Projector's band lists both
 kinds, and each item's drawer lets you discuss, dismiss, or snooze it. The
 owner checked the main-screen row of § 4 by hand under tmux. That row was
 the last criterion without evidence and the check that § 6, § 9, and
-§ 11.10 wait for, and it also closes the main-screen row that the
+§ 11.10 made the gate for completion, and it also closes the main-screen row that the
 [questions](../questions/readme.md) plan carried into § 4. As § 7 says,
 the look of notices and snoozing that stands at this check is the design.
 
-### 13.1 What shipped
+### 12.1 What shipped
 
 | Release | Pull requests | What they built |
 | --- | --- | --- |
@@ -940,11 +940,7 @@ the look of notices and snoozing that stands at this check is the design.
 | 0.7.18 | #296 | The Projector section says when the inbox helps and how to clear what was answered, and `implement` asks through the `ask` tool where the tool exists |
 | 0.7.18 | #294, #299 | Per-session numbering: the plan in § 11, then the build that § 11.10 records |
 
-Draft #305 adds § 12, which lets an agent take back an item it posted with
-a `withdraw` tool and `project inbox withdraw`. That work is in flight, and
-this section does not claim it as shipped.
-
-### 13.2 How the result differs from § 2
+### 12.2 How the result differs from § 2
 
 § 9, § 10, and § 11 record each deviation and its reason. These change how
 you use the inbox:
@@ -973,7 +969,7 @@ you use the inbox:
   through `ask` where the tool exists. The loop skills do not post through
   the inbox (§ 7).
 
-### 13.3 Evidence
+### 12.3 Evidence
 
 `PYTHONPATH=src python3 -m unittest discover` and `claude plugin test .`
 pass at the change that completes the project. The tests below are in
@@ -1021,7 +1017,7 @@ this plan, and in the fixture of
 `test_leaves_items_stored_under_old_references_unread_in_place`, which
 writes an old session's `counts.json` and `session.json`.
 
-### 13.4 What this project does not deliver
+### 12.4 What this project does not deliver
 
 These stay out of the project on purpose, and § 7 gives each one's reason
 and owner:
