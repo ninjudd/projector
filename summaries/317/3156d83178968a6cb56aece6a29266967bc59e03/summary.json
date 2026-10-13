@@ -26,7 +26,7 @@
    {
     "id": "review",
     "title": "Review so far",
-    "html": "<ul class=\"tight\"><li>The first Projector review, of <code>e305e65</code>, found that <code>set</code> skipped the override note when the value was already in the file. <code>55104e5</code> fixed it, and the thread is resolved.</li><li>Later commits let <code>unset</code> remove a key outside the schema, refuse a <code>--file</code> in a missing directory, and drop integer handling from the schema.</li><li>The review of <code>84a9073</code> is clean. The full test suite, <code>project check</code>, and both plugin validations pass at this head.</li></ul>"
+    "html": "<ul class=\"tight\"><li>The first Projector review, of <code>e305e65</code>, found that <code>set</code> skipped the override note when the value was already in the file. <code>55104e5</code> fixed it, and the thread is resolved.</li><li>Later commits let <code>unset</code> remove a key outside the schema, refuse a <code>--file</code> in a missing directory, and drop integer handling from the schema.</li><li>The full review of <code>84a9073</code> is clean. Its one suggestion was that <code>unset</code> on a whole table blamed an inline table. <code>3156d83</code> refuses a table key with its own message, and an incremental review of that head is clean.</li></ul>"
    }
   ]
  },
@@ -40,7 +40,7 @@
     "<code>Config.setting(key)</code> returns the merged value, or <code>None</code> when no layer sets it, and raises <code>ConfigError</code>, exit code 78, when a file holds a value of another type. <code>parse_value</code> turns command-line text into the key's type for <code>set</code>.",
     "<h4>The line editor</h4>",
     "Python's standard library reads TOML with <code>tomllib</code> but cannot write it, and rewriting the whole file would lose a person's comments. So <code>write_value</code> edits the text:",
-    "<ol><li><b>Scan.</b> <code>_scan</code> walks the lines and records each table header and each <code>key = value</code> statement, with the table it belongs to. A statement that spans lines, such as a multi-line string, ends at the first run of lines that parses on its own.</li><li><b>Edit.</b> A key that is set gets its new value on the same line, and any comment after the value stays. A missing key goes after the last statement of its table, or beside the dotted keys that define the table. A missing table goes at the end of the file. <code>unset</code> deletes the key's lines. <code>unset_value</code> refuses a key outside the schema that the file does not set, so a misspelled key gets the list of keys.</li><li><b>Check before writing.</b> The new text must parse, give the key its new value, and leave every other value unchanged. Otherwise the command refuses with exit code 65 and the file untouched, as for a key inside an inline table.</li><li><b>Write and read back.</b> <code>write_through</code> replaces the file's content and keeps a symlink a link. The editor then reads the file back and restores the original when the check fails.</li></ol>"
+    "<ol><li><b>Scan.</b> <code>_scan</code> walks the lines and records each table header and each <code>key = value</code> statement, with the table it belongs to. A statement that spans lines, such as a multi-line string, ends at the first run of lines that parses on its own.</li><li><b>Edit.</b> A key that is set gets its new value on the same line, and any comment after the value stays. A missing key goes after the last statement of its table, or beside the dotted keys that define the table. A missing table goes at the end of the file. <code>unset</code> deletes the key's lines. <code>unset_value</code> refuses a key outside the schema that the file does not set, so a misspelled key gets the list of keys. Both commands refuse a key that names a table, such as <code>review</code>, because they change one setting.</li><li><b>Check before writing.</b> The new text must parse, give the key its new value, and leave every other value unchanged. Otherwise the command refuses with exit code 65 and the file untouched, as for a key inside an inline table.</li><li><b>Write and read back.</b> <code>write_through</code> replaces the file's content and keeps a symlink a link. The editor then reads the file back and restores the original when the check fails.</li></ol>"
    ],
    "checks": [
     {
@@ -91,7 +91,7 @@
    "checks": [
     {
      "kind": "verify",
-     "text": "The full suite, 946 tests, passes at this head on Python 3.12."
+     "text": "The 48 config tests pass at this head on Python 3.12. The full suite, 946 tests, passed at <code>84a9073</code>, and only <code>config.py</code>, its tests, and <code>docs/cli.md</code> changed after that."
     }
    ],
    "files": [
