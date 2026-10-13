@@ -125,9 +125,11 @@ The watcher is level-triggered:
 - `CONFLICT` reports a branch that conflicts with its base. It clears when a
   push makes the branch mergeable again.
 - `REVIEW` reports a review body that has no inline thread, the shape every
-  `COMMENT` review posts. A Projector review whose body lists `Suggestions`
-  is work even under a clean verdict, because `fix-pr` implements or defers
-  each one.
+  `COMMENT` review posts. A Projector review that lists suggestions is work
+  even under a clean verdict, because `fix-pr` implements or defers each one,
+  reading them with `project review suggestions`. The line says how many the
+  review's marker counts, as `listing 2 suggestions`. A review an earlier
+  release published gives no count, so its line names none.
 - `DRAFT` reports a pull request a review loop has not signed off. It clears
   when the pull request is marked ready, which a review loop's `publish`
   does when the newest verdict on the current head is clean, whichever model
