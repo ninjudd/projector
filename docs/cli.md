@@ -1446,9 +1446,10 @@ do.
 
 ## Use the inbox
 
-`project inbox` keeps the questions an agent asks you, so the agent can keep
-working while it waits and you can answer from any host. Each session's
-inbox is its own directory under `$XDG_STATE_HOME/projector/inbox/`, or under
+`project inbox` keeps what an agent puts in front of you: questions, which
+you answer, and notices, which you read. The agent keeps working while an
+item waits, and you can deal with it from any host. Each session's inbox is
+its own directory under `$XDG_STATE_HOME/projector/inbox/`, or under
 `~/.local/state/projector/inbox/` when `XDG_STATE_HOME` is unset, and every
 command reaches it the same way from Claude Code, Codex, or a terminal.
 
@@ -1474,10 +1475,12 @@ or 120 characters, a missing recommendation, more than five other options, or
 an option that repeats the recommendation. Put what you need to decide in
 `--detail`, or `--detail-file`.
 
-Every command names the asking session with `--session`, or reads
+Every command names the posting session with `--session`, or reads
 `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
-every session's open questions, and `show`, `answer`, and `dismiss` find the
-session that holds the reference.
+every session's open items, and `show`, `answer`, `dismiss`, and `snooze`
+find the session that holds the reference. `list` prints each item's
+reference, kind, state, and subject, separated by tabs, after the session
+when it lists every session.
 
 The answers are lettered. `a` is always the recommendation, the other options
 follow as `b`, `c`, and on, and the last letter is a typed answer:
@@ -1525,11 +1528,49 @@ halfway leaves the answer for the next one. A lapsed claim's token still
 works until another `claim` takes the answer. `watch` marks an answer
 delivered only after its line prints, so when nothing reads the watcher any
 more, the answer waits for the next deliverer rather than being lost. Each
-session keeps its 100 most recently delivered questions.
+session keeps its 100 most recently delivered items, of either kind.
+
+An agent tells you something that needs no answer with `tell`, such as the
+answer to a question you asked it or something it did that you should know
+about. A notice takes the same one line, `--detail`, `--pr`, and `--agent` as
+a question, and the next number in the same counts, so a notice about #337
+after its third question is `#337.4`:
+
+```console
+$ project inbox tell "Force-pushed #337 to drop a stray debug file" \
+    --pr acme/app#337 --session "$SESSION"
+#337.4
+```
+
+`tell` refuses, with exit code 65, an empty notice, a notice longer than one
+line or 120 characters, and a `--pr` that is not `owner/repo#number`. A
+notice has no options, so `answer` and `claim` refuse one with exit code 65.
+Once you have read it, run `project inbox dismiss '#337.4'`. Nothing goes
+back to the agent, so the dismissal also marks the notice delivered, and
+`list` shows it, as `dismissed`, only with `--all`.
+
+To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
+an hour, or for the whole minutes that `--for` gives, and `--for 0` wakes it
+now. Projector's band leaves a snoozed item out until its time passes, and
+`list` shows it as `snoozed until <HH:MM>`, in local time:
+
+```console
+$ project inbox snooze '#337.3' --for 30
+#337.3 snoozed until 14:32
+$ project inbox list --session "$SESSION"
+#337.3	question	snoozed until 14:32	Decline the finding about the retry budget?
+#337.4	notice	open	Force-pushed #337 to drop a stray debug file
+```
+
+A snoozed item can still be answered or dismissed, and either one clears its
+snooze, so a resolved item never returns. `snooze` refuses, with exit code
+65, an item already answered or dismissed, and a negative `--for`.
 
 `project inbox context` reads text on standard input and prints what each
-question reference in it means, for the questions the session holds, so a
-prompt such as `go with #337.3.b.` can carry its question along. It matches a
+reference in it means, for the items the session holds, so a prompt such as
+`go with #337.3.b.` can carry its question along. A notice's reference prints
+`#337.4 is the notice: ` and its subject, and a notice's reference with a
+letter prints nothing, since a notice has no answers. It matches a
 reference only when it stands alone: `#337.3.b` and `q2.a` match, at the end
 of a sentence too, while `#337.3.4`, `x#337.3`, and the `2` in `rerun the 2
 failing tests` do not.
@@ -1587,7 +1628,7 @@ Projector uses these exit codes:
 | `0` | The command completed successfully. |
 | `2` | Command syntax or an argument is invalid. |
 | `3` | `project site status` found no Projector site for the repository. |
-| `65` | Project data is invalid, a mutation is unsafe, or a question or answer is refused. |
+| `65` | Project data is invalid, a mutation is unsafe, or an inbox item, answer, or snooze is refused. |
 | `66` | The requested project, the projects directory, or the inbox item does not exist. |
 | `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
 | `69` | Git, the interactive editor, or the installer is unavailable. |

@@ -348,3 +348,33 @@ notice as a third, separate system was considered and rejected in favor of
 one store with two kinds, for the reasons in § 3. The owner chose the name
 `inbox`, the actions `discuss | dismiss | snooze` for both kinds,
 and snoozing for both.
+
+## 9. What the implementation settled
+
+Both layers of § 6 are built. Building them settled these points, which the
+sections above leave open or state loosely:
+
+- **A dismissed notice lists only with `--all`.** Dismissing a notice marks
+  it delivered, and `list` without `--all` leaves out delivered items. The
+  § 4 row that dismisses a snoozed notice therefore reads `list --all` to see
+  it as `dismissed`.
+- **`snooze` takes whole minutes and prints the new state.** `--for` is an
+  integer. `snooze` prints the reference and the item's state, such as
+  `#12.1 snoozed until 14:32`, or `#12.1 open` after `--for 0`.
+- **`list` skips a file of no known kind.** A store file whose `kind` is
+  neither `question` nor `notice` is skipped, as a file whose name does not
+  match its reference already is.
+- **The `tell` tool sends the agent to the conversation in its own words.**
+  When `project` does not finish, the refusal ends `tell the person in the
+  conversation instead`, because the agent has nothing to ask. Every other
+  refusal follows `ask`'s rules, as § 2.4 says.
+- **The hooks type each kind.** `Item` in `hooks/types.d.ts` is `Question`
+  or `Notice`, so the deliverer and the reader of answers in a sent prompt
+  accept only a question.
+- **Waking counts from the band's previous tick.** The first tick after the
+  hooks module loads wakes nothing. An item whose snooze ended while no copy
+  of the module ran returns to the list, but does not bring back a hidden
+  band.
+
+The main-screen row of § 4 waits for a check by hand under tmux, so the
+project stays `in-progress`.

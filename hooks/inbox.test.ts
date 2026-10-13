@@ -15,13 +15,15 @@ import {
   signatureOf,
   span,
   storeOf,
+  tellArguments,
   typedLetter,
+  wokeBetween,
 } from './inbox'
-import type { Item } from './types'
+import type { Notice, Question } from './types'
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0)
 
-const question = (fields: Partial<Item> = {}): Item => ({
+const question = (fields: Partial<Question> = {}): Question => ({
   ref: '#7.1',
   number: 1,
   pr: 'o/r#7',
@@ -30,6 +32,18 @@ const question = (fields: Partial<Item> = {}): Item => ({
   subject: 'Decline the finding?',
   detail: '',
   choices: ['Decline it', 'Add a budget'],
+  session: 's1',
+  ...fields,
+})
+
+const notice = (fields: Partial<Notice> = {}): Notice => ({
+  ref: '#7.2',
+  number: 2,
+  pr: 'o/r#7',
+  postedAt: NOW - 30_000,
+  kind: 'notice',
+  subject: 'Force-pushed #7 to drop a stray file',
+  detail: '',
   session: 's1',
   ...fields,
 })
@@ -191,5 +205,55 @@ test('a call of the tool becomes `project inbox ask`, text kept as text', () => 
   expect(askArguments({ recommendation: 'Yes' }, 's1', undefined)).toEqual({ error: '`question` must be a string' })
   expect(askArguments({ question: 'Q', recommendation: 'Yes', options: 'no' }, 's1', undefined)).toEqual({
     error: '`options` must be a list of strings',
+  })
+})
+
+test('a snoozed item leaves the band until its time, and wakes once between two ticks', () => {
+  const snoozed = notice({ snoozedUntil: NOW + 3_600_000 })
+  expect(isShownAt(snoozed, NOW)).toBe(false)
+  expect(isShownAt(snoozed, NOW + 3_600_000)).toBe(true)
+  expect(wokeBetween([snoozed, question()], NOW + 3_595_000, NOW + 3_600_000)).toEqual([snoozed])
+  expect(wokeBetween([snoozed], NOW + 3_600_000, NOW + 3_605_000)).toEqual([])
+  expect(wokeBetween([snoozed], NOW, NOW + 3_595_000)).toEqual([])
+  const dismissed = notice({ snoozedUntil: NOW + 3_600_000, answer: { dismissed: true, answeredAt: NOW } })
+  expect(wokeBetween([dismissed], NOW, NOW + 3_600_000)).toEqual([])
+})
+
+test('only a question’s answer waits for a deliverer', () => {
+  const dismissed = { dismissed: true as const, answeredAt: NOW }
+  expect(needsDelivery(question({ answer: dismissed }), NOW)).toBe(true)
+  expect(needsDelivery(notice({ answer: dismissed }), NOW)).toBe(false)
+})
+
+test('a sent prompt answers snoozed questions and never a notice', () => {
+  const snoozed = question({ snoozedUntil: NOW + 3_600_000 })
+  const told = notice()
+  expect(answersIn('"Decline the finding?"\n\nAdd a budget\n', [snoozed, told])).toEqual([
+    { question: snoozed, letter: 'b' },
+  ])
+  expect(answersIn('"Force-pushed #7 to drop a stray file"\n\nThanks\n', [snoozed, told])).toEqual([])
+})
+
+test('a call of the tell tool becomes `project inbox tell`, text kept as text', () => {
+  expect(tellArguments({ notice: '-Dropped a file', detail: 'Why', pr: 'o/r#7' }, 's1', 'agent-1')).toEqual([
+    'inbox',
+    'tell',
+    '--session=s1',
+    '--detail=Why',
+    '--pr=o/r#7',
+    '--agent=agent-1',
+    '--',
+    '-Dropped a file',
+  ])
+  expect(tellArguments({ notice: 'Dropped a file' }, 's1', undefined)).toEqual([
+    'inbox',
+    'tell',
+    '--session=s1',
+    '--',
+    'Dropped a file',
+  ])
+  expect(tellArguments({ detail: 'Why' }, 's1', undefined)).toEqual({ error: '`notice` must be a string' })
+  expect(tellArguments({ notice: 'N', pr: 7 }, 's1', undefined)).toEqual({
+    error: '`pr` must be a string such as owner/repo#123',
   })
 })

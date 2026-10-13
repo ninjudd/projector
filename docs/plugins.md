@@ -231,28 +231,33 @@ is shown. The skills never depend on the band, and Codex has no equivalent.
 ### Read your inbox in Projector's band
 
 An agent in Claude Code asks you a question with Projector's `ask` tool,
-which the model sees as `mcp__projector__ask`, and keeps working. An agent
-that runs `project inbox ask` from the shell reaches the same inbox, as
+which the model sees as `mcp__projector__ask`, and tells you something that
+needs no answer with the `tell` tool, `mcp__projector__tell`. Either way it
+keeps working. An agent that runs `project inbox ask` or `project inbox tell`
+from the shell reaches the same inbox, as
 [Use the inbox](cli.md#use-the-inbox) describes.
-The questions are a bulleted list below the pull requests, oldest first.
-Each line ends with the pull request the question is
-about, as the band labels it, and how long ago it was asked. The band appears
-when a question arrives, even after you hid it, and the divider counts the
-questions still open.
+
+The items are a list below the pull requests, oldest first. A question's
+line starts with `-`, and a notice's with `•`, so you can tell which items
+want an answer and which want a read. Each line ends with the pull request
+the item is about, as the band labels it, and how long ago it was posted.
+The band appears when an item arrives, even after you hid it, and the
+divider counts the open questions and the open notices.
 
 ```text
-──────────────────────────────────────── 2 questions · updated 12s ago [-]
+──────────────────────────────── 2 questions · 1 notice · updated 12s ago [-]
 #337 draft Retry failed webhook deliveries with backoff
 
 - Run project init to add the publish rule?                             2m
 - Decline the finding about the retry budget?                     #337  5m
+• Force-pushed #337 to drop a stray debug file                    #337  1m
 ```
 
-Click anywhere on a question to open its drawer, and click it again to close
+Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press ctrl+x tab to move into the band, then Enter on
-a question. While its drawer is open, the question stays highlighted and has
-the band to itself, the divider included, so the question is the top row and
-the drawer has one more row before the band scrolls:
+an item. While its drawer is open, the item stays highlighted and has the
+band to itself, the divider included, so the item is the top row and the
+drawer has one more row before the band scrolls:
 
 ```text
 - Decline the finding about the retry budget?                 #337  5m [-]
@@ -265,7 +270,7 @@ the drawer has one more row before the band scrolls:
   2. Add a budget of two retries per host, and keep the total cap
   3. [ Type something                                                    ]
 
-  [ discuss ] [ dismiss ]
+  discuss | dismiss | snooze
 ```
 
 The first option is always the agent's recommendation. Click an option, or
@@ -290,11 +295,23 @@ the main loop, and when a subagent asked, the main loop also reads a note
 naming it, so it can pass the answer on.
 **discuss** puts only the quoted question in the prompt, followed by a space,
 so what you type after it on the same line talks the question over and
-answers nothing. **dismiss** sets the question aside without an answer.
+answers nothing. **dismiss** sets the question aside without an answer, and
+**snooze** hides it for an hour.
 
-An answered question stays in the list, dim, for a minute after its answer is
-delivered; a dismissed one is struck through. Its drawer still opens and
-marks the answer given with `✓`.
+A notice's drawer shows its detail, then the same `discuss | dismiss |
+snooze`. **discuss** puts the quoted notice in the prompt, and a prompt that
+quotes a notice answers nothing. **dismiss** clears the notice once you have
+read it, and nothing goes back to the agent.
+
+A snoozed item leaves the band and the divider's counts at once. When its
+hour passes, it returns to the list, and the band appears if you hid it. To pick another time, or to wake an item now, run
+`project inbox snooze <reference> --for <minutes>` in a terminal. An item you
+answer or dismiss from a terminal while it is snoozed does not return.
+
+A resolved item stays in the list, dim, for a minute after it is delivered,
+and a dismissed one is struck through. A dismissed notice is delivered at
+once, since nothing goes back to the agent. A question's drawer still opens and marks the answer given with `✓`, and a dismissed notice's drawer
+keeps only **discuss**.
 
 An answer you give from a terminal with `project inbox answer` reaches the
 agent through the band of the session that asked. A subagent that is still
@@ -307,8 +324,8 @@ names.
 
 Shown or hidden, the band lists the session's inbox directory every 5
 seconds and runs `project inbox` only when the directory changed since
-its last successful read or an answer is on its way, so a session with no
-questions starts no process. A read that fails runs again 5 seconds later.
+its last successful read or an answer is on its way, so a session with an
+empty inbox starts no process. A read that fails runs again 5 seconds later.
 
 ## Install for Codex
 

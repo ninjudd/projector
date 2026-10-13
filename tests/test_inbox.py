@@ -20,6 +20,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Callable
+from urllib.parse import quote
 from unittest import mock
 
 from projector import cli, inbox
@@ -113,8 +114,8 @@ class AskTests(InboxCase):
         self.assertEqual("#271.1", self.ask("About app?", *recommend, "--pr", "acme/app#271"))
         self.assertEqual("octo/web#271.1", self.ask("About web?", *recommend, "--pr", "octo/web#271", cwd=web))
         self.assertEqual("#271.2", self.ask("App again?", *recommend, "--pr", "acme/app#271", cwd=web))
-        self.assertCountEqual(["#271.1\topen\tAbout app?", "octo/web#271.1\topen\tAbout web?",
-                               "#271.2\topen\tApp again?"], self.run_cli("list", "--session", "s1")[1].splitlines())
+        self.assertCountEqual(["#271.1\tquestion\topen\tAbout app?", "octo/web#271.1\tquestion\topen\tAbout web?",
+                               "#271.2\tquestion\topen\tApp again?"], self.run_cli("list", "--session", "s1")[1].splitlines())
 
     def test_letters_the_recommendation_a_and_records_the_question(self) -> None:
         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--detail", "Why.",
@@ -348,13 +349,13 @@ class ListTests(InboxCase):
         self.ask("One?", "--recommend", "x", session="s1")
         self.ask("Two?", "--recommend", "x", session="s2")
         out = self.run_cli("list")[1]
-        self.assertEqual(["s1\tq1\topen\tOne?", "s2\tq1\topen\tTwo?"], out.splitlines())
+        self.assertEqual(["s1\tq1\tquestion\topen\tOne?", "s2\tq1\tquestion\topen\tTwo?"], out.splitlines())
 
     def test_skips_a_file_that_is_not_an_item(self) -> None:
         self.ask("One?", "--recommend", "x")
         (self.folder() / "q7.json").write_text("{not json")
         (self.folder() / "misnamed.json").write_text(json.dumps({"ref": "q8", "subject": "?"}))
-        self.assertEqual(["q1\topen\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
+        self.assertEqual(["q1\tquestion\topen\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
 
     def test_show_prints_the_lettered_answers(self) -> None:
         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget")
@@ -395,6 +396,136 @@ class ContextTests(InboxCase):
         for text in ("#337", "#337.3.4", "x#337.3", "2", "Q2", "eq2", "q2.4"):
             with self.subTest(text=text):
                 self.assertEqual([], inbox.references_in(text))
+
+
+class NoticeTests(InboxCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.ask("Decline it?", "--recommend", "Decline it", "--pr", "acme/app#12")
+
+    def tell(self, notice: str = "Force-pushed #12 to drop a stray file", *args: str) -> str:
+        code, out, err = self.run_cli("tell", notice, "--pr", "acme/app#12", "--session", "s1", *args)
+        self.assertEqual(0, code, err)
+        return out.strip()
+
+    def item(self, ref: str) -> dict:
+        return json.loads((self.folder() / f"{quote(ref, safe='')}.json").read_text())
+
+    def test_numbers_a_notice_in_the_counts_questions_use(self) -> None:
+        self.assertEqual("#12.2", self.tell())
+        notice = self.item("#12.2")
+        self.assertEqual(("notice", "Force-pushed #12 to drop a stray file"), (notice["kind"], notice["subject"]))
+        self.assertNotIn("choices", notice)
+        self.assertEqual("#12.3", self.ask("Rebase?", "--recommend", "Yes", "--pr", "acme/app#12"))
+        code, out, _ = self.run_cli("tell", "No pull", "--session", "s1", "--json")
+        self.assertEqual((0, "q1"), (code, json.loads(out)["item"]["ref"]))
+
+    def test_records_the_detail_and_the_posting_subagent(self) -> None:
+        detail = self.scratch / "detail.md"
+        detail.write_text("The file held a token.\n")
+        self.tell("Dropped a file", "--detail-file", str(detail), "--agent", "agent-7")
+        notice = self.item("#12.2")
+        self.assertEqual(("The file held a token.", "agent-7"), (notice["detail"], notice["agentId"]))
+
+    def test_refuses_a_notice_that_fails_a_check_and_writes_nothing(self) -> None:
+        counts = (self.folder() / "counts.json").read_text()
+        for args in (["Two\nlines"], ["x" * 121], [" "], ["Bad pull", "--pr", "12"]):
+            with self.subTest(args=args[0][:12]):
+                code, _, err = self.run_cli("tell", *args, "--session", "s1")
+                self.assertEqual(65, code, err)
+        self.assertEqual(counts, (self.folder() / "counts.json").read_text())
+        self.assertEqual(["#12.1"], [item["ref"] for item in inbox.load_items(self.folder())])
+
+    def test_dismissing_a_notice_delivers_it_at_once(self) -> None:
+        self.tell()
+        self.assertEqual((0, "dismissed #12.2\n", ""), self.run_cli("dismiss", "#12.2", "--session", "s1"))
+        notice = self.item("#12.2")
+        self.assertTrue(notice["answer"]["dismissed"])
+        self.assertEqual(notice["answer"]["answeredAt"], notice["deliveredAt"])
+        code, _, err = self.run_cli("dismiss", "#12.2", "--session", "s1")
+        self.assertEqual(65, code)
+        self.assertIn("already dismissed", err)
+        self.assertEqual("", self.run_cli("watch", "--once", "--session", "s1")[1])
+
+    def test_dismissing_a_question_still_waits_for_its_deliverer(self) -> None:
+        self.run_cli("dismiss", "#12.1", "--session", "s1")
+        self.assertNotIn("deliveredAt", self.item("#12.1"))
+        self.assertEqual("DISMISSED #12.1 Decline it?\n", self.run_cli("watch", "--once", "--session", "s1")[1])
+
+    def test_a_notice_takes_no_answer_and_no_claim(self) -> None:
+        self.tell()
+        for args in (["answer", "#12.2.a"], ["claim", "#12.2"]):
+            with self.subTest(command=args[0]):
+                code, _, err = self.run_cli(*args, "--session", "s1")
+                self.assertEqual(65, code)
+                self.assertIn("project inbox dismiss", err)
+
+    def test_lists_and_shows_a_notice_by_its_kind(self) -> None:
+        self.tell("Dropped a file", "--detail", "It held a token.")
+        self.assertEqual(["#12.1\tquestion\topen\tDecline it?", "#12.2\tnotice\topen\tDropped a file"],
+                         self.run_cli("list", "--session", "s1")[1].splitlines())
+        self.assertEqual("#12.2 Dropped a file\nabout acme/app#12\n\nIt held a token.\n\nopen\n",
+                         self.run_cli("show", "#12.2")[1])
+        self.run_cli("dismiss", "#12.2", "--session", "s1")
+        self.assertEqual(["#12.1\tquestion\topen\tDecline it?"], self.run_cli("list", "--session", "s1")[1].splitlines())
+        self.assertIn("#12.2\tnotice\tdismissed\tDropped a file", self.run_cli("list", "--all", "--session", "s1")[1])
+
+
+class SnoozeTests(InboxCase):
+    NOW = 1_800_000_000_000
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.ask("Decline it?", "--recommend", "Decline it", "--pr", "acme/app#12")
+        self.run_cli("tell", "Force-pushed #12", "--pr", "acme/app#12", "--session", "s1")
+        clock = mock.patch.object(inbox, "now_ms", return_value=self.NOW)
+        clock.start()
+        self.addCleanup(clock.stop)
+
+    def states(self, *args: str) -> dict[str, str]:
+        rows = (line.split("\t") for line in self.run_cli("list", "--session", "s1", *args)[1].splitlines())
+        return {row[0]: row[2] for row in rows}
+
+    def test_snoozes_an_item_for_an_hour_and_wakes_it_with_zero(self) -> None:
+        later = time.strftime("%H:%M", time.localtime((self.NOW + 3_600_000) / 1000))
+        self.assertEqual((0, f"#12.1 snoozed until {later}\n", ""), self.run_cli("snooze", "#12.1", "--session", "s1"))
+        self.assertEqual({"#12.1": f"snoozed until {later}", "#12.2": "open"}, self.states())
+        self.assertEqual(0, self.run_cli("snooze", "#12.1", "--for", "0", "--session", "s1")[0])
+        self.assertEqual({"#12.1": "open", "#12.2": "open"}, self.states())
+
+    def test_takes_the_minutes_and_returns_the_item_once_they_pass(self) -> None:
+        self.run_cli("snooze", "#12.2", "--for", "5", "--session", "s1")
+        self.assertEqual(self.NOW + 300_000, json.loads((self.folder() / "%2312.2.json").read_text())["snoozedUntil"])
+        with mock.patch.object(inbox, "now_ms", return_value=self.NOW + 300_000):
+            self.assertEqual("open", self.states()["#12.2"])
+
+    def test_refuses_a_resolved_item_and_a_negative_time(self) -> None:
+        self.run_cli("dismiss", "#12.2", "--session", "s1")
+        self.assertEqual(65, self.run_cli("snooze", "#12.2", "--session", "s1")[0])
+        self.assertEqual(65, self.run_cli("snooze", "#12.1", "--for", "-1", "--session", "s1")[0])
+
+    def test_answering_a_snoozed_question_clears_its_snooze(self) -> None:
+        self.run_cli("snooze", "#12.1", "--session", "s1")
+        self.assertEqual(0, self.run_cli("answer", "#12.1.a", "--session", "s1")[0])
+        self.assertNotIn("snoozedUntil", json.loads((self.folder() / "%2312.1.json").read_text()))
+
+    def test_dismissing_a_snoozed_item_clears_its_snooze(self) -> None:
+        for ref in ("#12.1", "#12.2"):
+            self.run_cli("snooze", ref, "--session", "s1")
+            self.assertEqual(0, self.run_cli("dismiss", ref, "--session", "s1")[0])
+        self.assertEqual({"#12.1": "answered #12.1", "#12.2": "dismissed"}, self.states("--all"))
+
+
+class NoticeContextTests(InboxCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.ask("Decline it?", "--recommend", "Decline it", "--pr", "acme/app#12")
+        self.run_cli("tell", "Force-pushed #12 to drop a stray file", "--pr", "acme/app#12", "--session", "s1")
+
+    def test_names_a_notice_and_gives_no_answer_for_its_letter(self) -> None:
+        self.assertEqual((0, "#12.2 is the notice: Force-pushed #12 to drop a stray file\n", ""),
+                         self.run_cli("context", "--session", "s1", stdin="see #12.2"))
+        self.assertEqual((0, "", ""), self.run_cli("context", "--session", "s1", stdin="see #12.2.a"))
 
 
 if __name__ == "__main__":

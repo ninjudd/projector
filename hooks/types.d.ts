@@ -38,29 +38,44 @@ export type Snapshot = {
   error: string | null
 }
 
-/** How an item was answered: a question by a lettered choice or typed text, or dismissed. */
+/** How an item was resolved: dismissed, or a question answered with a lettered choice or typed text. */
 export type Answer = { letter: string; text: string; answeredAt: number } | { dismissed: true; answeredAt: number }
 
-/** One item as `project inbox list --json` gives it, with the session whose store holds it. */
-export type Item = {
+/** What every item has, as `project inbox list --json` gives it, with the session whose store holds it. */
+export type Posted = {
   ref: string
-  kind: 'question'
   number: number
   /** The pull request it is about, as `owner/repo#number`; null when none. */
   pr: string | null
   /** When the agent posted it, in milliseconds. */
   postedAt: number
-  /** The question, in one line. */
+  /** The question or the notice, in one line. */
   subject: string
   detail: string
-  /** The answers in letter order, the recommendation first; the letter after the last is a typed answer. */
-  choices: string[]
+  /** The subagent that posted it. */
   agentId?: string
-  answer?: Answer
-  claim?: { token: string; renewedAt: number }
+  /** When a snoozed item returns, in milliseconds; absent when it is not snoozed. */
+  snoozedUntil?: number
   deliveredAt?: number
   session: string
 }
+
+/** A question, whose answer or dismissal goes back to the agent that asked. */
+export type Question = Posted & {
+  kind: 'question'
+  /** The answers in letter order, the recommendation first; the letter after the last is a typed answer. */
+  choices: string[]
+  answer?: Answer
+  claim?: { token: string; renewedAt: number }
+}
+
+/** A notice, which you read and dismiss, and which sends nothing back; dismissing it delivers it. */
+export type Notice = Posted & {
+  kind: 'notice'
+  answer?: { dismissed: true; answeredAt: number }
+}
+
+export type Item = Question | Notice
 
 /**
  * An answer the band claimed and is delivering: the claim's token, the route
