@@ -177,7 +177,7 @@ The top-level conversation starts no watch loop when either of these holds:
 Otherwise run `../start-watch-loop/SKILL.md` with the pull request, and every
 layer of a stack, as its tracked set, and start its watcher with
 `--exit-when-closed`, so the loop ends on its own once every pull request it
-watches has merged or closed. When this conversation already runs a fix
+watches has merged or closed. When this conversation already runs a watch
 loop, append the pull request to that loop's tracked file instead; never
 start a second one. Leave the review loop alone: it watches every pull
 request the operator has in the repository, so it runs once per repository,
