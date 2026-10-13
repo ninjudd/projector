@@ -1,0 +1,134 @@
+{
+ "version": 1,
+ "name": "Inbox guidance for agents",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 296,
+  "title": "Tell agents when the inbox helps and how to clear what was answered",
+  "head": "aac1073d6a8b6846ef63a8ce1216c3847b4a1b78",
+  "headRef": "agents-inbox-scope",
+  "base": "82822f0140c594d5e99f84db8aeac1b5b0900f81",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "In Claude Code, Projector's <b>band</b> sits above the person's prompt. It lists the pull requests that the session's review and watch loops track, with each one's state, and below them the session's <b>inbox</b>: the questions an agent asked with the <code>ask</code> tool and the notices it posted with the <code>tell</code> tool. An item stays there until the person answers or dismisses it.",
+   "Agents learn when to use the inbox from the Projector section that <code>project init</code> writes into a repository's <code>AGENTS.md</code>, from the template <code>src/projector/templates/agents-block.md</code>. Using that guidance showed three gaps, and this pull request closes them:",
+   "<ol><li><b>Agents posted news the band already shows.</b> The guidance named a pull request that is ready to merge as news to post, which only repeated the pull request's row in the band. The example is gone, and agents now leave out what the person already sees elsewhere.</li><li><b>Answered questions stayed in the inbox.</b> When the person answers in the conversation rather than in the band, nothing tells the band the question was answered. Agents now look over their open items each time the person writes, with <code>project inbox list</code>, and dismiss the ones that no longer need the person, with <code>project inbox dismiss</code>.</li><li><b>The <code>implement</code> skill stopped to ask.</b> It asked the person about any choice the repository could not answer, which stopped the build, and from a subagent the question never reached the person. Where the <code>ask</code> tool is available, it now asks there with a recommendation and keeps building what the answer does not block.</li></ol>",
+   "Codex has no band and no <code>ask</code> tool, so it keeps the old behavior. The template moves from version 7 to version 8, which is how <code>project init</code> knows to refresh the section in every repository that carries it."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: Projector's panel above the prompt in Claude Code, listing the session's loop pull requests and its inbox.</li><li><b>Inbox item</b>: a question from <code>ask</code> or a notice from <code>tell</code>, filed under the session's id and named by a reference such as <code>#296.1</code>.</li><li><b>Dismiss</b>: close an item without an answer. A dismissed question still sends its agent a <code>DISMISSED</code> line; a dismissed notice drops out at once.</li><li><b>Projector section</b>: the block between <code>&lt;!-- projector:begin N --&gt;</code> and <code>&lt;!-- projector:end --&gt;</code> in <code>AGENTS.md</code>, where <code>N</code> is the template version.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review, of <code>aac1073</code>, found the head clean with no finding threads.</li><li>It left one suggestion: the clause about a pull request's state holds only for pull requests a loop tracks. The flag note on the template shows it.</li><li>The full unit suite, <code>project check</code>, both <code>claude plugin validate</code> runs, and <code>git diff --check</code> passed at this head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "agents-block",
+   "title": "The Projector section agents read",
+   "kicker": "The template's inbox paragraph, its version pin, and this repository's refreshed copy",
+   "intro": [
+    "The template is the single source of the Projector section. <code>project init</code> renders it into each repository's <code>AGENTS.md</code>, filling in placeholders such as the plans directory, and <code>project check</code> warns when a repository's copy has fallen behind. Only the last paragraph, about the inbox, changes here.",
+    "That paragraph now does two new things. It narrows what to post, dropping the ready-to-merge example and telling agents to leave out what the band already shows. And it adds a cleanup step: while the agent has items open, each time the person writes it lists them with <code>project inbox list --session \"$CLAUDE_CODE_SESSION_ID\"</code> and dismisses the ones that no longer need the person. The <code>--session</code> flag names the session whose items to read; Claude Code sets <code>CLAUDE_CODE_SESSION_ID</code> in every shell it runs.",
+    "Because the text changed, the version marker moves to 8 and the test file pins the new text's hash. This repository's own <code>AGENTS.md</code>, which <code>CLAUDE.md</code> links to, carries the refreshed section."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "This repository's <code>AGENTS.md</code> section matches the version 8 template: <code>project check</code> prints <code>Project plans are valid.</code> at this head, and it warns when the two differ."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "collapsed": false,
+     "note": "The template every repository's Projector section is rendered from; the inbox paragraph at the end is what changed.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 60,
+       "text": "The band lists only the pull requests this session's loops track, as <code>docs/plugins.md</code> says. A pull request no loop tracks has no row there, so “a pull request's state, which the band lists” does not hold for it. Consider “the state of a pull request one of your loops tracks”. The agent's reply still carries the news either way."
+      },
+      {
+       "kind": "verify",
+       "line": 64,
+       "text": "<code>project inbox list</code> takes <code>--session</code> and, without <code>--all</code>, prints each item not yet delivered with its reference, kind, state, and subject, so an agent can find a question by its subject after losing the reference. Traced in <code>run_inbox</code> in <code>src/projector/cli.py</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 64,
+       "text": "The band's <code>ask</code> and <code>tell</code> tools file each item under the Claude Code session id, and a subagent's shell reports the parent session's id in <code>CLAUDE_CODE_SESSION_ID</code>, so the same command finds items a subagent posted. Traced in <code>hooks/register.tsx</code> and checked in a subagent's shell."
+      },
+      {
+       "kind": "verify",
+       "line": 67,
+       "text": "Dismissing a notice marks it delivered at once, so it leaves the next <code>list</code>. A dismissed question leaves once the band delivers its <code>DISMISSED</code> line to the agent. Traced in <code>dismiss</code> in <code>src/projector/inbox.py</code>."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins the hash of the version 8 template text.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 22,
+       "text": "The pin matches the template: the full unit suite, including <code>test_the_template_text_is_pinned_to_its_version</code>, ran 897 tests and ended <code>OK</code> at this head."
+      }
+     ]
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's own copy of the section, refreshed to version 8; it repeats the template's change."
+    }
+   ]
+  },
+  {
+   "id": "implement",
+   "title": "Asking without stopping in the implement skill",
+   "kicker": "The implement skill asks through the inbox and keeps building",
+   "intro": [
+    "The <code>implement</code> skill builds a change, either from a plan under <code>docs/projects</code> or from a description. Two of its steps send the person a choice the repository cannot answer: one in the description path and one while checking a plan's open questions. Before this change, asking in the conversation meant the build stopped until the person replied, and a subagent's question never reached the person at all.",
+    "Both steps now say that, where Projector's <code>ask</code> tool is available, the agent asks there with the answer it recommends and keeps building what the answer does not block. The <code>ask</code> tool records which subagent asked, so the answer finds its way back."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "Both steps that ask the person a choice now route it through the <code>ask</code> tool when it is available.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 41,
+       "text": "This step comes before the one that marks a plan <code>in-progress</code>. “Keep building what the answer does not block” leaves the readiness rule intact: a question that blocks implementation still has to be answered or deferred first."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The CLI reference",
+   "kicker": "What docs/cli.md says the Projector section tells agents",
+   "intro": [
+    "<code>docs/cli.md</code> lists what the section <code>project init</code> writes tells agents to do. The list gains the cleanup step: each time the person writes, dismiss any inbox item that no longer needs them."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Adds the cleanup step to the description of the Projector section."
+    }
+   ]
+  }
+ ]
+}
