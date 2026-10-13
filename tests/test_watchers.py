@@ -125,13 +125,14 @@ def review(review_id, *, who="codex", body="Body-only concern", sha=SHA_A, state
 
 
 def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:00Z", association="COLLABORATOR",
-                      model="claude-opus-5-5"):
-    """A GraphQL review node whose body carries the marker line `project review publish` writes, naming
-    `model`, or no model when it is None."""
+                      model="claude-opus-5-5", who="operator"):
+    """A GraphQL review node by `who` whose body carries the marker line `project review publish` writes,
+    naming `model`, or no model when it is None."""
     named = f"model={model} " if model else ""
     marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.7.12 {named}effort=high "
               f"sha={sha} findings=1 seconds=60 covered=1/1 -->")
-    return {"authorAssociation": association, "submittedAt": at, "body": f"Projector review\n\n{marker}\n\nSummary"}
+    return {"author": {"login": who}, "authorAssociation": association, "submittedAt": at,
+            "body": f"Projector review\n\n{marker}\n\nSummary"}
 
 
 @unittest.skipUnless(shutil.which("jq") and shutil.which("bash"), "the watcher tests need bash and jq")
@@ -795,38 +796,59 @@ class WatchPrsTests(WatcherCase):
             result.stdout.splitlines(),
         )
 
-    def test_a_head_the_model_already_reviewed_takes_its_row_without_a_word(self) -> None:
+    def test_a_head_this_reviewer_already_reviewed_takes_its_row_without_a_word(self) -> None:
         self.pull_request(1, ref="reviewed", verdicts=[projector_verdict(SHA_A, "clean")])
         self.pull_request(2, ref="other-model", verdicts=[projector_verdict(SHA_A, "clean", model="gpt-6")])
         self.pull_request(3, ref="unreviewed")
         self.pull_request(4, ref="older-head", verdicts=[projector_verdict(SHA_B, "clean")])
         self.pull_request(5, ref="no-model", verdicts=[projector_verdict(SHA_A, "clean", model=None)])
-        # Anyone can review a public repository, so a passerby's verdict reviews nothing there.
-        self.pull_request(6, ref="passerby", verdicts=[projector_verdict(SHA_A, "clean", association="NONE")])
-        self.track(*(f"acme/app#{n}" for n in range(1, 7)))
+        self.track(*(f"acme/app#{n}" for n in range(1, 6)))
+        reviewer = ("--reviewer", "operator")
 
         without_model = self.run_watcher(PRS)
         self.state.unlink()
-        # The model ID the host reports, with the context-window variant `project review` ignores.
-        with_model = self.run_watcher(PRS, "--model", "Claude-Opus-5-5[1m]")
-        again = self.run_watcher(PRS, "--model", "claude-opus-5-5")
+        # The model ID the host reports, with the context-window variant `project review` ignores, and the
+        # login in another case.
+        with_model = self.run_watcher(PRS, "--model", "Claude-Opus-5-5[1m]", "--reviewer", "Operator")
+        again = self.run_watcher(PRS, "--model", "claude-opus-5-5", *reviewer)
 
         def new_pr(n, ref):
             return f"NEW PR acme/app#{n} ({ref}) head=aaaaaaa — unreviewed, needs an exact-head review"
 
         self.assert_ok(without_model)
-        self.assertEqual(6, len(without_model.stdout.splitlines()), without_model.stdout)
+        self.assertEqual(5, len(without_model.stdout.splitlines()), without_model.stdout)
         self.assertIn(new_pr(1, "reviewed"), without_model.stdout)
         self.assert_ok(with_model)
         self.assertEqual(
-            [new_pr(2, "other-model"), new_pr(3, "unreviewed"), new_pr(4, "older-head"), new_pr(5, "no-model"),
-             new_pr(6, "passerby")],
+            [new_pr(2, "other-model"), new_pr(3, "unreviewed"), new_pr(4, "older-head"), new_pr(5, "no-model")],
             with_model.stdout.splitlines(),
         )
         self.assertEqual(["acme/app", "1", SHA_A, "reviewed", "-"], self.state_rows()[0])
-        self.assertEqual(6, len(self.state_rows()))
+        self.assertEqual(5, len(self.state_rows()))
         self.assert_ok(again)
         self.assertEqual("", again.stdout)
+
+    def test_only_the_reviewers_own_verdict_takes_a_row_without_a_word(self) -> None:
+        # A teammate whose own loop runs the same model reviewed, then asked for the operator's review.
+        self.pull_request(1, ref="teammate", author="teammate", requested=("operator",),
+                          verdicts=[projector_verdict(SHA_A, "clean", who="teammate")])
+        self.pull_request(2, ref="passerby", author="teammate", requested=("operator",),
+                          verdicts=[projector_verdict(SHA_A, "clean", who="passerby", association="NONE")])
+        # The reviewer's own verdict counts whatever its association, as `project review status` counts it.
+        self.pull_request(3, ref="outside-reviewer", author="teammate", requested=("operator",),
+                          verdicts=[projector_verdict(SHA_A, "clean", association="NONE")])
+
+        result = self.run_watcher(PRS, "--repo", "acme/app", "--review-requested", "operator",
+                                  "--model", "claude-opus-5-5", "--reviewer", "operator")
+
+        self.assert_ok(result)
+        self.assertEqual(
+            ["NEW PR acme/app#1 (teammate) head=aaaaaaa — unreviewed, needs an exact-head review",
+             "NEW PR acme/app#2 (passerby) head=aaaaaaa — unreviewed, needs an exact-head review"],
+            result.stdout.splitlines(),
+        )
+        self.assertEqual([["acme/app", "3", SHA_A, "outside-reviewer", "-"]],
+                         [row for row in self.state_rows() if row[1] == "3"])
 
     def test_a_reviewed_head_whose_author_answered_asks_for_a_re_review(self) -> None:
         # The author resolved every thread of this model's review without
@@ -834,8 +856,8 @@ class WatchPrsTests(WatcherCase):
         self.pull_request(1, draft=True, verdicts=[projector_verdict(SHA_A)], threads=[thread("T1", resolved=True)])
         self.track("acme/app#1")
 
-        baselined = self.run_watcher(PRS, "--model", "claude-opus-5-5")
-        quiet = self.run_watcher(PRS, "--model", "claude-opus-5-5")
+        baselined = self.run_watcher(PRS, "--model", "claude-opus-5-5", "--reviewer", "operator")
+        quiet = self.run_watcher(PRS, "--model", "claude-opus-5-5", "--reviewer", "operator")
 
         self.assert_ok(baselined)
         self.assertEqual(
@@ -853,7 +875,7 @@ class WatchPrsTests(WatcherCase):
         self.track("acme/app#1", "acme/app#2")
         self.state.write_text(f"acme/app 1 {SHA_B} moved -\nacme/app 2 {SHA_A} seen -\n")
 
-        result = self.run_watcher(PRS, "--model", "claude-opus-5-5")
+        result = self.run_watcher(PRS, "--model", "claude-opus-5-5", "--reviewer", "operator")
 
         self.assert_ok(result)
         self.assertEqual(["NEW HEAD acme/app#1 (moved): bbbbbbb -> aaaaaaa — needs an exact-head review"],
@@ -938,22 +960,27 @@ class WatchPrsTests(WatcherCase):
     def test_refuses_a_last_flag_without_its_value(self) -> None:
         # A short timeout, so a watcher that loops on the missing value fails the test instead of hanging it.
         for flag in ("--tracked", "--state", "--interval", "--worktree", "--repo", "--author",
-                     "--review-requested", "--model"):
+                     "--review-requested", "--model", "--reviewer"):
             result = self.run_watcher(PRS, flag, timeout=10)
 
             self.assertEqual(2, result.returncode, flag)
             self.assertEqual(f"watch-prs.sh: {flag} needs a value\n", result.stderr)
 
-    def test_refuses_a_model_that_would_match_the_wrong_heads_or_none(self) -> None:
-        # "-" is what the row says when no model gave the head a verdict.
+    def test_refuses_a_reviewer_that_no_verdict_could_name(self) -> None:
         self.pull_request(1)
         self.track("acme/app#1")
+        refusals = [(("--model", "claude-opus-5-5"), "--model goes with --reviewer"),
+                    (("--reviewer", "operator"), "--model goes with --reviewer"),
+                    (("--model", "claude-opus-5-5", "--reviewer", "ada lovelace"),
+                     "--reviewer is not a GitHub login: ada lovelace")]
+        refusals += [(("--model", model, "--reviewer", "operator"), f"--model is not a model ID: {model}")
+                     for model in ("-", "a,b", "claude opus")]
 
-        for model in ("-", "a,b", "claude opus"):
-            refused = self.run_watcher(PRS, "--model", model)
+        for args, message in refusals:
+            refused = self.run_watcher(PRS, *args)
 
-            self.assertEqual(2, refused.returncode, model)
-            self.assertIn(f"--model is not a model ID: {model}", refused.stderr)
+            self.assertEqual(2, refused.returncode, args)
+            self.assertIn(message, refused.stderr)
             self.assertEqual("", refused.stdout)
 
     def test_adopts_the_authors_open_pull_requests(self) -> None:
