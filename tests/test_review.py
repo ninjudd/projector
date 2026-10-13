@@ -2273,11 +2273,15 @@ class StatusTests(LatestWinsCase):
         result = json.loads(self.status("--json")[1])
 
         self.assertEqual(0, code, err)
-        self.assertEqual(f"#1 at {self.head[:7]}: clean with 3 suggestions from claude-opus-5-5, "
-                         f"{review_page(newest)}", out.splitlines()[0])
+        self.assertEqual([f"#1 at {self.head[:7]}: clean with 3 suggestions from claude-opus-5-5, "
+                          f"{review_page(newest)}",
+                          f"  claude-opus-5-5   clean               review {newest}, 14:20 UTC, 3 suggestions",
+                          f"  gpt-5.5           clean               review {older}, 14:02 UTC, 1 suggestion"],
+                         out.splitlines())
         self.assertEqual([(newest, 3), (older, 1)], [(m["review"], m["suggestions"]) for m in result["models"]],
                          "a marker that gives no count is read by its body, and one that does by its marker")
-        self.assertEqual(3, result["newest"]["suggestions"])
+        self.assertEqual((3, 4), (result["newest"]["suggestions"], result["suggestions"]),
+                         "the head's count is every model's, as `review suggestions` lists them")
 
     def test_every_account_the_repository_lets_in_counts_so_fix_pr_runs_it_once(self) -> None:
         skill = (Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text()
@@ -3394,9 +3398,10 @@ class KindPhraseTests(unittest.TestCase):
 
 
 class IncrementalSuggestionsTests(IncrementalCase):
-    def test_an_incremental_review_brings_the_suggestions_of_the_full_review_its_lead_links(self) -> None:
-        # The setup's full review listed none; a re-review of the same head lists two, and the incremental
-        # review builds on that newest full review.
+    def build_on_suggestions(self) -> tuple[int, str]:
+        """Publish a full review of the reviewed head that lists two suggestions, then an incremental review of a
+        push that builds on it, and return the full review's id and the new head. The setup's full review listed
+        none; the re-review of the same head is the newest full review, which the incremental review links."""
         self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
         self.assertEqual(0, self.publish("clean", "--threads", str(self.threads(*P3)))[0])
         full = self.posted()["id"]
@@ -3404,12 +3409,32 @@ class IncrementalSuggestionsTests(IncrementalCase):
         self.assertEqual(0, self.publish_incremental()[0])
         self.assertIn(f"({review_page(full)})", self.posted()["body"])
         self.assertIn(" covered=1/1 suggestions=0 -->", self.posted()["body"])
+        return full, head
+
+    def test_an_incremental_review_brings_the_suggestions_of_the_full_review_its_lead_links(self) -> None:
+        full, head = self.build_on_suggestions()
 
         code, out, err = self.project("suggestions", "1", "--repo", REPO, "--json")
 
         self.assertEqual(0, code, err)
         self.assertEqual([dict(item, url=review_page(full), sha=self.reviewed) for item in LISTED], json.loads(out),
                          f"the suggestions name the full review's head, not {head[:7]}")
+
+    def test_status_counts_the_suggestions_of_the_full_review_an_incremental_review_builds_on(self) -> None:
+        # The incremental review lists none of its own, so a count of its own would read 0 while fix-pr still
+        # has the full review's two to decide.
+        _, head = self.build_on_suggestions()
+        incremental = self.posted()["id"]
+
+        code, out, err = self.project("status", "1", "--repo", REPO)
+        result = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
+        listed = json.loads(self.project("suggestions", "1", "--repo", REPO, "--json")[1])
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([f"#1 at {head[:7]}: clean with 2 suggestions from claude-opus-5-5, "
+                          f"{review_page(incremental)}"], out.splitlines())
+        self.assertEqual((incremental, 2, 2, len(listed)),
+                         (result["newest"]["review"], result["newest"]["suggestions"], result["suggestions"], 2))
 
 
 class SuggestionParsingTests(unittest.TestCase):

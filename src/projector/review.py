@@ -1625,11 +1625,23 @@ def suggestion_item(text: str) -> dict:
     return {"path": path, "line": int(line) if line else None, "text": SEPARATOR.sub("", rest)}
 
 
-def listed_suggestions(body: str, marker: Optional[Verdict]) -> int:
+def listed_suggestions(review: dict) -> int:
     """How many suggestions a review lists: the count its marker gives, or the items of its body's section."""
+    body = review.get("body") or ""
+    marker = verdict_marker(body)
     if marker is not None and marker.suggestions is not None:
         return marker.suggestions
     return len(parse_suggestions(body) or [])
+
+
+def with_full_review(review: dict, reviews: list[dict]) -> list[dict]:
+    """The reviews whose suggestions stand with `review`: `review` itself and, when it is incremental, the full
+    review among `reviews` that its lead links, whose suggestions it leaves unrepeated."""
+    body = review.get("body") or ""
+    marker = verdict_marker(body)
+    link = FULL_REVIEW_LINK.search(body) if marker is not None and marker.incremental_from else None
+    full = next((r for r in reviews if link and r.get("url") == link.group(1)), None)
+    return [review] if full is None else [review, full]
 
 
 def reviewer_reviews(repo: str, number: int, reviewer: str) -> list[dict]:
@@ -1762,11 +1774,11 @@ def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
     """Each account's newest Projector verdict by each model on `head` among `reviews`, newest first, so the
     first is the head's newest verdict, whichever account and model gave it. Each has the `model`, by
     identity, its `verdict`, the `review` id, `url`, `at`, and `login` of the review that gave it, and how
-    many `suggestions` that review lists.
+    many `suggestions` stand with that review, as `with_full_review` finds them.
 
     One entry per account, not per model, because a reviewer is a model within an account: a teammate whose
     loop runs the same model must not hide the verdict a review loop looks for as its own."""
-    newest: dict[tuple[str, str], dict] = {}
+    newest: dict[tuple[str, str], tuple[dict, dict]] = {}
 
     def order(entry: dict) -> tuple[datetime, int]:
         return parse_time(entry["at"]), entry["review"] or 0
@@ -1776,13 +1788,23 @@ def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
         if marker is None or marker.sha != head or not found.get("at"):
             continue
         entry = {"model": identity(marker.model), "verdict": marker.verdict, "review": found.get("id"),
-                 "url": found.get("url"), "at": found["at"], "login": found.get("login"),
-                 "suggestions": listed_suggestions(found.get("body") or "", marker)}
+                 "url": found.get("url"), "at": found["at"], "login": found.get("login")}
         key = (entry["model"], (entry["login"] or "").lower())
         known = newest.get(key)
-        if known is None or order(entry) >= order(known):
-            newest[key] = entry
-    return sorted(newest.values(), key=order, reverse=True)
+        if known is None or order(entry) >= order(known[0]):
+            newest[key] = (entry, found)
+    for entry, found in newest.values():
+        entry["suggestions"] = sum(map(listed_suggestions, with_full_review(found, reviews)))
+    return sorted((entry for entry, _ in newest.values()), key=order, reverse=True)
+
+
+def suggesting_reviews(head: str, reviews: list[dict]) -> list[dict]:
+    """The reviews among `reviews` whose suggestions `fix-pr` decides on `head`: those `with_full_review` finds
+    for each verdict `newest_verdicts` gives, newest first, each once."""
+    by_id = {r.get("id"): r for r in reviews}
+    chosen = {found.get("id"): found for entry in newest_verdicts(head, reviews)
+              for found in with_full_review(by_id[entry["review"]], reviews)}
+    return list(chosen.values())
 
 
 FINDING_MODEL = re.compile(r"<!--\s*projector-finding\b[^>]*?\smodel=(\S+) -->")
@@ -1797,23 +1819,25 @@ def thread_model(thread: dict) -> Optional[str]:
 def status(repo: str, number: int, reviewer: str) -> dict:
     """The newest Projector verdict on the pull request's current head, the verdict `publish` sets draft
     state by, with each account's newest verdict by each model on it, every open Projector finding thread,
-    and every open hold comment."""
+    and every open hold comment. Its `suggestions` count those `review suggestions` lists for the head."""
     pr = read_pull_request(repo, number)
     head = pr["head"]["sha"]
-    models = newest_verdicts(head, verdicts(repo, number, reviewer, repo_visibility(pr)))
+    found = verdicts(repo, number, reviewer, repo_visibility(pr))
+    models = newest_verdicts(head, found)
     threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
     held = holds(repo, number, (pr.get("user") or {}).get("login") or "")
     newest = models[0] if models else None
     return {"repo": repo, "number": number, "head": head, "draft": bool(pr.get("draft")),
             "verdict": newest["verdict"] if newest else "unreviewed", "newest": newest, "models": models,
+            "suggestions": sum(map(listed_suggestions, suggesting_reviews(head, found))),
             "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads],
             "held": bool(held), "holds": held}
 
 
 def status_lines(result: dict) -> list[str]:
     """`review status` without --json: whether the head is held, the newest verdict on it, each account's
-    and model's when several gave one, naming the account where two share a model, the open threads, and
-    the hold comments."""
+    and model's when several gave one, naming the account where two share a model, each with the number of
+    suggestions standing with it when there are any, the open threads, and the hold comments."""
     newest = result["newest"]
     held = "held; " if result["held"] else ""
     count = newest["suggestions"] if newest else 0
@@ -1827,7 +1851,9 @@ def status_lines(result: dict) -> list[str]:
         width = max(len(name) for name in names) + 3
         for row, name in zip(rows, names):
             at = parse_time(row["at"]).strftime("%H:%M UTC")
-            lines.append(f"  {name:<{width}}{row['verdict']:<20}review {row['review']}, {at}")
+            count = row["suggestions"]
+            listing = f", {count} suggestion{'' if count == 1 else 's'}" if count else ""
+            lines.append(f"  {name:<{width}}{row['verdict']:<20}review {row['review']}, {at}{listing}")
     threads = result["open_threads"]
     if threads:
         named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "") for t in threads)
@@ -1838,25 +1864,14 @@ def status_lines(result: dict) -> list[str]:
 
 
 def suggestions(repo: str, number: int, reviewer: str) -> list[dict]:
-    """`review suggestions`: the suggestions `fix-pr` decides on the pull request's current head. They come
-    from each account's newest Projector review by each model on the head, among the reviews `status`
-    counts, newest first, and, after an incremental review, which lists none, from the full review its lead
-    links. Each has that review's `url` and the head `sha` its marker names, and the item's `path`, `line`, and
+    """`review suggestions`: the suggestions `fix-pr` decides on the pull request's current head, from the
+    reviews `suggesting_reviews` picks among those `status` counts, which `status` counts them from too. Each
+    has its review's `url` and the head `sha` that review's marker names, and the item's `path`, `line`, and
     `text`."""
     pr = read_pull_request(repo, number)
-    found = verdicts(repo, number, reviewer, repo_visibility(pr))
-    by_id, by_url = {r.get("id"): r for r in found}, {r.get("url"): r for r in found}
-    chosen: dict = {}
-    for entry in newest_verdicts(pr["head"]["sha"], found):
-        newest = by_id[entry["review"]]
-        chosen.setdefault(newest["id"], newest)
-        body = newest.get("body") or ""
-        link = FULL_REVIEW_LINK.search(body) if verdict_marker(body).incremental_from else None
-        full = by_url.get(link.group(1)) if link else None
-        if full is not None:
-            chosen.setdefault(full["id"], full)
+    reviews = suggesting_reviews(pr["head"]["sha"], verdicts(repo, number, reviewer, repo_visibility(pr)))
     return [{"url": r.get("url"), "sha": verdict_marker(r.get("body") or "").sha, **item}
-            for r in chosen.values() for item in parse_suggestions(r.get("body") or "") or []]
+            for r in reviews for item in parse_suggestions(r.get("body") or "") or []]
 
 
 def suggestions_text(items: list[dict]) -> str:

@@ -1573,18 +1573,22 @@ dismissal GitHub refuses, exits non-zero, and running it again finishes that
 review rather than posting another.
 
 `status` prints the newest Projector verdict on the pull request's current
-head, the one `publish` sets draft state by, with how many suggestions that
-review lists when it lists any, and the model and the review it came from.
-When several models gave a verdict on the head, it adds each model's newest
-one, newest first. Two accounts that run the same model each keep their own
-line, with the account in parentheses after the model, as
-`claude-opus-5-5 (teammate)`. Then it lists the open finding threads, and
-any hold comment the author has open:
+head, the one `publish` sets draft state by, with the model and the review it
+came from. When several models gave a verdict on the head, it adds each
+model's newest one, newest first. Two accounts that run the same model each
+keep their own line, with the account in parentheses after the model, as
+`claude-opus-5-5 (teammate)`. Each verdict gives the number of suggestions
+that stand with its review when there are any: those the review lists and,
+for an incremental review, those of the full review it builds on. These are
+the suggestions `suggestions` lists for the head, picked the same way, so
+after an incremental review the count does not drop to 0 while the full
+review's suggestions wait on `fix-pr`. Then it lists the open finding
+threads, and any hold comment the author has open:
 
 ```
 $ project review status 66
 #66 at 4f2a9c1: clean with 2 suggestions from claude-opus-5-5, https://github.com/example/app/pull/66#pullrequestreview-3301
-  claude-opus-5-5   clean               review 3301, 14:20 UTC
+  claude-opus-5-5   clean               review 3301, 14:20 UTC, 2 suggestions
   gpt-5.5           changes-requested   review 3290, 14:02 UTC
 ```
 
@@ -1605,8 +1609,9 @@ it cannot read the pull request. With `--json` it prints one object:
 | `repo`, `number`, `head` | The pull request and its current head SHA. |
 | `draft` | Whether the pull request is a draft. |
 | `verdict` | The newest verdict on the head: `clean`, `changes-requested`, or `unreviewed`. |
-| `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, and the number of `suggestions` its review lists, which the marker's `suggestions=` gives, or the body's list where the marker gives no count. It is `null` when the head is `unreviewed`. |
+| `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, and the number of `suggestions` that stand with its review: those the review lists and, for an incremental review, those of the full review it builds on. Each review's count is its marker's `suggestions=`, or its body's list where the marker gives no count. It is `null` when the head is `unreviewed`. |
 | `models` | Each account's newest verdict by each model on the head in the same shape, newest first. A review loop finds its own by `login` and `model`. |
+| `suggestions` | The number of suggestions every entry of `models` brings, each review counted once: the suggestions `suggestions` lists for the head. |
 | `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
 | `held` | Whether the pull request's author has a hold comment open, which keeps the pull request a draft whatever `verdict` says. |
 | `holds` | Each hold comment the pull request's author has open on it, as its `id` and `url`. A comment by anyone else that carries the marker holds nothing. |

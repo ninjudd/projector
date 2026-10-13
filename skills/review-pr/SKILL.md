@@ -189,9 +189,9 @@ resolved before a merge, hold the merge where they apply.
 
 `project review status <number>` prints the newest verdict on the current
 head, the model and review it came from, each account's newest verdict by
-each model there when several gave one, the open finding threads, and any
-open hold, as `docs/cli.md` describes; `fix-pr` reads it to tell whether a
-head is signed off.
+each model there when several gave one, the number of suggestions standing
+with each, the open finding threads, and any open hold, as `docs/cli.md`
+describes; `fix-pr` reads it to tell whether a head is signed off.
 
 ## Review an exact head
 
