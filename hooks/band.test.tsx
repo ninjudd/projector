@@ -31,6 +31,8 @@ const COMMAND = {
 } as const
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0)
+/** The account the band's `gh` is signed in as. */
+const VIEWER = 'ada'
 const SEVEN = 'https://github.com/x/y/pull/7'
 const SUMMARY = 'https://example.com/site/reviews/7'
 
@@ -56,6 +58,10 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       updatedAt: new Date(NOW - 45_000).toISOString(),
     }),
     p3: pr(3, 'Already merged', { state: 'MERGED' }),
+    p4: pr(4, 'First change by grace', { author: { login: 'grace' } }),
+    p5: pr(5, 'Change by bob', { author: { login: 'bob' } }),
+    p6: pr(6, 'Second change by grace', { author: { login: 'grace' } }),
+    p9: pr(9, 'Another change of my own', { author: { login: VIEWER } }),
   },
   'x/y': {
     p7: pr(7, 'Conflicting change', {
@@ -75,9 +81,9 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
   },
 }
 
-/** Answers a GraphQL query with each repository it names, under the alias it gave. */
+/** Answers a GraphQL query with the signed-in login and each repository it names, under the alias it gave. */
 function answer(query: string): string {
-  const data: Record<string, unknown> = {}
+  const data: Record<string, unknown> = query.includes('viewer { login }') ? { viewer: { login: VIEWER } } : {}
   for (const [, alias, owner, name] of query.matchAll(/(r\d+): repository\(owner: "([^"]+)", name: "([^"]+)"\)/g)) {
     data[alias ?? ''] = BY_REPO[`${owner}/${name}`] ?? null
   }
@@ -211,8 +217,10 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
 
   await ui.press({ key: 'pr:x/y#7' })
-  const facts = await ui.find({ type: 'Text', text: /^watching · by ada · fix-branch · \+12 −3 in 2 files$/ })
+  // The line names another person's author, and the drawer names none.
+  const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files$/ })
   expect(facts?.props.color).toBe('subtle')
+  expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
   // The pull request's age ends its line, so the drawer does not repeat it.
   expect(await ui.find({ type: 'Text', text: /updated 5m ago/ })).toBeUndefined()
@@ -220,9 +228,9 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   const opened = await ui.find({ key: 'drawer:x/y#7' })
   expect(opened).toBeDefined()
   expect(opened?.props.marginLeft).toBeUndefined()
-  // Under the facts, discuss has a row, and each link a line of its own, so a terminal without hyperlinks shows the whole URL.
+  // Under the facts, each link has a line of its own, so a terminal without hyperlinks shows the whole URL, and the actions' row comes last.
   const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
-  expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'Box', 'github:x/y#7', 'projector:x/y#7'])
+  expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'github:x/y#7', 'projector:x/y#7', 'Box'])
   expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[projector](${SUMMARY})`)
   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
@@ -259,6 +267,41 @@ test('ends each pull request’s line with its age, in one column as wide as the
   expect((await ui.find({ type: 'Text', text: /^5m$/ }))?.props.color).toBe('subtle')
   // A pull request GitHub gave no time for shows no age.
   expect(ages[0]?.text).toBe('')
+  await ui.unmount()
+})
+
+test('lists your pull requests first, then everyone else’s by author, naming theirs before the title', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const { commands } = world(on, { [REVIEW]: 'o/r#4\no/r#9\no/r#5\no/r#6\n', [WATCH]: 'x/y#7\n' })
+
+  // One command starts both watchers, so the band loads once.
+  await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
+  await clock.advance(1)
+  await clock.settle()
+
+  // The signed-in login comes in the one query that asks for the pull requests.
+  const gh = commands.filter(argv => argv[0] === 'gh')
+  expect(gh).toHaveLength(1)
+  expect(gh[0]?.join(' ')).toContain('viewer { login }')
+
+  const ui = await $.ui.mount(BAND)
+  // Yours keep their order, then bob's, then grace's two in theirs, with nothing between the groups.
+  const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
+  expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  expect(texts.filter(text => text === ' ')).toHaveLength(1)
+
+  // Only someone else's line names its author, in `subtle`, in a column as wide as the longest login.
+  expect(await ui.find({ key: 'author:x/y#7' })).toBeUndefined()
+  expect(await ui.find({ key: 'author:o/r#9' })).toBeUndefined()
+  const authors = await Promise.all(['o/r#5', 'o/r#4', 'o/r#6'].map(key => ui.find({ key: `author:${key}` })))
+  expect(authors.map(author => [author?.text, author?.props.width])).toEqual([
+    ['bob', 5],
+    ['grace', 5],
+    ['grace', 5],
+  ])
+  for (const name of await ui.findAll({ type: 'Text', text: /^(bob|grace)$/ })) expect(name.props.color).toBe('subtle')
   await ui.unmount()
 })
 

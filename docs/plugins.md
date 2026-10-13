@@ -182,28 +182,36 @@ line each. Run `/projector` to show or hide the band. It also appears when the
 session starts a loop's watcher for the first time.
 
 ```text
-──────────────────────────────────────────────────────────── updated 12s ago [-]
+──────────────────────────────────────────────────────────────── updated 12s ago [-]
 
-#267 draft List a loop's open pull requests above the Claude Code prompt  2h
-#258 draft Name the reviewed head in a review's signature line   conflict 5m
-reviewing · by ada · review-signature · +84 −12 in 5 files · checks passing
-discuss
+#267 draft List a loop's open pull requests above the Claude Code prompt      2h
+#258 draft grace Name the reviewed head in a review's signature line conflict 5m
+reviewing · review-signature · +84 −12 in 5 files · checks passing
 github
 projector
+discuss
 ```
 
-Each line is the pull request's number, `draft` or `ready`, the title, and,
-when the pull request has them, a merge conflict, a change request, or
-unresolved review threads. The line ends with how long ago the pull request
-last changed, in the column where the inbox's items end with their ages. A
-pull request that both a `start-watch-loop` watcher, `watch-threads.sh`, and
-a `start-review-loop` watcher, `watch-prs.sh`, track is listed once. Only
-the title shortens on a narrow terminal. The divider says how long ago the
-band reloaded, and Claude Code's `[-]` at its end collapses the band. A
-blank line sets the divider apart from the rows under it. Only a terminal
-draws the divider and that blank line. Claude Desktop, VS Code, and the
-mobile app do not set the band's text in a terminal's columns, so a rule
-sized to them would wrap, and there the band starts with its first row.
+Each line is the pull request's number, `draft` or `ready`, its author when
+someone else wrote it, the title, and, when the pull request has them, a
+merge conflict, a change request, or unresolved review threads. The line
+ends with how long ago the pull request last changed, in the column where
+the inbox's items end with their ages. Only the title shortens on a narrow
+terminal.
+
+Your own pull requests come first, then everyone else's, each author's
+together and the authors in order of login, with no line between the groups.
+The band tells which are yours by the account `gh` is signed in as, which it
+asks for in the same query as the pull requests. A pull request that both a
+`start-watch-loop` watcher, `watch-threads.sh`, and a `start-review-loop`
+watcher, `watch-prs.sh`, track is listed once.
+
+The divider says how long ago the band reloaded, and Claude Code's `[-]` at
+its end collapses the band. A blank line sets the divider apart from the
+rows under it. Only a terminal draws the divider and that blank line. Claude
+Desktop, VS Code, and the mobile app do not set the band's text in a
+terminal's columns, so a rule sized to them would wrap, and there the band
+starts with its first row.
 
 When a poll cannot reach GitHub, the band keeps showing the pull requests
 GitHub gave last, and the divider's time shows how old they are. It shows
@@ -212,18 +220,19 @@ GitHub's error only when it has none of them to show.
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
 under the number. It says whether your loops are watching or reviewing the
-pull request, then its author, branch, size, and checks. Below that:
+pull request, then its branch, size, and checks. Below that:
 
-- **discuss** puts the pull request's number in the prompt at the cursor,
-  as `#258`, or as `owner/repo#258` when the band lists more than one
-  repository.
 - **github** opens the pull request on GitHub.
 - **projector** opens its Projector summary, when the pull request's
   description links one.
+- **discuss** puts the pull request's number in the prompt at the cursor,
+  as `#258`, or as `owner/repo#258` when the band lists more than one
+  repository.
 
 Each link has a line of its own, because a terminal that does not draw
 hyperlinks shows a link's URL after its text, and a line shared with
-another link would cut the URL off.
+another link would cut the URL off. **discuss** comes last, on the row the
+drawer keeps for its actions.
 
 On the main screen, which Claude Code uses under tmux and when
 `CLAUDE_CODE_NO_FLICKER=0` is set, press ctrl+x tab to move into the band,

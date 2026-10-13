@@ -34,7 +34,7 @@ type Ran = { exitCode: number; stdout: string; stderr: string }
 
 const TICK_MS = 5_000
 const POLL_MS = 30_000
-const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
+const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null, error: null }
 const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
 const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
@@ -60,7 +60,8 @@ const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
 // The session keeps its state across a reload or an update of the plugin,
 // so a value an earlier version wrote can have another shape.
 const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
-const current = (value: Snapshot): Snapshot => (Array.isArray(value.rows) ? value : EMPTY)
+const current = (value: Snapshot): Snapshot =>
+  Array.isArray(value.rows) ? { ...value, viewer: value.viewer ?? null } : EMPTY
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -155,7 +156,7 @@ async function adopt($: Engine, command: string): Promise<void> {
 }
 
 async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> {
-  if (prs.length === 0) return { prs: new Map(), error: null }
+  if (prs.length === 0) return { prs: new Map(), viewer: null, error: null }
   const query = buildQuery(prs)
   try {
     const result = await $.process.run(['gh', 'api', 'graphql', '-f', `query=${query.text}`], {
@@ -163,7 +164,7 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> 
     })
     return parseResponse(query, result)
   } catch (error) {
-    return { prs: new Map(), error: messageOf(error) }
+    return { prs: new Map(), viewer: null, error: messageOf(error) }
   }
 }
 
@@ -205,6 +206,7 @@ async function load($: Engine): Promise<void> {
   const time = await $.clock.now()
   await update($, snapshot, () => ({
     rows,
+    viewer: fetched.viewer ?? last.viewer,
     fetchedAt: isFetched ? time : last.fetchedAt,
     error: fetched.error,
   }))
@@ -531,17 +533,33 @@ function notesOf(pr: PullRequest): Note[] {
   return notes
 }
 
-/** The drawer's facts, before its checks: what the loops do, who, where, and how big. */
+/** The drawer's facts, before its checks: what the loops do, where, and how big. */
 function factsOf(pr: PullRequest, kinds: readonly LoopKind[]): string {
   const files = `${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`
   return [
     kinds.join(' and '),
-    pr.author === null ? undefined : `by ${pr.author}`,
     pr.branch || undefined,
     `+${pr.additions} −${pr.deletions} in ${files}`,
   ]
     .filter(part => part !== undefined)
     .join(' · ')
+}
+
+/** Whether the account the band's `gh` is signed in as wrote a pull request. */
+const isOwn = (pr: PullRequest, viewer: string | null) => viewer !== null && pr.author === viewer
+
+/**
+ * The band's pull requests in the order it lists them: yours first, then
+ * everyone else's, each author's together and the authors by login. Within
+ * each, they keep the order they came in.
+ */
+function byAuthor(rows: readonly Row[], viewer: string | null): Row[] {
+  const loginOf = (row: Row) => (row.pr.author ?? '').toLowerCase()
+  const others = rows.filter(row => !isOwn(row.pr, viewer))
+  return [
+    ...rows.filter(row => isOwn(row.pr, viewer)),
+    ...others.sort((one, other) => loginOf(one).localeCompare(loginOf(other))),
+  ]
 }
 
 const ago = (seconds: number) => (seconds < 5 ? 'just now' : `${span(seconds)} ago`)
@@ -717,6 +735,13 @@ export const register: Register = on => {
     const label = labeler(shown.rows.map(row => row.pr))
     const reference = referencer(shown.rows.map(row => row.pr))
     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
+    // Another person's line names its author after `draft`, in a column as
+    // wide as the longest of those logins, so their titles start in one
+    // column too.
+    const authorWidth = Math.max(
+      0,
+      ...shown.rows.filter(row => !isOwn(row.pr, shown.viewer)).map(row => (row.pr.author ?? '').length),
+    )
     const heading = [
       ...counts,
       shown.fetchedAt === null ? undefined : `updated ${ago(secondsSince(time, shown.fetchedAt))}`,
@@ -948,6 +973,11 @@ export const register: Register = on => {
             <Box flexShrink={0}>
               <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
             </Box>
+            {!isOwn(pr, shown.viewer) && (
+              <Box key={`author:${key}`} flexShrink={0} width={authorWidth}>
+                <Text color="subtle">{pr.author ?? ''}</Text>
+              </Box>
+            )}
             <Box flexGrow={1} flexShrink={1}>
               <Text wrap="truncate-end">{pr.title}</Text>
             </Box>
@@ -971,14 +1001,14 @@ export const register: Register = on => {
                 <Text color="subtle">{factsOf(pr, kinds)}</Text>
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}
               </Text>
+              {/* Each link has a line of its own: a terminal without hyperlinks
+                  draws a link's URL after its text, and a shared line would
+                  cut the URL off. The actions follow, on one row. */}
+              <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
+              {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
               <Box flexDirection="row">
                 <Button key={`discuss:${key}`} plain label="discuss" onPress={() => fill(`${reference(pr)} `)} />
               </Box>
-              {/* Each link has a line of its own: a terminal without hyperlinks
-                  draws a link's URL after its text, and a shared line would
-                  cut the URL off. */}
-              <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
-              {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
             </Box>
           )}
         </Box>
@@ -998,7 +1028,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {divider}
-        {shown.rows.map(drawRow)}
+        {byAuthor(shown.rows, shown.viewer).map(drawRow)}
         {failure !== undefined && <Text color="error">{failure}</Text>}
         {shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
           <Text key="before-items"> </Text>

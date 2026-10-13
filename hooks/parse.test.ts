@@ -78,7 +78,8 @@ describe('GitHub', () => {
     { repo: 'x/y', number: 3 },
   ])
 
-  test('asks for every pull request in one query, grouped by repository', () => {
+  test('asks for every pull request in one query, grouped by repository, with the signed-in login', () => {
+    expect(query.text).toMatch(/^query \{ viewer \{ login \} r0: /)
     expect(query.text).toContain('r0: repository(owner: "o", name: "r") { p1: pullRequest(number: 1)')
     expect(query.text).toContain('p2: pullRequest(number: 2)')
     expect(query.text).toContain('r1: repository(owner: "x", name: "y") { p3: pullRequest(number: 3)')
@@ -87,6 +88,7 @@ describe('GitHub', () => {
   test('reads what came back even when one pull request is missing', () => {
     const body = {
       data: {
+        viewer: { login: 'ada' },
         r0: {
           p1: {
             number: 1,
@@ -118,6 +120,7 @@ describe('GitHub', () => {
     const fetched = parseResponse(query, { exitCode: 1, stdout: JSON.stringify(body), stderr: '' })
 
     expect(fetched.error).toBeNull()
+    expect(fetched.viewer).toBe('ada')
     expect([...fetched.prs.keys()]).toEqual(['o/r#1', 'x/y#3'])
     expect(fetched.prs.get('o/r#1')).toEqual({
       repo: 'o/r',
@@ -149,13 +152,13 @@ describe('GitHub', () => {
       stdout: '',
       stderr: 'error connecting to api.github.com\ncheck your internet connection\n',
     })
-    expect(offline).toEqual({ prs: new Map(), error: 'error connecting to api.github.com' })
+    expect(offline).toEqual({ prs: new Map(), viewer: null, error: 'error connecting to api.github.com' })
 
     const refused = parseResponse(query, {
       exitCode: 1,
       stdout: JSON.stringify({ errors: [{ message: 'Bad credentials' }] }),
       stderr: '',
     })
-    expect(refused.error).toBe('Bad credentials')
+    expect(refused).toEqual({ prs: new Map(), viewer: null, error: 'Bad credentials' })
   })
 })
