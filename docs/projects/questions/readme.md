@@ -549,3 +549,8 @@ band and the `ask` tool, both released in 0.7.14. It continues as the
 `project inbox`, so each command this plan names now runs under
 `project inbox`. The inbox plan's § 7 carries every open question in § 7
 here.
+
+The main-screen row of § 4 was not checked by hand before this project
+closed, and the inbox plan's § 4 carries that check forward. The row's
+clause about typing into the `Type something` field no longer applies,
+because the inbox plan's § 10 removes the field.

@@ -65,9 +65,10 @@ migrating anything.
 3. You open a notice's drawer: its detail, then `discuss | dismiss |
    snooze`. **dismiss** runs `project inbox dismiss`, which, for a
    notice, records the dismissal and sets `deliveredAt` to the same moment.
-   The line stays dim for a minute and then leaves the band, as an answered
-   question does. A question's drawer works as it does now, with **snooze**
-   added after **dismiss**.
+   The line stays, in the `subtle` color, for 30 seconds and then leaves
+   the band, as an answered question does (§ 10). A question's drawer
+   works as it does now, with **snooze** added after **dismiss** and with
+   no `Type something` field (§ 10).
 4. **snooze** runs `project inbox snooze`, which records `snoozedUntil`, an
    hour away. The item leaves the band and its divider's counts at once.
    When that time passes, the band shows it again and brings back a hidden
@@ -151,7 +152,10 @@ ask`.
 ### 2.5 Claude Code: the band
 
 The band draws questions as it does now and notices beside them, oldest
-first:
+first. § 10 gives the reasons for what **discuss** puts in the prompt,
+for a question's drawer without a `Type something` field, and for how
+long a resolved line stays. In a terminal, with one question and one
+notice about #337:
 
 ```text
 ──────────────────────────── 1 question · 1 notice · updated 12s ago [-]
@@ -168,24 +172,31 @@ first:
   the drawer.
 - **The divider** counts open questions and open notices separately,
   `1 question · 2 notices`, leaving out a count of zero and any snoozed
-  item.
+  item. Only a terminal draws the divider (§ 9), so only there does the
+  band count its items.
 - **A notice's drawer.** A blank line, its detail as `Markdown` and another
   blank line when it has detail, then `discuss | dismiss | snooze`: three
-  plain `Button`s, each drawn as its label alone, with a dim `|` between
-  them, in place of the bracketed buttons the drawer draws today.
-  **discuss** puts the quoted subject and a space in the prompt, as it does
-  for a question. **dismiss** runs `project inbox dismiss`, and **snooze**
-  runs `project inbox snooze`; each puts the item the command prints in the
-  band's list, and a second press finds the item changed and does nothing.
-- **A question's drawer** ends the same way, `discuss | dismiss |
-  snooze`, gaining **snooze** after **dismiss**.
+  plain `Button`s, each drawn as its label alone, with a `|` in the
+  `subtle` color between them, in place of the bracketed buttons the
+  drawer draws today. **discuss** puts the quoted subject and two newlines
+  in the prompt, as it does for a question, and what you type under a
+  quoted notice answers nothing. **dismiss** runs `project inbox dismiss`,
+  and **snooze** runs `project inbox snooze`; each puts the item the
+  command prints in the band's list, and a second press finds the item
+  changed and does nothing.
+- **A question's drawer** lists its options and ends the same way,
+  `discuss | dismiss | snooze`, gaining **snooze** after **dismiss**. It
+  has no `Type something` field: what you type under the quote that
+  **discuss** puts in the prompt is your answer. Sending a prompt that
+  answers the question closes its drawer.
 - **A snoozed item** leaves the list and closes its drawer. On each tick,
   shown or hidden, the band checks for an open item whose `snoozedUntil`
   has passed since its last tick; such an item returns to the list, and the
   band appears if you hid it. Waking needs no `list`, because the band
   already holds the item.
-- **A dismissed notice's line.** Dim and struck through for a minute after
-  `deliveredAt`, then gone. Its drawer still opens, with only **discuss**.
+- **A dismissed notice's line.** In the `subtle` color and struck through
+  for 30 seconds after `deliveredAt`, then gone. Its drawer still opens,
+  with only **discuss**.
 - **Sent prompts.** The reader of answers in a sent prompt considers
   questions only, snoozed ones included.
 
@@ -214,7 +225,7 @@ session's id in every host, which § 7 leaves open.
 - **One inbox, two kinds.** A question and a notice live the same life: an
   agent posts it, it waits for you in one place, and one action of yours
   clears it. Keeping both in one store reuses the numbering, the lock, the
-  band's reading of the store, its list, its drawer, and its minute of
+  band's reading of the store, its list, its drawer, and its 30 seconds of
   fading, and gives you one list to read. A third kind of store would
   duplicate all of it.
 - **A notice is not a question with one option.** A choice you cannot
@@ -226,8 +237,8 @@ session's id in every host, which § 7 leaves open.
   aside a question you will not answer; the kind decides only whether the
   agent hears of it.
 - **Dismissing a notice marks it delivered.** With `deliveredAt` set at
-  once, retention, `watch`, the band's deliverer, and the band's minute of
-  fading all handle a dismissed notice with no new branch: it is simply a
+  once, retention, `watch`, the band's deliverer, and the band's 30
+  seconds of fading all handle a dismissed notice with no new branch: it is simply a
   delivered item.
 - **Snoozing hides without losing.** An item you cannot deal with yet
   should leave your way without leaving the inbox. Snoozing records a time
@@ -240,6 +251,15 @@ session's id in every host, which § 7 leaves open.
   already done or answers what you already asked, so the agent keeps
   working whether or not you have read it. An agent that needs you to see
   something before it goes on asks a question instead.
+- **Keyed by session, not by branch.** Each session keeps its own items,
+  and an answer goes back to the session that asked. Keying the inbox by
+  branch, so that every session on one branch shared its items, was
+  considered and rejected for three reasons. Only the asking session has
+  the context: the agent that waits for the answer, and the transcript
+  that explains the question, are in that session. A loop spans branches:
+  one watch loop's session tracks many pull requests, each on its own
+  branch, so keying by branch would split one session's items. And a
+  worktree can have a detached head, with no branch to key by.
 - **Rename now, with no migration.** The names `question` and `questions`
   no longer describe what the command keeps. Nobody depends on them yet, so
   renaming the command, the module, the store's directory, the JSON keys,
@@ -271,10 +291,10 @@ session's id in every host, which § 7 leaves open.
 | `printf 'see #12.2.a' \| project inbox context --session s1` | Prints nothing and exits `0` |
 | A subagent calls `mcp__projector__tell` about #7 | Returns `Posted #7.1. …`; the band lists a `•` line naming `#7`, the divider counts `1 notice`, and one `$.ui.notify` is raised |
 | Open a notice's drawer | Its detail, then `discuss \| dismiss \| snooze` as three plain buttons |
-| Press **dismiss** in a notice's drawer | Runs `project inbox dismiss`; the line turns dim and struck through; no `$.session.send` or `$.prompt.submit` follows; the line leaves the band a minute later |
+| Press **dismiss** in a notice's drawer | Runs `project inbox dismiss`; the line turns to the `subtle` color and is struck through; no `$.session.send` or `$.prompt.submit` follows; the line leaves the band 30 seconds later |
 | Press **snooze** in either kind's drawer | Runs `project inbox snooze`; the item leaves the list and the divider's count; with the band hidden, an hour later the item returns and the band appears |
 | Snooze an item, hide the band, and dismiss the item from a terminal | An hour later the item does not return and the band stays hidden |
-| Press **discuss** in a notice's drawer | The prompt gains the quoted subject and a space |
+| Press **discuss** in a notice's drawer | The prompt gains the quoted subject and two newlines |
 | Send a prompt quoting a notice's subject and a line under it | Nothing is recorded |
 | With no items | The band, its divider, and the tick look and act as they do now |
 | On the main screen under tmux, ctrl+x tab and Enter on an item | Its drawer opens; a question's option numbers, `Markdown` links, take no press there |
@@ -308,7 +328,8 @@ under "Stack dependent work":
 2. **Add notices and snoozing.** Layer 2 of § 2.6, on top of the first.
 
 This project moves to `completed` once the main-screen row in § 4 has been
-checked by hand; until then layer 2 leaves it `in-progress`.
+checked by hand and the changes in § 10 and § 11 have shipped; until then
+it stays `in-progress`.
 
 ## 7. Open questions
 
@@ -326,18 +347,54 @@ them untracked.
   question above is settled.
 - **Views for Codex and Paseo.** Codex has no band, and Paseo's clients
   could list and clear items through `project inbox list --json`,
-  `answer`, and `dismiss`. Deferred until `project inbox` ships.
+  `answer`, and `dismiss`. Deferred until a session's id outside Claude
+  Code is settled, the first question here: a view shows one session's
+  items, so it must name its session the way that session's agents do, or
+  it shows another session's items or none.
 - **Old session directories.** A session's directory under
   `projector/inbox/` stays after the session ends. Removing directories
   older than some age is deferred until they turn out to pile up.
 - **The look of notices and snoozing.** The `•` bullet, the divider's
   wording, the hour a snooze lasts, and whether the band says how many
-  items are snoozed are a first choice. Owner: ninjudd, to adjust in a
-  development copy of the band once layer 2 lands, as the questions' layout
-  was.
+  items are snoozed are a first choice. Owner: ninjudd, who has been
+  adjusting the band in daily use since layer 2 shipped in 0.7.15. § 9 and
+  § 10 record the adjustments so far. Whatever stands when the main-screen
+  check of § 4 closes the project is the design.
 - **Old `projector/questions/` directories.** Left on disk, unread.
   Removing them is deferred, since no one but the owner has used the
   command.
+- **Revising an open item in place.** After you discuss a question, an
+  agent that should offer something else can only ask a new question, and
+  the old one stays open beside it until you dismiss it. A revision would
+  keep the item and its number instead. `project inbox ask --revise
+  <number>` and `project inbox tell --revise <number>`, and a `revise`
+  property on both tools, would replace the item's `subject`, `choices`,
+  and `detail` after the checks `ask` or `tell` makes, keep its
+  `postedAt`, `agentId`, and `snoozedUntil`, and record `revisedAt`. The
+  band would redraw the item where it was, forget any answer its drawer
+  had put in the prompt for it, and raise no notification. Under § 11 a
+  number holds no pull request, so a revision could change `pr` as well.
+  Deferred by the owner: asking again and dismissing the old question
+  already works, so the flag, the tool property, and the band's redraw
+  wait until revising proves common.
+- **Answering only under the band's own proposals.** Considered and set
+  aside. Under this rule, a quoted question in a sent prompt would answer
+  only while the band held a proposal for it, the text an option put in
+  the prompt, so that a message typed under a quote that **discuss** put
+  there was never recorded as an answer. § 10 makes **discuss** the way to
+  answer in your own words: what you type under the quoted question is
+  your answer. A quoted question followed by text is therefore an answer
+  on purpose, and this rule would undo that. To talk a question over
+  without answering it, write on the quote's own line. Owner: ninjudd, to
+  reopen if a message meant as discussion is recorded as an answer.
+- **Finding items across sessions.** A view or a shell user could want
+  every session's open items about one pull request, as `project inbox
+  list --pr owner/repo#337` would list them, each with its session.
+  Answers would still go to the session that asked, because only that
+  session's band or `watch` delivers them, so you would answer with that
+  session's `--session`. Deferred until a view needs it: `project inbox
+  list --json` without `--session` already prints every session's items
+  with their `pr`, which a script can filter.
 
 ## 8. Background
 
@@ -352,8 +409,9 @@ and snoozing for both.
 
 ## 9. What the implementation settled
 
-Both layers of § 6 are built. Building them settled these points, which the
-sections above leave open or state loosely:
+Both layers of § 6 are built, and shipped in 0.7.15 with #281, #283, and
+#284, which changed the band around them. Together they settled these
+points, which the sections above leave open or state loosely:
 
 - **A dismissed notice lists only with `--all`.** Dismissing a notice marks
   it delivered, and `list` without `--all` leaves out delivered items. The
@@ -380,9 +438,22 @@ sections above leave open or state loosely:
 - **`--for 0` ends a snooze now rather than removing it.** It sets
   `snoozedUntil` to the current time, so the band's next tick sees the item
   wake and brings back a band you hid, as it does when a snooze runs out.
+- **A blank line sets the divider apart.** #283 draws a blank line under
+  the divider, both when the band lists pull requests or items and when it
+  has nothing to list, so the divider's counts and its `updated …` time do
+  not run into the first row.
+- **Only a terminal draws the divider.** #284 draws the divider and the
+  blank line under it only when the surface is `terminal`. Claude Desktop,
+  VS Code, and the mobile app set the band's text in their own font rather
+  than in a terminal's columns, so a rule sized to those columns would
+  wrap. There the band starts with its first row, and shows neither the
+  item counts nor the `updated …` time.
 - **A notice's drawer drops the divider too.** #281 made an open
-  question's drawer the band's top row, with no divider above it, so the
-  drawer gets one more row before the engine scrolls the band. Every item's
+  question's drawer the band's top row, with no divider above it. In a
+  terminal that gives the drawer two more rows before the engine, which
+  caps the band below half the terminal, starts to scroll it: the
+  divider's row and the blank row under it. On any other surface the band
+  draws no divider, so the drawer gains no row. Every item's
   drawer, a notice's included, has the band to itself the same way. The
   divider and its counts return when the drawer closes or the item leaves
   the list, as a snooze makes it do.
@@ -396,3 +467,320 @@ sections above leave open or state loosely:
 
 The main-screen row of § 4 waits for a check by hand under tmux, so the
 project stays `in-progress`.
+
+## 10. The band after layer 2
+
+After using layer 2, the owner decided six changes to the band, which
+#295 builds. § 2.1, § 2.5, and § 4 describe the band with these changes,
+and this section gives their reasons, their files, and their evidence.
+The `/projector <tracked file>` form that the questions plan describes
+goes away.
+
+- **Discuss puts the quote and a blank line in the prompt.** One handler
+  serves both kinds: **discuss** puts the item's quoted subject and two
+  newlines in the prompt, so the cursor waits a blank line below the
+  quote. When you send the prompt, the first line that is not blank under
+  a quoted question is your answer: the option whose text it is, or else
+  a typed answer under the question's last letter. The band records it
+  and marks it delivered, because the prompt carries it to the agent, as
+  it does for an option you press. Under a quoted notice, what you type
+  answers nothing and reaches the agent as conversation. To talk a
+  question over without answering it, write on the quote's own line. You
+  answer in your own words in the prompt, where you write everything else
+  to the agent, with room for a long answer and for several answers in one
+  message.
+- **A question's drawer has no `Type something` field.** The drawer lists
+  its options, then `discuss | dismiss | snooze`. **discuss** does what
+  the field did, so two ways to type an answer differed only in where you
+  typed. The field was also the one part of the drawer that the mobile app
+  cannot draw, so every surface now draws the same drawer. Once a typed
+  answer is recorded, the drawer still shows it after the options, marked
+  `✓`.
+- **Sending an answer closes the question's drawer.** When a sent prompt
+  answers a question, from an option's text or from what you type under
+  the quote, the band closes that question's drawer if it is the open
+  one, so the band shows its list again. Pressing an option fills the
+  prompt and leaves the drawer open until you send, and **discuss** leaves
+  it open too, so the options and detail stay in view while you type.
+- **A quote may end in spaces or tabs.** When the band reads a sent
+  prompt, a quoted question followed by spaces or tabs and then a line
+  break still ends its line, so the answer under it is read. You cannot
+  see a trailing space in the prompt, so it must not decide whether your
+  answer is recorded.
+- **A resolved line stays 30 seconds.** An answered or dismissed item
+  stays in the band for 30 seconds after `deliveredAt`, which
+  `RESOLVED_MS` in `hooks/inbox.ts` sets, in place of a minute. That is
+  long enough to see that your answer or dismissal took, and the list
+  clears sooner. The line is drawn in the theme's `subtle` color, as all
+  of the band's muted text is, because some terminals draw `dimColor` text
+  at full strength.
+- **`/projector` takes no argument.** The command shows or hides the band
+  and does nothing more. The band lists only the loops whose watchers the
+  session starts, which it learns when its `Bash` and `Monitor` hooks see
+  the session run a watcher. Naming a tracked file by hand, such as
+  another session's, goes away. The band is the session's own view, of
+  its loops' pull requests and its inbox, so another session's loop
+  belongs in that session's band, beside the agents that act on it. With
+  no file named by hand, every loop the band lists takes its kind from the
+  watcher the session started. When the band cannot tell which file a
+  watcher's `--tracked` argument names, its toast says that the band does
+  not list that loop. The band never scans the machine's processes to
+  learn a loop's kind, and it leaves out a loop that the session's state
+  holds without a kind, until the session starts a watcher on that file,
+  whose entry then replaces it.
+
+| File | Change |
+| --- | --- |
+| `hooks/register.tsx` | **discuss** puts the quoted subject and two newlines in the prompt; a question's drawer draws no `Input`, and a resolved question keeps the `✓` row of its typed answer; `/projector` drops its `argumentHint` and its handling of a tracked file, and its description names the inbox; `runningLoops`, the `ps -A` scan, goes, and `load` lists only the seen loops that have a kind; the toast for a tracked path the band cannot read says that the loop is not listed; muted text takes the `subtle` color; a sent prompt that answers a question closes its drawer; a watcher's entry replaces a seen loop that has no kind |
+| `hooks/parse.ts`, `hooks/parse.test.ts` | `expandPath`, which only `/projector <tracked file>` used, goes with its test |
+| `hooks/types.d.ts` | `SeenLoop.kind` is required |
+| `hooks/inbox.ts` | `answersIn` lets spaces or tabs follow a quote before its line break; `RESOLVED_MS` is `30_000` |
+| `hooks/inbox.test.ts`, `hooks/band.test.tsx` | The rows below |
+| `docs/plugins.md` | The drawer, **discuss**, which quotes answer, the 30 seconds, and the band without a file named by hand |
+
+#295 also carries smaller fixes found while using the band, such as the
+pull request drawer's **discuss** becoming a plain `Button`, and its
+description lists them.
+
+| Do | Expect |
+| --- | --- |
+| Open a question's drawer | Its detail, its numbered options, then `discuss \| dismiss \| snooze`, with no field |
+| Press **discuss** on a question | The prompt gains the quoted subject and two newlines |
+| Type `keep the cap, but log each retry` under that quote, and send | The band records it as a typed answer under the last letter and marks it delivered; the prompt reaches the agent as you wrote it |
+| Type an option's text under the quote instead, and send | The band records that option |
+| Type on the quote's own line, and send | Nothing is recorded |
+| Press **discuss** on a notice, type under the quote, and send | Nothing is recorded; the prompt reaches the agent |
+| Press an option's number, then send the prompt | The drawer stays open after the press and closes when the prompt is sent; the band shows its list |
+| Press **discuss**, type an answer under the quote, and send | The drawer stays open while you type and closes when the prompt is sent |
+| Send a quoted question, two spaces, a line break, and an option's text | The band records that option |
+| Answer or dismiss an item | Its line stays, in the `subtle` color, for 30 seconds after `deliveredAt`, then leaves the band |
+| Run `/projector` while another session runs a loop | The band shows or hides, and lists only the loops whose watchers this session started |
+
+Before these changes, the rows for the drawer, for **discuss** on a
+question and the two answers typed under its quote, for the two drawers
+an answer closes, for a quote that ends in spaces, and for the 30 seconds
+each fail their test. The drawer draws the field, **discuss** leaves a
+space and no line break, a quote followed by a space answers nothing, an
+answered question's drawer stays open, and a resolved line stays a
+minute.
+
+## 11. Number each session's items 1, 2, 3
+
+Every item in a session takes the next number in one count, `1`, `2`,
+`3`, across questions and notices, in place of a reference built from its
+pull request. You never need to know an item's number: the band shows
+none, and you answer by pressing in the band or by sending the quoted
+question. The agent reads the number in what `ask` and `tell` return and
+in the `ANSWER` and `DISMISSED` lines, and a shell user reads it in
+`project inbox list`. `project inbox context`, which explains a reference
+typed in a prompt, goes away with the references. This section replaces
+the reference forms that § 2.1 and § 2.2 use and that the questions plan
+defines in its § 2.3 and § 2.4.
+
+### 11.1 Problem
+
+An item's reference names its pull request so that you could type it in
+a prompt: `#337.3` is the session's third item about #337,
+`octo/web#12.1` the first about another repository's #12, and `q2` the
+second about no pull request. Nothing asks you to type one. The band shows
+no reference, and you answer a question by pressing in its drawer or by
+sending its quoted subject. The forms still cost something:
+
+- **Three forms and a session repository.** `post` in
+  `src/projector/inbox.py` keeps a count for each pull request in
+  `counts.json`, and records in `session.json` the repository of the first
+  checkout that posts, so that only that repository's pull requests take
+  the short `#337.3`. To find that repository, each `ask` and `tell` runs
+  `git config` on the checkout's `origin`.
+- **A reader of references in every prompt.** The band's `prompt.submit`
+  hook tests each prompt you send with `mayReference`, and on a match runs
+  `project inbox context`, which finds references with the `IN_TEXT`
+  pattern and adds what they mean to the prompt's context. The `q` in `q2`
+  exists only so that this reader skips the `2` in "rerun the 2 failing
+  tests".
+- **References where you read them.** The notification for a new item
+  starts with its reference, as in `#337.3 Decline the finding about the
+  retry budget?`, and the toast for an answer that did not reach its
+  agent names the question by its reference alone.
+
+### 11.2 The flow
+
+1. **An agent posts an item.** `project inbox ask` or `tell`, run from
+   the shell or by the `ask` and `tell` tools, takes the session's lock,
+   reads `last` from `count.json`, writes `last + 1` there, and then
+   writes the item to `<number>.json`. It prints the number, such as `3`.
+   `--pr` still records what the item is about and must still be
+   `owner/repo#number`, but it does not change the number.
+2. **The tool answers with the number.** `ask` returns `Asked 3. Keep
+   working on anything the answer does not block; it arrives as a message
+   that starts ANSWER 3 or DISMISSED 3.`, and `tell` returns `Posted 3. It
+   waits in Projector's band until the person dismisses it; nothing comes
+   back to you.` Each raises a notification that holds the subject alone,
+   under the title `Projector question` or `Projector notice`.
+   `ASK_DESCRIPTION` ends: "The call returns the question's number, such
+   as 3, and the answer arrives later as a message that starts `ANSWER
+   3.<letter>` or `DISMISSED 3`."
+3. **The band draws the item as it does now.** Its line shows the bullet,
+   the subject, the pull request's label, and the age, and no number. The
+   drawer, **discuss**, **dismiss**, **snooze**, and the answers a sent
+   prompt gives work by the quoted subject or by the item the band holds,
+   as they do now. When a delivery fails, the toast quotes the question's
+   subject: `projector: the answer to "Decline the finding about the retry
+   budget?" did not reach its agent (…); answer it again`.
+4. **The answer reaches the agent with the number.** The band's deliverer
+   or `watch` sends `ANSWER 3.a Decline the finding about the retry
+   budget? → Decline it: the total cap already bounds retries to one
+   host`, `ANSWER 3.c … → keep the cap, but log each retry` for a typed
+   answer, or `DISMISSED 3 Decline the finding about the retry budget?`.
+   The letters are unchanged: `a` is the recommendation, and the last
+   letter is a typed answer.
+5. **A shell user names an item by its number.** `project inbox list`
+   prints the number first, then the kind, the state, and the subject,
+   separated by tabs, with the session before them when it lists every
+   session. `show 3`, `answer 3.a`, `answer 3.c --text …`, `dismiss 3`,
+   and `snooze 3` name the item. Only `answer` takes a letter, and every
+   other command refuses `3.a` with exit `65`. Without `--session`, a
+   command looks the number up in every session, as it does now. Once two
+   sessions hold a `3`, it exits `67` and names both, and you pass
+   `--session` with the session that `list` prints beside the item.
+6. **Nothing reads a prompt for references.** The `prompt.submit` hook
+   adds no context for anything you type, and `project inbox context` is
+   gone. A `3` or a `#337.3.b` in a prompt reaches the agent as plain
+   text.
+
+### 11.3 The store
+
+| Field or file | Value |
+| --- | --- |
+| `ref` | The item's number as a string, such as `"3"`: what the CLI prints and takes, and what the band keys an item by |
+| `number` | The same number, as an integer |
+| `pr` | Unchanged: the pull request the item is about, as `owner/repo#number`, or null. It no longer shapes `ref` |
+| `<number>.json` | The item's file, such as `3.json` |
+| `count.json` | New: `{ "last": 3 }`, the last number the session gave |
+| `counts.json`, `session.json` | Neither read nor written |
+
+Every other field keeps its meaning. An answer is still named by the
+item's reference, a `.`, and the letter, as `3.a`, in `answer`'s argument
+and in the `ANSWER` line.
+
+### 11.4 Items stored under the old references
+
+Nothing migrates. An item lives minutes or hours, and few people use the
+inbox yet, so a migration would cost more than the items it would keep.
+After the change:
+
+- **The CLI refuses an old reference.** `parse_reference` refuses
+  `#337.3`, `octo/web#12.1`, and `q2`, with or without a letter, with exit
+  `65` and a message that gives the new form: `3`, or `3.a` for an answer.
+- **Nothing reads an old item.** The check that decides whether a file
+  holds an item, which `load_items` makes, also requires a `ref` that is a
+  whole number, so it skips an old item as it skips a file of no known
+  kind. `list`, `list --all`, `watch`, the band, and pruning never see an
+  item posted before the change. Its file stays on disk, unread and never
+  pruned, beside the session's `counts.json` and `session.json`, until the
+  session's directory is removed (§ 7).
+- **An agent waiting on an old question hears nothing more.** Answer or
+  dismiss your open items before you upgrade, or ask the agent to ask
+  again afterward.
+- **An old session starts again at 1.** A session that posted before the
+  change has no `count.json`, so its next item is `1`. `1.json` cannot
+  overwrite an old item's file: an old file's name holds `%23`, the quoted
+  `#`, or starts with `q`, and a new file's name is digits alone.
+
+### 11.5 What goes away
+
+- **`project inbox context`.** The subcommand in `src/projector/cli.py`,
+  and `IN_TEXT`, `references_in`, and `context` in
+  `src/projector/inbox.py`. `project inbox context` then exits `2`, as an
+  unknown subcommand does.
+- **The band's reading of references.** `mayReference` in
+  `hooks/inbox.ts`, and `explain` and the context it adds in the
+  `prompt.submit` hook in `hooks/register.tsx`. The hook still adds the
+  note that names a subagent whose question your prompt answers.
+- **The session's repository and the counts for each pull request.**
+  `reference`, `session_repo`, and the `repo` argument of `post`, `ask`,
+  and `tell` in `src/projector/inbox.py`, and `checkout_repo` in
+  `src/projector/cli.py`, whose only callers are `ask` and `tell`. `PULL`
+  stays, to check `--pr`.
+
+### 11.6 Files
+
+| File | Change |
+| --- | --- |
+| `src/projector/inbox.py` | `post` takes its number from `count.json`, still writing the count before the item, and loses `repo`; `REFERENCE` becomes `^(?P<ref>[1-9][0-9]*)(?:\.(?P<letter>[a-z]))?$`, and `parse_reference`'s refusal gives `3` and `3.a` as examples; the check that decides whether a file holds an item also requires a `ref` that is a whole number; the removals in § 11.5 |
+| `src/projector/cli.py` | `ask` and `tell` pass no `repo`; the `context` subcommand and `checkout_repo` go; the help of `ask`, `tell`, `show`, and `answer` names a number, such as `3` and `3.a` |
+| `tests/test_inbox.py` | The numbering tests expect `1`, `2`, `3` across pull requests, repositories, and kinds, and `1` again in another session; `test_shortens_only_the_repository_of_the_sessions_first_ask`, `ContextTests`, and `NoticeContextTests` go; every other test names items by number; the new rows in § 11.8 |
+| `hooks/inbox.ts` | `ASK_DESCRIPTION` gives `3` as its example; `mayReference` goes |
+| `hooks/register.tsx` | Both tools' notifications hold the subject alone; the toast for a failed delivery quotes the question's subject, from the band's list, in place of its reference; `explain` goes |
+| `hooks/types.d.ts` | `Posted.ref`'s comment says it is the item's number, as a string; no type changes |
+| `hooks/inbox.test.ts`, `hooks/band.test.tsx` | Fixtures numbered `1`, `2`; the fake CLI in `band.test.tsx` prints `String(posted)` and drops its `context` branch; `only text shaped like a reference starts the CLI` goes; `a reference typed in the prompt reaches the agent with its question` becomes the prompt row in § 11.8; the tool tests expect `Asked 1.`, `Posted 1.`, and a notification without a number |
+| `docs/cli.md` | "Use the inbox" numbers its examples, drops the reference forms, the session's repository, and `project inbox context`, and says to pass `--session` from `list` when a number is in more than one session |
+| `docs/plugins.md` | "Read your inbox in Projector's band" drops the sentence about a reference typed in a prompt, and says to find an item's number with `project inbox list` before you snooze it from a terminal |
+| `docs/projects/inbox/readme.md` | What building this section settles |
+
+### 11.7 Why this design
+
+- **You never need a number.** The band answers by the quoted question
+  and acts on the item it holds, so a number on the line would be one
+  more thing to read and nothing to use. Only the agent and a shell user
+  need a handle, and a short number is the easiest one to type, and to
+  read in an `ANSWER` line.
+- **One count, across kinds and pull requests.** A count for each pull
+  request made the reference say which pull request the item is about,
+  and the item's `pr` field and the band's label already say that. One
+  count needs no session repository, no `git` call to find it, and no rule
+  for which repository takes the short form.
+- **A bare number is safe once nothing reads prompts.** `q2` and the `#`
+  forms let a reader of prose tell a reference from a number in a
+  sentence. With `project inbox context` gone, nothing reads a prompt for
+  references, so a bare `3` cannot be mistaken for one.
+- **The count has its own file.** Pruning deletes the oldest delivered
+  items, which can include the one with the largest number, so a number
+  taken from the files on disk could name a second item. A count that
+  only grows names one item for the whole session. The file's new name,
+  `count.json`, leaves an old session's `counts.json` unread rather than
+  read with a new meaning.
+- **`ref` stays, as a string.** The band keys an item, its drawer, and its
+  deliveries by `ref`, and passes it back to the CLI as the CLI printed
+  it. Keeping the field means a band and a CLI a release apart still work
+  together: an older band sends `3.a` to a newer CLI, and a newer band
+  passes an older CLI's `#337.3` back unchanged.
+
+### 11.8 Acceptance criteria
+
+| Do | Expect |
+| --- | --- |
+| In a checkout of `acme/app`, `project inbox ask "First?" --recommend x --pr acme/app#337 --session s1`, then `project inbox tell "Pushed" --pr octo/web#12 --session s1`, then `project inbox ask "No pull?" --recommend x --session s1` | Prints `1`, `2`, and `3`; the session's directory holds `1.json`, `2.json`, `3.json`, and `count.json` with `{ "last": 3 }`, and no `counts.json` or `session.json` |
+| The same `ask` from a checkout of `octo/web` | Takes the next number in the same count |
+| `project inbox ask "Other?" --recommend x --session s2` | Prints `1` |
+| `project inbox list --session s1` | Prints a line for each item that starts with its number, `1`, `2`, or `3`, then its kind, `open`, and its subject |
+| `project inbox answer 1.a --session s1`, then `project inbox watch --once --session s1` | `watch` prints `ANSWER 1.a First? → x` |
+| `project inbox answer 1.a` with no session, when `s1` and `s2` each hold a `1` | Exits `67`, naming both sessions |
+| `project inbox show '#337.1'`, `answer q1.a`, or `dismiss 'octo/web#12.1'` | Exits `65` with a message that gives `3` and `3.a` as the forms |
+| A session directory that holds `q1.json` and `%23337.1.json`, with a `counts.json` and a `session.json`, from before the change | `list --all` omits both items, and `watch` delivers neither; the next `ask` prints `1` and writes `1.json` and `count.json`, and leaves the old files in place |
+| `project inbox context --session s1` | Exits `2` |
+| A subagent calls `mcp__projector__ask` | Returns `Asked 1. …`, ending `ANSWER 1 or DISMISSED 1.`; the notification is the question alone |
+| A subagent calls `mcp__projector__tell` | Returns `Posted 2. …`; the notification is the notice alone |
+| Send `go with 1.b` or `go with #7.1.b` in the prompt | The prompt reaches the agent with no context added, and no `project` process starts for it |
+| A submit of an answer resolves `{ drop }` | The toast quotes the question's subject and names no number |
+| Open the band and an item's drawer | No line or drawer shows a number, as now |
+
+`tests/test_inbox.py` covers the CLI rows, and `hooks/inbox.test.ts` and
+`hooks/band.test.tsx` cover the rest. Before the change, each row but the
+last fails its test: `ask` and `tell` print `#337.1` and `q1`, the old
+references parse, the old files list, `context` runs, the tools return
+and notify references, a typed reference adds context, and the toast names
+a reference.
+
+### 11.9 Cost and rollout
+
+Each `ask` and `tell` reads one small file where it read two, and runs no
+`git`. A prompt you send starts no `project inbox context`, which today
+runs for any prompt that holds text shaped like `#12.3` or `q2`. Nothing
+else changes.
+
+Build the change as one pull request after #295, § 10's band pull
+request, merges, since both change `hooks/register.tsx`, `hooks/inbox.ts`, their
+tests, and `docs/plugins.md`. The CLI and the hooks change in that one
+pull request, and because `ref` stays a string, a band and a CLI a
+release apart still work together.
