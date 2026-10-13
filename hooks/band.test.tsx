@@ -2563,7 +2563,7 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
   expect(await drawerRowsOf(ui)).toEqual(['text: ', 'detail:2', 'text: ', 'discuss:2', 'dismiss:2', 'snooze:2'])
   await ui.press({ key: 'close:2' })
 
-  // A pull request's drawer has its links above its actions, the links with no letters.
+  // A pull request's drawer has its actions above its links, the links with no letters.
   await ui.press({ key: 'pr:x/y#7' })
   expect(await actionLinesOf(ui)).toEqual(['discuss:x/y#7 d discuss PR', 'dismiss:x/y#7 x dismiss PR'])
   await ui.unmount()
