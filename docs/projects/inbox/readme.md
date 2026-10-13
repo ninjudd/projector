@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -311,7 +311,7 @@ checked by hand; until then layer 2 leaves it `in-progress`.
 
 ## 7. Open questions
 
-The first five carry the questions plan's open questions under the inbox's
+The first four carry the questions plan's open questions under the inbox's
 names, so that marking that plan `completed` in layer 1 leaves none of
 them untracked.
 

@@ -1,45 +1,45 @@
 import type { AgentInfo, FsEntry } from 'claude-code'
 
-import type { Question } from './types'
+import type { Item } from './types'
 import type { Env } from './parse'
 
 /** How long a delivered question stays in the band. */
 export const RESOLVED_MS = 60_000
 
-/** How long a claim lasts without renewal, as `project question claim` counts it. */
+/** How long a claim lasts without renewal, as `project inbox claim` counts it. */
 export const CLAIM_MS = 60_000
 
 const LIVE: ReadonlySet<AgentInfo['status']> = new Set(['pending', 'running', 'waiting', 'idle'])
 
 /**
  * Whether text holds anything shaped like a reference, `#337.3` or `q2`, so
- * that only such a prompt starts `project question context`, which decides.
+ * that only such a prompt starts `project inbox context`, which decides.
  */
 export const mayReference = (text: string) => /#\d+\.\d|\bq\d/.test(text)
 
 export const letterAt = (index: number) => String.fromCharCode('a'.charCodeAt(0) + index)
 
 /** The letter of a typed answer: the one after the last choice. */
-export const typedLetter = (question: Question) => letterAt(question.choices.length)
+export const typedLetter = (question: Item) => letterAt(question.choices.length)
 
 /** Whether the band still shows a question: open, being delivered, or delivered under a minute ago. */
-export const isShownAt = (question: Question, time: number) =>
+export const isShownAt = (question: Item, time: number) =>
   question.deliveredAt === undefined || time - question.deliveredAt < RESOLVED_MS
 
 /** Whether an answer waits for a deliverer: recorded, undelivered, and claimed by none that is live. */
-export const needsDelivery = (question: Question, time: number) =>
+export const needsDelivery = (question: Item, time: number) =>
   question.answer !== undefined &&
   question.deliveredAt === undefined &&
   (question.claim === undefined || time - question.claim.renewedAt >= CLAIM_MS)
 
 /** What the band puts in the prompt to discuss a question: its text, in quotes. */
-export const quoteOf = (question: Question) => `"${question.question}"`
+export const quoteOf = (question: Item) => `"${question.subject}"`
 
 /** What the band puts in the prompt for an answer: the quoted question, a blank line, and the answer's text. */
-export const proposalOf = (question: Question, answer: string) => `${quoteOf(question)}\n\n${answer}`
+export const proposalOf = (question: Item, answer: string) => `${quoteOf(question)}\n\n${answer}`
 
 /** One answer a sent prompt gives: a choice's letter, or the typed letter and its text. */
-export type Given = { question: Question; letter: string; text?: string }
+export type Given = { question: Item; letter: string; text?: string }
 
 /** An answer a question's drawer put in the prompt. */
 export type Proposal = { ref: string; answer: string }
@@ -54,10 +54,10 @@ export type Proposal = { ref: string; answer: string }
  * never take one answer. A quoted question with more on its line, as discuss
  * leaves it, answers nothing.
  */
-export function answersIn(text: string, questions: readonly Question[], proposed: readonly Proposal[] = []): Given[] {
+export function answersIn(text: string, questions: readonly Item[], proposed: readonly Proposal[] = []): Given[] {
   const open = questions
     .filter(question => question.answer === undefined)
-    .sort((one, other) => one.askedAt - other.askedAt)
+    .sort((one, other) => one.postedAt - other.postedAt)
   const found: { at: number; given: Given }[] = []
   const taken = new Set<string>()
   for (const quote of new Set(open.map(quoteOf))) {
@@ -79,32 +79,32 @@ export function answersIn(text: string, questions: readonly Question[], proposed
 }
 
 /** Names the subagent that asked, by its description and id when the session still lists it. */
-function whoAsked(question: Question, agents: readonly AgentInfo[]): string {
+function whoAsked(question: Item, agents: readonly AgentInfo[]): string {
   const agent = agents.find(one => one.id === question.agentId)
   return agent === undefined ? (question.agentId ?? '') : `${agent.description} (${agent.id})`
 }
 
 /** What the main loop reads beside a prompt that answers a subagent's question: whom to send it to. */
-export const relayNote = (question: Question, agents: readonly AgentInfo[]) =>
+export const relayNote = (question: Item, agents: readonly AgentInfo[]) =>
   `The subagent ${whoAsked(question, agents)} asked ${quoteOf(question)}; send it the answer this prompt gives.`
 
 /** The subagent that asked, while it can still read a message; undefined sends the answer to the main loop. */
-export function liveAgent(question: Question, agents: readonly AgentInfo[]): string | undefined {
+export function liveAgent(question: Item, agents: readonly AgentInfo[]): string | undefined {
   const agent = agents.find(one => one.id === question.agentId)
   return agent !== undefined && LIVE.has(agent.status) ? agent.id : undefined
 }
 
 /** What the main loop receives: the answer, and the subagent to relay it to when one asked. */
-export function forMainLoop(text: string, question: Question, agents: readonly AgentInfo[]): string {
+export function forMainLoop(text: string, question: Item, agents: readonly AgentInfo[]): string {
   if (question.agentId === undefined) return text
   return `${text}\n\nThe subagent ${whoAsked(question, agents)} asked this, and the answer could not reach it; send it this answer, or act on it yourself.`
 }
 
-/** Where a session's questions live: `project question`'s store, found by the CLI's own rule. */
+/** Where a session's items live: `project inbox`'s store, found by the CLI's own rule. */
 export function storeOf(env: Env, session: string): string | undefined {
   const home = env('HOME')
   const base = env('XDG_STATE_HOME') ?? (home === undefined ? undefined : `${home}/.local/state`)
-  return base === undefined ? undefined : `${base}/projector/questions/${session}`
+  return base === undefined ? undefined : `${base}/projector/inbox/${session}`
 }
 
 /**
@@ -169,7 +169,7 @@ export const ASK_SCHEMA = {
 const isText = (value: unknown): value is string => typeof value === 'string'
 
 /**
- * The arguments of `project question ask` for one call of the tool, or why
+ * The arguments of `project inbox ask` for one call of the tool, or why
  * the call cannot be one. Each value rides in its flag's `=` form and the
  * question after `--`, so text that starts with `-` stays text.
  */
@@ -185,7 +185,7 @@ export function askArguments(
   if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
   if (pr !== undefined && !isText(pr)) return { error: '`pr` must be a string such as owner/repo#123' }
   return [
-    'question',
+    'inbox',
     'ask',
     `--session=${session}`,
     `--recommend=${recommendation}`,

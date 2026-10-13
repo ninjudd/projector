@@ -38,17 +38,20 @@ export type Snapshot = {
   error: string | null
 }
 
-/** How a question was answered: a lettered choice or typed text, or dismissed. */
+/** How an item was answered: a question by a lettered choice or typed text, or dismissed. */
 export type Answer = { letter: string; text: string; answeredAt: number } | { dismissed: true; answeredAt: number }
 
-/** One question as `project question list --json` gives it, with the session whose store holds it. */
-export type Question = {
+/** One item as `project inbox list --json` gives it, with the session whose store holds it. */
+export type Item = {
   ref: string
+  kind: 'question'
   number: number
   /** The pull request it is about, as `owner/repo#number`; null when none. */
   pr: string | null
-  askedAt: number
-  question: string
+  /** When the agent posted it, in milliseconds. */
+  postedAt: number
+  /** The question, in one line. */
+  subject: string
   detail: string
   /** The answers in letter order, the recommendation first; the letter after the last is a typed answer. */
   choices: string[]
@@ -79,10 +82,10 @@ declare module 'claude-code' {
       bandSnapshot: Snapshot
       bandNow: number
       isBandShown: boolean
-      /** The drawer that is open: a pull request's by `keyOf`, or `question:` and a question's reference. */
+      /** The drawer that is open: a pull request's by `keyOf`, or `item:` and an item's reference. */
       bandDrawer: string | null
-      /** The session's questions, as the band last read them. */
-      bandQuestions: Question[]
+      /** The session's inbox, as the band last read it. */
+      bandInbox: Item[]
       /** The answers the band is delivering, by reference. */
       bandSending: Record<string, Sending>
     }

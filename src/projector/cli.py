@@ -23,7 +23,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import permissions, questions, review, site, summary
+from . import inbox, permissions, review, site, summary
 from .permissions import allow_publish
 from .summary import WORKFLOW_PATH
 from .config import ConfigError
@@ -533,7 +533,7 @@ def parser() -> argparse.ArgumentParser:
                                 help="publish a clean incremental review of the change since this loop's last "
                                      "full review, when `project review interdiff` allows one")
 
-    add_question_parser(subcommands)
+    add_inbox_parser(subcommands)
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
@@ -624,9 +624,9 @@ def seconds(text: str) -> float:
     return value
 
 
-def add_question_parser(subcommands) -> None:
-    question = subcommands.add_parser("question", help="ask the person a question, and answer and deliver it")
-    commands = question.add_subparsers(dest="question_command", required=True)
+def add_inbox_parser(subcommands) -> None:
+    parser = subcommands.add_parser("inbox", help="ask the person a question, and answer and deliver it")
+    commands = parser.add_subparsers(dest="inbox_command", required=True)
 
     def command(name: str, help_text: str) -> argparse.ArgumentParser:
         parsed = commands.add_parser(name, help=help_text)
@@ -644,10 +644,10 @@ def add_question_parser(subcommands) -> None:
     ask.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
     ask.add_argument("--agent", help="the asking subagent's id, when a subagent asks")
 
-    listing = command("list", "list open questions: the session's, or every session's without one")
-    listing.add_argument("--all", action="store_true", help="include delivered questions")
+    listing = command("list", "list open items: the session's, or every session's without one")
+    listing.add_argument("--all", action="store_true", help="include delivered items")
 
-    show = command("show", "print one question with its detail and lettered answers")
+    show = command("show", "print one item with its detail and lettered answers")
     show.add_argument("reference", help="such as #337.3, owner/repo#337.3, or q2")
 
     answer = command("answer", "record an answer, such as #337.3.a")
@@ -671,7 +671,7 @@ def add_question_parser(subcommands) -> None:
     watch.add_argument("--interval", type=seconds, default=5.0, help="seconds between passes (default: 5)")
     watch.add_argument("--once", action="store_true", help="make one pass and exit")
 
-    command("context", "print what each question reference in standard input means")
+    command("context", "print what each inbox reference in standard input means")
 
 
 def open_editor(path: Path) -> None:
@@ -1073,10 +1073,10 @@ def run_review(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def question_session(arguments: argparse.Namespace, required: bool) -> Optional[str]:
+def inbox_session(arguments: argparse.Namespace, required: bool) -> Optional[str]:
     session = arguments.session or os.environ.get("PROJECTOR_SESSION") or None
     if required and session is None:
-        raise UsageError(f"`project question {arguments.question_command}` needs the asking session: pass --session "
+        raise UsageError(f"`project inbox {arguments.inbox_command}` needs the posting session: pass --session "
                          "or set PROJECTOR_SESSION")
     return session
 
@@ -1088,76 +1088,76 @@ def checkout_repo(checkout: Path) -> Optional[str]:
         return None
 
 
-def question_state(question: dict) -> str:
-    if not question.get("answer"):
+def item_state(item: dict) -> str:
+    if not item.get("answer"):
         return "open"
-    if question.get("deliveredAt"):
-        return f"delivered {questions.answer_ref(question)}"
-    if questions.live_claim(question):
-        return f"delivering {questions.answer_ref(question)}"
-    return f"answered {questions.answer_ref(question)}"
+    if item.get("deliveredAt"):
+        return f"delivered {inbox.answer_ref(item)}"
+    if inbox.live_claim(item):
+        return f"delivering {inbox.answer_ref(item)}"
+    return f"answered {inbox.answer_ref(item)}"
 
 
-def print_question(question: dict) -> None:
-    print(f"{question['ref']} {question['question']}")
-    if question.get("pr"):
-        print(f"about {question['pr']}")
-    if question.get("detail"):
-        print(f"\n{question['detail']}\n")
-    for index, choice in enumerate(question["choices"]):
+def print_item(item: dict) -> None:
+    print(f"{item['ref']} {item['subject']}")
+    if item.get("pr"):
+        print(f"about {item['pr']}")
+    if item.get("detail"):
+        print(f"\n{item['detail']}\n")
+    for index, choice in enumerate(item["choices"]):
         print(f"{chr(ord('a') + index)}. {choice}{' (recommended)' if index == 0 else ''}")
-    print(f"{questions.typed_letter(question)}. type an answer with --text")
-    print(question_state(question))
+    print(f"{inbox.typed_letter(item)}. type an answer with --text")
+    print(item_state(item))
 
 
-def run_question(arguments: argparse.Namespace) -> int:
-    command = arguments.question_command
+def run_inbox(arguments: argparse.Namespace) -> int:
+    command = arguments.inbox_command
     json_output = arguments.json_output
     if command == "ask":
         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
-        question = questions.ask(question_session(arguments, True), arguments.question, arguments.recommend,
-                                 arguments.option, detail=detail, pr=arguments.pr, agent=arguments.agent,
-                                 repo=checkout_repo(Path.cwd()))
-        print(json_text({"question": question}) if json_output else question["ref"])
+        item = inbox.ask(inbox_session(arguments, True), arguments.question, arguments.recommend,
+                         arguments.option, detail=detail, pr=arguments.pr, agent=arguments.agent,
+                         repo=checkout_repo(Path.cwd()))
+        print(json_text({"item": item}) if json_output else item["ref"])
     elif command == "list":
-        session = question_session(arguments, False)
-        names = [session] if session else questions.sessions()
-        rows = [{**question, "session": name} for name in names
-                for question in questions.load_questions(questions.session_dir(name))
-                if arguments.all or not question.get("deliveredAt")]
+        session = inbox_session(arguments, False)
+        names = [session] if session else inbox.sessions()
+        rows = [{**item, "session": name} for name in names
+                for item in inbox.load_items(inbox.session_dir(name))
+                if arguments.all or not item.get("deliveredAt")]
         if json_output:
-            print(json_text({"questions": rows}))
+            print(json_text({"items": rows}))
         for row in [] if json_output else rows:
-            columns = [row["ref"], question_state(row), row["question"]]
+            columns = [row["ref"], item_state(row), row["subject"]]
             print("\t".join(columns if session else [row["session"], *columns]))
     elif command == "show":
-        ref, _ = questions.parse_reference(arguments.reference)
-        _, question = questions.find(question_session(arguments, False), ref)
+        ref, _ = inbox.parse_reference(arguments.reference)
+        _, item = inbox.find(inbox_session(arguments, False), ref)
         if json_output:
-            print(json_text({"question": question}))
+            print(json_text({"item": item}))
         else:
-            print_question(question)
+            print_item(item)
     elif command in ("answer", "dismiss"):
-        ref, letter = questions.parse_reference(arguments.reference)
-        session = question_session(arguments, False)
-        question = (questions.answer(session, ref, letter, arguments.text) if command == "answer"
-                    else questions.dismiss(session, ref))
-        print(json_text({"question": question}) if json_output
-              else f"{'answered' if command == 'answer' else 'dismissed'} {questions.answer_ref(question)}")
+        ref, letter = inbox.parse_reference(arguments.reference)
+        session = inbox_session(arguments, False)
+        item = (inbox.answer(session, ref, letter, arguments.text) if command == "answer"
+                else inbox.dismiss(session, ref))
+        print(json_text({"item": item}) if json_output
+              else f"{'answered' if command == 'answer' else 'dismissed'} {inbox.answer_ref(item)}")
     elif command == "claim":
-        ref, _ = questions.parse_reference(arguments.reference)
-        question = questions.claim(question_session(arguments, False), ref, arguments.renew)
-        token, text = question["claim"]["token"], questions.message(question)
-        print(json_text({"token": token, "text": text, "question": question}) if json_output
+        ref, _ = inbox.parse_reference(arguments.reference)
+        item = inbox.claim(inbox_session(arguments, False), ref, arguments.renew)
+        token, text = item["claim"]["token"], inbox.message(item)
+        print(json_text({"token": token, "text": text, "item": item}) if json_output
               else f"{token}\t{text}")
     elif command in ("delivered", "reopen"):
-        ref, _ = questions.parse_reference(arguments.reference)
-        question = questions.settle(question_session(arguments, False), ref, arguments.claim,
-                                    delivered=command == "delivered")
-        print(json_text({"question": question}) if json_output
-              else f"{'delivered' if command == 'delivered' else 'reopened'} {question['ref']}")
+        ref, _ = inbox.parse_reference(arguments.reference)
+        item = inbox.settle(inbox_session(arguments, False), ref, arguments.claim,
+                            delivered=command == "delivered")
+        print(json_text({"item": item}) if json_output
+              else f"{'delivered' if command == 'delivered' else 'reopened'} {item['ref']}")
     elif command == "watch":
-        session = question_session(arguments, True)
+        session = inbox_session(arguments, True)
 
         def send(line: str) -> None:
             # A watcher reads one event a line, so JSON here stays on one line too.
@@ -1165,12 +1165,12 @@ def run_question(arguments: argparse.Namespace) -> int:
                   flush=True)
 
         while True:
-            questions.deliver_pass(session, send)
+            inbox.deliver_pass(session, send)
             if arguments.once:
                 return 0
             time.sleep(arguments.interval)
     elif command == "context":
-        lines = questions.context(question_session(arguments, True), sys.stdin.read())
+        lines = inbox.context(inbox_session(arguments, True), sys.stdin.read())
         print(json_text({"context": lines}) if json_output else "\n".join(lines), end="" if not lines else "\n")
     return 0
 
@@ -1651,8 +1651,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_site(arguments)
     if arguments.command == "review":
         return run_review(arguments)
-    if arguments.command == "question":
-        return run_question(arguments)
+    if arguments.command == "inbox":
+        return run_inbox(arguments)
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.

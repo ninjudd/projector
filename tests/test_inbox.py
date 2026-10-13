@@ -1,4 +1,4 @@
-"""The `project question` commands, against a temporary state directory.
+"""The `project inbox` commands, against a temporary state directory.
 
 Each test points `XDG_STATE_HOME` at its own directory and runs the CLI from a temporary
 Git checkout whose origin is `acme/app`, so a question about `acme/app` takes the short
@@ -22,14 +22,14 @@ from pathlib import Path
 from typing import Callable
 from unittest import mock
 
-from projector import cli, questions
+from projector import cli, inbox
 
 HOLD_LOCK = """
 import os, sys
 from pathlib import Path
-from projector import questions
+from projector import inbox
 
-with questions.locked(Path(sys.argv[1])):
+with inbox.locked(Path(sys.argv[1])):
     print("held", flush=True)
     if sys.argv[2] == "exit":
         os._exit(0)
@@ -39,7 +39,7 @@ with questions.locked(Path(sys.argv[1])):
 
 def at_once(*calls: Callable[[], object]) -> list[str]:
     """Start the calls together, each in its own thread, and return how each ended, sorted:
-    `done`, or `refused` when it raised `QuestionError`."""
+    `done`, or `refused` when it raised `InboxError`."""
     outcomes: list[str] = []
     start = threading.Barrier(len(calls))
 
@@ -48,7 +48,7 @@ def at_once(*calls: Callable[[], object]) -> list[str]:
         try:
             call()
             outcomes.append("done")
-        except questions.QuestionError:
+        except inbox.InboxError:
             outcomes.append("refused")
 
     threads = [threading.Thread(target=run, args=(call,)) for call in calls]
@@ -59,7 +59,7 @@ def at_once(*calls: Callable[[], object]) -> list[str]:
     return sorted(outcomes)
 
 
-class QuestionCase(unittest.TestCase):
+class InboxCase(unittest.TestCase):
     def setUp(self) -> None:
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
@@ -83,7 +83,7 @@ class QuestionCase(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.chdir(cwd or self.checkout), mock.patch("sys.stdin", io.StringIO(stdin)), \
                 redirect_stdout(out), redirect_stderr(err):
-            code = cli.main(["question", *args])
+            code = cli.main(["inbox", *args])
         return code, out.getvalue(), err.getvalue()
 
     def ask(self, question: str = "Decline the finding?", *args: str, session: str = "s1",
@@ -93,10 +93,10 @@ class QuestionCase(unittest.TestCase):
         return out.strip()
 
     def folder(self, session: str = "s1") -> Path:
-        return self.state / "projector" / "questions" / session
+        return self.state / "projector" / "inbox" / session
 
 
-class AskTests(QuestionCase):
+class AskTests(InboxCase):
     def test_numbers_each_pull_request_and_the_session_count_apart(self) -> None:
         recommend = ["--recommend", "Decline it"]
         self.assertEqual("#337.1", self.ask("First?", *recommend, "--pr", "acme/app#337"))
@@ -155,10 +155,23 @@ class AskTests(QuestionCase):
     def test_prints_the_question_as_json(self) -> None:
         code, out, _ = self.run_cli("ask", "Json?", "--recommend", "x", "--session", "s1", "--json")
         self.assertEqual(0, code)
-        self.assertEqual("q1", json.loads(out)["question"]["ref"])
+        self.assertEqual("q1", json.loads(out)["item"]["ref"])
+
+    def test_records_the_question_in_the_inbox_store(self) -> None:
+        self.ask("Where?", "--recommend", "x")
+        item = json.loads((self.folder() / "q1.json").read_text())
+        self.assertEqual(("question", "Where?"), (item["kind"], item["subject"]))
+        self.assertIsInstance(item["postedAt"], int)
+        self.assertNotIn("question", item)
+        self.assertFalse((self.state / "projector" / "questions").exists())
+
+    def test_the_old_question_command_is_gone(self) -> None:
+        with self.assertRaises(SystemExit) as stop, redirect_stderr(io.StringIO()):
+            cli.main(["question", "list"])
+        self.assertEqual(2, stop.exception.code)
 
 
-class AnswerTests(QuestionCase):
+class AnswerTests(InboxCase):
     def setUp(self) -> None:
         super().setUp()
         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--pr", "acme/app#337")
@@ -199,8 +212,8 @@ class AnswerTests(QuestionCase):
         self.assertEqual(65, self.run_cli("answer", "#337.1.a", "--session", "s1")[0])
 
     def test_two_answers_at_once_record_one(self) -> None:
-        self.assertEqual(["done", "refused"], at_once(lambda: questions.answer("s1", "#337.1", "a"),
-                                                      lambda: questions.answer("s1", "#337.1", "b")))
+        self.assertEqual(["done", "refused"], at_once(lambda: inbox.answer("s1", "#337.1", "a"),
+                                                      lambda: inbox.answer("s1", "#337.1", "b")))
         self.assertIn(json.loads((self.folder() / "%23337.1.json").read_text())["answer"]["letter"], "ab")
 
     def hold_lock(self, then: str) -> subprocess.Popen:
@@ -208,7 +221,7 @@ class AnswerTests(QuestionCase):
         standard input to close (`wait`) or exits without unlocking (`exit`)."""
         holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, str(self.folder()), then],
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
-                                  env={**os.environ, "PYTHONPATH": str(Path(questions.__file__).parents[1])})
+                                  env={**os.environ, "PYTHONPATH": str(Path(inbox.__file__).parents[1])})
         self.addCleanup(holder.stdout.close)
         self.addCleanup(holder.wait)
         self.addCleanup(holder.stdin.close)
@@ -217,7 +230,7 @@ class AnswerTests(QuestionCase):
 
     def test_a_lock_another_process_holds_makes_a_command_wait_then_refuse(self) -> None:
         holder = self.hold_lock("wait")
-        with mock.patch.object(questions, "LOCK_WAIT_SECONDS", 0.3):
+        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
             started = time.monotonic()
             code, _, err = self.run_cli("answer", "#337.1.a", "--session", "s1")
         self.assertGreaterEqual(time.monotonic() - started, 0.3)
@@ -230,11 +243,11 @@ class AnswerTests(QuestionCase):
     def test_a_holder_that_exits_without_unlocking_leaves_the_lock_free_at_once(self) -> None:
         holder = self.hold_lock("exit")
         self.assertEqual(0, holder.wait())
-        with mock.patch.object(questions, "LOCK_WAIT_SECONDS", 0):
+        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0):
             self.assertEqual(0, self.run_cli("answer", "#337.1.a", "--session", "s1")[0])
 
 
-class DeliveryTests(QuestionCase):
+class DeliveryTests(InboxCase):
     def setUp(self) -> None:
         super().setUp()
         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--pr", "acme/app#337")
@@ -251,8 +264,8 @@ class DeliveryTests(QuestionCase):
         self.assertEqual(65, self.claim()[0])
 
     def test_two_claims_at_once_take_one(self) -> None:
-        self.assertEqual(["done", "refused"], at_once(lambda: questions.claim("s1", "#337.1"),
-                                                      lambda: questions.claim("s1", "#337.1")))
+        self.assertEqual(["done", "refused"], at_once(lambda: inbox.claim("s1", "#337.1"),
+                                                      lambda: inbox.claim("s1", "#337.1")))
 
     def test_renews_only_with_the_claims_token(self) -> None:
         _, token = self.claim()
@@ -261,8 +274,8 @@ class DeliveryTests(QuestionCase):
 
     def test_a_claim_not_renewed_for_a_minute_is_taken_by_a_new_claim(self) -> None:
         _, token = self.claim()
-        later = questions.now_ms() + questions.CLAIM_EXPIRES_MS + 1
-        with mock.patch.object(questions, "now_ms", return_value=later):
+        later = inbox.now_ms() + inbox.CLAIM_EXPIRES_MS + 1
+        with mock.patch.object(inbox, "now_ms", return_value=later):
             code, fresh = self.claim()
             self.assertEqual(0, code)
             self.assertNotEqual(token, fresh)
@@ -271,10 +284,10 @@ class DeliveryTests(QuestionCase):
 
     def test_a_lapsed_claims_token_settles_it_until_a_new_claim_replaces_it(self) -> None:
         _, token = self.claim()
-        later = questions.now_ms() + questions.CLAIM_EXPIRES_MS + 1
-        with mock.patch.object(questions, "now_ms", return_value=later):
+        later = inbox.now_ms() + inbox.CLAIM_EXPIRES_MS + 1
+        with mock.patch.object(inbox, "now_ms", return_value=later):
             self.assertEqual(0, self.claim("--renew", token)[0])
-        with mock.patch.object(questions, "now_ms", return_value=later + questions.CLAIM_EXPIRES_MS + 1):
+        with mock.patch.object(inbox, "now_ms", return_value=later + inbox.CLAIM_EXPIRES_MS + 1):
             self.assertEqual(0, self.run_cli("delivered", "#337.1", "--claim", token, "--session", "s1")[0])
 
     def test_delivered_hides_the_question_from_the_open_list(self) -> None:
@@ -304,10 +317,10 @@ class DeliveryTests(QuestionCase):
                 raise BrokenPipeError(32, "Broken pipe")
 
         with contextlib.chdir(self.checkout), redirect_stdout(ClosedPipe()), redirect_stderr(io.StringIO()):
-            self.assertEqual(65, cli.main(["question", "watch", "--once", "--session", "s1"]))
+            self.assertEqual(65, cli.main(["inbox", "watch", "--once", "--session", "s1"]))
         self.assertIn("\tdelivering #337.1.b\t", self.run_cli("list", "--session", "s1")[1])
-        later = questions.now_ms() + questions.CLAIM_EXPIRES_MS + 1
-        with mock.patch.object(questions, "now_ms", return_value=later):
+        later = inbox.now_ms() + inbox.CLAIM_EXPIRES_MS + 1
+        with mock.patch.object(inbox, "now_ms", return_value=later):
             self.assertEqual("ANSWER #337.1.b Decline it? → Add a budget\n",
                              self.run_cli("watch", "--once", "--session", "s1")[1])
 
@@ -316,12 +329,12 @@ class DeliveryTests(QuestionCase):
             with self.subTest(interval=interval):
                 err = io.StringIO()
                 with self.assertRaises(SystemExit) as stop, redirect_stderr(err):
-                    cli.main(["question", "watch", "--interval", interval, "--once", "--session", "s1"])
+                    cli.main(["inbox", "watch", "--interval", interval, "--once", "--session", "s1"])
                 self.assertEqual(2, stop.exception.code)
                 self.assertIn("--interval", err.getvalue())
 
     def test_keeps_the_newest_delivered_questions(self) -> None:
-        with mock.patch.object(questions, "KEEP_DELIVERED", 2):
+        with mock.patch.object(inbox, "KEEP_DELIVERED", 2):
             for number in range(3):
                 ref = self.ask(f"Q{number}?", "--recommend", "x")
                 self.run_cli("answer", f"{ref}.a", "--session", "s1")
@@ -330,17 +343,17 @@ class DeliveryTests(QuestionCase):
         self.assertEqual(["q2.json", "q3.json"], names)
 
 
-class ListTests(QuestionCase):
+class ListTests(InboxCase):
     def test_lists_every_sessions_open_questions_without_a_session(self) -> None:
         self.ask("One?", "--recommend", "x", session="s1")
         self.ask("Two?", "--recommend", "x", session="s2")
         out = self.run_cli("list")[1]
         self.assertEqual(["s1\tq1\topen\tOne?", "s2\tq1\topen\tTwo?"], out.splitlines())
 
-    def test_skips_a_file_that_is_not_a_question(self) -> None:
+    def test_skips_a_file_that_is_not_an_item(self) -> None:
         self.ask("One?", "--recommend", "x")
         (self.folder() / "q7.json").write_text("{not json")
-        (self.folder() / "misnamed.json").write_text(json.dumps({"ref": "q8", "question": "?"}))
+        (self.folder() / "misnamed.json").write_text(json.dumps({"ref": "q8", "subject": "?"}))
         self.assertEqual(["q1\topen\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
 
     def test_show_prints_the_lettered_answers(self) -> None:
@@ -349,7 +362,7 @@ class ListTests(QuestionCase):
         self.assertIn("a. Decline it (recommended)\nb. Add a budget\nc. type an answer with --text\nopen", out)
 
 
-class ContextTests(QuestionCase):
+class ContextTests(InboxCase):
     def setUp(self) -> None:
         super().setUp()
         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--pr", "acme/app#337")
@@ -376,12 +389,12 @@ class ContextTests(QuestionCase):
                 self.assertEqual([], self.context(text))
 
     def test_finds_references_in_text_by_the_plans_table(self) -> None:
-        self.assertEqual([("#337.3", "b")], questions.references_in("Go with #337.3.b."))
-        self.assertEqual([("octo/app#337.3", "b")], questions.references_in("octo/app#337.3.b"))
-        self.assertEqual([("q2", "a")], questions.references_in("Let's do q2.a."))
+        self.assertEqual([("#337.3", "b")], inbox.references_in("Go with #337.3.b."))
+        self.assertEqual([("octo/app#337.3", "b")], inbox.references_in("octo/app#337.3.b"))
+        self.assertEqual([("q2", "a")], inbox.references_in("Let's do q2.a."))
         for text in ("#337", "#337.3.4", "x#337.3", "2", "Q2", "eq2", "q2.4"):
             with self.subTest(text=text):
-                self.assertEqual([], questions.references_in(text))
+                self.assertEqual([], inbox.references_in(text))
 
 
 if __name__ == "__main__":

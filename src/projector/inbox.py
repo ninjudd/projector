@@ -1,11 +1,10 @@
-"""Questions an agent asks the person, kept per session under Projector's state directory.
+"""The items an agent puts in the person's inbox, kept per session under Projector's state directory.
 
-Each session's questions are JSON files in their own directory, one per question, with
-`counts.json` holding the last number given in each count and `session.json` the session's
-repository, once an `ask` from a checkout has recorded one. Every write happens under the
-directory's lock, an operating-system lock on its `.lock` file, and lands by renaming a
-temporary file into place, so two writers never lose each other's change and a reader never
-sees half a file.
+Each session's items are JSON files in their own directory, one per item, with `counts.json`
+holding the last number given in each count and `session.json` the session's repository, once a
+post from a checkout has recorded one. Every write happens under the directory's lock, an
+operating-system lock on its `.lock` file, and lands by renaming a temporary file into place, so
+two writers never lose each other's change and a reader never sees half a file.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ from urllib.parse import quote
 
 from .core import ProjectorError
 
-MAX_QUESTION = 120
+MAX_SUBJECT = 120
 MAX_OPTIONS = 5
 KEEP_DELIVERED = 100
 CLAIM_EXPIRES_MS = 60_000
@@ -45,15 +44,15 @@ IN_TEXT = re.compile(
 )
 
 
-class QuestionError(ProjectorError):
-    """A question fails a check, or an answer or claim is not allowed in its state."""
+class InboxError(ProjectorError):
+    """An item fails a check, or an answer or claim is not allowed in its state."""
 
 
-class QuestionNotFound(ProjectorError):
+class ItemNotFound(ProjectorError):
     exit_code = 66
 
 
-class AmbiguousQuestion(ProjectorError):
+class AmbiguousItem(ProjectorError):
     exit_code = 67
 
 
@@ -64,16 +63,16 @@ def now_ms() -> int:
 def store_root(environ: Optional[dict] = None) -> Path:
     environ = os.environ if environ is None else environ
     base = environ.get("XDG_STATE_HOME")
-    return (Path(base) if base else Path.home() / ".local" / "state") / "projector" / "questions"
+    return (Path(base) if base else Path.home() / ".local" / "state") / "projector" / "inbox"
 
 
 def session_dir(session: str) -> Path:
     if not SESSION.match(session):
-        raise QuestionError(f"{session!r} is not a session id: use letters, digits, `.`, `_`, and `-`")
+        raise InboxError(f"{session!r} is not a session id: use letters, digits, `.`, `_`, and `-`")
     return store_root() / session
 
 
-def question_file(folder: Path, ref: str) -> Path:
+def item_file(folder: Path, ref: str) -> Path:
     return folder / f"{quote(ref, safe='')}.json"
 
 
@@ -118,7 +117,7 @@ def locked(folder: Path) -> Iterator[None]:
         deadline = time.monotonic() + LOCK_WAIT_SECONDS
         while not try_lock(descriptor):
             if time.monotonic() > deadline:
-                raise QuestionError(f"another command holds {lock}; try again once it finishes")
+                raise InboxError(f"another command holds {lock}; try again once it finishes")
             time.sleep(0.05)
         try:
             yield
@@ -148,17 +147,17 @@ def read_json(path: Path) -> Optional[dict]:
     return value if isinstance(value, dict) else None
 
 
-def load_questions(folder: Path) -> list[dict]:
-    """The session's questions, oldest first; a file that does not parse, or whose name does
-    not match its reference, is skipped rather than allowed to break a view."""
-    questions = []
+def load_items(folder: Path) -> list[dict]:
+    """The session's items, oldest first; a file that does not parse, or whose name does not
+    match its reference, is skipped rather than allowed to break a view."""
+    items = []
     if not folder.is_dir():
-        return questions
+        return items
     for path in folder.glob("*.json"):
-        question = read_json(path)
-        if question and isinstance(question.get("ref"), str) and question_file(folder, question["ref"]) == path:
-            questions.append(question)
-    return sorted(questions, key=lambda question: (question.get("askedAt", 0), question["ref"]))
+        item = read_json(path)
+        if item and isinstance(item.get("ref"), str) and item_file(folder, item["ref"]) == path:
+            items.append(item)
+    return sorted(items, key=lambda item: (item.get("postedAt", 0), item["ref"]))
 
 
 def sessions() -> list[str]:
@@ -178,23 +177,23 @@ def reference(pull: Optional[re.Match], count: int, repo: Optional[str]) -> str:
 
 def check(question: str, recommend: str, options: list[str], pr: Optional[str]) -> None:
     if not question.strip():
-        raise QuestionError("the question is empty")
+        raise InboxError("the question is empty")
     if "\n" in question or "\r" in question:
-        raise QuestionError("the question must be one line; put the rest in --detail")
-    if len(question) > MAX_QUESTION:
-        raise QuestionError(f"the question is {len(question)} characters; keep it to {MAX_QUESTION} and put the "
-                            "rest in --detail")
+        raise InboxError("the question must be one line; put the rest in --detail")
+    if len(question) > MAX_SUBJECT:
+        raise InboxError(f"the question is {len(question)} characters; keep it to {MAX_SUBJECT} and put the "
+                         "rest in --detail")
     if not recommend.strip():
-        raise QuestionError("give the answer you recommend with --recommend")
+        raise InboxError("give the answer you recommend with --recommend")
     if len(options) > MAX_OPTIONS:
-        raise QuestionError(f"{len(options)} other options; offer at most {MAX_OPTIONS} besides the recommendation")
+        raise InboxError(f"{len(options)} other options; offer at most {MAX_OPTIONS} besides the recommendation")
     for option in options:
         if not option.strip():
-            raise QuestionError("an --option is empty")
+            raise InboxError("an --option is empty")
         if option.strip() == recommend.strip():
-            raise QuestionError(f"the option {option!r} repeats the recommendation, which is already answer a")
+            raise InboxError(f"the option {option!r} repeats the recommendation, which is already answer a")
     if pr is not None and not PULL.match(pr):
-        raise QuestionError(f"{pr!r} is not a pull request; write it as owner/repo#number")
+        raise InboxError(f"{pr!r} is not a pull request; write it as owner/repo#number")
 
 
 def session_repo(folder: Path, repo: Optional[str]) -> Optional[str]:
@@ -225,10 +224,11 @@ def ask(session: str, question: str, recommend: str, options: list[str], *, deta
         count = int(counts.get(key, 0)) + 1
         record = {
             "ref": reference(pull, count, home),
+            "kind": "question",
             "number": count,
             "pr": pr,
-            "askedAt": now_ms(),
-            "question": question.strip(),
+            "postedAt": now_ms(),
+            "subject": question.strip(),
             "detail": detail.strip(),
             "choices": [recommend.strip(), *(option.strip() for option in options)],
         }
@@ -236,19 +236,19 @@ def ask(session: str, question: str, recommend: str, options: list[str], *, deta
             record["agentId"] = agent
         counts[key] = count
         # The count lands first: a write that stops between the two then skips a
-        # number, where the other order would hand the next question this reference.
+        # number, where the other order would hand the next item this reference.
         write_json(counts_path, counts)
-        write_json(question_file(folder, record["ref"]), record)
+        write_json(item_file(folder, record["ref"]), record)
     return record
 
 
-# Finding a question
+# Finding an item
 
 def parse_reference(text: str) -> tuple[str, Optional[str]]:
     match = REFERENCE.match(text.strip())
     if not match:
-        raise QuestionError(f"{text!r} is not a question reference, such as #337.3, owner/repo#337.3, or q2, "
-                            "with an optional answer letter, such as #337.3.a")
+        raise InboxError(f"{text!r} is not an inbox reference, such as #337.3, owner/repo#337.3, or q2, "
+                         "with an optional answer letter, such as #337.3.a")
     return match["ref"], match["letter"]
 
 
@@ -256,86 +256,86 @@ def locate(session: Optional[str], ref: str) -> Path:
     """The folder holding `ref`: the session's, or, without one, the one session that has it."""
     if session is not None:
         folder = session_dir(session)
-        if not question_file(folder, ref).is_file():
-            raise QuestionNotFound(f"session {session} has no question {ref}")
+        if not item_file(folder, ref).is_file():
+            raise ItemNotFound(f"session {session} has no item {ref}")
         return folder
-    holders = [name for name in sessions() if question_file(store_root() / name, ref).is_file()]
+    holders = [name for name in sessions() if item_file(store_root() / name, ref).is_file()]
     if not holders:
-        raise QuestionNotFound(f"no session has a question {ref}")
+        raise ItemNotFound(f"no session has an item {ref}")
     if len(holders) > 1:
-        raise AmbiguousQuestion(f"{ref} names a question in {len(holders)} sessions: {', '.join(holders)}; "
-                                "pass --session")
+        raise AmbiguousItem(f"{ref} names an item in {len(holders)} sessions: {', '.join(holders)}; "
+                            "pass --session")
     return store_root() / holders[0]
 
 
 def find(session: Optional[str], ref: str) -> tuple[Path, dict]:
     folder = locate(session, ref)
-    question = read_json(question_file(folder, ref))
-    if question is None:
-        raise QuestionNotFound(f"{question_file(folder, ref)} is not a question")
-    return folder, question
+    item = read_json(item_file(folder, ref))
+    if item is None:
+        raise ItemNotFound(f"{item_file(folder, ref)} is not an inbox item")
+    return folder, item
 
 
 def typed_letter(question: dict) -> str:
     return chr(ord("a") + len(question["choices"]))
 
 
-def answer_ref(question: dict) -> str:
-    answered = question.get("answer") or {}
-    return question["ref"] if answered.get("dismissed") else f"{question['ref']}.{answered['letter']}"
+def answer_ref(item: dict) -> str:
+    answered = item.get("answer") or {}
+    return item["ref"] if answered.get("dismissed") else f"{item['ref']}.{answered['letter']}"
 
 
 def message(question: dict) -> str:
     """The line that delivers an answer, as `watch` prints it and the band sends it."""
     answered = question["answer"]
     if answered.get("dismissed"):
-        return f"DISMISSED {question['ref']} {question['question']}"
-    return f"ANSWER {answer_ref(question)} {question['question']} → {answered['text']}"
+        return f"DISMISSED {question['ref']} {question['subject']}"
+    return f"ANSWER {answer_ref(question)} {question['subject']} → {answered['text']}"
 
 
 # Answering and delivering
 
 def update(session: Optional[str], ref: str, change) -> dict:
-    """Read the question under the lock, let `change` alter it, and write it back."""
+    """Read the item under the lock, let `change` alter it, and write it back."""
     folder = locate(session, ref)
     with locked(folder):
-        question = read_json(question_file(folder, ref))
-        if question is None:
-            raise QuestionNotFound(f"{question_file(folder, ref)} is not a question")
-        change(question)
-        write_json(question_file(folder, ref), question)
-        if question.get("deliveredAt"):
+        item = read_json(item_file(folder, ref))
+        if item is None:
+            raise ItemNotFound(f"{item_file(folder, ref)} is not an inbox item")
+        change(item)
+        write_json(item_file(folder, ref), item)
+        if item.get("deliveredAt"):
             prune(folder)
-    return question
+    return item
 
 
 def answer(session: Optional[str], ref: str, letter: Optional[str], text: Optional[str] = None) -> dict:
     def record(question: dict) -> None:
         if question.get("answer"):
-            raise QuestionError(f"{question['ref']} is already answered, as {answer_ref(question)}")
+            raise InboxError(f"{question['ref']} is already answered, as {answer_ref(question)}")
         last = typed_letter(question)
         if letter is None:
-            raise QuestionError(f"name the answer's letter, such as {question['ref']}.a")
+            raise InboxError(f"name the answer's letter, such as {question['ref']}.a")
         if letter == last:
             if not (text or "").strip():
-                raise QuestionError(f"{question['ref']}.{last} is a typed answer; give it with --text")
+                raise InboxError(f"{question['ref']}.{last} is a typed answer; give it with --text")
             chosen = text.strip()
         elif text is not None:
-            raise QuestionError(f"--text goes with the typed answer, {question['ref']}.{last}")
+            raise InboxError(f"--text goes with the typed answer, {question['ref']}.{last}")
         elif ord(letter) - ord("a") < len(question["choices"]):
             chosen = question["choices"][ord(letter) - ord("a")]
         else:
-            raise QuestionError(f"{question['ref']} has no answer {letter}; its letters run a to {last}")
+            raise InboxError(f"{question['ref']} has no answer {letter}; its letters run a to {last}")
         question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
 
     return update(session, ref, record)
 
 
 def dismiss(session: Optional[str], ref: str) -> dict:
-    def record(question: dict) -> None:
-        if question.get("answer"):
-            raise QuestionError(f"{question['ref']} is already answered, as {answer_ref(question)}")
-        question["answer"] = {"dismissed": True, "answeredAt": now_ms()}
+    def record(item: dict) -> None:
+        if item.get("answer"):
+            raise InboxError(f"{item['ref']} is already answered, as {answer_ref(item)}")
+        item["answer"] = {"dismissed": True, "answeredAt": now_ms()}
 
     return update(session, ref, record)
 
@@ -351,17 +351,17 @@ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict
     """Claim an answer for delivery, or renew a claim by its token; returns the question."""
     def take(question: dict) -> None:
         if not question.get("answer"):
-            raise QuestionError(f"{question['ref']} has no answer to deliver")
+            raise InboxError(f"{question['ref']} has no answer to deliver")
         if question.get("deliveredAt"):
-            raise QuestionError(f"{answer_ref(question)} is already delivered")
+            raise InboxError(f"{answer_ref(question)} is already delivered")
         held = live_claim(question)
         if renew is not None:
             if (question.get("claim") or {}).get("token") != renew:
-                raise QuestionError(f"{answer_ref(question)} is not claimed with that token")
+                raise InboxError(f"{answer_ref(question)} is not claimed with that token")
             question["claim"]["renewedAt"] = now_ms()
             return
         if held:
-            raise QuestionError(f"{answer_ref(question)} is already claimed for delivery")
+            raise InboxError(f"{answer_ref(question)} is already claimed for delivery")
         question["claim"] = {"token": secrets.token_hex(8), "renewedAt": now_ms()}
 
     return update(session, ref, take)
@@ -371,9 +371,9 @@ def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dic
     """Mark a claimed answer delivered, or reopen the question when its delivery failed."""
     def finish(question: dict) -> None:
         if question.get("deliveredAt"):
-            raise QuestionError(f"{answer_ref(question)} is already delivered")
+            raise InboxError(f"{answer_ref(question)} is already delivered")
         if (question.get("claim") or {}).get("token") != token:
-            raise QuestionError(f"{question['ref']} is not claimed with that token")
+            raise InboxError(f"{question['ref']} is not claimed with that token")
         del question["claim"]
         if delivered:
             question["deliveredAt"] = now_ms()
@@ -384,16 +384,16 @@ def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dic
 
 
 def prune(folder: Path) -> None:
-    delivered = [question for question in load_questions(folder) if question.get("deliveredAt")]
-    delivered.sort(key=lambda question: question["deliveredAt"], reverse=True)
-    for question in delivered[KEEP_DELIVERED:]:
+    delivered = [item for item in load_items(folder) if item.get("deliveredAt")]
+    delivered.sort(key=lambda item: item["deliveredAt"], reverse=True)
+    for item in delivered[KEEP_DELIVERED:]:
         with contextlib.suppress(FileNotFoundError):
-            question_file(folder, question["ref"]).unlink()
+            item_file(folder, item["ref"]).unlink()
 
 
 def undelivered(session: str) -> list[dict]:
-    return [question for question in load_questions(session_dir(session))
-            if question.get("answer") and not question.get("deliveredAt") and not live_claim(question)]
+    return [item for item in load_items(session_dir(session))
+            if item.get("answer") and not item.get("deliveredAt") and not live_claim(item)]
 
 
 def deliver_pass(session: str, send: Callable[[str], None]) -> None:
@@ -403,7 +403,7 @@ def deliver_pass(session: str, send: Callable[[str], None]) -> None:
     for question in undelivered(session):
         try:
             claimed = claim(session, question["ref"])
-        except QuestionError:
+        except InboxError:
             continue
         send(message(claimed))
         settle(session, claimed["ref"], claimed["claim"]["token"], delivered=True)
@@ -421,22 +421,23 @@ def references_in(text: str) -> list[tuple[str, Optional[str]]]:
 
 
 def context(session: str, text: str) -> list[str]:
-    """What each reference in `text` means, for the questions the session holds."""
+    """What each reference in `text` means, for the items the session holds."""
     folder = session_dir(session)
     lines = []
     for ref, letter in references_in(text):
-        question = read_json(question_file(folder, ref))
+        question = read_json(item_file(folder, ref))
         if question is None:
             continue
+        subject = question["subject"]
         if letter is None:
-            lines.append(f"{ref} is the question: {question['question']}")
+            lines.append(f"{ref} is the question: {subject}")
             continue
         index = ord(letter) - ord("a")
         answered = question.get("answer") or {}
         if index < len(question["choices"]):
-            lines.append(f"{ref}.{letter} answers {question['question']} with {question['choices'][index]}")
+            lines.append(f"{ref}.{letter} answers {subject} with {question['choices'][index]}")
         elif letter == typed_letter(question) and answered.get("letter") == letter:
-            lines.append(f"{ref}.{letter} answers {question['question']} with {answered['text']}")
+            lines.append(f"{ref}.{letter} answers {subject} with {answered['text']}")
         elif letter == typed_letter(question):
-            lines.append(f"{ref}.{letter} is a typed answer to {question['question']}")
+            lines.append(f"{ref}.{letter} is a typed answer to {subject}")
     return lines
