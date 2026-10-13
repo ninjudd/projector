@@ -1,0 +1,541 @@
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 2b356a4e..ef390038 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -16,7 +16,7 @@ the loop around it.
+ 
+ Resolve the reviewer and the operator as `../review-pr/SKILL.md`
+ describes; the watcher needs the operator's login for `--author` and
+-`--review-requested`.
++`--review-requested`, and the reviewer's for `--reviewer`.
+ 
+ Watch only the repository containing the current working directory. The loop
+ reviews every open pull request the operator authors there, from whichever
+@@ -70,10 +70,15 @@ back empty, indistinguishable from a repository with nothing open.
+ 4. Fetch each pull request's base SHA, head SHA, state, reviews, and
+    thread-aware review threads. Say how many pull requests are tracked, the
+    operator's and the requested ones, out of the repository total.
+-5. Determine the last reviewed SHA from durable GitHub state or the current
+-   conversation: the newest head that a Projector verdict by this loop's
+-   model names. Another model's verdict on a head is that model's review,
+-   not this loop's. Review any current head without a completed exact-head
++5. Find the current heads this loop has reviewed. For each tracked pull
++   request, run `project review status <number> --json`. Its `models` list
++   holds each model's newest verdict on the current head, and the head is
++   reviewed when an entry's `login` is the reviewer's, in any letter case,
++   and its `model` is the model ID the host reports for this session,
++   lowercased and without a trailing bracketed variant such as `[1m]`.
++   Another model's verdict is that model's review, and a verdict by the
++   same model from a teammate's account is a review by the teammate, not
++   by this loop. Review any current head without a completed exact-head
+    review by this model immediately; do not baseline it away.
+ 6. Write the tracked set to a durable tracked file, one `owner/repo#number`
+    per line, kept beside the state file and outside any checkout. That file
+@@ -93,24 +98,33 @@ back empty, indistinguishable from a repository with nothing open.
+    directory, where `project review publish` keeps it. Give each model's loop
+    an id of its own, because two loops that write one record can lose an
+    entry.
+-7. Seed the state file with only the SHAs already reviewed, then run one
+-   pass:
++7. Run one pass, with the model ID from step 6 as `--model` and the
++   reviewer's login as `--reviewer`:
+ 
+    ```sh
+-   scripts/watch-prs.sh --tracked <file> --state <seeded-file> \
++   scripts/watch-prs.sh --tracked <file> --state <new-state-file> \
++     --model <model-id> --reviewer <reviewer> \
+      --repo <owner/repo> --author <operator> --review-requested <operator> --once
+    ```
+ 
+-   It refuses to start, naming the line, on an entry that is not
+-   `owner/repo#number` or a number that names no pull request, and it
+-   distinguishes a lookup that failed for network or auth reasons from a
++   Name a new state file beside the tracked file, never one an earlier
++   watcher left, and leave it to the watcher, which creates it and alone
++   writes it. A pull request with no row there reports as `NEW PR`, unless
++   its head already has a verdict by this model from the reviewer's
++   account, which the watcher records without a word. A new file keeps the
++   check below true: a row an earlier watcher wrote can already hold a head
++   that step 5 found unreviewed, and that head would not come back as
++   `NEW PR`. The watcher refuses to start, naming the line, on an entry that
++   is not `owner/repo#number` or a number that names no pull request, and
++   it distinguishes a lookup that failed for network or auth reasons from a
+    missing pull request. Every head you found unreviewed in step 5 must come
+    back as `NEW PR`; one that does not is a pull request missing from the
+-   file. The pass records those heads as announced, so the running watcher
+-   will not repeat them; review them from this output. Then run the same
+-   script without `--once`, with the same state file and adoption flags,
+-   `--worktree <repository>`, and an interval of at least 30 seconds, under
+-   the host's persistent process or monitor facility.
++   file. The pass records every head it saw, so the running watcher does not
++   announce them again; review the heads it names from this output. Then run
++   the same script without `--once`, with the same state file, `--model`,
++   `--reviewer`, and adoption flags, `--worktree <repository>`, and an
++   interval of at least 30 seconds, under the host's persistent process or
++   monitor facility.
+ 
+ The watcher prints `NEW PR`, `NEW HEAD`, `RESPONDED`, `CLOSED`, `BRANCH`, and
+ `TRACKED`. Treat `RESPONDED` as a re-review request for a head still waiting on
+@@ -133,11 +147,17 @@ while the hold kept it a draft. A `RESPONDED` that reaches a subagent after
+ a review has marked the pull request ready, with no change request
+ standing, needs nothing: that review already signed the head off.
+ 
+-If adopting an existing watcher, fetch unresolved state first, confirm it runs
+-with both adoption flags, `--author` and `--review-requested`, for this
+-repository and operator and reads the tracked file this loop records, and
+-verify its state file contains every expected row. Restart it when the script
+-changed after the process started. Silence alone proves nothing.
++If adopting an existing watcher, fetch unresolved state first and run step 5,
++reviewing each head it finds unreviewed: the watcher announces a head once,
++possibly to a conversation that never finished its review. Confirm that the
++watcher runs with both adoption flags, `--author` and `--review-requested`,
++for this repository and operator, reads the tracked file this loop records,
++and passes this loop's model ID as `--model` and the reviewer's login as
++`--reviewer`. Its state file needs no check. A row there says only that the
++watcher saw a head, not that a review of it finished, and a tracked pull
++request with no row reports on the watcher's next cycle. Restart it, as
++step 7 starts it, when the script changed after the process started.
++Silence alone proves nothing.
+ 
+ ## Give each pull request its own subagent
+ 
+diff --git a/skills/start-review-loop/scripts/watch-prs.sh b/skills/start-review-loop/scripts/watch-prs.sh
+index 6ad7766e..ab1210f7 100755
+--- a/skills/start-review-loop/scripts/watch-prs.sh
++++ b/skills/start-review-loop/scripts/watch-prs.sh
+@@ -3,7 +3,9 @@
+ # review loop tracks, and stay silent otherwise. Intended to run under Claude
+ # Code's `Monitor`, where each stdout line becomes one notification.
+ #
+-#   NEW PR     a tracked pull request the state file has not seen
++#   NEW PR     a tracked pull request the state file has not seen, unless its
++#              head already has a verdict by the --model model that the
++#              --reviewer account posted
+ #   NEW HEAD   a tracked pull request's head SHA moved
+ #   RESPONDED  the author answered without pushing on a pull request still
+ #              waiting for a review: a draft by the --author login, or any
+@@ -26,7 +28,7 @@
+ #              than mistaken for a quiet repository
+ #
+ # Usage:
+-#   watch-prs.sh --tracked <file> --state <path>
++#   watch-prs.sh --tracked <file> --state <path> [--model <id> --reviewer <login>]
+ #                [--repo <owner/repo> [--author <login>] [--review-requested <login>]]
+ #                [--interval 60] [--worktree <dir>] [--once]
+ #
+@@ -57,30 +59,44 @@
+ # that pull request out of both the watch and adoption. A failed listing
+ # adopts nothing that cycle and is tried again.
+ #
+-# The state file is the loop's memory of what has been seen. Seed it with rows
+-# of `<owner/repo> <number> <sha> <ref>` to baseline heads as already reviewed;
+-# an empty file means every tracked pull request reports as new, which is the
+-# right default when the loop is establishing itself. A row for a pull request
+-# no longer in the tracked file is dropped without a word, since the loop
+-# removed it on purpose; CLOSED is for the other direction, a listed pull
+-# request that left the open set.
++# The state file is the watcher's memory of what it has seen, and only the
++# watcher writes it. A tracked pull request with no row there reports as NEW
++# PR, so a new or empty file announces every tracked pull request. --model
++# and --reviewer name the reviewer the review loop runs as: a model ID within
++# a GitHub account. With them, a pull request with no row whose head already
++# carries a Projector verdict that account posted with that model gets its
++# row without a word instead, since the head has had its exact-head review.
++# A verdict by another account or another model never does, even one that
++# counts for RESPONDED: a teammate whose loop runs the same model is another
++# reviewer, not this one. The model is compared as `project review` compares
++# one, lowercased and without a trailing bracketed variant such as `[1m]`, and
++# the login without regard to case. A row for a pull request no longer in the
++# tracked file is dropped without a word, since the loop removed it on
++# purpose; CLOSED is for the other direction, a listed pull request that left
++# the open set.
+ #
+ # --once makes a single pass and exits, which is how the loop checks, before
+ # arming the watch, that the file names the pull requests it meant to track.
+ 
+ set -uo pipefail
+ 
+-TRACKED=""; STATE=""; INTERVAL=60; WORKTREE=""; ONCE=0; REPO=""; AUTHOR=""; REQUESTED=""
++TRACKED=""; STATE=""; INTERVAL=60; WORKTREE=""; ONCE=0; REPO=""; AUTHOR=""; REQUESTED=""; MODEL=""; REVIEWER=""
++
++# Given the remaining arguments, refuse a flag that has no value after it,
++# where `shift 2` would fail without shifting and the loop would never end.
++takes_value() { [ $# -ge 2 ] || { echo "watch-prs.sh: $1 needs a value" >&2; exit 2; }; }
+ 
+ while [ $# -gt 0 ]; do
+   case "$1" in
+-    --tracked)  TRACKED="${2:-}"; shift 2 ;;
+-    --repo)     REPO="${2:-}"; shift 2 ;;
+-    --author)   AUTHOR="${2:-}"; shift 2 ;;
+-    --review-requested) REQUESTED="${2:-}"; shift 2 ;;
+-    --state)    STATE="${2:-}"; shift 2 ;;
+-    --interval) INTERVAL="${2:-60}"; shift 2 ;;
+-    --worktree) WORKTREE="${2:-}"; shift 2 ;;
++    --tracked)  takes_value "$@"; TRACKED="$2"; shift 2 ;;
++    --repo)     takes_value "$@"; REPO="$2"; shift 2 ;;
++    --author)   takes_value "$@"; AUTHOR="$2"; shift 2 ;;
++    --review-requested) takes_value "$@"; REQUESTED="$2"; shift 2 ;;
++    --model)    takes_value "$@"; MODEL="$2"; shift 2 ;;
++    --reviewer) takes_value "$@"; REVIEWER="$2"; shift 2 ;;
++    --state)    takes_value "$@"; STATE="$2"; shift 2 ;;
++    --interval) takes_value "$@"; INTERVAL="${2:-60}"; shift 2 ;;
++    --worktree) takes_value "$@"; WORKTREE="$2"; shift 2 ;;
+     --once)     ONCE=1; shift ;;
+     *) echo "watch-prs.sh: unknown argument: $1" >&2; exit 2 ;;
+   esac
+@@ -97,6 +113,14 @@ if [ -n "$REPO$AUTHOR$REQUESTED" ]; then
+   # An adopting watch may start from nothing; adoption fills the file.
+   touch "$TRACKED" 2>/dev/null || { echo "watch-prs.sh: cannot write tracked file: $TRACKED" >&2; exit 2; }
+ fi
++if [ -n "$MODEL$REVIEWER" ]; then
++  [ -n "$MODEL" ] && [ -n "$REVIEWER" ] || { echo "watch-prs.sh: --model goes with --reviewer" >&2; exit 2; }
++  [[ $REVIEWER =~ ^[A-Za-z0-9-]+$ ]] || { echo "watch-prs.sh: --reviewer is not a GitHub login: $REVIEWER" >&2; exit 2; }
++  # Verdicts are looked up as <login>/<model> in a comma-separated list, and
++  # no model there holds whitespace or a comma, so an ID that does would
++  # never match and every reviewed head would announce.
++  [[ $MODEL =~ ^[A-Za-z0-9][^[:space:],]*$ ]] || { echo "watch-prs.sh: --model is not a model ID: $MODEL" >&2; exit 2; }
++fi
+ 
+ # The skill's own floor: never poll GitHub harder than every 30 seconds.
+ [ "$INTERVAL" -lt 30 ] 2>/dev/null && INTERVAL=30
+@@ -143,6 +167,19 @@ EOF
+ 
+ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+ 
++VARIANT_RE='^(.*)\[[^][]*\]$'
++MODEL_ID=$(lower "$MODEL")
++[[ $MODEL_ID =~ $VARIANT_RE ]] && MODEL_ID="${BASH_REMATCH[1]}"
++REVIEWER_ID=$(lower "$REVIEWER")
++
++# Whether $1, the comma-separated <login>/<model> pairs that gave a head a
++# verdict, names the --reviewer account with the --model model.
++already_reviewed() {
++  [ -n "$MODEL_ID" ] || return 1
++  case ",$1," in *",$REVIEWER_ID/$MODEL_ID,"*) return 0 ;; esac
++  return 1
++}
++
+ # One row per pull request: state, draft flag, verdict, head SHA, head ref,
+ # how many threads are unresolved, and the newest unanswered author reply on
+ # an open Projector finding thread ("-" when there is none): the id of a last
+@@ -170,26 +207,35 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+ # open on it, one whose body carries `<!-- projector-hold v=1 -->`, and "-"
+ # otherwise. Only the author's comment counts, because anyone can comment. A
+ # hold lives only while its changes are built, so it is among the newest 100
+-# comments. The last field is the author's login.
++# comments. The field after it names who gave the head a verdict, each as
++# <login>/<model>, lowercased, without a trailing bracketed variant, and
++# separated by commas, or "-" when nobody did. Unlike the verdict, it takes a
++# review whatever its author's association: only the pair that names the
++# --reviewer account is used, and `project review status` counts that
++# account's own reviews the same way. The last field is the author's login.
+ PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
+   visibility
+   pullRequest(number:$n){
+     state isDraft headRefOid headRefName author{login}
+     comments(last:100){ nodes{ author{login} body } }
+-    reviews(last:100){ nodes{ authorAssociation submittedAt body } }
++    reviews(last:100){ nodes{ author{login} authorAssociation submittedAt body } }
+     reviewThreads(first:100){ nodes{ isResolved
+       comments(first:1){ nodes{ databaseId body } }
+       lastComment: comments(last:1){ nodes{ databaseId body } } } } } } }'
+ PR_JQ='(.data.repository.visibility | IN("PRIVATE", "INTERNAL")) as $closed
+   | .data.repository.pullRequest
+   | .headRefOid as $head
+-  | ([.reviews.nodes[]
+-      | select($closed or (.authorAssociation | IN("OWNER", "MEMBER", "COLLABORATOR")))
++  | [.reviews.nodes[]
++      | ($closed or (.authorAssociation | IN("OWNER", "MEMBER", "COLLABORATOR"))) as $counted
++      | (.author.login // "") as $login
+       | .submittedAt as $at
+       | .body // ""
+-      | capture("(?m)^<!-- projector-review v=1 verdict=(?<verdict>[a-z-]+) [^>]*?sha=(?<sha>[0-9a-f]{40}) ")
+-      | select(.sha == $head) | {at: $at, verdict}]
+-     | sort_by(.at) | last | .verdict // "-") as $verdict
++      | capture("(?m)^<!-- projector-review v=1 verdict=(?<verdict>[a-z-]+) (?:[^>]*?model=(?<model>\\S+) )?[^>]*?sha=(?<sha>[0-9a-f]{40}) ")
++      | select(.sha == $head) | {at: $at, verdict, model, login: $login, counted: $counted}] as $verdicts
++  | ([$verdicts[] | select(.counted)] | sort_by(.at) | last | .verdict // "-") as $verdict
++  | ([$verdicts[] | select(.login != "" and (.model // "") != "") | "\(.login)/\(.model)"
++      | ascii_downcase | sub("\\[[^\\[\\]]*\\]$"; "") | select(contains(",") | not)]
++     | unique | join(",") | if . == "" then "-" else . end) as $reviewers
+   | ([.reviewThreads.nodes[]
+       | select(.isResolved == false)
+       | select(.comments.nodes[0].body | test("projector-finding"))
+@@ -200,7 +246,7 @@ PR_JQ='(.data.repository.visibility | IN("PRIVATE", "INTERNAL")) as $closed
+   | (if $author != "" and any(.comments.nodes[];
+          (.author.login // "") == $author and (.body // "" | contains("<!-- projector-hold v=1 -->")))
+      then "held" else "-" end) as $held
+-  | "\(.state) \(.isDraft) \($verdict) \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer) \($held) \($author)"'
++  | "\(.state) \(.isDraft) \($verdict) \(.headRefOid) \(.headRefName) \([.reviewThreads.nodes[] | select(.isResolved == false)] | length) \($answer) \($held) \($reviewers) \($author)"'
+ 
+ # stdout: the row above for $1#$2. stderr is kept in $STATE.err so a failure
+ # can be told apart from a pull request that does not exist.
+@@ -334,7 +380,7 @@ EOF
+ "
+       continue
+     fi
+-    read -r pstate pdraft pverdict sha ref unresolved answer held pauthor <<EOF
++    read -r pstate pdraft pverdict sha ref unresolved answer held previewers pauthor <<EOF
+ $row
+ EOF
+     [ -n "${answer:-}" ] || answer="-"
+@@ -346,6 +392,11 @@ EOF
+       continue
+     fi
+ 
++    # A head this reviewer already reviewed is one this loop has seen. It still
++    # goes through the RESPONDED test below, which hears an author who
++    # answered that review while no watcher ran.
++    [ -z "$known" ] && already_reviewed "$previewers" && known="$sha"
++
+     if [ -z "$known" ]; then
+       echo "NEW PR $slug#$n ($ref) head=${sha:0:7} — unreviewed, needs an exact-head review"
+       # Announcing a head counts as having announced it, so the RESPONDED test
+diff --git a/skills/start-watch-loop/SKILL.md b/skills/start-watch-loop/SKILL.md
+index 6d315940..0a6ac24a 100644
+--- a/skills/start-watch-loop/SKILL.md
++++ b/skills/start-watch-loop/SKILL.md
+@@ -50,9 +50,9 @@ adopted it. Never list a pull request you would not push to.
+    each base and head SHA, author, state, mergeability, review decision, and
+    unresolved review threads. Include every layer of a stack created by this
+    conversation, found as `../implement/SKILL.md` describes under "Stack
+-   dependent work". Baseline only already-resolved threads. Never baseline an
+-   unresolved thread; every finding already waiting when the loop starts
+-   remains outstanding.
++   dependent work". Every unresolved thread is outstanding work, however
++   long it waited before the loop started. The watcher reports each one
++   until the thread is resolved.
+ 3. Verify the operator can push each tracked branch. Do not test with an empty
+    commit or direct push.
+ 4. Write the tracked set to a durable tracked file, one `owner/repo#number`
+@@ -92,11 +92,16 @@ adopted it. Never list a pull request you would not push to.
+    flag, so it stays idle on an empty file as a loop the user started does.
+ 
+ Before adopting an existing watcher, fetch unresolved threads, verdicts,
+-body-only reviews, and mergeability directly. Confirm its tracked file is the
+-set this conversation owns -- a watcher another session started watches that
+-session's set -- and verify its state file contains every expected unresolved
+-row. Restart the watcher when its script changed after it started; a live
+-process cannot prove which file version it loaded.
++body-only reviews, and mergeability directly, and dispatch that work at
++once. The watcher repeats a finding, verdict, conflict, or draft it already
++announced only at the renotification interval, and never repeats a review
++body, so fetching the work yourself is what catches what it told a
++conversation before this one. Its state file needs no check: it records
++only what the watcher announced, not whether anyone acted on it. Confirm
++its tracked file is the set this conversation owns -- a watcher another
++session started watches that session's set. Restart the watcher when its
++script changed after it started; a live process cannot prove which file
++version it loaded.
+ 
+ The watcher is level-triggered:
+ 
+diff --git a/skills/start-watch-loop/scripts/watch-threads.sh b/skills/start-watch-loop/scripts/watch-threads.sh
+index df0353da..4b05ddd3 100755
+--- a/skills/start-watch-loop/scripts/watch-threads.sh
++++ b/skills/start-watch-loop/scripts/watch-threads.sh
+@@ -67,12 +67,16 @@ set -uo pipefail
+ 
+ TRACKED=""; STATE=""; INTERVAL=60; RENOTIFY=900; ONCE=0; EXIT_WHEN_CLOSED=0
+ 
++# Given the remaining arguments, refuse a flag that has no value after it,
++# where `shift 2` would fail without shifting and the loop would never end.
++takes_value() { [ $# -ge 2 ] || { echo "watch-threads.sh: $1 needs a value" >&2; exit 2; }; }
++
+ while [ $# -gt 0 ]; do
+   case "$1" in
+-    --tracked)  TRACKED="${2:-}"; shift 2 ;;
+-    --state)    STATE="${2:-}"; shift 2 ;;
+-    --interval) INTERVAL="${2:-60}"; shift 2 ;;
+-    --renotify) RENOTIFY="${2:-900}"; shift 2 ;;
++    --tracked)  takes_value "$@"; TRACKED="$2"; shift 2 ;;
++    --state)    takes_value "$@"; STATE="$2"; shift 2 ;;
++    --interval) takes_value "$@"; INTERVAL="${2:-60}"; shift 2 ;;
++    --renotify) takes_value "$@"; RENOTIFY="${2:-900}"; shift 2 ;;
+     --once)     ONCE=1; shift ;;
+     --exit-when-closed) EXIT_WHEN_CLOSED=1; shift ;;
+     *) echo "watch-threads.sh: unknown argument: $1" >&2; exit 2 ;;
+diff --git a/tests/test_watchers.py b/tests/test_watchers.py
+index 5ada720c..fa11c8e9 100644
+--- a/tests/test_watchers.py
++++ b/tests/test_watchers.py
+@@ -124,11 +124,15 @@ def review(review_id, *, who="codex", body="Body-only concern", sha=SHA_A, state
+     return {"id": review_id, "state": state, "user": {"login": who}, "body": body, "commit_id": sha}
+ 
+ 
+-def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:00Z", association="COLLABORATOR"):
+-    """A GraphQL review node whose body carries the marker line `project review publish` writes."""
+-    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.7.12 model=claude-opus-5-5 effort=high "
++def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:00Z", association="COLLABORATOR",
++                      model="claude-opus-5-5", who="operator"):
++    """A GraphQL review node by `who` whose body carries the marker line `project review publish` writes,
++    naming `model`, or no model when it is None."""
++    named = f"model={model} " if model else ""
++    marker = (f"<!-- projector-review v=1 verdict={verdict} projector=0.7.12 {named}effort=high "
+               f"sha={sha} findings=1 seconds=60 covered=1/1 -->")
+-    return {"authorAssociation": association, "submittedAt": at, "body": f"Projector review\n\n{marker}\n\nSummary"}
++    return {"author": {"login": who}, "authorAssociation": association, "submittedAt": at,
++            "body": f"Projector review\n\n{marker}\n\nSummary"}
+ 
+ 
+ @unittest.skipUnless(shutil.which("jq") and shutil.which("bash"), "the watcher tests need bash and jq")
+@@ -194,7 +198,7 @@ def pull_request(
+     def track(self, *entries) -> None:
+         self.tracked.write_text("".join(f"{entry}\n" for entry in entries))
+ 
+-    def run_watcher(self, script, *args, down_after=None, late_line=None):
++    def run_watcher(self, script, *args, down_after=None, late_line=None, timeout=120):
+         """Make one pass. The call log, the failure switch and the late line cover this pass only."""
+         log = self.fixtures / "calls.log"
+         if log.exists():
+@@ -211,7 +215,7 @@ def run_watcher(self, script, *args, down_after=None, late_line=None):
+             text=True,
+             encoding="utf-8",
+             env=env,
+-            timeout=120,
++            timeout=timeout,
+         )
+ 
+     def calls(self) -> str:
+@@ -540,6 +544,14 @@ def test_refuses_to_start_when_github_cannot_be_reached(self) -> None:
+         self.assertIn("could not verify — network or auth error, not a missing repository or pull request", result.stderr)
+         self.assertNotIn("no such", result.stderr)
+ 
++    def test_refuses_a_last_flag_without_its_value(self) -> None:
++        # A short timeout, so a watcher that loops on the missing value fails the test instead of hanging it.
++        for flag in ("--tracked", "--state", "--interval", "--renotify"):
++            result = self.run_watcher(THREADS, flag, timeout=10)
++
++            self.assertEqual(2, result.returncode, flag)
++            self.assertEqual(f"watch-threads.sh: {flag} needs a value\n", result.stderr)
++
+     def test_refuses_the_repository_and_author_flags(self) -> None:
+         for flag in ("--repos", "--author"):
+             with self.subTest(flag=flag):
+@@ -784,6 +796,93 @@ def test_a_hold_marker_from_anyone_but_the_author_holds_nothing(self) -> None:
+             result.stdout.splitlines(),
+         )
+ 
++    def test_a_head_this_reviewer_already_reviewed_takes_its_row_without_a_word(self) -> None:
++        self.pull_request(1, ref="reviewed", verdicts=[projector_verdict(SHA_A, "clean")])
++        self.pull_request(2, ref="other-model", verdicts=[projector_verdict(SHA_A, "clean", model="gpt-6")])
++        self.pull_request(3, ref="unreviewed")
++        self.pull_request(4, ref="older-head", verdicts=[projector_verdict(SHA_B, "clean")])
++        self.pull_request(5, ref="no-model", verdicts=[projector_verdict(SHA_A, "clean", model=None)])
++        self.track(*(f"acme/app#{n}" for n in range(1, 6)))
++        reviewer = ("--reviewer", "operator")
++
++        without_model = self.run_watcher(PRS)
++        self.state.unlink()
++        # The model ID the host reports, with the context-window variant `project review` ignores, and the
++        # login in another case.
++        with_model = self.run_watcher(PRS, "--model", "Claude-Opus-5-5[1m]", "--reviewer", "Operator")
++        again = self.run_watcher(PRS, "--model", "claude-opus-5-5", *reviewer)
++
++        def new_pr(n, ref):
++            return f"NEW PR acme/app#{n} ({ref}) head=aaaaaaa — unreviewed, needs an exact-head review"
++
++        self.assert_ok(without_model)
++        self.assertEqual(5, len(without_model.stdout.splitlines()), without_model.stdout)
++        self.assertIn(new_pr(1, "reviewed"), without_model.stdout)
++        self.assert_ok(with_model)
++        self.assertEqual(
++            [new_pr(2, "other-model"), new_pr(3, "unreviewed"), new_pr(4, "older-head"), new_pr(5, "no-model")],
++            with_model.stdout.splitlines(),
++        )
++        self.assertEqual(["acme/app", "1", SHA_A, "reviewed", "-"], self.state_rows()[0])
++        self.assertEqual(5, len(self.state_rows()))
++        self.assert_ok(again)
++        self.assertEqual("", again.stdout)
++
++    def test_only_the_reviewers_own_verdict_takes_a_row_without_a_word(self) -> None:
++        # A teammate whose own loop runs the same model reviewed, then asked for the operator's review.
++        self.pull_request(1, ref="teammate", author="teammate", requested=("operator",),
++                          verdicts=[projector_verdict(SHA_A, "clean", who="teammate")])
++        self.pull_request(2, ref="passerby", author="teammate", requested=("operator",),
++                          verdicts=[projector_verdict(SHA_A, "clean", who="passerby", association="NONE")])
++        # The reviewer's own verdict counts whatever its association, as `project review status` counts it.
++        self.pull_request(3, ref="outside-reviewer", author="teammate", requested=("operator",),
++                          verdicts=[projector_verdict(SHA_A, "clean", association="NONE")])
++
++        result = self.run_watcher(PRS, "--repo", "acme/app", "--review-requested", "operator",
++                                  "--model", "claude-opus-5-5", "--reviewer", "operator")
++
++        self.assert_ok(result)
++        self.assertEqual(
++            ["NEW PR acme/app#1 (teammate) head=aaaaaaa — unreviewed, needs an exact-head review",
++             "NEW PR acme/app#2 (passerby) head=aaaaaaa — unreviewed, needs an exact-head review"],
++            result.stdout.splitlines(),
++        )
++        self.assertEqual([["acme/app", "3", SHA_A, "outside-reviewer", "-"]],
++                         [row for row in self.state_rows() if row[1] == "3"])
++
++    def test_a_reviewed_head_whose_author_answered_asks_for_a_re_review(self) -> None:
++        # The author resolved every thread of this model's review without
++        # pushing while no watcher ran, so no head event is coming.
++        self.pull_request(1, draft=True, verdicts=[projector_verdict(SHA_A)], threads=[thread("T1", resolved=True)])
++        self.track("acme/app#1")
++
++        baselined = self.run_watcher(PRS, "--model", "claude-opus-5-5", "--reviewer", "operator")
++        quiet = self.run_watcher(PRS, "--model", "claude-opus-5-5", "--reviewer", "operator")
++
++        self.assert_ok(baselined)
++        self.assertEqual(
++            ["RESPONDED acme/app#1 (feature) head=aaaaaaa — still a draft with every thread resolved; "
++             "re-review this head and sign off if clean"],
++            baselined.stdout.splitlines(),
++        )
++        self.assert_ok(quiet)
++        self.assertEqual("", quiet.stdout)
++
++    def test_the_model_leaves_a_pull_request_with_a_row_to_its_row(self) -> None:
++        reviewed = [projector_verdict(SHA_A, "clean")]
++        self.pull_request(1, ref="moved", verdicts=reviewed)
++        self.pull_request(2, ref="seen", verdicts=reviewed)
++        self.track("acme/app#1", "acme/app#2")
++        self.state.write_text(f"acme/app 1 {SHA_B} moved -\nacme/app 2 {SHA_A} seen -\n")
++
++        result = self.run_watcher(PRS, "--model", "claude-opus-5-5", "--reviewer", "operator")
++
++        self.assert_ok(result)
++        self.assertEqual(["NEW HEAD acme/app#1 (moved): bbbbbbb -> aaaaaaa — needs an exact-head review"],
++                         result.stdout.splitlines())
++        self.assertEqual([["acme/app", "1", SHA_A, "moved", f"{SHA_A}:-"], ["acme/app", "2", SHA_A, "seen", "-"]],
++                         self.state_rows())
++
+     def test_reports_a_tracked_pull_request_that_closed_once(self) -> None:
+         self.pull_request(1)
+         self.track("acme/app#1")
+@@ -858,6 +957,32 @@ def test_refuses_a_bad_tracked_file_and_the_old_flags(self) -> None:
+         self.assertEqual(2, not_a_login.returncode)
+         self.assertIn("--review-requested is not a GitHub login: ada is:merged", not_a_login.stderr)
+ 
++    def test_refuses_a_last_flag_without_its_value(self) -> None:
++        # A short timeout, so a watcher that loops on the missing value fails the test instead of hanging it.
++        for flag in ("--tracked", "--state", "--interval", "--worktree", "--repo", "--author",
++                     "--review-requested", "--model", "--reviewer"):
++            result = self.run_watcher(PRS, flag, timeout=10)
++
++            self.assertEqual(2, result.returncode, flag)
++            self.assertEqual(f"watch-prs.sh: {flag} needs a value\n", result.stderr)
++
++    def test_refuses_a_reviewer_that_no_verdict_could_name(self) -> None:
++        self.pull_request(1)
++        self.track("acme/app#1")
++        refusals = [(("--model", "claude-opus-5-5"), "--model goes with --reviewer"),
++                    (("--reviewer", "operator"), "--model goes with --reviewer"),
++                    (("--model", "claude-opus-5-5", "--reviewer", "ada lovelace"),
++                     "--reviewer is not a GitHub login: ada lovelace")]
++        refusals += [(("--model", model, "--reviewer", "operator"), f"--model is not a model ID: {model}")
++                     for model in ("-", "a,b", "claude opus")]
++
++        for args, message in refusals:
++            refused = self.run_watcher(PRS, *args)
++
++            self.assertEqual(2, refused.returncode, args)
++            self.assertIn(message, refused.stderr)
++            self.assertEqual("", refused.stdout)
++
+     def test_adopts_the_authors_open_pull_requests(self) -> None:
+         self.pull_request(1, ref="mine")
+         self.pull_request(2, ref="theirs", author="teammate")
