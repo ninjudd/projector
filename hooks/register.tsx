@@ -38,7 +38,7 @@ const POLL_MS = 30_000
 const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
 const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
-const QUOTE = '“Your mind is a projector; it uses everything as a kind of screen, it projects itself on the screen.” — Osho'
+const QUOTE = '“Your mind is a projecting machine, and thoughts are the film.” — Osho'
 
 // Watching first: a pull request both loops track is listed once, where its
 // watch loop puts it.

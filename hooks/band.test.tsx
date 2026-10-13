@@ -109,7 +109,7 @@ type Ran = ReturnType<typeof ran>
  */
 type Outcome = Ran | { deny: string }
 
-const QUOTE = '“Your mind is a projector; it uses everything as a kind of screen, it projects itself on the screen.” — Osho'
+const QUOTE = '“Your mind is a projecting machine, and thoughts are the film.” — Osho'
 
 /** GitHub's answer to a query, where a test needs another. */
 type Beneath = { github?: (query: string) => Ran }
