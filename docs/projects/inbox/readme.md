@@ -922,9 +922,10 @@ with the `ask` and `tell` tools in Claude Code. Projector's band lists both
 kinds, and each item's drawer lets you discuss, dismiss, or snooze it. The
 owner checked the main-screen row of § 4 by hand under tmux. That row was
 the last criterion without evidence and the check that § 6, § 9, and
-§ 11.10 made the gate for completion, and it also closes the main-screen row that the
-[questions](../questions/readme.md) plan carried into § 4. As § 7 says,
-the look of notices and snoozing that stands at this check is the design.
+§ 11.10 made the gate for completion, and it also closes the main-screen
+row that the [questions](../questions/readme.md) plan carried into § 4.
+As § 7 says, the look of notices and snoozing that stands at this check
+is the design.
 
 ### 12.1 What shipped
 
