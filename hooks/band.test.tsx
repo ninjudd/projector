@@ -217,7 +217,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
 
   await ui.press({ key: 'pr:x/y#7' })
-  // The line names another person's author, and the drawer names none.
+  // The drawer's facts name no author, whoever wrote the pull request.
   const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files$/ })
   expect(facts?.props.color).toBe('subtle')
   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
