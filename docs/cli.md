@@ -77,6 +77,9 @@ what it did to each:
     "Bash(project config set *)",
     "Bash(project config unset *)",
     "Bash(project site *prepare*)",
+    "Bash(project inbox answer *)",
+    "Bash(project inbox dismiss *)",
+    "Bash(project inbox snooze *)",
     "Bash(project -*)"
   ]
   ```
@@ -89,7 +92,11 @@ what it did to each:
   `Bash(project site *prepare*)` asks before either flag, as `--prepare x` or
   `--prepare=x`, and before `--no-prepare` too. Those two commands refuse an
   abbreviated option such as `--prep`, so no shorter spelling slips past the
-  rule. Claude Code checks ask rules before allow rules, so an ask rule
+  rule. `project inbox answer`, `dismiss`, and `snooze` record your answer to
+  an item an agent posted, or your choice to dismiss or put it off, so an
+  agent running one could answer its own question. Projector's band runs
+  them itself, not through an agent's shell, so answering from the band never
+  asks. Claude Code checks ask rules before allow rules, so an ask rule
   prompts for a command that `Bash(project *)` also allows, and a trailing
   ` *` matches the command with no arguments too. `Bash(project -*)` covers an
   option before the command, as in `project --root . init`, which no
@@ -160,11 +167,15 @@ what it did to each:
 
   ```text
   prefix_rule(
-      pattern = ["project", ["check", "done", "inbox", "list", "loop", "owner", "priority", "search", "show", "status", "summary"]],
+      pattern = ["project", ["check", "done", "list", "loop", "owner", "priority", "search", "show", "status", "summary"]],
       decision = "allow",
   )
   prefix_rule(
       pattern = ["project", "config", ["get", "list", "paths"]],
+      decision = "allow",
+  )
+  prefix_rule(
+      pattern = ["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "show", "tell", "watch", "withdraw"]],
       decision = "allow",
   )
   prefix_rule(
@@ -179,9 +190,10 @@ what it did to each:
 
   No rule matches `project init`, `project upgrade`, `project config set` or
   `unset`, `project create` or `project edit`, whose editor an agent could
-  drive, `project review gate`, `project site build` or `serve`, or a command
-  line that starts with an option, so Codex's usual approval decides them,
-  in its sandbox. A command added to Projector later reaches Codex once
+  drive, `project review gate`, `project site build` or `serve`,
+  `project inbox answer`, `dismiss`, or `snooze`, which record your choice,
+  or a command line that starts with an option, so Codex's usual approval
+  decides them, in its sandbox. A command added to Projector later reaches Codex once
   Projector names it and you run `init` again. To see what the rules allow,
   run
   `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
@@ -1635,6 +1647,11 @@ second exits 65. `dismiss` answers it with no letter, and `list` then shows
 it as `dismissed`. Only `answer` takes a letter: every other command refuses
 `3.a` with exit code 65, so `dismiss` never drops the answer you meant to
 give.
+
+`answer`, `dismiss`, and `snooze` record your choice, so the permission rules
+`project init` adds ask you before an agent runs one, in Claude Code, and
+leave them to Codex's usual approval. Otherwise an agent could answer its own
+question. Projector's band runs them itself, so answering there never asks.
 
 Every command refuses any other form of reference, such as `#337.3`,
 `octo/web#12.1`, or `q2`, with exit code 65, and no command lists, delivers,

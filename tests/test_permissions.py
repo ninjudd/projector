@@ -25,7 +25,16 @@ DECISIONS = (
     ("project review setup 12", "allow", "allow"),
     ("project review gate 12", "allow", "none"),
     ("project summary publish --summary summary.json", "allow", "allow"),
-    ("project inbox ask question", "allow", "allow"),
+    ("project inbox ask question --recommend yes --session s1", "allow", "allow"),
+    ("project inbox tell notice --session s1", "allow", "allow"),
+    ("project inbox withdraw 3 --session s1", "allow", "allow"),
+    ("project inbox watch --session s1", "allow", "allow"),
+    ("project inbox claim 3 --session s1", "allow", "allow"),
+    ("project inbox answer 3.a --session s1", "ask", "none"),
+    ("project inbox answer 3.c --text yes", "ask", "none"),
+    ("PROJECTOR_SESSION=s1 project inbox answer 3.a", "ask", "none"),
+    ("project inbox dismiss 3 --session s1", "ask", "none"),
+    ("project inbox snooze 3 --for 30", "ask", "none"),
     ("project list --json", "allow", "allow"),
     ("project config get review.username", "allow", "allow"),
     ("project config list", "allow", "allow"),
@@ -67,7 +76,8 @@ DECISIONS = (
 # What the Codex rules leave to Codex's usual approval: each command with the
 # subcommands left out, or None where the whole command is.
 CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None,
-                  "config": {"set", "unset"}, "review": {"gate"}, "site": {"build", "serve"}}
+                  "config": {"set", "unset"}, "inbox": {"answer", "dismiss", "snooze"}, "review": {"gate"},
+                  "site": {"build", "serve"}}
 
 # Some of the variables Claude Code lets an allow rule match past. Its list is
 # fixed, and holds none of VISUAL, EDITOR, PATH, HOME, or XDG_STATE_HOME.
