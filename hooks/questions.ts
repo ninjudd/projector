@@ -41,36 +41,41 @@ export const proposalOf = (question: Question, answer: string) => `${quoteOf(que
 /** One answer a sent prompt gives: a choice's letter, or the typed letter and its text. */
 export type Given = { question: Question; letter: string; text?: string }
 
+/** An answer a question's drawer put in the prompt. */
+export type Proposal = { ref: string; answer: string }
+
 /**
  * The answers a sent prompt gives, as the band wrote them. Each quoted
  * question that ends its line answers one open question with that text: the
  * choice whose text is the next line that is not blank, or else that line as
- * a typed answer. A quote goes first to a question whose drawer filled the
- * prompt, `proposed` naming them in the order they filled it, and otherwise
- * to the oldest open question with that text, so two questions that share
- * their text never take one answer. A quoted question with more on its line,
- * as discuss leaves it, answers nothing.
+ * a typed answer. When open questions share the text, the quote goes to the
+ * one whose drawer last put that same answer in the prompt, `proposed`
+ * holding them oldest first, and otherwise to the oldest, so two questions
+ * never take one answer. A quoted question with more on its line, as discuss
+ * leaves it, answers nothing.
  */
-export function answersIn(text: string, questions: readonly Question[], proposed: readonly string[] = []): Given[] {
-  const rank = (question: Question) => {
-    const at = proposed.indexOf(question.ref)
-    return at === -1 ? proposed.length : at
-  }
+export function answersIn(text: string, questions: readonly Question[], proposed: readonly Proposal[] = []): Given[] {
   const open = questions
     .filter(question => question.answer === undefined)
-    .sort((one, other) => rank(one) - rank(other) || one.askedAt - other.askedAt)
-  const quoted = new Set<number>()
-  return open.flatMap(question => {
-    const lead = `${quoteOf(question)}\n`
-    let at = text.indexOf(lead)
-    while (at !== -1 && quoted.has(at)) at = text.indexOf(lead, at + 1)
-    if (at === -1) return []
-    quoted.add(at)
-    const said = (text.slice(at + lead.length).replace(/^\s*\n/, '').split('\n')[0] ?? '').trim()
-    if (said === '') return []
-    const index = question.choices.indexOf(said)
-    return [index === -1 ? { question, letter: typedLetter(question), text: said } : { question, letter: letterAt(index) }]
-  })
+    .sort((one, other) => one.askedAt - other.askedAt)
+  const found: { at: number; given: Given }[] = []
+  const taken = new Set<string>()
+  for (const quote of new Set(open.map(quoteOf))) {
+    const lead = `${quote}\n`
+    for (let at = text.indexOf(lead); at !== -1; at = text.indexOf(lead, at + 1)) {
+      const said = (text.slice(at + lead.length).replace(/^\s*\n/, '').split('\n')[0] ?? '').trim()
+      const asking = open.filter(question => quoteOf(question) === quote && !taken.has(question.ref))
+      if (said === '') continue
+      const drawer = proposed.findLast(one => one.answer === said && asking.some(question => question.ref === one.ref))
+      const question = asking.find(one => one.ref === drawer?.ref) ?? asking[0]
+      if (question === undefined) continue
+      taken.add(question.ref)
+      const index = question.choices.indexOf(said)
+      const letter = index === -1 ? typedLetter(question) : letterAt(index)
+      found.push({ at, given: index === -1 ? { question, letter, text: said } : { question, letter } })
+    }
+  }
+  return found.sort((one, other) => one.at - other.at).map(one => one.given)
 }
 
 /** Names the subagent that asked, by its description and id when the session still lists it. */

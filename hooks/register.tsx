@@ -22,6 +22,7 @@ import {
   span,
   storeOf,
   typedLetter,
+  type Proposal,
 } from './questions'
 
 type Engine = EngineInterface
@@ -72,10 +73,10 @@ const delivering = new Set<string>()
 /** The questions an answer from the band is being recorded for, so a second press does nothing. */
 const answering = new Set<string>()
 /**
- * The questions whose drawers put an answer in the prompt, in that order, so
- * a sent quote answers the question you chose when another shares its text.
+ * The answers questions' drawers put in the prompt, oldest first, so a sent
+ * quote answers the question you chose when another shares its text.
  */
-const proposed: string[] = []
+let proposed: Proposal[] = []
 
 /** The few variables a tracked path is written with, read once per load. */
 function envOf($: Engine): Promise<Env> {
@@ -624,10 +625,7 @@ export const register: Register = on => {
     const given = isYours
       ? answersIn(e.text, (await read($, questions)).filter(question => question.session === session), proposed)
       : []
-    for (const one of given) {
-      const at = proposed.indexOf(one.question.ref)
-      if (at !== -1) proposed.splice(at, 1)
-    }
+    proposed = proposed.filter(proposal => !given.some(one => one.question.ref === proposal.ref))
     const asked = given.filter(one => one.question.agentId !== undefined)
     const agents = asked.length === 0 ? [] : await $.agent.list().catch(() => [])
     const notes = asked.map(one => relayNote(one.question, agents))
@@ -765,9 +763,7 @@ export const register: Register = on => {
         $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
       }
       const propose = (answer: string) => {
-        const at = proposed.indexOf(ref)
-        if (at !== -1) proposed.splice(at, 1)
-        proposed.push(ref)
+        proposed = [...proposed.filter(proposal => proposal.ref !== ref), { ref, answer }]
         fill(`${proposalOf(question, answer)}\n`)
       }
       const option = (letter: string, content: JSX.Element) => {

@@ -314,20 +314,21 @@ With a question's drawer open:
    send a prompt, at the terminal or through Remote Control (an `origin`
    whose `kind` is `composer` or `bridge`), the band's `prompt.submit` hook
    gives each quote that ends its line to one open question of the session
-   with that text: the one whose drawer put it in the prompt, or else the
-   oldest, so two questions that share their text never take one answer. It
-   takes the next line that is not blank as that question's answer: the
-   option with that text, or else a typed answer under the last letter. A
-   quote with more on its line, as discuss leaves it, answers nothing, and
-   so does any prompt you did not send, such as another session's message,
-   a notification, or a scheduled prompt, which can quote a question its
-   agent is still waiting on. When a subagent asked, the hook adds a note
-   to the prompt's `context` naming it, so the main loop passes the answer
-   on, as the loop skills already do. Once the prompt has entered, the band
-   runs `project question answer`, `claim`, and `delivered`, because the
-   prompt itself carried the answer to the main loop. **dismiss** runs
-   `project question dismiss`, and a second press finds the question
-   dismissed and does nothing.
+   with that text. It takes the next line that is not blank as the answer:
+   the option with that text, or else a typed answer under the last letter.
+   When open questions share the text, the quote goes to the one whose
+   drawer last put that same answer in the prompt, or else to the oldest,
+   so two questions never take one answer and a proposal you cleared from
+   the prompt decides nothing. A quote with more on its line, as discuss
+   leaves it, answers nothing, and so does any prompt you did not send,
+   such as another session's message, a notification, or a scheduled
+   prompt, which can quote a question its agent is still waiting on. When a
+   subagent asked, the hook adds a note to the prompt's `context` naming
+   it, so the main loop passes the answer on, as the loop skills already
+   do. Once the prompt has entered, the band runs `project question
+   answer`, `claim`, and `delivered`, because the prompt itself carried the
+   answer to the main loop. **dismiss** runs `project question dismiss`,
+   and a second press finds the question dismissed and does nothing.
 3. **The band delivers every other recorded answer.** Whenever the store
    holds an answer in its session with no `deliveredAt`, given from a
    terminal or a dismissal, and the band is not already delivering it, the

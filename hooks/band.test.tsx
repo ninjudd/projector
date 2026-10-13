@@ -636,6 +636,27 @@ test('a question another shares the text of takes only the answer its own drawer
   await ui.unmount()
 })
 
+test('a proposal you cleared from the prompt does not take the answer you sent for another question', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const newer = held({ ref: '#8.1', pr: 'x/y#8', askedAt: NOW - 60_000 })
+  const session = questionWorld(on, clock, [held({ askedAt: NOW - 30_000 }), newer])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'question:#8.1' })
+  await ui.press({ key: 'answer:#8.1.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  // You clear that from the prompt, then choose the other answer in #7.1's drawer.
+  await ui.press({ key: 'question:#8.1' })
+  await ui.press({ key: 'question:#7.1' })
+  await ui.press({ key: 'answer:#7.1.b', link: { href: SEVEN } })
+  await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+  expect(session.store.store.get('#8.1')?.answer).toBeUndefined()
+  await ui.unmount()
+})
+
 test('only a prompt you sent answers a question', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

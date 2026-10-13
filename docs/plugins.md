@@ -287,12 +287,12 @@ Sending that prompt answers the question. The band finds each quoted question
 whose quote ends its line, and takes the next line that is not blank as its
 answer: the option with that text, or else an answer you typed. Each quote
 answers one question: when two open questions ask the same thing, it answers
-the one whose drawer put it in your prompt, or else the older one. Only a
-prompt you send, at the terminal or through Remote Control, answers a
-question. Another session's message or a notification that quotes one
-answers nothing. Your prompt is what carries the answer to the main loop,
-and when a subagent asked, the main loop also reads a note naming it, so it
-can pass the answer on.
+the one whose drawer last put that same answer in your prompt, or else the
+older one. Only a prompt you send, at the terminal or through Remote
+Control, answers a question. Another session's message or a notification
+that quotes one answers nothing. Your prompt is what carries the answer to
+the main loop, and when a subagent asked, the main loop also reads a note
+naming it, so it can pass the answer on.
 **discuss** puts only the quoted question in the prompt, followed by a space,
 so what you type after it on the same line talks the question over and
 answers nothing. **dismiss** sets the question aside without an answer.

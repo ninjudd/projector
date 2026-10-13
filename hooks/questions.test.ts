@@ -66,16 +66,31 @@ test('a sent prompt answers each question whose quote ends its line', () => {
   expect(answersIn('"Decline the finding?"\n\nAdd a budget', [answered])).toEqual([])
 })
 
-test('a quote two questions share answers one: the one whose drawer filled it, else the oldest', () => {
+test('a quote two questions share answers one: the one whose drawer put that answer there, else the oldest', () => {
   const newer = question({ ref: '#8.1', pr: 'o/r#8' })
   const older = question({ askedAt: NOW - 120_000 })
-  const once = '"Decline the finding?"\n\nAdd a budget'
-  expect(answersIn(once, [newer, older])).toEqual([{ question: older, letter: 'b' }])
-  expect(answersIn(once, [newer, older], ['#8.1'])).toEqual([{ question: newer, letter: 'b' }])
-  // Quoted twice, each quote answers its own question, in the order the drawers filled the prompt.
-  expect(answersIn(`${once}\n"Decline the finding?"\n\nDecline it`, [older, newer], ['#8.1', '#7.1'])).toEqual([
+  const budget = '"Decline the finding?"\n\nAdd a budget'
+  const decline = '"Decline the finding?"\n\nDecline it'
+  expect(answersIn(budget, [newer, older])).toEqual([{ question: older, letter: 'b' }])
+  expect(answersIn(budget, [newer, older], [{ ref: '#8.1', answer: 'Add a budget' }])).toEqual([
     { question: newer, letter: 'b' },
-    { question: older, letter: 'a' },
+  ])
+  // A proposal whose answer the prompt no longer holds, as when you cleared it, decides nothing.
+  const both = [
+    { ref: '#8.1', answer: 'Decline it' },
+    { ref: '#7.1', answer: 'Add a budget' },
+  ]
+  expect(answersIn(budget, [newer, older], both)).toEqual([{ question: older, letter: 'b' }])
+  expect(answersIn(decline, [newer, older], [{ ref: '#8.1', answer: 'Decline it' }])).toEqual([
+    { question: newer, letter: 'a' },
+  ])
+  expect(answersIn(budget, [newer, older], [{ ref: '#8.1', answer: 'Decline it' }])).toEqual([
+    { question: older, letter: 'b' },
+  ])
+  // Quoted twice, each quote answers its own question, in the order the quotes appear.
+  expect(answersIn(`${budget}\n${decline}`, [older, newer], both)).toEqual([
+    { question: older, letter: 'b' },
+    { question: newer, letter: 'a' },
   ])
 })
 
