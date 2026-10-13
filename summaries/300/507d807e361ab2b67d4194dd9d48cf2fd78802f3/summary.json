@@ -1,0 +1,186 @@
+{
+ "version": 1,
+ "name": "Band pull request actions",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 300,
+  "title": "Dismiss a pull request from its loops in the band",
+  "head": "507d807e361ab2b67d4194dd9d48cf2fd78802f3",
+  "headRef": "band-pr-dismiss",
+  "base": "b04ae9f4b34c645bb1a97edc81b02be2abba7a81",
+  "baseRef": "band-pr-author",
+  "basePr": 298
+ },
+ "overview": {
+  "summary": [
+   "Projector's <b>band</b> is the strip above the Claude Code prompt that lists the pull requests a session's loops act on. A <b>loop</b> is a long-running agent workflow: the <b>watch loop</b> fixes review findings on pull requests, and the <b>review loop</b> reviews each new head. Each loop reads its scope from a <b>tracked file</b>, one <code>owner/repo#number</code> per line, which its watcher script reads again every cycle.",
+   "Until this change, the only way to stop a loop acting on one pull request was to edit its tracked file by hand. The review watcher and the band already honored a line <code>!owner/repo#number</code>, called an <b>exclusion</b>, that keeps a pull request out wherever it sits in the file. Nothing wrote that line, and the watch loop's watcher reported it as a malformed line.",
+   "This pull request does three things:",
+   "<ol><li><b>Two CLI commands.</b> <code>project loop drop owner/repo#number --tracked &lt;file&gt;</code> appends an exclusion, and <code>project loop restore</code> removes it, so a dismissal can be undone.</li><li><b>The watch loop honors exclusions.</b> <code>watch-threads.sh</code> now parses <code>!</code> lines the way <code>watch-prs.sh</code> already does.</li><li><b>A dismiss button in the band.</b> A pull request's drawer gains <b>dismiss</b> beside <b>discuss</b>. It runs <code>project loop drop</code> for each of the session's tracked files that lists the pull request, then reloads the band and says which loops stopped.</li></ol>",
+   "The pull request is the top layer of a stack on #298, which groups the band's pull requests by author. The review of this head found no blocking issue and left two suggestions in its body."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Tracked file</b>: a loop's list of pull requests, one <code>owner/repo#number</code> a line.</li><li><b>Exclusion</b>: a line <code>!owner/repo#number</code> that keeps that pull request out, matched without regard to letter case.</li><li><b>Watcher</b>: the shell script a loop runs to poll GitHub, <code>watch-prs.sh</code> for the review loop and <code>watch-threads.sh</code> for the watch loop.</li><li><b>Drawer</b>: the details a band line opens to when you press its number.</li></ul>"
+   },
+   {
+    "id": "readers",
+    "title": "Who reads an exclusion",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Reader</th><th>Where</th><th>Before this change</th></tr></thead><tbody><tr><td><code>watch-prs.sh</code></td><td>review loop</td><td>Honored it</td></tr><tr><td><code>watch-threads.sh</code></td><td>watch loop</td><td class=\"r\">Reported it as malformed; now honors it</td></tr><tr><td><code>parseTracked</code></td><td>the band</td><td>Honored it</td></tr><tr><td><code>loop.is_exclusion</code></td><td>the new CLI</td><td class=\"r\">New</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "cli",
+   "title": "The CLI writes and removes exclusions",
+   "kicker": "project loop drop and project loop restore edit a tracked file",
+   "intro": [
+    "A new module, <code>loop.py</code>, owns the only code that changes a tracked file's exclusions, so the band and an agent edit the file the same way. Both commands check the reference against the same <code>owner/repo#number</code> pattern the inbox uses, exit 65 on a malformed reference, and exit 66 when the tracked file does not exist.",
+    "<b>drop</b> appends rather than rewriting the file, because a watcher or an agent may append a pull request to the same file at the same moment. It does nothing when the file already holds an exclusion for the pull request in any letter case. <b>restore</b> rewrites the file atomically without that pull request's exclusions and leaves its plain line alone, so the pull request returns to the loop."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/loop.py",
+     "note": "New module: <code>drop</code> appends an exclusion, <code>restore</code> removes every exclusion for one pull request.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 35,
+       "text": "<code>is_exclusion</code> trims the line, needs the <code>!</code> directly before the reference, and ignores case. The review compared it with <code>parseTracked</code> in <code>hooks/parse.ts</code> and <code>parse_tracked</code> in both watchers: a line this counts as present is one every reader excludes."
+      },
+      {
+       "kind": "context",
+       "line": 51,
+       "text": "When the file does not end in a newline, <code>drop</code> writes one first, so the exclusion starts a line of its own."
+      },
+      {
+       "kind": "verify",
+       "line": 57,
+       "text": "<code>restore</code> writes through <code>write_through</code>, which follows a symlink and keeps the file's mode; <code>test_removes_only_the_pull_requests_exclusions_in_any_letter_case</code> checks the mode, and the review ran it."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Registers the <code>loop</code> subcommand and prints <code>dropped</code>, <code>restored</code>, or <code>unchanged</code>, as text or with <code>--json</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 703,
+       "text": "Errors reach <code>main</code>, which maps <code>ProjectorError</code> to exit 65 and the new <code>TrackedFileNotFound</code> to 66."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_loop.py",
+     "note": "Runs both commands against a temporary tracked file: case-insensitive matching, a missing trailing newline, refusals, and drop followed by restore."
+    }
+   ]
+  },
+  {
+   "id": "watcher",
+   "title": "The watch loop honors exclusions",
+   "kicker": "watch-threads.sh parses ! lines as watch-prs.sh does",
+   "intro": [
+    "The watch loop's watcher, <code>watch-threads.sh</code>, reported an exclusion as a malformed line. Its <code>parse_tracked</code> now collects exclusions and plain entries in one pass and prints only the entries no exclusion names. The two-pass shape matters because an exclusion can sit above the line it excludes."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The new parser follows the review watcher's <code>parse_tracked</code> in <code>skills/start-review-loop/scripts/watch-prs.sh</code> line for line, except that it keeps duplicate entries, as it did before."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/start-watch-loop/scripts/watch-threads.sh",
+     "note": "<code>parse_tracked</code> skips each entry an exclusion names, matched case-insensitively.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 118,
+       "text": "The match wraps each key in spaces, so <code>acme/app#1</code> never matches an exclusion for <code>acme/app#12</code>."
+      }
+     ]
+    },
+    {
+     "path": "skills/start-watch-loop/SKILL.md",
+     "note": "Tells the watch loop's agent what an exclusion does and that <code>project loop drop</code> and <code>restore</code> write it."
+    },
+    {
+     "path": "tests/test_watchers.py",
+     "note": "An exclusion above its entry, in another letter case, keeps that pull request out and stops every GitHub call for it."
+    }
+   ]
+  },
+  {
+   "id": "band",
+   "title": "Dismiss in the band",
+   "kicker": "A pull request's drawer gains dismiss, which drops it from the session's loops",
+   "intro": [
+    "Pressing <b>dismiss</b> in a pull request's drawer stops every loop of this session that tracks the pull request. <code>dismissPr</code> reads the session's tracked files again, runs <code>project loop drop</code> once for each file that still lists the pull request, closes the drawer, reloads the band so the line goes, and shows a toast such as <code>stopped watching and reviewing acme/app#258</code>. When the CLI refuses, the band shows the CLI's error and keeps the drawer open.",
+    "The drawer's actions now share one helper, <code>drawActions</code>, with an inbox item's drawer, so both draw plain buttons on one row with <code>|</code> between them."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "An inbox item's drawer already has a <b>dismiss</b> action, which marks the item done. On a pull request the same word means stop the session's loops acting on it."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds <code>dismissPr</code>, factors <code>trackedSets</code> out of <code>load</code>, makes <code>closeDrawer</code> take the whole drawer key, and adds the shared <code>drawActions</code> row.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 172,
+       "text": "<code>trackedSets</code> keeps each loop's <code>tracked</code> path, which <code>adopt</code> already resolved through <code>canonical</code>, so <code>project loop drop</code> writes the same file the watcher reads. The review traced the path from <code>adopt</code>."
+      },
+      {
+       "kind": "context",
+       "line": 459,
+       "text": "A refusal on the second file returns after the first file was already dropped; the <code>finally</code> block still toasts the loop that stopped and reloads, so the line stays only under the loop that refused."
+      },
+      {
+       "kind": "verify",
+       "line": 463,
+       "text": "All three callers of <code>closeDrawer</code> now pass a full drawer key: <code>item:&lt;ref&gt;</code> for an item, <code>keyOf(pr)</code> for a pull request. The review searched for every caller."
+      }
+     ]
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Dismiss drops the pull request from both loops, toasts once, and removes the line; a refusal toasts the CLI's error and keeps the line."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI reference, the band's guide, and the inbox plan",
+   "intro": [
+    "The CLI reference gains a section on keeping a pull request out of a loop, with both commands and their exit codes. The plugin guide describes <b>dismiss</b> in the drawer. The <code>inbox</code> plan, which stays <code>in-progress</code>, records the decision in its section on the owner's changes to the band and adds acceptance rows for it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "New section <i>Keep a pull request out of a loop</i>; the JSON and exit-code tables name <code>loop</code>."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "The drawer example shows <code>discuss | dismiss</code>, and a paragraph says what <b>dismiss</b> runs and how to undo it."
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "The band-changes section records <b>dismiss</b>, its files, and three acceptance rows."
+    }
+   ]
+  }
+ ]
+}
