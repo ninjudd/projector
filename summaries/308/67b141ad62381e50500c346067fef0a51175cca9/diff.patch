@@ -1,0 +1,214 @@
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index d5b6a3b..fa07683 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: in-progress
++status: completed
+ priority: now
+ ---
+ 
+@@ -466,8 +466,8 @@ points, which the sections above leave open or state loosely:
+ - **A command that waits out the store's lock exits 75,** not 65, so the
+   band shows the failure instead of reading it as an item resolved elsewhere.
+ 
+-The main-screen row of § 4 waits for a check by hand under tmux, so the
+-project stays `in-progress`.
++The main-screen row of § 4 waited for a check by hand under tmux, so the
++project stayed `in-progress` until the check that § 12 records.
+ 
+ ## 10. The band after layer 2
+ 
+@@ -916,8 +916,150 @@ subsections above leave open or which the code had moved past since
+   every item as before.
+ 
+ Each row of § 11.8 but the last failed its test before the change. The
+-main-screen row of § 4 still waits for a check by hand under tmux, so the
+-project stays `in-progress`.
++main-screen row of § 4 still waited for a check by hand under tmux, so the
++project stayed `in-progress` until the check that § 12 records.
++
++## 12. Outcome
++
++The project shipped, in releases 0.7.15 through 0.7.18 and in #303 and
++#305, which are on `main` for the next release. #319 followed on `main`,
++and § 13 records it: a reply leaves a question open, and the question's
++agent can revise it. An agent posts a question or a notice with
++`project inbox ask` or `project inbox tell`, or with the `ask` and `tell`
++tools in Claude Code, and takes one back with `project inbox withdraw` or
++the `withdraw` tool. Projector's band lists both kinds, and each item's
++drawer lets you discuss, dismiss, or snooze it. The owner checked the
++main-screen row of § 4 by hand under tmux. That row was the last
++criterion without evidence and the check that § 6, § 9, and § 11.10 made
++the gate for completion, and it also closes the main-screen row that the
++[questions](../questions/readme.md) plan carried into § 4. As § 7 says,
++the look of notices and snoozing that stands at this check is the design.
++
++### 12.1 What shipped
++
++| Release | Pull requests | What they built |
++| --- | --- | --- |
++| 0.7.15 | #278 | Layer 1 of § 6: `project question` becomes `project inbox`, with no new behavior |
++| 0.7.15 | #279 | Layer 2 of § 6: notices, the `tell` tool, and snoozing |
++| 0.7.15 | #281, #283, #284, #285, #287 | Band follow-ups: an open item's drawer as the band's top row, a blank line under the divider, the divider in a terminal only, a quote in an empty band with GitHub's errors kept out of it, and each item's kind kept when the band reads it |
++| 0.7.16 | #289 | The empty band's tagline in the `subtle` color |
++| 0.7.17 | #291 | The Projector section that `project init` writes tells agents to post what the person must not miss to the inbox |
++| 0.7.18 | #293 | Input checks for line breaks, snoozes longer than a day, and stray answer letters, and exit `75` for a busy store |
++| 0.7.18 | #295, #297, #298, #300 | The band changes of § 10 |
++| 0.7.18 | #296 | The Projector section says when the inbox helps and how to clear what was answered, and `implement` asks through the `ask` tool where the tool exists |
++| 0.7.18 | #294, #299 | Per-session numbering: the plan in § 11, then the build that § 11.10 records |
++| On `main`, after 0.7.18 | #303 | More band changes of § 10: a pull request's drawer starts under its state, open review threads show as a yellow `⋮` count beside the age, and a sent reply that quotes a notice closes the notice's drawer |
++| On `main`, after 0.7.18 | #305 | An agent takes back an item it posted with `project inbox withdraw` or the `withdraw` tool: the item leaves the band at once, and nothing goes back to the agent |
++| On `main`, after #303 and #305 | #319 | § 13: only picking an option answers a question, a reply leaves the question open, and its agent withdraws it, revises it with `project inbox revise` or the `revise` tool, or leaves it open |
++
++### 12.2 How the result differs from § 2
++
++§ 9, § 10, § 11, and § 13 record each deviation and its reason. These
++change how you use the inbox:
++
++- **Only an option answers, and a reply leaves a question open.** A
++  question's drawer has no `Type something` field (§ 10). Pressing an
++  option puts the quoted question and that option in the prompt, and
++  sending it answers the question. Anything else you send under a quoted
++  question, such as what you type under the quote that **discuss** puts
++  there, is a reply: the question stays open, and its agent withdraws it,
++  revises it, or leaves it open for you to answer (§ 13).
++- **A sent prompt closes the drawers it speaks to.** Sending an answer or
++  a reply closes that question's drawer, and a reply that quotes a notice
++  closes the notice's drawer. A resolved line stays 30 seconds, not a
++  minute (§ 10, § 13).
++- **Items take numbers, not references.** Each session numbers its items
++  `1`, `2`, `3` across both kinds and every pull request. `project inbox
++  context` and the band's reading of references in a prompt are gone, and
++  a bare number looks first among open items (§ 11).
++- **A snooze lasts a day at most, and a busy store exits `75`** (§ 9).
++- **The band is the session's own view.** `/projector` takes no argument,
++  the band lists only the loops whose watchers the session starts, the
++  divider appears only in a terminal, and an open drawer has the band to
++  itself (§ 9, § 10).
++- **The band changed beyond the inbox.** A pull request's line ends with
++  its age, after a yellow `⋮` count of its open threads, and its drawer
++  starts under its state. The lines group by author, and **dismiss** drops
++  a pull request from the session's loops through `project loop drop`
++  (§ 10).
++- **Agents learn the inbox from their instructions.** § 2.6 changes no
++  skill. The Projector section that `project init` writes tells an agent
++  when to post and how to clear what was answered, and `implement` asks
++  through `ask` where the tool exists. The loop skills do not post through
++  the inbox (§ 7).
++
++### 12.3 Evidence
++
++`PYTHONPATH=src python3 -m unittest discover` and `claude plugin test .`
++pass at the change that completes the project. The tests below are in
++`tests/test_inbox.py`, `hooks/inbox.test.ts`, and `hooks/band.test.tsx`
++unless the row names another file.
++
++| Criterion | Evidence |
++| --- | --- |
++| § 4: the renamed suite, and `project question list` exits `2` | `tests/test_inbox.py`, whose tests include `test_the_old_question_command_is_gone` |
++| § 4: `ask` writes under `projector/inbox/` with `kind`, `postedAt`, and `subject` | `test_records_the_question_in_the_inbox_store` |
++| § 4: `tell` numbers a notice and refuses bad input | `test_numbers_a_notice_in_the_count_questions_use`, `test_refuses_a_notice_that_fails_a_check_and_writes_nothing` |
++| § 4: `dismiss` on a notice and on a question, `answer` and `claim` on a notice, and `watch` with only a dismissed notice | `test_dismissing_a_notice_delivers_it_at_once`, `test_dismissing_a_question_still_waits_for_its_deliverer`, `test_a_notice_takes_no_answer_and_no_claim` |
++| § 4: every `snooze` row | `SnoozeTests` |
++| § 4: the two `project inbox context` rows | Superseded: § 11.5 removes the command, and `test_the_context_command_is_gone` pins its exit `2` |
++| § 4: the `tell` tool, the notice's line, the divider's count, and one notification | `a subagent tells through the tool, and the band lists the notice with its own bullet` |
++| § 4: a notice's drawer, **discuss**, and **dismiss** | `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
++| § 4: **snooze** in either drawer, and a snoozed item dismissed from a terminal | `snooze hides either kind for an hour, then brings a hidden band back`, `an item dismissed from a terminal while snoozed does not return` |
++| § 4, § 10: a sent prompt that quotes a notice answers nothing, and since #303 closes the notice's drawer and leaves the notice listed | `a sent prompt that quotes a notice answers nothing, and closes its drawer`, `a sent prompt answers snoozed questions and never a notice` |
++| § 4: the band with no items | `an idle session with no questions starts no project process` |
++| § 4: the main screen under tmux | Checked by hand by the owner |
++| § 10: a question's drawer, **discuss**, an option's text, text on the quote's own line, and the drawer that closes on send | `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `discuss keeps the drawer open with the question above a blank line, a reply under it answers nothing, and dismiss resolves it` |
++| § 10: a typed answer under the quote | Superseded: § 13 makes it a reply that leaves the question open, and § 13.4 gives the evidence |
++| § 10: a quote followed by spaces or tabs | `a sent prompt answers each question whose quote an option follows` in `hooks/inbox.test.ts` |
++| § 10: a resolved line stays 30 seconds | `a delivered question leaves the band after 30 seconds`, and the test of a notice's drawer above |
++| § 10: `/projector`, and a loop that another session runs | `` `/projector` only shows or hides the band, whatever follows it ``, `draws one line per open pull request of the session’s own loops` |
++| § 10: a pull request's age, in the column the items' ages share | `ends each pull request’s line with its age, in one column as wide as the widest`, `a pull request’s age and an item’s age end in one column` |
++| § 10: a pull request's drawer, which since #303 starts under `draft` or `ready` | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt` |
++| § 10: open review threads as a yellow `⋮` count, the last note before the age, from #303 | `draws one line per open pull request of the session’s own loops`, `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt` |
++| § 10: grouping by author | `lists your pull requests first, then everyone else’s by author, naming theirs before the title` |
++| § 10: **dismiss** for a pull request, its refusal, and `project loop restore` | `dismiss drops a pull request from each loop that tracks it, and its line goes`, `a dismiss the CLI refuses says why and keeps the line`, and `DropTests` and `RestoreTests` in `tests/test_loop.py` |
++| § 11.8: every CLI row | `NumberingTests` |
++| § 11.8: the tools' replies and notifications | `asks through the tool, and the band lists the question below the pull requests`, `the tools number a session’s items in one count, and notify with the subject alone` |
++| § 11.8: a number typed in a prompt | `a number or an old reference typed in the prompt reaches the agent as plain text` |
++| § 11.8: the toast for a dropped submit | `a dropped submit reopens the question and says why` |
++| § 11.8: no number in the band | `no line or drawer shows an item’s number` |
++| #305: an agent withdraws an item it posted, which § 12.2 and § 13 rely on | `WithdrawTests`, `the withdraw tool takes an item out of the band at once, and nothing goes back to the agent`, `the withdraw tool refuses what the CLI refuses, asks an old CLI to upgrade, and says when it hangs` |
++
++§ 5 and § 11.9 name no measurement. They claim that no path that runs
++often gains work, and the tests hold them to it: an idle band's tick
++starts no `project` process, and neither does a prompt you send. Waking a
++snoozed item compares times in `wokeBetween`, in `hooks/inbox.ts`, and the
++inbox commands start no `git` process.
++
++None of the code that the project replaced remains. The names it removed,
++such as `project question`, `references_in`, `mayReference`,
++`checkout_repo`, and `Type something`, appear only in completed plans, in
++this plan, and in the fixture of
++`test_leaves_items_stored_under_old_references_unread_in_place`, which
++writes an old session's `counts.json` and `session.json`.
++
++### 12.4 What this project does not deliver
++
++These stay out of the project on purpose, and § 7 gives each one's reason
++and owner:
++
++- **A session's id outside Claude Code.** Still open.
++- **The loop skills posting through the inbox.** Deferred until a
++  session's id outside Claude Code is settled.
++- **Views for Codex and Paseo.** Deferred for the same reason.
++- **Removing old session directories.** Deferred until they turn out to
++  pile up.
++- **Removing old `projector/questions/` directories.** Deferred, since no
++  one but the owner used `project question`.
++- **Finding items across sessions.** `project inbox list --pr` is deferred
++  until a view needs it.
++
++Revising an open item in place is not among them. § 7 deferred it until
++revising proved common, and § 13 (#319) took it up later for questions.
++§ 13 also replaces the rule § 7 set aside, answering only under the band's
++own proposals, with a different one: only an option's text answers a
++question.
+ 
+ ## 13. A reply leaves a question open
+ 
+@@ -933,9 +1075,8 @@ This section supersedes the first bullet of § 10, which made what you type
+ under a quoted question its answer, and settles two items of § 7: it
+ builds revising in place, and it replaces the rule § 7 set aside with a
+ different one, described below. The owner took up revising in place after
+-seeing replies close questions the owner had not settled, so this section
+-also supersedes § 12.4, which records revising in place as deferred until
+-it proves common.
++seeing replies close questions the owner had not settled, and § 12.4
++records that this section takes it up.
+ 
+ ### 13.1 Problem
+ 
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 7dd16df..b7d111d 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -903,6 +903,22 @@ test('asks through the tool, and the band lists the question below the pull requ
+   await ui.unmount()
+ })
+ 
++test('a pull request’s age and an item’s age end in one column', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  questionWorld(on, clock, [held({ postedAt: NOW - 12 * 60_000 })])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  // The pull request changed 5m ago and the question was posted 12m ago, so both ages take the wider one's width.
++  const ages = await Promise.all(['x/y#7', 'item:1'].map(key => ui.find({ key: `age:${key}` })))
++  expect(ages.map(age => [age?.text, age?.props.width, age?.props.justifyContent])).toEqual([
++    ['5m', 3, 'flex-end'],
++    ['12m', 3, 'flex-end'],
++  ])
++  await ui.unmount()
++})
++
+ test('a blank line sets GitHub’s error apart from the items under it', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
