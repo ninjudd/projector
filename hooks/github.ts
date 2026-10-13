@@ -8,6 +8,8 @@ export type Query = { text: string; slots: Slot[] }
 
 export type Fetched = {
   prs: Map<string, PullRequest>
+  /** The login of the account `gh` is signed in as; null when GitHub did not say. */
+  viewer: string | null
   error: string | null
 }
 
@@ -28,9 +30,10 @@ const CHECKS: Record<string, Checks> = {
 }
 
 /**
- * Builds one GraphQL query for every pull request, grouped by repository.
- * Repository names come from `parseTracked`, which admits only GitHub's
- * name characters, so they are safe inside a string literal.
+ * Builds one GraphQL query for every pull request, grouped by repository,
+ * and for the signed-in account's login. Repository names come from
+ * `parseTracked`, which admits only GitHub's name characters, so they are
+ * safe inside a string literal.
  */
 export function buildQuery(prs: readonly TrackedPr[]): Query {
   const byRepo = new Map<string, TrackedPr[]>()
@@ -50,7 +53,7 @@ export function buildQuery(prs: readonly TrackedPr[]): Query {
     return `${repoAlias}: repository(owner: "${owner}", name: "${name}") { ${pulls.join(' ')} }`
   })
 
-  return { text: `query { ${repos.join(' ')} }`, slots }
+  return { text: `query { viewer { login } ${repos.join(' ')} }`, slots }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -120,12 +123,16 @@ export function parseResponse(
     body = JSON.parse(result.stdout)
   } catch {
     const reason = firstLine(result.stderr) || `gh exited with ${result.exitCode}`
-    return { prs: new Map(), error: reason }
+    return { prs: new Map(), viewer: null, error: reason }
   }
 
   const data = isRecord(body) && isRecord(body.data) ? body.data : undefined
   if (data === undefined) {
-    return { prs: new Map(), error: messageOf(body) ?? (firstLine(result.stderr) || 'GitHub returned no data') }
+    return {
+      prs: new Map(),
+      viewer: null,
+      error: messageOf(body) ?? (firstLine(result.stderr) || 'GitHub returned no data'),
+    }
   }
 
   const prs = new Map<string, PullRequest>()
@@ -135,5 +142,6 @@ export function parseResponse(
     if (isRecord(node)) prs.set(keyOf(slot.pr), toPullRequest(slot.pr, node))
   }
 
-  return { prs, error: null }
+  const viewer = isRecord(data.viewer) && typeof data.viewer.login === 'string' ? data.viewer.login : null
+  return { prs, viewer, error: null }
 }
