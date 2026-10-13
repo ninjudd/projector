@@ -19,7 +19,9 @@ Read `docs/projects/README.md` before changing project plans.
   implementation. Priority makes no readiness claim.
 - Start a project with `project create`. Change its status, priority, and
   owner with `project status`, `project priority`, `project done`, and
-  `project owner`, never by editing the frontmatter. Never move a project,
+  `project owner`, never by editing the frontmatter. The one exception is a
+  plan those commands cannot load: fix by hand what the error or
+  `project check` names, then go back to the commands. Never move a project,
   create a shared queue file, or generate a tracked index.
 - Allow supplemental files and recursively nested projects. A directory is a
   project only when it has its own lowercase `readme.md`.

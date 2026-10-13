@@ -56,7 +56,7 @@ priority: later
 
 Prefer `project create <project>` to writing that frontmatter yourself. It
 writes `draft` and `later` unless you pass `--status` or `--priority`. Write
-the frontmatter by hand only when you author a new plan without the command.
+the frontmatter by hand when you author a new plan without the command.
 
 `status` records where the work is in its lifecycle:
 
@@ -113,6 +113,11 @@ For example, the pull request that begins implementation runs
 request that completes the final implementation runs `project done`, which
 sets the status to `completed`. A stale status is worse than a missing
 status.
+
+The commands load the plan before they write, so they refuse a plan whose
+frontmatter `project check` rejects, such as one with an empty `owner:` line.
+To repair such a plan, fix by hand what the error or `project check` names,
+then go back to the commands.
 
 ## Write a project plan
 

@@ -13,10 +13,12 @@ the entry point that owns them.
 Prefer `project create` to start a project, because it writes the directory,
 the entry point, and the frontmatter in this format. Change the frontmatter
 with `project status`, `project priority`, `project owner`, and `project done`
-rather than by hand. Do not create shared queue files, status or priority
-directories, or symlinks, and do not move a project when its status or
-priority changes. Number plan sections and never renumber them after another
-document or code comment cites them.
+rather than by hand. When the frontmatter stops those commands from loading a
+plan, fix by hand what the error or `project check` names, then go back to the
+commands. Do not create shared queue files, status or priority directories, or
+symlinks, and do not move a project when its status or priority changes.
+Number plan sections and never renumber them after another document or code
+comment cites them.
 
 Run `project list` to browse projects, `project search` to search them, and
 `project check` to validate the tree. Every `project` command comes from the
