@@ -304,19 +304,19 @@ Never write the suggestions into the body yourself. Give each P3 to
 `path`, a `line` when the suggestion has one, and a `body` of one sentence
 saying the change. `publish` ends the review body with them in one form, a
 `### Suggestions` heading and an item for each, opening with its
-`path:line` in code font:
+`path:line` in code font, after a line that counts them:
 
 ```markdown
+<!-- projector-suggestions v=1 count=2 -->
 ### Suggestions
 
 - `src/cache.py:42`: Name the helper `warm`, as the cache module calls it.
 - `README.md`: Say that a cold start warms the cache.
 ```
 
-It also records how many there are in the marker's `suggestions=`. The one
-form is what lets `project review suggestions` hand `fix-pr` every item: a
-section written by hand comes out in whatever label and list style the
-reviewing model chose.
+The one form is what lets `project review suggestions` hand `fix-pr` every
+item: a section written by hand comes out in whatever label and list style
+the reviewing model chose.
 
 Each P1 or P2 thread's first comment, after its marker, has three parts:
 

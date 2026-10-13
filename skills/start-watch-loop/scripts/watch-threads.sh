@@ -15,7 +15,7 @@
 #             verdict can land it until the base is merged in
 #   REVIEW    a submitted review carrying a body — the shape every COMMENT
 #             review posts, Projector's own included, which never moves
-#             reviewDecision. A Projector review whose marker counts
+#             reviewDecision. A Projector review whose body counts its
 #             suggestions says how many it lists
 #   TRACKED   a problem with the tracked file: a line that is not
 #             owner/repo#number, or a number that names no pull request.
@@ -201,10 +201,12 @@ not_found() {
 # empty COMMENTED review, so `last:10` returns ten replies and the bot review
 # has been displaced. Bodies empty once HTML comments are stripped are
 # skipped, which is also what keeps the loop's own replies from coming back
-# to it as work. The fourth field is how many suggestions a Projector review's
-# marker says its body lists, 0 for any other review.
+# to it as work. The fourth field is the count `project review publish` writes
+# before a review's suggestions, and 0 where there is none, as in a review an
+# earlier release published: parsing the list itself is the CLI's job, and
+# `project review suggestions` does it for fix-pr.
 REVIEWS_JQ='.[] | select(.state == "COMMENTED")
-  | ((.body // "" | capture("projector-review v=1 [^>]* suggestions=(?<n>[0-9]+) -->") | .n) // "0") as $suggestions
+  | ((.body // "" | capture("<!-- projector-suggestions v=1 count=(?<n>[0-9]+) -->") | .n) // "0") as $suggestions
   | (.body // "" | gsub("<!--([^-]|-[^-]|--[^>])*-->"; "") | gsub("<[^>]*>"; "") | gsub("[\r\n]+"; " ")) as $body
   | select(($body | gsub("[[:space:]]+"; "")) != "")
   | "\(.id)\t\(.user.login // "?")\t\(.commit_id // "?")\t\($suggestions)\t\($body[0:130])"'

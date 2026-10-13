@@ -719,7 +719,8 @@ class PublishTests(PublishCase):
             "**CLEAN** · took 12m 34s",
             review_body.splitlines()[0])
         self.assertIn(f"<!-- projector-review v=1 verdict=clean projector=1.2.3 model=claude-opus-5-5 "
-                      f"sha={self.head} findings=0 seconds=754 covered=3/3 suggestions=0 -->", review_body)
+                      f"sha={self.head} findings=0 seconds=754 covered=3/3 -->", review_body)
+        self.assertNotIn("projector-suggestions", review_body, "a review that lists none counts none")
         self.assertIn("0 finding threads: 0 resolved, 0 open", review_body)
         self.assertEqual(("COMMENT", self.head, "token-operator"),
                          (self.posted()["event"], self.posted()["commit_id"], "token-" + self.posted()["user"]["login"]))
@@ -1077,8 +1078,33 @@ LISTED = [{"path": "src/x.py", "line": 12, "text": "Name the helper `warm`, as t
           {"path": "README.md", "line": None, "text": "Say that a cold start warms the cache."}]
 
 
+# The review marker as release 0.7.19 reads it, copied from that release. A review loop on another machine
+# may run it, and it reads a marker with any field it does not know as no verdict at all.
+MARKER_0_7_19 = re.compile(
+    r"^<!-- projector-review v=1 verdict=(clean|approved|changes-requested) (?:projector=(\S+) )?model=(\S+) "
+    r"(?:effort=(\S+) )?sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
+)
+
+
+def verdict_0_7_19(body: str) -> tuple[str, str] | None:
+    """The verdict and head release 0.7.19 reads from a review body, or None when it reads none."""
+    found = next(filter(None, map(MARKER_0_7_19.match, body.splitlines())), None)
+    return (found.group(1), found.group(5)) if found else None
+
+
 class PublishSuggestionTests(PublishCase):
-    def test_lists_p3_entries_in_one_form_after_the_body_and_counts_them_in_the_marker(self) -> None:
+    def test_a_release_from_before_suggestions_reads_the_verdict_of_every_review_this_one_writes(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("changes-requested", "--threads", str(self.threads(*P3, finding())))[0])
+        listing = self.posted()["body"]
+        # The fake's census reads no thread the first review opened, so the re-review may be clean.
+        self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+
+        self.assertEqual(("changes-requested", self.head), verdict_0_7_19(listing))
+        self.assertEqual(("clean", self.head), verdict_0_7_19(self.posted()["body"]))
+
+    def test_lists_p3_entries_in_one_form_after_the_body_and_counts_them_before_the_list(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
         code, _, err = self.publish("changes-requested", "--threads", str(self.threads(P3[0], finding(), P3[1])))
@@ -1087,16 +1113,17 @@ class PublishSuggestionTests(PublishCase):
         posted = self.posted()
         self.assertTrue(posted["body"].endswith(
             "Covered 3 of 3 changed files.\n\n"
+            "<!-- projector-suggestions v=1 count=2 -->\n"
             "### Suggestions\n\n"
             "- `src/x.py:12`: Name the helper `warm`, as the cache calls it.\n"
             "- `README.md`: Say that a cold start warms the cache.\n"), posted["body"])
-        self.assertIn(" covered=3/3 suggestions=2 -->", posted["body"])
+        self.assertIn(" covered=3/3 -->\n", posted["body"], "the review's marker keeps the shape every release reads")
         self.assertIn(" findings=1 ", posted["body"], "a P3 is no finding")
         self.assertIn("1 finding thread: 0 resolved, 1 open", posted["body"])
         self.assertEqual([("src/x.py", 3)], [(c["path"], c["line"]) for c in posted["comments"]],
                          "a P3 opens no thread, and its line need not be in the diff")
         self.assertEqual(LISTED, review.parse_suggestions(posted["body"]))
-        self.assertEqual(2, review.verdict_marker(posted["body"]).suggestions)
+        self.assertEqual(2, review.listed_suggestions(posted))
 
     def test_a_head_whose_only_entries_are_p3_is_clean(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -1105,7 +1132,8 @@ class PublishSuggestionTests(PublishCase):
 
         self.assertEqual(0, code, err)
         self.assertEqual(([], "COMMENT"), (self.posted()["comments"], self.posted()["event"]))
-        self.assertIn(" findings=0 seconds=754 covered=3/3 suggestions=2 -->", self.posted()["body"])
+        self.assertIn(" findings=0 seconds=754 covered=3/3 -->", self.posted()["body"])
+        self.assertIn("\n<!-- projector-suggestions v=1 count=2 -->\n### Suggestions\n", self.posted()["body"])
         self.assertFalse(self.github.pr["draft"])
 
     def test_a_body_that_lists_suggestions_by_hand_publishes_as_written_and_is_counted(self) -> None:
@@ -1116,7 +1144,8 @@ class PublishSuggestionTests(PublishCase):
         code, _, err = self.publish("clean", body=self.body(text))
 
         self.assertEqual(0, code, err)
-        self.assertIn(" covered=3/3 suggestions=3 -->", self.posted()["body"])
+        self.assertIn("\n<!-- projector-suggestions v=1 count=3 -->\n### Suggestions\n", self.posted()["body"],
+                      "the count goes directly before the body's own label")
         self.assertTrue(self.posted()["body"].endswith(CHECKED), "the body publishes as written")
         self.assertEqual(WRITTEN, review.parse_suggestions(self.posted()["body"]))
 
@@ -2262,11 +2291,11 @@ class StatusTests(LatestWinsCase):
         self.assertEqual([f"#1 at {self.head[:7]}: clean from claude-opus-5-5, {review_page(newest)}"],
                          self.status()[1].splitlines())
 
-    def test_shows_how_many_suggestions_the_newest_review_lists_from_its_marker_or_else_its_body(self) -> None:
+    def test_shows_how_many_suggestions_each_review_lists_from_its_count_or_else_its_list(self) -> None:
         older = self.add_verdict("gpt-5.5", at="2026-09-27T14:02:00Z")
         newest = self.add_verdict("claude-opus-5-5", at="2026-09-27T14:20:00Z")
         counted, written = self.github.reviews
-        counted["body"] = counted["body"].replace(" -->", " suggestions=1 -->") + "\nNo section in this body.\n"
+        counted["body"] += "\n<!-- projector-suggestions v=1 count=1 -->\nThe list this line counts is not read.\n"
         written["body"] += "\n" + LABELED["bold line"]
 
         code, out, err = self.status()
@@ -2279,7 +2308,7 @@ class StatusTests(LatestWinsCase):
                           f"  gpt-5.5           clean               review {older}, 14:02 UTC, 1 suggestion"],
                          out.splitlines())
         self.assertEqual([(newest, 3), (older, 1)], [(m["review"], m["suggestions"]) for m in result["models"]],
-                         "a marker that gives no count is read by its body, and one that does by its marker")
+                         "a review with no count line, as 0.7.19 publishes, is counted by its list")
         self.assertEqual((3, 4), (result["newest"]["suggestions"], result["suggestions"]),
                          "the head's count is every model's, as `review suggestions` lists them")
 
@@ -3246,7 +3275,7 @@ class IncrementalPublishTests(IncrementalCase):
             f"{review.MARK} **Projector review** of `{head[:7]}` · `1.2.3` · model `claude-opus-5-5` · "
             f"**CLEAN** · incremental from `{self.reviewed[:7]}` · took 12m 34s\n\n"
             f"<!-- projector-review v=1 verdict=clean projector=1.2.3 model=claude-opus-5-5 sha={head} findings=0 "
-            "seconds=754 covered=1/1 suggestions=0 -->\n"
+            "seconds=754 covered=1/1 -->\n"
             f"<!-- projector-incremental v=1 from={self.reviewed} kind=push insertions=1 deletions=1 files=1 "
             "conflicts=0 -->\n\n"
             f"Incremental review of the change since the full review of [`{self.reviewed[:7]}`]({review_page(901)}): "
@@ -3256,7 +3285,7 @@ class IncrementalPublishTests(IncrementalCase):
         lines = posted["body"].splitlines()
         self.assertIsNotNone(review.SIGNATURE.match(lines[0]))
         self.assertIsNotNone(review.MARKER.match(lines[2]))
-        self.assertEqual(review.Verdict("clean", head, "1.2.3", "claude-opus-5-5", None, self.reviewed, 0),
+        self.assertEqual(review.Verdict("clean", head, "1.2.3", "claude-opus-5-5", None, self.reviewed),
                          review.verdict_marker(posted["body"]))
         self.assertEqual(("COMMENT", head, []), (posted["event"], posted["commit_id"], posted["comments"]))
         self.assertFalse(self.github.pr["draft"], "a clean self-review marks the pull request ready")
@@ -3408,7 +3437,8 @@ class IncrementalSuggestionsTests(IncrementalCase):
         head = self.pushed()
         self.assertEqual(0, self.publish_incremental()[0])
         self.assertIn(f"({review_page(full)})", self.posted()["body"])
-        self.assertIn(" covered=1/1 suggestions=0 -->", self.posted()["body"])
+        self.assertIsNotNone(verdict_0_7_19(self.posted()["body"]), "0.7.19 reads the incremental verdict")
+        self.assertNotIn("projector-suggestions", self.posted()["body"])
         return full, head
 
     def test_an_incremental_review_brings_the_suggestions_of_the_full_review_its_lead_links(self) -> None:
@@ -3483,12 +3513,6 @@ class VerdictMarkerTests(unittest.TestCase):
                          review.verdict_marker(f"Signature\n\n{self.MARKER}\n{self.INCREMENTAL}\n\nLead.\n"))
         self.assertEqual(review.Verdict("clean", self.SHA, "0.7.2", "claude-opus-5-5", "high", None),
                          review.verdict_marker(f"Signature\n\n{self.MARKER}\n\nBody.\n"))
-
-    def test_reads_the_suggestion_count_and_none_from_a_marker_that_gives_no_count(self) -> None:
-        counted = self.MARKER.replace("covered=1/1 -->", "covered=1/1 suggestions=3 -->")
-
-        self.assertEqual(3, review.verdict_marker(f"Signature\n\n{counted}\n\nBody.\n").suggestions)
-        self.assertIsNone(review.verdict_marker(f"Signature\n\n{self.MARKER}\n\nBody.\n").suggestions)
 
     def test_an_incremental_line_counts_only_directly_after_a_marker(self) -> None:
         self.assertIsNone(review.verdict_marker(f"Body.\n{self.INCREMENTAL}\n"))

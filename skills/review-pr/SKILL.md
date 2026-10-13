@@ -525,7 +525,7 @@ this skill — nothing in GitHub enforces them.
 ```
 📽️ **Projector review** of `<short-sha>` · `<version>` · model `<model-id>` · effort `<effort>` · **<VERDICT>** · took <duration>
 
-<!-- projector-review v=1 verdict=<clean|changes-requested> projector=<version> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> suggestions=<n> -->
+<!-- projector-review v=1 verdict=<clean|changes-requested> projector=<version> model=<model-id> effort=<effort> sha=<full-sha> findings=<n> seconds=<n> covered=<read>/<changed> -->
 ```
 
 The short SHA names the head the review read, the first seven characters of
@@ -575,9 +575,9 @@ lets a reader see the verdict was earned.
 are listed in the body rather than posted as threads, and `findings=` does
 not count them. `covered=` is how many of the changed files a pass or the
 reviewer read, over how many files the head changed; the body's coverage
-line prints the same two numbers. `suggestions=` is how many P3 items the
-body lists. A marker an earlier release wrote leaves it out, and a reader
-then counts the body's list.
+line prints the same two numbers. The marker holds no other field: every
+earlier release reads a marker with a field it does not know as no verdict,
+so a new fact about a review goes on a line of its own.
 
 The body follows the order `method.md` § 7 gives: the signature line and
 marker, the intent paragraph, the census, the coverage line, any disclosures,
@@ -595,10 +595,9 @@ the line directly after its marker names the full review it builds on:
 `from=` is the head of that full review, `kind=` is how the head moved since
 it, the counts are the change's size, and `conflicts=` is how many files the
 author resolved a conflict in. Its review marker keeps the grammar above, with
-`verdict=clean`, `findings=0`, `covered=<n>/<n>` for the files the change
-touches, and `suggestions=0`, so everything that reads a verdict reads it. A
-lead linking the full review follows the two lines, and then the reviewer's
-short body, as
+`verdict=clean`, `findings=0`, and `covered=<n>/<n>` for the files the change
+touches, so everything that reads a verdict reads it. A lead linking the full
+review follows the two lines, and then the reviewer's short body, as
 [Review a minimal push incrementally](#review-a-minimal-push-incrementally)
 describes. `publish --incremental` writes all of it except that body.
 
@@ -745,10 +744,11 @@ the same shape, with `"priority": "P3"`, a `line` you may leave out, and a
 
 `publish` opens no thread for a P3 entry and needs no diff line for it. It
 ends the body with a `### Suggestions` list of them, each item opening with
-its `path:line` in code font, and writes their number to the marker's
-`suggestions=`. A body that carries a suggestions section of its own, as one
-an older release of this skill wrote, still publishes as written, and
-`publish` counts its items.
+its `path:line` in code font. Directly before the label it writes
+`<!-- projector-suggestions v=1 count=<n> -->`, the number of items, which
+`project review status` and the watch loop read. A body that carries a
+suggestions section of its own, as one an older release of this skill
+wrote, still publishes as written, with the count line before its label.
 
 `publish` refuses, exiting 1 with what to fix and keeping the lock so you
 can correct the input and run it again, when:

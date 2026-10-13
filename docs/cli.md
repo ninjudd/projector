@@ -1507,16 +1507,23 @@ suggestion, which `publish` joins onto one line. `publish` ends the review
 body with the suggestions in one form, which `review suggestions` reads back:
 
 ```markdown
+<!-- projector-suggestions v=1 count=2 -->
 ### Suggestions
 
 - `src/cache.py:42`: Name the helper `warm`, as the cache module calls it.
 - `README.md`: Say that a cold start warms the cache.
 ```
 
-The review's marker ends with `suggestions=<n>`, how many the body lists. A
-body that carries a suggestions section of its own, as a review-pr skill
-from before P3 entries writes, publishes as written, and the marker counts
-its items.
+The `projector-suggestions` line directly before the label counts the list,
+for `status` and the watch loop to read without parsing it. It is a line of
+its own because every earlier release reads a review marker that holds a
+field it does not know as no verdict at all. The review's marker keeps the
+shape those releases read. A body that carries a suggestions section of its
+own, as a review-pr skill from before P3 entries writes, publishes as
+written, with the count line before its label. A review that lists no
+suggestions has no count line. Where a review has none but lists
+suggestions, as one an earlier release published does, `status` counts its
+list.
 
 `publish` refuses, exiting 1 and keeping the lock, when:
 
@@ -1609,7 +1616,7 @@ it cannot read the pull request. With `--json` it prints one object:
 | `repo`, `number`, `head` | The pull request and its current head SHA. |
 | `draft` | Whether the pull request is a draft. |
 | `verdict` | The newest verdict on the head: `clean`, `changes-requested`, or `unreviewed`. |
-| `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, and the number of `suggestions` that stand with its review: those the review lists and, for an incremental review, those of the full review it builds on. Each review's count is its marker's `suggestions=`, or its body's list where the marker gives no count. It is `null` when the head is `unreviewed`. |
+| `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, and the number of `suggestions` that stand with its review: those the review lists and, for an incremental review, those of the full review it builds on. Each review's count is its `projector-suggestions` line, or its body's list where it has none. It is `null` when the head is `unreviewed`. |
 | `models` | Each account's newest verdict by each model on the head in the same shape, newest first. A review loop finds its own by `login` and `model`. |
 | `suggestions` | The number of suggestions every entry of `models` brings, each review counted once: the suggestions `suggestions` lists for the head. |
 | `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
@@ -1770,12 +1777,11 @@ passes and 1 otherwise. With `--json` it prints one object:
 `publish --incremental` publishes the incremental review. It applies the same
 rules to the live state, and `--body` names a file of at most 600 characters,
 once its placeholders are filled, on what changed and what was checked. It
-writes the signature line with `incremental from <short-sha>`, and the review
-marker with `verdict=clean`, `findings=0`, `covered=<n>/<n>` for the files
-the change touches, and `suggestions=0`. After them it writes a
-`projector-incremental` line naming the full review's head, the kind, and the
-counts, and a lead that links the full review and states the change's size,
-the kind, and any resolved conflict. It always posts
+writes the signature line with `incremental from <short-sha>`, the review
+marker with `verdict=clean`, `findings=0`, and `covered=<n>/<n>` for the files
+the change touches, a `projector-incremental` line naming the full review's
+head, the kind, and the counts, and a lead that links the full review and
+states the change's size, the kind, and any resolved conflict. It always posts
 a `COMMENT`, even where `review.allow_approve` is `true`, adds "A human
 approval is what remains." on another author's pull request, and on a
 self-review marks the pull request ready, as any clean verdict does. It

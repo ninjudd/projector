@@ -289,14 +289,15 @@ class WatchThreadsTests(WatcherCase):
             {tuple(row[:3]) for row in self.state_rows()},
         )
 
-    def test_a_projector_review_says_how_many_suggestions_its_marker_counts(self) -> None:
-        def projector_review(review_id, counted):
+    def test_a_projector_review_says_how_many_suggestions_its_body_counts(self) -> None:
+        def projector_review(review_id, count):
             marker = (f"<!-- projector-review v=1 verdict=clean projector=0.7.20 model=claude-opus-5-5 sha={SHA_A} "
-                      f"findings=0 seconds=60 covered=1/1{counted} -->")
-            return review(review_id, who="operator", body=f"Projector review\n\n{marker}\n\nClean.")
+                      "findings=0 seconds=60 covered=1/1 -->")
+            counted = "" if count is None else f"<!-- projector-suggestions v=1 count={count} -->\n"
+            return review(review_id, who="operator", body=f"Projector review\n\n{marker}\n\n{counted}Clean.")
 
-        self.pull_request(1, reviews=[projector_review(81, " suggestions=2"), projector_review(82, " suggestions=1"),
-                                      projector_review(83, " suggestions=0"), projector_review(84, "")])
+        self.pull_request(1, reviews=[projector_review(81, 2), projector_review(82, 1), projector_review(83, 0),
+                                      projector_review(84, None)])
         self.track("acme/app#1")
 
         result = self.run_watcher(THREADS)

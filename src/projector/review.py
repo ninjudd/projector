@@ -1371,18 +1371,19 @@ CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.S | re.M)
 # as `{short_sha}` does, so it is filled; a placeholder inside longer code is quoted code.
 LONE_PLACEHOLDER = re.compile(r"`" + PLACEHOLDER.pattern + r"`")
 # A comment of Projector's own at the start of a line, as a review or finding carries it.
-OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding|incremental)\b", re.M)
+OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding|incremental|suggestions)\b", re.M)
 SIGNATURE = re.compile(
     r"^" + re.escape(MARK) + r" \*\*Projector review\*\* of `[0-9a-f]{7}` · `[^`\n]+` · model `[^`\n]+` · "
     r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · (?:incremental from `[0-9a-f]{7}` · )?"
     r"took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
 )
-# A review's marker line. Publish writes `projector=`, `clean`, and `suggestions=`, but a marker an earlier
-# release wrote may name no version, spell a clean verdict `approved`, or leave the count out, and it still
-# reads as the verdict it gives.
+# A review's marker line. Publish writes `projector=` and `clean`, but a marker an earlier release wrote
+# may name no version or spell a clean verdict `approved`, and it still reads as the verdict it gives. Every
+# earlier release reads a marker holding a field it does not know as no verdict, so a new fact about a review
+# goes on a line of its own, as the incremental line and the suggestions count do.
 MARKER = re.compile(
     r"^<!-- projector-review v=1 verdict=(clean|approved|changes-requested) (?:projector=(\S+) )?model=(\S+) "
-    r"(?:effort=(\S+) )?sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+(?: suggestions=(\d+))? -->$"
+    r"(?:effort=(\S+) )?sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
 )
 # How a head moved since the full review, by kind: `interdiff` prints the phrase, and an incremental
 # review's lead names every kind but a push as "across a <phrase>".
@@ -1401,9 +1402,9 @@ INCREMENTAL_BODY_LIMIT = 600
 
 @dataclass(frozen=True)
 class Verdict:
-    """What a review's marker says: the verdict, the head it judged, what produced it, for an incremental
-    review the head of the full review it builds on, and how many suggestions the body lists. `projector`
-    is None for a marker that names no version, and `suggestions` for one that gives no count."""
+    """What a review's marker says: the verdict, the head it judged, what produced it, and, for an
+    incremental review, the head of the full review it builds on. `projector` is None for a marker
+    that names no version."""
 
     verdict: str
     sha: str
@@ -1411,7 +1412,6 @@ class Verdict:
     model: str
     effort: Optional[str]
     incremental_from: Optional[str]
-    suggestions: Optional[int] = None
 
 
 def verdict_marker(body: str) -> Optional[Verdict]:
@@ -1425,10 +1425,10 @@ def verdict_marker(body: str) -> Optional[Verdict]:
         marker = MARKER.match(line)
         if marker is None:
             continue
-        verdict, projector, model, effort, sha, counted = marker.groups()
+        verdict, projector, model, effort, sha = marker.groups()
         incremental = INCREMENTAL.match(lines[i + 1]) if i + 1 < len(lines) else None
         return Verdict("clean" if verdict == "approved" else verdict, sha, projector, model, effort,
-                       incremental.group(1) if incremental else None, None if counted is None else int(counted))
+                       incremental.group(1) if incremental else None)
     return None
 
 
@@ -1534,6 +1534,9 @@ BARE_PLACE = re.compile(r"([^`\s:]+):(\d+)(?:[-–]\d+)?(?=[\s:,;.]|$)")
 # What joins that place to the suggestion's text.
 SEPARATOR = re.compile(r"^\s*(?:[:,;.—–]|--?(?=\s))?\s*")
 SUGGESTION_PATH = re.compile(r"[^\s`:]+")
+# The line `publish` writes directly before a suggestions section's label, counting its items. It is a line of
+# its own rather than a field of the review's marker, which every earlier release would then read as no verdict.
+SUGGESTIONS_COUNT = re.compile(r"^<!-- projector-suggestions v=1 count=(\d+) -->$", re.M)
 
 
 def suggestion_entries(threads: list) -> list[dict]:
@@ -1570,6 +1573,28 @@ def suggestions_section(entries: list[dict]) -> str:
     return "### Suggestions\n\n" + "\n".join(f"- `{place(entry)}`: {entry['text']}" for entry in entries)
 
 
+def suggestions_label(lines: list[str]) -> Optional[int]:
+    """The index of the first line outside fenced code that `SUGGESTIONS_LABEL` matches, or None."""
+    fenced = False
+    for i, line in enumerate(lines):
+        if FENCE.match(line.strip()):
+            fenced = not fenced
+        elif not fenced and SUGGESTIONS_LABEL.match(line.strip()):
+            return i
+    return None
+
+
+def with_suggestions_count(body: str) -> str:
+    """`body` with the line that counts its suggestions directly before their label, or as it is when it lists
+    none."""
+    items = parse_suggestions(body)
+    if not items:
+        return body
+    lines = body.splitlines()
+    lines.insert(suggestions_label(lines), f"<!-- projector-suggestions v=1 count={len(items)} -->")
+    return "\n".join(lines)
+
+
 def parse_suggestions(body: str) -> Optional[list[dict]]:
     """The items of a review body's suggestions section, each its `path` and `line`, None where the item names
     none, and its `text`, or None when the body has no such section.
@@ -1578,13 +1603,8 @@ def parse_suggestions(body: str) -> Optional[list[dict]]:
     line `SECTION_END` matches or at a paragraph after a blank line. Each list item at the first item's indent
     is a suggestion, and the lines under it, a deeper list included, join its text."""
     lines = body.splitlines()
-    fenced = False
-    for start, line in enumerate(lines):
-        if FENCE.match(line.strip()):
-            fenced = not fenced
-        elif not fenced and SUGGESTIONS_LABEL.match(line.strip()):
-            break
-    else:
+    start = suggestions_label(lines)
+    if start is None:
         return None
     items: list[list[str]] = []
     indent: Optional[int] = None
@@ -1626,12 +1646,11 @@ def suggestion_item(text: str) -> dict:
 
 
 def listed_suggestions(review: dict) -> int:
-    """How many suggestions a review lists: the count its marker gives, or the items of its body's section."""
+    """How many suggestions a review lists: the count `publish` wrote before their label, or, in a review an
+    earlier release published, the items of its body's section."""
     body = review.get("body") or ""
-    marker = verdict_marker(body)
-    if marker is not None and marker.suggestions is not None:
-        return marker.suggestions
-    return len(parse_suggestions(body) or [])
+    found = SUGGESTIONS_COUNT.search(body)
+    return int(found.group(1)) if found else len(parse_suggestions(body) or [])
 
 
 def with_full_review(review: dict, reviews: list[dict]) -> list[dict]:
@@ -1911,7 +1930,7 @@ def fill(body: str, values: dict[str, str]) -> str:
     return "".join(pieces)
 
 
-def heading(state: dict, verdict: str, findings: int, covered: str, suggestion_count: int, at: datetime,
+def heading(state: dict, verdict: str, findings: int, covered: str, at: datetime,
             incremental_from: Optional[str] = None) -> tuple[str, str, dict[str, str]]:
     """The signature line, the marker, and the placeholders' values, from one clock reading, so the
     duration and `seconds=` cannot disagree."""
@@ -1925,8 +1944,7 @@ def heading(state: dict, verdict: str, findings: int, covered: str, suggestion_c
                  + f"took {took}")
     marker = (f"<!-- projector-review v=1 verdict={verdict} projector={version} model={state['model']} "
               + (f"effort={effort} " if effort else "")
-              + f"sha={state['sha']} findings={findings} seconds={seconds} covered={covered} "
-              f"suggestions={suggestion_count} -->")
+              + f"sha={state['sha']} findings={findings} seconds={seconds} covered={covered} -->")
     if not SIGNATURE.match(signature) or not MARKER.match(marker):
         raise ReviewError("the signature line or marker does not match review-pr/SKILL.md; check the "
                           f"model in the review's state ({state['model']})")
@@ -1938,20 +1956,20 @@ def compose(state: dict, verdict: str, body: str, covered: str, findings: int, c
             at: datetime, entries: list[dict]) -> str:
     """The review's text: the signature line and marker, then the body with its placeholders filled, then
     the section listing the suggestions `entries` gives. A body that lists suggestions of its own, as one an
-    older skill wrote, publishes as written, with its items counted in the marker, but never beside `entries`."""
+    older skill wrote, publishes as written, but never beside `entries`. Either way the line that counts the
+    suggestions comes directly before their label."""
     check_body(body)
     if "{census}" not in prose(body):
         raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
                           "outside code")
-    written = parse_suggestions(body)
-    if entries and written is not None:
+    if entries and parse_suggestions(body) is not None:
         raise ReviewError("the body has a suggestions section of its own, and the threads file gives P3 entries; "
                           "take the section out of the body, and publish lists the P3 entries in its place")
-    count = len(entries) if entries else len(written or [])
-    signature, marker, values = heading(state, verdict, findings, covered, count, at)
+    signature, marker, values = heading(state, verdict, findings, covered, at)
     filled = fill(body, dict(values, census=census_line)).strip()
-    listing = f"\n\n{suggestions_section(entries)}" if entries else ""
-    return f"{signature}\n\n{marker}\n\n{filled}{listing}\n"
+    if entries:
+        filled += f"\n\n{suggestions_section(entries)}"
+    return f"{signature}\n\n{marker}\n\n{with_suggestions_count(filled)}\n"
 
 
 def listed(items: list[str]) -> str:
@@ -1984,8 +2002,7 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
     if "{census}" in prose(body):
         raise ReviewError("an incremental review prints no census; take {census} out of the body")
     count = len(rules["files"])
-    signature, marker, values = heading(state, "clean", 0, f"{count}/{count}", len(parse_suggestions(body) or []),
-                                        at, rules["from"])
+    signature, marker, values = heading(state, "clean", 0, f"{count}/{count}", at, rules["from"])
     filled = fill(body, values).strip()
     if len(filled) > INCREMENTAL_BODY_LIMIT:
         raise ReviewError(f"the body holds {len(filled)} characters once filled, and an incremental review's "
