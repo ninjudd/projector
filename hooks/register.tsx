@@ -552,10 +552,9 @@ function notesOf(pr: PullRequest): Note[] {
   const notes: Note[] = []
   if (pr.isConflicting) notes.push({ text: 'conflict', color: 'error' })
   if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
-  if (pr.openThreads > 0) {
-    notes.push({ text: `${pr.openThreads} open thread${pr.openThreads === 1 ? '' : 's'}`, color: 'warning' })
-  }
   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
+  // The open threads' count comes last, beside the age.
+  if (pr.openThreads > 0) notes.push({ text: `⋮${pr.openThreads}`, color: 'warning' })
   return notes
 }
 
@@ -706,9 +705,10 @@ export const register: Register = on => {
     // a question it is still waiting on.
     const session = await $.session.id()
     const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
-    const given = isYours
-      ? answersIn(e.text, (await read($, items)).filter(question => question.session === session), proposed)
-      : []
+    const mine = isYours ? (await read($, items)).filter(item => item.session === session) : []
+    const given = answersIn(e.text, mine, proposed)
+    // A reply to a notice answers nothing, but it is done with the notice's drawer.
+    const replied = mine.filter(item => item.kind === 'notice' && e.text.includes(quoteOf(item)))
     proposed = proposed.filter(proposal => !given.some(one => one.question.ref === proposal.ref))
     const asked = given.filter(one => one.question.agentId !== undefined)
     const agents = asked.length === 0 ? [] : await $.agent.list().catch(() => [])
@@ -719,6 +719,7 @@ export const register: Register = on => {
         void closeDrawer($, `item:${one.question.ref}`).catch(() => undefined)
         void answerFromPrompt($, one.question, one.letter, one.text)
       }
+      for (const notice of replied) void closeDrawer($, `item:${notice.ref}`).catch(() => undefined)
     }
     return entered
   }).catch(($, e, next) => next(e))
@@ -1021,8 +1022,9 @@ export const register: Register = on => {
             )}
             {ageColumn(key, pr.updatedAt)}
           </Box>
+          {/* The drawer starts where the state does, one column past the label. */}
           {opened === key && (
-            <Box key={`drawer:${key}`} flexDirection="column">
+            <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
               <Text wrap="truncate-end">
                 <Text color="subtle">{factsOf(pr, kinds)}</Text>
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}

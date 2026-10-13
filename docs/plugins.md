@@ -185,19 +185,19 @@ session starts a loop's watcher for the first time.
 ──────────────────────────────────────────────────────────────── updated 12s ago [-]
 
 #267 draft List a loop's open pull requests above the Claude Code prompt      2h
-#258 draft grace Name the reviewed head in a review's signature line conflict 5m
-reviewing · review-signature · +84 −12 in 5 files · checks passing
-github
-projector
-discuss | dismiss
+#258 draft grace Name the reviewed head in a review's signature conflict · ⋮5 5m
+     reviewing · review-signature · +84 −12 in 5 files · checks passing
+     github
+     projector
+     discuss | dismiss
 ```
 
 Each line is the pull request's number, `draft` or `ready`, its author when
 someone else wrote it, the title, and, when the pull request has them, a
-merge conflict, a change request, or unresolved review threads. The line
-ends with how long ago the pull request last changed, in the column where
-the inbox's items end with their ages. Only the title shortens on a narrow
-terminal.
+merge conflict or a change request, then the number of unresolved review
+threads after a `⋮` in yellow, such as `⋮5`. The line ends with how long
+ago the pull request last changed, in the column where the inbox's items
+end with their ages. Only the title shortens on a narrow terminal.
 
 Your own pull requests come first, then everyone else's, each author's
 together and the authors in order of login, with no line between the groups.
@@ -219,8 +219,9 @@ GitHub's error only when it has none of them to show.
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
-under the number. It says whether your loops are watching or reviewing the
-pull request, then its branch, size, and checks. Below that:
+one column past the number, under `draft` or `ready`. It says whether your
+loops are watching or reviewing the pull request, then its branch, size, and
+checks. Below that:
 
 - **github** opens the pull request on GitHub.
 - **projector** opens its Projector summary, when the pull request's
@@ -345,9 +346,10 @@ Under the options, a question's drawer has three actions:
 - **snooze** hides the question for an hour.
 
 A notice's drawer shows its detail, then the same `discuss | dismiss |
-snooze`. **discuss** puts the quoted notice in the prompt, and a prompt that
-quotes a notice answers nothing. **dismiss** clears the notice once you have
-read it, and nothing goes back to the agent.
+snooze`. **discuss** puts the quoted notice in the prompt. A prompt you send
+that quotes a notice answers nothing, but it closes the notice's drawer; the
+notice stays in the band until you dismiss it. **dismiss** clears the notice
+once you have read it, and nothing goes back to the agent.
 
 A snoozed item leaves the band and the divider's counts at once. When its
 hour passes, it returns to the list, and the band appears if you hid it. To

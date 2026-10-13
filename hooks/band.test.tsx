@@ -166,7 +166,9 @@ test('draws one line per open pull request of the session’s own loops', async 
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '1 open thread' })).toBeDefined()
+  // Open threads show as their count after a `⋮`, in yellow.
+  expect((await ui.findAll({ type: 'Text', text: '⋮1' })).map(found => found.props.color)).toContain('warning')
+  expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
@@ -213,6 +215,9 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
   expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
+  // The threads' count comes after the other notes, beside the age.
+  const notes = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  expect(notes.indexOf(' · ⋮2')).toBeGreaterThan(notes.indexOf('conflict'))
 
   await ui.press({ key: 'pr:x/y#7' })
   // The drawer's facts name no author, whoever wrote the pull request.
@@ -222,10 +227,10 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
   // The pull request's age ends its line, so the drawer does not repeat it.
   expect(await ui.find({ type: 'Text', text: /updated 5m ago/ })).toBeUndefined()
-  // The drawer starts in the row's first column, under the number.
+  // The drawer starts where the state does: past the three-column labels `r#1` and `y#7` and the gap after them.
   const opened = await ui.find({ key: 'drawer:x/y#7' })
   expect(opened).toBeDefined()
-  expect(opened?.props.marginLeft).toBeUndefined()
+  expect(opened?.props.marginLeft).toBe(4)
   // Under the facts, each link has a line of its own, so a terminal without hyperlinks shows the whole URL, and the actions' row comes last.
   const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
   expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'github:x/y#7', 'projector:x/y#7', 'Box'])
@@ -1516,16 +1521,23 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
   await hidden.unmount()
 })
 
-test('a sent prompt that quotes a notice answers nothing', async ($, on) => {
+test('a sent prompt that quotes a notice answers nothing, and closes its drawer', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [notice()])
   await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'item:2' })
+  expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeDefined()
 
   await $.prompt.submit({ text: `"${FORCE_PUSHED}"\n\nThanks`, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.project().filter(command => /^inbox (answer|dismiss|claim)/.test(command))).toEqual([])
   expect(session.store.store.get('2')?.answer).toBeUndefined()
+  // The notice stays in the band, but the reply is done with its drawer.
+  expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+  await ui.unmount()
 })
 
 test('a snoozed item read at the start leaves a hidden band hidden until its time', async ($, on) => {
