@@ -24,6 +24,9 @@ import {
   TELL_SCHEMA,
   tellArguments,
   typedLetter,
+  WITHDRAW_DESCRIPTION,
+  WITHDRAW_SCHEMA,
+  withdrawArguments,
   wokeBetween,
   type Proposal,
 } from './inbox'
@@ -36,6 +39,7 @@ const POLL_MS = 30_000
 const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null, error: null }
 const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
+const WITHDRAW_TOOL = 'mcp__projector__withdraw'
 const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
 
 // Watching first: a pull request both loops track is listed once, where its
@@ -601,15 +605,15 @@ function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
 }
 
 /**
- * Runs the `project inbox` command one of the tools makes: the reference it
- * prints, or why the tool call is refused. `instead` says where the agent
- * turns when the command does not finish.
+ * Runs the `project inbox` command one of the tools makes: what it printed,
+ * or why the tool call is refused. `instead` says where the agent turns when
+ * the command does not finish.
  */
-async function post(
+async function runTool(
   $: Engine,
   args: string[] | { error: string },
   instead: string,
-): Promise<{ ref: string } | { deny: string }> {
+): Promise<{ stdout: string } | { deny: string }> {
   if (!Array.isArray(args)) return { deny: args.error }
   let ran: Ran
   try {
@@ -617,11 +621,12 @@ async function post(
   } catch (error) {
     return { deny: `project did not finish (${messageOf(error)}); ${instead}` }
   }
-  // 65 refuses the post and 75 finds the store busy; any other failure is a CLI too old to post.
-  if (ran.exitCode === 65 || ran.exitCode === 75) return { deny: errorOf(ran) }
+  // 65 refuses the call, 66 finds no such item, and 75 finds the store busy;
+  // any other failure is a CLI too old to know the command.
+  if (ran.exitCode === 65 || ran.exitCode === 66 || ran.exitCode === 75) return { deny: errorOf(ran) }
   if (ran.exitCode !== 0) return { deny: `${errorOf(ran)}; run project upgrade` }
   checkSoon($)
-  return { ref: ran.stdout.trim() }
+  return { stdout: ran.stdout }
 }
 
 export const register: Register = on => {
@@ -631,24 +636,25 @@ export const register: Register = on => {
       description: 'Show or hide Projector’s band of your loops’ pull requests and your inbox',
     })
     // A session whose engine cannot serve the tools keeps the band.
-    await $.tool
-      .register({ name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA, isDeferred: false })
-      .catch(() => undefined)
-    await $.tool
-      .register({ name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA, isDeferred: false })
-      .catch(() => undefined)
+    for (const tool of [
+      { name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA },
+      { name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA },
+      { name: 'withdraw', description: WITHDRAW_DESCRIPTION, inputSchema: WITHDRAW_SCHEMA },
+    ]) {
+      await $.tool.register({ ...tool, isDeferred: false }).catch(() => undefined)
+    }
     $.clock.every(TICK_MS, () => void tick($))
     soon($)
     checkSoon($)
     return next(e)
   })
 
-  // The tools post through the CLI, so an item posted here and one posted
-  // from the shell land in the same store.
+  // The tools run the CLI, so what they post or withdraw and what the shell
+  // does land in the same store.
   on('tool.call', { tool: ASK_TOOL }, async ($, e) => {
-    const posted = await post($, askArguments(e, await $.session.id(), e.agentId), 'ask in the conversation instead')
+    const posted = await runTool($, askArguments(e, await $.session.id(), e.agentId), 'ask in the conversation instead')
     if ('deny' in posted) return posted
-    const { ref } = posted
+    const ref = posted.stdout.trim()
     void $.ui.notify(String(e.question), { title: 'Projector question' }).catch(() => undefined)
     return {
       result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
@@ -657,14 +663,29 @@ export const register: Register = on => {
 
   on('tool.call', { tool: TELL_TOOL }, async ($, e) => {
     const args = tellArguments(e, await $.session.id(), e.agentId)
-    const posted = await post($, args, 'tell the person in the conversation instead')
+    const posted = await runTool($, args, 'tell the person in the conversation instead')
     if ('deny' in posted) return posted
-    const { ref } = posted
+    const ref = posted.stdout.trim()
     void $.ui.notify(String(e.notice), { title: 'Projector notice' }).catch(() => undefined)
     return {
       result: `Posted ${ref}. It waits in Projector’s band until the person dismisses it; nothing comes back to you.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the notice; tell the person in the conversation instead' }))
+
+  // The band takes the withdrawn item from the CLI at once, so it leaves the
+  // band before the next read of the store.
+  on('tool.call', { tool: WITHDRAW_TOOL }, async ($, e) => {
+    const session = await $.session.id()
+    const instead = 'tell the person in the conversation that it no longer needs them'
+    const ran = await runTool($, withdrawArguments(e, session), instead)
+    if ('deny' in ran) return ran
+    const item = itemOf(ran.stdout, session)
+    await replace($, item)
+    await closeDrawer($, `item:${item.ref}`)
+    return { result: `Withdrew ${item.ref}. It has left Projector’s band, and nothing comes back to you.` }
+  }).catch(() => ({
+    deny: 'Projector could not withdraw the item; tell the person in the conversation that it no longer needs them',
+  }))
 
   // These hooks only watch: the catch hands back what the event settled to,
   // so a failure here never runs a tool twice or refuses anything.

@@ -48,11 +48,11 @@ what it did to each:
   pull request as a draft until a clean review marks it ready, and, where the
   `ask` and `tell` tools are available, post anything the person must not
   miss to the inbox as well as saying it in the conversation, and each time
-  the person writes, dismiss any item that no longer needs them. `init`
-  appends the section to an existing file or creates the file
-  with only that section, and refreshes the section when it falls behind the
-  template this command ships. Everything outside the markers is yours and
-  is never changed.
+  the person writes, withdraw any item that no longer needs them with the
+  `withdraw` tool. `init` appends the section to an existing file or creates
+  the file with only that section, and refreshes the section when it falls
+  behind the template this command ships. Everything outside the markers is
+  yours and is never changed.
 - `CLAUDE.md` is a symlink to `AGENTS.md`, because Claude Code reads
   `CLAUDE.md` and Codex reads `AGENTS.md`, and one file can serve both. `init`
   creates the link when `CLAUDE.md` is absent, or a file containing the import
@@ -1478,12 +1478,12 @@ need to decide in `--detail`, or `--detail-file`.
 
 Every command names the posting session with `--session`, or reads
 `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
-every session's open items, and `show`, `answer`, `dismiss`, and `snooze`
-find the session that holds the number. `list` prints each item's number,
-kind, state, and subject, separated by tabs, after the session when it lists
-every session. Every session counts from 1 and keeps the items you resolved,
-so two sessions often hold the same number. Without a session, those four
-commands look first among open items, the ones with no answer recorded: a
+every session's open items, and `show`, `answer`, `dismiss`, `withdraw`, and
+`snooze` find the session that holds the number. `list` prints each item's
+number, kind, state, and subject, separated by tabs, after the session when it
+lists every session. Every session counts from 1 and keeps the items you
+resolved, so two sessions often hold the same number. Without a session, those
+five commands look first among open items, the ones with no answer recorded: a
 number that one session holds open names that session's item, whatever other
 sessions hold resolved under the same number. Only when no session holds the
 number open do they look among every item. A command that still finds the
@@ -1585,6 +1585,24 @@ A snoozed item can still be answered or dismissed, and either one clears its
 snooze, so a resolved item never returns. `snooze` refuses, with exit code
 65, an item already answered or dismissed, a negative `--for`, and a `--for`
 longer than a day, and it changes nothing when it refuses.
+
+An agent takes back an open item that no longer needs you with `withdraw`,
+such as a question you answered in the conversation or news that has gone
+stale:
+
+```console
+$ project inbox withdraw 3 --session "$SESSION"
+withdrew 3
+```
+
+`withdraw` takes either kind. In one write, it records the item as dismissed
+and withdrawn and marks it delivered, so nothing goes back to the agent, not
+even a `DISMISSED` line for a question. Projector's band drops the item at
+once, and `list --all` shows it as `withdrawn`. `withdraw` refuses what
+`dismiss` refuses: an answer letter, such as `3.a`, and an item already
+answered, dismissed, or withdrawn, with exit code 65, and a number no session
+holds, with exit code 66. In Claude Code, the agent withdraws an item with
+Projector's `withdraw` tool rather than from the shell.
 
 ## Keep a pull request out of a loop
 

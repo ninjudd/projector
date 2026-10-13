@@ -270,9 +270,11 @@ is shown. The skills never depend on the band, and Codex has no equivalent.
 An agent in Claude Code asks you a question with Projector's `ask` tool,
 which the model sees as `mcp__projector__ask`, and tells you something that
 needs no answer with the `tell` tool, `mcp__projector__tell`. Either way it
-keeps working. An agent that runs `project inbox ask` or `project inbox tell`
-from the shell reaches the same inbox, as
-[Use the inbox](cli.md#use-the-inbox) describes.
+keeps working. When an item it posted no longer needs you, such as a question
+you answered in the conversation, the agent takes it back with the `withdraw`
+tool, `mcp__projector__withdraw`, by the number `ask` or `tell` returned. An
+agent that runs `project inbox ask`, `tell`, or `withdraw` from the shell
+reaches the same inbox, as [Use the inbox](cli.md#use-the-inbox) describes.
 
 The items are a list below the pull requests, oldest first. A question's
 line starts with `-`, and a notice's with `•`, so you can tell which items
@@ -360,7 +362,9 @@ dismiss from a terminal while it is snoozed does not return.
 
 A resolved item stays in the list, muted, for 30 seconds after it is
 delivered, and a dismissed one is struck through. A dismissed notice is
-delivered at once, since nothing goes back to the agent. A question's drawer
+delivered at once, since nothing goes back to the agent. An item the agent
+withdrew leaves the band at once, its drawer with it, and sends nothing back,
+not even `DISMISSED` for a question. A question's drawer
 still opens and marks the answer given with `✓`, listing an answer in your
 own words after the options. A dismissed notice's drawer keeps only
 **discuss**.
@@ -620,9 +624,9 @@ marketplace files, and read upstream's new skill against the rules in
 
 ## Work without MCP
 
-Projector currently ships no MCP server. The `ask` and `tell` tools carry
-the `mcp__projector__` prefix, but Projector's hooks module in Claude Code
-serves them: no MCP server runs, and no skill depends on them. Every core
-skill uses the public `project` CLI and ordinary Git or GitHub commands. A
-future MCP adapter can expose the same versioned project operations without
-becoming the package that contains the skills.
+Projector currently ships no MCP server. The `ask`, `tell`, and `withdraw`
+tools carry the `mcp__projector__` prefix, but Projector's hooks module in
+Claude Code serves them: no MCP server runs, and no skill depends on them.
+Every core skill uses the public `project` CLI and ordinary Git or GitHub
+commands. A future MCP adapter can expose the same versioned project
+operations without becoming the package that contains the skills.
