@@ -1,0 +1,115 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 614da43..59f3e10 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -197,7 +197,10 @@ watcher, `watch-threads.sh`, and a `start-review-loop` watcher,
+ `watch-prs.sh`, track is listed once. Only the title shortens on a narrow
+ terminal. The divider says how long ago the band reloaded, and Claude Code's
+ `[-]` at its end collapses the band. A blank line sets the divider apart from
+-the rows under it.
++the rows under it. Only a terminal draws the divider and that blank line.
++Claude Desktop, VS Code, and the mobile app do not set the band's text in a
++terminal's columns, so a rule sized to them would wrap, and there the band
++starts with its first row.
+ 
+ Click a pull request's number to open a drawer under it, and click it again
+ to close the drawer; opening one drawer closes any other. The drawer says
+@@ -243,8 +246,8 @@ The items are a list below the pull requests, oldest first. A question's
+ line starts with `-`, and a notice's with `•`, so you can tell which items
+ want an answer and which want a read. Each line ends with the pull request
+ the item is about, as the band labels it, and how long ago it was posted.
+-The band appears when an item arrives, even after you hid it, and the
+-divider counts the open questions and the open notices.
++The band appears when an item arrives, even after you hid it, and in a
++terminal the divider counts the open questions and the open notices.
+ 
+ ```text
+ ──────────────────────────────── 2 questions · 1 notice · updated 12s ago [-]
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 396d6d1..29dc88c 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -176,6 +176,23 @@ test('draws one line per open pull request of the session’s own loops', async
+   await ui.unmount()
+ })
+ 
++test('draws no divider on a surface that does not lay text out in columns', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#1\n' })
++
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
++  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
++  expect(texts.filter(text => text.includes('─'))).toEqual([])
++  expect(texts[0]).not.toBe(' ')
++  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
++  await ui.unmount()
++})
++
+ test('a press on a pull request’s number opens its drawer, and discuss puts it in the prompt', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -321,7 +338,14 @@ test('says so when no loop tracks an open pull request', async ($, on) => {
+ 
+   const ui = await $.ui.mount(BAND)
+   expect(await ui.find({ type: 'Text', text: /No open pull requests are being watched or reviewed/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
+   await ui.unmount()
++
++  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
++  const texts = (await desktop.findAll({ type: 'Text' })).map(found => found.text)
++  expect(texts[0]).toMatch(/No open pull requests/)
++  expect(texts.filter(text => text.includes('─'))).toEqual([])
++  await desktop.unmount()
+ })
+ 
+ const SESSION = 's1'
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index c61dfdf..a66a5e4 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -748,19 +748,24 @@ export const register: Register = on => {
+     }
+ 
+     // The engine draws the band's `[-]` just past `bodyColumns` on the first
+-    // row, so a divider that fills the body ends at the mark.
+-    const divider = (
+-      <Text dimColor>
+-        {'─'.repeat(Math.max(0, e.props.bodyColumns - updated.length))}
+-        {updated}
+-      </Text>
+-    )
++    // row, so a divider that fills the body ends at the mark, and a blank line
++    // sets it apart from the rows under it. Only a terminal lays text out in
++    // those columns; any other surface would wrap the rule, so it draws none.
++    const divider =
++      e.surface === 'terminal'
++        ? [
++            <Text key="divider" dimColor>
++              {'─'.repeat(Math.max(0, e.props.bodyColumns - updated.length))}
++              {updated}
++            </Text>,
++            <Text key="under-divider"> </Text>,
++          ]
++        : []
+ 
+     if (shown.rows.length === 0 && shownItems.length === 0) {
+       return (
+         <Box flexDirection="column">
+           {divider}
+-          <Text key="under-divider"> </Text>
+           <Box flexDirection="row" columnGap={1}>
+             <Text dimColor wrap="truncate-end">
+               {shown.fetchedAt === null && failure === undefined
+@@ -1011,7 +1016,6 @@ export const register: Register = on => {
+     return (
+       <Box flexDirection="column">
+         {divider}
+-        <Text key="under-divider"> </Text>
+         {shown.rows.map(drawRow)}
+         {failure !== undefined && <Text color="error">{failure}</Text>}
+         {shownItems.length > 0 && shown.rows.length > 0 && <Text key="before-items"> </Text>}
