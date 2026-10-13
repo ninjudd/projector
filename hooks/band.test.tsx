@@ -1,7 +1,7 @@
 import type { AgentInfo, FsEntry, On } from 'claude-code'
 import { expect, mock, test, type Engine } from 'claude-code/testing'
 
-import type { Item } from './types'
+import type { Notice, Question } from './types'
 
 const HOME = '/home/ada'
 const REVIEW = `${HOME}/loops/review/tracked`
@@ -109,7 +109,12 @@ type Ran = ReturnType<typeof ran>
  */
 type Outcome = Ran | { deny: string }
 
-function world(on: On, files: Record<string, string>, ps = PS, project?: (argv: string[], stdin: string) => Outcome) {
+function world(
+  on: On,
+  files: Record<string, string>,
+  ps = PS,
+  project?: (argv: string[], stdin: string) => Outcome | Promise<Outcome>,
+) {
   const commands: string[][] = []
   const filled: string[] = []
   on('fs.stat', ($, e) => ({
@@ -119,8 +124,9 @@ function world(on: On, files: Record<string, string>, ps = PS, project?: (argv: 
   on('process.run', ($, e) => {
     commands.push([...e.argv])
     if (e.argv[0] === 'project' && project !== undefined) {
+      const answered = (outcome: Outcome) => ('deny' in outcome ? outcome : { value: outcome })
       const outcome = project([...e.argv], e.init?.stdin ?? '')
-      return 'deny' in outcome ? outcome : { value: outcome }
+      return outcome instanceof Promise ? outcome.then(answered) : answered(outcome)
     }
     return { value: ran(e.argv[0] === 'ps' ? ps : answer(e.argv.join(' '))) }
   })
@@ -319,24 +325,39 @@ const SESSION = 's1'
 const STORE = `${HOME}/.local/state/projector/inbox/${SESSION}`
 const TICK = 5_000
 
-type Held = Omit<Item, 'session'>
+type HeldQuestion = Omit<Question, 'session'>
+type HeldNotice = Omit<Notice, 'session'>
+type Held = HeldQuestion | HeldNotice
 type Clock = ReturnType<typeof mock.clock>
 
-const held = (fields: Partial<Held> = {}): Held => ({
+const HOUR = 3_600_000
+
+const held = (fields: Partial<HeldQuestion> = {}): HeldQuestion => ({
   ref: '#7.1',
+  kind: 'question',
   number: 1,
   pr: 'x/y#7',
   postedAt: NOW - 120_000,
-  kind: 'question',
   subject: 'Decline the finding?',
   detail: 'The loop caps retries at three.',
   choices: ['Decline it', 'Add a budget'],
   ...fields,
 })
 
+const notice = (fields: Partial<HeldNotice> = {}): HeldNotice => ({
+  ref: '#7.2',
+  kind: 'notice',
+  number: 2,
+  pr: 'x/y#7',
+  postedAt: NOW - 60_000,
+  subject: 'Force-pushed #7 to drop a stray file',
+  detail: 'The file held a debug token.',
+  ...fields,
+})
+
 /** A question with its answer and claim cleared, as `reopen` leaves it. */
-const reopened = (question: Held): Held =>
-  Object.fromEntries(Object.entries(question).filter(([key]) => key !== 'answer' && key !== 'claim')) as Held
+const reopened = (question: HeldQuestion): HeldQuestion =>
+  Object.fromEntries(Object.entries(question).filter(([key]) => key !== 'answer' && key !== 'claim')) as HeldQuestion
 
 /** `project inbox`, answered from items held in memory the way the CLI keeps them. */
 function questionStore(clock: Clock, seed: readonly Held[]) {
@@ -346,31 +367,33 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
   const refusal: { code?: number; message?: string; rejection?: string } = {}
   /** How many of the next `list` commands fail. */
   const failing = { lists: 0 }
+  /** A write that lands while the next `list` runs, after that list read the store. */
+  const during: { list?: () => void } = {}
   let writes = 0
-  let asked = 0
-  const put = (question: Held) => {
+  let posted = 0
+  const put = (item: Held) => {
     writes += 1
-    store.set(question.ref, question)
-    times.set(question.ref, writes)
-    return question
+    store.set(item.ref, item)
+    times.set(item.ref, writes)
+    return item
   }
-  for (const question of seed) put(question)
+  for (const item of seed) put(item)
 
   const failed = (exitCode: number, message: string): Ran => ({ ...ran(''), exitCode, stderr: `project: ${message}\n` })
-  const printed = (question: Held, extra: Record<string, unknown> = {}) =>
-    ran(JSON.stringify({ schema_version: 2, ...extra, item: question }))
+  const printed = (item: Held, extra: Record<string, unknown> = {}) =>
+    ran(JSON.stringify({ schema_version: 2, ...extra, item }))
   const flag = (args: readonly string[], name: string) => {
     const joined = args.find(arg => arg.startsWith(`--${name}=`))
     if (joined !== undefined) return joined.slice(name.length + 3)
     const at = args.indexOf(`--${name}`)
     return at === -1 ? undefined : args[at + 1]
   }
-  const textOf = (question: Held) =>
+  const textOf = (question: HeldQuestion) =>
     question.answer !== undefined && 'letter' in question.answer
       ? `ANSWER ${question.ref}.${question.answer.letter} ${question.subject} → ${question.answer.text}`
       : `DISMISSED ${question.ref} ${question.subject}`
 
-  const run = (argv: string[], stdin: string): Outcome => {
+  const run = (argv: string[], stdin: string): Outcome | Promise<Outcome> => {
     const [, group, command = '', ...args] = argv
     const time = clock.now()
     if (group !== 'inbox') return failed(2, `invalid choice: '${group ?? ''}'`)
@@ -380,27 +403,40 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         return failed(1, 'the store could not be read')
       }
       const items = [...store.values()].map(one => ({ ...one, session: SESSION }))
-      return ran(JSON.stringify({ schema_version: 2, items }))
+      const listed = ran(JSON.stringify({ schema_version: 2, items }))
+      const write = during.list
+      if (write === undefined) return listed
+      delete during.list
+      return clock
+        .sleep(10)
+        .then(() => {
+          write()
+          return clock.sleep(10)
+        })
+        .then(() => listed)
     }
-    if (command === 'ask') {
+    if (command === 'ask' || command === 'tell') {
       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
       const pr = flag(args, 'pr') ?? null
-      asked += 1
-      const ref = pr === null ? `q${asked}` : `#${pr.split('#')[1] ?? ''}.${asked}`
+      posted += 1
+      const ref = pr === null ? `q${posted}` : `#${pr.split('#')[1] ?? ''}.${posted}`
       const agentId = flag(args, 'agent')
-      const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
-      put({
+      const common = {
         ref,
-        number: asked,
+        number: posted,
         pr,
         postedAt: time,
-        kind: 'question',
         subject: args[args.indexOf('--') + 1] ?? '',
         detail: flag(args, 'detail') ?? '',
-        choices: [flag(args, 'recommend') ?? '', ...options],
         ...(agentId === undefined ? {} : { agentId }),
-      })
+      }
+      const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
+      put(
+        command === 'ask'
+          ? { ...common, kind: 'question', choices: [flag(args, 'recommend') ?? '', ...options] }
+          : { ...common, kind: 'notice' },
+      )
       return ran(`${ref}\n`)
     }
     if (command === 'context') {
@@ -409,31 +445,38 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
 
     const written = args[0] ?? ''
     const ref = command === 'answer' ? written.slice(0, written.lastIndexOf('.')) : written
-    const question = store.get(ref)
-    if (question === undefined) return failed(66, `no question ${ref}`)
-    if (command === 'answer' || command === 'dismiss') {
-      if (question.answer !== undefined) return failed(65, `${ref} is already answered`)
+    const item = store.get(ref)
+    if (item === undefined) return failed(66, `no item ${ref}`)
+    if (item.answer !== undefined && (command === 'answer' || command === 'dismiss' || command === 'snooze')) {
+      return failed(65, `${ref} is already answered`)
+    }
+    const { snoozedUntil: _, ...awake } = item
+    if (command === 'dismiss') {
+      const answer = { dismissed: true as const, answeredAt: time }
+      return printed(put(awake.kind === 'notice' ? { ...awake, answer, deliveredAt: time } : { ...awake, answer }))
+    }
+    if (command === 'snooze') return printed(put({ ...item, snoozedUntil: time + HOUR }))
+    if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
+    if (command === 'answer') {
       const letter = written.slice(written.lastIndexOf('.') + 1)
-      const text = flag(args, 'text') ?? question.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''
-      const answer =
-        command === 'dismiss' ? { dismissed: true as const, answeredAt: time } : { letter, text, answeredAt: time }
-      return printed(put({ ...question, answer }))
+      const text = flag(args, 'text') ?? item.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''
+      return printed(put({ ...(awake as HeldQuestion), answer: { letter, text, answeredAt: time } }))
     }
     if (command === 'claim') {
-      if (question.answer === undefined || question.deliveredAt !== undefined) return failed(65, 'nothing to deliver')
+      if (item.answer === undefined || item.deliveredAt !== undefined) return failed(65, 'nothing to deliver')
       const renew = flag(args, 'renew')
       if (renew !== undefined) {
-        if (question.claim?.token !== renew) return failed(65, 'not claimed with that token')
-        put({ ...question, claim: { token: renew, renewedAt: time } })
+        if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
+        put({ ...item, claim: { token: renew, renewedAt: time } })
         return ran('')
       }
-      if (question.claim !== undefined && time - question.claim.renewedAt < 60_000) return failed(65, 'already claimed')
+      if (item.claim !== undefined && time - item.claim.renewedAt < 60_000) return failed(65, 'already claimed')
       const claim = { token: `token-${writes}`, renewedAt: time }
-      return printed(put({ ...question, claim }), { token: claim.token, text: textOf(question) })
+      return printed(put({ ...item, claim }), { token: claim.token, text: textOf(item) })
     }
     if (command === 'delivered' || command === 'reopen') {
-      if (question.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
-      return printed(put(command === 'delivered' ? { ...question, deliveredAt: time } : reopened(question)))
+      if (item.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
+      return printed(put(command === 'delivered' ? { ...item, deliveredAt: time } : reopened(item)))
     }
     return failed(2, `invalid choice: '${command}'`)
   }
@@ -447,7 +490,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       isLink: false,
     }))
 
-  return { run, files, store, refusal, failing }
+  return { run, files, store, refusal, failing, during, write: put }
 }
 
 type Options = { agents?: AgentInfo[]; drop?: string; isTurnRunning?: boolean }
@@ -522,7 +565,10 @@ test('asks through the tool, and the band lists the question below the pull requ
     pr: 'x/y#7',
   })
   expect(String(called.text ?? called.result)).toContain('Asked #7.1.')
-  expect(session.registered).toEqual([expect.objectContaining({ name: 'ask', isDeferred: false })])
+  expect(session.registered).toEqual([
+    expect.objectContaining({ name: 'ask', isDeferred: false }),
+    expect.objectContaining({ name: 'tell', isDeferred: false }),
+  ])
   expect(session.project()).toContain(
     'inbox ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
   )
@@ -871,4 +917,208 @@ test('a reference typed in the prompt reaches the agent with its question', asyn
     { text: 'rerun the 2 failing tests', context: [] },
   ])
   expect(session.project().filter(command => command.startsWith('inbox context'))).toHaveLength(1)
+})
+
+const FORCE_PUSHED = 'Force-pushed #7 to drop a stray file'
+
+test('a subagent tells through the tool, and the band lists the notice with its own bullet', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock)
+  await startSession($, clock)
+
+  const called = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, pr: 'x/y#7', agentId: 'agent-1' })
+  expect(String(called.text ?? called.result)).toBe(
+    'Posted #7.1. It waits in Projector’s band until the person dismisses it; nothing comes back to you.',
+  )
+  expect(session.project()).toContain(`inbox tell --session=s1 --pr=x/y#7 --agent=agent-1 -- ${FORCE_PUSHED}`)
+  expect(session.notified).toEqual([`#7.1 ${FORCE_PUSHED}`])
+
+  await clock.advance(1)
+  await clock.settle()
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated (just now|\d+s ago)$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '• ' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'item:#7.1' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the tell tool refuses what the CLI refuses, and says when it hangs', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock)
+  await startSession($, clock)
+  const tell = { tool: 'mcp__projector__tell' as const, notice: FORCE_PUSHED }
+
+  Object.assign(session.store.refusal, { code: 65, message: 'the notice must be one line; put the rest in --detail' })
+  const refused = await $.tool.call(tell)
+  expect(refused.deny ?? refused.text).toBe('the notice must be one line; put the rest in --detail')
+
+  Object.assign(session.store.refusal, { code: undefined, rejection: 'project timed out after 15000 ms' })
+  const hung = await $.tool.call(tell)
+  expect(hung.deny ?? hung.text).toMatch(/^project did not finish \(.*\); tell the person in the conversation instead$/)
+})
+
+test('a notice’s drawer quotes it, and dismiss clears it without sending anything', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held(), notice()])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
+  await ui.press({ key: 'item:#7.2' })
+  // An open notice has the band to itself, the divider included, as an open question does.
+  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
+  expect((await ui.find({ key: 'detail:#7.2' }))?.props.text).toBe('The file held a debug token.')
+  expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeUndefined()
+  for (const name of ['discuss', 'dismiss', 'snooze']) {
+    expect((await ui.find({ type: 'Button', key: `${name}:#7.2` }))?.props.plain).toBe(true)
+  }
+  expect(await ui.findAll({ type: 'Text', text: '|' })).toHaveLength(2)
+
+  await ui.press({ key: 'discuss:#7.2' })
+  expect(session.filled).toEqual([`insert:"${FORCE_PUSHED}" `])
+
+  await ui.press({ key: 'dismiss:#7.2' })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([
+    'inbox dismiss #7.2 --session s1 --json',
+  ])
+  const line = await ui.find({ type: 'Text', text: FORCE_PUSHED })
+  expect([line?.props.dimColor, line?.props.strikethrough]).toEqual([true, true])
+  expect(await ui.find({ type: 'Button', key: 'discuss:#7.2' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.2' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'snooze:#7.2' })).toBeUndefined()
+
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.sent).toEqual([])
+  expect(session.submitted).toEqual([])
+  expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
+
+  await ui.press({ key: 'item:#7.2' })
+  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+  await clock.advance(60_000)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('snooze hides either kind for an hour, then brings a hidden band back', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held(), notice()])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'item:#7.1' })
+  await ui.press({ key: 'snooze:#7.1' })
+  await clock.settle()
+  await ui.press({ key: 'item:#7.2' })
+  await ui.press({ key: 'snooze:#7.2' })
+  await clock.settle()
+  expect(session.project()).toContain('inbox snooze #7.1 --session s1 --json')
+  expect(session.project()).toContain('inbox snooze #7.2 --session s1 --json')
+  expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
+  await ui.unmount()
+
+  await clock.advance(TICK)
+  await clock.settle()
+  await $.command.run(COMMAND)
+  await clock.advance(HOUR - TICK)
+  await clock.settle()
+  const hidden = await $.ui.mount(BAND)
+  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  await hidden.unmount()
+
+  await clock.advance(2 * TICK)
+  await clock.settle()
+  const woken = await $.ui.mount(BAND)
+  expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
+  expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+  expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+  expect(await woken.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
+  await woken.unmount()
+})
+
+test('a snooze ended while a tick reads the store brings a hidden band back', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held({ snoozedUntil: NOW + HOUR })])
+  await startSession($, clock)
+  await $.command.run(COMMAND)
+  await clock.advance(TICK)
+  await clock.settle()
+
+  // `snooze --for 0` lands after the next tick's `list` read the store, before that list returns.
+  session.store.during.list = () => session.store.write({ ...held(), snoozedUntil: clock.now() })
+  session.store.write(held({ snoozedUntil: NOW + HOUR }))
+  await clock.advance(TICK)
+  await clock.settle()
+  const hidden = await $.ui.mount(BAND)
+  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  await hidden.unmount()
+
+  await clock.advance(2 * TICK)
+  await clock.settle()
+  const woken = await $.ui.mount(BAND)
+  expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
+  expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+  await woken.unmount()
+})
+
+test('an item dismissed from a terminal while snoozed does not return', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [notice()])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'item:#7.2' })
+  await ui.press({ key: 'snooze:#7.2' })
+  await clock.advance(TICK)
+  await clock.settle()
+  await ui.unmount()
+  await $.command.run(COMMAND)
+  session.store.run(['project', 'inbox', 'dismiss', '#7.2', '--session', SESSION], '')
+
+  await clock.advance(HOUR + 2 * TICK)
+  await clock.settle()
+  const hidden = await $.ui.mount(BAND)
+  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  await hidden.unmount()
+})
+
+test('a sent prompt that quotes a notice answers nothing', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [notice()])
+  await startSession($, clock)
+
+  await $.prompt.submit({ text: `"${FORCE_PUSHED}"\n\nThanks`, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.project().filter(command => /^inbox (answer|dismiss|claim)/.test(command))).toEqual([])
+  expect(session.store.store.get('#7.2')?.answer).toBeUndefined()
+})
+
+test('a snoozed item read at the start leaves a hidden band hidden until its time', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  questionWorld(on, clock, [notice({ snoozedUntil: NOW + 3 * TICK })])
+  await startSession($, clock, false)
+  await clock.advance(TICK)
+  await clock.settle()
+  const hidden = await $.ui.mount(BAND)
+  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  await hidden.unmount()
+
+  await clock.advance(3 * TICK)
+  await clock.settle()
+  const woken = await $.ui.mount(BAND)
+  expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+  await woken.unmount()
 })

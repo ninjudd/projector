@@ -1,6 +1,8 @@
 """The items an agent puts in the person's inbox, kept per session under Projector's state directory.
 
-Each session's items are JSON files in their own directory, one per item, with `counts.json`
+An item is a question, which the person answers or dismisses and whose answer goes back to the
+agent, or a notice, which the person reads and dismisses and which sends nothing back. Each
+session's items are JSON files in their own directory, one per item, with `counts.json`
 holding the last number given in each count and `session.json` the session's repository, once a
 post from a checkout has recorded one. Every write happens under the directory's lock, an
 operating-system lock on its `.lock` file, and lands by renaming a temporary file into place, so
@@ -24,6 +26,8 @@ from .core import ProjectorError
 
 MAX_SUBJECT = 120
 MAX_OPTIONS = 5
+SNOOZE_MINUTES = 60
+KINDS = ("question", "notice")
 KEEP_DELIVERED = 100
 CLAIM_EXPIRES_MS = 60_000
 LOCK_WAIT_SECONDS = 5.0
@@ -45,7 +49,7 @@ IN_TEXT = re.compile(
 
 
 class InboxError(ProjectorError):
-    """An item fails a check, or an answer or claim is not allowed in its state."""
+    """An item fails a check, or an answer, claim, or snooze is not allowed in its state."""
 
 
 class ItemNotFound(ProjectorError):
@@ -148,14 +152,16 @@ def read_json(path: Path) -> Optional[dict]:
 
 
 def load_items(folder: Path) -> list[dict]:
-    """The session's items, oldest first; a file that does not parse, or whose name does not
-    match its reference, is skipped rather than allowed to break a view."""
+    """The session's items, oldest first; a file that does not parse, whose name does not match its
+    reference, or whose kind is neither `question` nor `notice`, is skipped rather than allowed to break
+    a view."""
     items = []
     if not folder.is_dir():
         return items
     for path in folder.glob("*.json"):
         item = read_json(path)
-        if item and isinstance(item.get("ref"), str) and item_file(folder, item["ref"]) == path:
+        if (item and isinstance(item.get("ref"), str) and item_file(folder, item["ref"]) == path
+                and item.get("kind") in KINDS):
             items.append(item)
     return sorted(items, key=lambda item: (item.get("postedAt", 0), item["ref"]))
 
@@ -175,14 +181,22 @@ def reference(pull: Optional[re.Match], count: int, repo: Optional[str]) -> str:
     return f"{pull['repo']}#{pull['number']}.{count}"
 
 
-def check(question: str, recommend: str, options: list[str], pr: Optional[str]) -> None:
-    if not question.strip():
-        raise InboxError("the question is empty")
-    if "\n" in question or "\r" in question:
-        raise InboxError("the question must be one line; put the rest in --detail")
-    if len(question) > MAX_SUBJECT:
-        raise InboxError(f"the question is {len(question)} characters; keep it to {MAX_SUBJECT} and put the "
+def check_subject(kind: str, subject: str, pr: Optional[str]) -> None:
+    """The checks every item passes: a subject of one line and at most `MAX_SUBJECT` characters,
+    and a pull request written as owner/repo#number."""
+    if not subject.strip():
+        raise InboxError(f"the {kind} is empty")
+    if "\n" in subject or "\r" in subject:
+        raise InboxError(f"the {kind} must be one line; put the rest in --detail")
+    if len(subject) > MAX_SUBJECT:
+        raise InboxError(f"the {kind} is {len(subject)} characters; keep it to {MAX_SUBJECT} and put the "
                          "rest in --detail")
+    if pr is not None and not PULL.match(pr):
+        raise InboxError(f"{pr!r} is not a pull request; write it as owner/repo#number")
+
+
+def check(question: str, recommend: str, options: list[str], pr: Optional[str]) -> None:
+    check_subject("question", question, pr)
     if not recommend.strip():
         raise InboxError("give the answer you recommend with --recommend")
     if len(options) > MAX_OPTIONS:
@@ -192,8 +206,6 @@ def check(question: str, recommend: str, options: list[str], pr: Optional[str]) 
             raise InboxError("an --option is empty")
         if option.strip() == recommend.strip():
             raise InboxError(f"the option {option!r} repeats the recommendation, which is already answer a")
-    if pr is not None and not PULL.match(pr):
-        raise InboxError(f"{pr!r} is not a pull request; write it as owner/repo#number")
 
 
 def session_repo(folder: Path, repo: Optional[str]) -> Optional[str]:
@@ -209,11 +221,12 @@ def session_repo(folder: Path, repo: Optional[str]) -> Optional[str]:
     return repo
 
 
-def ask(session: str, question: str, recommend: str, options: list[str], *, detail: str = "",
-        pr: Optional[str] = None, agent: Optional[str] = None, repo: Optional[str] = None) -> dict:
-    """Check, number, and record a question; returns it. `repo` is the repository of the checkout
-    `ask` runs in, which becomes the session's repository when the session has none yet."""
-    check(question, recommend, options, pr)
+def post(session: str, kind: str, subject: str, *, detail: str, pr: Optional[str], agent: Optional[str],
+         repo: Optional[str], choices: Optional[list[str]] = None) -> dict:
+    """Number and record an item that passed its checks; returns it. Questions and notices share
+    the counts, so each reference names one item of either kind. `repo` is the repository of the
+    checkout the command runs in, which becomes the session's repository when the session has
+    none yet."""
     folder = session_dir(session)
     pull = PULL.match(pr) if pr else None
     key = f"{pull['repo'].lower()}#{pull['number']}" if pull else "q"
@@ -224,14 +237,15 @@ def ask(session: str, question: str, recommend: str, options: list[str], *, deta
         count = int(counts.get(key, 0)) + 1
         record = {
             "ref": reference(pull, count, home),
-            "kind": "question",
+            "kind": kind,
             "number": count,
             "pr": pr,
             "postedAt": now_ms(),
-            "subject": question.strip(),
+            "subject": subject.strip(),
             "detail": detail.strip(),
-            "choices": [recommend.strip(), *(option.strip() for option in options)],
         }
+        if choices is not None:
+            record["choices"] = choices
         if agent:
             record["agentId"] = agent
         counts[key] = count
@@ -240,6 +254,21 @@ def ask(session: str, question: str, recommend: str, options: list[str], *, deta
         write_json(counts_path, counts)
         write_json(item_file(folder, record["ref"]), record)
     return record
+
+
+def ask(session: str, question: str, recommend: str, options: list[str], *, detail: str = "",
+        pr: Optional[str] = None, agent: Optional[str] = None, repo: Optional[str] = None) -> dict:
+    """Check, number, and record a question; returns it."""
+    check(question, recommend, options, pr)
+    choices = [recommend.strip(), *(option.strip() for option in options)]
+    return post(session, "question", question, detail=detail, pr=pr, agent=agent, repo=repo, choices=choices)
+
+
+def tell(session: str, notice: str, *, detail: str = "", pr: Optional[str] = None,
+         agent: Optional[str] = None, repo: Optional[str] = None) -> dict:
+    """Check, number, and record a notice; returns it."""
+    check_subject("notice", notice, pr)
+    return post(session, "notice", notice, detail=detail, pr=pr, agent=agent, repo=repo)
 
 
 # Finding an item
@@ -274,6 +303,15 @@ def find(session: Optional[str], ref: str) -> tuple[Path, dict]:
     if item is None:
         raise ItemNotFound(f"{item_file(folder, ref)} is not an inbox item")
     return folder, item
+
+
+def is_notice(item: dict) -> bool:
+    return item.get("kind") == "notice"
+
+
+def refuse_notice(item: dict, action: str) -> None:
+    if is_notice(item):
+        raise InboxError(f"{item['ref']} is a notice, which {action}; dismiss it with `project inbox dismiss`")
 
 
 def typed_letter(question: dict) -> str:
@@ -311,6 +349,7 @@ def update(session: Optional[str], ref: str, change) -> dict:
 
 def answer(session: Optional[str], ref: str, letter: Optional[str], text: Optional[str] = None) -> dict:
     def record(question: dict) -> None:
+        refuse_notice(question, "takes no answer")
         if question.get("answer"):
             raise InboxError(f"{question['ref']} is already answered, as {answer_ref(question)}")
         last = typed_letter(question)
@@ -327,17 +366,45 @@ def answer(session: Optional[str], ref: str, letter: Optional[str], text: Option
         else:
             raise InboxError(f"{question['ref']} has no answer {letter}; its letters run a to {last}")
         question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
+        question.pop("snoozedUntil", None)
 
     return update(session, ref, record)
 
 
 def dismiss(session: Optional[str], ref: str) -> dict:
+    """Dismiss an item. A dismissed question waits for its deliverer to tell the agent; a dismissed
+    notice has nothing to send, so it is delivered at once."""
     def record(item: dict) -> None:
         if item.get("answer"):
-            raise InboxError(f"{item['ref']} is already answered, as {answer_ref(item)}")
-        item["answer"] = {"dismissed": True, "answeredAt": now_ms()}
+            raise InboxError(f"{item['ref']} is already {'dismissed' if is_notice(item) else 'answered'}, as "
+                             f"{answer_ref(item)}")
+        time = now_ms()
+        item["answer"] = {"dismissed": True, "answeredAt": time}
+        item.pop("snoozedUntil", None)
+        if is_notice(item):
+            item["deliveredAt"] = time
 
     return update(session, ref, record)
+
+
+def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> dict:
+    """Hide an open item until `minutes` from now, or wake it now with 0."""
+    if minutes < 0:
+        raise InboxError(f"snooze for 0 minutes or more, not {minutes}")
+
+    def record(item: dict) -> None:
+        if item.get("answer"):
+            raise InboxError(f"{item['ref']} is already {'dismissed' if is_notice(item) else 'answered'}, so it "
+                             "has nothing to return for")
+        item["snoozedUntil"] = now_ms() + minutes * 60_000
+
+    return update(session, ref, record)
+
+
+def snoozed_until(item: dict) -> Optional[int]:
+    """When a snoozed item returns, while that time is still ahead."""
+    until = item.get("snoozedUntil")
+    return until if isinstance(until, int) and until > now_ms() else None
 
 
 def live_claim(question: dict) -> Optional[dict]:
@@ -350,6 +417,7 @@ def live_claim(question: dict) -> Optional[dict]:
 def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict:
     """Claim an answer for delivery, or renew a claim by its token; returns the question."""
     def take(question: dict) -> None:
+        refuse_notice(question, "has nothing to deliver")
         if not question.get("answer"):
             raise InboxError(f"{question['ref']} has no answer to deliver")
         if question.get("deliveredAt"):
@@ -429,6 +497,10 @@ def context(session: str, text: str) -> list[str]:
         if question is None:
             continue
         subject = question["subject"]
+        if is_notice(question):
+            if letter is None:
+                lines.append(f"{ref} is the notice: {subject}")
+            continue
         if letter is None:
             lines.append(f"{ref} is the question: {subject}")
             continue

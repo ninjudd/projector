@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, FsEntry, Register } from 'claude-code'
 
-import type { Checks, Item, LoopKind, PullRequest, Row, SeenLoop, Sending, Snapshot } from './types'
+import type { Checks, Item, LoopKind, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
 import { buildQuery, parseResponse, type Fetched } from './github'
 import { expandPath, findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
 import {
@@ -21,7 +21,11 @@ import {
   signatureOf,
   span,
   storeOf,
+  TELL_DESCRIPTION,
+  TELL_SCHEMA,
+  tellArguments,
   typedLetter,
+  wokeBetween,
   type Proposal,
 } from './inbox'
 
@@ -33,6 +37,7 @@ const TICK_MS = 5_000
 const POLL_MS = 30_000
 const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
 const ASK_TOOL = 'mcp__projector__ask'
+const TELL_TOOL = 'mcp__projector__tell'
 
 // Watching first: a pull request both loops track is listed once, where its
 // watch loop puts it.
@@ -70,8 +75,10 @@ let listed: string | undefined
 let isChecking = false
 /** The answers this copy of the module is claiming or delivering, by reference. */
 const delivering = new Set<string>()
-/** The questions an answer from the band is being recorded for, so a second press does nothing. */
+/** The items the band is dismissing or snoozing, so a second press does nothing. */
 const answering = new Set<string>()
+/** When the last tick ran, so an item whose snooze ends between two ticks wakes once. */
+let tickedAt: number | undefined
 /**
  * The answers questions' drawers put in the prompt, oldest first, so a sent
  * quote answers the question you chose when another shares its text.
@@ -264,24 +271,28 @@ function refresh($: Engine, isForced = false): Promise<void> {
   return inFlight
 }
 
-/** Puts a question the CLI just answered for in the band's list, in place of what it showed. */
+/** Puts an item the CLI just changed in the band's list, in place of what it showed. */
 const replace = ($: Engine, question: Item) =>
   update($, items, list =>
     list.map(one => (one.ref === question.ref && one.session === question.session ? question : one)),
   )
 
-/** The question a CLI command printed with `--json`, in the session it belongs to. */
+/** The item a CLI command printed with `--json`, in the session it belongs to. */
 const itemOf = (stdout: string, session: string): Item => ({
   ...(JSON.parse(stdout) as { item: Omit<Item, 'session'> }).item,
   session,
 })
 
-/** Takes the band's list from the store, and shows the band for a question it has not shown before. */
+/**
+ * Takes the band's list from the store, and shows the band for an open item
+ * it has not shown before, unless that item is still snoozed.
+ */
 async function setItems($: Engine, list: Item[]): Promise<void> {
+  const time = await $.clock.now()
   let isNew = false
   await update($, items, before => {
     const known = new Set(before.map(one => one.ref))
-    isNew = list.some(one => one.answer === undefined && !known.has(one.ref))
+    isNew = list.some(one => one.answer === undefined && !known.has(one.ref) && isShownAt(one, time))
     return list
   })
   if (isNew && !(await read($, isShown))) show($)
@@ -341,7 +352,7 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
  * it can still read a message, otherwise to the main loop as a prompt of its
  * own, which waits for the session to be idle.
  */
-async function deliver($: Engine, question: Item): Promise<void> {
+async function deliver($: Engine, question: Question): Promise<void> {
   const { ref, session } = question
   delivering.add(ref)
   try {
@@ -399,9 +410,9 @@ async function checkInbox($: Engine): Promise<void> {
     await renewClaims($)
     const time = await $.clock.now()
     const pending = await read($, sending)
-    for (const question of await read($, items)) {
-      if (question.session !== session || delivering.has(question.ref) || question.ref in pending) continue
-      if (needsDelivery(question, time)) void deliver($, question)
+    for (const item of await read($, items)) {
+      if (item.session !== session || delivering.has(item.ref) || item.ref in pending) continue
+      if (needsDelivery(item, time)) void deliver($, item)
     }
   } catch {
     // The next tick tries again.
@@ -413,17 +424,22 @@ async function checkInbox($: Engine): Promise<void> {
 /** Checks the questions now rather than at the next tick. */
 const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
 
-/** Dismisses a question from the band; a second press finds it dismissed and does nothing. */
-async function dismiss($: Engine, question: Item): Promise<void> {
-  const { ref, session } = question
+/**
+ * Dismisses or snoozes an item from the band; a second press finds it changed
+ * and does nothing. Snoozing closes the item's drawer, since the item leaves
+ * the band.
+ */
+async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promise<void> {
+  const { ref, session } = item
   if (answering.has(ref)) return
   answering.add(ref)
   try {
-    const ran = await project($, ['inbox', 'dismiss', ref, '--session', session, '--json'])
+    const ran = await project($, ['inbox', command, ref, '--session', session, '--json'])
     if (ran.exitCode === 0) {
       await replace($, itemOf(ran.stdout, session))
+      if (command === 'snooze') await update($, drawer, was => (was === `item:${ref}` ? null : was))
     } else if (ran.exitCode === 65) {
-      // Answered elsewhere since the band read the store: read it again.
+      // Resolved elsewhere since the band read the store: read it again.
       listed = undefined
     } else {
       void $.ui.toast(`projector: ${errorOf(ran)}`)
@@ -441,7 +457,7 @@ async function dismiss($: Engine, question: Item): Promise<void> {
  * prompt itself carries it to the main loop. The band's own deliverer leaves
  * the question alone meanwhile, so the agent hears the answer once.
  */
-async function answerFromPrompt($: Engine, question: Item, letter: string, text?: string): Promise<void> {
+async function answerFromPrompt($: Engine, question: Question, letter: string, text?: string): Promise<void> {
   const { ref, session } = question
   delivering.add(ref)
   try {
@@ -460,7 +476,7 @@ async function answerFromPrompt($: Engine, question: Item, letter: string, text?
   }
 }
 
-/** What the CLI says about each question a prompt refers to, or undefined when it names none. */
+/** What the CLI says about each item a prompt refers to, or undefined when it names none. */
 async function explain($: Engine, text: string): Promise<string | undefined> {
   try {
     const ran = await project($, ['inbox', 'context', '--session', await $.session.id()], text)
@@ -472,13 +488,22 @@ async function explain($: Engine, text: string): Promise<string | undefined> {
 }
 
 /**
- * Reads the questions whether or not the band is shown, then moves the band's
- * clock on and polls GitHub once the last load is old enough.
+ * Reads the inbox whether or not the band is shown, and brings a hidden band
+ * back for an item whose snooze ended since the last tick. A shown band moves
+ * its clock on, which returns that item to the list, and polls GitHub once
+ * the last load is old enough.
  */
 async function tick($: Engine): Promise<void> {
-  await checkInbox($)
-  if (!(await read($, isShown))) return
+  // Read before the store, so a snooze that ends while the store is read
+  // falls in the next tick's window.
   const time = await $.clock.now()
+  await checkInbox($)
+  const since = tickedAt ?? time
+  tickedAt = time
+  if (!(await read($, isShown))) {
+    if (wokeBetween(await read($, items), since, time).length > 0) show($)
+    return
+  }
   await update($, now, () => time)
   if (time - attemptedAt >= POLL_MS) await refresh($)
 }
@@ -542,6 +567,29 @@ function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
   return pr => `${isNameEnough ? pr.repo.split('/')[1] : pr.repo}#${pr.number}`
 }
 
+/**
+ * Runs the `project inbox` command one of the tools makes: the reference it
+ * prints, or why the tool call is refused. `instead` says where the agent
+ * turns when the command does not finish.
+ */
+async function post(
+  $: Engine,
+  args: string[] | { error: string },
+  instead: string,
+): Promise<{ ref: string } | { deny: string }> {
+  if (!Array.isArray(args)) return { deny: args.error }
+  let ran: Ran
+  try {
+    ran = await project($, args)
+  } catch (error) {
+    return { deny: `project did not finish (${messageOf(error)}); ${instead}` }
+  }
+  if (ran.exitCode === 65) return { deny: errorOf(ran) }
+  if (ran.exitCode !== 0) return { deny: `${errorOf(ran)}; run project upgrade` }
+  checkSoon($)
+  return { ref: ran.stdout.trim() }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -549,9 +597,12 @@ export const register: Register = on => {
       description: 'Show or hide Projector’s band of the pull requests your loops track',
       argumentHint: '[tracked file]',
     })
-    // A session whose engine cannot serve the tool keeps the band.
+    // A session whose engine cannot serve the tools keeps the band.
     await $.tool
       .register({ name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA, isDeferred: false })
+      .catch(() => undefined)
+    await $.tool
+      .register({ name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA, isDeferred: false })
       .catch(() => undefined)
     $.clock.every(TICK_MS, () => void tick($))
     soon($)
@@ -559,26 +610,28 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The tool asks through the CLI, so a question asked here and one asked
+  // The tools post through the CLI, so an item posted here and one posted
   // from the shell land in the same store.
   on('tool.call', { tool: ASK_TOOL }, async ($, e) => {
-    const args = askArguments(e, await $.session.id(), e.agentId)
-    if (!Array.isArray(args)) return { deny: args.error }
-    let ran: Ran
-    try {
-      ran = await project($, args)
-    } catch (error) {
-      return { deny: `project did not finish (${messageOf(error)}); ask in the conversation instead` }
-    }
-    if (ran.exitCode === 65) return { deny: errorOf(ran) }
-    if (ran.exitCode !== 0) return { deny: `${errorOf(ran)}; run project upgrade` }
-    const ref = ran.stdout.trim()
-    checkSoon($)
+    const posted = await post($, askArguments(e, await $.session.id(), e.agentId), 'ask in the conversation instead')
+    if ('deny' in posted) return posted
+    const { ref } = posted
     void $.ui.notify(`${ref} ${String(e.question)}`, { title: 'Projector question' }).catch(() => undefined)
     return {
       result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the question; ask it in the conversation instead' }))
+
+  on('tool.call', { tool: TELL_TOOL }, async ($, e) => {
+    const args = tellArguments(e, await $.session.id(), e.agentId)
+    const posted = await post($, args, 'tell the person in the conversation instead')
+    if ('deny' in posted) return posted
+    const { ref } = posted
+    void $.ui.notify(`${ref} ${String(e.notice)}`, { title: 'Projector notice' }).catch(() => undefined)
+    return {
+      result: `Posted ${ref}. It waits in Projector’s band until the person dismisses it; nothing comes back to you.`,
+    }
+  }).catch(() => ({ deny: 'Projector could not record the notice; tell the person in the conversation instead' }))
 
   // These hooks only watch: the catch hands back what the event settled to,
   // so a failure here never runs a tool twice or refuses anything.
@@ -672,15 +725,18 @@ export const register: Register = on => {
     const shown = current(await read($, snapshot))
     const time = await read($, now)
     const opened = await read($, drawer)
-    const asked = (await read($, items)).filter(question => isShownAt(question, time))
-    const open = asked.filter(question => question.answer === undefined).length
+    const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
+    const counts = (['question', 'notice'] as const).map(kind => {
+      const count = shownItems.filter(item => item.kind === kind && item.answer === undefined).length
+      return count === 0 ? undefined : `${count} ${kind}${count === 1 ? '' : 's'}`
+    })
     const label = labeler(shown.rows.map(row => row.pr))
     const reference = referencer(shown.rows.map(row => row.pr))
     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
     // A drawer starts where the titles do: past the label, `draft`, and a gap after each.
     const drawerIndent = labelWidth + 1 + 'draft'.length + 1
     const heading = [
-      open === 0 ? undefined : `${open} question${open === 1 ? '' : 's'}`,
+      ...counts,
       shown.fetchedAt === null ? undefined : `updated ${ago(secondsSince(time, shown.fetchedAt))}`,
     ]
       .filter(part => part !== undefined)
@@ -700,7 +756,7 @@ export const register: Register = on => {
       </Text>
     )
 
-    if (shown.rows.length === 0 && asked.length === 0) {
+    if (shown.rows.length === 0 && shownItems.length === 0) {
       return (
         <Box flexDirection="column">
           {divider}
@@ -722,7 +778,7 @@ export const register: Register = on => {
     // question's pull request, or the question's own file in the store when it
     // has none.
     const store = (session: string) => storeOf(env, session) ?? ''
-    const hrefOf = (question: Item) => {
+    const hrefOf = (question: Question) => {
       const pull = question.pr?.match(/^([^#]+)#(\d+)$/)
       return pull === null || pull === undefined
         ? `file://${encodeURI(`${store(question.session)}/${encodeURIComponent(question.ref)}.json`)}`
@@ -732,32 +788,29 @@ export const register: Register = on => {
     const link = (key: string, text: string, href: string, onPress: () => void) => (
       <Markdown key={key} text={`[${escaped(text)}](${href})`} onLinkPress={onPress} />
     )
-    // A question names its pull request as the band labels it, or in full
-    // when the band does not list it.
-    const pullOf = (question: Item) => {
-      const row = shown.rows.find(one => keyOf(one.pr) === question.pr?.toLowerCase())
-      return row === undefined ? (question.pr ?? '') : label(row.pr)
+    // An item names its pull request as the band labels it, or in full when
+    // the band does not list it.
+    const pullOf = (item: Item) => {
+      const row = shown.rows.find(one => keyOf(one.pr) === item.pr?.toLowerCase())
+      return row === undefined ? (item.pr ?? '') : label(row.pr)
     }
 
-    // The questions are a bulleted list below the pull requests, oldest
-    // first. A question's drawer numbers its options; choosing one puts the
-    // question and that answer in the prompt as text, for you to send or
-    // change, and sending it is what answers the question.
+    // The items are a list below the pull requests, oldest first: a question
+    // bulleted `-`, a notice `•`. A question's drawer numbers its options;
+    // choosing one puts the question and that answer in the prompt as text,
+    // for you to send or change, and sending it is what answers the question.
     // Each age sits in one column as wide as the widest, so the pull requests
     // before it end in one column too.
-    const ageWidth = Math.max(0, ...asked.map(question => span(secondsSince(time, question.postedAt)).length))
-    const drawQuestion = (question: Item) => {
+    const ageWidth = Math.max(0, ...shownItems.map(item => span(secondsSince(time, item.postedAt)).length))
+    const fill = (text: string) => {
+      $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
+    }
+    const drawAnswers = (question: Question) => {
       const { ref, answer } = question
-      const key = `item:${ref}`
       const isOpen = answer === undefined
-      const isDismissed = answer !== undefined && 'dismissed' in answer
       const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
       const typed = typedLetter(question)
       const href = hrefOf(question)
-      const pull = pullOf(question)
-      const fill = (text: string) => {
-        $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
-      }
       const propose = (answer: string) => {
         proposed = [...proposed.filter(proposal => proposal.ref !== ref), { ref, answer }]
         fill(`${proposalOf(question, answer)}\n`)
@@ -782,24 +835,76 @@ export const register: Register = on => {
         )
       }
 
+      return [
+        <Text key={`before-answers:${ref}`}> </Text>,
+        ...question.choices.map((choice, index) => {
+          const letter = letterAt(index)
+          return option(
+            letter,
+            <Text dimColor={!isOpen && letter !== chosen}>
+              {choice}
+              {index === 0 && <Text color="success"> (recommended)</Text>}
+              {letter === chosen && <Text color="success"> ✓</Text>}
+            </Text>,
+          )
+        }),
+        chosen === typed && answer !== undefined && 'text' in answer
+          ? option(
+              typed,
+              <Text>
+                {answer.text}
+                <Text color="success"> ✓</Text>
+              </Text>,
+            )
+          : isOpen &&
+            Input !== undefined &&
+            option(
+              typed,
+              <Input
+                key={`answer:${ref}.${typed}`}
+                placeholder="Type something"
+                submitLabel="answer"
+                onSubmit={(value: string) => {
+                  if (value.trim() !== '') propose(value.trim())
+                }}
+              />,
+            ),
+      ]
+    }
+    const drawItem = (item: Item) => {
+      const { ref, answer } = item
+      const key = `item:${ref}`
+      const isOpen = answer === undefined
+      const isDismissed = answer !== undefined && 'dismissed' in answer
+      const pull = pullOf(item)
+      const actions = [
+        { name: 'discuss', onPress: () => fill(`${quoteOf(item)} `) },
+        ...(isOpen
+          ? [
+              { name: 'dismiss', onPress: () => void act($, item, 'dismiss') },
+              { name: 'snooze', onPress: () => void act($, item, 'snooze') },
+            ]
+          : []),
+      ]
+
       return (
         <Box key={`line:${ref}`} flexDirection="column">
           <Box flexDirection="row" columnGap={1}>
-            {/* The whole question is one plain Button, so a press anywhere on
-                it opens its drawer: a click in fullscreen, Enter on the main
+            {/* The whole item is one plain Button, so a press anywhere on it
+                opens its drawer: a click in fullscreen, Enter on the main
                 screen. */}
             <Box flexGrow={1} flexShrink={1}>
-              {/* An open drawer keeps its question inverted, as the pointer draws it. */}
+              {/* An open drawer keeps its item inverted, as the pointer draws it. */}
               <Button key={key} plain onPress={() => toggle(key)}>
                 <Text dimColor={!isOpen} inverse={opened === key}>
-                  -{' '}
+                  {item.kind === 'notice' ? '•' : '-'}{' '}
                 </Text>
                 <Text dimColor={!isOpen} strikethrough={isDismissed} inverse={opened === key}>
-                  {question.subject}
+                  {item.subject}
                 </Text>
               </Button>
             </Box>
-            {!isOpen && question.deliveredAt === undefined && (
+            {!isOpen && item.deliveredAt === undefined && (
               <Box flexShrink={0}>
                 <Text color="subtle">sending</Text>
               </Box>
@@ -810,52 +915,24 @@ export const register: Register = on => {
               </Box>
             )}
             <Box flexShrink={0} width={ageWidth} justifyContent="flex-end">
-              <Text color="subtle">{span(secondsSince(time, question.postedAt))}</Text>
+              <Text color="subtle">{span(secondsSince(time, item.postedAt))}</Text>
             </Box>
           </Box>
           {opened === key && (
             <Box flexDirection="column" marginLeft={2}>
-              {/* A blank line sets the answers apart from the question, and the
-                  detail, when there is one, sits between two. */}
-              {question.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
-              {question.detail !== '' && <Markdown key={`detail:${ref}`} text={question.detail} />}
-              <Text key={`before-answers:${ref}`}> </Text>
-              {question.choices.map((choice, index) => {
-                const letter = letterAt(index)
-                return option(
-                  letter,
-                  <Text dimColor={!isOpen && letter !== chosen}>
-                    {choice}
-                    {index === 0 && <Text color="success"> (recommended)</Text>}
-                    {letter === chosen && <Text color="success"> ✓</Text>}
-                  </Text>,
-                )
-              })}
-              {chosen === typed && answer !== undefined && 'text' in answer
-                ? option(
-                    typed,
-                    <Text>
-                      {answer.text}
-                      <Text color="success"> ✓</Text>
-                    </Text>,
-                  )
-                : isOpen &&
-                  Input !== undefined &&
-                  option(
-                    typed,
-                    <Input
-                      key={`answer:${ref}.${typed}`}
-                      placeholder="Type something"
-                      submitLabel="answer"
-                      onSubmit={(value: string) => {
-                        if (value.trim() !== '') propose(value.trim())
-                      }}
-                    />,
-                  )}
+              {/* A blank line sets the item apart from its line, and the detail,
+                  when there is one, sits between two. */}
+              {item.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
+              {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
+              {item.kind === 'question' && drawAnswers(item)}
               <Text key={`before-buttons:${ref}`}> </Text>
               <Box flexDirection="row" columnGap={1}>
-                <Button key={`discuss:${ref}`} label="discuss" onPress={() => fill(`${quoteOf(question)} `)} />
-                {isOpen && <Button key={`dismiss:${ref}`} label="dismiss" onPress={() => void dismiss($, question)} />}
+                {actions.flatMap(({ name, onPress }, at) => [
+                  ...(at === 0 ? [] : [<Text key={`between:${ref}.${at}`} dimColor>|</Text>]),
+                  <Button key={`${name}:${ref}`} plain onPress={onPress}>
+                    <Text>{name}</Text>
+                  </Button>,
+                ])}
               </Box>
             </Box>
           )}
@@ -920,23 +997,23 @@ export const register: Register = on => {
       )
     }
 
-    // An open question's drawer has the band to itself, until it is closed or
-    // the question leaves the band. The divider steps aside too, so the
-    // question is the top row and the drawer has one more row before the
-    // engine, which caps the band below half the terminal, starts to scroll.
-    const focused = asked.find(question => opened === `item:${question.ref}`)
+    // An open item's drawer has the band to itself, until it is closed or the
+    // item leaves the band. The divider steps aside too, so the item is the
+    // top row and the drawer has one more row before the engine, which caps
+    // the band below half the terminal, starts to scroll.
+    const focused = shownItems.find(item => opened === `item:${item.ref}`)
     if (focused !== undefined) {
-      return <Box flexDirection="column">{drawQuestion(focused)}</Box>
+      return <Box flexDirection="column">{drawItem(focused)}</Box>
     }
 
-    // Otherwise the pull requests come first, then a blank line, then the questions.
+    // Otherwise the pull requests come first, then a blank line, then the items.
     return (
       <Box flexDirection="column">
         {divider}
         {shown.rows.map(drawRow)}
         {failure !== undefined && <Text color="error">{failure}</Text>}
-        {asked.length > 0 && shown.rows.length > 0 && <Text key="before-questions"> </Text>}
-        {[...asked].sort((a, b) => a.postedAt - b.postedAt).map(drawQuestion)}
+        {shownItems.length > 0 && shown.rows.length > 0 && <Text key="before-items"> </Text>}
+        {[...shownItems].sort((a, b) => a.postedAt - b.postedAt).map(drawItem)}
       </Box>
     )
   })

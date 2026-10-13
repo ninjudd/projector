@@ -625,7 +625,8 @@ def seconds(text: str) -> float:
 
 
 def add_inbox_parser(subcommands) -> None:
-    parser = subcommands.add_parser("inbox", help="ask the person a question, and answer and deliver it")
+    parser = subcommands.add_parser("inbox", help="put a question or a notice in the person's inbox, and answer, "
+                                                   "dismiss, snooze, and deliver it")
     commands = parser.add_subparsers(dest="inbox_command", required=True)
 
     def command(name: str, help_text: str) -> argparse.ArgumentParser:
@@ -644,6 +645,14 @@ def add_inbox_parser(subcommands) -> None:
     ask.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
     ask.add_argument("--agent", help="the asking subagent's id, when a subagent asks")
 
+    tell = command("tell", "check, number, and record a notice, and print its reference")
+    tell.add_argument("notice", help="the notice, in one line of at most 120 characters")
+    detail = tell.add_mutually_exclusive_group()
+    detail.add_argument("--detail", default="", help="the rest of the notice, as Markdown")
+    detail.add_argument("--detail-file", type=Path, help="read the detail from this file")
+    tell.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
+    tell.add_argument("--agent", help="the posting subagent's id, when a subagent posts")
+
     listing = command("list", "list open items: the session's, or every session's without one")
     listing.add_argument("--all", action="store_true", help="include delivered items")
 
@@ -654,8 +663,13 @@ def add_inbox_parser(subcommands) -> None:
     answer.add_argument("reference", help="the question's reference and the answer's letter, such as #337.3.a")
     answer.add_argument("--text", help="the typed answer, for the question's last letter")
 
-    dismiss = command("dismiss", "record that you dismissed a question")
+    dismiss = command("dismiss", "record that you dismissed a question or read a notice")
     dismiss.add_argument("reference")
+
+    snooze = command("snooze", "hide an open item for a while")
+    snooze.add_argument("reference")
+    snooze.add_argument("--for", dest="minutes", type=int, default=inbox.SNOOZE_MINUTES, metavar="MINUTES",
+                        help="minutes until it returns (default: 60); 0 wakes it now")
 
     claim = command("claim", "claim a recorded answer for delivery and print its token and text")
     claim.add_argument("reference")
@@ -1089,8 +1103,13 @@ def checkout_repo(checkout: Path) -> Optional[str]:
 
 
 def item_state(item: dict) -> str:
+    until = inbox.snoozed_until(item)
+    if until is not None:
+        return f"snoozed until {time.strftime('%H:%M', time.localtime(until / 1000))}"
     if not item.get("answer"):
         return "open"
+    if inbox.is_notice(item):
+        return "dismissed"
     if item.get("deliveredAt"):
         return f"delivered {inbox.answer_ref(item)}"
     if inbox.live_claim(item):
@@ -1104,10 +1123,15 @@ def print_item(item: dict) -> None:
         print(f"about {item['pr']}")
     if item.get("detail"):
         print(f"\n{item['detail']}\n")
-    for index, choice in enumerate(item["choices"]):
-        print(f"{chr(ord('a') + index)}. {choice}{' (recommended)' if index == 0 else ''}")
-    print(f"{inbox.typed_letter(item)}. type an answer with --text")
+    if not inbox.is_notice(item):
+        print_choices(item)
     print(item_state(item))
+
+
+def print_choices(question: dict) -> None:
+    for index, choice in enumerate(question["choices"]):
+        print(f"{chr(ord('a') + index)}. {choice}{' (recommended)' if index == 0 else ''}")
+    print(f"{inbox.typed_letter(question)}. type an answer with --text")
 
 
 def run_inbox(arguments: argparse.Namespace) -> int:
@@ -1119,6 +1143,11 @@ def run_inbox(arguments: argparse.Namespace) -> int:
                          arguments.option, detail=detail, pr=arguments.pr, agent=arguments.agent,
                          repo=checkout_repo(Path.cwd()))
         print(json_text({"item": item}) if json_output else item["ref"])
+    elif command == "tell":
+        detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
+        item = inbox.tell(inbox_session(arguments, True), arguments.notice, detail=detail, pr=arguments.pr,
+                          agent=arguments.agent, repo=checkout_repo(Path.cwd()))
+        print(json_text({"item": item}) if json_output else item["ref"])
     elif command == "list":
         session = inbox_session(arguments, False)
         names = [session] if session else inbox.sessions()
@@ -1128,7 +1157,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         if json_output:
             print(json_text({"items": rows}))
         for row in [] if json_output else rows:
-            columns = [row["ref"], item_state(row), row["subject"]]
+            columns = [row["ref"], row["kind"], item_state(row), row["subject"]]
             print("\t".join(columns if session else [row["session"], *columns]))
     elif command == "show":
         ref, _ = inbox.parse_reference(arguments.reference)
@@ -1144,6 +1173,10 @@ def run_inbox(arguments: argparse.Namespace) -> int:
                 else inbox.dismiss(session, ref))
         print(json_text({"item": item}) if json_output
               else f"{'answered' if command == 'answer' else 'dismissed'} {inbox.answer_ref(item)}")
+    elif command == "snooze":
+        ref, _ = inbox.parse_reference(arguments.reference)
+        item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
+        print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
     elif command == "claim":
         ref, _ = inbox.parse_reference(arguments.reference)
         item = inbox.claim(inbox_session(arguments, False), ref, arguments.renew)

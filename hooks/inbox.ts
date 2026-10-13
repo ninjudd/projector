@@ -1,9 +1,9 @@
 import type { AgentInfo, FsEntry } from 'claude-code'
 
-import type { Item } from './types'
+import type { Item, Question } from './types'
 import type { Env } from './parse'
 
-/** How long a delivered question stays in the band. */
+/** How long a delivered item stays in the band. */
 export const RESOLVED_MS = 60_000
 
 /** How long a claim lasts without renewal, as `project inbox claim` counts it. */
@@ -20,26 +20,40 @@ export const mayReference = (text: string) => /#\d+\.\d|\bq\d/.test(text)
 export const letterAt = (index: number) => String.fromCharCode('a'.charCodeAt(0) + index)
 
 /** The letter of a typed answer: the one after the last choice. */
-export const typedLetter = (question: Item) => letterAt(question.choices.length)
+export const typedLetter = (question: Question) => letterAt(question.choices.length)
 
-/** Whether the band still shows a question: open, being delivered, or delivered under a minute ago. */
-export const isShownAt = (question: Item, time: number) =>
-  question.deliveredAt === undefined || time - question.deliveredAt < RESOLVED_MS
+/** Whether an item is snoozed at a time: hidden until its `snoozedUntil`. */
+const isSnoozedAt = (item: Item, time: number) => item.snoozedUntil !== undefined && time < item.snoozedUntil
 
-/** Whether an answer waits for a deliverer: recorded, undelivered, and claimed by none that is live. */
-export const needsDelivery = (question: Item, time: number) =>
-  question.answer !== undefined &&
-  question.deliveredAt === undefined &&
-  (question.claim === undefined || time - question.claim.renewedAt >= CLAIM_MS)
+/**
+ * Whether the band shows an item: not snoozed, and open, being delivered, or
+ * delivered under a minute ago.
+ */
+export const isShownAt = (item: Item, time: number) =>
+  !isSnoozedAt(item, time) && (item.deliveredAt === undefined || time - item.deliveredAt < RESOLVED_MS)
 
-/** What the band puts in the prompt to discuss a question: its text, in quotes. */
-export const quoteOf = (question: Item) => `"${question.subject}"`
+/** The open items whose snooze ended after `since` and by `time`, which bring a hidden band back. */
+export const wokeBetween = (items: readonly Item[], since: number, time: number) =>
+  items.filter(
+    item =>
+      item.answer === undefined && item.snoozedUntil !== undefined && since < item.snoozedUntil && item.snoozedUntil <= time,
+  )
+
+/** Whether a question's answer waits for a deliverer: recorded, undelivered, and claimed by none that is live. */
+export const needsDelivery = (item: Item, time: number): item is Question =>
+  item.kind === 'question' &&
+  item.answer !== undefined &&
+  item.deliveredAt === undefined &&
+  (item.claim === undefined || time - item.claim.renewedAt >= CLAIM_MS)
+
+/** What the band puts in the prompt to discuss an item: its subject, in quotes. */
+export const quoteOf = (item: Item) => `"${item.subject}"`
 
 /** What the band puts in the prompt for an answer: the quoted question, a blank line, and the answer's text. */
-export const proposalOf = (question: Item, answer: string) => `${quoteOf(question)}\n\n${answer}`
+export const proposalOf = (question: Question, answer: string) => `${quoteOf(question)}\n\n${answer}`
 
 /** One answer a sent prompt gives: a choice's letter, or the typed letter and its text. */
-export type Given = { question: Item; letter: string; text?: string }
+export type Given = { question: Question; letter: string; text?: string }
 
 /** An answer a question's drawer put in the prompt. */
 export type Proposal = { ref: string; answer: string }
@@ -52,11 +66,12 @@ export type Proposal = { ref: string; answer: string }
  * one whose drawer last put that same answer in the prompt, `proposed`
  * holding them oldest first, and otherwise to the oldest, so two questions
  * never take one answer. A quoted question with more on its line, as discuss
- * leaves it, answers nothing.
+ * leaves it, answers nothing. Only questions take answers, snoozed ones
+ * included, so a quoted notice answers nothing either.
  */
-export function answersIn(text: string, questions: readonly Item[], proposed: readonly Proposal[] = []): Given[] {
-  const open = questions
-    .filter(question => question.answer === undefined)
+export function answersIn(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Given[] {
+  const open = items
+    .filter((item): item is Question => item.kind === 'question' && item.answer === undefined)
     .sort((one, other) => one.postedAt - other.postedAt)
   const found: { at: number; given: Given }[] = []
   const taken = new Set<string>()
@@ -79,23 +94,23 @@ export function answersIn(text: string, questions: readonly Item[], proposed: re
 }
 
 /** Names the subagent that asked, by its description and id when the session still lists it. */
-function whoAsked(question: Item, agents: readonly AgentInfo[]): string {
+function whoAsked(question: Question, agents: readonly AgentInfo[]): string {
   const agent = agents.find(one => one.id === question.agentId)
   return agent === undefined ? (question.agentId ?? '') : `${agent.description} (${agent.id})`
 }
 
 /** What the main loop reads beside a prompt that answers a subagent's question: whom to send it to. */
-export const relayNote = (question: Item, agents: readonly AgentInfo[]) =>
+export const relayNote = (question: Question, agents: readonly AgentInfo[]) =>
   `The subagent ${whoAsked(question, agents)} asked ${quoteOf(question)}; send it the answer this prompt gives.`
 
 /** The subagent that asked, while it can still read a message; undefined sends the answer to the main loop. */
-export function liveAgent(question: Item, agents: readonly AgentInfo[]): string | undefined {
+export function liveAgent(question: Question, agents: readonly AgentInfo[]): string | undefined {
   const agent = agents.find(one => one.id === question.agentId)
   return agent !== undefined && LIVE.has(agent.status) ? agent.id : undefined
 }
 
 /** What the main loop receives: the answer, and the subagent to relay it to when one asked. */
-export function forMainLoop(text: string, question: Item, agents: readonly AgentInfo[]): string {
+export function forMainLoop(text: string, question: Question, agents: readonly AgentInfo[]): string {
   if (question.agentId === undefined) return text
   return `${text}\n\nThe subagent ${whoAsked(question, agents)} asked this, and the answer could not reach it; send it this answer, or act on it yourself.`
 }
@@ -190,10 +205,50 @@ export function askArguments(
     `--session=${session}`,
     `--recommend=${recommendation}`,
     ...options.map(option => `--option=${option}`),
-    ...(detail === undefined || detail === '' ? [] : [`--detail=${detail}`]),
-    ...(pr === undefined || pr === '' ? [] : [`--pr=${pr}`]),
-    ...(agentId === undefined ? [] : [`--agent=${agentId}`]),
+    ...postedFlags(detail, pr, agentId),
     '--',
     question,
   ]
 }
+
+export const TELL_DESCRIPTION = [
+  'Tell the person something without stopping: it appears in Projector’s band above their prompt until they dismiss it.',
+  'Use it for the answer to a question they asked you, or for something you did that they should know about.',
+  'Write one short line of at most 120 characters, and put the rest in `detail`.',
+  'Name the pull request it is about in `pr`, as owner/repo#number.',
+  'Nothing comes back to you; when you need the person to decide something, use `ask` instead.',
+].join(' ')
+
+export const TELL_SCHEMA = {
+  type: 'object',
+  properties: {
+    notice: { type: 'string', description: 'What to tell the person, in one line of at most 120 characters.' },
+    detail: {
+      type: 'string',
+      description: 'The rest of what they should read, as Markdown; leave it out when the line says it all.',
+    },
+    pr: { type: 'string', description: 'The pull request the notice is about, as owner/repo#number.' },
+  },
+  required: ['notice'],
+  additionalProperties: false,
+}
+
+/** The arguments of `project inbox tell` for one call of the tool, or why the call cannot be one. */
+export function tellArguments(
+  input: Readonly<Record<string, unknown>>,
+  session: string,
+  agentId: string | undefined,
+): string[] | { error: string } {
+  const { notice, detail, pr } = input
+  if (!isText(notice)) return { error: '`notice` must be a string' }
+  if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
+  if (pr !== undefined && !isText(pr)) return { error: '`pr` must be a string such as owner/repo#123' }
+  return ['inbox', 'tell', `--session=${session}`, ...postedFlags(detail, pr, agentId), '--', notice]
+}
+
+/** The flags both tools pass when they have a value: the detail, the pull request, and the subagent. */
+const postedFlags = (detail: string | undefined, pr: string | undefined, agentId: string | undefined) => [
+  ...(detail === undefined || detail === '' ? [] : [`--detail=${detail}`]),
+  ...(pr === undefined || pr === '' ? [] : [`--pr=${pr}`]),
+  ...(agentId === undefined ? [] : [`--agent=${agentId}`]),
+]
