@@ -273,20 +273,20 @@ With a question's drawer open:
   drawer closes or the question leaves the band.
 - **The drawer.** A blank line, `detail` as `Markdown` and another blank
   line when there is detail, then the options, numbered from `1.`, one line
-  each. Each number is a `Markdown` link, drawn as a pull request's number
-  is, in a column of its own beside the option's text. A plain click on it
-  puts the question and that option in the prompt (§ 2.7); a ctrl, alt or
-  cmd click opens the question's pull request, or the question's own file
-  in the store when it has none, since `Markdown` draws only an `https:`,
-  `http:` or `file:` link as one. The first option, the recommendation,
-  ends `(recommended)` in the `success` color. The last number holds an
-  `Input` keyed by its answer's reference, such as `answer:#337.3.c`, with
-  the placeholder `Type something`, and Enter there fills the prompt the
-  same way; the mobile app draws no `Input`, so there the drawer leaves
-  that line out. After a blank line come **discuss** and **dismiss**, both
-  buttons. Nothing in the band has a hotkey: Claude Code presses a band
-  `Button` whose hotkey is a digit when that digit is typed first in an
-  empty prompt, so a hotkey would let `2 things first:` press it.
+  each. Each number is a `Markdown` link, in a column of its own beside the
+  option's text. A plain click on it puts the question and that option in
+  the prompt (§ 2.7); a ctrl, alt or cmd click opens the question's pull
+  request, or the question's own file in the store when it has none, since
+  `Markdown` draws only an `https:`, `http:` or `file:` link as one. The
+  first option, the recommendation, ends `(recommended)` in the `success`
+  color. The last number holds an `Input` keyed by its answer's reference,
+  such as `answer:#337.3.c`, with the placeholder `Type something`, and
+  Enter there fills the prompt the same way; the mobile app draws no
+  `Input`, so there the drawer leaves that line out. After a blank line come
+  **discuss** and **dismiss**, both buttons. Nothing in the band has a
+  hotkey: Claude Code presses a band `Button` whose hotkey is a digit when
+  that digit is typed first in an empty prompt, so a hotkey would let
+  `2 things first:` press it.
 - **An answered question's line.** The same line, dim, and struck through
   for a dismissed question. Until the answer is delivered, `sending`
   follows the question. Its drawer still opens, with the options dim and
@@ -439,8 +439,8 @@ settled.
   question takes the band to itself so its drawer reads without the rest.
 - **A Button for the question, links for the options.** A question's line
   is a plain `Button`, so a press anywhere on it opens the drawer, on the
-  main screen too. The options are `Markdown` links like the pull request
-  numbers, so they read as links without an underline drawn by hand.
+  main screen too. The options are `Markdown` links, so they read as links
+  without an underline drawn by hand.
 
 ## 4. Acceptance criteria
 
