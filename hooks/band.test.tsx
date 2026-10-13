@@ -877,6 +877,22 @@ test('asks through the tool, and the band lists the question below the pull requ
   await ui.unmount()
 })
 
+test('a pull request’s age and an item’s age end in one column', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  questionWorld(on, clock, [held({ postedAt: NOW - 12 * 60_000 })])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  // The pull request changed 5m ago and the question was posted 12m ago, so both ages take the wider one's width.
+  const ages = await Promise.all(['x/y#7', 'item:1'].map(key => ui.find({ key: `age:${key}` })))
+  expect(ages.map(age => [age?.text, age?.props.width, age?.props.justifyContent])).toEqual([
+    ['5m', 3, 'flex-end'],
+    ['12m', 3, 'flex-end'],
+  ])
+  await ui.unmount()
+})
+
 test('a blank line sets GitHub’s error apart from the items under it', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
