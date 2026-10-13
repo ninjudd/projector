@@ -1,0 +1,95 @@
+{
+ "version": 1,
+ "name": "Agent inbox plan",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 276,
+  "title": "Plan an inbox for an agent's questions and notices",
+  "head": "cfe69fb9ed53ec6fe41a445c81cd210465b706ae",
+  "headRef": "inbox-plan",
+  "base": "fbda71b3476c770991da011e2064515a86fd6125",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "An agent in Claude Code can already ask you a question without stopping. <code>project question ask</code> records the question in a store kept for the agent's session, Projector's band above the Claude Code prompt lists it, and your answer goes back to the agent. That work shipped in release 0.7.14 under the <code>questions</code> project.",
+   "An agent also has things to tell you that need no answer: the reply to something you asked it, or a report that it force-pushed a branch or declined a review finding. Today those land in the transcript and scroll away. This pull request adds a plan, <code>docs/projects/inbox/readme.md</code>, that gives them the same place to wait. It changes no code.",
+   "<ol><li><b>Rename.</b> <code>project question</code> becomes <code>project inbox</code>. The module, the store's directory, the JSON keys, and the record's fields are renamed with it, and nothing is migrated, because nobody depends on the old names yet.</li><li><b>Notices.</b> An item gets a <code>kind</code>: <code>question</code>, as today, or <code>notice</code>. An agent posts a notice with <code>project inbox tell</code> or a new <code>tell</code> tool. A notice has no options, and dismissing it marks it delivered at once, because nothing goes back to the agent.</li><li><b>Snoozing.</b> Either kind can be snoozed for an hour. The band hides it, and then shows it again as if it were just posted.</li></ol>",
+   "The plan is at <code>status: ready</code>, which claims that nothing blocking implementation is left open, and <code>priority: now</code>. It builds as a two-layer stack: the rename alone, then notices and snoozing."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the strip Projector's Claude Code plugin draws above the prompt. It lists tracked pull requests and, below them, open items.</li><li><b>Drawer</b>: the detail an item's line opens in the band, ending in its action buttons.</li><li><b>Store</b>: a session's directory of item files under <code>$XDG_STATE_HOME/projector/</code>, written only by the CLI under a lock.</li><li><b>Reference</b>: an item's name, such as <code>#337.4</code> for the fourth item about pull request #337, or <code>q2</code> for one about no pull request.</li><li><b>Delivered</b>: <code>deliveredAt</code> is set, meaning the agent has received the outcome. Delivered items fade from the band after a minute and are pruned past the newest 100.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>One Projector review, of <code>cfe69fb</code>, found two open findings:</p><ul class=\"tight\"><li>Dismissing a snoozed item keeps its <code>snoozedUntil</code>, so <code>list</code> reports it as snoozed and the band later wakes for a resolved item.</li><li>Layer 1 marks <code>questions</code> completed while three of its open questions are not carried into this plan.</li></ul><p class=\"note\">The validation gate passed at this head.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The inbox plan",
+   "kicker": "One new plan that renames the questions CLI and adds notices and snoozing",
+   "intro": [
+    "The plan follows the repository's plan layout: the problem, the solution with its CLI, store, tool, band, and file changes, the reasons for the design, acceptance criteria, cost, rollout, open questions, and background.",
+    "Read it against the code it renames. <code>src/projector/questions.py</code> holds the store and every command, <code>src/projector/cli.py</code> parses them, and <code>hooks/questions.ts</code> and <code>hooks/register.tsx</code> draw the band and serve the <code>ask</code> tool. The plan's claims about today's behavior come from those files."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "collapsed": false,
+     "note": "The whole plan. § 2 is the design, § 4 the acceptance criteria, § 6 the two-layer rollout, and § 7 the open questions.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 2,
+       "text": "<code>status: ready</code> claims that every question blocking implementation is answered or deliberately deferred. The four questions in § 7 are either about other hosts, which this plan leaves alone, or deferred until after layer 2."
+      },
+      {
+       "kind": "verify",
+       "line": 57,
+       "text": "§ 2.1 numbering: the CLI keeps one count per pull request and one <code>q</code> count in <code>counts.json</code>, so a notice taking the next number in the shared count gives <code>#337.4</code> after three questions. Checked against <code>ask</code> and <code>reference</code> in <code>src/projector/questions.py</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 102,
+       "text": "§ 2.2 <code>watch</code>: the deliverer and <code>watch</code> skip any item with <code>deliveredAt</code>, so a notice that gets <code>deliveredAt</code> when it is dismissed never reaches them. Checked against <code>undelivered</code> in <code>src/projector/questions.py</code> and <code>needsDelivery</code> in <code>hooks/questions.ts</code>."
+      },
+      {
+       "kind": "flag",
+       "line": 99,
+       "text": "§ 2.2 <code>dismiss</code> does not clear <code>snoozedUntil</code>, though <code>answer</code> does. An item snoozed in the band and then dismissed from a terminal lists as <code>snoozed until &lt;HH:MM&gt;</code>, and an hour later the band's wake check in § 2.5 brings the hidden band back for an item that is already resolved. Open review finding."
+      },
+      {
+       "kind": "verify",
+       "line": 172,
+       "text": "§ 2.5 plain buttons: Claude Code 2.1.296 declares a <code>plain</code> <code>Button</code> that draws as its label alone, so <code>discuss | dismiss | snooze</code> can replace today's bracketed buttons."
+      },
+      {
+       "kind": "verify",
+       "line": 190,
+       "text": "§ 2.6 file list: <code>git grep</code> finds no reference to <code>project question</code>, the <code>questions</code> module, or <code>projector/questions</code> outside the files listed here."
+      },
+      {
+       "kind": "flag",
+       "line": 204,
+       "text": "§ 2.6 marks <code>questions</code> completed in layer 1, but § 7 carries only two of its five open questions. Three are left with no active plan: opening a pull request's drawer on the main screen, Codex and Paseo views, and removing session directories after a session ends. Open review finding."
+      },
+      {
+       "kind": "context",
+       "line": 296,
+       "text": "§ 6: layer 1 changes no behavior, so a reviewer checks it by seeing every existing test pass under the new names. Layer 2 carries all the new behavior."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
