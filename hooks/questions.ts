@@ -1,7 +1,7 @@
 import type { AgentInfo, FsEntry } from 'claude-code'
 
-import type { Question, Row } from './types'
-import { keyOf, type Env } from './parse'
+import type { Question } from './types'
+import type { Env } from './parse'
 
 /** How long a delivered question stays in the band. */
 export const RESOLVED_MS = 60_000
@@ -22,10 +22,6 @@ export const letterAt = (index: number) => String.fromCharCode('a'.charCodeAt(0)
 /** The letter of a typed answer: the one after the last choice. */
 export const typedLetter = (question: Question) => letterAt(question.choices.length)
 
-/** The reference of what was chosen: `#337.3.a`, or the question's own when it was dismissed. */
-export const chosenRef = (question: Question) =>
-  question.answer !== undefined && 'letter' in question.answer ? `${question.ref}.${question.answer.letter}` : question.ref
-
 /** Whether the band still shows a question: open, being delivered, or delivered under a minute ago. */
 export const isShownAt = (question: Question, time: number) =>
   question.deliveredAt === undefined || time - question.deliveredAt < RESOLVED_MS
@@ -36,6 +32,44 @@ export const needsDelivery = (question: Question, time: number) =>
   question.deliveredAt === undefined &&
   (question.claim === undefined || time - question.claim.renewedAt >= CLAIM_MS)
 
+/** What the band puts in the prompt to discuss a question: its text, in quotes. */
+export const quoteOf = (question: Question) => `"${question.question}"`
+
+/** What the band puts in the prompt for an answer: the quoted question, a blank line, and the answer's text. */
+export const proposalOf = (question: Question, answer: string) => `${quoteOf(question)}\n\n${answer}`
+
+/** One answer a sent prompt gives: a choice's letter, or the typed letter and its text. */
+export type Given = { question: Question; letter: string; text?: string }
+
+/**
+ * The answers a sent prompt gives, as the band wrote them: for each open
+ * question whose quoted text ends its line, the choice whose text is the next
+ * line that is not blank, or else that line as a typed answer. A quoted
+ * question with more on its line, as discuss leaves it, answers nothing.
+ */
+export function answersIn(text: string, questions: readonly Question[]): Given[] {
+  return questions.flatMap(question => {
+    if (question.answer !== undefined) return []
+    const lead = `${quoteOf(question)}\n`
+    const at = text.indexOf(lead)
+    if (at === -1) return []
+    const said = (text.slice(at + lead.length).replace(/^\s*\n/, '').split('\n')[0] ?? '').trim()
+    if (said === '') return []
+    const index = question.choices.indexOf(said)
+    return [index === -1 ? { question, letter: typedLetter(question), text: said } : { question, letter: letterAt(index) }]
+  })
+}
+
+/** Names the subagent that asked, by its description and id when the session still lists it. */
+function whoAsked(question: Question, agents: readonly AgentInfo[]): string {
+  const agent = agents.find(one => one.id === question.agentId)
+  return agent === undefined ? (question.agentId ?? '') : `${agent.description} (${agent.id})`
+}
+
+/** What the main loop reads beside a prompt that answers a subagent's question: whom to send it to. */
+export const relayNote = (question: Question, agents: readonly AgentInfo[]) =>
+  `The subagent ${whoAsked(question, agents)} asked ${quoteOf(question)}; send it the answer this prompt gives.`
+
 /** The subagent that asked, while it can still read a message; undefined sends the answer to the main loop. */
 export function liveAgent(question: Question, agents: readonly AgentInfo[]): string | undefined {
   const agent = agents.find(one => one.id === question.agentId)
@@ -45,9 +79,7 @@ export function liveAgent(question: Question, agents: readonly AgentInfo[]): str
 /** What the main loop receives: the answer, and the subagent to relay it to when one asked. */
 export function forMainLoop(text: string, question: Question, agents: readonly AgentInfo[]): string {
   if (question.agentId === undefined) return text
-  const agent = agents.find(one => one.id === question.agentId)
-  const who = agent === undefined ? question.agentId : `${agent.description} (${agent.id})`
-  return `${text}\n\nThe subagent ${who} asked this, and the answer could not reach it; send it this answer, or act on it yourself.`
+  return `${text}\n\nThe subagent ${whoAsked(question, agents)} asked this, and the answer could not reach it; send it this answer, or act on it yourself.`
 }
 
 /** Where a session's questions live: `project question`'s store, found by the CLI's own rule. */
@@ -79,30 +111,6 @@ function refOf(name: string): string {
   } catch {
     return ''
   }
-}
-
-/**
- * The band's order: questions about no pull request it lists come first, in
- * the order they were asked, and each pull request's follow it, by number.
- */
-export function arrange(
-  rows: readonly Row[],
-  questions: readonly Question[],
-): { loose: Question[]; byPr: Map<string, Question[]> } {
-  const listed = new Set(rows.map(row => keyOf(row.pr)))
-  const loose: Question[] = []
-  const byPr = new Map<string, Question[]>()
-  for (const question of questions) {
-    const key = question.pr?.toLowerCase()
-    if (key === undefined || !listed.has(key)) {
-      loose.push(question)
-    } else {
-      byPr.set(key, [...(byPr.get(key) ?? []), question])
-    }
-  }
-  loose.sort((a, b) => a.askedAt - b.askedAt)
-  for (const each of byPr.values()) each.sort((a, b) => a.number - b.number)
-  return { loose, byPr }
 }
 
 /** A short age: `40s`, `5m`, `2h`, `3d`. */

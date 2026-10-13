@@ -431,7 +431,7 @@ type Options = { agents?: AgentInfo[]; drop?: string; isTurnRunning?: boolean }
 /** A session with a loop on x/y#7 and a store of questions beneath the plugin. */
 function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options: Options = {}) {
   const store = questionStore(clock, seed)
-  const { commands } = world(on, { [REVIEW]: 'x/y#7\n' }, PS, store.run)
+  const { commands, filled } = world(on, { [REVIEW]: 'x/y#7\n' }, PS, store.run)
   const registered: unknown[] = []
   const notified: string[] = []
   const toasts: string[] = []
@@ -470,7 +470,7 @@ function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options
     return { value: undefined }
   })
   const project = () => commands.filter(argv => argv[0] === 'project').map(argv => argv.slice(1).join(' '))
-  return { store, registered, notified, toasts, sent, submitted, project, release }
+  return { store, registered, notified, toasts, sent, submitted, filled, project, release }
 }
 
 async function startSession($: Engine, clock: Clock, isShown = true) {
@@ -483,7 +483,7 @@ async function startSession($: Engine, clock: Clock, isShown = true) {
 const running = (status: AgentInfo['status']): AgentInfo =>
   ({ id: 'agent-1', description: 'Fix #7', type: 'general-purpose', status }) as AgentInfo
 
-test('asks through the tool, and the band shows the question after its pull request', async ($, on) => {
+test('asks through the tool, and the band lists the question below the pull requests', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
@@ -509,6 +509,8 @@ test('asks through the tool, and the band shows the question after its pull requ
   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated (just now|\d+s ago)$/ })).toBeDefined()
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
+  // The line names the question's pull request as the band labels it.
+  expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'question:#7.1' })).toBeDefined()
   await ui.unmount()
 })
@@ -563,42 +565,60 @@ test('an idle session with no questions starts no project process', async ($, on
   await ui.unmount()
 })
 
-test('a letter records the answer, reaches the live subagent, and leaves the band a minute later', async ($, on) => {
+test('an option puts the question and its answer in the prompt, and sending it answers the question', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const session = questionWorld(on, clock, [held({ agentId: 'agent-1' })], { agents: [running('running')] })
+  const later = held({ ref: '#7.2', number: 2, question: 'Rebase first?', askedAt: NOW - 60_000 })
+  const session = questionWorld(on, clock, [held({ agentId: 'agent-1' }), later], { agents: [running('running')] })
   await startSession($, clock)
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'question:#7.1' })
+  // The open question has the band to itself.
+  expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   expect((await ui.find({ key: 'detail:#7.1' }))?.props.text).toBe('The loop caps retries at three.')
-  expect(await ui.find({ type: 'Button', key: 'answer:#7.1.b' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeDefined()
   expect((await ui.find({ type: 'Input', key: 'answer:#7.1.c' }))?.props.placeholder).toBe('Type something')
+  expect(await ui.find({ type: 'Button', key: 'discuss:#7.1' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeDefined()
   // A digit typed first in an empty prompt presses a band Button whose hotkey it is.
   for (const button of await ui.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
 
-  await ui.press({ key: 'answer:#7.1.a' })
-  expect(await ui.find({ type: 'Text', text: /^#7\.1\.a sending Decline the finding\?$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /1 question/ })).toBeUndefined()
+  // Choosing an option answers nothing yet: it fills the prompt.
+  await ui.press({ key: 'answer:#7.1.b', link: { href: SEVEN } })
+  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nAdd a budget\n'])
+  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
 
-  await clock.advance(1)
+  const text = 'Thanks.\n"Decline the finding?"\n\nAdd a budget\n'
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
-  expect(session.sent).toEqual([
-    { to: expect.stringContaining('agent-1'), text: 'ANSWER #7.1.a Decline the finding? → Decline it' },
+  expect(session.submitted).toEqual([
+    {
+      text,
+      context: ['The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the answer this prompt gives.'],
+    },
   ])
-  expect(session.submitted).toEqual([])
+  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
   expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^#7\.1\.a Decline the finding\?$/ })).toBeDefined()
+  // The prompt delivered it, so the band sends nothing more.
+  expect(session.sent).toEqual([])
 
+  // The resolved question still opens, its choice marked and nothing left to press.
+  expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
+  expect(await ui.find({ key: 'answer:#7.1.a' })).toBeUndefined()
+  expect(await ui.find({ type: 'Input', key: 'answer:#7.1.c' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeUndefined()
+
+  await ui.press({ key: 'question:#7.1' })
+  expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
   await clock.advance(60_000 + TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
   await ui.unmount()
 })
 
-test('a typed answer and a dismissal record what was given', async ($, on) => {
+test('a typed answer fills the prompt, discuss quotes the question, and dismiss resolves it', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held(), held({ ref: '#7.2', number: 2, question: 'Rebase first?' })])
@@ -607,51 +627,73 @@ test('a typed answer and a dismissal record what was given', async ($, on) => {
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'question:#7.1' })
   await ui.input({ key: 'answer:#7.1.c', text: 'keep the cap' })
+  await ui.press({ key: 'discuss:#7.1' })
+  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nkeep the cap\n', 'insert:"Decline the finding?" '])
+
+  // Text after the quoted question on its own line discusses it and answers nothing.
+  const discussed = '"Decline the finding?" what does the cap cover?'
+  await $.prompt.submit({ text: discussed, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+
+  await $.prompt.submit({ text: '"Decline the finding?"\n\nkeep the cap', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.store.store.get('#7.1')?.answer).toEqual(expect.objectContaining({ letter: 'c', text: 'keep the cap' }))
   expect(session.project()).toContain('question answer #7.1.c --text=keep the cap --session s1 --json')
+
+  await ui.press({ key: 'question:#7.1' })
   await ui.press({ key: 'question:#7.2' })
   await ui.press({ key: 'dismiss:#7.2' })
   expect(session.project()).toContain('question dismiss #7.2 --session s1 --json')
-
   await clock.advance(1)
   await clock.settle()
-  expect(session.submitted.map(one => one.text)).toEqual([
-    'ANSWER #7.1.c Decline the finding? → keep the cap',
-    'DISMISSED #7.2 Rebase first?',
-  ])
+  expect(session.submitted.map(one => one.text)).toContain('DISMISSED #7.2 Rebase first?')
   await ui.unmount()
 })
 
-test('an answer for a subagent that ended goes to the main loop, naming it', async ($, on) => {
+test('an answer from a terminal reaches the live subagent that asked', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const session = questionWorld(on, clock, [held({ agentId: 'agent-1' })], { agents: [running('completed')] })
-  await startSession($, clock)
-
-  const ui = await $.ui.mount(BAND)
-  await ui.press({ key: 'question:#7.1' })
-  await ui.press({ key: 'answer:#7.1.b' })
-  await clock.advance(1)
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [held({ agentId: 'agent-1', answer })], { agents: [running('running')] })
+  await startSession($, clock, false)
+  await clock.advance(TICK)
   await clock.settle()
+
+  expect(session.sent).toEqual([
+    { to: expect.stringContaining('agent-1'), text: 'ANSWER #7.1.a Decline the finding? → Decline it' },
+  ])
+  expect(session.submitted).toEqual([])
+  expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
+})
+
+test('an answer from a terminal for a subagent that ended goes to the main loop, naming it', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { letter: 'b', text: 'Add a budget', answeredAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [held({ agentId: 'agent-1', answer })], { agents: [running('completed')] })
+  await startSession($, clock, false)
+  await clock.advance(TICK)
+  await clock.settle()
+
   expect(session.sent).toEqual([])
   expect(session.submitted[0]?.text).toContain('ANSWER #7.1.b Decline the finding? → Add a budget')
   expect(session.submitted[0]?.text).toContain('The subagent Fix #7 (agent-1) asked this')
   expect(session.store.store.get('#7.1')?.deliveredAt).toBeDefined()
-  await ui.unmount()
 })
 
 test('a dropped submit reopens the question and says why', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const session = questionWorld(on, clock, [held()], { drop: 'a hook refused it' })
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [held({ answer })], { drop: 'a hook refused it' })
   await startSession($, clock)
-
-  const ui = await $.ui.mount(BAND)
-  await ui.press({ key: 'question:#7.1' })
-  await ui.press({ key: 'answer:#7.1.a' })
-  await clock.advance(1)
+  await clock.advance(TICK)
   await clock.settle()
+
   expect(session.toasts).toEqual(['projector: #7.1 did not reach its agent (a hook refused it); answer it again'])
   expect(session.store.store.get('#7.1')?.answer).toBeUndefined()
+  const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Button', key: 'question:#7.1' })).toBeDefined()
   await ui.unmount()
 })

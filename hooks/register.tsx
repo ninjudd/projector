@@ -7,15 +7,17 @@ import { expandPath, findWatchers, keyOf, parseTracked, type Env, type TrackedPr
 import {
   ASK_DESCRIPTION,
   ASK_SCHEMA,
-  arrange,
+  answersIn,
   askArguments,
-  chosenRef,
   forMainLoop,
   isShownAt,
   letterAt,
   liveAgent,
   mayReference,
   needsDelivery,
+  proposalOf,
+  quoteOf,
+  relayNote,
   signatureOf,
   span,
   storeOf,
@@ -409,17 +411,13 @@ async function checkQuestions($: Engine): Promise<void> {
 /** Checks the questions now rather than at the next tick. */
 const checkSoon = ($: Engine) => $.clock.after(1, () => void checkQuestions($))
 
-/** Records an answer from the band, a letter or typed text, or dismisses the question when no letter is given. */
-async function record($: Engine, question: Question, letter?: string, text?: string): Promise<void> {
+/** Dismisses a question from the band; a second press finds it dismissed and does nothing. */
+async function dismiss($: Engine, question: Question): Promise<void> {
   const { ref, session } = question
   if (answering.has(ref)) return
   answering.add(ref)
   try {
-    const args =
-      letter === undefined
-        ? ['question', 'dismiss', ref]
-        : ['question', 'answer', `${ref}.${letter}`, ...(text === undefined ? [] : [`--text=${text}`])]
-    const ran = await project($, [...args, '--session', session, '--json'])
+    const ran = await project($, ['question', 'dismiss', ref, '--session', session, '--json'])
     if (ran.exitCode === 0) {
       await replace($, questionOf(ran.stdout, session))
     } else if (ran.exitCode === 65) {
@@ -433,6 +431,30 @@ async function record($: Engine, question: Question, letter?: string, text?: str
     void $.ui.toast(`projector: ${messageOf(error)}`)
   } finally {
     answering.delete(ref)
+  }
+}
+
+/**
+ * Records an answer a sent prompt gave and marks it delivered, because the
+ * prompt itself carries it to the main loop. The band's own deliverer leaves
+ * the question alone meanwhile, so the agent hears the answer once.
+ */
+async function answerFromPrompt($: Engine, question: Question, letter: string, text?: string): Promise<void> {
+  const { ref, session } = question
+  delivering.add(ref)
+  try {
+    const typed = text === undefined ? [] : [`--text=${text}`]
+    const answered = await project($, ['question', 'answer', `${ref}.${letter}`, ...typed, '--session', session, '--json'])
+    if (answered.exitCode !== 0) return
+    const claimed = await project($, ['question', 'claim', ref, '--session', session, '--json'])
+    if (claimed.exitCode !== 0) return
+    const { token } = JSON.parse(claimed.stdout) as { token: string }
+    const ran = await project($, ['question', 'delivered', ref, '--claim', token, '--session', session, '--json'])
+    if (ran.exitCode === 0) await replace($, questionOf(ran.stdout, session))
+  } catch {
+    // An answer recorded but not marked delivered is the band's to deliver on a later tick.
+  } finally {
+    delivering.delete(ref)
   }
 }
 
@@ -587,9 +609,23 @@ export const register: Register = on => {
       return entered
     }
 
+    // An answer the band put in the prompt, now sent: the prompt carries it to
+    // the main loop, with a note naming the subagent that asked when one did,
+    // and the band records it once the prompt has entered.
+    const session = await $.session.id()
+    const given = answersIn(e.text, (await read($, questions)).filter(question => question.session === session))
+    const asked = given.filter(one => one.question.agentId !== undefined)
+    const agents = asked.length === 0 ? [] : await $.agent.list().catch(() => [])
+    const notes = asked.map(one => relayNote(one.question, agents))
+
     // A reference typed in the prompt reaches the agent with its question.
     const said = mayReference(e.text) ? await explain($, e.text) : undefined
-    return next(said === undefined ? e : { ...e, context: [...(e.context ?? []), said] })
+    const added = [...(said === undefined ? [] : [said]), ...notes]
+    const entered = await next(added.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...added] })
+    if (entered.drop === undefined) {
+      for (const one of given) void answerFromPrompt($, one.question, one.letter, one.text)
+    }
+    return entered
   }).catch(($, e, next) => next(e))
 
   // A turn may have pushed, replied or resolved threads.
@@ -622,6 +658,7 @@ export const register: Register = on => {
 
     const elements = $.ui.resolve(e)
     const { Box, Button, Markdown, Text } = elements
+    const env = await envOf($)
     // The mobile app draws no field, so there a question takes a letter or a dismissal.
     const Input = 'Input' in elements ? elements.Input : undefined
     const shown = current(await read($, snapshot))
@@ -671,90 +708,142 @@ export const register: Register = on => {
       )
     }
 
-    // A letter or a reference is a Button, which takes a click in fullscreen
-    // and Enter on the main screen, drawn plain and underlined as a link. It
-    // has no hotkey: a digit typed first in an empty prompt would press it.
-    const link = (key: string, text: string, onPress: () => void) => (
-      <Button key={key} plain onPress={onPress}>
-        <Text color="suggestion" underline>
-          {text}
-        </Text>
-      </Button>
+    // A question's numbered options are Markdown links, drawn as a pull
+    // request's number is: a plain click runs `onPress`, and a ctrl, alt or
+    // cmd click opens `href`. Markdown draws only an `https:`, `http:` or
+    // `file:` link as one, so an option links its question's pull request, or
+    // the question's own file in the store when it has none.
+    const store = (session: string) => storeOf(env, session) ?? ''
+    const hrefOf = (question: Question) => {
+      const pull = question.pr?.match(/^([^#]+)#(\d+)$/)
+      return pull === null || pull === undefined
+        ? `file://${encodeURI(`${store(question.session)}/${encodeURIComponent(question.ref)}.json`)}`
+        : `https://github.com/${pull[1] ?? ''}/pull/${pull[2] ?? ''}`
+    }
+    const escaped = (text: string) => text.replace(/[\\[\]*_`~]/g, '\\$&')
+    const link = (key: string, text: string, href: string, onPress: () => void) => (
+      <Markdown key={key} text={`[${escaped(text)}](${href})`} onLinkPress={onPress} />
     )
+    // A question names its pull request as the band labels it, or in full
+    // when the band does not list it.
+    const pullOf = (question: Question) => {
+      const row = shown.rows.find(one => keyOf(one.pr) === question.pr?.toLowerCase())
+      return row === undefined ? (question.pr ?? '') : label(row.pr)
+    }
 
+    // The questions are a bulleted list below the pull requests, oldest
+    // first. A question's drawer numbers its options; choosing one puts the
+    // question and that answer in the prompt as text, for you to send or
+    // change, and sending it is what answers the question.
+    // Each age sits in one column as wide as the widest, so the pull requests
+    // before it end in one column too.
+    const ageWidth = Math.max(0, ...asked.map(question => span(secondsSince(time, question.askedAt)).length))
     const drawQuestion = (question: Question) => {
-      const { ref } = question
+      const { ref, answer } = question
       const key = `question:${ref}`
-      const age = (
-        <Box flexShrink={0}>
-          <Text dimColor>{span(secondsSince(time, question.askedAt))}</Text>
-        </Box>
-      )
-
-      if (question.answer !== undefined) {
-        const isDismissed = 'dismissed' in question.answer
+      const isOpen = answer === undefined
+      const isDismissed = answer !== undefined && 'dismissed' in answer
+      const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
+      const typed = typedLetter(question)
+      const href = hrefOf(question)
+      const pull = pullOf(question)
+      const fill = (text: string) => {
+        $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
+      }
+      const option = (letter: string, content: JSX.Element) => {
+        const number = `${letter.charCodeAt(0) - 'a'.charCodeAt(0) + 1}.`
         return (
-          <Box key={`line:${ref}`} flexDirection="row" columnGap={1}>
-            <Box flexGrow={1} flexShrink={1}>
-              <Text dimColor wrap="truncate-end">
-                <Text strikethrough={isDismissed}>{chosenRef(question)}</Text>
-                {question.deliveredAt === undefined ? ' sending ' : ' '}
-                <Text strikethrough={isDismissed}>{question.question}</Text>
-              </Text>
+          <Box key={`option:${ref}.${letter}`} flexDirection="row" columnGap={1}>
+            <Box flexShrink={0}>
+              {isOpen ? (
+                link(`answer:${ref}.${letter}`, number, href, () =>
+                  fill(`${proposalOf(question, question.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? '')}\n`),
+                )
+              ) : (
+                <Text color={letter === chosen ? 'success' : undefined} dimColor={letter !== chosen}>
+                  {number}
+                </Text>
+              )}
             </Box>
-            {age}
+            <Box flexShrink={1}>{content}</Box>
           </Box>
         )
       }
 
-      const typed = typedLetter(question)
       return (
         <Box key={`line:${ref}`} flexDirection="column">
           <Box flexDirection="row" columnGap={1}>
-            <Box flexShrink={0}>{link(key, ref, () => toggle(key))}</Box>
+            {/* The whole question is one plain Button, so a press anywhere on
+                it opens its drawer: a click in fullscreen, Enter on the main
+                screen. */}
             <Box flexGrow={1} flexShrink={1}>
-              <Text wrap="truncate-end">{question.question}</Text>
+              {/* An open drawer keeps its question inverted, as the pointer draws it. */}
+              <Button key={key} plain onPress={() => toggle(key)}>
+                <Text dimColor={!isOpen} inverse={opened === key}>
+                  -{' '}
+                </Text>
+                <Text dimColor={!isOpen} strikethrough={isDismissed} inverse={opened === key}>
+                  {question.question}
+                </Text>
+              </Button>
             </Box>
-            {age}
+            {!isOpen && question.deliveredAt === undefined && (
+              <Box flexShrink={0}>
+                <Text color="subtle">sending</Text>
+              </Box>
+            )}
+            {pull !== '' && (
+              <Box flexShrink={0}>
+                <Text color="subtle">{pull}</Text>
+              </Box>
+            )}
+            <Box flexShrink={0} width={ageWidth} justifyContent="flex-end">
+              <Text color="subtle">{span(secondsSince(time, question.askedAt))}</Text>
+            </Box>
           </Box>
           {opened === key && (
-            <Box flexDirection="column" marginLeft={ref.length + 1}>
+            <Box flexDirection="column" marginLeft={2}>
+              {/* A blank line sets the answers apart from the question, and the
+                  detail, when there is one, sits between two. */}
+              {question.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
               {question.detail !== '' && <Markdown key={`detail:${ref}`} text={question.detail} />}
+              <Text key={`before-answers:${ref}`}> </Text>
               {question.choices.map((choice, index) => {
                 const letter = letterAt(index)
-                return (
-                  <Box key={`choice:${ref}.${letter}`} flexDirection="row" columnGap={1}>
-                    <Box flexShrink={0}>
-                      {link(`answer:${ref}.${letter}`, `${letter}.`, () => void record($, question, letter))}
-                    </Box>
-                    <Box flexShrink={1}>
-                      <Text>
-                        {choice}
-                        {index === 0 && <Text color="success"> (recommended)</Text>}
-                      </Text>
-                    </Box>
-                  </Box>
+                return option(
+                  letter,
+                  <Text dimColor={!isOpen && letter !== chosen}>
+                    {choice}
+                    {index === 0 && <Text color="success"> (recommended)</Text>}
+                    {letter === chosen && <Text color="success"> ✓</Text>}
+                  </Text>,
                 )
               })}
-              {Input !== undefined && (
-                <Box flexDirection="row" columnGap={1}>
-                  <Box flexShrink={0}>
-                    <Text>{typed}.</Text>
-                  </Box>
-                  <Box flexGrow={1}>
+              {chosen === typed && answer !== undefined && 'text' in answer
+                ? option(
+                    typed,
+                    <Text>
+                      {answer.text}
+                      <Text color="success"> ✓</Text>
+                    </Text>,
+                  )
+                : isOpen &&
+                  Input !== undefined &&
+                  option(
+                    typed,
                     <Input
                       key={`answer:${ref}.${typed}`}
                       placeholder="Type something"
                       submitLabel="answer"
                       onSubmit={(value: string) => {
-                        if (value.trim() !== '') void record($, question, typed, value.trim())
+                        if (value.trim() !== '') fill(`${proposalOf(question, value.trim())}\n`)
                       }}
-                    />
-                  </Box>
-                </Box>
-              )}
-              <Box>
-                <Button key={`dismiss:${ref}`} label="dismiss" onPress={() => void record($, question)} />
+                    />,
+                  )}
+              <Text key={`before-buttons:${ref}`}> </Text>
+              <Box flexDirection="row" columnGap={1}>
+                <Button key={`discuss:${ref}`} label="discuss" onPress={() => fill(`${quoteOf(question)} `)} />
+                {isOpen && <Button key={`dismiss:${ref}`} label="dismiss" onPress={() => void dismiss($, question)} />}
               </Box>
             </Box>
           )}
@@ -823,15 +912,26 @@ export const register: Register = on => {
       )
     }
 
-    // A question about a pull request the band lists follows it; any other
-    // question comes before the pull requests.
-    const { loose, byPr } = arrange(shown.rows, asked)
+    // An open question's drawer has the band to itself, until it is closed or
+    // the question leaves the band.
+    const focused = asked.find(question => opened === `question:${question.ref}`)
+    if (focused !== undefined) {
+      return (
+        <Box flexDirection="column">
+          {divider}
+          {drawQuestion(focused)}
+        </Box>
+      )
+    }
+
+    // Otherwise the pull requests come first, then a blank line, then the questions.
     return (
       <Box flexDirection="column">
         {divider}
-        {loose.map(drawQuestion)}
-        {shown.rows.flatMap(row => [drawRow(row), ...(byPr.get(keyOf(row.pr)) ?? []).map(drawQuestion)])}
+        {shown.rows.map(drawRow)}
         {failure !== undefined && <Text color="error">{failure}</Text>}
+        {asked.length > 0 && shown.rows.length > 0 && <Text key="before-questions"> </Text>}
+        {[...asked].sort((a, b) => a.askedAt - b.askedAt).map(drawQuestion)}
       </Box>
     )
   })

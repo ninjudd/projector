@@ -239,46 +239,71 @@ An agent in Claude Code asks you a question with Projector's `ask` tool,
 which the model sees as `mcp__projector__ask`, and keeps working. An agent
 that runs `project question ask` from the shell reaches the same questions,
 as [Ask and answer questions](cli.md#ask-and-answer-questions) describes.
-Each question appears in the band on the line after the pull request it is
-about, or above the pull requests when it is about none the band lists. The
-band appears when a question arrives, even after you hid it, and the divider
-counts the questions still open.
+The questions are a bulleted list below the pull requests, oldest first.
+Each line ends with the pull request the question is
+about, as the band labels it, and how long ago it was asked. The band appears
+when a question arrives, even after you hid it, and the divider counts the
+questions still open.
 
 ```text
 ──────────────────────────────────────── 2 questions · updated 12s ago [-]
-q1 Run project init to add the publish rule?                          2m
 #337 draft Retry failed webhook deliveries with backoff
-#337.3 Decline the finding about the retry budget?                    5m
-       The review asks for a retry budget per host. The loop caps retries
-       at three in total, which covers the case the finding names.
-       a. Decline it: the total cap already bounds retries to one host
-          (recommended)
-       b. Add a budget of two retries per host, and keep the total cap
-       c. [ Type something                                             ]
-       [ dismiss ]
-#337.2.a Rebase onto main before the fix?                             40s
+
+- Run project init to add the publish rule?                             2m
+- Decline the finding about the retry budget?                     #337  5m
 ```
 
-Click a question's reference to open its drawer: what you need to decide,
-then the answers, lettered. `a` is always the agent's recommendation, and the
-last letter takes an answer you type. Click a letter, or type an answer and
-press Enter. **dismiss** sets the question aside without an answer. On the
-main screen, press ctrl+x tab to move into the band, then Enter on a
-reference or a letter. The letters have no hotkeys, so a digit you type in an
-empty prompt never answers a question.
+Click anywhere on a question to open its drawer, and click it again to close
+it. On the main screen, press ctrl+x tab to move into the band, then Enter on
+a question. While its drawer is open, the question stays highlighted and has
+the band to itself:
 
-The band sends your answer to the agent that asked, as a message that starts
-`ANSWER #337.3.a`, or `DISMISSED #337.3` for a dismissal. A subagent that is
-still running receives it directly. Otherwise the main loop receives it as a
-prompt of its own once its turn ends, with the name of the subagent that
-asked. While the answer is on its way, `sending` follows its reference; then
-the line stays dim for a minute. An answer you give from a terminal with
-`project question answer` reaches the agent the same way, through the band of
-the session that asked.
+```text
+──────────────────────────────────────── 2 questions · updated 12s ago [-]
+- Decline the finding about the retry budget?                     #337  5m
 
-To talk a question over, type its reference in the prompt, such as `go with
-#337.3.b, but log each retry`. The agent receives the question and that
-answer beside your prompt.
+  The review asks for a retry budget per host. The loop caps retries at
+  three in total, which covers the case the finding names.
+
+  1. Decline it: the total cap already bounds retries to one host
+     (recommended)
+  2. Add a budget of two retries per host, and keep the total cap
+  3. [ Type something                                                    ]
+
+  [ discuss ] [ dismiss ]
+```
+
+The first option is always the agent's recommendation. Click an option, or
+type an answer and press Enter, and the band puts the question and that
+answer in your prompt, for you to send as it stands or change first:
+
+```text
+"Decline the finding about the retry budget?"
+
+Add a budget of two retries per host, and keep the total cap
+```
+
+Sending that prompt answers the question. The band finds each quoted question
+whose quote ends its line, and takes the next line that is not blank as its
+answer: the option with that text, or else an answer you typed. Your prompt
+is what carries the answer to the main loop, and when a subagent asked, the
+main loop also reads a note naming it, so it can pass the answer on.
+**discuss** puts only the quoted question in the prompt, followed by a space,
+so what you type after it on the same line talks the question over and
+answers nothing. **dismiss** sets the question aside without an answer.
+
+An answered question stays in the list, dim, for a minute after its answer is
+delivered; a dismissed one is struck through. Its drawer still opens and
+marks the answer given with `✓`.
+
+An answer you give from a terminal with `project question answer` reaches the
+agent through the band of the session that asked. A subagent that is still
+running receives it directly, as a message that starts `ANSWER`, or
+`DISMISSED` for a dismissal. Otherwise the main loop receives it as a prompt
+of its own once its turn ends, with the name of the subagent that asked, and
+`sending` follows the question until it has gone. A reference to a question
+in a prompt, such as `#337.3.b`, reaches the agent with the question it
+names.
 
 Shown or hidden, the band lists the session's question directory every 5
 seconds and runs `project question` only when the directory changed since

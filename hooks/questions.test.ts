@@ -2,20 +2,22 @@ import type { AgentInfo } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
 import {
-  arrange,
+  answersIn,
   askArguments,
-  chosenRef,
   forMainLoop,
   isShownAt,
   liveAgent,
   mayReference,
   needsDelivery,
+  proposalOf,
+  quoteOf,
+  relayNote,
   signatureOf,
   span,
   storeOf,
   typedLetter,
 } from './questions'
-import type { PullRequest, Question } from './types'
+import type { Question } from './types'
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0)
 
@@ -34,8 +36,6 @@ const question = (fields: Partial<Question> = {}): Question => ({
 const agent = (status: AgentInfo['status']): AgentInfo =>
   ({ id: 'agent-1', description: 'Fix #7', type: 'general-purpose', status }) as AgentInfo
 
-const pr = (repo: string, number: number) => ({ pr: { repo, number } as PullRequest, kinds: [] })
-
 const file = (name: string, mtimeMs: number) => ({ name, kind: 'file' as const, size: 10, mtimeMs, isLink: false })
 
 test('only text shaped like a reference starts the CLI', () => {
@@ -45,8 +45,33 @@ test('only text shaped like a reference starts the CLI', () => {
 
 test('letters run from the recommendation to the typed answer', () => {
   expect(typedLetter(question())).toBe('c')
-  expect(chosenRef(question({ answer: { letter: 'b', text: 'Add a budget', answeredAt: NOW } }))).toBe('#7.1.b')
-  expect(chosenRef(question({ answer: { dismissed: true, answeredAt: NOW } }))).toBe('#7.1')
+})
+
+test('the prompt carries a question in quotes, and an answer on a line of its own', () => {
+  expect(quoteOf(question())).toBe('"Decline the finding?"')
+  expect(proposalOf(question(), 'Add a budget')).toBe('"Decline the finding?"\n\nAdd a budget')
+})
+
+test('a sent prompt answers each question whose quote ends its line', () => {
+  const open = [question(), question({ ref: '#7.2', question: 'Rebase first?', choices: ['Merge main', 'Rebase'] })]
+  expect(answersIn('"Decline the finding?"\n\nAdd a budget\n', open)).toEqual([{ question: open[0], letter: 'b' }])
+  expect(answersIn('Both:\n"Decline the finding?"\nDecline it\n"Rebase first?"\n\nkeep it', open)).toEqual([
+    { question: open[0], letter: 'a' },
+    { question: open[1], letter: 'c', text: 'keep it' },
+  ])
+  // Discussing a question, or leaving its answer empty, answers nothing.
+  expect(answersIn('"Decline the finding?" what does the cap cover?', open)).toEqual([])
+  expect(answersIn('"Decline the finding?"\n\n', open)).toEqual([])
+  const answered = question({ answer: { letter: 'a', text: 'Decline it', answeredAt: NOW } })
+  expect(answersIn('"Decline the finding?"\n\nAdd a budget', [answered])).toEqual([])
+})
+
+test('the note beside an answer names the subagent that asked', () => {
+  const asked = question({ agentId: 'agent-1' })
+  expect(relayNote(asked, [agent('completed')])).toBe(
+    'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the answer this prompt gives.',
+  )
+  expect(relayNote(asked, [])).toBe('The subagent agent-1 asked "Decline the finding?"; send it the answer this prompt gives.')
 })
 
 test('a delivered question leaves the band after a minute', () => {
@@ -101,19 +126,6 @@ test('the band’s own renewal leaves the store’s signature alone', () => {
   expect(signatureOf(asked, renewing)).not.toBe(signatureOf(renewed, renewing))
   expect(signatureOf([file('.%237.1.json.abc', 1)], new Set())).toBe('')
   expect(signatureOf([file('100%.json', 1)], renewing)).toBe('100%.json 10 1')
-})
-
-test('questions follow their pull request; others come first', () => {
-  const rows = [pr('o/r', 7), pr('o/r', 9)]
-  const { loose, byPr } = arrange(rows, [
-    question({ ref: '#7.2', number: 2, askedAt: NOW - 1 }),
-    question({ ref: 'q1', number: 1, pr: null, askedAt: NOW - 3 }),
-    question({ ref: '#7.1', number: 1, pr: 'O/R#7', askedAt: NOW }),
-    question({ ref: '#5.1', number: 1, pr: 'o/r#5', askedAt: NOW - 2 }),
-  ])
-  expect(loose.map(one => one.ref)).toEqual(['q1', '#5.1'])
-  expect(byPr.get('o/r#7')?.map(one => one.ref)).toEqual(['#7.1', '#7.2'])
-  expect(byPr.get('o/r#9')).toBeUndefined()
 })
 
 test('ages are short', () => {
