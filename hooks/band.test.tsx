@@ -109,7 +109,12 @@ type Ran = ReturnType<typeof ran>
  */
 type Outcome = Ran | { deny: string }
 
-function world(on: On, files: Record<string, string>, ps = PS, project?: (argv: string[], stdin: string) => Outcome) {
+function world(
+  on: On,
+  files: Record<string, string>,
+  ps = PS,
+  project?: (argv: string[], stdin: string) => Outcome | Promise<Outcome>,
+) {
   const commands: string[][] = []
   const filled: string[] = []
   on('fs.stat', ($, e) => ({
@@ -119,8 +124,9 @@ function world(on: On, files: Record<string, string>, ps = PS, project?: (argv: 
   on('process.run', ($, e) => {
     commands.push([...e.argv])
     if (e.argv[0] === 'project' && project !== undefined) {
+      const answered = (outcome: Outcome) => ('deny' in outcome ? outcome : { value: outcome })
       const outcome = project([...e.argv], e.init?.stdin ?? '')
-      return 'deny' in outcome ? outcome : { value: outcome }
+      return outcome instanceof Promise ? outcome.then(answered) : answered(outcome)
     }
     return { value: ran(e.argv[0] === 'ps' ? ps : answer(e.argv.join(' '))) }
   })
@@ -361,6 +367,8 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
   const refusal: { code?: number; message?: string; rejection?: string } = {}
   /** How many of the next `list` commands fail. */
   const failing = { lists: 0 }
+  /** A write that lands while the next `list` runs, after that list read the store. */
+  const during: { list?: () => void } = {}
   let writes = 0
   let posted = 0
   const put = (item: Held) => {
@@ -385,7 +393,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       ? `ANSWER ${question.ref}.${question.answer.letter} ${question.subject} → ${question.answer.text}`
       : `DISMISSED ${question.ref} ${question.subject}`
 
-  const run = (argv: string[], stdin: string): Outcome => {
+  const run = (argv: string[], stdin: string): Outcome | Promise<Outcome> => {
     const [, group, command = '', ...args] = argv
     const time = clock.now()
     if (group !== 'inbox') return failed(2, `invalid choice: '${group ?? ''}'`)
@@ -395,7 +403,17 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         return failed(1, 'the store could not be read')
       }
       const items = [...store.values()].map(one => ({ ...one, session: SESSION }))
-      return ran(JSON.stringify({ schema_version: 2, items }))
+      const listed = ran(JSON.stringify({ schema_version: 2, items }))
+      const write = during.list
+      if (write === undefined) return listed
+      delete during.list
+      return clock
+        .sleep(10)
+        .then(() => {
+          write()
+          return clock.sleep(10)
+        })
+        .then(() => listed)
     }
     if (command === 'ask' || command === 'tell') {
       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
@@ -472,7 +490,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       isLink: false,
     }))
 
-  return { run, files, store, refusal, failing }
+  return { run, files, store, refusal, failing, during, write: put }
 }
 
 type Options = { agents?: AgentInfo[]; drop?: string; isTurnRunning?: boolean }
@@ -1024,6 +1042,32 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
   expect(await woken.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
+  await woken.unmount()
+})
+
+test('a snooze ended while a tick reads the store brings a hidden band back', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held({ snoozedUntil: NOW + HOUR })])
+  await startSession($, clock)
+  await $.command.run(COMMAND)
+  await clock.advance(TICK)
+  await clock.settle()
+
+  // `snooze --for 0` lands after the next tick's `list` read the store, before that list returns.
+  session.store.during.list = () => session.store.write({ ...held(), snoozedUntil: clock.now() })
+  session.store.write(held({ snoozedUntil: NOW + HOUR }))
+  await clock.advance(TICK)
+  await clock.settle()
+  const hidden = await $.ui.mount(BAND)
+  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  await hidden.unmount()
+
+  await clock.advance(2 * TICK)
+  await clock.settle()
+  const woken = await $.ui.mount(BAND)
+  expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
+  expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   await woken.unmount()
 })
 

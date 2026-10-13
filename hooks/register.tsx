@@ -494,8 +494,10 @@ async function explain($: Engine, text: string): Promise<string | undefined> {
  * the last load is old enough.
  */
 async function tick($: Engine): Promise<void> {
-  await checkInbox($)
+  // Read before the store, so a snooze that ends while the store is read
+  // falls in the next tick's window.
   const time = await $.clock.now()
+  await checkInbox($)
   const since = tickedAt ?? time
   tickedAt = time
   if (!(await read($, isShown))) {

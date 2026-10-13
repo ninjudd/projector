@@ -374,7 +374,8 @@ sections above leave open or state loosely:
 - **Waking counts from the band's previous tick.** The first tick after the
   hooks module loads wakes nothing. An item whose snooze ended while no copy
   of the module ran returns to the list, but does not bring back a hidden
-  band.
+  band. A tick reads the clock before the store, so a snooze that ends
+  while the store is read wakes on the next tick.
 - **`--for 0` ends a snooze now rather than removing it.** It sets
   `snoozedUntil` to the current time, so the band's next tick sees the item
   wake and brings back a band you hid, as it does when a snooze runs out.
