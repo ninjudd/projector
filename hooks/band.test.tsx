@@ -416,6 +416,8 @@ test('says why GitHub failed for a loop added after the band loaded with nothing
 
 const SESSION = 's1'
 const STORE = `${HOME}/.local/state/projector/inbox/${SESSION}`
+/** What the CLI says, exiting 75, when another command holds the store's lock. */
+const BUSY = `another command holds ${STORE}/.lock; try again once it finishes`
 const TICK = 5_000
 
 type HeldQuestion = Omit<Question, 'session'>
@@ -542,7 +544,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     if (item === undefined) return failed(66, `no item ${ref}`)
     if (failing.locks > 0) {
       failing.locks -= 1
-      return failed(75, `another command holds ${STORE}/.lock; try again once it finishes`)
+      return failed(75, BUSY)
     }
     if (item.answer !== undefined && (command === 'answer' || command === 'dismiss' || command === 'snooze')) {
       return failed(65, `${ref} is already answered`)
@@ -694,6 +696,10 @@ test('refuses what the CLI refuses, asks an old CLI to upgrade, and says when it
   Object.assign(session.store.refusal, { code: 65, message: 'the question must be one line; put the rest in --detail' })
   const refused = await $.tool.call(ask)
   expect(refused.deny ?? refused.text).toBe('the question must be one line; put the rest in --detail')
+
+  Object.assign(session.store.refusal, { code: 75, message: BUSY })
+  const busy = await $.tool.call(ask)
+  expect(busy.deny ?? busy.text).toBe(BUSY)
 
   Object.assign(session.store.refusal, { code: 2, message: "error: argument command: invalid choice: 'inbox'" })
   const old = await $.tool.call(ask)
@@ -1052,6 +1058,10 @@ test('the tell tool refuses what the CLI refuses, and says when it hangs', async
   const refused = await $.tool.call(tell)
   expect(refused.deny ?? refused.text).toBe('the notice must be one line; put the rest in --detail')
 
+  Object.assign(session.store.refusal, { code: 75, message: BUSY })
+  const busy = await $.tool.call(tell)
+  expect(busy.deny ?? busy.text).toBe(BUSY)
+
   Object.assign(session.store.refusal, { code: undefined, rejection: 'project timed out after 15000 ms' })
   const hung = await $.tool.call(tell)
   expect(hung.deny ?? hung.text).toMatch(/^project did not finish \(.*\); tell the person in the conversation instead$/)
@@ -1155,8 +1165,7 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
     await ui.press({ key: `${name}:#7.1` })
     await clock.settle()
   }
-  const busy = `projector: another command holds ${STORE}/.lock; try again once it finishes`
-  expect(session.toasts).toEqual([busy, busy])
+  expect(session.toasts).toEqual([`projector: ${BUSY}`, `projector: ${BUSY}`])
   expect(session.store.store.get('#7.1')).toEqual(held())
   expect(await ui.find({ type: 'Button', key: 'dismiss:#7.1' })).toBeDefined()
   await ui.unmount()
