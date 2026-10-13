@@ -1516,16 +1516,23 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
   await hidden.unmount()
 })
 
-test('a sent prompt that quotes a notice answers nothing', async ($, on) => {
+test('a sent prompt that quotes a notice answers nothing, and closes its drawer', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [notice()])
   await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'item:2' })
+  expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeDefined()
 
   await $.prompt.submit({ text: `"${FORCE_PUSHED}"\n\nThanks`, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.project().filter(command => /^inbox (answer|dismiss|claim)/.test(command))).toEqual([])
   expect(session.store.store.get('2')?.answer).toBeUndefined()
+  // The notice stays in the band, but the reply is done with its drawer.
+  expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+  await ui.unmount()
 })
 
 test('a snoozed item read at the start leaves a hidden band hidden until its time', async ($, on) => {

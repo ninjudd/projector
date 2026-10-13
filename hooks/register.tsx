@@ -706,9 +706,10 @@ export const register: Register = on => {
     // a question it is still waiting on.
     const session = await $.session.id()
     const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
-    const given = isYours
-      ? answersIn(e.text, (await read($, items)).filter(question => question.session === session), proposed)
-      : []
+    const mine = isYours ? (await read($, items)).filter(item => item.session === session) : []
+    const given = answersIn(e.text, mine, proposed)
+    // A reply to a notice answers nothing, but it is done with the notice's drawer.
+    const replied = mine.filter(item => item.kind === 'notice' && e.text.includes(quoteOf(item)))
     proposed = proposed.filter(proposal => !given.some(one => one.question.ref === proposal.ref))
     const asked = given.filter(one => one.question.agentId !== undefined)
     const agents = asked.length === 0 ? [] : await $.agent.list().catch(() => [])
@@ -719,6 +720,7 @@ export const register: Register = on => {
         void closeDrawer($, `item:${one.question.ref}`).catch(() => undefined)
         void answerFromPrompt($, one.question, one.letter, one.text)
       }
+      for (const notice of replied) void closeDrawer($, `item:${notice.ref}`).catch(() => undefined)
     }
     return entered
   }).catch(($, e, next) => next(e))

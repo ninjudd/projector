@@ -346,9 +346,10 @@ Under the options, a question's drawer has three actions:
 - **snooze** hides the question for an hour.
 
 A notice's drawer shows its detail, then the same `discuss | dismiss |
-snooze`. **discuss** puts the quoted notice in the prompt, and a prompt that
-quotes a notice answers nothing. **dismiss** clears the notice once you have
-read it, and nothing goes back to the agent.
+snooze`. **discuss** puts the quoted notice in the prompt. A prompt you send
+that quotes a notice answers nothing, but it closes the notice's drawer; the
+notice stays in the band until you dismiss it. **dismiss** clears the notice
+once you have read it, and nothing goes back to the agent.
 
 A snoozed item leaves the band and the divider's counts at once. When its
 hour passes, it returns to the list, and the band appears if you hid it. To

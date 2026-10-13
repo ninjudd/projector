@@ -505,7 +505,9 @@ goes away.
   the quote, the band closes that question's drawer if it is the open
   one, so the band shows its list again. Pressing an option fills the
   prompt and leaves the drawer open until you send, and **discuss** leaves
-  it open too, so the options and detail stay in view while you type.
+  it open too, so the options and detail stay in view while you type. A
+  sent reply that quotes a notice closes that notice's drawer the same way,
+  though it answers nothing and the notice stays until it is dismissed.
 - **A quote may end in spaces or tabs.** When the band reads a sent
   prompt, a quoted question followed by spaces or tabs and then a line
   break still ends its line, so the answer under it is read. You cannot
