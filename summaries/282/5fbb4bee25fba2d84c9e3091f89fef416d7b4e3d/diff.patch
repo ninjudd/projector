@@ -1,0 +1,486 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 9045bf05..d397ca7a 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -120,7 +120,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 5 -->
++<!-- projector:begin 6 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -162,7 +162,7 @@ the plugin, the rest of this section still applies.
+ Build each change you will open a pull request for with the `implement`
+ skill, `/projector:implement` in Claude Code or `$implement` in Codex,
+ whether it follows a plan under `docs/projects` or only a description,
+-however small. Its hand-over opens the pull request and starts a fix loop on
++however small. Its hand-over opens the pull request and starts a watch loop on
+ it, so review findings are fixed as they arrive rather than waiting for
+ someone to notice that nothing is fixing them.
+ 
+diff --git a/README.md b/README.md
+index 7aa98ebc..accff23c 100644
+--- a/README.md
++++ b/README.md
+@@ -64,7 +64,7 @@ query time. Projector never writes a tracked status index.
+ The plugin gives Claude Code and Codex the same skills: `spec`, `implement`,
+ and `finish` a project, where `implement` also builds a small change from a
+ description; `review-pr` to review a pull request once; `fix-pr` to fix its
+-findings and merge conflicts once; `start-review-loop` and `start-fix-loop`
++findings and merge conflicts once; `start-review-loop` and `start-watch-loop`
+ to run those two on every pull request continuously; `summarize-pr`, which
+ summarizes a pull request's changes as a guided review page; and `write`,
+ which writes or revises any prose so that it follows Projector's writing
+diff --git a/docs/cli.md b/docs/cli.md
+index 4dd8d32b..61ef791f 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -44,7 +44,7 @@ what it did to each:
+   `gh stack` is unavailable, and keep every layer on the current head of the
+   one below so the stack can merge as a unit. Its last part applies only
+   where the Projector plugin is installed: build every change with the
+-  `implement` skill, so a fix loop starts on its pull request, and open every
++  `implement` skill, so a watch loop starts on its pull request, and open every
+   pull request as a draft until a clean review marks it ready. `init`
+   appends the section to an existing file or creates the file
+   with only that section, and refreshes the section when it falls behind the
+@@ -533,7 +533,7 @@ These are the keys Projector reads today:
+ | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+-| `fix.auto_start` | boolean | `true` | `implement`, to start `start-fix-loop` on each pull request it opens, or add the pull request to the fix loop the conversation already runs; `false` leaves starting the loop to you |
++| `watch.auto_start` | boolean | `true` | `implement`, to start `start-watch-loop` on each pull request it opens, or add the pull request to the watch loop the conversation already runs; `false` leaves starting the loop to you |
+ 
+ `review.allow_approve` is off unless it is exactly `true`; an unset key means
+ `false` rather than a question to ask. It never applies to a review of your own
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 0d8e32e3..67b2fd7b 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -13,7 +13,7 @@ instructions and supporting scripts without a generated copy or host-specific
+ fork.
+ 
+ The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
+-`start-review-loop`, `start-fix-loop`, `summarize-pr`, and `write`.
++`start-review-loop`, `start-watch-loop`, `summarize-pr`, and `write`.
+ `summarize-pr` summarizes a pull request's changes as a guided review page.
+ Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
+ `$<skill>`.
+@@ -26,7 +26,7 @@ install docs`.
+ `start-review-loop` runs it on every new head of your pull requests and of
+ those that request your review. `fix-pr` answers one pull request's
+ findings, verifying each by the same protocol, and merges the base into a
+-branch that conflicts with it; `start-fix-loop` runs it, one subagent per
++branch that conflicts with it; `start-watch-loop` runs it, one subagent per
+ pull request, whenever its watcher reports work on one this conversation
+ owns. `implement` starts that loop on every pull request it opens, or adds
+ the pull request to the loop the conversation already runs,
+@@ -36,7 +36,7 @@ running as a subagent hands its pull request up, through every subagent
+ above it, to that conversation, which starts or joins the loop on it, and a
+ subagent asked to start the loop hands that request up the same way. Where
+ the host cannot keep the loop running, `implement` says so when it hands the
+-pull request over. Set `fix.auto_start = false` in `.projector.toml` to
++pull request over. Set `watch.auto_start = false` in `.projector.toml` to
+ start the loop yourself instead. `fix-pr` also implements or defers each
+ suggestion a review lists. While it builds a change that no review has read,
+ such as a
+@@ -65,11 +65,11 @@ When dependent work needs more than one pull request to stay reviewable,
+ GitHub CLI extension, and `fix-pr` carries a fix on a lower layer up through
+ the layers above it right away. Every layer stays on the current head of the
+ layer below it, so you can merge the whole stack, or any number of layers
+-from the bottom up, in one step from GitHub, and `start-fix-loop` reports
++from the bottom up, in one step from GitHub, and `start-watch-loop` reports
+ which of them are ready to merge together. The extension is optional.
+ Without it, or in a repository that does not have stacks enabled,
+ `implement` chains the pull requests by base branch and tells you once, and
+-`fix-pr` and `start-fix-loop` find a stack's layers from those base
++`fix-pr` and `start-watch-loop` find a stack's layers from those base
+ branches. Install it with `gh extension install github/gh-stack` to get
+ real stacks.
+ 
+@@ -191,7 +191,7 @@ session starts a loop's watcher for the first time.
+ 
+ Each line is the pull request's number, `draft` or `ready`, the title, and,
+ when the pull request has them, a merge conflict, a change request, or
+-unresolved review threads. A pull request that both a `start-fix-loop`
++unresolved review threads. A pull request that both a `start-watch-loop`
+ watcher, `watch-threads.sh`, and a `start-review-loop` watcher,
+ `watch-prs.sh`, track is listed once. Only the title shortens on a narrow
+ terminal. The divider says how long ago the band reloaded, and Claude Code's
+diff --git a/docs/projects/questions/readme.md b/docs/projects/questions/readme.md
+index 6ac0e17f..f833478b 100644
+--- a/docs/projects/questions/readme.md
++++ b/docs/projects/questions/readme.md
+@@ -19,7 +19,7 @@ beside the pull request it is about. The implementation follows #269.
+ ## 1. Problem
+ 
+ When a loop's subagent needs a decision from you, it has nowhere to put it
+-but the conversation. `start-fix-loop` and `start-review-loop` both say "a
++but the conversation. `start-watch-loop` and `start-review-loop` both say "a
+ question for the user comes back to the main loop to ask", and the subagent
+ goes on with other work meanwhile. The main loop then asks in the transcript,
+ as a line of text. `review-pr` and `summarize-pr` do the same when they need
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 2830afbe..dfcff0c8 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -13,7 +13,7 @@ const REVIEW_COMMAND = 'scripts/watch-prs.sh --tracked ~/loops/review/tracked --
+ const PS = [
+   `/bin/zsh -c eval 'scripts/watch-prs.sh --tracked "$HOME/loops/review/tracked"'`,
+   `bash scripts/watch-prs.sh --tracked ${REVIEW} --state ${HOME}/loops/review/state`,
+-  `bash /plugin/skills/start-fix-loop/scripts/watch-threads.sh --tracked ${WATCH} --state s`,
++  `bash /plugin/skills/start-watch-loop/scripts/watch-threads.sh --tracked ${WATCH} --state s`,
+   '',
+ ].join('\n')
+ 
+diff --git a/hooks/parse.test.ts b/hooks/parse.test.ts
+index 0a341b7d..1f41b79d 100644
+--- a/hooks/parse.test.ts
++++ b/hooks/parse.test.ts
+@@ -15,9 +15,9 @@ describe('findWatchers', () => {
+ 
+   test('reads a fix watcher behind cd, quotes and a variable script path', () => {
+     const command =
+-      'cd /repo && "$ROOT/skills/start-fix-loop/scripts/watch-threads.sh" --tracked "$HOME/fix loop/tracked" --state s'
++      'cd /repo && "$ROOT/skills/start-watch-loop/scripts/watch-threads.sh" --tracked "$HOME/watch loop/tracked" --state s'
+     expect(findWatchers(command, env)).toEqual([
+-      { kind: 'watching', tracked: '/home/ada/fix loop/tracked', written: '$HOME/fix loop/tracked' },
++      { kind: 'watching', tracked: '/home/ada/watch loop/tracked', written: '$HOME/watch loop/tracked' },
+     ])
+   })
+ 
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index ea14b05c..f2dd02ad 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -10,7 +10,7 @@ Merge its base when the branch conflicts, and answer every outstanding
+ finding with a pushed fix or a declined reply. Implement or defer each
+ suggestion a review lists, and hold the pull request in draft while you
+ build a change no review has read. The fix runs once and starts no watcher.
+-`start-fix-loop` runs this skill whenever its watcher reports work on a pull
++`start-watch-loop` runs this skill whenever its watcher reports work on a pull
+ request.
+ 
+ ## Choose the pull request
+diff --git a/skills/implement/SKILL.md b/skills/implement/SKILL.md
+index d8f4b5f5..c29c85e8 100644
+--- a/skills/implement/SKILL.md
++++ b/skills/implement/SKILL.md
+@@ -69,7 +69,7 @@ nearly every change:
+   for.
+ 
+ Follow `../guidelines.md`, the code guidelines every Projector skill shares.
+-The review loop reads your head against them and the fix loop follows them in
++The review loop reads your head against them and the watch loop follows them in
+ each fix, so a rule skipped here comes back as a finding citing the section
+ you skipped. Its first rule is about comments: write code that needs none,
+ simplify a stretch before you explain it, and add a comment only to preserve a
+@@ -157,37 +157,37 @@ and point at the test that covers it. `gh stack submit` writes each layer's
+ body too, and it is the wrong body; replace it as
+ [Stack dependent work](#stack-dependent-work) describes.
+ 
+-Then start the fix loop on the pull request, so review findings are fixed as
++Then start the watch loop on the pull request, so review findings are fixed as
+ they arrive instead of waiting for the user to notice that nothing is fixing
+ them. Only the top-level conversation, the one the user talks to, starts or
+-joins a fix loop. A subagent's processes end when it returns, and the
++joins a watch loop. A subagent's processes end when it returns, and the
+ conversation that started it cannot see a loop it left behind, so it would
+-start a second one. When you run as a subagent, start no fix loop and join
++start a second one. When you run as a subagent, start no watch loop and join
+ none: hand the pull request up with your result. The conversation that
+ started you may be a subagent too, so each one hands it up in turn until it
+ reaches the top-level conversation. That conversation treats a pull request
+-opened below it as one it opened itself, and starts its fix loop on it or
++opened below it as one it opened itself, and starts its watch loop on it or
+ appends it to the loop it already runs.
+ 
+-The top-level conversation starts no fix loop when either of these holds:
++The top-level conversation starts no watch loop when either of these holds:
+ 
+-- `project config get fix.auto_start --default true` prints `false`.
++- `project config get watch.auto_start --default true` prints `false`.
+ - The host cannot keep a process running after this turn.
+ 
+-Otherwise run `../start-fix-loop/SKILL.md` with the pull request, and every
++Otherwise run `../start-watch-loop/SKILL.md` with the pull request, and every
+ layer of a stack, as its tracked set, and start its watcher with
+ `--exit-when-closed`, so the loop ends on its own once every pull request it
+-watches has merged or closed. When this conversation already runs a fix
++watches has merged or closed. When this conversation already runs a watch
+ loop, append the pull request to that loop's tracked file instead; never
+ start a second one. Leave the review loop alone: it watches every pull
+ request the operator has in the repository, so it runs once per repository,
+ not once per change.
+ 
+-When you hand over the URL, say whether a fix loop is watching the pull
+-request. Either this session's fix loop watches it and stops when the
++When you hand over the URL, say whether a watch loop is watching the pull
++request. Either this session's watch loop watches it and stops when the
+ session ends, or none does, and you say whether the setting or the host
+ stopped it, and that review findings wait until the user runs
+-`start-fix-loop`. As a subagent, say that you started no fix loop and are
++`start-watch-loop`. As a subagent, say that you started no watch loop and are
+ handing the pull request up to the top-level conversation, which runs it.
+ 
+ ## Stack dependent work
+@@ -198,7 +198,7 @@ below it, that GitHub records as one stack. Make and keep one with
+ reference for its commands; Projector's marketplace serves it as the
+ `gh-stack` plugin, which Claude Code installs with Projector and Projector's
+ installer adds for Codex. Where the skill is not installed,
+-`gh stack <command> --help` covers the flags. `fix-pr` and `start-fix-loop`
++`gh stack <command> --help` covers the flags. `fix-pr` and `start-watch-loop`
+ find and update a stack's layers, and fall back when `gh stack` cannot help,
+ as this section describes.
+ 
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 47b99673..86e8c40c 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -728,7 +728,7 @@ and run it again, when:
+ - the collision check below trips.
+ 
+ The collision check lists every verdict the reviewer has already posted on
+-this exact SHA by this model, reading every page, since each fix-loop thread
++this exact SHA by this model, reading every page, since each watch-loop thread
+ reply adds a review object of its own. A verdict by another model is a second
+ opinion and never collides; one whose marker names no model, from an earlier
+ release, collides with every model. A verdict this run did not publish means
+diff --git a/skills/start-review-loop/scripts/watch-prs.sh b/skills/start-review-loop/scripts/watch-prs.sh
+index 58cc6c11..6ad7766e 100755
+--- a/skills/start-review-loop/scripts/watch-prs.sh
++++ b/skills/start-review-loop/scripts/watch-prs.sh
+@@ -395,7 +395,7 @@ EOF
+       if [ -n "$rstate" ]; then
+         # Every thread resolved is one answer per head, so only the head is
+         # compared: a head announced while a reply was outstanding, then
+-        # resolved by the fix loop or settled by that head's own review, is
++        # resolved by the watch loop or settled by that head's own review, is
+         # the head already under review. A reply on an open finding is
+         # compared by reply too, so each further reply asks again.
+         if [ "$unresolved" = "0" ]; then
+diff --git a/skills/start-fix-loop/SKILL.md b/skills/start-watch-loop/SKILL.md
+similarity index 99%
+rename from skills/start-fix-loop/SKILL.md
+rename to skills/start-watch-loop/SKILL.md
+index 1876d25e..5018c8b7 100644
+--- a/skills/start-fix-loop/SKILL.md
++++ b/skills/start-watch-loop/SKILL.md
+@@ -1,9 +1,9 @@
+ ---
+-name: start-fix-loop
++name: start-watch-loop
+ description: Watch chat-owned GitHub pull requests for review findings and merge conflicts, and run fix-pr on each one that has work, one subagent per pull request. Use when the user asks to keep fixing review feedback as it arrives or drive PRs to a clean review.
+ ---
+ 
+-# Start Fix Loop
++# Start Watch Loop
+ 
+ Run a persistent background loop alongside foreground work. Watch only pull
+ requests this conversation created or explicitly adopted, and keep watching
+@@ -22,7 +22,7 @@ Resolve the operator as `../fix-pr/SKILL.md` describes, once for the loop.
+ Run the loop only in the top-level conversation, the one the user talks to.
+ A subagent's processes end when it returns, and the conversation that
+ started it cannot see a loop it left behind, so a subagent never starts or
+-joins a fix loop. A subagent asked to start one hands the request up
++joins a watch loop. A subagent asked to start one hands the request up
+ instead, and a subagent that opens a pull request, such as one running
+ `implement`, hands the pull request up. The conversation that started it may
+ be a subagent too, so each one hands it up in turn until it reaches the
+diff --git a/skills/start-fix-loop/scripts/watch-threads.sh b/skills/start-watch-loop/scripts/watch-threads.sh
+similarity index 97%
+rename from skills/start-fix-loop/scripts/watch-threads.sh
+rename to skills/start-watch-loop/scripts/watch-threads.sh
+index f5f94c32..73a664fb 100755
+--- a/skills/start-fix-loop/scripts/watch-threads.sh
++++ b/skills/start-watch-loop/scripts/watch-threads.sh
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env bash
+ # watch-threads.sh — emit one line per piece of outstanding review work on the
+-# pull requests a fix loop tracks, and stay silent otherwise. Intended to run
++# pull requests a watch loop tracks, and stay silent otherwise. Intended to run
+ # under Claude Code's `Monitor`, where each stdout line becomes one
+ # notification.
+ #
+@@ -48,7 +48,7 @@
+ # --renotify is how many seconds before a still-unresolved thread is announced
+ # again. Set it high enough to be a reminder rather than a stream. Every line
+ # is a Monitor notification counting toward the limit that stops a watcher,
+-# and a stopped watcher leaves the fix loop deaf while its skill reads silence
++# and a stopped watcher leaves the watch loop deaf while its skill reads silence
+ # as "nothing outstanding".
+ #
+ # --once makes a single pass and exits, which is how the loop checks, before
+@@ -125,9 +125,9 @@ parse_tracked() {
+ # fake a field break.
+ #
+ # Findings open with `<!-- projector-finding v=1 priority=<P> sha=<40-hex> -->`
+-# and fix-loop replies with `<!-- projector-reply v=1 -->`; the first is about
++# and watch-loop replies with `<!-- projector-reply v=1 -->`; the first is about
+ # 88 characters, so against a 130-character snippet it would leave roughly 42
+-# characters of the actual finding in every notification the fix loop sees.
++# characters of the actual finding in every notification the watch loop sees.
+ # HTML comments are stripped before snipping for that reason. A thread whose
+ # last comment strips to nothing is still reported: an unresolved thread is
+ # outstanding work whatever its last comment looks like, and dropping it is
+@@ -174,7 +174,7 @@ not_found() {
+ # threads, and a body-only review — a failed anchor, a summary with no thread
+ # under it — would otherwise vanish without a trace. REST rather than GraphQL,
+ # because a GraphQL reviews connection can only be windowed and the window is
+-# exactly the trap: every reply the fix loop posts inside a thread files an
++# exactly the trap: every reply the watch loop posts inside a thread files an
+ # empty COMMENTED review, so `last:10` returns ten replies and the bot review
+ # has been displaced. Bodies empty once HTML comments are stripped are
+ # skipped, which is also what keeps the loop's own replies from coming back
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index ade89ace..5cf7a572 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 5 -->
++<!-- projector:begin 6 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -40,7 +40,7 @@ the plugin, the rest of this section still applies.
+ Build each change you will open a pull request for with the `implement`
+ skill, `/projector:implement` in Claude Code or `$implement` in Codex,
+ whether it follows a plan under `{projects_dir}` or only a description,
+-however small. Its hand-over opens the pull request and starts a fix loop on
++however small. Its hand-over opens the pull request and starts a watch loop on
+ it, so review findings are fixed as they arrive rather than waiting for
+ someone to notice that nothing is fixing them.
+ 
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 69c28d22..a3f04d6a 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -17,6 +17,7 @@
+     3: "29fe4f2f6610598f250a55c91dee55226555b92c6c71b0fc9c16d245073182fa",
+     4: "8a5be21b0a353027b2193aa0eafc1f89ff4c619f9340ed7edf24795217771445",
+     5: "b149c63490732eae4ea0f70ef4985642828298910c16070079ff07f0933af74a",
++    6: "0b5e821b044698e0c71d5c50c54557f02f9dd005a2026c839672c278d2bae62e",
+ }
+ 
+ 
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+index 083802c9..abe5fcd1 100644
+--- a/tests/test_packaging.py
++++ b/tests/test_packaging.py
+@@ -15,7 +15,7 @@
+     "review-pr",
+     "fix-pr",
+     "start-review-loop",
+-    "start-fix-loop",
++    "start-watch-loop",
+     "summarize-pr",
+     "write",
+ }
+@@ -142,7 +142,7 @@ def test_every_citation_of_the_stack_section_names_a_heading_implement_has(self)
+         for citing in (
+             ROOT / "src" / "projector" / "templates" / "agents-block.md",
+             ROOT / "skills" / "fix-pr" / "SKILL.md",
+-            ROOT / "skills" / "start-fix-loop" / "SKILL.md",
++            ROOT / "skills" / "start-watch-loop" / "SKILL.md",
+         ):
+             prose = " ".join(citing.read_text().split())
+             self.assertIn('under "Stack dependent work"', prose, str(citing.relative_to(ROOT)))
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 4acaea28..9b176c59 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -2667,11 +2667,11 @@ def test_a_stack_draws_no_divider_between_its_rows_and_no_link_is_underlined(sel
+ 
+     def test_each_stack_and_review_alone_opens_with_its_header(self) -> None:
+         drawn = self.draw([self.review(10, 9, "open", header=self.ALPHA), self.review(11, 9, "open", header=self.ALPHA),
+-                           self.review(8, None, "open", header={"title": "Fix loop stack subagent name"})])
++                           self.review(8, None, "open", header={"title": "Watch loop stack subagent name"})])
+         html = drawn["steps"][0]["list"]
+ 
+         self.assertEqual([[[10, 11]], [[8]]], self.stacks(html))
+-        self.assertEqual(['<a href="/projects/alpha/">Build alpha</a>', "<span>Fix loop stack subagent name</span>"],
++        self.assertEqual(['<a href="/projects/alpha/">Build alpha</a>', "<span>Watch loop stack subagent name</span>"],
+                          self.heads(html), "a project's header links to it, and a title's is plain text")
+ 
+     def test_a_header_stays_above_the_rows_a_box_leaves(self) -> None:
+diff --git a/tests/test_watchers.py b/tests/test_watchers.py
+index cf3a8029..937e00f2 100644
+--- a/tests/test_watchers.py
++++ b/tests/test_watchers.py
+@@ -18,7 +18,7 @@
+ import unittest
+ 
+ ROOT = pathlib.Path(__file__).resolve().parent.parent
+-THREADS = ROOT / "skills" / "start-fix-loop" / "scripts" / "watch-threads.sh"
++THREADS = ROOT / "skills" / "start-watch-loop" / "scripts" / "watch-threads.sh"
+ PRS = ROOT / "skills" / "start-review-loop" / "scripts" / "watch-prs.sh"
+ 
+ SHA_A = "a" * 40
+@@ -647,7 +647,7 @@ def finding_thread(*replies):
+         self.assertIn("the author replied on an open finding", replied_again.stdout)
+ 
+     def test_resolving_a_replied_finding_after_a_push_does_not_re_request_the_head(self) -> None:
+-        # The fix loop replies, pushes, then resolves; a poll between the push
++        # The watch loop replies, pushes, then resolves; a poll between the push
+         # and the resolve announces the head with a reply outstanding. Resolving
+         # it next, or the reviewer resolving it during that head's review, must
+         # not ask for the same head again.
+diff --git a/web/components/sections/review-loop.tsx b/web/components/sections/review-loop.tsx
+index 33f6f451..6c6ded25 100644
+--- a/web/components/sections/review-loop.tsx
++++ b/web/components/sections/review-loop.tsx
+@@ -14,7 +14,7 @@ const steps = [
+     body: "It checks out that exact commit locally, reads the change, and posts what it finds as one comment review. Each pull request keeps its own reviewer, so the next review knows the last, and a large one gets a summary on the repository\u2019s site.",
+   },
+   {
+-    title: "The fix loop fixes it",
++    title: "The watch loop fixes it",
+     body: "Each finding is checked, fixed, committed, and pushed, and a branch that conflicts with its base gets the base merged in. The loop replies with the commit and resolves the thread. Each pull request keeps its own fixer, so the next round knows the last.",
+   },
+   {
+@@ -46,7 +46,7 @@ export function ReviewLoop() {
+         <>
+           <Code>review-pr</Code> reviews one pull request&rsquo;s current head when you ask, and{" "}
+           <Code>fix-pr</Code> fixes what a review found and resolves merge conflicts. Two more
+-          skills, <Code>start-review-loop</Code> and <Code>start-fix-loop</Code>, run them in the
++          skills, <Code>start-review-loop</Code> and <Code>start-watch-loop</Code>, run them in the
+           background while you keep working. The plans and the CLI do not depend on any of them.
+         </>
+       }
+@@ -73,7 +73,7 @@ export function ReviewLoop() {
+         </p>
+         <div className="flex flex-wrap gap-x-6 gap-y-2 pt-1">
+           <DocLink href={DOCS.reviewLoop}>Review loop</DocLink>
+-          <DocLink href={DOCS.fixLoop}>Fix loop</DocLink>
++          <DocLink href={DOCS.watchLoop}>Watch loop</DocLink>
+         </div>
+       </div>
+     </Section>
+diff --git a/web/components/site-footer.tsx b/web/components/site-footer.tsx
+index 247520f6..857c75e8 100644
+--- a/web/components/site-footer.tsx
++++ b/web/components/site-footer.tsx
+@@ -36,7 +36,7 @@ export function SiteFooter() {
+           <FooterLink href={DOCS.cli}>CLI reference</FooterLink>
+           <FooterLink href={DOCS.plugins}>Plugin guide</FooterLink>
+           <FooterLink href={DOCS.reviewLoop}>Review loop</FooterLink>
+-          <FooterLink href={DOCS.fixLoop}>Fix loop</FooterLink>
++          <FooterLink href={DOCS.watchLoop}>Watch loop</FooterLink>
+         </div>
+         <div className="flex flex-col gap-3">
+           <h3 className="text-sm font-medium text-fg">Project</h3>
+diff --git a/web/lib/links.ts b/web/lib/links.ts
+index 8c1effd0..bf88da50 100644
+--- a/web/lib/links.ts
++++ b/web/lib/links.ts
+@@ -9,7 +9,7 @@ export const DOCS = {
+   site: `${GITHUB}/blob/main/docs/site.md`,
+   convention: `${GITHUB}/blob/main/docs/projects/README.md`,
+   reviewLoop: `${GITHUB}/blob/main/skills/start-review-loop/SKILL.md`,
+-  fixLoop: `${GITHUB}/blob/main/skills/start-fix-loop/SKILL.md`,
++  watchLoop: `${GITHUB}/blob/main/skills/start-watch-loop/SKILL.md`,
+   issues: `${GITHUB}/issues`,
+   license: `${GITHUB}/blob/main/LICENSE`,
+ };
