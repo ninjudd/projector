@@ -1,0 +1,189 @@
+{
+ "version": 1,
+ "name": "Summary refresh",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 311,
+  "title": "Carry a published summary forward through project summary refresh",
+  "head": "d5fa6673eac7204d107c99a639a14f6a00b92b0d",
+  "headRef": "summary-refresh",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A <b>summary</b> is the JSON file behind a pull request's guided review page on the Projector site. <code>project summary publish</code> stores each one on the hidden ref <code>refs/projector/summaries</code>, in a folder per pull request and head. When a pull request moves, an agent updates the summary it published before rather than writing a new one.",
+   "Until now that update was done by hand. The <code>summarize-pr</code> skill told agents to fetch the ref, find the newest folder with <code>git log</code>, copy its <code>summary.json</code> out with <code>git show</code>, and edit the JSON: set <code>pr.head</code>, move new files into groups, and drop files that left the diff. Nothing told agents to update <code>pr.base</code>, the merge base the page's diff starts from. After a pull request merged its base branch, the stale base pulled the base's own changes into the diff, and <code>validate</code> then demanded groups for files the pull request never touched.",
+   "This pull request adds two commands so an agent writes only the prose and chooses the groups:",
+   "<ul><li><b><code>project summary init --from-published</code></b> copies the pull request's newest stored summary instead of writing a skeleton. It picks and dates the newest head the way the site does, and <code>--head</code> picks one head instead.</li><li><b><code>project summary refresh</code></b> resets every <code>pr</code> field from GitHub, <code>pr.base</code> included, adds files new to the diff to the <code>unassigned</code> group, drops files that left the diff and prints their prose, and lists notes whose line the new diff no longer shows.</li></ul>",
+   "The skills and docs now run these two commands in place of the hand-edit steps."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Summaries ref</b>: <code>refs/projector/summaries</code>, a hidden ref (not a branch) holding <code>summaries/&lt;number&gt;/&lt;head&gt;/summary.json</code> for every published head.</li><li><b>Tracking ref</b>: this checkout's copy of the remote's summaries ref, at <code>refs/projector/remotes/origin/summaries</code>.</li><li><b><code>spec.json</code></b>: the name an older release stored summaries under. The site reads only <code>summary.json</code>, but dates a republished head by its <code>spec.json</code>.</li><li><b>Walkthroughs ref</b>: <code>refs/projector/walkthroughs</code>, the ref's name before summaries were renamed.</li><li><b><code>unassigned</code> group</b>: the group <code>init</code> puts every file in, for the author to sort into real groups.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>Projector's review of <code>d5fa667</code> found no defects and posted no finding threads. It suggested one optional change: <code>refresh</code> prints full 40-character SHAs for <code>pr.head</code> and <code>pr.base</code>, while the docs example shows them shortened. The full test suite, <code>project check</code>, and both plugin validations pass at this head.</p><p class=\"note\">Left for later: <code>project summary migrate</code>, which would delete the old walkthroughs ref once every site reads the new one.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "refresh",
+   "title": "Refreshing a summary to the current head",
+   "kicker": "project summary refresh and the helpers it shares with init and validate",
+   "intro": [
+    "<code>refresh</code> reads a summary file, asks GitHub for the pull request's current <code>pr</code> fields and diff, and rewrites the parts of the summary a program can decide. <code>carry_forward</code> does the work in memory and returns what it changed, and <code>refresh</code> writes the file and prints a report.",
+    "<ol><li><b>Every <code>pr</code> field is replaced.</b> The summary's <code>pr</code> becomes exactly what <code>pr_metadata</code> returns, so <code>pr.base</code> follows a merged base branch, and <code>pr.basePr</code>, the pull request this one is stacked on, disappears when it is no longer stacked.</li><li><b>Files that left the diff are dropped</b> from their groups, and their note and checks are printed so the author can move what still applies.</li><li><b>Files new to the diff join the <code>unassigned</code> group</b>, which is created last when the summary has none.</li><li><b>Notes on lines the new diff does not show are listed</b> and left in place. <code>validate</code> refuses such notes, so the author must move them before publishing.</li></ol>",
+    "The file is rewritten only when a <code>pr</code> field changed or a file was added or dropped, and it is replaced in one step so a reader never finds it half written."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A group the drops empty is reported but kept. <code>validate</code> accepts an empty group, so the summary still validates until the author removes it or moves files into it."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/summary.py",
+     "note": "Adds <code>carry_forward</code> and <code>refresh</code>, and factors <code>current_diff</code>, <code>unassigned_group</code>, <code>write_summary</code> and <code>file_row</code> out of <code>init</code> so both commands share them. <code>validate</code>'s line check moves into <code>unshown_lines</code>, which <code>refresh</code> also uses to find stale notes.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The change lines print each value whole, so <code>pr.head</code> and <code>pr.base</code> appear as full 40-character SHAs. Every other line of the report shortens a head to nine characters, and the <code>docs/cli.md</code> example shows them shortened. The review left this as an optional suggestion.",
+       "line": 1579
+      },
+      {
+       "kind": "context",
+       "text": "Replacing <code>pr</code> outright, rather than merging into it, is what removes <code>basePr</code> once the pull request is no longer stacked. Any other key a summary carried in <code>pr</code> goes too and is reported as <code>→ none</code>.",
+       "line": 1581
+      },
+      {
+       "kind": "verify",
+       "text": "A file is new when no group still lists it after the drops, so a file already in a group is never added twice. <code>test_new_files_join_the_unassigned_group_the_summary_has</code> checks that an existing <code>unassigned</code> group is reused rather than duplicated.",
+       "line": 1595
+      },
+      {
+       "kind": "verify",
+       "text": "When nothing changed, the file is not rewritten: <code>test_a_summary_already_at_the_head_is_left_alone</code> compares the inode and modification time before and after a second run.",
+       "line": 1622
+      },
+      {
+       "kind": "verify",
+       "text": "<code>validate</code> reports the same lines through <code>unshown_lines</code> and <code>side_of</code> as its inline check did before. The check still treats a missing or unknown <code>side</code> as <code>new</code>, and still flags a non-integer <code>line</code>.",
+       "line": 960
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "from-published",
+   "title": "Copying the newest published summary",
+   "kicker": "project summary init --from-published, and the ref reading it shares with site serve",
+   "intro": [
+    "<code>init --from-published</code> copies a stored summary to the <code>--summary</code> path instead of writing a skeleton. It checks that the remote is the repository <code>--repo</code> names, fetches the remote's summaries ref into the tracking ref, and picks a head with <code>newest_summary</code>. If the fetch fails, it says so and reads the copy the checkout already has.",
+    "The choice must match what the site shows as the pull request's newest summary, so it reuses the ref reading that <code>project site serve</code> already does:",
+    "<ul><li><b>Which refs:</b> <code>summaries_refs</code> gives the tracking ref and this checkout's own <code>refs/projector/summaries</code>, or the walkthroughs ref when neither exists.</li><li><b>Which date:</b> a head is as new as the commit that last changed its <code>spec.json</code> when it has one, and its <code>summary.json</code> otherwise. So republishing an old head, which adds a fresh <code>summary.json</code> beside its old <code>spec.json</code>, never makes it outrank a newer head.</li><li><b>Ties:</b> when both refs date their newest alike, this checkout's ref wins, as it does on the site.</li></ul>",
+    "<code>commit_times</code>, split out of <code>extract_summaries</code>, gives the date of each path for both callers."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/site/serve.py",
+     "note": "Adds <code>newest_summary</code> and <code>StoredSummary</code>, and splits <code>commit_times</code> out of <code>extract_summaries</code> so both date summaries the same way.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A head stored only as <code>spec.json</code> is a candidate here, though the site leaves such heads out. That lets <code>--head</code> copy one for republishing, as <code>docs/site.md</code> now describes.",
+       "line": 171
+      },
+      {
+       "kind": "verify",
+       "text": "Heads with the same date keep the first one found, in the path order <code>ls-tree</code> lists, which matches the site's stable sort over a sorted list of paths. The walkthroughs history keeps its dates when it is carried over, because <code>seed_from_legacy</code> replays each commit with its original dates.",
+       "line": 172
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>--from-published</code>, <code>--remote</code> and <code>--head</code> options to <code>summary init</code>, the <code>summary refresh</code> subcommand, and <code>init_from_published</code>, which runs the copy.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A remote whose URL is not a GitHub URL, such as a local path, gives an empty slug and skips this check.",
+       "line": 1268
+      },
+      {
+       "kind": "context",
+       "text": "The fetch writes only the tracking ref, never <code>FETCH_HEAD</code>, so it is safe in a checkout that other sessions also fetch into.",
+       "line": 1270
+      },
+      {
+       "kind": "verify",
+       "text": "<code>--remote</code> or <code>--head</code> without <code>--from-published</code>, and <code>--diff</code> with it, exit with a usage error; <code>test_the_published_summary_options_need_each_other</code> covers all three.",
+       "line": 1298
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Fourteen tests against temporary Git repositories and a stubbed gh",
+   "intro": [
+    "<code>FromPublishedTests</code> stores summaries on a local bare remote with chosen commit dates and runs <code>init --from-published</code> through the CLI. <code>RefreshTests</code> stubs <code>gh</code> with a pull request whose base was merged in, so one file moved, one left the diff, and one joined it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_summary.py",
+     "note": "Covers newest-head selection, republished old heads, <code>spec.json</code>-only heads, the walkthroughs ref, a summary kept in the checkout, ties between refs, <code>--head</code>, nothing stored, a mismatched remote, usage errors, and each part of <code>refresh</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Skills and documentation",
+   "kicker": "Every by-hand read of the summaries ref now runs the new commands",
+   "intro": [
+    "The <code>summarize-pr</code> skill's \"Update the page when the pull request moves\" flow now runs <code>init --from-published</code>, then <code>refresh</code>, then the agent's prose edits. Every other place that told an agent to read the ref by hand, including reading another stack layer's <code>project</code> and republishing a <code>spec.json</code> head, now uses <code>init --from-published</code>.",
+    "In <code>review-pr</code>, only the \"Update rather than start over\" bullet changed. <code>docs/cli.md</code> documents both commands."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Agents follow <code>SKILL.md</code> files as instructions, so read the two skill files as behavior changes, not prose."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/summarize-pr/SKILL.md",
+     "note": "Replaces the <code>git fetch</code> and <code>git show</code> steps with <code>init --from-published</code>, adds <code>refresh</code> as the first step of an update, and renumbers the steps after it."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "The review loop's summary step now runs <code>init --from-published</code> first and updates what it finds."
+    },
+    {
+     "path": "skills/summarize-pr/format.md",
+     "note": "Drops the advice to keep <code>pr</code> fields when editing by hand, and says <code>refresh</code> resets them."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents <code>init --from-published</code> and <code>refresh</code>, with an example of <code>refresh</code>'s output."
+    },
+    {
+     "path": "docs/site.md",
+     "note": "The steps for republishing a <code>spec.json</code> head use <code>init --from-published --head</code> in place of <code>git show FETCH_HEAD:…</code>."
+    }
+   ]
+  }
+ ]
+}
