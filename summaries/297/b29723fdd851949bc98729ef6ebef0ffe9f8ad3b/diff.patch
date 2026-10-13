@@ -1,0 +1,319 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 7d2d9af..f2b9d03 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -182,34 +182,37 @@ line each. Run `/projector` to show or hide the band. It also appears when the
+ session starts a loop's watcher for the first time.
+ 
+ ```text
+-───────────────────────────────────────────────── updated 12s ago [-]
+-
+-#267 draft List a loop's open pull requests above the Claude Code prompt
+-#258 draft Name the reviewed head in a review's signature line  conflict
+-           reviewing · by ada · review-signature · +84 −12 in 5 files · checks passing
+-           discuss  github  projector
++──────────────────────────────────────────────────────────── updated 12s ago [-]
++
++#267 draft List a loop's open pull requests above the Claude Code prompt  2h
++#258 draft Name the reviewed head in a review's signature line   conflict 5m
++reviewing · by ada · review-signature · +84 −12 in 5 files · checks passing
++discuss
++github
++projector
+ ```
+ 
+ Each line is the pull request's number, `draft` or `ready`, the title, and,
+ when the pull request has them, a merge conflict, a change request, or
+-unresolved review threads. A pull request that both a `start-watch-loop`
+-watcher, `watch-threads.sh`, and a `start-review-loop` watcher,
+-`watch-prs.sh`, track is listed once. Only the title shortens on a narrow
+-terminal. The divider says how long ago the band reloaded, and Claude Code's
+-`[-]` at its end collapses the band. A blank line sets the divider apart from
+-the rows under it. Only a terminal draws the divider and that blank line.
+-Claude Desktop, VS Code, and the mobile app do not set the band's text in a
+-terminal's columns, so a rule sized to them would wrap, and there the band
+-starts with its first row.
++unresolved review threads. The line ends with how long ago the pull request
++last changed, in the column where the inbox's items end with their ages. A
++pull request that both a `start-watch-loop` watcher, `watch-threads.sh`, and
++a `start-review-loop` watcher, `watch-prs.sh`, track is listed once. Only
++the title shortens on a narrow terminal. The divider says how long ago the
++band reloaded, and Claude Code's `[-]` at its end collapses the band. A
++blank line sets the divider apart from the rows under it. Only a terminal
++draws the divider and that blank line. Claude Desktop, VS Code, and the
++mobile app do not set the band's text in a terminal's columns, so a rule
++sized to them would wrap, and there the band starts with its first row.
+ 
+ When a poll cannot reach GitHub, the band keeps showing the pull requests
+ GitHub gave last, and the divider's time shows how old they are. It shows
+ GitHub's error only when it has none of them to show.
+ 
+ Click a pull request's number to open a drawer under it, and click it again
+-to close the drawer; opening one drawer closes any other. The drawer says
+-whether your loops are watching or reviewing the pull request, then its
+-author, branch, size, checks, and when it last changed. Below that:
++to close the drawer; opening one drawer closes any other. The drawer starts
++under the number. It says whether your loops are watching or reviewing the
++pull request, then its author, branch, size, and checks. Below that:
+ 
+ - **discuss** puts the pull request's number in the prompt at the cursor,
+   as `#258`, or as `owner/repo#258` when the band lists more than one
+@@ -218,6 +221,10 @@ author, branch, size, checks, and when it last changed. Below that:
+ - **projector** opens its Projector summary, when the pull request's
+   description links one.
+ 
++Each link has a line of its own, because a terminal that does not draw
++hyperlinks shows a link's URL after its text, and a line shared with
++another link would cut the URL off.
++
+ On the main screen, which Claude Code uses under tmux and when
+ `CLAUDE_CODE_NO_FLICKER=0` is set, press ctrl+x tab to move into the band,
+ then Enter on a number to open its drawer and Enter on **discuss** to use it.
+@@ -255,7 +262,7 @@ terminal the divider counts the open questions and the open notices.
+ ```text
+ ──────────────────────────────── 2 questions · 1 notice · updated 12s ago [-]
+ 
+-#337 draft Retry failed webhook deliveries with backoff
++#337 draft Retry failed webhook deliveries with backoff                 1h
+ 
+ - Run project init to add the publish rule?                             2m
+ - Decline the finding about the retry budget?                     #337  5m
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index f5ef1ca..0822a53 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -471,8 +471,9 @@ project stays `in-progress`.
+ ## 10. The band after layer 2
+ 
+ After using layer 2, the owner decided six changes to the band, which
+-#295 builds. § 2.1, § 2.5, and § 4 describe the band with these changes,
+-and this section gives their reasons, their files, and their evidence.
++#295 builds, and three to its pull request lines and drawers, which #297
++builds. § 2.1, § 2.5, and § 4 describe the band with these changes, and
++this section gives their reasons, their files, and their evidence.
+ The `/projector <tracked file>` form that the questions plan describes
+ goes away.
+ 
+@@ -528,6 +529,22 @@ goes away.
+   learn a loop's kind, and it leaves out a loop that the session's state
+   holds without a kind, until the session starts a watcher on that file,
+   whose entry then replaces it.
++- **A pull request's line ends with its age.** Each pull request's line in
++  the band ends with how long ago the pull request last changed, its
++  `updatedAt`, in the `subtle` color and the short form an item's age
++  takes, such as `7h`. Pull requests and items share one right-aligned age
++  column as wide as the widest age in the band, so what comes before the
++  ages ends in one column. The title fills its line, so a pull request's
++  notes and age end it as an item's pull request label and age do. A pull
++  request that GitHub gave no time for shows no age. The drawer's facts no
++  longer end with "updated … ago"; the divider's "updated" time, when the
++  band last loaded, stays.
++- **A pull request's drawer starts under the number.** Its lines start in
++  the row's first column, not where the titles start.
++- **Each drawer link has a line of its own.** **discuss** keeps its own
++  row, and **github** and **projector** each take a line, because a
++  terminal without hyperlink support draws a link's URL after its text,
++  and a line shared with another link cut that URL off.
+ 
+ | File | Change |
+ | --- | --- |
+@@ -537,6 +554,8 @@ goes away.
+ | `hooks/inbox.ts` | `answersIn` lets spaces or tabs follow a quote before its line break; `RESOLVED_MS` is `30_000` |
+ | `hooks/inbox.test.ts`, `hooks/band.test.tsx` | The rows below |
+ | `docs/plugins.md` | The drawer, **discuss**, which quotes answer, the 30 seconds, and the band without a file named by hand |
++| `hooks/register.tsx` | Each pull request's line ends with its age, in a column shared with the items' ages through one helper, and its title grows to fill the line; the drawer drops "updated … ago" and `drawerIndent`, and puts **github** and **projector** on lines of their own |
++| `docs/plugins.md` | The band examples, the age at the end of a pull request's line, and the drawer under the number with one link per line |
+ 
+ #295 also carries smaller fixes found while using the band, such as the
+ pull request drawer's **discuss** becoming a plain `Button`, and its
+@@ -555,6 +574,8 @@ description lists them.
+ | Send a quoted question, two spaces, a line break, and an option's text | The band records that option |
+ | Answer or dismiss an item | Its line stays, in the `subtle` color, for 30 seconds after `deliveredAt`, then leaves the band |
+ | Run `/projector` while another session runs a loop | The band shows or hides, and lists only the loops whose watchers this session started |
++| Look at a pull request's line | It ends with how long ago the pull request changed, such as `7h`, in the `subtle` color, in the same column as the items' ages |
++| Open a pull request's drawer | Its lines start under the number; its facts end with the checks; **discuss**, **github**, and **projector** each have a line |
+ 
+ Before these changes, the rows for the drawer, for **discuss** on a
+ question and the two answers typed under its quote, for the two drawers
+@@ -562,7 +583,10 @@ an answer closes, for a quote that ends in spaces, and for the 30 seconds
+ each fail their test. The drawer draws the field, **discuss** leaves a
+ space and no line break, a quote followed by a space answers nothing, an
+ answered question's drawer stays open, and a resolved line stays a
+-minute.
++minute. Before #297, the rows for a pull request's line and its drawer
++fail their test too: the line ends with no age, and the drawer starts
++under the title, ends its facts with when the pull request was updated,
++and puts its links on one line.
+ 
+ ## 11. Number each session's items 1, 2, 3
+ 
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 9205e3a..0dc04c6 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -50,7 +50,11 @@ const pr = (number: number, title: string, fields: Record<string, unknown> = {})
+ const BY_REPO: Record<string, Record<string, unknown>> = {
+   'o/r': {
+     p1: pr(1, 'Signed-off change'),
+-    p2: pr(2, 'Change under review', { isDraft: true, reviewThreads: { nodes: [{ isResolved: false }] } }),
++    p2: pr(2, 'Change under review', {
++      isDraft: true,
++      reviewThreads: { nodes: [{ isResolved: false }] },
++      updatedAt: new Date(NOW - 45_000).toISOString(),
++    }),
+     p3: pr(3, 'Already merged', { state: 'MERGED' }),
+   },
+   'x/y': {
+@@ -210,7 +214,15 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   const facts = await ui.find({ type: 'Text', text: /^watching · by ada · fix-branch · \+12 −3 in 2 files$/ })
+   expect(facts?.props.color).toBe('subtle')
+   expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
+-  expect((await ui.find({ type: 'Text', text: /^ · updated 5m ago$/ }))?.props.color).toBe('subtle')
++  // The pull request's age ends its line, so the drawer does not repeat it.
++  expect(await ui.find({ type: 'Text', text: /updated 5m ago/ })).toBeUndefined()
++  // The drawer starts in the row's first column, under the number.
++  const opened = await ui.find({ key: 'drawer:x/y#7' })
++  expect(opened).toBeDefined()
++  expect(opened?.props.marginLeft).toBeUndefined()
++  // Under the facts, discuss has a row, and each link a line of its own, so a terminal without hyperlinks shows the whole URL.
++  const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
++  expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'Box', 'github:x/y#7', 'projector:x/y#7'])
+   expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
+   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[projector](${SUMMARY})`)
+   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
+@@ -225,6 +237,31 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   await ui.unmount()
+ })
+ 
++test('ends each pull request’s line with its age, in one column as wide as the widest', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#1\no/r#2\n', [WATCH]: 'x/y#7\n' })
++
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  // Ages of different widths sit right-aligned in one column, so the titles and notes before them line up.
++  const ages = await Promise.all(['o/r#1', 'o/r#2', 'x/y#7'].map(key => ui.find({ key: `age:${key}` })))
++  expect(ages.map(age => [age?.props.width, age?.props.justifyContent])).toEqual([
++    [3, 'flex-end'],
++    [3, 'flex-end'],
++    [3, 'flex-end'],
++  ])
++  expect((await ui.find({ type: 'Text', text: /^45s$/ }))?.props.color).toBe('subtle')
++  expect((await ui.find({ type: 'Text', text: /^5m$/ }))?.props.color).toBe('subtle')
++  // A pull request GitHub gave no time for shows no age.
++  expect(ages[0]?.text).toBe('')
++  await ui.unmount()
++})
++
+ test('opening one drawer closes the one that was open', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index b9eb6eb..6495881 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -717,8 +717,6 @@ export const register: Register = on => {
+     const label = labeler(shown.rows.map(row => row.pr))
+     const reference = referencer(shown.rows.map(row => row.pr))
+     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
+-    // A drawer starts where the titles do: past the label, `draft`, and a gap after each.
+-    const drawerIndent = labelWidth + 1 + 'draft'.length + 1
+     const heading = [
+       ...counts,
+       shown.fetchedAt === null ? undefined : `updated ${ago(secondsSince(time, shown.fetchedAt))}`,
+@@ -789,9 +787,22 @@ export const register: Register = on => {
+     // for you to send or change, and sending it is what answers the question.
+     // Discuss puts the question alone, for an answer in your own words, which
+     // a resolved question's drawer shows after its options.
+-    // Each age sits in one column as wide as the widest, so the pull requests
+-    // before it end in one column too.
+-    const ageWidth = Math.max(0, ...shownItems.map(item => span(secondsSince(time, item.postedAt)).length))
++
++    // A pull request's line and an item's line each end with an age, in one
++    // column as wide as the widest age in the band, so what comes before the
++    // ages ends in one column too.
++    const ageOf = (then: number | null) => (then === null ? '' : span(secondsSince(time, then)))
++    const ageWidth = Math.max(
++      0,
++      ...[...shown.rows.map(row => row.pr.updatedAt), ...shownItems.map(item => item.postedAt)].map(
++        then => ageOf(then).length,
++      ),
++    )
++    const ageColumn = (key: string, then: number | null) => (
++      <Box key={`age:${key}`} flexShrink={0} width={ageWidth} justifyContent="flex-end">
++        <Text color="subtle">{ageOf(then)}</Text>
++      </Box>
++    )
+     const fill = (text: string) => {
+       $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
+     }
+@@ -894,9 +905,7 @@ export const register: Register = on => {
+                 <Text color="subtle">{pull}</Text>
+               </Box>
+             )}
+-            <Box flexShrink={0} width={ageWidth} justifyContent="flex-end">
+-              <Text color="subtle">{span(secondsSince(time, item.postedAt))}</Text>
+-            </Box>
++            {ageColumn(key, item.postedAt)}
+           </Box>
+           {opened === key && (
+             <Box flexDirection="column" marginLeft={2}>
+@@ -927,9 +936,11 @@ export const register: Register = on => {
+         <Box key={key} flexDirection="column">
+           {/* Only the title gives way when the line is short; the label column
+               is as wide as the longest label, so every title starts in one
+-              column. The label is a plain Button rather than a link, so it
+-              takes a click in fullscreen and Enter on the main screen, and no
+-              terminal ever draws a URL beside it. */}
++              column, and the title fills the line, so its notes and age end
++              it as an item's pull request and age do. The label is a plain
++              Button rather than a link, so it takes a click in fullscreen and
++              Enter on the main screen, and no terminal ever draws a URL
++              beside it. */}
+           <Box flexDirection="row" columnGap={1}>
+             <Box flexShrink={0} width={labelWidth}>
+               <Button key={`pr:${key}`} plain label={label(pr)} onPress={() => toggle(key)} />
+@@ -937,7 +948,7 @@ export const register: Register = on => {
+             <Box flexShrink={0}>
+               <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
+             </Box>
+-            <Box flexShrink={1}>
++            <Box flexGrow={1} flexShrink={1}>
+               <Text wrap="truncate-end">{pr.title}</Text>
+             </Box>
+             {notes.length > 0 && (
+@@ -952,21 +963,22 @@ export const register: Register = on => {
+                 </Text>
+               </Box>
+             )}
++            {ageColumn(key, pr.updatedAt)}
+           </Box>
+           {opened === key && (
+-            <Box flexDirection="column" marginLeft={drawerIndent}>
++            <Box key={`drawer:${key}`} flexDirection="column">
+               <Text wrap="truncate-end">
+                 <Text color="subtle">{factsOf(pr, kinds)}</Text>
+                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}
+-                {pr.updatedAt !== null && (
+-                  <Text color="subtle"> · updated {ago(secondsSince(time, pr.updatedAt))}</Text>
+-                )}
+               </Text>
+-              <Box flexDirection="row" columnGap={2}>
++              <Box flexDirection="row">
+                 <Button key={`discuss:${key}`} plain label="discuss" onPress={() => fill(`${reference(pr)} `)} />
+-                <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
+-                {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
+               </Box>
++              {/* Each link has a line of its own: a terminal without hyperlinks
++                  draws a link's URL after its text, and a shared line would
++                  cut the URL off. */}
++              <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
++              {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
+             </Box>
+           )}
+         </Box>

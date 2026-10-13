@@ -1,0 +1,125 @@
+{
+ "version": 1,
+ "name": "Band pull request ages",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 297,
+  "title": "Show each pull request's age on its line, and line its drawer up with the number",
+  "head": "b29723fdd851949bc98729ef6ebef0ffe9f8ad3b",
+  "headRef": "band-pr-age",
+  "base": "96eee3eed4fbe25ed50ec32ad31dbfae2a81e673",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's <b>band</b> is the strip its Claude Code plugin draws above the prompt. It lists the pull requests the session's review and watch loops track, one line each, and below them the session's <b>inbox</b>: questions and notices that agents posted for you. Each inbox item's line already ended with how long ago it was posted, such as <code>5m</code>. Clicking a pull request's number opens its <b>drawer</b>, a few lines under it with the pull request's facts and links.",
+   "Before this change, a pull request's line did not say how long ago the pull request changed. That age sat at the end of the drawer, one click away, though it is what tells you whether a loop is still making progress. This change ends each pull request's line with that age, in the same right-aligned column as the items' ages.",
+   "The change also reshapes the drawer in two ways:",
+   "<ul><li><b>It starts under the number.</b> It used to start under the title, which indented its lines for no reason under a short title.</li><li><b>Each link has a line of its own.</b> <b>github</b> and <b>projector</b> used to share a line with <b>discuss</b>. A terminal without hyperlink support draws a link's URL after its text, so on a shared line the first URL pushed the second link off the edge.</li></ul>",
+   "Only <code>hooks/register.tsx</code> changes behavior. The rest is one updated and one new test, the band examples in <code>docs/plugins.md</code>, and a record of the three changes in § 10 of the inbox plan."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review at <code>b29723f</code> requested changes with one open finding: § 10 of the inbox plan now says § 2.5 describes the band with these changes, but § 2.5's example still draws the pull request line without an age.</li><li>The code, the tests, and <code>docs/plugins.md</code> passed that review. Both band tests the change touches fail against the base version of <code>hooks/register.tsx</code> and pass at the head.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the strip above the Claude Code prompt that lists tracked pull requests and inbox items.</li><li><b>Item</b>: a question or notice an agent posted to the inbox, shown as a line in the band.</li><li><b>Drawer</b>: the lines that open under a pull request or item when you click it.</li><li><b>Age</b>: how long ago something happened, in short form such as <code>45s</code>, <code>5m</code>, or <code>7h</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "band",
+   "title": "The pull request line and its drawer",
+   "kicker": "One age column for pull requests and items, and a drawer that starts under the number",
+   "intro": [
+    "The band draws each pull request as a row: its number, <code>draft</code> or <code>ready</code>, the title, and any notes such as <code>conflict</code>. Each inbox item's row ended with its age in a column as wide as the widest item age, so the items' pull request labels lined up. This change widens that column to cover pull requests too: the width is the widest of every pull request's <code>updatedAt</code> age and every shown item's <code>postedAt</code> age, and both kinds of row draw it through one helper, <code>ageColumn</code>.",
+    "For the age to land at the right edge, the title now grows to fill its row, as an item's subject already did. A pull request that GitHub gave no update time for draws an empty column of the same width, so the rows still line up.",
+    "The drawer loses its left margin, <code>drawerIndent</code>, and its \"updated … ago\" fact, since the row now shows the age. <b>discuss</b> keeps a row of its own, and the <b>github</b> and <b>projector</b> links each take a line."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Both band tests the change touches fail when <code>hooks/register.tsx</code> is put back to the base version and pass at the head; <code>claude plugin test .</code> passed 73 of 73 at the code's head."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The band's renderer: the shared age column, the growing title, and the drawer's new layout.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>updatedAt</code> is <code>number | null</code>, and <code>hooks/github.ts</code> turns an unparseable time into <code>null</code>, so <code>ageOf</code> never passes <code>NaN</code> to <code>span</code>. <code>secondsSince</code> clamps a time in the future to zero.",
+       "line": 794
+      },
+      {
+       "kind": "context",
+       "text": "The width counts every listed pull request and every shown item, so when an item's drawer has the band to itself, its age column can be wider than its own age. The age stays right-aligned; the item's subject has a column less room to show.",
+       "line": 795
+      },
+      {
+       "kind": "verify",
+       "text": "A pull request's age box is keyed <code>age:owner/repo#n</code> and an item's <code>age:item:&lt;ref&gt;</code>, so the keys never collide.",
+       "line": 801
+      },
+      {
+       "kind": "verify",
+       "text": "Nothing else read the removed <code>drawerIndent</code>, and the divider still uses <code>ago</code>.",
+       "line": 969
+      }
+     ]
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Gives one fixture pull request an update time, checks the drawer's new layout, and adds a test for the age column.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Three pull requests with ages of 0, 3, and 2 characters each get an age column 3 wide, right-aligned, and the one with no update time gets an empty column.",
+       "line": 240
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The band examples and the inbox plan's record of the change",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the band for users. Its examples now end each pull request line with an age and show the drawer starting in the first column with one link per line. § 10 of the inbox plan, which records the band changes made after the plan's second layer shipped, gains the three changes, their files, and the rows that test them."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The band examples and the text about the pull request line and drawer.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Every row in this example ends at column 76, four columns before the divider's <code>[-]</code>, as the band draws it.",
+       "line": 188
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "§ 10 records the three changes to the pull request line and drawer.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "This section now says § 2.5 describes the band with these changes, but § 2.5's example still draws <code>#337 draft Retry failed webhook deliveries with backoff</code> with no age after it. End that line with an age such as <code>1h</code>, in the same column as the items' ages.",
+       "line": 475
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
