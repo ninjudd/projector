@@ -2024,21 +2024,51 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
         # subcommand or flag it lacks, so the warning follows argparse's.
         if stop.code:
             warn_of_stale_release()
+        flush_stdout()
         raise
 
 
-def main(argv: list[str] | None = None) -> int:
+def flush_stdout() -> None:
+    """Flush now what Python would flush at exit, where a closed reader makes it print "Exception ignored".
+
+    `sys.stdout` is None when the command starts with its stdout closed.
+    """
+
+    if sys.stdout is not None:
+        sys.stdout.flush()
+
+
+def run_command(argv: list[str] | None) -> int:
+    """Run the command `argv` names and return its exit status, reporting a failure on stderr."""
+
     try:
         arguments = parse(argv)
         if arguments.command != "upgrade":
             warn_of_stale_release()
         return run(arguments)
+    except BrokenPipeError:
+        raise
     except ProjectorError as error:
         print(f"project: {error}", file=sys.stderr)
         return error.exit_code
     except (OSError, UnicodeDecodeError) as error:
         print(f"project: {error}", file=sys.stderr)
         return 65
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        status = run_command(argv)
+        flush_stdout()
+        return status
+    except BrokenPipeError:
+        # The reader of stdout has gone away, as `head` does once it has its
+        # lines. Pointing stdout at the null device keeps the flush at exit
+        # from failing on what is still buffered. 141 is 128 + SIGPIPE, the
+        # status a shell reports when a closed pipe ends `cat` or `git`.
+        if sys.stdout is not None:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 141
 
 
 if __name__ == "__main__":

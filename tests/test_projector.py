@@ -5,6 +5,7 @@ import os
 import shlex
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -2293,6 +2294,76 @@ class StaleReleaseWarningTests(unittest.TestCase):
         self.assertEqual("https://raw.githubusercontent.com/ninjudd/projector/v0/.claude-plugin/plugin.json", upstream)
         self.assertEqual("https://raw.githubusercontent.com/someone/projector/v0/.claude-plugin/plugin.json", fork)
         self.assertEqual("https://raw.githubusercontent.com/ninjudd/projector/v0.6.2/.claude-plugin/plugin.json", pinned)
+
+
+class ClosedReaderTests(RepositoryTestCase):
+    """A reader that goes away early, as `head` does, ends the command quietly with status 141.
+
+    Python reports a failed flush at exit after every handler has run, so only
+    a real process shows it. Each test runs the command both ways it is
+    installed: as `python -m projector` and as the console script, which calls
+    `projector.cli:main` directly.
+    """
+
+    ENTRY_POINTS = {
+        "module": ["-m", "projector"],
+        "console script": ["-c", "import sys; from projector.cli import main; sys.exit(main())"],
+    }
+
+    def environment(self) -> dict[str, str]:
+        return dict(os.environ, PYTHONPATH=str(Path(cli.__file__).resolve().parents[1]),
+                    PROJECTOR_OFFLINE="1", XDG_CACHE_HOME=str(self.home / ".cache"))
+
+    def project(self, entry: str, *arguments: str, stdout: int) -> subprocess.Popen[bytes]:
+        return subprocess.Popen([sys.executable, *self.ENTRY_POINTS[entry], *arguments], cwd=self.root,
+                                env=self.environment(), stdout=stdout, stderr=subprocess.PIPE)
+
+    def big_plan(self) -> Path:
+        # Several times what a pipe holds, so the reader leaves output unwritten.
+        return self.plan("big", body="\n".join(f"Line {n} of a plan no pipe holds at once." for n in range(20_000)))
+
+    def test_a_reader_that_stops_after_the_first_line_ends_the_command_quietly(self) -> None:
+        self.big_plan()
+        for entry in self.ENTRY_POINTS:
+            with self.subTest(entry=entry), self.project(entry, "show", "big", stdout=subprocess.PIPE) as process:
+                self.assertEqual(b"---\n", process.stdout.readline())
+                process.stdout.close()
+                self.assertEqual(b"", process.stderr.read())
+                self.assertEqual(141, process.wait(timeout=60))
+
+    def test_output_still_buffered_at_exit_ends_the_command_quietly(self) -> None:
+        # Short output waits in Python's buffer until exit, so a reader gone
+        # before then fails only the flush at exit.
+        self.plan("small")
+        for arguments in (["show", "small"], ["--help"]):
+            for entry in self.ENTRY_POINTS:
+                read, write = os.pipe()
+                os.close(read)
+                with self.subTest(entry=entry, arguments=arguments), self.project(entry, *arguments,
+                                                                                  stdout=write) as process:
+                    os.close(write)
+                    stderr = process.stderr.read()
+                    self.assertEqual((141, b""), (process.wait(timeout=60), stderr))
+
+    def test_a_reader_that_reads_to_the_end_gets_the_whole_plan(self) -> None:
+        path = self.big_plan()
+        for entry in self.ENTRY_POINTS:
+            with self.subTest(entry=entry), self.project(entry, "show", "big", stdout=subprocess.PIPE) as process:
+                stdout, stderr = process.communicate(timeout=60)
+                self.assertEqual((0, path.read_bytes(), b""), (process.returncode, stdout, stderr))
+
+    def test_a_command_started_with_stdout_closed_still_succeeds(self) -> None:
+        # Python leaves sys.stdout None then, so there is nothing to flush.
+        self.plan("small")
+        result = subprocess.run(["sh", "-c", 'exec "$@" >&-', "sh", sys.executable, "-m", "projector", "show", "small"],
+                                cwd=self.root, env=self.environment(), capture_output=True)
+        self.assertEqual((0, b""), (result.returncode, result.stderr))
+
+    def test_another_os_error_is_still_reported(self) -> None:
+        self.plan("small")
+        with mock.patch.object(cli, "run", side_effect=PermissionError(13, "Permission denied", "readme.md")):
+            self.assertEqual((65, "", "project: [Errno 13] Permission denied: 'readme.md'\n"),
+                             self.invoke("show", "small"))
 
 
 if __name__ == "__main__":
