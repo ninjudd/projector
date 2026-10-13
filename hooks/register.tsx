@@ -653,20 +653,8 @@ function notesOf(pr: PullRequest): Note[] {
   if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
   // The open threads' count comes last, beside the age.
-  if (pr.openThreads > 0) notes.push({ text: `⋮${pr.openThreads}`, color: 'warning' })
+  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}⋮`, color: 'warning' })
   return notes
-}
-
-/** The drawer's facts, before its checks: what the loops do, where, and how big. */
-function factsOf(pr: PullRequest, kinds: readonly LoopKind[]): string {
-  const files = `${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`
-  return [
-    kinds.join(' and '),
-    pr.branch || undefined,
-    `+${pr.additions} −${pr.deletions} in ${files}`,
-  ]
-    .filter(part => part !== undefined)
-    .join(' · ')
 }
 
 /** Whether the account the band's `gh` is signed in as wrote a pull request. */
@@ -1281,9 +1269,19 @@ export const register: Register = on => {
           {/* The drawer starts where the state does, one column past the label. */}
           {opened === key && (
             <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
-              {/* Only the checks take a color, not the `·` before them. */}
+              {/* The facts line: what the loops do with the pull request in
+                  `inactive`, its branch in `subtle`, and its size as a diff
+                  stat, insertions in `success`, deletions in `error`, and the
+                  files in `subtle`, then its checks in theirs. Each `·` between
+                  them keeps the default color. */}
               <Text wrap="truncate-end">
-                {factsOf(pr, kinds)}
+                <Text color="inactive">{kinds.join(' and ')}</Text>
+                {pr.branch !== '' && ' · '}
+                {pr.branch !== '' && <Text color="subtle">{pr.branch}</Text>}
+                {' · '}
+                <Text color="success">{`+${pr.additions}`}</Text>{' '}
+                <Text color="error">{`−${pr.deletions}`}</Text>
+                <Text color="subtle">{` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}</Text>
                 {pr.checks !== null && ' · '}
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
               </Text>

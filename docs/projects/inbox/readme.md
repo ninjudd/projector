@@ -1551,12 +1551,13 @@ does: digits for the options and letters for the actions.
 
 ## 16. Smaller changes to the band
 
-The owner asked for five changes to the band while previewing § 15, four
-to how it draws its lines and one to how **snooze** works. They are
+The owner asked for these changes to the band while previewing § 15,
+most to how it draws its lines and one to how **snooze** works. They are
 recorded apart from § 15 so they can ship apart. This section supersedes
-the bullet of § 2.5 that gives a notice the bullet `•`, and its bullet
-under which **snooze** runs `project inbox snooze` at once, which snoozes
-for the CLI's default hour.
+the bullet of § 2.5 that gives a notice the bullet `•`; its bullet under
+which **snooze** runs `project inbox snooze` at once, which snoozes for the
+CLI's default hour; and the part of § 10's bullet on ages that shows open
+review threads as a count after `⋮`.
 
 ### 16.1 What changes
 
@@ -1565,13 +1566,30 @@ for the CLI's default hour.
   labels rather than as things to press. No other drawer draws these
   links: an item names its pull request as text, and § 15 removed the link
   that carried a question's options.
-- **A pull request's facts take the default color.** The line under a pull
-  request, such as `watching · fix-branch · +12 −3 in 2 files`, was drawn
-  in `subtle`, which made the drawer's main content its faintest line.
+- **A pull request's facts take a color per piece.** The line under a
+  pull request, such as `watching · fix-branch · +12 −3 in 2 files`, was
+  drawn whole in `subtle`, which made the drawer's main content its
+  faintest line. Now what the loops do, `watching`, `reviewing`, or
+  `watching and reviewing`, takes the theme color `inactive`; the branch
+  takes `subtle`; the size takes the colors the next bullet but one gives
+  it; and each ` · ` between them keeps the default color.
 - **Only the checks take the checks' color.** The facts line ended with
   ` · checks pending` drawn whole in the checks' color, so the `·` turned
   yellow while checks ran. The `·` now keeps the line's color, and only
   `checks <state>` takes `success`, `error`, or `warning`.
+- **The size reads as a diff stat.** In the facts line's
+  `+12 −3 in 2 files`, the insertions take `success` and the deletions
+  `error`, green and red as a diff stat draws them, and ` in 2 files` takes
+  `subtle`. The theme's `diffAdded` and `diffRemoved` are backgrounds for
+  whole diff lines, not text colors, so the band uses `success` and
+  `error`. The owner tried the terminal's `gray` and then the drawer
+  links' color for the branch before choosing `subtle`; Claude Code
+  resolves a `Text` color only as a theme key, `rgb()`, hex, `ansi256()`,
+  or an `ansi:` name, and draws a plain name such as `gray` in the default
+  color.
+- **A pull request's open threads read `5⋮`.** The count of unresolved
+  review threads comes before the `⋮` rather than after it, still in
+  yellow, `warning`, and still the last note before the age.
 - **Questions and notices share one bullet, and an open question takes a
   color.** Every item's line starts with `-`. An open question's line, its
   bullet and its subject, is drawn in the theme color `permission`, and an
@@ -1617,7 +1635,7 @@ for the CLI's default hour.
 
 | Behavior | Test |
 | --- | --- |
-| The drawer's links read `open in github` and `open in projector`; the facts take the default color, and only `checks <state>` takes the checks' color | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt` in `hooks/band.test.tsx` |
+| The drawer's links read `open in github` and `open in projector`; on the facts line what the loops do takes `inactive`, the branch `subtle`, the size's `+N` `success`, its `−N` `error`, and ` in N files` `subtle`, `checks <state>` takes the checks' color, and each `·` stays plain; the open-thread count reads `2⋮`, in `warning`, after the other notes | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt` in `hooks/band.test.tsx` |
 | Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in the default color` |
 | **snooze** shows the lengths and cancel, runs nothing, and takes no digits; each length runs `snooze --for` with its minutes; **cancel** and closing the drawer put the actions back; Enter carries the ring onto the first length and back onto **snooze** | `snooze asks how long, and only a length it offers snoozes the item`, and the snooze tests § 14.4 lists, which now pick a length |
 | A restored question's line returns to `permission` | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place`, `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` |

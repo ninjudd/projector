@@ -195,7 +195,7 @@ session starts a loop's watcher for the first time.
 ──────────────────────────────────────────────────────────────── updated 12s ago [-]
 
 #267 draft List a loop's open pull requests above the Claude Code prompt      2h
-#258 draft grace Name the reviewed head in a review's signature conflict · ⋮5 5m
+#258 draft grace Name the reviewed head in a review's signature conflict · 5⋮ 5m
      reviewing · review-signature · +84 −12 in 5 files · checks passing
      d: discuss PR
      x: dismiss PR
@@ -206,7 +206,7 @@ session starts a loop's watcher for the first time.
 Each line is the pull request's number, `draft` or `ready`, its author when
 someone else wrote it, the title, and, when the pull request has them, a
 merge conflict or a change request, then the number of unresolved review
-threads after a `⋮` in yellow, such as `⋮5`. The line ends with how long
+threads before a `⋮` in yellow, such as `5⋮`. The line ends with how long
 ago the pull request last changed, in the column where the inbox's items
 end with their ages. Only the title shortens on a narrow terminal.
 
@@ -231,10 +231,13 @@ GitHub's error only when it has none of them to show.
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
 one column past the number, under `draft` or `ready`. It says whether your
-loops are watching or reviewing the pull request, then its branch, size, and
-checks, in the default text color; only the checks' state takes a color of
-its own. Below that come two actions, a line each, on the letters `d` and
-`x`, as [Use the band from the keyboard](#use-the-band-from-the-keyboard)
+loops are watching or reviewing the pull request, in the theme's
+`inactive` color, then its branch, in `subtle`, its size, and its checks.
+The size reads as a diff stat: the insertions, such as `+84`, in green, the
+deletions, such as `−12`, in red, and ` in 5 files` in `subtle`. The
+checks' state takes a color of its own, and each `·` keeps the default
+text color. Below that come two actions, a line each, on the letters `d`
+and `x`, as [Use the band from the keyboard](#use-the-band-from-the-keyboard)
 describes, and then two links:
 
 - **discuss PR** puts the pull request's number in the prompt at the

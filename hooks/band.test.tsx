@@ -166,8 +166,8 @@ test('draws one line per open pull request of the session’s own loops', async 
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
-  // Open threads show as their count after a `⋮`, in yellow.
-  expect((await ui.findAll({ type: 'Text', text: '⋮1' })).map(found => found.props.color)).toContain('warning')
+  // Open threads show as their count before a `⋮`, in yellow.
+  expect((await ui.findAll({ type: 'Text', text: '1⋮' })).map(found => found.props.color)).toContain('warning')
   expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
@@ -218,15 +218,30 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
   // The threads' count comes after the other notes, beside the age.
   const notes = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(notes.indexOf(' · ⋮2')).toBeGreaterThan(notes.indexOf('conflict'))
+  expect(notes.indexOf(' · 2⋮')).toBeGreaterThan(notes.indexOf('conflict'))
 
   await ui.press({ key: 'pr:x/y#7' })
   // The drawer's facts name no author, whoever wrote the pull request.
   const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files · checks passing$/ })
   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
-  // The facts take the default color, and only the checks take theirs, not the `·` before them.
+  // What the loops do takes `inactive`, the branch `subtle`, and the size reads as a diff stat: insertions green,
+  // deletions red, the files `subtle`. The checks take theirs, and each `·` keeps the default color.
   expect([facts?.props.color, facts?.props.dimColor]).toEqual([undefined, undefined])
-  expect((await ui.find({ type: 'Text', text: /^checks passing$/ }))?.props.color).toBe('success')
+  const pieces = (facts?.children ?? []) as (string | { props: { color?: string }; children: string[] })[]
+  expect(
+    pieces.map(piece => (typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.color])),
+  ).toEqual([
+    ['watching', 'inactive'],
+    ' · ',
+    ['fix-branch', 'subtle'],
+    ' · ',
+    ['+12', 'success'],
+    ' ',
+    ['−3', 'error'],
+    [' in 2 files', 'subtle'],
+    ' · ',
+    ['checks passing', 'success'],
+  ])
   // The pull request's age ends its line, so the drawer does not repeat it.
   expect(await ui.find({ type: 'Text', text: /updated 5m ago/ })).toBeUndefined()
   // The drawer starts where the state does: past the three-column labels `r#1` and `y#7` and the gap after them.
