@@ -186,10 +186,10 @@ session starts a loop's watcher for the first time.
 
 #267 draft List a loop's open pull requests above the Claude Code prompt      2h
 #258 draft grace Name the reviewed head in a review's signature line conflict 5m
-reviewing · review-signature · +84 −12 in 5 files · checks passing
-github
-projector
-discuss | dismiss
+     reviewing · review-signature · +84 −12 in 5 files · checks passing
+     github
+     projector
+     discuss | dismiss
 ```
 
 Each line is the pull request's number, `draft` or `ready`, its author when
@@ -219,8 +219,9 @@ GitHub's error only when it has none of them to show.
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
-under the number. It says whether your loops are watching or reviewing the
-pull request, then its branch, size, and checks. Below that:
+one column past the number, under `draft` or `ready`. It says whether your
+loops are watching or reviewing the pull request, then its branch, size, and
+checks. Below that:
 
 - **github** opens the pull request on GitHub.
 - **projector** opens its Projector summary, when the pull request's

@@ -1021,8 +1021,9 @@ export const register: Register = on => {
             )}
             {ageColumn(key, pr.updatedAt)}
           </Box>
+          {/* The drawer starts where the state does, one column past the label. */}
           {opened === key && (
-            <Box key={`drawer:${key}`} flexDirection="column">
+            <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
               <Text wrap="truncate-end">
                 <Text color="subtle">{factsOf(pr, kinds)}</Text>
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}

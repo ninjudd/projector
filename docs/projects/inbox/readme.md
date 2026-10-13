@@ -542,8 +542,9 @@ goes away.
   request that GitHub gave no time for shows no age. The drawer's facts no
   longer end with "updated … ago"; the divider's "updated" time, when the
   band last loaded, stays.
-- **A pull request's drawer starts under the number.** Its lines start in
-  the row's first column, not where the titles start.
+- **A pull request's drawer starts under its state.** Its lines start one
+  column past the number, under `draft` or `ready`, not where the titles
+  start.
 - **Each drawer link has a line of its own, and the actions come last.**
   **github** and **projector** each take a line, because a terminal
   without hyperlink support draws a link's URL after its text, and a line
@@ -588,7 +589,7 @@ goes away.
 | `hooks/inbox.test.ts`, `hooks/band.test.tsx` | The rows below |
 | `docs/plugins.md` | The drawer, **discuss**, which quotes answer, the 30 seconds, and the band without a file named by hand |
 | `hooks/register.tsx` | Each pull request's line ends with its age, in a column shared with the items' ages through one helper, and its title grows to fill the line; the drawer drops "updated … ago" and `drawerIndent`, and puts **github** and **projector** on lines of their own |
-| `docs/plugins.md` | The band examples, the age at the end of a pull request's line, and the drawer under the number with one link per line |
+| `docs/plugins.md` | The band examples, the age at the end of a pull request's line, and the drawer under the state with one link per line |
 | `hooks/github.ts`, `hooks/register.tsx`, `hooks/types.d.ts`, `docs/plugins.md` | The query asks for `viewer { login }`, and the snapshot keeps it; the band lists your pull requests first and then everyone else's by author, names another person's author before the title, drops "by" and the author from the drawer's facts, and draws the **discuss** row after the links |
 | `src/projector/loop.py`, `src/projector/cli.py`, `tests/test_loop.py`, `skills/start-watch-loop/scripts/watch-threads.sh`, `skills/start-watch-loop/SKILL.md`, `tests/test_watchers.py`, `hooks/register.tsx`, `docs/cli.md`, `docs/plugins.md` | `project loop drop` and `restore` add and remove a tracked file's `!` lines; `watch-threads.sh` honors them; a pull request's drawer gains **dismiss**, which drops the pull request from each of the session's loops that lists it, through the CLI, on one actions' row shared with an item's drawer |
 
@@ -610,7 +611,7 @@ description lists them.
 | Answer or dismiss an item | Its line stays, in the `subtle` color, for 30 seconds after `deliveredAt`, then leaves the band |
 | Run `/projector` while another session runs a loop | The band shows or hides, and lists only the loops whose watchers this session started |
 | Look at a pull request's line | It ends with how long ago the pull request changed, such as `7h`, in the `subtle` color, in the same column as the items' ages |
-| Open a pull request's drawer | Its lines start under the number; its facts name no author and end with the checks; **github** and **projector** each have a line, and the row with **discuss** comes last |
+| Open a pull request's drawer | Its lines start under `draft` or `ready`; its facts name no author and end with the checks; **github** and **projector** each have a line, and the row with **discuss** comes last |
 | Track your own pull requests and someone else's | Yours come first, naming no author; then the others, each author's together and the authors in order of login, each line naming its author in the `subtle` color before the title |
 | Press **dismiss** in the drawer of a pull request both loops track | `project loop drop` runs once for each tracked file; the drawer closes, the line leaves the band, and a toast says `stopped watching and reviewing owner/repo#number` |
 | Press **dismiss** when `project loop drop` refuses | The band shows the CLI's error, keeps the line, and leaves the drawer open |

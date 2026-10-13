@@ -222,10 +222,10 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
   // The pull request's age ends its line, so the drawer does not repeat it.
   expect(await ui.find({ type: 'Text', text: /updated 5m ago/ })).toBeUndefined()
-  // The drawer starts in the row's first column, under the number.
+  // The drawer starts where the state does: past the three-column labels `r#1` and `y#7` and the gap after them.
   const opened = await ui.find({ key: 'drawer:x/y#7' })
   expect(opened).toBeDefined()
-  expect(opened?.props.marginLeft).toBeUndefined()
+  expect(opened?.props.marginLeft).toBe(4)
   // Under the facts, each link has a line of its own, so a terminal without hyperlinks shows the whole URL, and the actions' row comes last.
   const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
   expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'github:x/y#7', 'projector:x/y#7', 'Box'])
