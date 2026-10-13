@@ -1,0 +1,178 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index bce7eb0..c099239 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1998,3 +1998,4 @@ Projector uses these exit codes:
+ | `69` | Git, the interactive editor, or the installer is unavailable. |
+ | `75` | Another command held an inbox session's lock for five seconds; run the command again. |
+ | `78` | A `.projector.toml` file is not valid TOML. |
++| `141` | The reader of the command's output closed before reading all of it, as `head` does once it has its lines. The command stops without a message, and 141 is the status a shell reports for `cat` or `git` stopped the same way. |
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index ed71169..01ebb2e 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -2021,15 +2021,30 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
+         # subcommand or flag it lacks, so the warning follows argparse's.
+         if stop.code:
+             warn_of_stale_release()
++        flush_stdout()
+         raise
+ 
+ 
+-def main(argv: list[str] | None = None) -> int:
++def flush_stdout() -> None:
++    """Flush now what Python would flush at exit, where a closed reader makes it print "Exception ignored".
++
++    `sys.stdout` is None when the command starts with its stdout closed.
++    """
++
++    if sys.stdout is not None:
++        sys.stdout.flush()
++
++
++def run_command(argv: list[str] | None) -> int:
++    """Run the command `argv` names and return its exit status, reporting a failure on stderr."""
++
+     try:
+         arguments = parse(argv)
+         if arguments.command != "upgrade":
+             warn_of_stale_release()
+         return run(arguments)
++    except BrokenPipeError:
++        raise
+     except ProjectorError as error:
+         print(f"project: {error}", file=sys.stderr)
+         return error.exit_code
+@@ -2038,5 +2053,20 @@ def main(argv: list[str] | None = None) -> int:
+         return 65
+ 
+ 
++def main(argv: list[str] | None = None) -> int:
++    try:
++        status = run_command(argv)
++        flush_stdout()
++        return status
++    except BrokenPipeError:
++        # The reader of stdout has gone away, as `head` does once it has its
++        # lines. Pointing stdout at the null device keeps the flush at exit
++        # from failing on what is still buffered. 141 is 128 + SIGPIPE, the
++        # status a shell reports when a closed pipe ends `cat` or `git`.
++        if sys.stdout is not None:
++            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
++        return 141
++
++
+ if __name__ == "__main__":
+     raise SystemExit(main())
+diff --git a/tests/test_inbox.py b/tests/test_inbox.py
+index be30567..d92e73a 100644
+--- a/tests/test_inbox.py
++++ b/tests/test_inbox.py
+@@ -454,12 +454,13 @@ def test_watch_delivers_each_answer_once_and_skips_a_live_claim(self) -> None:
+         self.assertEqual("", self.run_cli("watch", "--once", "--session", "s1")[1])
+ 
+     def test_watch_leaves_an_answer_it_could_not_print_to_the_next_deliverer(self) -> None:
+-        class ClosedPipe(io.StringIO):
+-            def write(self, text: str) -> int:
+-                raise BrokenPipeError(32, "Broken pipe")
+-
+-        with contextlib.chdir(self.scratch), redirect_stdout(ClosedPipe()), redirect_stderr(io.StringIO()):
+-            self.assertEqual(65, cli.main(["inbox", "watch", "--once", "--session", "s1"]))
++        read, write = os.pipe()
++        os.close(read)
++        stderr = io.StringIO()
++        with open(write, "w") as closed_pipe, contextlib.chdir(self.scratch), redirect_stdout(closed_pipe), \
++                redirect_stderr(stderr):
++            self.assertEqual(141, cli.main(["inbox", "watch", "--once", "--session", "s1"]))
++        self.assertEqual("", stderr.getvalue())
+         self.assertIn("\tdelivering 1.b\t", self.run_cli("list", "--session", "s1")[1])
+         later = inbox.now_ms() + inbox.CLAIM_EXPIRES_MS + 1
+         with mock.patch.object(inbox, "now_ms", return_value=later):
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 125e8ad..fbd99af 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -6,6 +6,7 @@
+ import shutil
+ import stat
+ import subprocess
++import sys
+ import tempfile
+ import threading
+ import time
+@@ -2288,5 +2289,75 @@ def test_the_compared_release_is_the_one_upgrade_installs(self) -> None:
+         self.assertEqual("https://raw.githubusercontent.com/ninjudd/projector/v0.6.2/.claude-plugin/plugin.json", pinned)
+ 
+ 
++class ClosedReaderTests(RepositoryTestCase):
++    """A reader that goes away early, as `head` does, ends the command quietly with status 141.
++
++    Python reports a failed flush at exit after every handler has run, so only
++    a real process shows it. Each test runs the command both ways it is
++    installed: as `python -m projector` and as the console script, which calls
++    `projector.cli:main` directly.
++    """
++
++    ENTRY_POINTS = {
++        "module": ["-m", "projector"],
++        "console script": ["-c", "import sys; from projector.cli import main; sys.exit(main())"],
++    }
++
++    def environment(self) -> dict[str, str]:
++        return dict(os.environ, PYTHONPATH=str(Path(cli.__file__).resolve().parents[1]),
++                    PROJECTOR_OFFLINE="1", XDG_CACHE_HOME=str(self.home / ".cache"))
++
++    def project(self, entry: str, *arguments: str, stdout: int) -> subprocess.Popen[bytes]:
++        return subprocess.Popen([sys.executable, *self.ENTRY_POINTS[entry], *arguments], cwd=self.root,
++                                env=self.environment(), stdout=stdout, stderr=subprocess.PIPE)
++
++    def big_plan(self) -> Path:
++        # Several times what a pipe holds, so the reader leaves output unwritten.
++        return self.plan("big", body="\n".join(f"Line {n} of a plan no pipe holds at once." for n in range(20_000)))
++
++    def test_a_reader_that_stops_after_the_first_line_ends_the_command_quietly(self) -> None:
++        self.big_plan()
++        for entry in self.ENTRY_POINTS:
++            with self.subTest(entry=entry), self.project(entry, "show", "big", stdout=subprocess.PIPE) as process:
++                self.assertEqual(b"---\n", process.stdout.readline())
++                process.stdout.close()
++                self.assertEqual(b"", process.stderr.read())
++                self.assertEqual(141, process.wait(timeout=60))
++
++    def test_output_still_buffered_at_exit_ends_the_command_quietly(self) -> None:
++        # Short output waits in Python's buffer until exit, so a reader gone
++        # before then fails only the flush at exit.
++        self.plan("small")
++        for arguments in (["show", "small"], ["--help"]):
++            for entry in self.ENTRY_POINTS:
++                read, write = os.pipe()
++                os.close(read)
++                with self.subTest(entry=entry, arguments=arguments), self.project(entry, *arguments,
++                                                                                  stdout=write) as process:
++                    os.close(write)
++                    stderr = process.stderr.read()
++                    self.assertEqual((141, b""), (process.wait(timeout=60), stderr))
++
++    def test_a_reader_that_reads_to_the_end_gets_the_whole_plan(self) -> None:
++        path = self.big_plan()
++        for entry in self.ENTRY_POINTS:
++            with self.subTest(entry=entry), self.project(entry, "show", "big", stdout=subprocess.PIPE) as process:
++                stdout, stderr = process.communicate(timeout=60)
++                self.assertEqual((0, path.read_bytes(), b""), (process.returncode, stdout, stderr))
++
++    def test_a_command_started_with_stdout_closed_still_succeeds(self) -> None:
++        # Python leaves sys.stdout None then, so there is nothing to flush.
++        self.plan("small")
++        result = subprocess.run(["sh", "-c", 'exec "$@" >&-', "sh", sys.executable, "-m", "projector", "show", "small"],
++                                cwd=self.root, env=self.environment(), capture_output=True)
++        self.assertEqual((0, b""), (result.returncode, result.stderr))
++
++    def test_another_os_error_is_still_reported(self) -> None:
++        self.plan("small")
++        with mock.patch.object(cli, "run", side_effect=PermissionError(13, "Permission denied", "readme.md")):
++            self.assertEqual((65, "", "project: [Errno 13] Permission denied: 'readme.md'\n"),
++                             self.invoke("show", "small"))
++
++
+ if __name__ == "__main__":
+     unittest.main()

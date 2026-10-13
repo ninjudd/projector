@@ -1,0 +1,108 @@
+{
+ "version": 1,
+ "name": "Quiet exit on closed pipe",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 320,
+  "title": "Exit quietly when the reader of the output goes away",
+  "head": "bac28ba21ed4574b360d2edf3b7d1f88b2585283",
+  "headRef": "fix-broken-pipe",
+  "base": "95bc52c3c6d9e73fbcd5c796e9b7204224abf881",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Every <code>project</code> command writes its results to standard output, and people often pipe that output into another program, such as <code>project show big | head -4</code>. When that reader exits early, the next write to the pipe fails with <code>BrokenPipeError</code>, the error Python raises when nothing reads the other end of a pipe any more.",
+   "Before this change, that showed up two ways. A write that failed while the command ran was caught by the CLI's general <code>OSError</code> handler, which printed <code>project: [Errno 32] Broken pipe</code> and exited 65, the status that otherwise means invalid project data. Output still sitting in Python's buffer when the command finished failed only in the interpreter's own flush at exit, which printed <code>Exception ignored while flushing sys.stdout</code> and exited 120.",
+   "Now <code>main</code> flushes standard output itself, catches <code>BrokenPipeError</code>, points standard output at the null device so nothing is left to fail at exit, and returns 141. That is 128 plus the number of <code>SIGPIPE</code>, the signal a closed pipe sends, and it is the status a shell reports when <code>cat</code> or <code>git</code> stops the same way. Every other error is reported exactly as before.",
+   "The change keeps Python's default of ignoring <code>SIGPIPE</code> rather than letting the signal kill the process. A killed process could stop in the middle of a write that has to land whole, such as an update to the inbox store, while an exception unwinds through the code's own cleanup."
+  ],
+  "cards": [
+   {
+    "id": "statuses",
+    "title": "Exit status when the reader goes away",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>When the write fails</th><th>Before</th><th>After</th></tr></thead><tbody><tr><td>While the command runs, such as <code>show</code> on a large plan</td><td>65, with <code>project: [Errno 32] Broken pipe</code></td><td class=\"r\">141, silent</td></tr><tr><td>At the final flush, such as <code>--help</code> or a short <code>show</code></td><td>120, with <code>Exception ignored</code></td><td class=\"r\">141, silent</td></tr><tr><td>Any other <code>OSError</code></td><td>65, with the error</td><td class=\"r\">65, with the error</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review, clean, at <code>bac28ba</code>. No finding threads.</li><li>The full test suite passes on this head, and the new <code>ClosedReaderTests</code> fail on the base, so they test the fix.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "cli",
+   "title": "Catching the closed pipe in main",
+   "kicker": "Where the CLI turns a closed reader into a silent exit with status 141",
+   "intro": [
+    "The old <code>main</code> becomes <code>run_command</code>, which runs the command and turns each error into a message on standard error and an exit status. It now lets <code>BrokenPipeError</code> pass up instead of reporting it as an <code>OSError</code>, because <code>BrokenPipeError</code> is a kind of <code>OSError</code> and would otherwise land in that handler.",
+    "The new <code>main</code> calls <code>run_command</code>, then flushes standard output with <code>flush_stdout</code>, so output still in Python's buffer fails here, where the code can catch it, rather than in the interpreter's flush at exit, where it cannot. On <code>BrokenPipeError</code> it uses <code>os.dup2</code> to point standard output's file descriptor at the null device, so the flush at exit writes the rest of the buffer somewhere harmless, and returns 141.",
+    "<code>parse</code> flushes too, because argparse's <code>--help</code> and <code>--version</code> print and then raise <code>SystemExit</code>, which leaves through <code>parse</code> without reaching the flush in <code>main</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Only a closed standard output or standard error reaches the new handler. Each subprocess write in the CLI goes through <code>subprocess.run(input=…)</code>, which ignores a closed child's pipe itself, and the two <code>urlopen</code> calls catch <code>OSError</code> where they are made. Checked by reading every subprocess and network call in <code>src/projector</code>."
+    },
+    {
+     "kind": "verify",
+     "text": "A command that changes state is no more likely to stop halfway than before: the exception is raised at the same point as on the base, and only how it is reported changes. Running <code>project status big ready | true</code> wrote the new status and exited 141, so a script never sees success for output nobody read."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Splits the old <code>main</code> into <code>run_command</code> and a new <code>main</code> that flushes standard output and handles <code>BrokenPipeError</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>raise</code> here keeps <code>BrokenPipeError</code> out of the <code>OSError</code> handler below it, which would otherwise print the error and return 65.",
+       "line": 2046
+      },
+      {
+       "kind": "verify",
+       "text": "A genuine error still surfaces: <code>project show nosuch | head</code> prints <code>project not found</code> and exits 66, and <code>test_another_os_error_is_still_reported</code> checks that another <code>OSError</code> still prints and exits 65.",
+       "line": 2061
+      },
+      {
+       "kind": "context",
+       "text": "<code>sys.stdout</code> is <code>None</code> when the command starts with standard output already closed, so both this line and <code>flush_stdout</code> check for it. A test runs <code>show</code> that way and expects status 0.",
+       "line": 2067
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests and documentation",
+   "kicker": "Real pipes in subprocesses, a reworked inbox test, and the exit-code table",
+   "intro": [
+    "The failed flush at exit happens after every handler in the program has run, so only a separate process shows it. <code>ClosedReaderTests</code> therefore runs the CLI as a subprocess, both ways it is installed: as <code>python -m projector</code> and as the console script, which calls <code>projector.cli:main</code> directly.",
+    "The inbox test for <code>inbox watch</code> used to swap in a fake stream that raised the error. It now writes to a real pipe whose reading end is closed, because <code>main</code> needs a real file descriptor to redirect. <code>watch</code> still marks an answer delivered only after its line is flushed, so an answer it could not print waits for the next deliverer."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "With the base <code>cli.py</code> and this head's tests, six subtests of <code>ClosedReaderTests</code> fail; with this head all pass. The whole suite, 1031 tests, passes under Python 3.12."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_projector.py",
+     "note": "Adds <code>ClosedReaderTests</code>: a reader that stops after one line, a reader gone before any output, a reader that reads everything, standard output closed from the start, and another <code>OSError</code>."
+    },
+    {
+     "path": "tests/test_inbox.py",
+     "note": "The <code>inbox watch</code> test now expects 141 and an empty standard error, and writes to a real closed pipe."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Adds 141 to the exit-code table."
+    }
+   ]
+  }
+ ]
+}
