@@ -440,6 +440,11 @@ The same command upgrades what it installed. A marketplace that reads a local
 path is moved to the repository, removed and added again from that source,
 and a `moved` row names the old path and the new source. One that already
 reads a remote is refreshed from wherever it points rather than added again.
+Codex's Git clone of a marketplace can time out on a slow connection, so the
+installer runs a failed Codex `marketplace add` or `marketplace upgrade` of a
+remote source once more after five seconds, with a `retrying` row, and stops
+with Codex's exit status only when the second try fails too. A source that is
+a local directory clones nothing, so its failure stops the installer at once.
 An installed plugin is updated rather than installed again, because a host
 asked to install a plugin it already has leaves it as it is; the update is
 what moves it. Claude Code applies the update on its next start. A plugin

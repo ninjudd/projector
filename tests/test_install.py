@@ -37,12 +37,18 @@ class InstallTests(unittest.TestCase):
         # answers from state files a test writes; no file means nothing yet.
         self.state = self.user_root / "host-state"
         self.state.mkdir()
-        # A command line written to `<command>-fails` makes that host fail it.
+        # A command line written to `<command>-fails` makes that host fail it
+        # every time, and one written to `<command>-fails-once` only the first
+        # time. The host fails with status 3, which the installer never exits
+        # with itself, so a test can tell the host's status from the
+        # installer's.
         for command, executable in (("claude", "host-a"), ("codex", "host-b")):
+            once = f'"$PROJECTOR_TEST_STATE/{command}-fails-once"'
             (self.fake_bin / executable).write_text(
                 "#!/bin/sh\n"
                 f"printf '%s %s\\n' '{command}' \"$*\" >> \"$PROJECTOR_TEST_LOG\"\n"
-                f'[ "$*" = "$(cat "$PROJECTOR_TEST_STATE/{command}-fails" 2>/dev/null)" ] && exit 1\n'
+                f'[ "$*" = "$(cat "$PROJECTOR_TEST_STATE/{command}-fails" 2>/dev/null)" ] && exit 3\n'
+                f'if [ "$*" = "$(cat {once} 2>/dev/null)" ]; then rm {once}; exit 3; fi\n'
                 'case "$*" in\n'
                 f'  "plugin marketplace list --json") cat "$PROJECTOR_TEST_STATE/{command}-marketplaces.json" 2>/dev/null ;;\n'
                 f'  "plugin list --json") cat "$PROJECTOR_TEST_STATE/{command}-plugins.json" 2>/dev/null ;;\n'
@@ -60,6 +66,13 @@ class InstallTests(unittest.TestCase):
             "exit 0\n"
         )
         (self.fake_bin / "host-c").chmod(0o755)
+        # The installer pauses before it retries a command; the fake records
+        # the pause rather than taking it.
+        (self.fake_bin / "sleep").write_text(
+            "#!/bin/sh\n"
+            "printf '%s %s\\n' sleep \"$*\" >> \"$PROJECTOR_TEST_LOG\"\n"
+        )
+        (self.fake_bin / "sleep").chmod(0o755)
         # pipx is asked where its venvs live and is handed an interpreter when
         # one of them already holds this package; the fake reports both.
         (self.fake_bin / "pipx").write_text(
@@ -482,6 +495,76 @@ class InstallTests(unittest.TestCase):
         self.assertIn("gh-stack       ⚠️  claude could not install gh-stack@projector", claude.stdout)
         self.assertIn("gh-stack       ⚠️  codex could not install gh-stack@projector", codex.stdout)
 
+    def has_git_codex_marketplace(self) -> None:
+        self.host_has("codex", marketplace="git", version="0.2.0",
+                      source="https://github.com/acme/projector.git")
+
+    def test_codex_upgrades_its_marketplace_without_a_retry_when_the_first_try_works(self) -> None:
+        self.has_git_codex_marketplace()
+
+        result = self.install("codex")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        log = self.log.read_text()
+        self.assertEqual(1, log.count("codex plugin marketplace upgrade projector\n"))
+        self.assertNotIn("sleep", log)
+        self.assertNotIn("retrying", result.stdout)
+
+    def test_codex_retries_a_failed_marketplace_upgrade_once(self) -> None:
+        self.has_git_codex_marketplace()
+        (self.state / "codex-fails-once").write_text("plugin marketplace upgrade projector")
+
+        result = self.install("codex")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            "retrying       codex plugin marketplace upgrade projector exited 3 -- "
+            "trying once more in 5s, since a slow connection can time out Codex's Git clone\n",
+            result.stdout,
+        )
+        log = self.log.read_text().splitlines()
+        upgrade = "codex plugin marketplace upgrade projector"
+        self.assertEqual(2, log.count(upgrade))
+        first = log.index(upgrade)
+        self.assertEqual([upgrade, "sleep 5", upgrade], log[first:first + 3])
+        self.assertIn("codex plugin add projector@projector", log[first + 3:])
+
+    def test_codex_reports_a_marketplace_upgrade_that_fails_twice(self) -> None:
+        self.has_git_codex_marketplace()
+        (self.state / "codex-fails").write_text("plugin marketplace upgrade projector")
+
+        result = self.install("codex")
+
+        self.assertEqual(3, result.returncode)
+        self.assertEqual(1, result.stdout.count("retrying"))
+        log = self.log.read_text()
+        self.assertEqual(2, log.count("codex plugin marketplace upgrade projector\n"))
+        self.assertEqual(1, log.count("sleep 5\n"))
+        self.assertNotIn("codex plugin add", log)
+
+    def test_codex_adds_a_local_marketplace_once_because_it_clones_nothing(self) -> None:
+        checkout = self.checkout_with_origin(None)
+        (self.state / "codex-fails-once").write_text(f"plugin marketplace add {checkout}")
+
+        result = self.installer_in(checkout, "codex", offline=True)
+
+        self.assertEqual(3, result.returncode)
+        self.assertNotIn("retrying", result.stdout)
+        log = self.log.read_text()
+        self.assertEqual(1, log.count(f"codex plugin marketplace add {checkout}\n"))
+        self.assertNotIn("sleep", log)
+        self.assertNotIn("codex plugin add", log)
+
+    def test_only_codex_marketplace_commands_are_retried(self) -> None:
+        self.host_has("claude", marketplace="github", version="0.2.0", source="acme/projector")
+        (self.state / "claude-fails").write_text("plugin marketplace update projector")
+
+        result = self.install("claude")
+
+        self.assertEqual(3, result.returncode)
+        self.assertEqual(1, self.log.read_text().count("claude plugin marketplace update projector\n"))
+        self.assertNotIn("retrying", result.stdout)
+
     def test_all_installs_the_gh_stack_extension_when_it_is_absent(self) -> None:
         result = self.install("all")
 
@@ -765,6 +848,18 @@ class ReleaseInstallTests(unittest.TestCase):
         self.assertIn("claude plugin marketplace add ninjudd/projector --scope user", log)
         self.assertIn("claude plugin install projector@projector --scope user", log)
         self.assertIn("codex plugin marketplace add https://github.com/ninjudd/projector.git", log)
+        self.assertIn("codex plugin add projector@projector", log)
+
+    def test_codex_retries_a_failed_marketplace_add_once(self) -> None:
+        add = "plugin marketplace add https://github.com/ninjudd/projector.git"
+        (self.state / "codex-fails-once").write_text(add)
+
+        result = self.piped("codex")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"retrying       codex {add} exited 3", result.stdout)
+        log = self.logged()
+        self.assertEqual(2, log.count(f"codex {add}"))
         self.assertIn("codex plugin add projector@projector", log)
 
     def test_a_marketplace_left_reading_a_checkout_moves_to_github(self) -> None:
