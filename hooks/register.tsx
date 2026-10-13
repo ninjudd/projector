@@ -717,8 +717,6 @@ export const register: Register = on => {
     const label = labeler(shown.rows.map(row => row.pr))
     const reference = referencer(shown.rows.map(row => row.pr))
     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
-    // A drawer starts where the titles do: past the label, `draft`, and a gap after each.
-    const drawerIndent = labelWidth + 1 + 'draft'.length + 1
     const heading = [
       ...counts,
       shown.fetchedAt === null ? undefined : `updated ${ago(secondsSince(time, shown.fetchedAt))}`,
@@ -789,9 +787,22 @@ export const register: Register = on => {
     // for you to send or change, and sending it is what answers the question.
     // Discuss puts the question alone, for an answer in your own words, which
     // a resolved question's drawer shows after its options.
-    // Each age sits in one column as wide as the widest, so the pull requests
-    // before it end in one column too.
-    const ageWidth = Math.max(0, ...shownItems.map(item => span(secondsSince(time, item.postedAt)).length))
+
+    // A pull request's line and an item's line each end with an age, in one
+    // column as wide as the widest age in the band, so what comes before the
+    // ages ends in one column too.
+    const ageOf = (then: number | null) => (then === null ? '' : span(secondsSince(time, then)))
+    const ageWidth = Math.max(
+      0,
+      ...[...shown.rows.map(row => row.pr.updatedAt), ...shownItems.map(item => item.postedAt)].map(
+        then => ageOf(then).length,
+      ),
+    )
+    const ageColumn = (key: string, then: number | null) => (
+      <Box key={`age:${key}`} flexShrink={0} width={ageWidth} justifyContent="flex-end">
+        <Text color="subtle">{ageOf(then)}</Text>
+      </Box>
+    )
     const fill = (text: string) => {
       $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
     }
@@ -894,9 +905,7 @@ export const register: Register = on => {
                 <Text color="subtle">{pull}</Text>
               </Box>
             )}
-            <Box flexShrink={0} width={ageWidth} justifyContent="flex-end">
-              <Text color="subtle">{span(secondsSince(time, item.postedAt))}</Text>
-            </Box>
+            {ageColumn(key, item.postedAt)}
           </Box>
           {opened === key && (
             <Box flexDirection="column" marginLeft={2}>
@@ -927,9 +936,11 @@ export const register: Register = on => {
         <Box key={key} flexDirection="column">
           {/* Only the title gives way when the line is short; the label column
               is as wide as the longest label, so every title starts in one
-              column. The label is a plain Button rather than a link, so it
-              takes a click in fullscreen and Enter on the main screen, and no
-              terminal ever draws a URL beside it. */}
+              column, and the title fills the line, so its notes and age end
+              it as an item's pull request and age do. The label is a plain
+              Button rather than a link, so it takes a click in fullscreen and
+              Enter on the main screen, and no terminal ever draws a URL
+              beside it. */}
           <Box flexDirection="row" columnGap={1}>
             <Box flexShrink={0} width={labelWidth}>
               <Button key={`pr:${key}`} plain label={label(pr)} onPress={() => toggle(key)} />
@@ -937,7 +948,7 @@ export const register: Register = on => {
             <Box flexShrink={0}>
               <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
             </Box>
-            <Box flexShrink={1}>
+            <Box flexGrow={1} flexShrink={1}>
               <Text wrap="truncate-end">{pr.title}</Text>
             </Box>
             {notes.length > 0 && (
@@ -952,21 +963,22 @@ export const register: Register = on => {
                 </Text>
               </Box>
             )}
+            {ageColumn(key, pr.updatedAt)}
           </Box>
           {opened === key && (
-            <Box flexDirection="column" marginLeft={drawerIndent}>
+            <Box key={`drawer:${key}`} flexDirection="column">
               <Text wrap="truncate-end">
                 <Text color="subtle">{factsOf(pr, kinds)}</Text>
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}
-                {pr.updatedAt !== null && (
-                  <Text color="subtle"> · updated {ago(secondsSince(time, pr.updatedAt))}</Text>
-                )}
               </Text>
-              <Box flexDirection="row" columnGap={2}>
+              <Box flexDirection="row">
                 <Button key={`discuss:${key}`} plain label="discuss" onPress={() => fill(`${reference(pr)} `)} />
-                <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
-                {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
               </Box>
+              {/* Each link has a line of its own: a terminal without hyperlinks
+                  draws a link's URL after its text, and a shared line would
+                  cut the URL off. */}
+              <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
+              {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
             </Box>
           )}
         </Box>
