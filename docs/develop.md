@@ -84,9 +84,19 @@ npm run dev
 
 ## Validate a change
 
-Run the validation gate from the repository root. Run `npm ci` once in
-`site/` first, or the test that compares the compiled scripts with their
-TypeScript skips:
+Run the validation gate from the repository root. Prepare each checkout once
+first:
+
+1. Run `npm ci` in `site/`. Without it, the test that compares the compiled
+   scripts with their TypeScript skips, and `hooks/typecheck.sh` has no
+   compiler.
+2. Start an interactive session with `claude --plugin-dir .` from the
+   repository root. When the session loads the checkout as a plugin, Claude
+   Code writes the declarations the hooks module compiles against to
+   `.claude-plugin/types/`, which Git ignores. They stay after you quit the
+   session. Projector loads only when its `gh-stack` dependency is installed,
+   as [Install for Claude Code](plugins.md#install-for-claude-code)
+   describes. Start such a session again after you update Claude Code.
 
 ```sh
 PYTHONPATH=src python3 -m unittest discover -v
@@ -94,11 +104,18 @@ PYTHONPATH=src python3 -m projector check
 claude plugin validate .
 claude plugin validate skills
 claude plugin test .
+hooks/typecheck.sh
 git diff --check
 ```
 
+`hooks/typecheck.sh` runs `site/`'s `tsc` over `hooks/` with the root
+`tsconfig.json`, which extends the one Claude Code writes beside its
+declarations. While the declarations are missing, the script fails and says
+how to get them.
+
 The Check workflow runs `npm run check`, the tests, and `project check` on
-every pull request.
+every pull request. It cannot type-check `hooks/`, because only an
+interactive Claude Code session writes the declarations.
 
 ## Release
 

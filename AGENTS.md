@@ -70,6 +70,7 @@ PYTHONPATH=src python3 -m projector check
 claude plugin validate .
 claude plugin validate skills
 claude plugin test .
+hooks/typecheck.sh
 git diff --check
 ```
 
@@ -78,6 +79,15 @@ skill set. `claude plugin validate .` validates the marketplace and the Claude
 Code hooks module in `hooks/`, while `claude plugin validate skills` validates
 the skill tree. `claude plugin test .` runs the hooks module's `*.test.ts`
 and `*.test.tsx` files. Codex has no separate public validation command.
+
+`hooks/typecheck.sh` type-checks the hooks module with `site/`'s TypeScript,
+through the root `tsconfig.json`. It compiles against the declarations
+Claude Code writes to `.claude-plugin/types/` each time an interactive
+session loads the checkout as a plugin. Nothing else provides them, so CI
+cannot run this check. Once per checkout, run `npm ci` in `site/` and start
+a session with `claude --plugin-dir .` from the repository root. The script
+fails with that instruction while the declarations are missing. Start such a
+session again after you update Claude Code, so the declarations match it.
 
 The site's front end lives in `site/`: TypeScript under `site/src/`, and
 the stylesheets, icon, and compiled JavaScript the site serves under
