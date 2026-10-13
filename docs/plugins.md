@@ -189,7 +189,7 @@ session starts a loop's watcher for the first time.
 reviewing · review-signature · +84 −12 in 5 files · checks passing
 github
 projector
-discuss
+discuss | dismiss
 ```
 
 Each line is the pull request's number, `draft` or `ready`, its author when
@@ -228,15 +228,27 @@ pull request, then its branch, size, and checks. Below that:
 - **discuss** puts the pull request's number in the prompt at the cursor,
   as `#258`, or as `owner/repo#258` when the band lists more than one
   repository.
+- **dismiss** keeps the pull request out of every loop of this session that
+  tracks it, and the band drops its line and says which loops stopped, such
+  as `stopped watching and reviewing acme/app#258`.
 
 Each link has a line of its own, because a terminal that does not draw
 hyperlinks shows a link's URL after its text, and a line shared with
-another link would cut the URL off. **discuss** comes last, on the row the
-drawer keeps for its actions.
+another link would cut the URL off. **discuss** and **dismiss** come last,
+on the row the drawer keeps for its actions.
+
+**dismiss** runs `project loop drop` once for each tracked file that lists
+the pull request, which appends a `!owner/repo#number` line that both
+watchers honor, so the loops stop acting on it. When the command fails, the
+band shows its error and keeps the line. To bring a dismissed pull request
+back, run `project loop restore` with the same reference and tracked file,
+as [Keep a pull request out of a loop](cli.md#keep-a-pull-request-out-of-a-loop)
+describes.
 
 On the main screen, which Claude Code uses under tmux and when
 `CLAUDE_CODE_NO_FLICKER=0` is set, press ctrl+x tab to move into the band,
-then Enter on a number to open its drawer and Enter on **discuss** to use it.
+then Enter on a number to open its drawer and Enter on **discuss** or
+**dismiss** to use it.
 The **github** and **projector** links take no press there; the terminal
 opens them the way it opens any other link.
 

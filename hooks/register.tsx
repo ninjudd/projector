@@ -76,7 +76,7 @@ let listed: string | undefined
 let isChecking = false
 /** The answers this copy of the module is claiming or delivering, by reference. */
 const delivering = new Set<string>()
-/** The items the band is dismissing or snoozing, so a second press does nothing. */
+/** The items and pull requests the band is dismissing or snoozing, so a second press does nothing. */
 const acting = new Set<string>()
 /** When the last tick ran, so an item whose snooze ends between two ticks wakes once. */
 let tickedAt: number | undefined
@@ -168,17 +168,20 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> 
   }
 }
 
-async function load($: Engine): Promise<void> {
-  // The band lists the session's own loops: the watchers it started.
+/** The session's own loops, the watchers it started, each with the pull requests its tracked file lists. */
+async function trackedSets($: Engine): Promise<(SeenLoop & { entries: TrackedPr[] })[]> {
   const loops = (await read($, seen)).filter(loop => isKind(loop.kind))
-
   // A tracked file that is gone belongs to a loop that ended.
-  const sets = await Promise.all(
+  return Promise.all(
     loops.map(async loop => ({
-      kind: loop.kind,
+      ...loop,
       entries: await $.fs.read(loop.tracked).then(parseTracked, () => [] as TrackedPr[]),
     })),
   )
+}
+
+async function load($: Engine): Promise<void> {
+  const sets = await trackedSets($)
 
   const kindsOf = new Map<string, LoopKind[]>()
   const tracked = new Map<string, TrackedPr>()
@@ -247,8 +250,8 @@ function refresh($: Engine, isForced = false): Promise<void> {
 const replace = ($: Engine, item: Item) =>
   update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
 
-/** Closes an item's drawer when it is the one open. */
-const closeDrawer = ($: Engine, ref: string) => update($, drawer, was => (was === `item:${ref}` ? null : was))
+/** Closes a drawer when it is the one open. */
+const closeDrawer = ($: Engine, key: string) => update($, drawer, was => (was === key ? null : was))
 
 /**
  * An item as the CLI prints it, without the session the band adds. Each kind
@@ -421,7 +424,7 @@ async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promis
     const ran = await project($, ['inbox', command, ref, '--session', session, '--json'])
     if (ran.exitCode === 0) {
       await replace($, itemOf(ran.stdout, session))
-      if (command === 'snooze') await closeDrawer($, ref)
+      if (command === 'snooze') await closeDrawer($, `item:${ref}`)
     } else if (ran.exitCode === 65) {
       // Resolved elsewhere since the band read the store: read it again.
       listed = undefined
@@ -433,6 +436,38 @@ async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promis
     void $.ui.toast(`projector: ${messageOf(error)}`)
   } finally {
     acting.delete(ref)
+  }
+}
+
+/**
+ * Dismisses a pull request from the session's loops: `project loop drop`
+ * keeps it out of each tracked file that lists it, and the band reloads
+ * without it. A failure says why, and the line stays.
+ */
+async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
+  const key = keyOf(pr)
+  const named = `${pr.repo}#${pr.number}`
+  if (acting.has(key)) return
+  acting.add(key)
+  const stopped: LoopKind[] = []
+  try {
+    for (const loop of await trackedSets($)) {
+      if (!loop.entries.some(entry => keyOf(entry) === key)) continue
+      const ran = await project($, ['loop', 'drop', named, '--tracked', loop.tracked])
+      if (ran.exitCode !== 0) {
+        void $.ui.toast(`projector: ${errorOf(ran)}`)
+        return
+      }
+      stopped.push(loop.kind)
+    }
+    await closeDrawer($, key)
+  } catch (error) {
+    void $.ui.toast(`projector: ${messageOf(error)}`)
+  } finally {
+    acting.delete(key)
+    const kinds = KINDS.filter(kind => stopped.includes(kind))
+    if (kinds.length > 0) void $.ui.toast(`projector: stopped ${kinds.join(' and ')} ${named}`)
+    await refresh($)
   }
 }
 
@@ -694,7 +729,7 @@ export const register: Register = on => {
     const entered = await next(added.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...added] })
     if (entered.drop === undefined) {
       for (const one of given) {
-        void closeDrawer($, one.question.ref).catch(() => undefined)
+        void closeDrawer($, `item:${one.question.ref}`).catch(() => undefined)
         void answerFromPrompt($, one.question, one.letter, one.text)
       }
     }
@@ -831,6 +866,17 @@ export const register: Register = on => {
     const fill = (text: string) => {
       $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
     }
+    // A drawer's actions are plain Buttons on one row, `|` between them.
+    const drawActions = (id: string, actions: readonly { name: string; onPress: () => void }[]) => (
+      <Box flexDirection="row" columnGap={1}>
+        {actions.flatMap(({ name, onPress }, at) => [
+          ...(at === 0 ? [] : [<Text key={`between:${id}.${at}`} color="subtle">|</Text>]),
+          <Button key={`${name}:${id}`} plain onPress={onPress}>
+            <Text>{name}</Text>
+          </Button>,
+        ])}
+      </Box>
+    )
     const drawAnswers = (question: Question) => {
       const { ref, answer } = question
       const isOpen = answer === undefined
@@ -940,14 +986,7 @@ export const register: Register = on => {
               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
               {item.kind === 'question' && drawAnswers(item)}
               <Text key={`before-buttons:${ref}`}> </Text>
-              <Box flexDirection="row" columnGap={1}>
-                {actions.flatMap(({ name, onPress }, at) => [
-                  ...(at === 0 ? [] : [<Text key={`between:${ref}.${at}`} color="subtle">|</Text>]),
-                  <Button key={`${name}:${ref}`} plain onPress={onPress}>
-                    <Text>{name}</Text>
-                  </Button>,
-                ])}
-              </Box>
+              {drawActions(ref, actions)}
             </Box>
           )}
         </Box>
@@ -1006,9 +1045,10 @@ export const register: Register = on => {
                   cut the URL off. The actions follow, on one row. */}
               <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
               {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
-              <Box flexDirection="row">
-                <Button key={`discuss:${key}`} plain label="discuss" onPress={() => fill(`${reference(pr)} `)} />
-              </Box>
+              {drawActions(key, [
+                { name: 'discuss', onPress: () => fill(`${reference(pr)} `) },
+                { name: 'dismiss', onPress: () => void dismissPr($, pr) },
+              ])}
             </Box>
           )}
         </Box>

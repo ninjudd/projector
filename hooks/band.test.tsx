@@ -305,6 +305,71 @@ test('lists your pull requests first, then everyone else’s by author, naming t
   await ui.unmount()
 })
 
+/** Records each toast the band shows. */
+function toastsOf(on: On): string[] {
+  const toasts: string[] = []
+  on('ui.toast', ($, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  return toasts
+}
+
+test('dismiss drops a pull request from each loop that tracks it, and its line goes', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const files: Record<string, string> = { [REVIEW]: 'o/r#1\nx/y#7\n', [WATCH]: 'x/y#7\n' }
+  // `project loop drop <reference> --tracked <file>` appends the exclusion, as the CLI does.
+  const { commands } = world(on, files, ([, , , reference = '', , tracked = '']) => {
+    files[tracked] = `${files[tracked] ?? ''}!${reference}\n`
+    return ran(`dropped ${reference} from ${tracked}\n`)
+  })
+  const toasts = toastsOf(on)
+  await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'pr:x/y#7' })
+  // The drawer's actions share one row, as an item's do.
+  expect(await ui.findAll({ type: 'Text', text: '|' })).toHaveLength(1)
+  expect((await ui.find({ type: 'Button', key: 'dismiss:x/y#7' }))?.props.plain).toBe(true)
+
+  await ui.press({ key: 'dismiss:x/y#7' })
+  await clock.settle()
+
+  expect(commands.filter(argv => argv[0] === 'project')).toEqual([
+    ['project', 'loop', 'drop', 'x/y#7', '--tracked', REVIEW],
+    ['project', 'loop', 'drop', 'x/y#7', '--tracked', WATCH],
+  ])
+  expect(toasts).toEqual(['projector: stopped watching and reviewing x/y#7'])
+  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+  expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a dismiss the CLI refuses says why and keeps the line', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const refused = { ...ran(''), exitCode: 66, stderr: `project: no tracked file at ${WATCH}\n` }
+  world(on, { [WATCH]: 'x/y#7\n' }, () => refused)
+  const toasts = toastsOf(on)
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  await ui.press({ key: 'pr:x/y#7' })
+  await ui.press({ key: 'dismiss:x/y#7' })
+  await clock.settle()
+
+  expect(toasts).toEqual([`projector: no tracked file at ${WATCH}`])
+  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
+  expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
+  await ui.unmount()
+})
+
 test('opening one drawer closes the one that was open', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
