@@ -67,12 +67,16 @@ set -uo pipefail
 
 TRACKED=""; STATE=""; INTERVAL=60; RENOTIFY=900; ONCE=0; EXIT_WHEN_CLOSED=0
 
+# Given the remaining arguments, refuse a flag that has no value after it,
+# where `shift 2` would fail without shifting and the loop would never end.
+takes_value() { [ $# -ge 2 ] || { echo "watch-threads.sh: $1 needs a value" >&2; exit 2; }; }
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --tracked)  TRACKED="${2:-}"; shift 2 ;;
-    --state)    STATE="${2:-}"; shift 2 ;;
-    --interval) INTERVAL="${2:-60}"; shift 2 ;;
-    --renotify) RENOTIFY="${2:-900}"; shift 2 ;;
+    --tracked)  takes_value "$@"; TRACKED="$2"; shift 2 ;;
+    --state)    takes_value "$@"; STATE="$2"; shift 2 ;;
+    --interval) takes_value "$@"; INTERVAL="${2:-60}"; shift 2 ;;
+    --renotify) takes_value "$@"; RENOTIFY="${2:-900}"; shift 2 ;;
     --once)     ONCE=1; shift ;;
     --exit-when-closed) EXIT_WHEN_CLOSED=1; shift ;;
     *) echo "watch-threads.sh: unknown argument: $1" >&2; exit 2 ;;

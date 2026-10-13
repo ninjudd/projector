@@ -197,7 +197,7 @@ class WatcherCase(unittest.TestCase):
     def track(self, *entries) -> None:
         self.tracked.write_text("".join(f"{entry}\n" for entry in entries))
 
-    def run_watcher(self, script, *args, down_after=None, late_line=None):
+    def run_watcher(self, script, *args, down_after=None, late_line=None, timeout=120):
         """Make one pass. The call log, the failure switch and the late line cover this pass only."""
         log = self.fixtures / "calls.log"
         if log.exists():
@@ -214,7 +214,7 @@ class WatcherCase(unittest.TestCase):
             text=True,
             encoding="utf-8",
             env=env,
-            timeout=120,
+            timeout=timeout,
         )
 
     def calls(self) -> str:
@@ -542,6 +542,14 @@ class WatchThreadsTests(WatcherCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("could not verify — network or auth error, not a missing repository or pull request", result.stderr)
         self.assertNotIn("no such", result.stderr)
+
+    def test_refuses_a_last_flag_without_its_value(self) -> None:
+        # A short timeout, so a watcher that loops on the missing value fails the test instead of hanging it.
+        for flag in ("--tracked", "--state", "--interval", "--renotify"):
+            result = self.run_watcher(THREADS, flag, timeout=10)
+
+            self.assertEqual(2, result.returncode, flag)
+            self.assertEqual(f"watch-threads.sh: {flag} needs a value\n", result.stderr)
 
     def test_refuses_the_repository_and_author_flags(self) -> None:
         for flag in ("--repos", "--author"):
@@ -926,6 +934,15 @@ class WatchPrsTests(WatcherCase):
             self.assertIn("--repo goes with --author, --review-requested, or both", alone.stderr)
         self.assertEqual(2, not_a_login.returncode)
         self.assertIn("--review-requested is not a GitHub login: ada is:merged", not_a_login.stderr)
+
+    def test_refuses_a_last_flag_without_its_value(self) -> None:
+        # A short timeout, so a watcher that loops on the missing value fails the test instead of hanging it.
+        for flag in ("--tracked", "--state", "--interval", "--worktree", "--repo", "--author",
+                     "--review-requested", "--model"):
+            result = self.run_watcher(PRS, flag, timeout=10)
+
+            self.assertEqual(2, result.returncode, flag)
+            self.assertEqual(f"watch-prs.sh: {flag} needs a value\n", result.stderr)
 
     def test_refuses_a_model_that_would_match_the_wrong_heads_or_none(self) -> None:
         # "-" is what the row says when no model gave the head a verdict.

@@ -77,16 +77,20 @@ set -uo pipefail
 
 TRACKED=""; STATE=""; INTERVAL=60; WORKTREE=""; ONCE=0; REPO=""; AUTHOR=""; REQUESTED=""; MODEL=""
 
+# Given the remaining arguments, refuse a flag that has no value after it,
+# where `shift 2` would fail without shifting and the loop would never end.
+takes_value() { [ $# -ge 2 ] || { echo "watch-prs.sh: $1 needs a value" >&2; exit 2; }; }
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --tracked)  TRACKED="${2:-}"; shift 2 ;;
-    --repo)     REPO="${2:-}"; shift 2 ;;
-    --author)   AUTHOR="${2:-}"; shift 2 ;;
-    --review-requested) REQUESTED="${2:-}"; shift 2 ;;
-    --model)    MODEL="${2:-}"; shift 2 ;;
-    --state)    STATE="${2:-}"; shift 2 ;;
-    --interval) INTERVAL="${2:-60}"; shift 2 ;;
-    --worktree) WORKTREE="${2:-}"; shift 2 ;;
+    --tracked)  takes_value "$@"; TRACKED="$2"; shift 2 ;;
+    --repo)     takes_value "$@"; REPO="$2"; shift 2 ;;
+    --author)   takes_value "$@"; AUTHOR="$2"; shift 2 ;;
+    --review-requested) takes_value "$@"; REQUESTED="$2"; shift 2 ;;
+    --model)    takes_value "$@"; MODEL="$2"; shift 2 ;;
+    --state)    takes_value "$@"; STATE="$2"; shift 2 ;;
+    --interval) takes_value "$@"; INTERVAL="${2:-60}"; shift 2 ;;
+    --worktree) takes_value "$@"; WORKTREE="$2"; shift 2 ;;
     --once)     ONCE=1; shift ;;
     *) echo "watch-prs.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
