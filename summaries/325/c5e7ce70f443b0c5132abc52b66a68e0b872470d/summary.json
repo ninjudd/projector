@@ -1,0 +1,54 @@
+{
+ "version": 1,
+ "name": "Fix-pr hold paragraph rewrap",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 325,
+  "title": "Rewrap the hold paragraph in the fix-pr skill",
+  "head": "c5e7ce70f443b0c5132abc52b66a68e0b872470d",
+  "headRef": "fix-pr-rewrap",
+  "base": "d016544a9e7775f85b0ffd506b1c337b1cf49791",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The <code>fix-pr</code> skill is the set of instructions an agent follows when it addresses review feedback on a pull request. One of its paragraphs tells the agent what to do when the host refuses <code>project review hold</code>, the command that keeps a pull request in draft while the agent builds a change: do not retry it as a raw <code>gh api</code> call, and ask the user to run <code>project init</code> or the command themselves.",
+   "In that paragraph, one line ran to 116 characters while the lines around it wrap near 76, the width the repository's <code>CLAUDE.md</code> asks Markdown edits to match. A review of #318 suggested the rewrap, and #318 merged without it. This pull request moves the paragraph's line breaks so every line fits, and changes no words."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "rewrap",
+   "title": "The rewrapped hold paragraph",
+   "kicker": "Line breaks move in one paragraph of the fix-pr skill; the words stay the same.",
+   "intro": [
+    "The diff replaces three lines with three lines. The first line keeps its opening and ends at \"Leave\", and the next two lines carry the rest of the paragraph, so no line runs past 76 characters.",
+    "Because an agent reads this file as instructions, a change to its words would change what the agent does. This change moves only line breaks, which Markdown renders the same way, so the agent's instructions are unchanged."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "The hold paragraph's last four lines, rewrapped to the width of the lines above them.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The words are unchanged: the file at the head matches the base word for word after collapsing every run of spaces and line breaks."
+      },
+      {
+       "kind": "verify",
+       "text": "No line of the paragraph exceeds 76 characters; the three rewrapped lines are 73, 72, and 55 characters long.",
+       "line": 248
+      },
+      {
+       "kind": "verify",
+       "text": "No test or skill matches text across the moved line breaks. The repository's unit tests (1,044, one skipped), <code>project check</code>, <code>claude plugin validate</code> on the marketplace and the skill tree, and <code>git diff --check</code> all pass at this head."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
