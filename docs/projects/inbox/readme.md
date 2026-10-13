@@ -1650,3 +1650,49 @@ review threads as a count after `⋮`.
 | Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in the default color` |
 | **snooze** shows the lengths and cancel, runs nothing, and takes no digits; each length runs `snooze --for` with its minutes; **cancel** and closing the drawer put the actions back; Enter carries the ring onto the first length and back onto **snooze** | `snooze asks how long, and only a length it offers snoozes the item`, and the snooze tests § 14.4 lists, which now pick a length |
 | A restored question's line returns to `permission` | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place`, `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` |
+
+## 17. Close an item's drawer on 0
+
+An open item's drawer gives the band to the item, its own line at the top,
+and that line closes the drawer. The line now takes the hotkey `0`, which
+the engine draws before it as `0: `. Pressing `0` closes the drawer as a
+click or Enter on the line does, so the keyboard can close a drawer from
+anywhere in it, not only with the ring on its line.
+
+### 17.1 What changes
+
+- **An open item's line takes `0`.** Every inbox item's drawer gets it:
+  an open or resolved question, an open, dismissed, or snoozed notice,
+  and a snoozed question. The line is the `close:<number>` Button § 15
+  keys, so the hotkey is set only while the drawer is open; a closed
+  item's line in the list takes none.
+- **`0` works as the option digits do.** It presses the line while the
+  band holds the keyboard, and typed first into an empty prompt while the
+  drawer is open, as Claude Code takes a digit for a survey.
+- **Closing is unchanged.** The press runs the line's `toggle`, so it
+  closes the drawer and moves the focus ring exactly as a click or Enter
+  on the line does: the ring follows the line back into the list only when
+  it was on the line.
+- **A pull request's drawer takes no `0`.** Its number's Button opens and
+  closes it in place, and it never has the band to itself.
+
+### 17.2 Why this design
+
+- **`0`, not `/` or `.`.** The owner asked for `/` and then `.`, but a
+  Button's hotkey must be one digit or one lowercase letter, and the
+  engine refuses anything else. The options take `1` to `6`, so `0` is
+  free in every drawer, and it sits beside them on the keyboard.
+- **The line keeps its look.** The engine draws the `0` in its accent
+  color, `suggestion`, and the `: ` in the Button's own text color, before
+  the line's bullet and subject. Those keep their colors and stay
+  inverted while the drawer is open, so the line still reads as the open
+  item. An open question's line is drawn in `permission`, the same color
+  as `suggestion` in every built-in theme, so its `0` matches it.
+
+### 17.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| No line of the list and no pull request's drawer takes `0`; each open item's line takes it, open, answered, dismissed, or snoozed, and pressing it closes the drawer | `an open item’s line closes its drawer on 0, and no other line takes 0` in `hooks/band.test.tsx` |
+| The only digit in a resolved question's, a notice's, or a snoozing drawer is the line's `0` | `an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open`, `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `snooze asks how long, and only a length it offers snoozes the item` |
+| `0` from an empty prompt and the line's look with the prefix | Checked by hand by the owner in a preview session |

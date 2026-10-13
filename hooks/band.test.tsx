@@ -1223,7 +1223,8 @@ test('an option puts the question and its answer in the prompt, and sending it a
   expect((await ui.find({ type: 'Text', text: /^Decline it/ }))?.props.color).toBe('subtle')
   expect((await ui.find({ type: 'Text', text: /^Decline the finding\?$/ }))?.props.color).toBe('subtle')
   expect(await optionsOf(ui)).toEqual([])
-  expect(await digitsOf(ui)).toEqual([])
+  // Only the line itself takes a digit, `0`, which closes the drawer.
+  expect(await digitsOf(ui)).toEqual(['close:1'])
   expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeUndefined()
 
   await ui.press({ key: 'close:1' })
@@ -2466,10 +2467,10 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while 
   const ui = await $.ui.mount(BAND)
   const digits = () => digitsOf(ui)
 
-  // A closed drawer leaves the digits to the prompt.
+  // A closed drawer leaves the digits to the prompt, and a notice's drawer takes only `0`, on its line.
   expect(await digits()).toEqual([])
   await ui.press({ key: 'item:2' })
-  expect(await digits()).toEqual([])
+  expect(await digits()).toEqual(['close:2'])
   await ui.press({ key: 'close:2' })
 
   await ui.press({ key: 'item:1' })
@@ -2488,10 +2489,47 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while 
   await clock.settle()
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'f', text: 'Split the change' }))
 
-  // The answered question's drawer lists its options with no digits.
+  // The answered question's drawer lists its options with no digits; only its line takes `0`.
   await ui.press({ key: 'item:1' })
   expect(await ui.find({ type: 'Text', text: /^Split the change ✓$/ })).toBeDefined()
-  expect(await digits()).toEqual([])
+  expect(await digits()).toEqual(['close:1'])
+  await ui.unmount()
+})
+
+test('an open item’s line closes its drawer on 0, and no other line takes 0', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const dismissed = { dismissed: true as const, answeredAt: NOW - 1_000 }
+  const snoozed = { snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR }
+  questionWorld(on, clock, [
+    held(),
+    notice(),
+    held({ ref: '3', number: 3, subject: 'Rebase first?', answer, deliveredAt: NOW - 1_000 }),
+    notice({ ref: '4', number: 4, subject: 'Pushed a fix', answer: dismissed, deliveredAt: NOW - 1_000 }),
+    notice({ ref: '5', number: 5, subject: 'Merged #6', ...snoozed }),
+  ])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  const zeros = async () =>
+    (await ui.findAll({ type: 'Button' })).flatMap(button => (button.props.hotkey === '0' ? [button.key] : []))
+
+  // No line of the list takes `0`, nor a pull request's drawer.
+  expect(await zeros()).toEqual([])
+  await ui.press({ key: 'pr:x/y#7' })
+  expect(await zeros()).toEqual([])
+  await ui.press({ key: 'pr:x/y#7' })
+
+  // Each open item's line takes `0`, whatever state the item is in, and pressing it closes the drawer.
+  for (const ref of ['1', '2', '3', '4', '5']) {
+    await ui.press({ key: `item:${ref}` })
+    const line = await ui.find({ type: 'Button', key: `close:${ref}` })
+    expect([line?.props.hotkey, line?.props.plain]).toEqual(['0', true])
+    expect(await zeros()).toEqual([`close:${ref}`])
+    await ui.press({ key: `close:${ref}` })
+    expect(await ui.find({ type: 'Button', key: `close:${ref}` })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: `item:${ref}` })).toBeDefined()
+  }
   await ui.unmount()
 })
 
@@ -2745,7 +2783,7 @@ test('snooze asks how long, and only a length it offers snoozes the item', async
     'cancel:2 cancel',
   ])
   expect((await ui.findAll({ type: 'Text', text: '|' })).map(bar => bar.props.color)).toEqual(Array(4).fill('subtle'))
-  expect(await digitsOf(ui)).toEqual([])
+  expect(await digitsOf(ui)).toEqual(['close:2'])
   expect(snoozes()).toEqual([])
 
   // Cancel puts the actions back.
