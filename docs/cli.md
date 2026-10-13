@@ -44,7 +44,7 @@ what it did to each:
   `gh stack` is unavailable, and keep every layer on the current head of the
   one below so the stack can merge as a unit. Its last part applies only
   where the Projector plugin is installed: build every change with the
-  `implement` skill, so a fix loop starts on its pull request, and open every
+  `implement` skill, so a watch loop starts on its pull request, and open every
   pull request as a draft until a clean review marks it ready. `init`
   appends the section to an existing file or creates the file
   with only that section, and refreshes the section when it falls behind the
@@ -533,7 +533,7 @@ These are the keys Projector reads today:
 | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
-| `fix.auto_start` | boolean | `true` | `implement`, to start `start-fix-loop` on each pull request it opens, or add the pull request to the fix loop the conversation already runs; `false` leaves starting the loop to you |
+| `watch.auto_start` | boolean | `true` | `implement`, to start `start-watch-loop` on each pull request it opens, or add the pull request to the watch loop the conversation already runs; `false` leaves starting the loop to you |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own

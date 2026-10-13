@@ -10,7 +10,7 @@ Merge its base when the branch conflicts, and answer every outstanding
 finding with a pushed fix or a declined reply. Implement or defer each
 suggestion a review lists, and hold the pull request in draft while you
 build a change no review has read. The fix runs once and starts no watcher.
-`start-fix-loop` runs this skill whenever its watcher reports work on a pull
+`start-watch-loop` runs this skill whenever its watcher reports work on a pull
 request.
 
 ## Choose the pull request

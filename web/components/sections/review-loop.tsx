@@ -14,7 +14,7 @@ const steps = [
     body: "It checks out that exact commit locally, reads the change, and posts what it finds as one comment review. Each pull request keeps its own reviewer, so the next review knows the last, and a large one gets a summary on the repository\u2019s site.",
   },
   {
-    title: "The fix loop fixes it",
+    title: "The watch loop fixes it",
     body: "Each finding is checked, fixed, committed, and pushed, and a branch that conflicts with its base gets the base merged in. The loop replies with the commit and resolves the thread. Each pull request keeps its own fixer, so the next round knows the last.",
   },
   {
@@ -46,7 +46,7 @@ export function ReviewLoop() {
         <>
           <Code>review-pr</Code> reviews one pull request&rsquo;s current head when you ask, and{" "}
           <Code>fix-pr</Code> fixes what a review found and resolves merge conflicts. Two more
-          skills, <Code>start-review-loop</Code> and <Code>start-fix-loop</Code>, run them in the
+          skills, <Code>start-review-loop</Code> and <Code>start-watch-loop</Code>, run them in the
           background while you keep working. The plans and the CLI do not depend on any of them.
         </>
       }
@@ -73,7 +73,7 @@ export function ReviewLoop() {
         </p>
         <div className="flex flex-wrap gap-x-6 gap-y-2 pt-1">
           <DocLink href={DOCS.reviewLoop}>Review loop</DocLink>
-          <DocLink href={DOCS.fixLoop}>Fix loop</DocLink>
+          <DocLink href={DOCS.watchLoop}>Watch loop</DocLink>
         </div>
       </div>
     </Section>

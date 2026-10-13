@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # watch-threads.sh — emit one line per piece of outstanding review work on the
-# pull requests a fix loop tracks, and stay silent otherwise. Intended to run
+# pull requests a watch loop tracks, and stay silent otherwise. Intended to run
 # under Claude Code's `Monitor`, where each stdout line becomes one
 # notification.
 #
@@ -48,7 +48,7 @@
 # --renotify is how many seconds before a still-unresolved thread is announced
 # again. Set it high enough to be a reminder rather than a stream. Every line
 # is a Monitor notification counting toward the limit that stops a watcher,
-# and a stopped watcher leaves the fix loop deaf while its skill reads silence
+# and a stopped watcher leaves the watch loop deaf while its skill reads silence
 # as "nothing outstanding".
 #
 # --once makes a single pass and exits, which is how the loop checks, before
@@ -125,9 +125,9 @@ parse_tracked() {
 # fake a field break.
 #
 # Findings open with `<!-- projector-finding v=1 priority=<P> sha=<40-hex> -->`
-# and fix-loop replies with `<!-- projector-reply v=1 -->`; the first is about
+# and watch-loop replies with `<!-- projector-reply v=1 -->`; the first is about
 # 88 characters, so against a 130-character snippet it would leave roughly 42
-# characters of the actual finding in every notification the fix loop sees.
+# characters of the actual finding in every notification the watch loop sees.
 # HTML comments are stripped before snipping for that reason. A thread whose
 # last comment strips to nothing is still reported: an unresolved thread is
 # outstanding work whatever its last comment looks like, and dropping it is
@@ -174,7 +174,7 @@ not_found() {
 # threads, and a body-only review — a failed anchor, a summary with no thread
 # under it — would otherwise vanish without a trace. REST rather than GraphQL,
 # because a GraphQL reviews connection can only be windowed and the window is
-# exactly the trap: every reply the fix loop posts inside a thread files an
+# exactly the trap: every reply the watch loop posts inside a thread files an
 # empty COMMENTED review, so `last:10` returns ten replies and the bot review
 # has been displaced. Bodies empty once HTML comments are stripped are
 # skipped, which is also what keeps the loop's own replies from coming back

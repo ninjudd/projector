@@ -728,7 +728,7 @@ and run it again, when:
 - the collision check below trips.
 
 The collision check lists every verdict the reviewer has already posted on
-this exact SHA by this model, reading every page, since each fix-loop thread
+this exact SHA by this model, reading every page, since each watch-loop thread
 reply adds a review object of its own. A verdict by another model is a second
 opinion and never collides; one whose marker names no model, from an earlier
 release, collides with every model. A verdict this run did not publish means

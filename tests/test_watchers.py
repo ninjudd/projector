@@ -18,7 +18,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-THREADS = ROOT / "skills" / "start-fix-loop" / "scripts" / "watch-threads.sh"
+THREADS = ROOT / "skills" / "start-watch-loop" / "scripts" / "watch-threads.sh"
 PRS = ROOT / "skills" / "start-review-loop" / "scripts" / "watch-prs.sh"
 
 SHA_A = "a" * 40
@@ -647,7 +647,7 @@ class WatchPrsTests(WatcherCase):
         self.assertIn("the author replied on an open finding", replied_again.stdout)
 
     def test_resolving_a_replied_finding_after_a_push_does_not_re_request_the_head(self) -> None:
-        # The fix loop replies, pushes, then resolves; a poll between the push
+        # The watch loop replies, pushes, then resolves; a poll between the push
         # and the resolve announces the head with a reply outstanding. Resolving
         # it next, or the reviewer resolving it during that head's review, must
         # not ask for the same head again.

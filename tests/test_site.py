@@ -2667,11 +2667,11 @@ function frame(active, title, body) {
 
     def test_each_stack_and_review_alone_opens_with_its_header(self) -> None:
         drawn = self.draw([self.review(10, 9, "open", header=self.ALPHA), self.review(11, 9, "open", header=self.ALPHA),
-                           self.review(8, None, "open", header={"title": "Fix loop stack subagent name"})])
+                           self.review(8, None, "open", header={"title": "Watch loop stack subagent name"})])
         html = drawn["steps"][0]["list"]
 
         self.assertEqual([[[10, 11]], [[8]]], self.stacks(html))
-        self.assertEqual(['<a href="/projects/alpha/">Build alpha</a>', "<span>Fix loop stack subagent name</span>"],
+        self.assertEqual(['<a href="/projects/alpha/">Build alpha</a>', "<span>Watch loop stack subagent name</span>"],
                          self.heads(html), "a project's header links to it, and a title's is plain text")
 
     def test_a_header_stays_above_the_rows_a_box_leaves(self) -> None:

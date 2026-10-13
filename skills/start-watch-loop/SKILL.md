@@ -1,9 +1,9 @@
 ---
-name: start-fix-loop
+name: start-watch-loop
 description: Watch chat-owned GitHub pull requests for review findings and merge conflicts, and run fix-pr on each one that has work, one subagent per pull request. Use when the user asks to keep fixing review feedback as it arrives or drive PRs to a clean review.
 ---
 
-# Start Fix Loop
+# Start Watch Loop
 
 Run a persistent background loop alongside foreground work. Watch only pull
 requests this conversation created or explicitly adopted, and keep watching
@@ -22,7 +22,7 @@ Resolve the operator as `../fix-pr/SKILL.md` describes, once for the loop.
 Run the loop only in the top-level conversation, the one the user talks to.
 A subagent's processes end when it returns, and the conversation that
 started it cannot see a loop it left behind, so a subagent never starts or
-joins a fix loop. A subagent asked to start one hands the request up
+joins a watch loop. A subagent asked to start one hands the request up
 instead, and a subagent that opens a pull request, such as one running
 `implement`, hands the pull request up. The conversation that started it may
 be a subagent too, so each one hands it up in turn until it reaches the

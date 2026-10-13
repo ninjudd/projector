@@ -395,7 +395,7 @@ EOF
       if [ -n "$rstate" ]; then
         # Every thread resolved is one answer per head, so only the head is
         # compared: a head announced while a reply was outstanding, then
-        # resolved by the fix loop or settled by that head's own review, is
+        # resolved by the watch loop or settled by that head's own review, is
         # the head already under review. A reply on an open finding is
         # compared by reply too, so each further reply asks again.
         if [ "$unresolved" = "0" ]; then

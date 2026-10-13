@@ -9,7 +9,7 @@ export const DOCS = {
   site: `${GITHUB}/blob/main/docs/site.md`,
   convention: `${GITHUB}/blob/main/docs/projects/README.md`,
   reviewLoop: `${GITHUB}/blob/main/skills/start-review-loop/SKILL.md`,
-  fixLoop: `${GITHUB}/blob/main/skills/start-fix-loop/SKILL.md`,
+  watchLoop: `${GITHUB}/blob/main/skills/start-watch-loop/SKILL.md`,
   issues: `${GITHUB}/issues`,
   license: `${GITHUB}/blob/main/LICENSE`,
 };
