@@ -1239,19 +1239,22 @@ class ModelTests(PublishCase):
         sentence = re.search(r"passes `--loop <id>` and `--model <model-id>` to each\s+`project review` command it "
                              r"runs on a pull request: (.*?)\. ", skill, re.S)
         commands = re.findall(r"`(\w+)`", sentence.group(1))
-        self.assertEqual(["setup", "move", "census", "interdiff", "gate", "publish", "release", "finish"], commands)
+        self.assertEqual(["setup", "move", "census", "settle", "interdiff", "gate", "publish", "release", "finish"],
+                         commands)
         flags = ("--loop", "l1", "--model", "claude-opus-5-5")
         # Each command, as the loop runs it on one pull request: a refusal is fine, an unknown flag is not.
         self.assertEqual(0, self.project("setup", "1", "--state-dir", str(self.state), *flags)[0])
         self.github.pr["head"]["sha"] = self.push_head("second head")
+        extras = {"publish": ("--verdict", "clean", "--body", str(self.body()), "--covered", "3/3"),
+                  "settle": ("--thread", "PRRT_none", "--result", "fixed", "--body", str(self.body()))}
         ran = {"setup": 0}
         for command in commands[1:]:
-            extra = ("--verdict", "clean", "--body", str(self.body()), "--covered", "3/3") if command == "publish" else ()
-            ran[command] = self.later(command, *flags, *extra)[0]
+            ran[command] = self.later(command, *flags, *extras.get(command, ()))[0]
 
-        self.assertEqual({"setup": 0, "move": 0, "census": 0, "interdiff": 1, "gate": 1, "publish": 0, "release": 0,
-                          "finish": 0},
-                         ran, "interdiff refuses with no full review to build on, and gate with review.gate unset")
+        self.assertEqual({"setup": 0, "move": 0, "census": 0, "settle": 1, "interdiff": 1, "gate": 1, "publish": 0,
+                          "release": 0, "finish": 0},
+                         ran, "settle refuses a thread that is not on the pull request, interdiff with no full review "
+                              "to build on, and gate with review.gate unset")
 
     def test_move_keeps_the_model_in_the_start_comment(self) -> None:
         self.assertEqual(0, self.setup_review()[0])
@@ -1469,6 +1472,217 @@ class FinishTests(PublishCase):
         for text in (review_pr, review_loop):
             self.assertNotIn("issues/comments", text)
             self.assertNotIn("git worktree", text)
+
+
+class SettleTests(PublishCase):
+    """`settle` writes the verify marker from the review's state, so no reply on a finding is typed by hand."""
+
+    THREAD = "PRRT_finding"
+    REPLY = "The warm-up runs in `load` now, so a restart starts warm."
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.threads: dict[str, dict] = {}
+        self.add_thread(self.THREAD, FINDING % self.head)
+        self.next_reply = 601
+        self.calls: list[tuple[list[str], str | None]] = []
+        fake = self.github
+
+        def answer(args: list[str], token: str | None = None) -> str:
+            fields = dict(arg.split("=", 1) for arg in args[3::2]) if args[:2] == ["api", "graphql"] else {}
+            query = fields.get("query", "")
+            if "node(id:" in query or "ReviewThread" in query:
+                self.calls.append((list(args), token))
+            if "node(id:" in query:
+                return self.node(fields["t"])
+            if "addPullRequestReviewThreadReply" in query:
+                return self.reply(fields["t"], fields["b"], token)
+            if "unresolveReviewThread" in query or "resolveReviewThread" in query:
+                self.threads[fields["t"]]["resolved"] = "unresolveReviewThread" not in query
+                return "{}"
+            if len(args) == 2 and args[1].startswith(f"repos/{REPO}/pulls/comments/"):
+                return self.comment(int(args[1].rsplit("/", 1)[1]))
+            return fake(args, token)
+
+        patcher = mock.patch.object(review, "run_gh", answer)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def add_thread(self, thread_id: str, first: str, *, number: int = 1, repo: str = REPO,
+                   resolved: bool = False) -> None:
+        self.threads[thread_id] = {"resolved": resolved, "number": number, "repo": repo,
+                                   "comments": [{"databaseId": 500 + len(self.threads), "body": first,
+                                                 "login": "operator"}]}
+
+    def node(self, thread_id: str) -> str:
+        if thread_id not in self.threads:
+            raise NotFound(f"gh: Could not resolve to a node with the global id of '{thread_id}'")
+        found = self.threads[thread_id]
+        last = found["comments"][-1]
+        return json.dumps({"data": {"node": {
+            "isResolved": found["resolved"],
+            "pullRequest": {"number": found["number"], "repository": {"nameWithOwner": found["repo"]}},
+            "first": {"nodes": [{"body": found["comments"][0]["body"]}]},
+            "last": {"nodes": [{"databaseId": last["databaseId"], "body": last["body"]}]}}}})
+
+    def reply(self, thread_id: str, body: str, token: str | None) -> str:
+        reply_id, self.next_reply = self.next_reply, self.next_reply + 1
+        self.threads[thread_id]["comments"].append({"databaseId": reply_id, "body": body,
+                                                    "login": (token or "").removeprefix("token-")})
+        return json.dumps({"data": {"addPullRequestReviewThreadReply": {"comment": {"databaseId": reply_id}}}})
+
+    def comment(self, comment_id: int) -> str:
+        for found in self.threads.values():
+            for posted in found["comments"]:
+                if posted["databaseId"] == comment_id:
+                    return json.dumps({"id": comment_id, "body": posted["body"],
+                                       "html_url": f"https://github.com/{REPO}/pull/1#discussion_r{comment_id}"})
+        raise NotFound("gh: Not Found (HTTP 404)")
+
+    def reply_file(self, text: str | None = None) -> Path:
+        path = self.dir / "reply.md"
+        path.write_text(self.REPLY + "\n" if text is None else text)
+        return path
+
+    def settle(self, result: str, *extra: str, thread: str | None = None, body: Path | None = None
+               ) -> tuple[int, str, str]:
+        return self.later("settle", "--thread", thread or self.THREAD, "--result", result,
+                          "--body", str(body or self.reply_file()), *extra)
+
+    def mutations(self) -> list[str]:
+        return [next(a for a in args if a.startswith("query=")).split("(input", 1)[0].rsplit(" ", 1)[-1]
+                for args, _ in self.calls if any(a.startswith("query=mutation") for a in args)]
+
+    def test_each_result_replies_with_the_marker_and_resolves_reopens_or_leaves_the_thread(self) -> None:
+        for result, before, after, mutations in (
+                ("fixed", False, True, ["addPullRequestReviewThreadReply", "resolveReviewThread"]),
+                ("accepted", False, True, ["addPullRequestReviewThreadReply", "resolveReviewThread"]),
+                ("withdrawn", False, True, ["addPullRequestReviewThreadReply", "resolveReviewThread"]),
+                ("kept", False, False, ["addPullRequestReviewThreadReply"]),
+                ("kept", True, True, ["addPullRequestReviewThreadReply"]),
+                ("reopened", True, False, ["addPullRequestReviewThreadReply", "unresolveReviewThread"])):
+            with self.subTest(result=result, resolved=before):
+                self.add_thread(self.THREAD, FINDING % self.head, resolved=before)
+                self.calls.clear()
+
+                code, out, err = self.settle(result, "--loop", "l1", "--model", self.model)
+
+                self.assertEqual(0, code, err)
+                posted = self.threads[self.THREAD]["comments"][-1]
+                self.assertEqual(f"<!-- projector-verify v=1 result={result} sha={self.head} model=claude-opus-5-5 -->"
+                                 f"\n{self.REPLY}\n", posted["body"])
+                self.assertEqual("operator", posted["login"], "the reviewer posts the reply")
+                self.assertTrue(all(token == "token-operator" for args, token in self.calls
+                                    if any(a.startswith("query=mutation") for a in args)))
+                self.assertIs(after, self.threads[self.THREAD]["resolved"])
+                self.assertEqual(mutations, self.mutations(), "the reply goes first, so no loop reads the thread "
+                                                              "as answered without it")
+                self.assertIn(f"replied {result} on thread {self.THREAD} of {REPO}#1 at {self.head[:7]}", out)
+                self.assertIn(f"the thread is {'resolved' if after else 'open'}", out)
+
+    def test_the_marker_names_the_head_and_model_the_review_state_records(self) -> None:
+        self.github.pr["head"]["sha"] = self.push_head("second head")
+        self.assertEqual(0, self.later("move")[0])
+
+        code, out, err = self.settle("fixed", "--json")
+
+        self.assertEqual(0, code, err)
+        moved = self.read_state()["sha"]
+        self.assertTrue(self.threads[self.THREAD]["comments"][-1]["body"].startswith(
+            f"<!-- projector-verify v=1 result=fixed sha={moved} model=claude-opus-5-5 -->\n"))
+        self.assertEqual({"repo": REPO, "number": 1, "thread": self.THREAD, "result": "fixed", "sha": moved,
+                          "model": self.model, "comment": 601,
+                          "url": f"https://github.com/{REPO}/pull/1#discussion_r601", "resolved": True},
+                         json.loads(out))
+
+    def test_refuses_any_thread_but_a_projector_finding_thread_on_this_pull_request(self) -> None:
+        self.add_thread("PRRT_other_pr", FINDING % self.head, number=2)
+        self.add_thread("PRRT_other_repo", FINDING % self.head, repo="acme/other")
+        self.add_thread("PRRT_person", "Could this use the cache?")
+        for thread, why in (("PRRT_missing", "is not a review thread on acme/app#1"),
+                            ("PRRT_other_pr", "is not a review thread on acme/app#1"),
+                            ("PRRT_other_repo", "is not a review thread on acme/app#1"),
+                            ("PRRT_person", "carries no Projector finding")):
+            with self.subTest(thread=thread):
+                code, _, err = self.settle("fixed", thread=thread)
+
+                self.assertEqual(1, code)
+                self.assertIn(why, err)
+        self.assertEqual([], self.mutations(), "nothing was posted or resolved")
+        self.assertEqual([1] * 4, [len(found["comments"]) for found in self.threads.values()])
+
+    def test_refuses_a_result_outside_the_set_and_a_body_that_is_empty_or_carries_a_marker(self) -> None:
+        with self.assertRaises(SystemExit) as refused, redirect_stderr(io.StringIO()):
+            self.settle("approved")
+        self.assertEqual(2, refused.exception.code)
+        with self.assertRaisesRegex(ReviewError, "--result must be one of fixed, accepted, withdrawn, kept, reopened"):
+            review.settle(review.Paths(self.state, REPO, 1, self.model), self.THREAD, "approved", self.reply_file())
+        for text, why in (("\n", "the body is empty"),
+                          (f"<!-- projector-verify v=1 result=fixed sha={self.head} model=x -->\nFixed.\n",
+                           "leave the marker out of the body"),
+                          (None, "does not exist")):
+            with self.subTest(why=why):
+                body = self.dir / "missing.md" if text is None else self.reply_file(text)
+
+                code, _, err = self.settle("fixed", body=body)
+
+                self.assertEqual(1, code)
+                self.assertIn(why, err)
+        self.assertEqual([], self.mutations())
+
+    def test_a_reply_that_does_not_read_back_with_its_marker_exits_one(self) -> None:
+        def mangled(comment_id: int) -> str:
+            return json.dumps({"id": comment_id, "body": self.REPLY, "html_url": None})
+
+        with mock.patch.object(self, "comment", mangled):
+            code, _, err = self.settle("fixed")
+
+        self.assertEqual(1, code)
+        self.assertIn("does not open with <!-- projector-verify v=1 result=fixed", err)
+
+    def test_a_thread_whose_resolution_does_not_take_exits_one(self) -> None:
+        def unchanged(args: list[str], token: str | None = None) -> str:
+            if any(a.startswith("query=mutation") and "resolveReviewThread" in a for a in args):
+                return "{}"
+            return answer(args, token)
+
+        answer = review.run_gh
+        with mock.patch.object(review, "run_gh", unchanged):
+            code, _, err = self.settle("fixed")
+
+        self.assertEqual(1, code)
+        self.assertIn(f"thread {self.THREAD} is open after fixed; run settle again", err)
+
+    def test_running_settle_again_after_its_reply_posted_resolves_without_a_second_reply(self) -> None:
+        marker = f"<!-- projector-verify v=1 result=fixed sha={self.head} model=claude-opus-5-5 -->"
+        self.reply(self.THREAD, f"{marker}\n{self.REPLY}\n", "token-operator")
+
+        code, _, err = self.settle("fixed")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(2, len(self.threads[self.THREAD]["comments"]), "no second reply")
+        self.assertEqual(["resolveReviewThread"], self.mutations())
+        self.assertTrue(self.threads[self.THREAD]["resolved"])
+
+    def test_refuses_without_a_review_set_up(self) -> None:
+        code, _, err = self.later("settle", "--repo", REPO, "--model", "gpt-5.5", "--thread", self.THREAD,
+                                  "--result", "fixed", "--body", str(self.reply_file()))
+
+        self.assertEqual(1, code)
+        self.assertIn("project review setup 1 --model gpt-5.5", err)
+        self.assertEqual([], self.mutations())
+
+    def test_review_pr_settles_threads_through_the_command_alone(self) -> None:
+        # A hand-typed marker that misses `projector-verify` makes the reviewer's own reply read as the author
+        # answering, which fires RESPONDED.
+        skill = (Path(cli.__file__).resolve().parents[2] / "skills" / "review-pr" / "SKILL.md").read_text()
+
+        self.assertIn("project review settle <number> --thread <thread-id> --result <result> --body <file>", skill)
+        for result in review.SETTLED:
+            self.assertIn(f"`--result {result}`", skill)
+        self.assertNotIn("resolveReviewThread", skill)
+        self.assertNotIn("Every reply you post opens with", skill)
 
 
 def iso(at: datetime) -> str:
@@ -3027,7 +3241,7 @@ class ArgumentTests(unittest.TestCase):
     def test_no_review_command_takes_a_sha(self) -> None:
         # Every SHA comes from GitHub or the state file; a typed one is how two
         # wrong 40-character SHAs reached a publish.
-        for command in ("setup", "move", "census", "release", "finish", "publish", "gate", "interdiff"):
+        for command in ("setup", "move", "census", "settle", "release", "finish", "publish", "gate", "interdiff"):
             with self.subTest(command):
                 help_text = io.StringIO()
                 with redirect_stdout(help_text), self.assertRaises(SystemExit):
