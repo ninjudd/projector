@@ -202,7 +202,7 @@ first:
 | `hooks/register.tsx` | 1, 2 | Run `project inbox`; layer 2 registers and serves `tell`, and draws notices, **snooze** in both drawers, the divider's counts, and the waking of a snoozed item |
 | `hooks/band.test.tsx` | 1, 2 | Every existing test passing under the new names; layer 2 adds the notice and snooze tests in § 4 |
 | `docs/plugins.md` | 1, 2 | "Answer your agents' questions in Projector's band" becomes "Read your inbox in Projector's band"; layer 2 describes notices and snoozing |
-| `docs/projects/questions/readme.md` | 1 | Status `completed`, with a final section saying it shipped in 0.7.14 and continues as `inbox` |
+| `docs/projects/questions/readme.md` | 1 | Status `completed`, with a final section saying it shipped in 0.7.14 and continues as `inbox`, whose § 7 carries each of its open questions |
 | `docs/projects/inbox/readme.md` | 1, 2 | Status `in-progress` in layer 1; what layer 2 settles |
 
 No skill changes. A loop skill that posts through `project inbox` needs the
@@ -310,14 +310,29 @@ checked by hand; until then layer 2 leaves it `in-progress`.
 
 ## 7. Open questions
 
-- **A session's id outside Claude Code.** Carried from the questions plan:
-  a Codex agent or a Paseo runner needs to pass its own id to `--session` or
-  `PROJECTOR_SESSION`, and which id each host offers is not settled. Owner:
-  ninjudd, with Jason Fieldman for Paseo.
+The first five carry the questions plan's open questions under the inbox's
+names, so that marking that plan `completed` in layer 1 leaves none of
+them untracked.
+
+- **A session's id outside Claude Code.** A Codex agent or a Paseo runner
+  needs to pass its own id to `--session` or `PROJECTOR_SESSION`, and which
+  id each host offers is not settled. Until it is, an agent there passes an
+  id its runner chooses. Owner: ninjudd, with Jason Fieldman for Paseo.
 - **The loop skills posting through the inbox.** Once every host can name
   its session, `fix-pr` and the loops can ask and tell through `project
   inbox` instead of handing everything to the main loop. Deferred until the
   question above is settled.
+- **Opening a pull request's drawer on the main screen.** A pull request's
+  number is a `Markdown` link, which takes no press there. Switching pull
+  request lines to `Button`s, as inbox items use, would fix it but loses
+  the ctrl-click that opens the Projector summary. Owner: ninjudd, after
+  trying item lines on the main screen.
+- **Views for Codex and Paseo.** Codex has no band, and Paseo's clients
+  could list and clear items through `project inbox list --json`,
+  `answer`, and `dismiss`. Deferred until `project inbox` ships.
+- **Old session directories.** A session's directory under
+  `projector/inbox/` stays after the session ends. Removing directories
+  older than some age is deferred until they turn out to pile up.
 - **The look of notices and snoozing.** The `•` bullet, the divider's
   wording, the hour a snooze lasts, and whether the band says how many
   items are snoozed are a first choice. Owner: ninjudd, to adjust in a
