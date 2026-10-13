@@ -26,7 +26,16 @@ from urllib.request import url2pathname, urlopen
 from . import inbox, loop, permissions, review, site, summary
 from .permissions import allow_publish
 from .summary import WORKFLOW_PATH
-from .config import ConfigError
+from .config import (
+    CONFIG_NAME,
+    Change,
+    ConfigError,
+    parse_value,
+    same_value,
+    unset_value,
+    user_config_path,
+    write_value,
+)
 from .config import load as load_config
 from .core import (
     DISTRIBUTION,
@@ -394,13 +403,24 @@ def parser() -> argparse.ArgumentParser:
 
     add_output(subcommands.add_parser("check", help="validate all projects"))
 
-    config = subcommands.add_parser("config", help="read layered configuration")
+    config = subcommands.add_parser("config", help="read and change layered configuration")
     config_commands = config.add_subparsers(dest="config_command", required=True)
 
     config_get = config_commands.add_parser("get", help="print one value")
     config_get.add_argument("key", help="dotted key, for example review.username")
     config_get.add_argument("--default", help="printed when the key is unset")
     add_output(config_get)
+
+    config_set = config_commands.add_parser("set", help="set one value in one configuration file")
+    config_set.add_argument("key", help="a key Projector reads, for example watch.auto_start")
+    config_set.add_argument("value", help="true or false, or text, as the key takes")
+    add_config_file(config_set)
+    add_output(config_set)
+
+    config_unset = config_commands.add_parser("unset", help="remove one value from one configuration file")
+    config_unset.add_argument("key", help="a key Projector reads, or any other key the file sets")
+    add_config_file(config_unset)
+    add_output(config_unset)
 
     config_list = config_commands.add_parser("list", help="print the merged configuration")
     add_output(config_list)
@@ -469,8 +489,16 @@ def parser() -> argparse.ArgumentParser:
         "move", help="follow a head that moved mid-review and update the start comment in place"
     )
     review_census = review_commands.add_parser("census", help="count a pull request's Projector finding threads")
+    review_settle = review_commands.add_parser(
+        "settle", help="reply on a Projector finding thread with the verify marker, as the reviewer, and resolve or "
+                       "unresolve the thread as the result asks"
+    )
     review_release = review_commands.add_parser(
         "release", help="clear a pull request's review lock when no review is running"
+    )
+    review_finish = review_commands.add_parser(
+        "finish", help="end a review on this machine: delete its start comments that no longer mean a review in "
+                       "progress, and remove its scratch worktrees, locks, and state"
     )
     review_publish = review_commands.add_parser(
         "publish", help="check and submit the review, set draft state, and delete the start comment"
@@ -512,8 +540,8 @@ def parser() -> argparse.ArgumentParser:
                            help="a listed change that will not be built: remove it, and end the hold when none is "
                                 "left (repeatable); with no TEXT, end the hold, which you do once the push that "
                                 "carries every listed change succeeds, since the command does not check it")
-    for command in (review_setup, review_move, review_census, review_release, review_publish, review_gate,
-                    review_interdiff):
+    for command in (review_setup, review_move, review_census, review_settle, review_release, review_finish,
+                    review_publish, review_gate, review_interdiff):
         command.add_argument("pr", type=int, help="the pull request number")
         command.add_argument("--repo", help="owner/name (setup: must match the checkout's origin; "
                              "later: default the review set up for this pull request)")
@@ -528,11 +556,24 @@ def parser() -> argparse.ArgumentParser:
     review_setup.add_argument("--model", required=True,
                               help="the model ID of this session, which names the start comment and keys the "
                                    "review's state")
-    for command in (review_move, review_census, review_release, review_publish, review_gate, review_interdiff):
+    for command in (review_move, review_census, review_settle, review_release, review_finish, review_publish,
+                    review_gate, review_interdiff):
         command.add_argument("--model", help="the model whose review this is (default: the one model with a review "
                                              "of this pull request set up here)")
+    review_settle.add_argument("--thread", required=True, help="the finding thread's id, as `census --json` lists it")
+    review_settle.add_argument("--result", required=True, choices=tuple(review.SETTLED),
+                               help="how the finding stands at the head under review: fixed, accepted, and "
+                                    "withdrawn resolve the thread, reopened unresolves it, and kept leaves it open")
+    review_settle.add_argument("--body", type=Path, required=True,
+                               help="the reply's text, without the marker, which settle writes")
     review_setup.add_argument("--rereview", action="store_true",
                               help="a re-review of a head this loop already published a verdict on")
+    review_setup.add_argument("--replace", type=int, metavar="COMMENT_ID",
+                              help="the start comment of this model's that a stopped session left: check that it is "
+                                   "one, and delete it once this review is set up in its place")
+    review_finish.add_argument("--force", action="store_true",
+                               help="discard a review that is set up and unpublished, as when its pull request "
+                                    "closed")
     review_publish.add_argument("--verdict", choices=("clean", "changes-requested"),
                                 help="the verdict the signature line and marker carry (required without "
                                      "--incremental)")
@@ -635,6 +676,15 @@ def add_output(command: argparse.ArgumentParser) -> None:
     command.add_argument("--json", action="store_true", dest="json_output")
 
 
+def add_config_file(command: argparse.ArgumentParser) -> None:
+    target = command.add_mutually_exclusive_group()
+    target.add_argument("--repo", action="store_const", const="repo", dest="scope",
+                        help=f"the repository's own {CONFIG_NAME}, the default")
+    target.add_argument("--user", action="store_const", const="user", dest="scope",
+                        help=f"~/{CONFIG_NAME}, which applies in every repository")
+    target.add_argument("--file", type=Path, help="this configuration file, such as one in a parent directory")
+
+
 def seconds(text: str) -> float:
     value = float(text)
     if not 0 < value < float("inf"):
@@ -686,6 +736,18 @@ def add_inbox_parser(subcommands) -> None:
 
     withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
     withdraw.add_argument("reference")
+
+    revise = command("revise", "replace an open question's text, keeping its number")
+    revise.add_argument("reference", help="the question's number, such as 3")
+    revise.add_argument("--question", help="the new question, in one line of at most 120 characters")
+    revise.add_argument("--recommend", help="the new recommended answer, which becomes answer a")
+    options = revise.add_mutually_exclusive_group()
+    options.add_argument("--option", action="append",
+                         help="another answer; repeat for each, up to five, to replace every option but answer a")
+    options.add_argument("--no-options", action="store_true", help="drop every option but answer a")
+    detail = revise.add_mutually_exclusive_group()
+    detail.add_argument("--detail", help="the new detail, as Markdown; an empty one clears it")
+    detail.add_argument("--detail-file", type=Path, help="read the new detail from this file")
 
     snooze = command("snooze", "hide an open item for a while")
     snooze.add_argument("reference")
@@ -797,7 +859,62 @@ def format_value(value: object) -> str:
     return json.dumps(value, sort_keys=True, default=json_scalar)
 
 
+def config_file(arguments: argparse.Namespace) -> Path:
+    """The file `set` and `unset` change: the repository's own unless `--user` or `--file` names another."""
+
+    if arguments.file:
+        path = arguments.file.absolute()
+        if not path.parent.is_dir():
+            raise UsageError(f"{path.parent} is not a directory; --file creates a file but not its directory")
+        return path
+    if arguments.scope == "user":
+        return user_config_path()
+    if arguments.root:
+        return arguments.root.resolve() / CONFIG_NAME
+    try:
+        return discover_git_root(Path.cwd()) / CONFIG_NAME
+    except EnvironmentError as error:
+        raise EnvironmentError(f"{error}; pass --user or --file to name a configuration file") from error
+
+
+def report_override(arguments: argparse.Namespace, change: Change) -> None:
+    """Say on stderr when the merged configuration here does not give the value just written."""
+
+    try:
+        config = load_config(config_start(arguments))
+    except ConfigError:
+        return
+    effective = config.get(change.key)
+    if same_value(effective, change.new):
+        return
+    source = config.source(change.key)
+    if source is not None:
+        print(f"project: {source} sets {change.key} = {format_value(effective)}, which applies here",
+              file=sys.stderr)
+    else:
+        print(f"project: {change.path} is not read here; 'project config paths' lists the files that are",
+              file=sys.stderr)
+
+
+def change_config(arguments: argparse.Namespace) -> int:
+    path = config_file(arguments)
+    if arguments.config_command == "set":
+        change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value))
+    else:
+        change = unset_value(path, arguments.key)
+    if arguments.json_output:
+        print(json_text({"action": change.action, "key": change.key, "old": change.old, "new": change.new,
+                         "file": str(change.path)}), flush=True)
+    else:
+        shown = "" if change.new is None else f" = {format_value(change.new)}"
+        print(f"{change.action} {change.key}{shown} in {change.path}", flush=True)
+    report_override(arguments, change)
+    return 0
+
+
 def run_config(arguments: argparse.Namespace) -> int:
+    if arguments.config_command in ("set", "unset"):
+        return change_config(arguments)
     config = load_config(config_start(arguments))
     command = arguments.config_command
 
@@ -879,36 +996,20 @@ def emit_files(files: list[FileAction], json_output: bool, pages: Optional[dict]
 def instructions_enabled(root: Path) -> bool:
     """`instructions.enabled` from configuration; unset means enabled."""
 
-    value = load_config(root).get("instructions.enabled")
-    if value is None:
-        return True
-    if not isinstance(value, bool):
-        raise ConfigError(
-            f"instructions.enabled must be true or false, not {type(value).__name__}"
-        )
-    return value
+    return load_config(root).setting("instructions.enabled") is not False
 
 
 def configured_projects_dir(root: Path) -> Optional[Path]:
     """`projects.dir` from configuration, when the flag did not supply one."""
 
-    configured = load_config(root).get("projects.dir")
-    if configured is None:
-        return None
-    if not isinstance(configured, str):
-        raise ConfigError(f"projects.dir must be a string, not {type(configured).__name__}")
-    return Path(configured)
+    configured = load_config(root).setting("projects.dir")
+    return None if configured is None else Path(configured)
 
 
 def configured_prepare(root: Path) -> Optional[str]:
     """`site.prepare` from configuration: the command that generates what the site copies."""
 
-    configured = load_config(root).get("site.prepare")
-    if configured is None or configured == "":
-        return None
-    if not isinstance(configured, str):
-        raise ConfigError(f"site.prepare must be a string, not {type(configured).__name__}")
-    return configured
+    return load_config(root).setting("site.prepare") or None
 
 
 def allowed_prepare_file() -> Path:
@@ -1003,12 +1104,7 @@ def review_rules(json_output: bool) -> int:
 def incremental_enabled(checkout: Path) -> bool:
     """`review.incremental` from the review's checkout; unset means incremental reviews are on."""
 
-    value = load_config(checkout).get("review.incremental")
-    if value is None:
-        return True
-    if not isinstance(value, bool):
-        raise ConfigError(f"review.incremental must be true or false, not {type(value).__name__}")
-    return value
+    return load_config(checkout).setting("review.incremental") is not False
 
 
 def review_status(root: Path, arguments: argparse.Namespace) -> int:
@@ -1029,7 +1125,7 @@ def review_status(root: Path, arguments: argparse.Namespace) -> int:
 def review_hold(arguments: argparse.Namespace) -> int:
     """`review hold`: post, extend, shrink, or end your hold on a pull request in `--repo`, or else in the
     repository of the checkout it runs in."""
-    repo = review.hold_repo(arguments.repo, Path.cwd())
+    repo = review.named_repo(arguments.repo, Path.cwd(), "to hold a pull request in")
     result = review.hold(repo, arguments.pr, arguments.add or [], arguments.drop or [])
     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.hold_lines(result)))
     return 0
@@ -1045,6 +1141,10 @@ def run_review(arguments: argparse.Namespace) -> int:
         return review_status(root, arguments)
     loop = review.valid_loop(arguments.loop)
     command = arguments.review_command
+    if command == "finish":
+        result = review.finish(root, arguments.pr, arguments.repo, arguments.model, arguments.force, Path.cwd())
+        print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.finish_lines(result)))
+        return 0
     if command == "setup":
         checkout = arguments.checkout or Path.cwd()
         try:
@@ -1053,7 +1153,7 @@ def run_review(arguments: argparse.Namespace) -> int:
             configured = None
         state = review.setup(root, arguments.pr, checkout, arguments.repo, arguments.reviewer,
                              configured if isinstance(configured, str) else None,
-                             arguments.model, loop, arguments.rereview)
+                             arguments.model, loop, arguments.rereview, arguments.replace)
     else:
         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
         if command == "census":
@@ -1076,6 +1176,10 @@ def run_review(arguments: argparse.Namespace) -> int:
                       + (f" by model {model}" if model else ""))
             return 0
         paths = review.review_paths(root, repo, arguments.pr, arguments.model)
+        if command == "settle":
+            result = review.settle(paths, arguments.thread, arguments.result, arguments.body)
+            print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.settle_lines(result)))
+            return 0
         if command == "interdiff":
             state = review.read_state(paths)
             enabled = incremental_enabled(Path(state["checkout"]))
@@ -1138,6 +1242,8 @@ def run_review(arguments: argparse.Namespace) -> int:
         print(f"worktree {state['worktree']}")
         print("trusted" if state["trusted"] else f"untrusted: {state['untrusted_because']}; review it by reading")
         print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
+        if command == "setup" and arguments.replace is not None:
+            print(f"deleted start comment {arguments.replace}, which this review replaces")
     return 0
 
 
@@ -1232,6 +1338,12 @@ def run_inbox(arguments: argparse.Namespace) -> int:
                 else inbox.dismiss(session, ref, withdrawn=command == "withdraw"))
         done = {"answer": "answered", "dismiss": "dismissed", "withdraw": "withdrew"}[command]
         print(json_text({"item": item}) if json_output else f"{done} {inbox.answer_ref(item)}")
+    elif command == "revise":
+        detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
+        options = [] if arguments.no_options else arguments.option
+        item = inbox.revise(inbox_session(arguments, False), ref, question=arguments.question, detail=detail,
+                            recommend=arguments.recommend, options=options)
+        print(json_text({"item": item}) if json_output else f"revised {item['ref']}")
     elif command == "snooze":
         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
         print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
@@ -1707,23 +1819,13 @@ def init_site(root: Path, action_ref: str, takeover: bool = False, url: str = ""
 def site_enabled(root: Path) -> bool:
     """`site.enabled` from configuration; unset means `init` sets the site up."""
 
-    value = load_config(root).get("site.enabled")
-    if value is None:
-        return True
-    if not isinstance(value, bool):
-        raise ConfigError(f"site.enabled must be true or false, not {type(value).__name__}")
-    return value
+    return load_config(root).setting("site.enabled") is not False
 
 
 def publish_rule_enabled(root: Path) -> bool:
     """`review.publish_rule` from configuration; unset means `init` adds the rules."""
 
-    value = load_config(root).get("review.publish_rule")
-    if value is None:
-        return True
-    if not isinstance(value, bool):
-        raise ConfigError(f"review.publish_rule must be true or false, not {type(value).__name__}")
-    return value
+    return load_config(root).setting("review.publish_rule") is not False
 
 
 def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[str]:

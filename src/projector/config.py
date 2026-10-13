@@ -24,23 +24,76 @@ rather than less.
 A worktree under the repository, as `.claude/worktrees/<name>` is, keeps the
 repository and its parents on the walk. A worktree created outside the
 repository does not, and sees only its own file and the user layer.
+
+`project config set` and `unset` change one file, one line at a time, so the
+comments and layout a person wrote survive every change.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from .core import ProjectorError
+from .core import ProjectorError, UsageError, write_through
 
 
 CONFIG_NAME = ".projector.toml"
 
+# Every key Projector reads, with its type. `project config set` accepts only
+# these keys and values of these types, and `Config.setting` refuses a file's
+# value of another type.
+SETTINGS: dict[str, type] = {
+    "projects.dir": str,
+    "instructions.enabled": bool,
+    "site.enabled": bool,
+    "site.prepare": str,
+    "review.username": str,
+    "review.allow_approve": bool,
+    "review.publish_rule": bool,
+    "review.gate": str,
+    "review.incremental": bool,
+    "review.summarize": bool,
+    "fix.resolve_human_threads": bool,
+    "watch.auto_start": bool,
+}
+
 
 class ConfigError(ProjectorError):
     exit_code = 78
+
+
+def same_value(one: Any, other: Any) -> bool:
+    return type(one) is type(other) and one == other
+
+
+def _unknown_key(key: str, reason: str = "") -> UsageError:
+    return UsageError(f"unknown key {key!r}{reason}; the keys are {', '.join(sorted(SETTINGS))}")
+
+
+def setting_type(key: str) -> type:
+    try:
+        return SETTINGS[key]
+    except KeyError:
+        raise _unknown_key(key) from None
+
+
+def parse_value(key: str, text: str) -> Any:
+    """`text` from the command line as the type `key` takes."""
+
+    if setting_type(key) is bool:
+        if text not in ("true", "false"):
+            raise UsageError(f"{key} must be true or false, not {text!r}")
+        return text == "true"
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise UsageError(f"{key} must be text that UTF-8 can encode") from None
+    return text
 
 
 def user_config_path(environ: Optional[dict[str, str]] = None) -> Path:
@@ -156,6 +209,16 @@ class Config:
             current = current[part]
         return current
 
+    def setting(self, key: str) -> Any:
+        """A key from `SETTINGS`, or None when unset; a value of another type is an error naming the key."""
+
+        value = self.get(key)
+        kind = SETTINGS[key]
+        if value is not None and not isinstance(value, kind):
+            expected = "true or false" if kind is bool else "a string"
+            raise ConfigError(f"{key} must be {expected}, not {type(value).__name__}")
+        return value
+
     def source(self, key: str) -> Optional[Path]:
         return self.sources.get(key)
 
@@ -185,3 +248,235 @@ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, s
     final = _flatten(values)
     sources = {key: path for key, path in sources.items() if key in final}
     return Config(values, sources, paths)
+
+
+@dataclass(frozen=True)
+class Change:
+    """What `write_value` did to one key: `set`, `unset`, or `unchanged`."""
+
+    action: str
+    key: str
+    old: Any
+    new: Any
+    path: Path
+
+
+def write_value(path: Path, key: str, value: Any) -> Change:
+    """Set `key` to `value` in the file at `path`, or remove it when `value` is None.
+
+    Only the lines that set `key` change, so every comment, blank line, and
+    other setting stays byte for byte. The edit is checked twice: before
+    writing, by parsing the new text, and after, by reading the file back,
+    which restores the original when the two disagree.
+    """
+
+    original = path.read_bytes().decode("utf-8") if path.exists() else None
+    try:
+        before = tomllib.loads(original or "")
+    except tomllib.TOMLDecodeError as error:
+        raise ConfigError(f"{path}: invalid TOML: {error}") from error
+    old = Config(before, {}, []).get(key)
+    if same_value(old, value):
+        return Change("unchanged", key, old, value, path)
+    if isinstance(old, dict):
+        command = "unset removes" if value is None else "set changes"
+        raise ProjectorError(f"{path}: {key} is a table, and {command} one setting, not a table; the file is unchanged")
+
+    expected = {name: setting for name, setting in _flatten(before).items() if name != key}
+    if value is not None:
+        expected[key] = value
+    text = _edited(original or "", key, value)
+    if not _reads_back(text, key, value, expected):
+        raise ProjectorError(
+            f"{path}: cannot change {key} by editing its own line, as when an inline table holds it; "
+            "the file is unchanged"
+        )
+    write_through(path, text)
+    if not _reads_back(path.read_bytes().decode("utf-8"), key, value, expected):
+        if original is None:
+            path.resolve().unlink(missing_ok=True)
+        else:
+            write_through(path, original)
+        raise ProjectorError(f"{path}: {key} did not read back as written, so the file was restored")
+    return Change("unset" if value is None else "set", key, old, value, path)
+
+
+def unset_value(path: Path, key: str) -> Change:
+    """Remove `key` from the file at `path`.
+
+    A key outside `SETTINGS` is removed when the file sets it, so a setting
+    Projector no longer reads can be cleaned up, and refused when the file
+    does not, so a misspelled key still gets the list of keys.
+    """
+
+    change = write_value(path, key, None)
+    if change.action == "unchanged" and key not in SETTINGS:
+        raise _unknown_key(key, f", which {path} does not set")
+    return change
+
+
+def _reads_back(text: str, key: str, value: Any, expected: dict[str, Any]) -> bool:
+    try:
+        values = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return False
+    return same_value(Config(values, {}, []).get(key), value) and _flatten(values) == expected
+
+
+_KEY_PART = r"""(?:[A-Za-z0-9_-]+|"(?:[^"\\\n]|\\.)*"|'[^'\n]*')"""
+_DOTTED_KEY = rf"{_KEY_PART}(?:[ \t]*\.[ \t]*{_KEY_PART})*"
+_HEADER = re.compile(rf"[ \t]*(\[\[?)[ \t]*({_DOTTED_KEY})[ \t]*\]")
+_ASSIGNMENT = re.compile(rf"([ \t]*)({_DOTTED_KEY})[ \t]*=[ \t]*")
+
+
+@dataclass(frozen=True)
+class _Header:
+    line: int
+    table: tuple[str, ...]
+    array: bool
+
+
+@dataclass(frozen=True)
+class _Entry:
+    """One `key = value` statement: lines `start` up to `end`, under the table `table`."""
+
+    start: int
+    end: int
+    table: tuple[str, ...]
+    key: tuple[str, ...]
+    indent: str
+    value_start: int
+
+    @property
+    def path(self) -> tuple[str, ...]:
+        return self.table + self.key
+
+
+def _key_path(dotted: str) -> tuple[str, ...]:
+    """A dotted key as TOML reads it, with quotes and escapes resolved."""
+
+    node: Any = tomllib.loads(f"{dotted} = 0")
+    path: list[str] = []
+    while isinstance(node, dict):
+        ((name, node),) = node.items()
+        path.append(name)
+    return tuple(path)
+
+
+def _statement_end(lines: list[str], start: int) -> int:
+    """The line after the last one the statement at `start` spans.
+
+    A value such as a multi-line string or array continues onto later lines,
+    and the first run of lines that parses on its own is the whole statement.
+    """
+
+    for end in range(start + 1, len(lines) + 1):
+        try:
+            tomllib.loads("".join(lines[start:end]))
+        except tomllib.TOMLDecodeError:
+            continue
+        return end
+    raise ConfigError(f"line {start + 1}: cannot find the end of the value")
+
+
+def _scan(lines: list[str]) -> tuple[list[_Header], list[_Entry]]:
+    headers: list[_Header] = []
+    entries: list[_Entry] = []
+    table: tuple[str, ...] = ()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.strip() or line.lstrip().startswith("#"):
+            index += 1
+        elif header := _HEADER.match(line):
+            table = _key_path(header.group(2))
+            headers.append(_Header(index, table, header.group(1) == "[["))
+            index += 1
+        else:
+            assignment = _ASSIGNMENT.match(line)
+            if assignment is None:
+                raise ConfigError(f"line {index + 1}: cannot read the key")
+            end = _statement_end(lines, index)
+            entries.append(
+                _Entry(index, end, table, _key_path(assignment.group(2)), assignment.group(1), assignment.end())
+            )
+            index = end
+    return headers, entries
+
+
+def _value_end(statement: str, value_start: int) -> int:
+    """Where the value that begins at `value_start` ends, so a comment after it survives.
+
+    The value ends either at the end of the statement or before a `#` that
+    starts a comment. A `#` inside a string leaves the text before it
+    unparseable, so the first cut that parses is the end of the value.
+    """
+
+    cuts = [match.start() for match in re.finditer("#", statement) if match.start() > value_start]
+    for cut in [*cuts, len(statement)]:
+        head = statement[:cut].rstrip()
+        try:
+            tomllib.loads(head)
+        except tomllib.TOMLDecodeError:
+            continue
+        return len(head)
+    raise ConfigError("cannot find the end of the value")
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    # JSON escapes every control character TOML does except DEL, which a TOML
+    # basic string may not hold unescaped.
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007F")
+
+
+def _edited(text: str, key: str, value: Any) -> str:
+    """`text` with `key` set to `value`, or removed when `value` is None."""
+
+    lines = re.findall(r"[^\n]*\n|[^\n]+\Z", text)
+    newline = "\r\n" if "\r\n" in text else "\n"
+    path = tuple(key.split("."))
+    headers, entries = _scan(lines)
+
+    entry = next((entry for entry in entries if entry.path == path), None)
+    if entry is not None:
+        if value is None:
+            del lines[entry.start:entry.end]
+        else:
+            statement = "".join(lines[entry.start:entry.end])
+            end = _value_end(statement, entry.value_start)
+            lines[entry.start:entry.end] = [statement[:entry.value_start] + _toml_value(value) + statement[end:]]
+        return "".join(lines)
+    if value is None:
+        return text
+
+    parent = path[:-1]
+    header = next((header for header in headers if header.table == parent and not header.array), None)
+    if header is not None or not parent:
+        # After the section's last statement rather than at its end, so a
+        # comment that introduces the next table stays above that table.
+        siblings = [entry for entry in entries if entry.table == parent]
+        written = path[-1:]
+        after = siblings[-1] if siblings else None
+        at = after.end if after else (header.line + 1 if header else 0)
+    else:
+        # A table made by dotted keys, as `watch.auto_start = true` at the top
+        # level makes `watch`, cannot also take a `[watch]` header, so the key
+        # joins those dotted keys.
+        dotted = [entry for entry in entries
+                  if len(entry.table) < len(parent) < len(entry.path) and entry.path[:len(parent)] == parent]
+        if not dotted:
+            separator = newline if text.strip() and not text.endswith(newline * 2) else ""
+            ending = newline if text and not text.endswith("\n") else ""
+            return (f"{text}{ending}{separator}[{'.'.join(parent)}]{newline}"
+                    f"{path[-1]} = {_toml_value(value)}{newline}")
+        after = dotted[-1]
+        written = path[len(after.table):]
+        at = after.end
+
+    if at and not lines[at - 1].endswith("\n"):
+        lines[at - 1] += newline
+    indent = after.indent if after else ""
+    lines.insert(at, f"{indent}{'.'.join(written)} = {_toml_value(value)}{newline}")
+    return "".join(lines)

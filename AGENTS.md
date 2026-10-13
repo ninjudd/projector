@@ -46,6 +46,7 @@ project owner <name> --clear
 project done <name>
 project check
 project config get <key>
+project config set <key> <value>
 ```
 
 ## Keep the core portable
@@ -79,6 +80,7 @@ PYTHONPATH=src python3 -m projector check
 claude plugin validate .
 claude plugin validate skills
 claude plugin test .
+hooks/typecheck.sh
 git diff --check
 ```
 
@@ -87,6 +89,18 @@ skill set. `claude plugin validate .` validates the marketplace and the Claude
 Code hooks module in `hooks/`, while `claude plugin validate skills` validates
 the skill tree. `claude plugin test .` runs the hooks module's `*.test.ts`
 and `*.test.tsx` files. Codex has no separate public validation command.
+
+`hooks/typecheck.sh` type-checks the hooks module with `site/`'s TypeScript,
+through the root `tsconfig.json`. It compiles against the declarations
+Claude Code writes to `.claude-plugin/types/` each time an interactive
+session loads the checkout as a plugin. Nothing else provides them, so CI
+cannot run this check. Once per checkout, run `npm ci` in `site/`, and start
+a session with `claude --plugin-dir .` from the repository root. In a linked
+worktree that has no `tsc` or no declarations of its own, the script uses the
+main checkout's and says so. The declarations depend mainly on the Claude
+Code version, so a worktree can share them. The script fails with the setup
+instruction when neither checkout has what it needs. Start such a session
+again after you update Claude Code, so the declarations match it.
 
 The site's front end lives in `site/`: TypeScript under `site/src/`, and
 the stylesheets, icon, and compiled JavaScript the site serves under
@@ -129,7 +143,7 @@ because squash merges preserve that body as the commit message.
 For review findings, verify first, commit locally, reply with the commit, push,
 resolve the thread, and re-fetch it in that order.
 
-<!-- projector:begin 10 -->
+<!-- projector:begin 11 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -190,9 +204,15 @@ it. Post news they need to act on, such as a failure that needs them, and
 anything that comes up while they are away. Leave out what they already see
 elsewhere, such as a pull request's state, which the band lists. An item
 stays above their prompt until they answer or dismiss it, so keep the inbox
-for what matters, not as a log of everything you did. Each time the person
-writes to you, look over the items you posted that are still open, and
-withdraw any that no longer need them, such as a question they answered in
-the conversation or news that has gone stale, with the `withdraw` tool and
+for what matters, not as a log of everything you did.
+
+When the person picks one of a question's options, the answer reaches you
+as a message that starts `ANSWER`. When they reply to a question you asked
+instead, answer what they asked. Then withdraw the question with the
+`withdraw` tool if the reply settles it, revise it with the `revise` tool
+if the reply shows it was unclear or the choice has changed, or leave it
+open while it still needs them. Each time the person writes to you, also
+look over the other items you posted that are still open, and withdraw any
+that no longer need them, such as news that has gone stale. Name an item by
 the number `ask` or `tell` returned.
 <!-- projector:end -->
