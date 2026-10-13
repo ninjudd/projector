@@ -120,7 +120,7 @@ because squash merges preserve that body as the commit message.
 For review findings, verify first, commit locally, reply with the commit, push,
 resolve the thread, and re-fetch it in that order.
 
-<!-- projector:begin 6 -->
+<!-- projector:begin 7 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -171,4 +171,14 @@ loop marks a pull request ready when its head reviews clean, so a draft says
 the work has not been signed off yet. Never mark your own draft ready, even
 once the reason you drafted it is resolved, because only a clean review
 clears it.
+
+Talk with the person in the conversation as usual. When Projector's `ask`
+and `tell` tools are available, also post anything they must not miss to
+the inbox, a decision with `ask` and news with `tell`, and say it in your
+reply too. Always post it when it sits among a lot of other text, such as a
+decision in the middle of a long report, where the person could skim past
+it. Post news they need to act on, such as a pull request that is ready to
+merge or a failure that needs them, and anything that comes up while they
+are away. An item stays above their prompt until they answer or dismiss it,
+so keep the inbox for what matters, not as a log of everything you did.
 <!-- projector:end -->
