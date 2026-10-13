@@ -193,9 +193,9 @@ what it did to each:
   drive, `project review gate`, `project site build` or `serve`,
   `project inbox answer`, `dismiss`, or `snooze`, which record your choice,
   or a command line that starts with an option, so Codex's usual approval
-  decides them, in its sandbox. A command added to Projector later reaches Codex once
-  Projector names it and you run `init` again. To see what the rules allow,
-  run
+  decides them, in its sandbox. A command added to Projector later reaches
+  Codex once Projector names it and you run `init` again. To see what the
+  rules allow, run
   `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
   `init` keeps the file, and says on stderr how to add the rules yourself, when
   the file is not valid UTF-8, cannot be read, or cannot be written, as one in
