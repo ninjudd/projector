@@ -1,0 +1,118 @@
+{
+ "version": 1,
+ "name": "Empty owner handling",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 314,
+  "title": "Treat an empty owner as no owner",
+  "head": "d55275dcdf4a77734fe90d84cdf8e7f414445666",
+  "headRef": "owner-optional",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Every Projector project has a plan file, <code>docs/projects/&lt;name&gt;/readme.md</code>, whose YAML frontmatter holds its <code>status</code>, its <code>priority</code>, and an optional <code>owner</code>, the one person who owns the project. The <code>project</code> command reads that frontmatter for <code>list</code>, <code>show</code>, and <code>check</code>, and rewrites single lines of it for <code>status</code>, <code>priority</code>, <code>owner</code>, and <code>done</code>.",
+   "Before this change, a plan with an <code>owner:</code> line and no value was invalid. <code>project check</code> rejected it with \"owner must not be empty\", and every command that loads the plan before writing refused too. That included <code>project owner &lt;name&gt; --clear</code>, the command meant to remove the line, so the only fix was a hand edit.",
+   "This change reads an empty owner as no owner. <code>owner:</code>, <code>owner:</code> with trailing spaces, <code>owner: \"\"</code>, and a quoted blank such as <code>owner: '  '</code> all load with <code>owner: null</code>. <code>check</code> accepts them, and <code>list --owner</code> never selects them. <code>project owner</code> fills in the value on the existing line, and <code>--clear</code> removes the line. A multi-line owner, such as <code>owner: |</code>, is still an error.",
+   "The change also fixes a bug with CRLF line endings, where each line ends in a carriage return and a newline. The pattern that finds a field's line missed it on such a plan unless the line ended in a comment. <code>project owner</code> then added a second <code>owner:</code> line, which made the plan unreadable, and <code>status</code> and <code>priority</code> refused to update it."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review, of <code>d55275d</code>, found the head clean, with no finding threads.</li><li>The full unit suite (927 tests, 1 skipped), <code>project check</code>, both <code>claude plugin validate</code> runs, and <code>git diff --check</code> passed on this head.</li><li>#310, which documents hand-repairing a plan the commands cannot load, uses <code>status: blocked</code> as its example and touches none of these files, so the two can merge in either order.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "Reading and writing the owner line",
+   "kicker": "The loader accepts an empty owner, and the writer fills it in on the same line",
+   "intro": [
+    "All of the change's behavior lives in <code>src/projector/core.py</code>. Three pieces change:",
+    "<ol><li><b>The loader.</b> <code>project_from_text</code> turns a plan's text into a <code>Project</code>. It no longer rejects an empty owner, and it stores an owner that is blank after stripping as <code>None</code>.</li><li><b>The writer.</b> <code>ProjectStore.set_owner</code> backs <code>project owner</code>. When the existing value is empty, it rebuilds the line as <code>owner: &lt;login&gt;</code>, with one space after the colon and a space before any trailing comment.</li><li><b>The field-line pattern.</b> <code>_field_line</code> builds the regular expression that <code>status</code>, <code>priority</code>, and <code>owner</code> use to find their line. It now allows a carriage return before the line end.</li></ol>"
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/core.py",
+     "note": "The loader, the owner writer, and the shared field-line pattern.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 30,
+       "text": "The lookahead <code>(?=\\r?$)</code> leaves the carriage return outside the match. I traced the three writers that use the pattern: the value replacement in <code>_set_field</code>, the <code>--clear</code> removal, which cuts through the newline, and the priority insertion in <code>_insert_priority</code>. Each keeps CRLF endings intact, and a scratch run of <code>owner</code> on CRLF plans wrote <code>owner: ben\\r\\n</code> every time."
+      },
+      {
+       "kind": "verify",
+       "line": 273,
+       "text": "Every reader of <code>Project.owner</code> already handles <code>None</code>: <code>list --owner</code>, <code>search</code>, the text listing, and the site's owner label. An absent <code>owner</code> defaults to <code>\"\"</code> at line 265, which still passes the multi-line test."
+      },
+      {
+       "kind": "verify",
+       "line": 771,
+       "text": "In a scratch repository I ran <code>project owner alpha ben</code> on <code>owner:# c</code>, <code>owner:</code> followed by a tab, <code>owner: '' # c</code>, <code>owner: \"  \"</code>, and <code>owner:</code>, with LF and with CRLF endings. Each left one <code>owner: ben</code> line, with any comment kept after a space, and <code>project check</code> passed afterward."
+      },
+      {
+       "kind": "context",
+       "line": 771,
+       "text": "Only an empty value is rebuilt. A non-empty value, such as <code>\"\"</code> or <code>'  '</code>, is replaced in place, and the existing prefix already holds the space after the colon."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests for each empty form and for CRLF plans",
+   "kicker": "New tests pin the exact file contents each command writes",
+   "intro": [
+    "The tests create plans in temporary Git repositories and run the CLI against them. They compare the whole file after each command, so a stray space, a doubled line, or a lost carriage return fails the test."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_projector.py",
+     "note": "Five new mutation tests, one renamed validation test, and the loader test's empty-owner plan moved to the valid side.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 615,
+       "text": "This test covers the CRLF fix. It runs <code>owner</code> and then <code>status</code> on a CRLF plan and compares the bytes."
+      },
+      {
+       "kind": "context",
+       "line": 1748,
+       "text": "The loader test checks that <code>project_from_text</code> and the store load a plan the same way. The empty-owner plan now loads, so the expected failure count drops by one."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Command reference",
+   "kicker": "The CLI reference describes how an empty owner reads",
+   "intro": [
+    "<code>docs/cli.md</code> is the reference for every <code>project</code> command. It gains a paragraph on the empty owner and drops \"an empty\" from the list of owner problems <code>check</code> reports."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "A new paragraph on how an empty owner reads, and one fewer <code>check</code> error.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 373,
+       "text": "Each claim in this paragraph matches the code at this head and the scratch runs above. No other document, skill, or template still calls an empty owner an error."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
