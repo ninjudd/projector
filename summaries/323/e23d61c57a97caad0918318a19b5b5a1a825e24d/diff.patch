@@ -1,0 +1,29 @@
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index b7d111d..9b52ad1 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -172,8 +172,9 @@ test('draws one line per open pull request of the session’s own loops', async
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+   const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
+   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
+-  // `dimColor` does not dim in every terminal, so muted text takes the theme's subtle color.
+-  expect(divider?.props.color).toBe('subtle')
++  // The divider is drawn at full strength, not muted like the rows' details.
++  expect(divider?.props.color).toBeUndefined()
++  expect(divider?.props.dimColor).toBeUndefined()
+   // A blank line sets the divider apart from the rows under it.
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+   expect(texts[texts.indexOf(divider?.text ?? '') + 1]).toBe(' ')
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index c25edde..19f40ca 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -857,7 +857,7 @@ export const register: Register = on => {
+     const divider =
+       e.surface === 'terminal'
+         ? [
+-            <Text key="divider" color="subtle">
++            <Text key="divider">
+               {'─'.repeat(Math.max(0, e.props.bodyColumns - updated.length))}
+               {updated}
+             </Text>,

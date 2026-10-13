@@ -1,0 +1,73 @@
+{
+ "version": 1,
+ "name": "Band divider color",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 323,
+  "title": "Draw the band's divider at full strength",
+  "head": "e23d61c57a97caad0918318a19b5b5a1a825e24d",
+  "headRef": "band-divider-color",
+  "base": "510f098e35f264eff4bec14a501770b723e0f6d7",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's plugin draws a <b>band</b> above Claude Code's prompt: a short list of the session's open pull requests, questions, and notices. In a terminal, the band's first line is its <b>divider</b>, a rule of <code>─</code> characters across the band's width that ends in how long ago the band reloaded, such as <code>updated just now</code>. Claude Code draws the band's <code>[-]</code> collapse mark just past the divider's end.",
+   "Until this change, the divider took the theme's <code>subtle</code> color, the muted color the band also uses for a row's details, such as its author and age. So the band's top edge and its update time read as muted text. The owner wants that line at full strength, so this change drops the color from the divider and lets it draw in the terminal's default text color. Every other muted part of the band keeps <code>subtle</code>."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the plugin's panel above Claude Code's prompt, built in <code>hooks/register.tsx</code>.</li><li><b>Divider</b>: the band's first line in a terminal, a rule that ends in the time since the band reloaded.</li><li><b><code>subtle</code></b>: the theme color the band uses for muted text. The band uses it in place of <code>dimColor</code>, which does not dim in every terminal.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first Projector review of this head found it clean, with no finding threads.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "divider",
+   "title": "The divider loses its muted color",
+   "kicker": "One prop removed from the divider, and the test that pins it",
+   "intro": [
+    "The divider is a <code>&lt;Text key=\"divider\"&gt;</code> element that <code>register</code> builds once per render, only when the band draws in a terminal. Both the empty band and the band with rows put the same element first, so one edit changes the divider everywhere it appears.",
+    "The test that draws the band's rows used to assert that the divider's <code>color</code> is <code>subtle</code>. It now asserts that the divider sets neither <code>color</code> nor <code>dimColor</code>, so a later change that mutes the divider again fails it."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>claude plugin test .</code> at this head ends <code>100 pass</code> and <code>0 fail</code>, and <code>git diff --check</code> against the merge base prints nothing."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Builds the band. The divider element drops <code>color=\"subtle\"</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 860,
+       "text": "Only the divider changes. The loading line, the tagline, and each row's author, age, and details still set <code>color=\"subtle\"</code>, as a search of the file at this head shows."
+      }
+     ]
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "The band's row test now asserts that the divider carries no color and no <code>dimColor</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 176,
+       "text": "The test finds the divider by its text, a run of <code>─</code> ending in <code>updated just now</code> or <code>updated Ns ago</code>, so it reads the props of the real divider element."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
