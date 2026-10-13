@@ -667,6 +667,9 @@ def add_inbox_parser(subcommands) -> None:
     dismiss = command("dismiss", "record that you dismissed a question or read a notice")
     dismiss.add_argument("reference")
 
+    withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
+    withdraw.add_argument("reference")
+
     snooze = command("snooze", "hide an open item for a while")
     snooze.add_argument("reference")
     snooze.add_argument("--for", dest="minutes", type=int, default=inbox.SNOOZE_MINUTES, metavar="MINUTES",
@@ -1141,7 +1144,7 @@ def item_state(item: dict) -> str:
     if not answered:
         return "open"
     if answered.get("dismissed"):
-        return "dismissed"
+        return "withdrawn" if answered.get("withdrawn") else "dismissed"
     if item.get("deliveredAt"):
         return f"delivered {inbox.answer_ref(item)}"
     if inbox.live_claim(item):
@@ -1197,12 +1200,12 @@ def run_inbox(arguments: argparse.Namespace) -> int:
             print(json_text({"item": item}))
         else:
             print_item(item)
-    elif command in ("answer", "dismiss"):
+    elif command in ("answer", "dismiss", "withdraw"):
         session = inbox_session(arguments, False)
         item = (inbox.answer(session, ref, letter, arguments.text) if command == "answer"
-                else inbox.dismiss(session, ref))
-        print(json_text({"item": item}) if json_output
-              else f"{'answered' if command == 'answer' else 'dismissed'} {inbox.answer_ref(item)}")
+                else inbox.dismiss(session, ref, withdrawn=command == "withdraw"))
+        done = {"answer": "answered", "dismiss": "dismissed", "withdraw": "withdrew"}[command]
+        print(json_text({"item": item}) if json_output else f"{done} {inbox.answer_ref(item)}")
     elif command == "snooze":
         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
         print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")

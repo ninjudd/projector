@@ -17,6 +17,7 @@ import {
   storeOf,
   tellArguments,
   typedLetter,
+  withdrawArguments,
   wokeBetween,
 } from './inbox'
 import type { Notice, Question } from './types'
@@ -125,6 +126,22 @@ test('a delivered question leaves the band after 30 seconds', () => {
   expect(isShownAt(question(), NOW)).toBe(true)
   expect(isShownAt(question({ deliveredAt: NOW - 29_000 }), NOW)).toBe(true)
   expect(isShownAt(question({ deliveredAt: NOW - 30_000 }), NOW)).toBe(false)
+})
+
+test('a withdrawn item leaves the band at once', () => {
+  const dismissed = { dismissed: true as const, answeredAt: NOW }
+  const withdrawn = { ...dismissed, withdrawn: true as const }
+  expect(isShownAt(notice({ answer: dismissed, deliveredAt: NOW }), NOW)).toBe(true)
+  expect(isShownAt(notice({ answer: withdrawn, deliveredAt: NOW }), NOW)).toBe(false)
+  expect(isShownAt(question({ answer: withdrawn, deliveredAt: NOW }), NOW)).toBe(false)
+})
+
+test('a call of the withdraw tool becomes `project inbox withdraw`, and only a whole number names an item', () => {
+  expect(withdrawArguments({ number: 3 }, 's1')).toEqual(['inbox', 'withdraw', '3', '--session', 's1', '--json'])
+  const refusal = { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
+  for (const number of [undefined, '3', 0, -1, 1.5, Number.NaN]) {
+    expect(withdrawArguments({ number }, 's1')).toEqual(refusal)
+  }
 })
 
 test('an answer waits for a deliverer until a live claim holds it', () => {

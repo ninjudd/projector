@@ -1,7 +1,8 @@
 """The items an agent puts in the person's inbox, kept per session under Projector's state directory.
 
 An item is a question, which the person answers or dismisses and whose answer goes back to the
-agent, or a notice, which the person reads and dismisses and which sends nothing back. Each
+agent, or a notice, which the person reads and dismisses and which sends nothing back. The agent
+that posted an open item can withdraw it, which dismisses it and sends nothing back. Each
 session numbers its items 1, 2, 3, and on, in one count across both kinds. Its items are JSON
 files in their own directory, one per item and named by its number, with `count.json` holding the
 last number given. Every write happens under the directory's lock, an operating-system lock on
@@ -322,6 +323,15 @@ def answer_ref(item: dict) -> str:
     return item["ref"] if answered.get("dismissed") else f"{item['ref']}.{answered['letter']}"
 
 
+def resolution(item: dict) -> str:
+    """How a resolved item was resolved, as a refusal names it: `withdrawn`, `dismissed`, or
+    `answered, as 3.a`."""
+    answered = item["answer"]
+    if answered.get("withdrawn"):
+        return "withdrawn"
+    return "dismissed" if answered.get("dismissed") else f"answered, as {answer_ref(item)}"
+
+
 def message(question: dict) -> str:
     """The line that delivers an answer, as `watch` prints it and the band sends it."""
     answered = question["answer"]
@@ -370,17 +380,17 @@ def answer(session: Optional[str], ref: str, letter: Optional[str], text: Option
     return update(session, ref, record, prefer_open=True)
 
 
-def dismiss(session: Optional[str], ref: str) -> dict:
+def dismiss(session: Optional[str], ref: str, withdrawn: bool = False) -> dict:
     """Dismiss an item. A dismissed question waits for its deliverer to tell the agent; a dismissed
-    notice has nothing to send, so it is delivered at once."""
+    notice has nothing to send, so it is delivered at once. A `withdrawn` item, which the agent that
+    posted it took back, is delivered at once too, because that agent already knows."""
     def record(item: dict) -> None:
         if item.get("answer"):
-            raise InboxError(f"{item['ref']} is already {'dismissed' if is_notice(item) else 'answered'}, as "
-                             f"{answer_ref(item)}")
+            raise InboxError(f"{item['ref']} is already {resolution(item)}")
         now = now_ms()
-        item["answer"] = {"dismissed": True, "answeredAt": now}
+        item["answer"] = {"dismissed": True, "answeredAt": now, **({"withdrawn": True} if withdrawn else {})}
         item.pop("snoozedUntil", None)
-        if is_notice(item):
+        if withdrawn or is_notice(item):
             item["deliveredAt"] = now
 
     return update(session, ref, record, prefer_open=True)
@@ -393,8 +403,7 @@ def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> d
 
     def record(item: dict) -> None:
         if item.get("answer"):
-            raise InboxError(f"{item['ref']} is already {'dismissed' if is_notice(item) else 'answered'}, so it "
-                             "has nothing to return for")
+            raise InboxError(f"{item['ref']} is already {resolution(item)}, so it has nothing to return for")
         item["snoozedUntil"] = now_ms() + minutes * 60_000
 
     return update(session, ref, record, prefer_open=True)
