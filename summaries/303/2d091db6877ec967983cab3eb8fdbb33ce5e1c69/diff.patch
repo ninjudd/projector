@@ -1,0 +1,238 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index fda5dd4..0f94cfb 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -185,19 +185,19 @@ session starts a loop's watcher for the first time.
+ ──────────────────────────────────────────────────────────────── updated 12s ago [-]
+ 
+ #267 draft List a loop's open pull requests above the Claude Code prompt      2h
+-#258 draft grace Name the reviewed head in a review's signature line conflict 5m
+-reviewing · review-signature · +84 −12 in 5 files · checks passing
+-github
+-projector
+-discuss | dismiss
++#258 draft grace Name the reviewed head in a review's signature conflict · ⋮5 5m
++     reviewing · review-signature · +84 −12 in 5 files · checks passing
++     github
++     projector
++     discuss | dismiss
+ ```
+ 
+ Each line is the pull request's number, `draft` or `ready`, its author when
+ someone else wrote it, the title, and, when the pull request has them, a
+-merge conflict, a change request, or unresolved review threads. The line
+-ends with how long ago the pull request last changed, in the column where
+-the inbox's items end with their ages. Only the title shortens on a narrow
+-terminal.
++merge conflict or a change request, then the number of unresolved review
++threads after a `⋮` in yellow, such as `⋮5`. The line ends with how long
++ago the pull request last changed, in the column where the inbox's items
++end with their ages. Only the title shortens on a narrow terminal.
+ 
+ Your own pull requests come first, then everyone else's, each author's
+ together and the authors in order of login, with no line between the groups.
+@@ -219,8 +219,9 @@ GitHub's error only when it has none of them to show.
+ 
+ Click a pull request's number to open a drawer under it, and click it again
+ to close the drawer; opening one drawer closes any other. The drawer starts
+-under the number. It says whether your loops are watching or reviewing the
+-pull request, then its branch, size, and checks. Below that:
++one column past the number, under `draft` or `ready`. It says whether your
++loops are watching or reviewing the pull request, then its branch, size, and
++checks. Below that:
+ 
+ - **github** opens the pull request on GitHub.
+ - **projector** opens its Projector summary, when the pull request's
+@@ -345,9 +346,10 @@ Under the options, a question's drawer has three actions:
+ - **snooze** hides the question for an hour.
+ 
+ A notice's drawer shows its detail, then the same `discuss | dismiss |
+-snooze`. **discuss** puts the quoted notice in the prompt, and a prompt that
+-quotes a notice answers nothing. **dismiss** clears the notice once you have
+-read it, and nothing goes back to the agent.
++snooze`. **discuss** puts the quoted notice in the prompt. A prompt you send
++that quotes a notice answers nothing, but it closes the notice's drawer; the
++notice stays in the band until you dismiss it. **dismiss** clears the notice
++once you have read it, and nothing goes back to the agent.
+ 
+ A snoozed item leaves the band and the divider's counts at once. When its
+ hour passes, it returns to the list, and the band appears if you hid it. To
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 3ef013c..8e53f56 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -505,7 +505,9 @@ goes away.
+   the quote, the band closes that question's drawer if it is the open
+   one, so the band shows its list again. Pressing an option fills the
+   prompt and leaves the drawer open until you send, and **discuss** leaves
+-  it open too, so the options and detail stay in view while you type.
++  it open too, so the options and detail stay in view while you type. A
++  sent reply that quotes a notice closes that notice's drawer the same way,
++  though it answers nothing and the notice stays until it is dismissed.
+ - **A quote may end in spaces or tabs.** When the band reads a sent
+   prompt, a quoted question followed by spaces or tabs and then a line
+   break still ends its line, so the answer under it is read. You cannot
+@@ -541,9 +543,12 @@ goes away.
+   notes and age end it as an item's pull request label and age do. A pull
+   request that GitHub gave no time for shows no age. The drawer's facts no
+   longer end with "updated … ago"; the divider's "updated" time, when the
+-  band last loaded, stays.
+-- **A pull request's drawer starts under the number.** Its lines start in
+-  the row's first column, not where the titles start.
++  band last loaded, stays. Open review threads show as a count after `⋮`
++  in yellow, such as `⋮5`, the last note before the age, in place of the
++  words "5 open threads".
++- **A pull request's drawer starts under its state.** Its lines start one
++  column past the number, under `draft` or `ready`, not where the titles
++  start.
+ - **Each drawer link has a line of its own, and the actions come last.**
+   **github** and **projector** each take a line, because a terminal
+   without hyperlink support draws a link's URL after its text, and a line
+@@ -581,14 +586,14 @@ goes away.
+ 
+ | File | Change |
+ | --- | --- |
+-| `hooks/register.tsx` | **discuss** puts the quoted subject and two newlines in the prompt; a question's drawer draws no `Input`, and a resolved question keeps the `✓` row of its typed answer; `/projector` drops its `argumentHint` and its handling of a tracked file, and its description names the inbox; `runningLoops`, the `ps -A` scan, goes, and `load` lists only the seen loops that have a kind; the toast for a tracked path the band cannot read says that the loop is not listed; muted text takes the `subtle` color; a sent prompt that answers a question closes its drawer; a watcher's entry replaces a seen loop that has no kind |
++| `hooks/register.tsx` | **discuss** puts the quoted subject and two newlines in the prompt; a question's drawer draws no `Input`, and a resolved question keeps the `✓` row of its typed answer; `/projector` drops its `argumentHint` and its handling of a tracked file, and its description names the inbox; `runningLoops`, the `ps -A` scan, goes, and `load` lists only the seen loops that have a kind; the toast for a tracked path the band cannot read says that the loop is not listed; muted text takes the `subtle` color; a sent prompt that answers a question closes its drawer, and a sent reply that quotes a notice closes the notice's drawer; a watcher's entry replaces a seen loop that has no kind |
+ | `hooks/parse.ts`, `hooks/parse.test.ts` | `expandPath`, which only `/projector <tracked file>` used, goes with its test |
+ | `hooks/types.d.ts` | `SeenLoop.kind` is required |
+ | `hooks/inbox.ts` | `answersIn` lets spaces or tabs follow a quote before its line break; `RESOLVED_MS` is `30_000` |
+ | `hooks/inbox.test.ts`, `hooks/band.test.tsx` | The rows below |
+ | `docs/plugins.md` | The drawer, **discuss**, which quotes answer, the 30 seconds, and the band without a file named by hand |
+-| `hooks/register.tsx` | Each pull request's line ends with its age, in a column shared with the items' ages through one helper, and its title grows to fill the line; the drawer drops "updated … ago" and `drawerIndent`, and puts **github** and **projector** on lines of their own |
+-| `docs/plugins.md` | The band examples, the age at the end of a pull request's line, and the drawer under the number with one link per line |
++| `hooks/register.tsx` | Each pull request's line ends with its age, in a column shared with the items' ages through one helper, and its title grows to fill the line; the drawer drops "updated … ago" and `drawerIndent`, and puts **github** and **projector** on lines of their own; open review threads show as a yellow count after `⋮`, the last note before the age |
++| `docs/plugins.md` | The band examples, the age at the end of a pull request's line, and the drawer under the state with one link per line |
+ | `hooks/github.ts`, `hooks/register.tsx`, `hooks/types.d.ts`, `docs/plugins.md` | The query asks for `viewer { login }`, and the snapshot keeps it; the band lists your pull requests first and then everyone else's by author, names another person's author before the title, drops "by" and the author from the drawer's facts, and draws the **discuss** row after the links |
+ | `src/projector/loop.py`, `src/projector/cli.py`, `tests/test_loop.py`, `skills/start-watch-loop/scripts/watch-threads.sh`, `skills/start-watch-loop/SKILL.md`, `tests/test_watchers.py`, `hooks/register.tsx`, `docs/cli.md`, `docs/plugins.md` | `project loop drop` and `restore` add and remove a tracked file's `!` lines; `watch-threads.sh` honors them; a pull request's drawer gains **dismiss**, which drops the pull request from each of the session's loops that lists it, through the CLI, on one actions' row shared with an item's drawer |
+ 
+@@ -603,14 +608,14 @@ description lists them.
+ | Type `keep the cap, but log each retry` under that quote, and send | The band records it as a typed answer under the last letter and marks it delivered; the prompt reaches the agent as you wrote it |
+ | Type an option's text under the quote instead, and send | The band records that option |
+ | Type on the quote's own line, and send | Nothing is recorded |
+-| Press **discuss** on a notice, type under the quote, and send | Nothing is recorded; the prompt reaches the agent |
++| Press **discuss** on a notice, type under the quote, and send | Nothing is recorded; the prompt reaches the agent; the notice's drawer closes and the notice stays listed |
+ | Press an option's number, then send the prompt | The drawer stays open after the press and closes when the prompt is sent; the band shows its list |
+ | Press **discuss**, type an answer under the quote, and send | The drawer stays open while you type and closes when the prompt is sent |
+ | Send a quoted question, two spaces, a line break, and an option's text | The band records that option |
+ | Answer or dismiss an item | Its line stays, in the `subtle` color, for 30 seconds after `deliveredAt`, then leaves the band |
+ | Run `/projector` while another session runs a loop | The band shows or hides, and lists only the loops whose watchers this session started |
+ | Look at a pull request's line | It ends with how long ago the pull request changed, such as `7h`, in the `subtle` color, in the same column as the items' ages |
+-| Open a pull request's drawer | Its lines start under the number; its facts name no author and end with the checks; **github** and **projector** each have a line, and the row with **discuss** comes last |
++| Open a pull request's drawer | Its lines start under `draft` or `ready`; its facts name no author and end with the checks; **github** and **projector** each have a line, and the row with **discuss** comes last |
+ | Track your own pull requests and someone else's | Yours come first, naming no author; then the others, each author's together and the authors in order of login, each line naming its author in the `subtle` color before the title |
+ | Press **dismiss** in the drawer of a pull request both loops track | `project loop drop` runs once for each tracked file; the drawer closes, the line leaves the band, and a toast says `stopped watching and reviewing owner/repo#number` |
+ | Press **dismiss** when `project loop drop` refuses | The band shows the CLI's error, keeps the line, and leaves the drawer open |
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 54f25af..045310d 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -166,7 +166,9 @@ test('draws one line per open pull request of the session’s own loops', async
+   const ui = await $.ui.mount(BAND)
+   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: '1 open thread' })).toBeDefined()
++  // Open threads show as their count after a `⋮`, in yellow.
++  expect((await ui.findAll({ type: 'Text', text: '⋮1' })).map(found => found.props.color)).toContain('warning')
++  expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+   const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
+   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
+@@ -213,6 +215,9 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
+   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
+   expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
++  // The threads' count comes after the other notes, beside the age.
++  const notes = (await ui.findAll({ type: 'Text' })).map(found => found.text)
++  expect(notes.indexOf(' · ⋮2')).toBeGreaterThan(notes.indexOf('conflict'))
+ 
+   await ui.press({ key: 'pr:x/y#7' })
+   // The drawer's facts name no author, whoever wrote the pull request.
+@@ -222,10 +227,10 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
+   // The pull request's age ends its line, so the drawer does not repeat it.
+   expect(await ui.find({ type: 'Text', text: /updated 5m ago/ })).toBeUndefined()
+-  // The drawer starts in the row's first column, under the number.
++  // The drawer starts where the state does: past the three-column labels `r#1` and `y#7` and the gap after them.
+   const opened = await ui.find({ key: 'drawer:x/y#7' })
+   expect(opened).toBeDefined()
+-  expect(opened?.props.marginLeft).toBeUndefined()
++  expect(opened?.props.marginLeft).toBe(4)
+   // Under the facts, each link has a line of its own, so a terminal without hyperlinks shows the whole URL, and the actions' row comes last.
+   const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
+   expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'github:x/y#7', 'projector:x/y#7', 'Box'])
+@@ -1516,16 +1521,23 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
+   await hidden.unmount()
+ })
+ 
+-test('a sent prompt that quotes a notice answers nothing', async ($, on) => {
++test('a sent prompt that quotes a notice answers nothing, and closes its drawer', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [notice()])
+   await startSession($, clock)
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'item:2' })
++  expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeDefined()
+ 
+   await $.prompt.submit({ text: `"${FORCE_PUSHED}"\n\nThanks`, wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+   expect(session.project().filter(command => /^inbox (answer|dismiss|claim)/.test(command))).toEqual([])
+   expect(session.store.store.get('2')?.answer).toBeUndefined()
++  // The notice stays in the band, but the reply is done with its drawer.
++  expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
++  await ui.unmount()
+ })
+ 
+ test('a snoozed item read at the start leaves a hidden band hidden until its time', async ($, on) => {
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index c2ba88d..aeaad8b 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -552,10 +552,9 @@ function notesOf(pr: PullRequest): Note[] {
+   const notes: Note[] = []
+   if (pr.isConflicting) notes.push({ text: 'conflict', color: 'error' })
+   if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
+-  if (pr.openThreads > 0) {
+-    notes.push({ text: `${pr.openThreads} open thread${pr.openThreads === 1 ? '' : 's'}`, color: 'warning' })
+-  }
+   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
++  // The open threads' count comes last, beside the age.
++  if (pr.openThreads > 0) notes.push({ text: `⋮${pr.openThreads}`, color: 'warning' })
+   return notes
+ }
+ 
+@@ -706,9 +705,10 @@ export const register: Register = on => {
+     // a question it is still waiting on.
+     const session = await $.session.id()
+     const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+-    const given = isYours
+-      ? answersIn(e.text, (await read($, items)).filter(question => question.session === session), proposed)
+-      : []
++    const mine = isYours ? (await read($, items)).filter(item => item.session === session) : []
++    const given = answersIn(e.text, mine, proposed)
++    // A reply to a notice answers nothing, but it is done with the notice's drawer.
++    const replied = mine.filter(item => item.kind === 'notice' && e.text.includes(quoteOf(item)))
+     proposed = proposed.filter(proposal => !given.some(one => one.question.ref === proposal.ref))
+     const asked = given.filter(one => one.question.agentId !== undefined)
+     const agents = asked.length === 0 ? [] : await $.agent.list().catch(() => [])
+@@ -719,6 +719,7 @@ export const register: Register = on => {
+         void closeDrawer($, `item:${one.question.ref}`).catch(() => undefined)
+         void answerFromPrompt($, one.question, one.letter, one.text)
+       }
++      for (const notice of replied) void closeDrawer($, `item:${notice.ref}`).catch(() => undefined)
+     }
+     return entered
+   }).catch(($, e, next) => next(e))
+@@ -1021,8 +1022,9 @@ export const register: Register = on => {
+             )}
+             {ageColumn(key, pr.updatedAt)}
+           </Box>
++          {/* The drawer starts where the state does, one column past the label. */}
+           {opened === key && (
+-            <Box key={`drawer:${key}`} flexDirection="column">
++            <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
+               <Text wrap="truncate-end">
+                 <Text color="subtle">{factsOf(pr, kinds)}</Text>
+                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}> · checks {pr.checks}</Text>}
