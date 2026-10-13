@@ -1,0 +1,2018 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index a779121..e10bae2 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1446,9 +1446,10 @@ do.
+ 
+ ## Use the inbox
+ 
+-`project inbox` keeps the questions an agent asks you, so the agent can keep
+-working while it waits and you can answer from any host. Each session's
+-inbox is its own directory under `$XDG_STATE_HOME/projector/inbox/`, or under
++`project inbox` keeps what an agent puts in front of you: questions, which
++you answer, and notices, which you read. The agent keeps working while an
++item waits, and you can deal with it from any host. Each session's inbox is
++its own directory under `$XDG_STATE_HOME/projector/inbox/`, or under
+ `~/.local/state/projector/inbox/` when `XDG_STATE_HOME` is unset, and every
+ command reaches it the same way from Claude Code, Codex, or a terminal.
+ 
+@@ -1474,10 +1475,12 @@ or 120 characters, a missing recommendation, more than five other options, or
+ an option that repeats the recommendation. Put what you need to decide in
+ `--detail`, or `--detail-file`.
+ 
+-Every command names the asking session with `--session`, or reads
++Every command names the posting session with `--session`, or reads
+ `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
+-every session's open questions, and `show`, `answer`, and `dismiss` find the
+-session that holds the reference.
++every session's open items, and `show`, `answer`, `dismiss`, and `snooze`
++find the session that holds the reference. `list` prints each item's
++reference, kind, state, and subject, separated by tabs, after the session
++when it lists every session.
+ 
+ The answers are lettered. `a` is always the recommendation, the other options
+ follow as `b`, `c`, and on, and the last letter is a typed answer:
+@@ -1525,11 +1528,49 @@ halfway leaves the answer for the next one. A lapsed claim's token still
+ works until another `claim` takes the answer. `watch` marks an answer
+ delivered only after its line prints, so when nothing reads the watcher any
+ more, the answer waits for the next deliverer rather than being lost. Each
+-session keeps its 100 most recently delivered questions.
++session keeps its 100 most recently delivered items, of either kind.
++
++An agent tells you something that needs no answer with `tell`, such as the
++answer to a question you asked it or something it did that you should know
++about. A notice takes the same one line, `--detail`, `--pr`, and `--agent` as
++a question, and the next number in the same counts, so a notice about #337
++after its third question is `#337.4`:
++
++```console
++$ project inbox tell "Force-pushed #337 to drop a stray debug file" \
++    --pr acme/app#337 --session "$SESSION"
++#337.4
++```
++
++`tell` refuses, with exit code 65, an empty notice, a notice longer than one
++line or 120 characters, and a `--pr` that is not `owner/repo#number`. A
++notice has no options, so `answer` and `claim` refuse one with exit code 65.
++Once you have read it, run `project inbox dismiss '#337.4'`. Nothing goes
++back to the agent, so the dismissal also marks the notice delivered, and
++`list` shows it, as `dismissed`, only with `--all`.
++
++To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
++an hour, or for the whole minutes that `--for` gives, and `--for 0` wakes it
++now. Projector's band leaves a snoozed item out until its time passes, and
++`list` shows it as `snoozed until <HH:MM>`, in local time:
++
++```console
++$ project inbox snooze '#337.3' --for 30
++#337.3 snoozed until 14:32
++$ project inbox list --session "$SESSION"
++#337.3	question	snoozed until 14:32	Decline the finding about the retry budget?
++#337.4	notice	open	Force-pushed #337 to drop a stray debug file
++```
++
++A snoozed item can still be answered or dismissed, and either one clears its
++snooze, so a resolved item never returns. `snooze` refuses, with exit code
++65, an item already answered or dismissed, and a negative `--for`.
+ 
+ `project inbox context` reads text on standard input and prints what each
+-question reference in it means, for the questions the session holds, so a
+-prompt such as `go with #337.3.b.` can carry its question along. It matches a
++reference in it means, for the items the session holds, so a prompt such as
++`go with #337.3.b.` can carry its question along. A notice's reference prints
++`#337.4 is the notice: ` and its subject, and a notice's reference with a
++letter prints nothing, since a notice has no answers. It matches a
+ reference only when it stands alone: `#337.3.b` and `q2.a` match, at the end
+ of a sentence too, while `#337.3.4`, `x#337.3`, and the `2` in `rerun the 2
+ failing tests` do not.
+@@ -1587,7 +1628,7 @@ Projector uses these exit codes:
+ | `0` | The command completed successfully. |
+ | `2` | Command syntax or an argument is invalid. |
+ | `3` | `project site status` found no Projector site for the repository. |
+-| `65` | Project data is invalid, a mutation is unsafe, or a question or answer is refused. |
++| `65` | Project data is invalid, a mutation is unsafe, or an inbox item, answer, or snooze is refused. |
+ | `66` | The requested project, the projects directory, or the inbox item does not exist. |
+ | `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
+ | `69` | Git, the interactive editor, or the installer is unavailable. |
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 79a48b8..9924e6f 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -236,30 +236,35 @@ is shown. The skills never depend on the band, and Codex has no equivalent.
+ ### Read your inbox in Projector's band
+ 
+ An agent in Claude Code asks you a question with Projector's `ask` tool,
+-which the model sees as `mcp__projector__ask`, and keeps working. An agent
+-that runs `project inbox ask` from the shell reaches the same inbox, as
++which the model sees as `mcp__projector__ask`, and tells you something that
++needs no answer with the `tell` tool, `mcp__projector__tell`. Either way it
++keeps working. An agent that runs `project inbox ask` or `project inbox tell`
++from the shell reaches the same inbox, as
+ [Use the inbox](cli.md#use-the-inbox) describes.
+-The questions are a bulleted list below the pull requests, oldest first.
+-Each line ends with the pull request the question is
+-about, as the band labels it, and how long ago it was asked. The band appears
+-when a question arrives, even after you hid it, and the divider counts the
+-questions still open.
++
++The items are a list below the pull requests, oldest first. A question's
++line starts with `-`, and a notice's with `•`, so you can tell which items
++want an answer and which want a read. Each line ends with the pull request
++the item is about, as the band labels it, and how long ago it was posted.
++The band appears when an item arrives, even after you hid it, and the
++divider counts the open questions and the open notices.
+ 
+ ```text
+-──────────────────────────────────────── 2 questions · updated 12s ago [-]
++──────────────────────────────── 2 questions · 1 notice · updated 12s ago [-]
+ #337 draft Retry failed webhook deliveries with backoff
+ 
+ - Run project init to add the publish rule?                             2m
+ - Decline the finding about the retry budget?                     #337  5m
++• Force-pushed #337 to drop a stray debug file                    #337  1m
+ ```
+ 
+-Click anywhere on a question to open its drawer, and click it again to close
++Click anywhere on an item to open its drawer, and click it again to close
+ it. On the main screen, press ctrl+x tab to move into the band, then Enter on
+-a question. While its drawer is open, the question stays highlighted and has
+-the band to itself:
++an item. While its drawer is open, the item stays highlighted and has the
++band to itself:
+ 
+ ```text
+-──────────────────────────────────────── 2 questions · updated 12s ago [-]
++──────────────────────────────── 2 questions · 1 notice · updated 12s ago [-]
+ - Decline the finding about the retry budget?                     #337  5m
+ 
+   The review asks for a retry budget per host. The loop caps retries at
+@@ -270,7 +275,7 @@ the band to itself:
+   2. Add a budget of two retries per host, and keep the total cap
+   3. [ Type something                                                    ]
+ 
+-  [ discuss ] [ dismiss ]
++  discuss | dismiss | snooze
+ ```
+ 
+ The first option is always the agent's recommendation. Click an option, or
+@@ -295,11 +300,25 @@ the main loop, and when a subagent asked, the main loop also reads a note
+ naming it, so it can pass the answer on.
+ **discuss** puts only the quoted question in the prompt, followed by a space,
+ so what you type after it on the same line talks the question over and
+-answers nothing. **dismiss** sets the question aside without an answer.
+-
+-An answered question stays in the list, dim, for a minute after its answer is
+-delivered; a dismissed one is struck through. Its drawer still opens and
+-marks the answer given with `✓`.
++answers nothing. **dismiss** sets the question aside without an answer, and
++**snooze** hides it for an hour.
++
++A notice's drawer shows its detail, then the same `discuss | dismiss |
++snooze`. **discuss** puts the quoted notice in the prompt, and a prompt that
++quotes a notice answers nothing. **dismiss** clears the notice once you have
++read it, and nothing goes back to the agent.
++
++A snoozed item leaves the band and the divider's counts at once. When its
++hour passes, it returns to the list, and the band appears if you hid it. To
++pick another time, or to wake an item now, run
++`project inbox snooze <reference> --for <minutes>` in a terminal. An item you
++answer or dismiss from a terminal while it is snoozed does not return.
++
++A resolved item stays in the list, dim, for a minute after it is delivered,
++and a dismissed one is struck through. A dismissed notice is delivered at
++once, since nothing goes back to the agent. A question's drawer still opens
++and marks the answer given with `✓`, and a dismissed notice's drawer keeps
++only **discuss**.
+ 
+ An answer you give from a terminal with `project inbox answer` reaches the
+ agent through the band of the session that asked. A subagent that is still
+@@ -312,8 +331,8 @@ names.
+ 
+ Shown or hidden, the band lists the session's inbox directory every 5
+ seconds and runs `project inbox` only when the directory changed since
+-its last successful read or an answer is on its way, so a session with no
+-questions starts no process. A read that fails runs again 5 seconds later.
++its last successful read or an answer is on its way, so a session with an
++empty inbox starts no process. A read that fails runs again 5 seconds later.
+ 
+ ## Install for Codex
+ 
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 97119af..27dec96 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -98,7 +98,7 @@ removed, so `project question ...` exits `2` as any unknown command does.
+ | `project inbox show <reference>` | Renamed; a notice prints its reference and subject, `about <pr>`, its detail, and its state, with no options |
+ | `project inbox answer` | Renamed; exits `65` for a notice, naming `dismiss`; answering clears `snoozedUntil` |
+ | `project inbox dismiss <reference>` | Renamed, and takes either kind. A notice records `{ dismissed: true, answeredAt }` and `deliveredAt` together; a question, as now, waits for its deliverer. Dismissing either kind clears `snoozedUntil` |
+-| `project inbox snooze <reference> [--for <minutes>]` | New: sets `snoozedUntil` to `--for` minutes from now, 60 by default; `--for 0` removes it. Exits `65` for an item already answered or dismissed, and for a negative `--for` |
++| `project inbox snooze <reference> [--for <minutes>]` | New: sets `snoozedUntil` to `--for` minutes from now, 60 by default; `--for 0` sets it to now, which wakes the item. Exits `65` for an item already answered or dismissed, and for a negative `--for` |
+ | `project inbox claim`, `delivered`, `reopen` | Renamed; `claim` exits `65` for a notice, which has nothing to deliver |
+ | `project inbox watch` | Renamed; unchanged, since a dismissed notice already has `deliveredAt` |
+ | `project inbox context` | Renamed; a notice's reference prints `<ref> is the notice: <subject>`. With a letter, such as `#12.2.a`, it prints nothing, because a notice has no answers to name |
+@@ -127,7 +127,7 @@ its 100 most recently delivered items, either kind.
+ | `detail` | Unchanged |
+ | `choices` | A question's answers in letter order, as now; absent on a notice |
+ | `answer` | A question's as now; a notice's `{ dismissed: true, answeredAt }` once dismissed |
+-| `snoozedUntil` | New: when a snoozed item returns, in milliseconds; absent when it is not snoozed, and cleared when the item is answered or dismissed |
++| `snoozedUntil` | New: when a snoozed item returns, in milliseconds; absent until the item is first snoozed, and cleared when the item is answered or dismissed |
+ | `claim` | A question's only |
+ | `deliveredAt` | As now; a notice's is set when it is dismissed |
+ 
+@@ -353,3 +353,36 @@ notice as a third, separate system was considered and rejected in favor of
+ one store with two kinds, for the reasons in § 3. The owner chose the name
+ `inbox`, the actions `discuss | dismiss | snooze` for both kinds,
+ and snoozing for both.
++
++## 9. What the implementation settled
++
++Both layers of § 6 are built. Building them settled these points, which the
++sections above leave open or state loosely:
++
++- **A dismissed notice lists only with `--all`.** Dismissing a notice marks
++  it delivered, and `list` without `--all` leaves out delivered items. The
++  § 4 row that dismisses a snoozed notice therefore reads `list --all` to see
++  it as `dismissed`.
++- **`snooze` takes whole minutes and prints the new state.** `--for` is an
++  integer. `snooze` prints the reference and the item's state, such as
++  `#12.1 snoozed until 14:32`, or `#12.1 open` after `--for 0`.
++- **`list` skips a file of no known kind.** A store file whose `kind` is
++  neither `question` nor `notice` is skipped, as a file whose name does not
++  match its reference already is.
++- **The `tell` tool sends the agent to the conversation in its own words.**
++  When `project` does not finish, the refusal ends `tell the person in the
++  conversation instead`, because the agent has nothing to ask. Every other
++  refusal follows `ask`'s rules, as § 2.4 says.
++- **The hooks type each kind.** `Item` in `hooks/types.d.ts` is `Question`
++  or `Notice`, so the deliverer and the reader of answers in a sent prompt
++  accept only a question.
++- **Waking counts from the band's previous tick.** The first tick after the
++  hooks module loads wakes nothing. An item whose snooze ended while no copy
++  of the module ran returns to the list, but does not bring back a hidden
++  band.
++- **`--for 0` ends a snooze now rather than removing it.** It sets
++  `snoozedUntil` to the current time, so the band's next tick sees the item
++  wake and brings back a band you hid, as it does when a snooze runs out.
++
++The main-screen row of § 4 waits for a check by hand under tmux, so the
++project stays `in-progress`.
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 60bfd29..6350304 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -1,7 +1,7 @@
+ import type { AgentInfo, FsEntry, On } from 'claude-code'
+ import { expect, mock, test, type Engine } from 'claude-code/testing'
+ 
+-import type { Item } from './types'
++import type { Notice, Question } from './types'
+ 
+ const HOME = '/home/ada'
+ const REVIEW = `${HOME}/loops/review/tracked`
+@@ -298,24 +298,39 @@ const SESSION = 's1'
+ const STORE = `${HOME}/.local/state/projector/inbox/${SESSION}`
+ const TICK = 5_000
+ 
+-type Held = Omit<Item, 'session'>
++type HeldQuestion = Omit<Question, 'session'>
++type HeldNotice = Omit<Notice, 'session'>
++type Held = HeldQuestion | HeldNotice
+ type Clock = ReturnType<typeof mock.clock>
+ 
+-const held = (fields: Partial<Held> = {}): Held => ({
++const HOUR = 3_600_000
++
++const held = (fields: Partial<HeldQuestion> = {}): HeldQuestion => ({
+   ref: '#7.1',
++  kind: 'question',
+   number: 1,
+   pr: 'x/y#7',
+   postedAt: NOW - 120_000,
+-  kind: 'question',
+   subject: 'Decline the finding?',
+   detail: 'The loop caps retries at three.',
+   choices: ['Decline it', 'Add a budget'],
+   ...fields,
+ })
+ 
++const notice = (fields: Partial<HeldNotice> = {}): HeldNotice => ({
++  ref: '#7.2',
++  kind: 'notice',
++  number: 2,
++  pr: 'x/y#7',
++  postedAt: NOW - 60_000,
++  subject: 'Force-pushed #7 to drop a stray file',
++  detail: 'The file held a debug token.',
++  ...fields,
++})
++
+ /** A question with its answer and claim cleared, as `reopen` leaves it. */
+-const reopened = (question: Held): Held =>
+-  Object.fromEntries(Object.entries(question).filter(([key]) => key !== 'answer' && key !== 'claim')) as Held
++const reopened = (question: HeldQuestion): HeldQuestion =>
++  Object.fromEntries(Object.entries(question).filter(([key]) => key !== 'answer' && key !== 'claim')) as HeldQuestion
+ 
+ /** `project inbox`, answered from items held in memory the way the CLI keeps them. */
+ function questionStore(clock: Clock, seed: readonly Held[]) {
+@@ -326,25 +341,25 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+   /** How many of the next `list` commands fail. */
+   const failing = { lists: 0 }
+   let writes = 0
+-  let asked = 0
+-  const put = (question: Held) => {
++  let posted = 0
++  const put = (item: Held) => {
+     writes += 1
+-    store.set(question.ref, question)
+-    times.set(question.ref, writes)
+-    return question
++    store.set(item.ref, item)
++    times.set(item.ref, writes)
++    return item
+   }
+-  for (const question of seed) put(question)
++  for (const item of seed) put(item)
+ 
+   const failed = (exitCode: number, message: string): Ran => ({ ...ran(''), exitCode, stderr: `project: ${message}\n` })
+-  const printed = (question: Held, extra: Record<string, unknown> = {}) =>
+-    ran(JSON.stringify({ schema_version: 2, ...extra, item: question }))
++  const printed = (item: Held, extra: Record<string, unknown> = {}) =>
++    ran(JSON.stringify({ schema_version: 2, ...extra, item }))
+   const flag = (args: readonly string[], name: string) => {
+     const joined = args.find(arg => arg.startsWith(`--${name}=`))
+     if (joined !== undefined) return joined.slice(name.length + 3)
+     const at = args.indexOf(`--${name}`)
+     return at === -1 ? undefined : args[at + 1]
+   }
+-  const textOf = (question: Held) =>
++  const textOf = (question: HeldQuestion) =>
+     question.answer !== undefined && 'letter' in question.answer
+       ? `ANSWER ${question.ref}.${question.answer.letter} ${question.subject} → ${question.answer.text}`
+       : `DISMISSED ${question.ref} ${question.subject}`
+@@ -361,25 +376,28 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       const items = [...store.values()].map(one => ({ ...one, session: SESSION }))
+       return ran(JSON.stringify({ schema_version: 2, items }))
+     }
+-    if (command === 'ask') {
++    if (command === 'ask' || command === 'tell') {
+       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
+       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
+       const pr = flag(args, 'pr') ?? null
+-      asked += 1
+-      const ref = pr === null ? `q${asked}` : `#${pr.split('#')[1] ?? ''}.${asked}`
++      posted += 1
++      const ref = pr === null ? `q${posted}` : `#${pr.split('#')[1] ?? ''}.${posted}`
+       const agentId = flag(args, 'agent')
+-      const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
+-      put({
++      const common = {
+         ref,
+-        number: asked,
++        number: posted,
+         pr,
+         postedAt: time,
+-        kind: 'question',
+         subject: args[args.indexOf('--') + 1] ?? '',
+         detail: flag(args, 'detail') ?? '',
+-        choices: [flag(args, 'recommend') ?? '', ...options],
+         ...(agentId === undefined ? {} : { agentId }),
+-      })
++      }
++      const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
++      put(
++        command === 'ask'
++          ? { ...common, kind: 'question', choices: [flag(args, 'recommend') ?? '', ...options] }
++          : { ...common, kind: 'notice' },
++      )
+       return ran(`${ref}\n`)
+     }
+     if (command === 'context') {
+@@ -388,31 +406,38 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+ 
+     const written = args[0] ?? ''
+     const ref = command === 'answer' ? written.slice(0, written.lastIndexOf('.')) : written
+-    const question = store.get(ref)
+-    if (question === undefined) return failed(66, `no question ${ref}`)
+-    if (command === 'answer' || command === 'dismiss') {
+-      if (question.answer !== undefined) return failed(65, `${ref} is already answered`)
++    const item = store.get(ref)
++    if (item === undefined) return failed(66, `no item ${ref}`)
++    if (item.answer !== undefined && (command === 'answer' || command === 'dismiss' || command === 'snooze')) {
++      return failed(65, `${ref} is already answered`)
++    }
++    const { snoozedUntil: _, ...awake } = item
++    if (command === 'dismiss') {
++      const answer = { dismissed: true as const, answeredAt: time }
++      return printed(put(awake.kind === 'notice' ? { ...awake, answer, deliveredAt: time } : { ...awake, answer }))
++    }
++    if (command === 'snooze') return printed(put({ ...item, snoozedUntil: time + HOUR }))
++    if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
++    if (command === 'answer') {
+       const letter = written.slice(written.lastIndexOf('.') + 1)
+-      const text = flag(args, 'text') ?? question.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''
+-      const answer =
+-        command === 'dismiss' ? { dismissed: true as const, answeredAt: time } : { letter, text, answeredAt: time }
+-      return printed(put({ ...question, answer }))
++      const text = flag(args, 'text') ?? item.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''
++      return printed(put({ ...(awake as HeldQuestion), answer: { letter, text, answeredAt: time } }))
+     }
+     if (command === 'claim') {
+-      if (question.answer === undefined || question.deliveredAt !== undefined) return failed(65, 'nothing to deliver')
++      if (item.answer === undefined || item.deliveredAt !== undefined) return failed(65, 'nothing to deliver')
+       const renew = flag(args, 'renew')
+       if (renew !== undefined) {
+-        if (question.claim?.token !== renew) return failed(65, 'not claimed with that token')
+-        put({ ...question, claim: { token: renew, renewedAt: time } })
++        if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
++        put({ ...item, claim: { token: renew, renewedAt: time } })
+         return ran('')
+       }
+-      if (question.claim !== undefined && time - question.claim.renewedAt < 60_000) return failed(65, 'already claimed')
++      if (item.claim !== undefined && time - item.claim.renewedAt < 60_000) return failed(65, 'already claimed')
+       const claim = { token: `token-${writes}`, renewedAt: time }
+-      return printed(put({ ...question, claim }), { token: claim.token, text: textOf(question) })
++      return printed(put({ ...item, claim }), { token: claim.token, text: textOf(item) })
+     }
+     if (command === 'delivered' || command === 'reopen') {
+-      if (question.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
+-      return printed(put(command === 'delivered' ? { ...question, deliveredAt: time } : reopened(question)))
++      if (item.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
++      return printed(put(command === 'delivered' ? { ...item, deliveredAt: time } : reopened(item)))
+     }
+     return failed(2, `invalid choice: '${command}'`)
+   }
+@@ -500,7 +525,10 @@ test('asks through the tool, and the band lists the question below the pull requ
+     pr: 'x/y#7',
+   })
+   expect(String(called.text ?? called.result)).toContain('Asked #7.1.')
+-  expect(session.registered).toEqual([expect.objectContaining({ name: 'ask', isDeferred: false })])
++  expect(session.registered).toEqual([
++    expect.objectContaining({ name: 'ask', isDeferred: false }),
++    expect.objectContaining({ name: 'tell', isDeferred: false }),
++  ])
+   expect(session.project()).toContain(
+     'inbox ask --session=s1 --recommend=Decline it --option=Add a budget --pr=x/y#7 -- Decline the finding?',
+   )
+@@ -847,3 +875,178 @@ test('a reference typed in the prompt reaches the agent with its question', asyn
+   ])
+   expect(session.project().filter(command => command.startsWith('inbox context'))).toHaveLength(1)
+ })
++
++const FORCE_PUSHED = 'Force-pushed #7 to drop a stray file'
++
++test('a subagent tells through the tool, and the band lists the notice with its own bullet', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock)
++  await startSession($, clock)
++
++  const called = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, pr: 'x/y#7', agentId: 'agent-1' })
++  expect(String(called.text ?? called.result)).toBe(
++    'Posted #7.1. It waits in Projector’s band until the person dismisses it; nothing comes back to you.',
++  )
++  expect(session.project()).toContain(`inbox tell --session=s1 --pr=x/y#7 --agent=agent-1 -- ${FORCE_PUSHED}`)
++  expect(session.notified).toEqual([`#7.1 ${FORCE_PUSHED}`])
++
++  await clock.advance(1)
++  await clock.settle()
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated (just now|\d+s ago)$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: '• ' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'item:#7.1' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('the tell tool refuses what the CLI refuses, and says when it hangs', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock)
++  await startSession($, clock)
++  const tell = { tool: 'mcp__projector__tell' as const, notice: FORCE_PUSHED }
++
++  Object.assign(session.store.refusal, { code: 65, message: 'the notice must be one line; put the rest in --detail' })
++  const refused = await $.tool.call(tell)
++  expect(refused.deny ?? refused.text).toBe('the notice must be one line; put the rest in --detail')
++
++  Object.assign(session.store.refusal, { code: undefined, rejection: 'project timed out after 15000 ms' })
++  const hung = await $.tool.call(tell)
++  expect(hung.deny ?? hung.text).toMatch(/^project did not finish \(.*\); tell the person in the conversation instead$/)
++})
++
++test('a notice’s drawer quotes it, and dismiss clears it without sending anything', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held(), notice()])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
++  await ui.press({ key: 'item:#7.2' })
++  expect((await ui.find({ key: 'detail:#7.2' }))?.props.text).toBe('The file held a debug token.')
++  expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeUndefined()
++  for (const name of ['discuss', 'dismiss', 'snooze']) {
++    expect((await ui.find({ type: 'Button', key: `${name}:#7.2` }))?.props.plain).toBe(true)
++  }
++  expect(await ui.findAll({ type: 'Text', text: '|' })).toHaveLength(2)
++
++  await ui.press({ key: 'discuss:#7.2' })
++  expect(session.filled).toEqual([`insert:"${FORCE_PUSHED}" `])
++
++  await ui.press({ key: 'dismiss:#7.2' })
++  await clock.settle()
++  expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([
++    'inbox dismiss #7.2 --session s1 --json',
++  ])
++  const line = await ui.find({ type: 'Text', text: FORCE_PUSHED })
++  expect([line?.props.dimColor, line?.props.strikethrough]).toEqual([true, true])
++  expect(await ui.find({ type: 'Button', key: 'discuss:#7.2' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'dismiss:#7.2' })).toBeUndefined()
++  expect(await ui.find({ type: 'Button', key: 'snooze:#7.2' })).toBeUndefined()
++
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(session.sent).toEqual([])
++  expect(session.submitted).toEqual([])
++  expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
++
++  await ui.press({ key: 'item:#7.2' })
++  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
++  await clock.advance(60_000)
++  await clock.settle()
++  expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeUndefined()
++  await ui.unmount()
++})
++
++test('snooze hides either kind for an hour, then brings a hidden band back', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held(), notice()])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'item:#7.1' })
++  await ui.press({ key: 'snooze:#7.1' })
++  await clock.settle()
++  await ui.press({ key: 'item:#7.2' })
++  await ui.press({ key: 'snooze:#7.2' })
++  await clock.settle()
++  expect(session.project()).toContain('inbox snooze #7.1 --session s1 --json')
++  expect(session.project()).toContain('inbox snooze #7.2 --session s1 --json')
++  expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
++  await ui.unmount()
++
++  await clock.advance(TICK)
++  await clock.settle()
++  await $.command.run(COMMAND)
++  await clock.advance(HOUR - TICK)
++  await clock.settle()
++  const hidden = await $.ui.mount(BAND)
++  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
++  await hidden.unmount()
++
++  await clock.advance(2 * TICK)
++  await clock.settle()
++  const woken = await $.ui.mount(BAND)
++  expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
++  expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
++  expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
++  expect(await woken.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
++  await woken.unmount()
++})
++
++test('an item dismissed from a terminal while snoozed does not return', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [notice()])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  await ui.press({ key: 'item:#7.2' })
++  await ui.press({ key: 'snooze:#7.2' })
++  await clock.advance(TICK)
++  await clock.settle()
++  await ui.unmount()
++  await $.command.run(COMMAND)
++  session.store.run(['project', 'inbox', 'dismiss', '#7.2', '--session', SESSION], '')
++
++  await clock.advance(HOUR + 2 * TICK)
++  await clock.settle()
++  const hidden = await $.ui.mount(BAND)
++  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
++  await hidden.unmount()
++})
++
++test('a sent prompt that quotes a notice answers nothing', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [notice()])
++  await startSession($, clock)
++
++  await $.prompt.submit({ text: `"${FORCE_PUSHED}"\n\nThanks`, wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.project().filter(command => /^inbox (answer|dismiss|claim)/.test(command))).toEqual([])
++  expect(session.store.store.get('#7.2')?.answer).toBeUndefined()
++})
++
++test('a snoozed item read at the start leaves a hidden band hidden until its time', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  questionWorld(on, clock, [notice({ snoozedUntil: NOW + 3 * TICK })])
++  await startSession($, clock, false)
++  await clock.advance(TICK)
++  await clock.settle()
++  const hidden = await $.ui.mount(BAND)
++  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
++  await hidden.unmount()
++
++  await clock.advance(3 * TICK)
++  await clock.settle()
++  const woken = await $.ui.mount(BAND)
++  expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
++  await woken.unmount()
++})
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index b88fa30..cde0f71 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -15,13 +15,15 @@ import {
+   signatureOf,
+   span,
+   storeOf,
++  tellArguments,
+   typedLetter,
++  wokeBetween,
+ } from './inbox'
+-import type { Item } from './types'
++import type { Notice, Question } from './types'
+ 
+ const NOW = Date.UTC(2026, 9, 12, 12, 0)
+ 
+-const question = (fields: Partial<Item> = {}): Item => ({
++const question = (fields: Partial<Question> = {}): Question => ({
+   ref: '#7.1',
+   number: 1,
+   pr: 'o/r#7',
+@@ -34,6 +36,18 @@ const question = (fields: Partial<Item> = {}): Item => ({
+   ...fields,
+ })
+ 
++const notice = (fields: Partial<Notice> = {}): Notice => ({
++  ref: '#7.2',
++  number: 2,
++  pr: 'o/r#7',
++  postedAt: NOW - 30_000,
++  kind: 'notice',
++  subject: 'Force-pushed #7 to drop a stray file',
++  detail: '',
++  session: 's1',
++  ...fields,
++})
++
+ const agent = (status: AgentInfo['status']): AgentInfo =>
+   ({ id: 'agent-1', description: 'Fix #7', type: 'general-purpose', status }) as AgentInfo
+ 
+@@ -193,3 +207,53 @@ test('a call of the tool becomes `project inbox ask`, text kept as text', () =>
+     error: '`options` must be a list of strings',
+   })
+ })
++
++test('a snoozed item leaves the band until its time, and wakes once between two ticks', () => {
++  const snoozed = notice({ snoozedUntil: NOW + 3_600_000 })
++  expect(isShownAt(snoozed, NOW)).toBe(false)
++  expect(isShownAt(snoozed, NOW + 3_600_000)).toBe(true)
++  expect(wokeBetween([snoozed, question()], NOW + 3_595_000, NOW + 3_600_000)).toEqual([snoozed])
++  expect(wokeBetween([snoozed], NOW + 3_600_000, NOW + 3_605_000)).toEqual([])
++  expect(wokeBetween([snoozed], NOW, NOW + 3_595_000)).toEqual([])
++  const dismissed = notice({ snoozedUntil: NOW + 3_600_000, answer: { dismissed: true, answeredAt: NOW } })
++  expect(wokeBetween([dismissed], NOW, NOW + 3_600_000)).toEqual([])
++})
++
++test('only a question’s answer waits for a deliverer', () => {
++  const dismissed = { dismissed: true as const, answeredAt: NOW }
++  expect(needsDelivery(question({ answer: dismissed }), NOW)).toBe(true)
++  expect(needsDelivery(notice({ answer: dismissed }), NOW)).toBe(false)
++})
++
++test('a sent prompt answers snoozed questions and never a notice', () => {
++  const snoozed = question({ snoozedUntil: NOW + 3_600_000 })
++  const told = notice()
++  expect(answersIn('"Decline the finding?"\n\nAdd a budget\n', [snoozed, told])).toEqual([
++    { question: snoozed, letter: 'b' },
++  ])
++  expect(answersIn('"Force-pushed #7 to drop a stray file"\n\nThanks\n', [snoozed, told])).toEqual([])
++})
++
++test('a call of the tell tool becomes `project inbox tell`, text kept as text', () => {
++  expect(tellArguments({ notice: '-Dropped a file', detail: 'Why', pr: 'o/r#7' }, 's1', 'agent-1')).toEqual([
++    'inbox',
++    'tell',
++    '--session=s1',
++    '--detail=Why',
++    '--pr=o/r#7',
++    '--agent=agent-1',
++    '--',
++    '-Dropped a file',
++  ])
++  expect(tellArguments({ notice: 'Dropped a file' }, 's1', undefined)).toEqual([
++    'inbox',
++    'tell',
++    '--session=s1',
++    '--',
++    'Dropped a file',
++  ])
++  expect(tellArguments({ detail: 'Why' }, 's1', undefined)).toEqual({ error: '`notice` must be a string' })
++  expect(tellArguments({ notice: 'N', pr: 7 }, 's1', undefined)).toEqual({
++    error: '`pr` must be a string such as owner/repo#123',
++  })
++})
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index dd8ab63..65bda53 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -1,9 +1,9 @@
+ import type { AgentInfo, FsEntry } from 'claude-code'
+ 
+-import type { Item } from './types'
++import type { Item, Question } from './types'
+ import type { Env } from './parse'
+ 
+-/** How long a delivered question stays in the band. */
++/** How long a delivered item stays in the band. */
+ export const RESOLVED_MS = 60_000
+ 
+ /** How long a claim lasts without renewal, as `project inbox claim` counts it. */
+@@ -20,26 +20,40 @@ export const mayReference = (text: string) => /#\d+\.\d|\bq\d/.test(text)
+ export const letterAt = (index: number) => String.fromCharCode('a'.charCodeAt(0) + index)
+ 
+ /** The letter of a typed answer: the one after the last choice. */
+-export const typedLetter = (question: Item) => letterAt(question.choices.length)
++export const typedLetter = (question: Question) => letterAt(question.choices.length)
+ 
+-/** Whether the band still shows a question: open, being delivered, or delivered under a minute ago. */
+-export const isShownAt = (question: Item, time: number) =>
+-  question.deliveredAt === undefined || time - question.deliveredAt < RESOLVED_MS
++/** Whether an item is snoozed at a time: hidden until its `snoozedUntil`. */
++const isSnoozedAt = (item: Item, time: number) => item.snoozedUntil !== undefined && time < item.snoozedUntil
+ 
+-/** Whether an answer waits for a deliverer: recorded, undelivered, and claimed by none that is live. */
+-export const needsDelivery = (question: Item, time: number) =>
+-  question.answer !== undefined &&
+-  question.deliveredAt === undefined &&
+-  (question.claim === undefined || time - question.claim.renewedAt >= CLAIM_MS)
+-
+-/** What the band puts in the prompt to discuss a question: its text, in quotes. */
+-export const quoteOf = (question: Item) => `"${question.subject}"`
++/**
++ * Whether the band shows an item: not snoozed, and open, being delivered, or
++ * delivered under a minute ago.
++ */
++export const isShownAt = (item: Item, time: number) =>
++  !isSnoozedAt(item, time) && (item.deliveredAt === undefined || time - item.deliveredAt < RESOLVED_MS)
++
++/** The open items whose snooze ended after `since` and by `time`, which bring a hidden band back. */
++export const wokeBetween = (items: readonly Item[], since: number, time: number) =>
++  items.filter(
++    item =>
++      item.answer === undefined && item.snoozedUntil !== undefined && since < item.snoozedUntil && item.snoozedUntil <= time,
++  )
++
++/** Whether a question's answer waits for a deliverer: recorded, undelivered, and claimed by none that is live. */
++export const needsDelivery = (item: Item, time: number): item is Question =>
++  item.kind === 'question' &&
++  item.answer !== undefined &&
++  item.deliveredAt === undefined &&
++  (item.claim === undefined || time - item.claim.renewedAt >= CLAIM_MS)
++
++/** What the band puts in the prompt to discuss an item: its subject, in quotes. */
++export const quoteOf = (item: Item) => `"${item.subject}"`
+ 
+ /** What the band puts in the prompt for an answer: the quoted question, a blank line, and the answer's text. */
+-export const proposalOf = (question: Item, answer: string) => `${quoteOf(question)}\n\n${answer}`
++export const proposalOf = (question: Question, answer: string) => `${quoteOf(question)}\n\n${answer}`
+ 
+ /** One answer a sent prompt gives: a choice's letter, or the typed letter and its text. */
+-export type Given = { question: Item; letter: string; text?: string }
++export type Given = { question: Question; letter: string; text?: string }
+ 
+ /** An answer a question's drawer put in the prompt. */
+ export type Proposal = { ref: string; answer: string }
+@@ -52,11 +66,12 @@ export type Proposal = { ref: string; answer: string }
+  * one whose drawer last put that same answer in the prompt, `proposed`
+  * holding them oldest first, and otherwise to the oldest, so two questions
+  * never take one answer. A quoted question with more on its line, as discuss
+- * leaves it, answers nothing.
++ * leaves it, answers nothing. Only questions take answers, snoozed ones
++ * included, so a quoted notice answers nothing either.
+  */
+-export function answersIn(text: string, questions: readonly Item[], proposed: readonly Proposal[] = []): Given[] {
+-  const open = questions
+-    .filter(question => question.answer === undefined)
++export function answersIn(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Given[] {
++  const open = items
++    .filter((item): item is Question => item.kind === 'question' && item.answer === undefined)
+     .sort((one, other) => one.postedAt - other.postedAt)
+   const found: { at: number; given: Given }[] = []
+   const taken = new Set<string>()
+@@ -79,23 +94,23 @@ export function answersIn(text: string, questions: readonly Item[], proposed: re
+ }
+ 
+ /** Names the subagent that asked, by its description and id when the session still lists it. */
+-function whoAsked(question: Item, agents: readonly AgentInfo[]): string {
++function whoAsked(question: Question, agents: readonly AgentInfo[]): string {
+   const agent = agents.find(one => one.id === question.agentId)
+   return agent === undefined ? (question.agentId ?? '') : `${agent.description} (${agent.id})`
+ }
+ 
+ /** What the main loop reads beside a prompt that answers a subagent's question: whom to send it to. */
+-export const relayNote = (question: Item, agents: readonly AgentInfo[]) =>
++export const relayNote = (question: Question, agents: readonly AgentInfo[]) =>
+   `The subagent ${whoAsked(question, agents)} asked ${quoteOf(question)}; send it the answer this prompt gives.`
+ 
+ /** The subagent that asked, while it can still read a message; undefined sends the answer to the main loop. */
+-export function liveAgent(question: Item, agents: readonly AgentInfo[]): string | undefined {
++export function liveAgent(question: Question, agents: readonly AgentInfo[]): string | undefined {
+   const agent = agents.find(one => one.id === question.agentId)
+   return agent !== undefined && LIVE.has(agent.status) ? agent.id : undefined
+ }
+ 
+ /** What the main loop receives: the answer, and the subagent to relay it to when one asked. */
+-export function forMainLoop(text: string, question: Item, agents: readonly AgentInfo[]): string {
++export function forMainLoop(text: string, question: Question, agents: readonly AgentInfo[]): string {
+   if (question.agentId === undefined) return text
+   return `${text}\n\nThe subagent ${whoAsked(question, agents)} asked this, and the answer could not reach it; send it this answer, or act on it yourself.`
+ }
+@@ -190,10 +205,50 @@ export function askArguments(
+     `--session=${session}`,
+     `--recommend=${recommendation}`,
+     ...options.map(option => `--option=${option}`),
+-    ...(detail === undefined || detail === '' ? [] : [`--detail=${detail}`]),
+-    ...(pr === undefined || pr === '' ? [] : [`--pr=${pr}`]),
+-    ...(agentId === undefined ? [] : [`--agent=${agentId}`]),
++    ...postedFlags(detail, pr, agentId),
+     '--',
+     question,
+   ]
+ }
++
++export const TELL_DESCRIPTION = [
++  'Tell the person something without stopping: it appears in Projector’s band above their prompt until they dismiss it.',
++  'Use it for the answer to a question they asked you, or for something you did that they should know about.',
++  'Write one short line of at most 120 characters, and put the rest in `detail`.',
++  'Name the pull request it is about in `pr`, as owner/repo#number.',
++  'Nothing comes back to you; when you need the person to decide something, use `ask` instead.',
++].join(' ')
++
++export const TELL_SCHEMA = {
++  type: 'object',
++  properties: {
++    notice: { type: 'string', description: 'What to tell the person, in one line of at most 120 characters.' },
++    detail: {
++      type: 'string',
++      description: 'The rest of what they should read, as Markdown; leave it out when the line says it all.',
++    },
++    pr: { type: 'string', description: 'The pull request the notice is about, as owner/repo#number.' },
++  },
++  required: ['notice'],
++  additionalProperties: false,
++}
++
++/** The arguments of `project inbox tell` for one call of the tool, or why the call cannot be one. */
++export function tellArguments(
++  input: Readonly<Record<string, unknown>>,
++  session: string,
++  agentId: string | undefined,
++): string[] | { error: string } {
++  const { notice, detail, pr } = input
++  if (!isText(notice)) return { error: '`notice` must be a string' }
++  if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
++  if (pr !== undefined && !isText(pr)) return { error: '`pr` must be a string such as owner/repo#123' }
++  return ['inbox', 'tell', `--session=${session}`, ...postedFlags(detail, pr, agentId), '--', notice]
++}
++
++/** The flags both tools pass when they have a value: the detail, the pull request, and the subagent. */
++const postedFlags = (detail: string | undefined, pr: string | undefined, agentId: string | undefined) => [
++  ...(detail === undefined || detail === '' ? [] : [`--detail=${detail}`]),
++  ...(pr === undefined || pr === '' ? [] : [`--pr=${pr}`]),
++  ...(agentId === undefined ? [] : [`--agent=${agentId}`]),
++]
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index a68634f..bcc5bc0 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1,7 +1,7 @@
+ import { atom, read, update } from 'claude-code'
+ import type { EngineInterface, FsEntry, Register } from 'claude-code'
+ 
+-import type { Checks, Item, LoopKind, PullRequest, Row, SeenLoop, Sending, Snapshot } from './types'
++import type { Checks, Item, LoopKind, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
+ import { buildQuery, parseResponse, type Fetched } from './github'
+ import { expandPath, findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
+ import {
+@@ -21,7 +21,11 @@ import {
+   signatureOf,
+   span,
+   storeOf,
++  TELL_DESCRIPTION,
++  TELL_SCHEMA,
++  tellArguments,
+   typedLetter,
++  wokeBetween,
+   type Proposal,
+ } from './inbox'
+ 
+@@ -33,6 +37,7 @@ const TICK_MS = 5_000
+ const POLL_MS = 30_000
+ const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
+ const ASK_TOOL = 'mcp__projector__ask'
++const TELL_TOOL = 'mcp__projector__tell'
+ 
+ // Watching first: a pull request both loops track is listed once, where its
+ // watch loop puts it.
+@@ -70,8 +75,10 @@ let listed: string | undefined
+ let isChecking = false
+ /** The answers this copy of the module is claiming or delivering, by reference. */
+ const delivering = new Set<string>()
+-/** The questions an answer from the band is being recorded for, so a second press does nothing. */
++/** The items the band is dismissing or snoozing, so a second press does nothing. */
+ const answering = new Set<string>()
++/** When the last tick ran, so an item whose snooze ends between two ticks wakes once. */
++let tickedAt: number | undefined
+ /**
+  * The answers questions' drawers put in the prompt, oldest first, so a sent
+  * quote answers the question you chose when another shares its text.
+@@ -268,24 +275,28 @@ function refresh($: Engine, isForced = false): Promise<void> {
+   return inFlight
+ }
+ 
+-/** Puts a question the CLI just answered for in the band's list, in place of what it showed. */
++/** Puts an item the CLI just changed in the band's list, in place of what it showed. */
+ const replace = ($: Engine, question: Item) =>
+   update($, items, list =>
+     list.map(one => (one.ref === question.ref && one.session === question.session ? question : one)),
+   )
+ 
+-/** The question a CLI command printed with `--json`, in the session it belongs to. */
++/** The item a CLI command printed with `--json`, in the session it belongs to. */
+ const itemOf = (stdout: string, session: string): Item => ({
+   ...(JSON.parse(stdout) as { item: Omit<Item, 'session'> }).item,
+   session,
+ })
+ 
+-/** Takes the band's list from the store, and shows the band for a question it has not shown before. */
++/**
++ * Takes the band's list from the store, and shows the band for an open item
++ * it has not shown before, unless that item is still snoozed.
++ */
+ async function setItems($: Engine, list: Item[]): Promise<void> {
++  const time = await $.clock.now()
+   let isNew = false
+   await update($, items, before => {
+     const known = new Set(before.map(one => one.ref))
+-    isNew = list.some(one => one.answer === undefined && !known.has(one.ref))
++    isNew = list.some(one => one.answer === undefined && !known.has(one.ref) && isShownAt(one, time))
+     return list
+   })
+   if (isNew && !(await read($, isShown))) show($)
+@@ -345,7 +356,7 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
+  * it can still read a message, otherwise to the main loop as a prompt of its
+  * own, which waits for the session to be idle.
+  */
+-async function deliver($: Engine, question: Item): Promise<void> {
++async function deliver($: Engine, question: Question): Promise<void> {
+   const { ref, session } = question
+   delivering.add(ref)
+   try {
+@@ -403,9 +414,9 @@ async function checkInbox($: Engine): Promise<void> {
+     await renewClaims($)
+     const time = await $.clock.now()
+     const pending = await read($, sending)
+-    for (const question of await read($, items)) {
+-      if (question.session !== session || delivering.has(question.ref) || question.ref in pending) continue
+-      if (needsDelivery(question, time)) void deliver($, question)
++    for (const item of await read($, items)) {
++      if (item.session !== session || delivering.has(item.ref) || item.ref in pending) continue
++      if (needsDelivery(item, time)) void deliver($, item)
+     }
+   } catch {
+     // The next tick tries again.
+@@ -417,17 +428,22 @@ async function checkInbox($: Engine): Promise<void> {
+ /** Checks the questions now rather than at the next tick. */
+ const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
+ 
+-/** Dismisses a question from the band; a second press finds it dismissed and does nothing. */
+-async function dismiss($: Engine, question: Item): Promise<void> {
+-  const { ref, session } = question
++/**
++ * Dismisses or snoozes an item from the band; a second press finds it changed
++ * and does nothing. Snoozing closes the item's drawer, since the item leaves
++ * the band.
++ */
++async function act($: Engine, item: Item, command: 'dismiss' | 'snooze'): Promise<void> {
++  const { ref, session } = item
+   if (answering.has(ref)) return
+   answering.add(ref)
+   try {
+-    const ran = await project($, ['inbox', 'dismiss', ref, '--session', session, '--json'])
++    const ran = await project($, ['inbox', command, ref, '--session', session, '--json'])
+     if (ran.exitCode === 0) {
+       await replace($, itemOf(ran.stdout, session))
++      if (command === 'snooze') await update($, drawer, was => (was === `item:${ref}` ? null : was))
+     } else if (ran.exitCode === 65) {
+-      // Answered elsewhere since the band read the store: read it again.
++      // Resolved elsewhere since the band read the store: read it again.
+       listed = undefined
+     } else {
+       void $.ui.toast(`projector: ${errorOf(ran)}`)
+@@ -445,7 +461,7 @@ async function dismiss($: Engine, question: Item): Promise<void> {
+  * prompt itself carries it to the main loop. The band's own deliverer leaves
+  * the question alone meanwhile, so the agent hears the answer once.
+  */
+-async function answerFromPrompt($: Engine, question: Item, letter: string, text?: string): Promise<void> {
++async function answerFromPrompt($: Engine, question: Question, letter: string, text?: string): Promise<void> {
+   const { ref, session } = question
+   delivering.add(ref)
+   try {
+@@ -464,7 +480,7 @@ async function answerFromPrompt($: Engine, question: Item, letter: string, text?
+   }
+ }
+ 
+-/** What the CLI says about each question a prompt refers to, or undefined when it names none. */
++/** What the CLI says about each item a prompt refers to, or undefined when it names none. */
+ async function explain($: Engine, text: string): Promise<string | undefined> {
+   try {
+     const ran = await project($, ['inbox', 'context', '--session', await $.session.id()], text)
+@@ -476,13 +492,20 @@ async function explain($: Engine, text: string): Promise<string | undefined> {
+ }
+ 
+ /**
+- * Reads the questions whether or not the band is shown, then moves the band's
+- * clock on and polls GitHub once the last load is old enough.
++ * Reads the inbox whether or not the band is shown, and brings a hidden band
++ * back for an item whose snooze ended since the last tick. A shown band moves
++ * its clock on, which returns that item to the list, and polls GitHub once
++ * the last load is old enough.
+  */
+ async function tick($: Engine): Promise<void> {
+   await checkInbox($)
+-  if (!(await read($, isShown))) return
+   const time = await $.clock.now()
++  const since = tickedAt ?? time
++  tickedAt = time
++  if (!(await read($, isShown))) {
++    if (wokeBetween(await read($, items), since, time).length > 0) show($)
++    return
++  }
+   await update($, now, () => time)
+   if (time - attemptedAt >= POLL_MS) await refresh($)
+ }
+@@ -546,6 +569,29 @@ function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+   return pr => `${isNameEnough ? pr.repo.split('/')[1] : pr.repo}#${pr.number}`
+ }
+ 
++/**
++ * Runs the `project inbox` command one of the tools makes: the reference it
++ * prints, or why the tool call is refused. `instead` says where the agent
++ * turns when the command does not finish.
++ */
++async function post(
++  $: Engine,
++  args: string[] | { error: string },
++  instead: string,
++): Promise<{ ref: string } | { deny: string }> {
++  if (!Array.isArray(args)) return { deny: args.error }
++  let ran: Ran
++  try {
++    ran = await project($, args)
++  } catch (error) {
++    return { deny: `project did not finish (${messageOf(error)}); ${instead}` }
++  }
++  if (ran.exitCode === 65) return { deny: errorOf(ran) }
++  if (ran.exitCode !== 0) return { deny: `${errorOf(ran)}; run project upgrade` }
++  checkSoon($)
++  return { ref: ran.stdout.trim() }
++}
++
+ export const register: Register = on => {
+   on('session.start', async ($, e, next) => {
+     await $.command.register({
+@@ -553,37 +599,42 @@ export const register: Register = on => {
+       description: 'Show or hide Projector’s band of the pull requests your loops track',
+       argumentHint: '[tracked file]',
+     })
+-    // A session whose engine cannot serve the tool keeps the band.
++    // A session whose engine cannot serve the tools keeps the band.
+     await $.tool
+       .register({ name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA, isDeferred: false })
+       .catch(() => undefined)
++    await $.tool
++      .register({ name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA, isDeferred: false })
++      .catch(() => undefined)
+     $.clock.every(TICK_MS, () => void tick($))
+     soon($)
+     checkSoon($)
+     return next(e)
+   })
+ 
+-  // The tool asks through the CLI, so a question asked here and one asked
++  // The tools post through the CLI, so an item posted here and one posted
+   // from the shell land in the same store.
+   on('tool.call', { tool: ASK_TOOL }, async ($, e) => {
+-    const args = askArguments(e, await $.session.id(), e.agentId)
+-    if (!Array.isArray(args)) return { deny: args.error }
+-    let ran: Ran
+-    try {
+-      ran = await project($, args)
+-    } catch (error) {
+-      return { deny: `project did not finish (${messageOf(error)}); ask in the conversation instead` }
+-    }
+-    if (ran.exitCode === 65) return { deny: errorOf(ran) }
+-    if (ran.exitCode !== 0) return { deny: `${errorOf(ran)}; run project upgrade` }
+-    const ref = ran.stdout.trim()
+-    checkSoon($)
++    const posted = await post($, askArguments(e, await $.session.id(), e.agentId), 'ask in the conversation instead')
++    if ('deny' in posted) return posted
++    const { ref } = posted
+     void $.ui.notify(`${ref} ${String(e.question)}`, { title: 'Projector question' }).catch(() => undefined)
+     return {
+       result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
+     }
+   }).catch(() => ({ deny: 'Projector could not record the question; ask it in the conversation instead' }))
+ 
++  on('tool.call', { tool: TELL_TOOL }, async ($, e) => {
++    const args = tellArguments(e, await $.session.id(), e.agentId)
++    const posted = await post($, args, 'tell the person in the conversation instead')
++    if ('deny' in posted) return posted
++    const { ref } = posted
++    void $.ui.notify(`${ref} ${String(e.notice)}`, { title: 'Projector notice' }).catch(() => undefined)
++    return {
++      result: `Posted ${ref}. It waits in Projector’s band until the person dismisses it; nothing comes back to you.`,
++    }
++  }).catch(() => ({ deny: 'Projector could not record the notice; tell the person in the conversation instead' }))
++
+   // These hooks only watch: the catch hands back what the event settled to,
+   // so a failure here never runs a tool twice or refuses anything.
+   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+@@ -676,15 +727,18 @@ export const register: Register = on => {
+     const shown = current(await read($, snapshot))
+     const time = await read($, now)
+     const opened = await read($, drawer)
+-    const asked = (await read($, items)).filter(question => isShownAt(question, time))
+-    const open = asked.filter(question => question.answer === undefined).length
++    const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
++    const counts = (['question', 'notice'] as const).map(kind => {
++      const count = shownItems.filter(item => item.kind === kind && item.answer === undefined).length
++      return count === 0 ? undefined : `${count} ${kind}${count === 1 ? '' : 's'}`
++    })
+     const label = labeler(shown.rows.map(row => row.pr))
+     const reference = referencer(shown.rows.map(row => row.pr))
+     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
+     // A drawer starts where the titles do: past the label, `draft`, and a gap after each.
+     const drawerIndent = labelWidth + 1 + 'draft'.length + 1
+     const heading = [
+-      open === 0 ? undefined : `${open} question${open === 1 ? '' : 's'}`,
++      ...counts,
+       shown.fetchedAt === null ? undefined : `updated ${ago(secondsSince(time, shown.fetchedAt))}`,
+     ]
+       .filter(part => part !== undefined)
+@@ -704,7 +758,7 @@ export const register: Register = on => {
+       </Text>
+     )
+ 
+-    if (shown.rows.length === 0 && asked.length === 0) {
++    if (shown.rows.length === 0 && shownItems.length === 0) {
+       return (
+         <Box flexDirection="column">
+           {divider}
+@@ -726,7 +780,7 @@ export const register: Register = on => {
+     // `file:` link as one, so an option links its question's pull request, or
+     // the question's own file in the store when it has none.
+     const store = (session: string) => storeOf(env, session) ?? ''
+-    const hrefOf = (question: Item) => {
++    const hrefOf = (question: Question) => {
+       const pull = question.pr?.match(/^([^#]+)#(\d+)$/)
+       return pull === null || pull === undefined
+         ? `file://${encodeURI(`${store(question.session)}/${encodeURIComponent(question.ref)}.json`)}`
+@@ -736,32 +790,29 @@ export const register: Register = on => {
+     const link = (key: string, text: string, href: string, onPress: () => void) => (
+       <Markdown key={key} text={`[${escaped(text)}](${href})`} onLinkPress={onPress} />
+     )
+-    // A question names its pull request as the band labels it, or in full
+-    // when the band does not list it.
+-    const pullOf = (question: Item) => {
+-      const row = shown.rows.find(one => keyOf(one.pr) === question.pr?.toLowerCase())
+-      return row === undefined ? (question.pr ?? '') : label(row.pr)
++    // An item names its pull request as the band labels it, or in full when
++    // the band does not list it.
++    const pullOf = (item: Item) => {
++      const row = shown.rows.find(one => keyOf(one.pr) === item.pr?.toLowerCase())
++      return row === undefined ? (item.pr ?? '') : label(row.pr)
+     }
+ 
+-    // The questions are a bulleted list below the pull requests, oldest
+-    // first. A question's drawer numbers its options; choosing one puts the
+-    // question and that answer in the prompt as text, for you to send or
+-    // change, and sending it is what answers the question.
++    // The items are a list below the pull requests, oldest first: a question
++    // bulleted `-`, a notice `•`. A question's drawer numbers its options;
++    // choosing one puts the question and that answer in the prompt as text,
++    // for you to send or change, and sending it is what answers the question.
+     // Each age sits in one column as wide as the widest, so the pull requests
+     // before it end in one column too.
+-    const ageWidth = Math.max(0, ...asked.map(question => span(secondsSince(time, question.postedAt)).length))
+-    const drawQuestion = (question: Item) => {
++    const ageWidth = Math.max(0, ...shownItems.map(item => span(secondsSince(time, item.postedAt)).length))
++    const fill = (text: string) => {
++      $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
++    }
++    const drawAnswers = (question: Question) => {
+       const { ref, answer } = question
+-      const key = `item:${ref}`
+       const isOpen = answer === undefined
+-      const isDismissed = answer !== undefined && 'dismissed' in answer
+       const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
+       const typed = typedLetter(question)
+       const href = hrefOf(question)
+-      const pull = pullOf(question)
+-      const fill = (text: string) => {
+-        $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
+-      }
+       const propose = (answer: string) => {
+         proposed = [...proposed.filter(proposal => proposal.ref !== ref), { ref, answer }]
+         fill(`${proposalOf(question, answer)}\n`)
+@@ -786,24 +837,76 @@ export const register: Register = on => {
+         )
+       }
+ 
++      return [
++        <Text key={`before-answers:${ref}`}> </Text>,
++        ...question.choices.map((choice, index) => {
++          const letter = letterAt(index)
++          return option(
++            letter,
++            <Text dimColor={!isOpen && letter !== chosen}>
++              {choice}
++              {index === 0 && <Text color="success"> (recommended)</Text>}
++              {letter === chosen && <Text color="success"> ✓</Text>}
++            </Text>,
++          )
++        }),
++        chosen === typed && answer !== undefined && 'text' in answer
++          ? option(
++              typed,
++              <Text>
++                {answer.text}
++                <Text color="success"> ✓</Text>
++              </Text>,
++            )
++          : isOpen &&
++            Input !== undefined &&
++            option(
++              typed,
++              <Input
++                key={`answer:${ref}.${typed}`}
++                placeholder="Type something"
++                submitLabel="answer"
++                onSubmit={(value: string) => {
++                  if (value.trim() !== '') propose(value.trim())
++                }}
++              />,
++            ),
++      ]
++    }
++    const drawItem = (item: Item) => {
++      const { ref, answer } = item
++      const key = `item:${ref}`
++      const isOpen = answer === undefined
++      const isDismissed = answer !== undefined && 'dismissed' in answer
++      const pull = pullOf(item)
++      const actions = [
++        { name: 'discuss', onPress: () => fill(`${quoteOf(item)} `) },
++        ...(isOpen
++          ? [
++              { name: 'dismiss', onPress: () => void act($, item, 'dismiss') },
++              { name: 'snooze', onPress: () => void act($, item, 'snooze') },
++            ]
++          : []),
++      ]
++
+       return (
+         <Box key={`line:${ref}`} flexDirection="column">
+           <Box flexDirection="row" columnGap={1}>
+-            {/* The whole question is one plain Button, so a press anywhere on
+-                it opens its drawer: a click in fullscreen, Enter on the main
++            {/* The whole item is one plain Button, so a press anywhere on it
++                opens its drawer: a click in fullscreen, Enter on the main
+                 screen. */}
+             <Box flexGrow={1} flexShrink={1}>
+-              {/* An open drawer keeps its question inverted, as the pointer draws it. */}
++              {/* An open drawer keeps its item inverted, as the pointer draws it. */}
+               <Button key={key} plain onPress={() => toggle(key)}>
+                 <Text dimColor={!isOpen} inverse={opened === key}>
+-                  -{' '}
++                  {item.kind === 'notice' ? '•' : '-'}{' '}
+                 </Text>
+                 <Text dimColor={!isOpen} strikethrough={isDismissed} inverse={opened === key}>
+-                  {question.subject}
++                  {item.subject}
+                 </Text>
+               </Button>
+             </Box>
+-            {!isOpen && question.deliveredAt === undefined && (
++            {!isOpen && item.deliveredAt === undefined && (
+               <Box flexShrink={0}>
+                 <Text color="subtle">sending</Text>
+               </Box>
+@@ -814,52 +917,24 @@ export const register: Register = on => {
+               </Box>
+             )}
+             <Box flexShrink={0} width={ageWidth} justifyContent="flex-end">
+-              <Text color="subtle">{span(secondsSince(time, question.postedAt))}</Text>
++              <Text color="subtle">{span(secondsSince(time, item.postedAt))}</Text>
+             </Box>
+           </Box>
+           {opened === key && (
+             <Box flexDirection="column" marginLeft={2}>
+-              {/* A blank line sets the answers apart from the question, and the
+-                  detail, when there is one, sits between two. */}
+-              {question.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
+-              {question.detail !== '' && <Markdown key={`detail:${ref}`} text={question.detail} />}
+-              <Text key={`before-answers:${ref}`}> </Text>
+-              {question.choices.map((choice, index) => {
+-                const letter = letterAt(index)
+-                return option(
+-                  letter,
+-                  <Text dimColor={!isOpen && letter !== chosen}>
+-                    {choice}
+-                    {index === 0 && <Text color="success"> (recommended)</Text>}
+-                    {letter === chosen && <Text color="success"> ✓</Text>}
+-                  </Text>,
+-                )
+-              })}
+-              {chosen === typed && answer !== undefined && 'text' in answer
+-                ? option(
+-                    typed,
+-                    <Text>
+-                      {answer.text}
+-                      <Text color="success"> ✓</Text>
+-                    </Text>,
+-                  )
+-                : isOpen &&
+-                  Input !== undefined &&
+-                  option(
+-                    typed,
+-                    <Input
+-                      key={`answer:${ref}.${typed}`}
+-                      placeholder="Type something"
+-                      submitLabel="answer"
+-                      onSubmit={(value: string) => {
+-                        if (value.trim() !== '') propose(value.trim())
+-                      }}
+-                    />,
+-                  )}
++              {/* A blank line sets the item apart from its line, and the detail,
++                  when there is one, sits between two. */}
++              {item.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
++              {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
++              {item.kind === 'question' && drawAnswers(item)}
+               <Text key={`before-buttons:${ref}`}> </Text>
+               <Box flexDirection="row" columnGap={1}>
+-                <Button key={`discuss:${ref}`} label="discuss" onPress={() => fill(`${quoteOf(question)} `)} />
+-                {isOpen && <Button key={`dismiss:${ref}`} label="dismiss" onPress={() => void dismiss($, question)} />}
++                {actions.flatMap(({ name, onPress }, at) => [
++                  ...(at === 0 ? [] : [<Text key={`between:${ref}.${at}`} dimColor>|</Text>]),
++                  <Button key={`${name}:${ref}`} plain onPress={onPress}>
++                    <Text>{name}</Text>
++                  </Button>,
++                ])}
+               </Box>
+             </Box>
+           )}
+@@ -928,26 +1003,26 @@ export const register: Register = on => {
+       )
+     }
+ 
+-    // An open question's drawer has the band to itself, until it is closed or
+-    // the question leaves the band.
+-    const focused = asked.find(question => opened === `item:${question.ref}`)
++    // An open item's drawer has the band to itself, until it is closed or the
++    // item leaves the band.
++    const focused = shownItems.find(item => opened === `item:${item.ref}`)
+     if (focused !== undefined) {
+       return (
+         <Box flexDirection="column">
+           {divider}
+-          {drawQuestion(focused)}
++          {drawItem(focused)}
+         </Box>
+       )
+     }
+ 
+-    // Otherwise the pull requests come first, then a blank line, then the questions.
++    // Otherwise the pull requests come first, then a blank line, then the items.
+     return (
+       <Box flexDirection="column">
+         {divider}
+         {shown.rows.map(drawRow)}
+         {failure !== undefined && <Text color="error">{failure}</Text>}
+-        {asked.length > 0 && shown.rows.length > 0 && <Text key="before-questions"> </Text>}
+-        {[...asked].sort((a, b) => a.postedAt - b.postedAt).map(drawQuestion)}
++        {shownItems.length > 0 && shown.rows.length > 0 && <Text key="before-items"> </Text>}
++        {[...shownItems].sort((a, b) => a.postedAt - b.postedAt).map(drawItem)}
+       </Box>
+     )
+   })
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index e082173..4ea670a 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -38,30 +38,45 @@ export type Snapshot = {
+   error: string | null
+ }
+ 
+-/** How an item was answered: a question by a lettered choice or typed text, or dismissed. */
++/** How an item was resolved: dismissed, or a question answered with a lettered choice or typed text. */
+ export type Answer = { letter: string; text: string; answeredAt: number } | { dismissed: true; answeredAt: number }
+ 
+-/** One item as `project inbox list --json` gives it, with the session whose store holds it. */
+-export type Item = {
++/** What every item has, as `project inbox list --json` gives it, with the session whose store holds it. */
++export type Posted = {
+   ref: string
+-  kind: 'question'
+   number: number
+   /** The pull request it is about, as `owner/repo#number`; null when none. */
+   pr: string | null
+   /** When the agent posted it, in milliseconds. */
+   postedAt: number
+-  /** The question, in one line. */
++  /** The question or the notice, in one line. */
+   subject: string
+   detail: string
++  /** The subagent that posted it. */
++  agentId?: string
++  /** When a snoozed item returns, in milliseconds; absent when it is not snoozed. */
++  snoozedUntil?: number
++  deliveredAt?: number
++  session: string
++}
++
++/** A question, whose answer or dismissal goes back to the agent that asked. */
++export type Question = Posted & {
++  kind: 'question'
+   /** The answers in letter order, the recommendation first; the letter after the last is a typed answer. */
+   choices: string[]
+-  agentId?: string
+   answer?: Answer
+   claim?: { token: string; renewedAt: number }
+-  deliveredAt?: number
+-  session: string
+ }
+ 
++/** A notice, which you read and dismiss, and which sends nothing back; dismissing it delivers it. */
++export type Notice = Posted & {
++  kind: 'notice'
++  answer?: { dismissed: true; answeredAt: number }
++}
++
++export type Item = Question | Notice
++
+ /**
+  * An answer the band claimed and is delivering: the claim's token, the route
+  * it took, and the text sent, so a later copy of the module keeps renewing
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index debf87f..72cee27 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -625,7 +625,8 @@ def seconds(text: str) -> float:
+ 
+ 
+ def add_inbox_parser(subcommands) -> None:
+-    parser = subcommands.add_parser("inbox", help="ask the person a question, and answer and deliver it")
++    parser = subcommands.add_parser("inbox", help="put a question or a notice in the person's inbox, and answer, "
++                                                   "dismiss, snooze, and deliver it")
+     commands = parser.add_subparsers(dest="inbox_command", required=True)
+ 
+     def command(name: str, help_text: str) -> argparse.ArgumentParser:
+@@ -644,6 +645,14 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     ask.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
+     ask.add_argument("--agent", help="the asking subagent's id, when a subagent asks")
+ 
++    tell = command("tell", "check, number, and record a notice, and print its reference")
++    tell.add_argument("notice", help="the notice, in one line of at most 120 characters")
++    detail = tell.add_mutually_exclusive_group()
++    detail.add_argument("--detail", default="", help="the rest of the notice, as Markdown")
++    detail.add_argument("--detail-file", type=Path, help="read the detail from this file")
++    tell.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
++    tell.add_argument("--agent", help="the posting subagent's id, when a subagent posts")
++
+     listing = command("list", "list open items: the session's, or every session's without one")
+     listing.add_argument("--all", action="store_true", help="include delivered items")
+ 
+@@ -654,9 +663,14 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     answer.add_argument("reference", help="the question's reference and the answer's letter, such as #337.3.a")
+     answer.add_argument("--text", help="the typed answer, for the question's last letter")
+ 
+-    dismiss = command("dismiss", "record that you dismissed a question")
++    dismiss = command("dismiss", "record that you dismissed a question or read a notice")
+     dismiss.add_argument("reference")
+ 
++    snooze = command("snooze", "hide an open item for a while")
++    snooze.add_argument("reference")
++    snooze.add_argument("--for", dest="minutes", type=int, default=inbox.SNOOZE_MINUTES, metavar="MINUTES",
++                        help="minutes until it returns (default: 60); 0 wakes it now")
++
+     claim = command("claim", "claim a recorded answer for delivery and print its token and text")
+     claim.add_argument("reference")
+     claim.add_argument("--renew", metavar="TOKEN", help="keep this claim live while its delivery is pending")
+@@ -1089,8 +1103,13 @@ def checkout_repo(checkout: Path) -> Optional[str]:
+ 
+ 
+ def item_state(item: dict) -> str:
++    until = inbox.snoozed_until(item)
++    if until is not None:
++        return f"snoozed until {time.strftime('%H:%M', time.localtime(until / 1000))}"
+     if not item.get("answer"):
+         return "open"
++    if inbox.is_notice(item):
++        return "dismissed"
+     if item.get("deliveredAt"):
+         return f"delivered {inbox.answer_ref(item)}"
+     if inbox.live_claim(item):
+@@ -1104,12 +1123,17 @@ def print_item(item: dict) -> None:
+         print(f"about {item['pr']}")
+     if item.get("detail"):
+         print(f"\n{item['detail']}\n")
+-    for index, choice in enumerate(item["choices"]):
+-        print(f"{chr(ord('a') + index)}. {choice}{' (recommended)' if index == 0 else ''}")
+-    print(f"{inbox.typed_letter(item)}. type an answer with --text")
++    if not inbox.is_notice(item):
++        print_choices(item)
+     print(item_state(item))
+ 
+ 
++def print_choices(question: dict) -> None:
++    for index, choice in enumerate(question["choices"]):
++        print(f"{chr(ord('a') + index)}. {choice}{' (recommended)' if index == 0 else ''}")
++    print(f"{inbox.typed_letter(question)}. type an answer with --text")
++
++
+ def run_inbox(arguments: argparse.Namespace) -> int:
+     command = arguments.inbox_command
+     json_output = arguments.json_output
+@@ -1119,6 +1143,11 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+                          arguments.option, detail=detail, pr=arguments.pr, agent=arguments.agent,
+                          repo=checkout_repo(Path.cwd()))
+         print(json_text({"item": item}) if json_output else item["ref"])
++    elif command == "tell":
++        detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
++        item = inbox.tell(inbox_session(arguments, True), arguments.notice, detail=detail, pr=arguments.pr,
++                          agent=arguments.agent, repo=checkout_repo(Path.cwd()))
++        print(json_text({"item": item}) if json_output else item["ref"])
+     elif command == "list":
+         session = inbox_session(arguments, False)
+         names = [session] if session else inbox.sessions()
+@@ -1128,7 +1157,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+         if json_output:
+             print(json_text({"items": rows}))
+         for row in [] if json_output else rows:
+-            columns = [row["ref"], item_state(row), row["subject"]]
++            columns = [row["ref"], row["kind"], item_state(row), row["subject"]]
+             print("\t".join(columns if session else [row["session"], *columns]))
+     elif command == "show":
+         ref, _ = inbox.parse_reference(arguments.reference)
+@@ -1144,6 +1173,10 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+                 else inbox.dismiss(session, ref))
+         print(json_text({"item": item}) if json_output
+               else f"{'answered' if command == 'answer' else 'dismissed'} {inbox.answer_ref(item)}")
++    elif command == "snooze":
++        ref, _ = inbox.parse_reference(arguments.reference)
++        item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
++        print(json_text({"item": item}) if json_output else f"{item['ref']} {item_state(item)}")
+     elif command == "claim":
+         ref, _ = inbox.parse_reference(arguments.reference)
+         item = inbox.claim(inbox_session(arguments, False), ref, arguments.renew)
+diff --git a/src/projector/inbox.py b/src/projector/inbox.py
+index 2e5c41b..68c7250 100644
+--- a/src/projector/inbox.py
++++ b/src/projector/inbox.py
+@@ -1,6 +1,8 @@
+ """The items an agent puts in the person's inbox, kept per session under Projector's state directory.
+ 
+-Each session's items are JSON files in their own directory, one per item, with `counts.json`
++An item is a question, which the person answers or dismisses and whose answer goes back to the
++agent, or a notice, which the person reads and dismisses and which sends nothing back. Each
++session's items are JSON files in their own directory, one per item, with `counts.json`
+ holding the last number given in each count and `session.json` the session's repository, once a
+ post from a checkout has recorded one. Every write happens under the directory's lock, an
+ operating-system lock on its `.lock` file, and lands by renaming a temporary file into place, so
+@@ -24,6 +26,8 @@
+ 
+ MAX_SUBJECT = 120
+ MAX_OPTIONS = 5
++SNOOZE_MINUTES = 60
++KINDS = ("question", "notice")
+ KEEP_DELIVERED = 100
+ CLAIM_EXPIRES_MS = 60_000
+ LOCK_WAIT_SECONDS = 5.0
+@@ -45,7 +49,7 @@
+ 
+ 
+ class InboxError(ProjectorError):
+-    """An item fails a check, or an answer or claim is not allowed in its state."""
++    """An item fails a check, or an answer, claim, or snooze is not allowed in its state."""
+ 
+ 
+ class ItemNotFound(ProjectorError):
+@@ -148,14 +152,16 @@ def read_json(path: Path) -> Optional[dict]:
+ 
+ 
+ def load_items(folder: Path) -> list[dict]:
+-    """The session's items, oldest first; a file that does not parse, or whose name does not
+-    match its reference, is skipped rather than allowed to break a view."""
++    """The session's items, oldest first; a file that does not parse, whose name does not match its
++    reference, or whose kind is neither `question` nor `notice`, is skipped rather than allowed to break
++    a view."""
+     items = []
+     if not folder.is_dir():
+         return items
+     for path in folder.glob("*.json"):
+         item = read_json(path)
+-        if item and isinstance(item.get("ref"), str) and item_file(folder, item["ref"]) == path:
++        if (item and isinstance(item.get("ref"), str) and item_file(folder, item["ref"]) == path
++                and item.get("kind") in KINDS):
+             items.append(item)
+     return sorted(items, key=lambda item: (item.get("postedAt", 0), item["ref"]))
+ 
+@@ -175,14 +181,22 @@ def reference(pull: Optional[re.Match], count: int, repo: Optional[str]) -> str:
+     return f"{pull['repo']}#{pull['number']}.{count}"
+ 
+ 
+-def check(question: str, recommend: str, options: list[str], pr: Optional[str]) -> None:
+-    if not question.strip():
+-        raise InboxError("the question is empty")
+-    if "\n" in question or "\r" in question:
+-        raise InboxError("the question must be one line; put the rest in --detail")
+-    if len(question) > MAX_SUBJECT:
+-        raise InboxError(f"the question is {len(question)} characters; keep it to {MAX_SUBJECT} and put the "
++def check_subject(kind: str, subject: str, pr: Optional[str]) -> None:
++    """The checks every item passes: a subject of one line and at most `MAX_SUBJECT` characters,
++    and a pull request written as owner/repo#number."""
++    if not subject.strip():
++        raise InboxError(f"the {kind} is empty")
++    if "\n" in subject or "\r" in subject:
++        raise InboxError(f"the {kind} must be one line; put the rest in --detail")
++    if len(subject) > MAX_SUBJECT:
++        raise InboxError(f"the {kind} is {len(subject)} characters; keep it to {MAX_SUBJECT} and put the "
+                          "rest in --detail")
++    if pr is not None and not PULL.match(pr):
++        raise InboxError(f"{pr!r} is not a pull request; write it as owner/repo#number")
++
++
++def check(question: str, recommend: str, options: list[str], pr: Optional[str]) -> None:
++    check_subject("question", question, pr)
+     if not recommend.strip():
+         raise InboxError("give the answer you recommend with --recommend")
+     if len(options) > MAX_OPTIONS:
+@@ -192,8 +206,6 @@ def check(question: str, recommend: str, options: list[str], pr: Optional[str])
+             raise InboxError("an --option is empty")
+         if option.strip() == recommend.strip():
+             raise InboxError(f"the option {option!r} repeats the recommendation, which is already answer a")
+-    if pr is not None and not PULL.match(pr):
+-        raise InboxError(f"{pr!r} is not a pull request; write it as owner/repo#number")
+ 
+ 
+ def session_repo(folder: Path, repo: Optional[str]) -> Optional[str]:
+@@ -209,11 +221,12 @@ def session_repo(folder: Path, repo: Optional[str]) -> Optional[str]:
+     return repo
+ 
+ 
+-def ask(session: str, question: str, recommend: str, options: list[str], *, detail: str = "",
+-        pr: Optional[str] = None, agent: Optional[str] = None, repo: Optional[str] = None) -> dict:
+-    """Check, number, and record a question; returns it. `repo` is the repository of the checkout
+-    `ask` runs in, which becomes the session's repository when the session has none yet."""
+-    check(question, recommend, options, pr)
++def post(session: str, kind: str, subject: str, *, detail: str, pr: Optional[str], agent: Optional[str],
++         repo: Optional[str], choices: Optional[list[str]] = None) -> dict:
++    """Number and record an item that passed its checks; returns it. Questions and notices share
++    the counts, so each reference names one item of either kind. `repo` is the repository of the
++    checkout the command runs in, which becomes the session's repository when the session has
++    none yet."""
+     folder = session_dir(session)
+     pull = PULL.match(pr) if pr else None
+     key = f"{pull['repo'].lower()}#{pull['number']}" if pull else "q"
+@@ -224,14 +237,15 @@ def ask(session: str, question: str, recommend: str, options: list[str], *, deta
+         count = int(counts.get(key, 0)) + 1
+         record = {
+             "ref": reference(pull, count, home),
+-            "kind": "question",
++            "kind": kind,
+             "number": count,
+             "pr": pr,
+             "postedAt": now_ms(),
+-            "subject": question.strip(),
++            "subject": subject.strip(),
+             "detail": detail.strip(),
+-            "choices": [recommend.strip(), *(option.strip() for option in options)],
+         }
++        if choices is not None:
++            record["choices"] = choices
+         if agent:
+             record["agentId"] = agent
+         counts[key] = count
+@@ -242,6 +256,21 @@ def ask(session: str, question: str, recommend: str, options: list[str], *, deta
+     return record
+ 
+ 
++def ask(session: str, question: str, recommend: str, options: list[str], *, detail: str = "",
++        pr: Optional[str] = None, agent: Optional[str] = None, repo: Optional[str] = None) -> dict:
++    """Check, number, and record a question; returns it."""
++    check(question, recommend, options, pr)
++    choices = [recommend.strip(), *(option.strip() for option in options)]
++    return post(session, "question", question, detail=detail, pr=pr, agent=agent, repo=repo, choices=choices)
++
++
++def tell(session: str, notice: str, *, detail: str = "", pr: Optional[str] = None,
++         agent: Optional[str] = None, repo: Optional[str] = None) -> dict:
++    """Check, number, and record a notice; returns it."""
++    check_subject("notice", notice, pr)
++    return post(session, "notice", notice, detail=detail, pr=pr, agent=agent, repo=repo)
++
++
+ # Finding an item
+ 
+ def parse_reference(text: str) -> tuple[str, Optional[str]]:
+@@ -276,6 +305,15 @@ def find(session: Optional[str], ref: str) -> tuple[Path, dict]:
+     return folder, item
+ 
+ 
++def is_notice(item: dict) -> bool:
++    return item.get("kind") == "notice"
++
++
++def refuse_notice(item: dict, action: str) -> None:
++    if is_notice(item):
++        raise InboxError(f"{item['ref']} is a notice, which {action}; dismiss it with `project inbox dismiss`")
++
++
+ def typed_letter(question: dict) -> str:
+     return chr(ord("a") + len(question["choices"]))
+ 
+@@ -311,6 +349,7 @@ def update(session: Optional[str], ref: str, change) -> dict:
+ 
+ def answer(session: Optional[str], ref: str, letter: Optional[str], text: Optional[str] = None) -> dict:
+     def record(question: dict) -> None:
++        refuse_notice(question, "takes no answer")
+         if question.get("answer"):
+             raise InboxError(f"{question['ref']} is already answered, as {answer_ref(question)}")
+         last = typed_letter(question)
+@@ -327,19 +366,47 @@ def record(question: dict) -> None:
+         else:
+             raise InboxError(f"{question['ref']} has no answer {letter}; its letters run a to {last}")
+         question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
++        question.pop("snoozedUntil", None)
+ 
+     return update(session, ref, record)
+ 
+ 
+ def dismiss(session: Optional[str], ref: str) -> dict:
++    """Dismiss an item. A dismissed question waits for its deliverer to tell the agent; a dismissed
++    notice has nothing to send, so it is delivered at once."""
++    def record(item: dict) -> None:
++        if item.get("answer"):
++            raise InboxError(f"{item['ref']} is already {'dismissed' if is_notice(item) else 'answered'}, as "
++                             f"{answer_ref(item)}")
++        time = now_ms()
++        item["answer"] = {"dismissed": True, "answeredAt": time}
++        item.pop("snoozedUntil", None)
++        if is_notice(item):
++            item["deliveredAt"] = time
++
++    return update(session, ref, record)
++
++
++def snooze(session: Optional[str], ref: str, minutes: int = SNOOZE_MINUTES) -> dict:
++    """Hide an open item until `minutes` from now, or wake it now with 0."""
++    if minutes < 0:
++        raise InboxError(f"snooze for 0 minutes or more, not {minutes}")
++
+     def record(item: dict) -> None:
+         if item.get("answer"):
+-            raise InboxError(f"{item['ref']} is already answered, as {answer_ref(item)}")
+-        item["answer"] = {"dismissed": True, "answeredAt": now_ms()}
++            raise InboxError(f"{item['ref']} is already {'dismissed' if is_notice(item) else 'answered'}, so it "
++                             "has nothing to return for")
++        item["snoozedUntil"] = now_ms() + minutes * 60_000
+ 
+     return update(session, ref, record)
+ 
+ 
++def snoozed_until(item: dict) -> Optional[int]:
++    """When a snoozed item returns, while that time is still ahead."""
++    until = item.get("snoozedUntil")
++    return until if isinstance(until, int) and until > now_ms() else None
++
++
+ def live_claim(question: dict) -> Optional[dict]:
+     claim = question.get("claim")
+     if claim and now_ms() - int(claim.get("renewedAt", 0)) < CLAIM_EXPIRES_MS:
+@@ -350,6 +417,7 @@ def live_claim(question: dict) -> Optional[dict]:
+ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict:
+     """Claim an answer for delivery, or renew a claim by its token; returns the question."""
+     def take(question: dict) -> None:
++        refuse_notice(question, "has nothing to deliver")
+         if not question.get("answer"):
+             raise InboxError(f"{question['ref']} has no answer to deliver")
+         if question.get("deliveredAt"):
+@@ -429,6 +497,10 @@ def context(session: str, text: str) -> list[str]:
+         if question is None:
+             continue
+         subject = question["subject"]
++        if is_notice(question):
++            if letter is None:
++                lines.append(f"{ref} is the notice: {subject}")
++            continue
+         if letter is None:
+             lines.append(f"{ref} is the question: {subject}")
+             continue
+diff --git a/tests/test_inbox.py b/tests/test_inbox.py
+index 76f725b..b199230 100644
+--- a/tests/test_inbox.py
++++ b/tests/test_inbox.py
+@@ -20,6 +20,7 @@
+ from contextlib import redirect_stderr, redirect_stdout
+ from pathlib import Path
+ from typing import Callable
++from urllib.parse import quote
+ from unittest import mock
+ 
+ from projector import cli, inbox
+@@ -113,8 +114,8 @@ def test_shortens_only_the_repository_of_the_sessions_first_ask(self) -> None:
+         self.assertEqual("#271.1", self.ask("About app?", *recommend, "--pr", "acme/app#271"))
+         self.assertEqual("octo/web#271.1", self.ask("About web?", *recommend, "--pr", "octo/web#271", cwd=web))
+         self.assertEqual("#271.2", self.ask("App again?", *recommend, "--pr", "acme/app#271", cwd=web))
+-        self.assertCountEqual(["#271.1\topen\tAbout app?", "octo/web#271.1\topen\tAbout web?",
+-                               "#271.2\topen\tApp again?"], self.run_cli("list", "--session", "s1")[1].splitlines())
++        self.assertCountEqual(["#271.1\tquestion\topen\tAbout app?", "octo/web#271.1\tquestion\topen\tAbout web?",
++                               "#271.2\tquestion\topen\tApp again?"], self.run_cli("list", "--session", "s1")[1].splitlines())
+ 
+     def test_letters_the_recommendation_a_and_records_the_question(self) -> None:
+         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget", "--detail", "Why.",
+@@ -348,13 +349,13 @@ def test_lists_every_sessions_open_questions_without_a_session(self) -> None:
+         self.ask("One?", "--recommend", "x", session="s1")
+         self.ask("Two?", "--recommend", "x", session="s2")
+         out = self.run_cli("list")[1]
+-        self.assertEqual(["s1\tq1\topen\tOne?", "s2\tq1\topen\tTwo?"], out.splitlines())
++        self.assertEqual(["s1\tq1\tquestion\topen\tOne?", "s2\tq1\tquestion\topen\tTwo?"], out.splitlines())
+ 
+     def test_skips_a_file_that_is_not_an_item(self) -> None:
+         self.ask("One?", "--recommend", "x")
+         (self.folder() / "q7.json").write_text("{not json")
+         (self.folder() / "misnamed.json").write_text(json.dumps({"ref": "q8", "subject": "?"}))
+-        self.assertEqual(["q1\topen\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
++        self.assertEqual(["q1\tquestion\topen\tOne?"], self.run_cli("list", "--session", "s1")[1].splitlines())
+ 
+     def test_show_prints_the_lettered_answers(self) -> None:
+         self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget")
+@@ -397,5 +398,140 @@ def test_finds_references_in_text_by_the_plans_table(self) -> None:
+                 self.assertEqual([], inbox.references_in(text))
+ 
+ 
++class NoticeTests(InboxCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.ask("Decline it?", "--recommend", "Decline it", "--pr", "acme/app#12")
++
++    def tell(self, notice: str = "Force-pushed #12 to drop a stray file", *args: str) -> str:
++        code, out, err = self.run_cli("tell", notice, "--pr", "acme/app#12", "--session", "s1", *args)
++        self.assertEqual(0, code, err)
++        return out.strip()
++
++    def item(self, ref: str) -> dict:
++        return json.loads((self.folder() / f"{quote(ref, safe='')}.json").read_text())
++
++    def test_numbers_a_notice_in_the_counts_questions_use(self) -> None:
++        self.assertEqual("#12.2", self.tell())
++        notice = self.item("#12.2")
++        self.assertEqual(("notice", "Force-pushed #12 to drop a stray file"), (notice["kind"], notice["subject"]))
++        self.assertNotIn("choices", notice)
++        self.assertEqual("#12.3", self.ask("Rebase?", "--recommend", "Yes", "--pr", "acme/app#12"))
++        code, out, _ = self.run_cli("tell", "No pull", "--session", "s1", "--json")
++        self.assertEqual((0, "q1"), (code, json.loads(out)["item"]["ref"]))
++
++    def test_records_the_detail_and_the_posting_subagent(self) -> None:
++        detail = self.scratch / "detail.md"
++        detail.write_text("The file held a token.\n")
++        self.tell("Dropped a file", "--detail-file", str(detail), "--agent", "agent-7")
++        notice = self.item("#12.2")
++        self.assertEqual(("The file held a token.", "agent-7"), (notice["detail"], notice["agentId"]))
++
++    def test_refuses_a_notice_that_fails_a_check_and_writes_nothing(self) -> None:
++        counts = (self.folder() / "counts.json").read_text()
++        for args in (["Two\nlines"], ["x" * 121], [" "], ["Bad pull", "--pr", "12"]):
++            with self.subTest(args=args[0][:12]):
++                code, _, err = self.run_cli("tell", *args, "--session", "s1")
++                self.assertEqual(65, code, err)
++        self.assertEqual(counts, (self.folder() / "counts.json").read_text())
++        self.assertEqual(["#12.1"], [item["ref"] for item in inbox.load_items(self.folder())])
++
++    def test_dismissing_a_notice_delivers_it_at_once(self) -> None:
++        self.tell()
++        self.assertEqual((0, "dismissed #12.2\n", ""), self.run_cli("dismiss", "#12.2", "--session", "s1"))
++        notice = self.item("#12.2")
++        self.assertTrue(notice["answer"]["dismissed"])
++        self.assertEqual(notice["answer"]["answeredAt"], notice["deliveredAt"])
++        code, _, err = self.run_cli("dismiss", "#12.2", "--session", "s1")
++        self.assertEqual(65, code)
++        self.assertIn("already dismissed", err)
++        self.assertEqual("", self.run_cli("watch", "--once", "--session", "s1")[1])
++
++    def test_dismissing_a_question_still_waits_for_its_deliverer(self) -> None:
++        self.run_cli("dismiss", "#12.1", "--session", "s1")
++        self.assertNotIn("deliveredAt", self.item("#12.1"))
++        self.assertEqual("DISMISSED #12.1 Decline it?\n", self.run_cli("watch", "--once", "--session", "s1")[1])
++
++    def test_a_notice_takes_no_answer_and_no_claim(self) -> None:
++        self.tell()
++        for args in (["answer", "#12.2.a"], ["claim", "#12.2"]):
++            with self.subTest(command=args[0]):
++                code, _, err = self.run_cli(*args, "--session", "s1")
++                self.assertEqual(65, code)
++                self.assertIn("project inbox dismiss", err)
++
++    def test_lists_and_shows_a_notice_by_its_kind(self) -> None:
++        self.tell("Dropped a file", "--detail", "It held a token.")
++        self.assertEqual(["#12.1\tquestion\topen\tDecline it?", "#12.2\tnotice\topen\tDropped a file"],
++                         self.run_cli("list", "--session", "s1")[1].splitlines())
++        self.assertEqual("#12.2 Dropped a file\nabout acme/app#12\n\nIt held a token.\n\nopen\n",
++                         self.run_cli("show", "#12.2")[1])
++        self.run_cli("dismiss", "#12.2", "--session", "s1")
++        self.assertEqual(["#12.1\tquestion\topen\tDecline it?"], self.run_cli("list", "--session", "s1")[1].splitlines())
++        self.assertIn("#12.2\tnotice\tdismissed\tDropped a file", self.run_cli("list", "--all", "--session", "s1")[1])
++
++
++class SnoozeTests(InboxCase):
++    NOW = 1_800_000_000_000
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.ask("Decline it?", "--recommend", "Decline it", "--pr", "acme/app#12")
++        self.run_cli("tell", "Force-pushed #12", "--pr", "acme/app#12", "--session", "s1")
++        clock = mock.patch.object(inbox, "now_ms", return_value=self.NOW)
++        clock.start()
++        self.addCleanup(clock.stop)
++
++    def states(self, *args: str) -> dict[str, str]:
++        rows = (line.split("\t") for line in self.run_cli("list", "--session", "s1", *args)[1].splitlines())
++        return {row[0]: row[2] for row in rows}
++
++    def test_snoozes_an_item_for_an_hour_and_wakes_it_with_zero(self) -> None:
++        later = time.strftime("%H:%M", time.localtime((self.NOW + 3_600_000) / 1000))
++        self.assertEqual((0, f"#12.1 snoozed until {later}\n", ""), self.run_cli("snooze", "#12.1", "--session", "s1"))
++        self.assertEqual({"#12.1": f"snoozed until {later}", "#12.2": "open"}, self.states())
++        self.assertEqual(0, self.run_cli("snooze", "#12.1", "--for", "0", "--session", "s1")[0])
++        self.assertEqual({"#12.1": "open", "#12.2": "open"}, self.states())
++
++    def test_wakes_an_item_by_ending_its_snooze_now(self) -> None:
++        self.run_cli("snooze", "#12.1", "--session", "s1")
++        self.run_cli("snooze", "#12.1", "--for", "0", "--session", "s1")
++        self.assertEqual(self.NOW, json.loads((self.folder() / "%2312.1.json").read_text())["snoozedUntil"])
++
++    def test_takes_the_minutes_and_returns_the_item_once_they_pass(self) -> None:
++        self.run_cli("snooze", "#12.2", "--for", "5", "--session", "s1")
++        self.assertEqual(self.NOW + 300_000, json.loads((self.folder() / "%2312.2.json").read_text())["snoozedUntil"])
++        with mock.patch.object(inbox, "now_ms", return_value=self.NOW + 300_000):
++            self.assertEqual("open", self.states()["#12.2"])
++
++    def test_refuses_a_resolved_item_and_a_negative_time(self) -> None:
++        self.run_cli("dismiss", "#12.2", "--session", "s1")
++        self.assertEqual(65, self.run_cli("snooze", "#12.2", "--session", "s1")[0])
++        self.assertEqual(65, self.run_cli("snooze", "#12.1", "--for", "-1", "--session", "s1")[0])
++
++    def test_answering_a_snoozed_question_clears_its_snooze(self) -> None:
++        self.run_cli("snooze", "#12.1", "--session", "s1")
++        self.assertEqual(0, self.run_cli("answer", "#12.1.a", "--session", "s1")[0])
++        self.assertNotIn("snoozedUntil", json.loads((self.folder() / "%2312.1.json").read_text()))
++
++    def test_dismissing_a_snoozed_item_clears_its_snooze(self) -> None:
++        for ref in ("#12.1", "#12.2"):
++            self.run_cli("snooze", ref, "--session", "s1")
++            self.assertEqual(0, self.run_cli("dismiss", ref, "--session", "s1")[0])
++        self.assertEqual({"#12.1": "answered #12.1", "#12.2": "dismissed"}, self.states("--all"))
++
++
++class NoticeContextTests(InboxCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.ask("Decline it?", "--recommend", "Decline it", "--pr", "acme/app#12")
++        self.run_cli("tell", "Force-pushed #12 to drop a stray file", "--pr", "acme/app#12", "--session", "s1")
++
++    def test_names_a_notice_and_gives_no_answer_for_its_letter(self) -> None:
++        self.assertEqual((0, "#12.2 is the notice: Force-pushed #12 to drop a stray file\n", ""),
++                         self.run_cli("context", "--session", "s1", stdin="see #12.2"))
++        self.assertEqual((0, "", ""), self.run_cli("context", "--session", "s1", stdin="see #12.2.a"))
++
++
+ if __name__ == "__main__":
+     unittest.main()
