@@ -1,0 +1,188 @@
+{
+ "version": 1,
+ "name": "Review watcher baseline",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 312,
+  "title": "Baseline already-reviewed heads in the review watcher",
+  "head": "92c8c02c5efdabae4992d3ab7978d8ad1c363b6d",
+  "headRef": "review-baseline",
+  "base": "95bc52c3c6d9e73fbcd5c796e9b7204224abf881",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A Projector review loop runs a shell watcher, <code>watch-prs.sh</code>, that polls the pull requests the loop tracks and prints one line per event, such as <code>NEW PR</code> for a pull request it has not seen or <code>NEW HEAD</code> when a push moves a head. The watcher remembers what it has seen in a <em>state file</em>, one row per pull request holding the head SHA it last saw. A pull request with no row is announced as <code>NEW PR</code>, which tells the loop to review that head.",
+   "Before this change, a loop starting on pull requests that already had reviews told the agent to write rows into that state file by hand, for heads already reviewed, so the watcher would stay quiet about them. The hand-written format had drifted from what the watcher writes, and a head seeded by mistake skipped its review without a word.",
+   "Now the watcher does the baselining itself. Given <code>--model &lt;id&gt; --reviewer &lt;login&gt;</code>, it reads who gave each pull request's current head a Projector <em>verdict</em>, the review whose body carries a <code>projector-review</code> marker line naming the model and the head SHA. A pull request with no row whose head carries a verdict that the reviewer's account posted with this model gets its row silently. A same-model verdict from a teammate's account does not count, because that teammate is a different reviewer. The skills stop asking for hand-written rows and start the watcher on a new state file. Both watchers also refuse a flag given last with no value, which used to spin forever. To make the loop's own check agree with the watcher, <code>project review status</code> now keeps each account's newest verdict by each model, so a teammate's later verdict cannot hide the reviewer's own."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Where the review stands",
+    "html": "<ul class=\"tight\"><li>The latest review, on <code>92c8c02</code>, is clean, and the pull request is marked ready. This head merges <code>main</code>, which brought <code>project review finish</code>, <code>settle</code>, and <code>project loop add</code> and <code>remove</code>. The merge resolved two small conflicts and kept both sides.</li><li>The earlier P2 finding is fixed and resolved. A teammate's same-model verdict used to swallow a review the teammate requested of the operator. The watcher now matches the verdict's <code>&lt;login&gt;/&lt;model&gt;</code> pair against <code>--reviewer</code>, and step 5 of <code>start-review-loop</code> checks the entry's <code>login</code>.</li><li>Every suggestion from earlier reviews is addressed.</li><li>The full gate passes at this head: 1034 tests, 1 skipped.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Operator</b>: the GitHub account the loop tracks pull requests for, its own and those that request its review.</li><li><b>Reviewer</b>: the account a review posts as, by default the operator.</li><li><b>Verdict</b>: a Projector review's outcome, <code>clean</code> or <code>changes-requested</code>, recorded in a marker line in its body.</li><li><b>Adoption</b>: the watcher appending a pull request to its tracked file because the operator wrote it or was asked to review it.</li><li><b><code>RESPONDED</code></b>: the event asking for a re-review when an author answers without pushing.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "watcher-baseline",
+   "title": "The review watcher records reviewed heads itself",
+   "kicker": "watch-prs.sh learns who reviewed each head and stays quiet about this reviewer's own",
+   "intro": [
+    "The watcher already ran one GraphQL query per pull request and read the newest Projector verdict on the head, for its <code>RESPONDED</code> check. This group extends that query to read each review's author, and its jq to collect a <code>&lt;login&gt;/&lt;model&gt;</code> pair for every verdict that names the current head. Logins and models are lowercased, and a model loses any trailing bracketed variant such as <code>[1m]</code>, the same way <code>project review</code> compares models. The list rides in a new field of the per-pull-request row.",
+    "With <code>--model</code> and <code>--reviewer</code>, a pull request with no state row whose head carries this reviewer's pair counts as already seen, so it gets no <code>NEW PR</code>. It still goes through the <code>RESPONDED</code> check, so an author who answered that review while no watcher ran gets a re-review on the first pass. Without the two flags, nothing changes.",
+    "The pair list takes the reviewer's own verdict whatever its author association, as <code>project review status</code> does. The <code>RESPONDED</code> verdict still counts only an owner, member, or collaborator in a public repository. The flags are validated so that they cannot match the wrong heads: each needs the other, the login must use GitHub's login characters, and a model ID that is <code>-</code> or holds a comma or whitespace is refused."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The head's watcher ran one <code>--once</code> pass against live pull requests #310 and #311 through <code>gh</code>'s own jq, with temporary tracked and state files. Under <code>--model 'claude-opus-5-5[1m]' --reviewer NinJudd</code> it recorded both silently, since each head carries that account's verdict; under <code>--reviewer someoneelse</code> it announced both."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/start-review-loop/scripts/watch-prs.sh",
+     "note": "Adds <code>--model</code> and <code>--reviewer</code>, collects login and model pairs in the review query, and baselines a row-less pull request this reviewer reviewed. Also refuses a flag given last with no value.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 87,
+       "text": "<code>takes_value</code> exits when a value-taking flag is the last argument. Before, <code>shift 2</code> failed without shifting and the argument loop never ended. <code>watch-threads.sh</code> gets the same guard."
+      },
+      {
+       "kind": "context",
+       "line": 122,
+       "text": "The model ID must start with a letter or digit and hold no whitespace or comma, because it is matched inside a comma-separated list of <code>&lt;login&gt;/&lt;model&gt;</code> pairs."
+      },
+      {
+       "kind": "context",
+       "line": 233,
+       "text": "The optional <code>model=</code> group lets a marker from an earlier release, which names no model, still count as a verdict for <code>RESPONDED</code>. Such a verdict never baselines a head."
+      },
+      {
+       "kind": "verify",
+       "line": 398,
+       "text": "Only the <code>--reviewer</code> account's pair baselines a head, which settles the earlier finding: a teammate whose loop runs the same model is a different reviewer. <code>test_only_the_reviewers_own_verdict_takes_a_row_without_a_word</code> shows that an adopted pull request carrying a teammate's or a passerby's verdict still announces <code>NEW PR</code>."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watchers.py",
+     "note": "Fixture tests for the baseline, a teammate's verdict, the re-review on a baselined head, rows that already exist, the flag refusals, and the flag-without-value refusal in both watchers.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 831,
+       "text": "The full suite passes at this head (929 tests, 1 skipped). This test covers a teammate's same-model verdict, a passerby's, and the reviewer's own verdict under the association <code>NONE</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "threads-flags",
+   "title": "The thread watcher refuses a flag with no value",
+   "kicker": "The same argument guard in the watch loop's watcher",
+   "intro": [
+    "<code>watch-threads.sh</code> is the watcher the fix loop runs, which reports unresolved review threads. It parsed its flags the same way as <code>watch-prs.sh</code>, so a flag given last with no value spun forever. It now prints <code>&lt;flag&gt; needs a value</code> and exits 2."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/start-watch-loop/scripts/watch-threads.sh",
+     "note": "Adds <code>takes_value</code> before each value-taking flag.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 72,
+       "text": "<code>test_refuses_a_last_flag_without_its_value</code> runs each flag last with a 10-second timeout and gets exit 2 with the message; it passes at this head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "status",
+   "title": "Review status keeps each account's verdict",
+   "kicker": "project review status lists the newest verdict per account and model, not per model",
+   "intro": [
+    "<code>project review status &lt;n&gt;</code> reports the newest Projector verdict on a pull request's head and, in its <code>models</code> list, each model's newest verdict there. Step 5 of <code>start-review-loop</code> reads that list to find the heads the loop already reviewed. Keyed on the model alone, a teammate's later verdict by the same model replaced the reviewer's own, so step 5 called a reviewed head unreviewed while the watcher stayed quiet about it.",
+    "<code>newest_verdicts</code> now keys each entry on the model and the lowercased login. The overall newest verdict, which <code>publish</code> sets draft state by, is unchanged: it is still the first entry. The plain-text output names the account only where two entries share a model."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The head's <code>project review status 310 --json</code> against GitHub reads one <code>ninjudd</code>/<code>claude-opus-5-5</code> clean entry, and the same command for this pull request reads <code>unreviewed</code> for the new head."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Keys <code>newest_verdicts</code> on model and account, and labels shared models with the account in <code>status_lines</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1651,
+       "text": "<code>publish</code> takes element <code>[0]</code> of this list, which is still the head's newest verdict from any account, so its draft and dismissal decisions do not change. <code>status</code> is the only other caller."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "A teammate's later same-model verdict keeps its own entry beside the operator's.",
+     "checks": []
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Describes the per-account <code>models</code> list and the account label in the text output.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "The loop skills stop asking for hand-written state",
+   "kicker": "start-review-loop finds reviewed heads with project review status; start-watch-loop drops its state-file checks",
+   "intro": [
+    "<code>start-review-loop</code> is the instruction file an agent follows to run a review loop. Step 5 now finds the heads this loop already reviewed with <code>project review status &lt;n&gt; --json</code>, whose <code>models</code> list holds each account's newest verdict by each model on the head, and counts an entry only when both its <code>login</code> and its <code>model</code> are the reviewer's. Step 7 starts the watcher on a new state file, with <code>--model</code> and <code>--reviewer</code>. A new file avoids a row an earlier watcher wrote that would hide a head step 5 found unreviewed. When adopting a running watcher, the agent reviews every head step 5 finds unreviewed instead of checking the watcher's state file, because a row says only that the watcher saw a head, not that its review finished.",
+    "<code>start-watch-loop</code>, the fix loop's instructions, drops its wording about baselining threads, which its watcher cannot do, and its state-file check when adopting a watcher. It now says the thread watcher repeats findings, verdicts, conflicts, and drafts but never a review body, which is why the adopting session fetches that work itself."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "Step 5 reads reviewed heads from <code>project review status</code> by login and model, step 7 starts the watcher on a new state file with <code>--model</code> and <code>--reviewer</code>, and adoption reruns step 5.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 81,
+       "text": "Step 5 counts a <code>models</code> entry only when both its <code>login</code> and its <code>model</code> are the reviewer's, and the list now keeps one entry per account, so a teammate's verdict can neither count nor hide the reviewer's own."
+      },
+      {
+       "kind": "context",
+       "line": 114,
+       "text": "The merge with <code>main</code> kept this change's step 7 in place of <code>main</code>'s instruction to seed the state file, and kept <code>main</code>'s <code>settle</code> and <code>finish</code> in the command list just above."
+      }
+     ]
+    },
+    {
+     "path": "skills/start-watch-loop/SKILL.md",
+     "note": "Drops the instruction to baseline threads and the state-file check when adopting a watcher.",
+     "checks": []
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Says <code>project review status</code> lists each account's newest verdict by each model.",
+     "checks": []
+    }
+   ]
+  }
+ ]
+}
