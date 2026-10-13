@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -17,6 +19,40 @@ release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 
 FILES = ("pyproject.toml", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
+
+FAKE_GH = r"""#!/usr/bin/env bash
+# Plays GitHub's releases: $FAKE_GH_DIR/releases lists the tags that have one.
+# Logs one line per call to $FAKE_GH_DIR/calls.log. With FAKE_GH_FAIL set to a
+# command such as "release create", that command fails as GitHub refusing it.
+set -u
+printf '%s\n' "$*" >> "$FAKE_GH_DIR/calls.log"
+if [ "$1 $2" = "${FAKE_GH_FAIL:-}" ]; then
+  echo "HTTP 403: Resource not accessible by integration" >&2
+  exit 1
+fi
+case "$1 $2" in
+  "release view")
+    if grep -qxF "$3" "$FAKE_GH_DIR/releases" 2>/dev/null; then
+      printf '{"tagName":"%s"}\n' "$3"
+    else
+      echo "release not found" >&2
+      exit 1
+    fi ;;
+  "release create") printf '%s\n' "$3" >> "$FAKE_GH_DIR/releases" ;;
+  *) echo "fake gh: unexpected $*" >&2; exit 2 ;;
+esac
+"""
+
+# A pre-receive hook that rejects every update to v0. It stands in for GitHub
+# rejecting the push of the major tag after it accepted the version tag.
+REFUSE_MAJOR_TAG = r"""#!/usr/bin/env bash
+while read -r old new ref; do
+  if [ "$ref" = refs/tags/v0 ]; then
+    echo "fatal error in commit_refs" >&2
+    exit 1
+  fi
+done
+"""
 
 
 def copy_version_files(dest: Path) -> None:
@@ -80,6 +116,7 @@ class SetTests(unittest.TestCase):
 class TagTests(unittest.TestCase):
     def setUp(self) -> None:
         tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         self.remote = tmp / "remote.git"
         run(tmp, "git", "init", "--quiet", "--bare", str(self.remote))
         self.repo = tmp / "repo"
@@ -89,10 +126,29 @@ class TagTests(unittest.TestCase):
             run(self.repo, "git", "config", key, value)
         copy_version_files(self.repo)
         self.commit("0.5.0")
-        self.releases: list[tuple[str, str]] = []
-        patcher = mock.patch.object(release, "create_release", side_effect=lambda root, remote, tag: self.releases.append((remote, tag)))
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.github = tmp / "github"
+        self.github.mkdir()
+        bin_dir = tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "gh").write_text(FAKE_GH)
+        (bin_dir / "gh").chmod(0o755)
+        env = mock.patch.dict(os.environ, {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+                                           "FAKE_GH_DIR": str(self.github)})
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("FAKE_GH_FAIL", None)
+        # The test remote is a local path, which names no GitHub repository.
+        slug = mock.patch.object(release, "repo_slug", return_value="test/projector")
+        slug.start()
+        self.addCleanup(slug.stop)
+
+    def releases(self) -> list[str]:
+        path = self.github / "releases"
+        return path.read_text().split() if path.exists() else []
+
+    def gh_calls(self) -> list[str]:
+        path = self.github / "calls.log"
+        return path.read_text().splitlines() if path.exists() else []
 
     def commit(self, version: str) -> str:
         for name in FILES:
@@ -109,40 +165,24 @@ class TagTests(unittest.TestCase):
         run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
         return run(self.repo, "git", "rev-parse", "HEAD")
 
+    def commit_other_change(self) -> None:
+        (self.repo / "notes.txt").write_text("not a release\n")
+        run(self.repo, "git", "add", "-A")
+        run(self.repo, "git", "commit", "--quiet", "-m", "notes")
+        run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
+
+    def tag_by_hand(self, name: str, commit: str) -> None:
+        run(self.repo, "git", "tag", "-a", name, commit, "-m", name)
+        run(self.repo, "git", "push", "--quiet", "origin", f"refs/tags/{name}")
+
     def remote_tag(self, name: str) -> str:
         return run(self.remote, "git", "rev-parse", f"{name}^{{commit}}")
 
-    def test_tags_the_release_and_moves_the_major_tag(self) -> None:
-        first = run(self.repo, "git", "rev-parse", "HEAD")
-        release.tag(self.repo, branch="trunk")
-        self.assertEqual(first, self.remote_tag("v0.5.0"))
-        self.assertEqual(first, self.remote_tag("v0"))
+    def remote_tag_object(self, name: str) -> str:
+        return run(self.remote, "git", "rev-parse", f"refs/tags/{name}")
 
-        second = self.commit("0.5.1")
-        release.tag(self.repo, branch="trunk")
-        self.assertEqual(first, self.remote_tag("v0.5.0"), "a release tag never moves")
-        self.assertEqual(second, self.remote_tag("v0.5.1"))
-        self.assertEqual(second, self.remote_tag("v0"))
-
-    def test_creates_the_github_release_for_the_exact_tag(self) -> None:
-        release.tag(self.repo, branch="trunk")
-        self.assertEqual([("origin", "v0.5.0")], self.releases)
-
-    def test_no_release_pushes_only_the_tags(self) -> None:
-        release.tag(self.repo, branch="trunk", github_release=False)
-        self.assertEqual([], self.releases)
-        self.assertTrue(self.remote_tag("v0.5.0"))
-
-    def test_a_failed_release_says_the_tags_are_pushed_and_how_to_finish(self) -> None:
-        with mock.patch.object(release, "create_release", side_effect=release.ReleaseError("gh release create failed: HTTP 403")):
-            with self.assertRaisesRegex(release.ReleaseError, r"v0\.5\.0 and v0 are pushed.*gh release create v0\.5\.0"):
-                release.tag(self.repo, branch="trunk")
-        self.assertTrue(self.remote_tag("v0.5.0"))
-
-    def test_refuses_to_retag_a_released_version(self) -> None:
-        release.tag(self.repo, branch="trunk")
-        with self.assertRaisesRegex(release.ReleaseError, "v0.5.0 already exists"):
-            release.tag(self.repo, branch="trunk")
+    def tag(self, **kwargs) -> str:
+        return release.tag(self.repo, branch="trunk", **kwargs)
 
     def released(self) -> tuple[int, str]:
         out = io.StringIO()
@@ -150,29 +190,141 @@ class TagTests(unittest.TestCase):
             code = release.main(["released", "--branch", "trunk"], root=self.repo)
         return code, out.getvalue()
 
-    def test_released_says_whether_the_merged_version_is_tagged(self) -> None:
-        self.assertEqual((release.NOT_RELEASED, "v0.5.0 is not released yet\n"), self.released())
+    def test_a_fresh_release_tags_moves_the_major_tag_and_publishes(self) -> None:
+        first = run(self.repo, "git", "rev-parse", "HEAD")
+        self.assertEqual(f"v0.5.0 at {first[:9]} on origin/trunk: tagged v0.5.0, moved v0, published the GitHub release",
+                         self.tag())
+        self.assertEqual(first, self.remote_tag("v0.5.0"))
+        self.assertEqual(first, self.remote_tag("v0"))
+        self.assertEqual(["v0.5.0"], self.releases())
 
-        release.tag(self.repo, branch="trunk")
+        second = self.commit("0.5.1")
+        self.tag()
+        self.assertEqual(first, self.remote_tag("v0.5.0"), "a release tag never moves")
+        self.assertEqual(second, self.remote_tag("v0.5.1"))
+        self.assertEqual(second, self.remote_tag("v0"))
+        self.assertEqual(["v0.5.0", "v0.5.1"], self.releases())
+
+    def test_creates_the_github_release_for_the_exact_tag(self) -> None:
+        self.tag()
+        self.assertIn("release create v0.5.0 --verify-tag --generate-notes --repo test/projector", self.gh_calls())
+
+    def test_no_release_pushes_only_the_tags(self) -> None:
+        self.tag(github_release=False)
+        self.assertEqual([], self.gh_calls())
+        self.assertTrue(self.remote_tag("v0.5.0"))
+        commit = self.remote_tag("v0")
+        self.assertEqual((release.NOT_RELEASED, "v0.5.0 is not released yet; it still needs the GitHub release\n"),
+                         self.released())
+        self.assertEqual(f"v0.5.0 at {commit[:9]} on origin/trunk: published the GitHub release "
+                         "(already done: the v0.5.0 tag, v0)", self.tag())
+
+    def test_finishes_a_release_whose_major_tag_push_failed(self) -> None:
+        first = run(self.repo, "git", "rev-parse", "HEAD")
+        self.tag()
+        second = self.commit("0.5.1")
+        hook = self.remote / "hooks" / "pre-receive"
+        hook.write_text(REFUSE_MAJOR_TAG)
+        hook.chmod(0o755)
+        # A developer's global core.hooksPath would hide the remote's own hooks.
+        run(self.remote, "git", "config", "core.hooksPath", str(hook.parent))
+        with self.assertRaisesRegex(release.ReleaseError,
+                                    r"(?s)fatal error in commit_refs.*Before that it tagged v0\.5\.1\. "
+                                    r"Run tag again, or re-run the Release workflow, to finish v0\.5\.1"):
+            self.tag()
+        self.assertEqual(second, self.remote_tag("v0.5.1"))
+        self.assertEqual(first, self.remote_tag("v0"))
+        self.assertEqual(["v0.5.0"], self.releases())
+        tagged = self.remote_tag_object("v0.5.1")
+
+        hook.unlink()
+        self.commit_other_change()
+        # This clone still has the v0 it moved before the push failed, which
+        # the remote's v0 has to replace.
+        self.assertEqual((release.NOT_RELEASED,
+                          f"v0.5.1 is not released yet; it still needs v0 at {second[:9]}, the GitHub release\n"),
+                         self.released())
+        self.assertEqual(f"v0.5.1 at {second[:9]} on origin/trunk: moved v0, published the GitHub release "
+                         "(already done: the v0.5.1 tag)", self.tag())
+        self.assertEqual(tagged, self.remote_tag_object("v0.5.1"), "finishing a release never retags it")
+        self.assertEqual(second, self.remote_tag("v0"), "v0 follows the release, not the branch's newer head")
+        self.assertEqual(["v0.5.0", "v0.5.1"], self.releases())
+        self.assertEqual((0, "v0.5.1 is released\n"), self.released())
+
+    def test_a_failed_github_release_is_finished_by_running_tag_again(self) -> None:
+        commit = run(self.repo, "git", "rev-parse", "HEAD")
+        os.environ["FAKE_GH_FAIL"] = "release create"
+        with self.assertRaisesRegex(release.ReleaseError,
+                                    r"gh release create failed: HTTP 403.*Before that it tagged v0\.5\.0, moved v0\."):
+            self.tag()
+        del os.environ["FAKE_GH_FAIL"]
+        self.assertEqual(f"v0.5.0 at {commit[:9]} on origin/trunk: published the GitHub release "
+                         "(already done: the v0.5.0 tag, v0)", self.tag())
+        self.assertEqual(["v0.5.0"], self.releases())
+
+    def test_tag_does_nothing_once_the_version_is_released(self) -> None:
+        commit = run(self.repo, "git", "rev-parse", "HEAD")
+        self.tag()
+        tagged, major = self.remote_tag_object("v0.5.0"), self.remote_tag_object("v0")
+        self.assertEqual(f"v0.5.0 at {commit[:9]} on origin/trunk: nothing to do "
+                         "(already done: the v0.5.0 tag, v0, the GitHub release)", self.tag())
+        self.assertEqual((tagged, major), (self.remote_tag_object("v0.5.0"), self.remote_tag_object("v0")))
+        self.assertEqual(1, sum(call.startswith("release create") for call in self.gh_calls()))
+
+    def test_released_needs_the_tag_the_major_tag_and_the_github_release(self) -> None:
+        head = run(self.repo, "git", "rev-parse", "HEAD")
+        self.assertEqual((release.NOT_RELEASED, "v0.5.0 is not released yet; it still needs the v0.5.0 tag, "
+                          f"v0 at {head[:9]}, the GitHub release\n"), self.released())
+
+        self.tag()
         self.commit_other_change()
         self.assertEqual((0, "v0.5.0 is released\n"), self.released())
 
+        bump = self.commit("0.5.1")
+        self.assertEqual((release.NOT_RELEASED, "v0.5.1 is not released yet; it still needs the v0.5.1 tag, "
+                          f"v0 at {bump[:9]}, the GitHub release\n"), self.released())
+
+    def assert_refused(self, message: str) -> None:
+        major = run(self.remote, "git", "tag", "--list", "v0")
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            self.assertEqual(1, release.main(["released", "--branch", "trunk"], root=self.repo))
+        self.assertIn(message, err.getvalue())
+        with self.assertRaisesRegex(release.ReleaseError, re.escape(message)):
+            self.tag()
+        self.assertEqual(major, run(self.remote, "git", "tag", "--list", "v0"), "a refusal moves no tag")
+        self.assertFalse(any(call.startswith("release create") for call in self.gh_calls()))
+
+    def test_refuses_a_version_tag_that_is_not_on_the_branch(self) -> None:
+        side = run(self.repo, "git", "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "side")
+        self.tag_by_hand("v0.5.0", side)
+        self.assert_refused(f"v0.5.0 already names {side[:9]}, which is not on origin/trunk")
+
+    def test_refuses_a_version_tag_on_a_commit_that_names_another_version(self) -> None:
+        early = run(self.repo, "git", "rev-parse", "HEAD")
+        self.tag_by_hand("v0.5.1", early)
         self.commit("0.5.1")
-        self.assertEqual((release.NOT_RELEASED, "v0.5.1 is not released yet\n"), self.released())
+        self.assert_refused(f"v0.5.1 already names {early[:9]}, but origin/trunk names 0.5.0 at {early[:9]}")
+
+    def test_refuses_a_version_the_branch_left_and_came_back_to(self) -> None:
+        released_at = self.commit("0.5.1")
+        self.tag_by_hand("v0.5.1", released_at)
+        reverted = self.commit("0.5.0")
+        self.commit("0.5.1")
+        self.assert_refused(f"v0.5.1 already names {released_at[:9]}, but origin/trunk names 0.5.0 at {reverted[:9]}")
 
     def test_released_fails_as_an_error_when_it_cannot_tell(self) -> None:
-        run(self.repo, "git", "remote", "set-url", "origin", str(self.repo.parent / "missing.git"))
-        err = io.StringIO()
-        with redirect_stderr(err):
-            code = release.main(["released", "--branch", "trunk"], root=self.repo)
-        self.assertEqual(1, code, "an error is not an answer the workflow can act on")
-        self.assertIn("git fetch", err.getvalue())
-
-    def commit_other_change(self) -> None:
-        (self.repo / "notes.txt").write_text("not a release\n")
-        run(self.repo, "git", "add", "-A")
-        run(self.repo, "git", "commit", "--quiet", "-m", "notes")
-        run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
+        for broken, expected in (("gh", "gh release view failed: HTTP 403"), ("git", "git fetch")):
+            with self.subTest(broken=broken):
+                if broken == "gh":
+                    os.environ["FAKE_GH_FAIL"] = "release view"
+                else:
+                    run(self.repo, "git", "remote", "set-url", "origin", str(self.repo.parent / "missing.git"))
+                err = io.StringIO()
+                with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                    code = release.main(["released", "--branch", "trunk"], root=self.repo)
+                self.assertEqual(1, code, "an error is not an answer the workflow can act on")
+                self.assertIn(expected, err.getvalue())
 
     def test_reads_the_version_from_the_remote_branch_not_the_checkout(self) -> None:
         # An unpushed local bump must not name the release.

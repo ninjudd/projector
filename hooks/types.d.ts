@@ -40,8 +40,11 @@ export type Snapshot = {
   error: string | null
 }
 
+/** A dismissal, `withdrawn` when the agent that posted the item took it back. */
+export type Dismissal = { dismissed: true; withdrawn?: true; answeredAt: number }
+
 /** How an item was resolved: dismissed, or a question answered with a lettered choice or typed text. */
-export type Answer = { letter: string; text: string; answeredAt: number } | { dismissed: true; answeredAt: number }
+export type Answer = { letter: string; text: string; answeredAt: number } | Dismissal
 
 /** What every item has, as `project inbox list --json` gives it, with the session whose store holds it. */
 export type Posted = {
@@ -75,7 +78,7 @@ export type Question = Posted & {
 /** A notice, which you read and dismiss, and which sends nothing back; dismissing it delivers it. */
 export type Notice = Posted & {
   kind: 'notice'
-  answer?: { dismissed: true; answeredAt: number }
+  answer?: Dismissal
 }
 
 export type Item = Question | Notice

@@ -19,12 +19,17 @@ export const typedLetter = (question: Question) => letterAt(question.choices.len
 /** Whether an item is snoozed at a time: hidden until its `snoozedUntil`. */
 const isSnoozedAt = (item: Item, time: number) => item.snoozedUntil !== undefined && time < item.snoozedUntil
 
+/** Whether the agent that posted an item withdrew it. */
+const isWithdrawn = (item: Item) => item.answer !== undefined && 'withdrawn' in item.answer
+
 /**
- * Whether the band shows an item: not snoozed, and open, being delivered, or
- * delivered within the last 30 seconds.
+ * Whether the band shows an item: not withdrawn, not snoozed, and open, being
+ * delivered, or delivered within the last 30 seconds.
  */
 export const isShownAt = (item: Item, time: number) =>
-  !isSnoozedAt(item, time) && (item.deliveredAt === undefined || time - item.deliveredAt < RESOLVED_MS)
+  !isWithdrawn(item) &&
+  !isSnoozedAt(item, time) &&
+  (item.deliveredAt === undefined || time - item.deliveredAt < RESOLVED_MS)
 
 /** The open items whose snooze ended after `since` and by `time`, which bring a hidden band back. */
 export const wokeBetween = (items: readonly Item[], since: number, time: number) =>
@@ -242,7 +247,39 @@ export function tellArguments(
   return ['inbox', 'tell', `--session=${session}`, ...postedFlags(detail, pr, agentId), '--', notice]
 }
 
-/** The flags both tools pass when they have a value: the detail, the pull request, and the subagent. */
+export const WITHDRAW_DESCRIPTION = [
+  'Withdraw a question or notice you posted that no longer needs the person,',
+  'such as a question they answered in the conversation or news that has gone stale.',
+  'Name it by the number `ask` or `tell` returned. It leaves Projector’s band at once.',
+  'Nothing comes back to you: a withdrawn question sends no `DISMISSED` message.',
+].join(' ')
+
+export const WITHDRAW_SCHEMA = {
+  type: 'object',
+  properties: {
+    number: {
+      type: 'integer',
+      minimum: 1,
+      description: 'The item’s number, as `ask` or `tell` returned it, such as 3.',
+    },
+  },
+  required: ['number'],
+  additionalProperties: false,
+}
+
+/** The arguments of `project inbox withdraw` for one call of the tool, or why the call cannot be one. */
+export function withdrawArguments(
+  input: Readonly<Record<string, unknown>>,
+  session: string,
+): string[] | { error: string } {
+  const { number } = input
+  if (typeof number !== 'number' || !Number.isInteger(number) || number < 1) {
+    return { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
+  }
+  return ['inbox', 'withdraw', String(number), '--session', session, '--json']
+}
+
+/** The flags both posting tools pass when they have a value: the detail, the pull request, and the subagent. */
 const postedFlags = (detail: string | undefined, pr: string | undefined, agentId: string | undefined) => [
   ...(detail === undefined || detail === '' ? [] : [`--detail=${detail}`]),
   ...(pr === undefined || pr === '' ? [] : [`--pr=${pr}`]),

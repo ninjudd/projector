@@ -167,19 +167,20 @@ path with `404.html`.
 Older releases stored each summary as `spec.json`, and the site reads only
 `summary.json`. The site leaves out each summary stored only as `spec.json`,
 and the deploy reports it as skipped. To show one again, upgrade Projector,
-then publish the stored summary under the new name:
+then copy the stored summary and publish it under the new name:
 
 ```sh
 project upgrade
-git fetch origin refs/projector/summaries
-git show FETCH_HEAD:summaries/<number>/<head>/spec.json > summary.json
+project summary init --repo <owner>/<repo> --pr <number> --head <head> \
+  --summary summary.json --from-published
 project summary publish --summary summary.json
 ```
 
-`publish` stores `summary.json` beside the old file, and the next deploy
-shows the summary. The site dates a republished summary by its `spec.json`,
-when its head was first published, so you can republish a pull request's
-heads in any order.
+`init --from-published` reads the head's `spec.json` when no `summary.json`
+is beside it. `publish` stores `summary.json` beside the old file, and the
+next deploy shows the summary. The site dates a republished summary by its
+`spec.json`, when its head was first published, so you can republish a pull
+request's heads in any order.
 
 ## Update a site set up for walkthroughs
 
