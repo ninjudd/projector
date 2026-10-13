@@ -1,0 +1,181 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 59f3e10..9d4e8d8 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -202,6 +202,13 @@ Claude Desktop, VS Code, and the mobile app do not set the band's text in a
+ terminal's columns, so a rule sized to them would wrap, and there the band
+ starts with its first row.
+ 
++When a poll cannot reach GitHub, the band keeps showing the pull requests
++GitHub gave last, and the divider's time shows how old they are. It shows
++GitHub's error only when it has none of them to show. When your loops track
++no open pull request and your inbox is empty, the band shows a quote of
++Osho's, dimmed: “Your mind is a projector; it uses everything as a kind of
++screen, it projects itself on the screen.”
++
+ Click a pull request's number to open a drawer under it, and click it again
+ to close the drawer; opening one drawer closes any other. The drawer says
+ whether your loops are watching or reviewing the pull request, then its
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 29dc88c..3725701 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -109,11 +109,17 @@ type Ran = ReturnType<typeof ran>
+  */
+ type Outcome = Ran | { deny: string }
+ 
++const QUOTE = '“Your mind is a projector; it uses everything as a kind of screen, it projects itself on the screen.” — Osho'
++
++/** GitHub's answer to a query, where a test needs another. */
++type Beneath = { github?: (query: string) => Ran }
++
+ function world(
+   on: On,
+   files: Record<string, string>,
+   ps = PS,
+   project?: (argv: string[], stdin: string) => Outcome | Promise<Outcome>,
++  { github = query => ran(answer(query)) }: Beneath = {},
+ ) {
+   const commands: string[][] = []
+   const filled: string[] = []
+@@ -128,7 +134,7 @@ function world(
+       const outcome = project([...e.argv], e.init?.stdin ?? '')
+       return outcome instanceof Promise ? outcome.then(answered) : answered(outcome)
+     }
+-    return { value: ran(e.argv[0] === 'ps' ? ps : answer(e.argv.join(' '))) }
++    return { value: e.argv[0] === 'ps' ? ran(ps) : github(e.argv.join(' ')) }
+   })
+   on('prompt.fill', ($, e) => {
+     filled.push(`${e.mode}:${e.text}`)
+@@ -327,7 +333,7 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
+   await ui.unmount()
+ })
+ 
+-test('says so when no loop tracks an open pull request', async ($, on) => {
++test('shows Osho’s quote, dimmed, when no loop tracks an open pull request', async ($, on) => {
+   const clock = mock.clock(on)
+   mock.env(on, { HOME })
+   world(on, {}, '')
+@@ -337,17 +343,76 @@ test('says so when no loop tracks an open pull request', async ($, on) => {
+   await clock.settle()
+ 
+   const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Text', text: /No open pull requests are being watched or reviewed/ })).toBeDefined()
++  expect((await ui.find({ type: 'Text', text: QUOTE }))?.props.dimColor).toBe(true)
++  expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
+   await ui.unmount()
+ 
+   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+   const texts = (await desktop.findAll({ type: 'Text' })).map(found => found.text)
+-  expect(texts[0]).toMatch(/No open pull requests/)
++  expect(texts[0]).toBe(QUOTE)
+   expect(texts.filter(text => text.includes('─'))).toEqual([])
+   await desktop.unmount()
+ })
+ 
++/** What `gh` answers when it cannot reach GitHub. */
++const DOWN = { ...ran(''), exitCode: 1, stderr: 'read: connection reset by peer\n' }
++
++test('says why GitHub failed only when the band has no pull request from it to draw', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  let isDown = true
++  world(on, { [REVIEW]: 'o/r#1\n' }, PS, undefined, { github: query => (isDown ? DOWN : ran(answer(query))) })
++  // Hiding the band and showing it again loads it again.
++  const reload = async () => {
++    await $.command.run(COMMAND)
++    await $.command.run(COMMAND)
++    await clock.advance(1)
++    await clock.settle()
++  }
++
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeUndefined()
++
++  isDown = false
++  await reload()
++  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
++
++  // A later failure keeps what GitHub said last, and says nothing of it.
++  isDown = true
++  await reload()
++  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^GitHub:/ })).toBeUndefined()
++  await ui.unmount()
++})
++
++test('says why GitHub failed for a loop added after the band loaded with nothing to track', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const files: Record<string, string> = {}
++  world(on, files, '', undefined, { github: () => DOWN })
++
++  // A band shown before any loop tracks a pull request asks GitHub nothing.
++  await $.command.run(COMMAND)
++  await clock.advance(1)
++  await clock.settle()
++
++  files[REVIEW] = 'o/r#1\n'
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: QUOTE })).toBeUndefined()
++  await ui.unmount()
++})
++
+ const SESSION = 's1'
+ const STORE = `${HOME}/.local/state/projector/inbox/${SESSION}`
+ const TICK = 5_000
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index a66a5e4..228d0bd 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -38,6 +38,7 @@ const POLL_MS = 30_000
+ const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
+ const ASK_TOOL = 'mcp__projector__ask'
+ const TELL_TOOL = 'mcp__projector__tell'
++const QUOTE = '“Your mind is a projector; it uses everything as a kind of screen, it projects itself on the screen.” — Osho'
+ 
+ // Watching first: a pull request both loops track is listed once, where its
+ // watch loop puts it.
+@@ -742,7 +743,10 @@ export const register: Register = on => {
+       .filter(part => part !== undefined)
+       .join(' · ')
+     const updated = heading === '' ? '' : ` ${heading}`
+-    const failure = shown.error === null ? undefined : `GitHub: ${shown.error}`
++    // A failed poll keeps drawing the pull requests GitHub last gave, and the
++    // divider's time says how old they are, so the band says why it failed
++    // only when it has none of them to draw.
++    const failure = shown.error === null || shown.rows.length > 0 ? undefined : `GitHub: ${shown.error}`
+     const toggle = (key: string) => {
+       update($, drawer, was => (was === key ? null : key)).catch(() => undefined)
+     }
+@@ -766,14 +770,11 @@ export const register: Register = on => {
+       return (
+         <Box flexDirection="column">
+           {divider}
+-          <Box flexDirection="row" columnGap={1}>
+-            <Text dimColor wrap="truncate-end">
+-              {shown.fetchedAt === null && failure === undefined
+-                ? 'Looking for pull requests…'
+-                : 'No open pull requests are being watched or reviewed.'}
+-            </Text>
+-            {failure !== undefined && <Text color="error">{failure}</Text>}
+-          </Box>
++          {failure !== undefined ? (
++            <Text color="error">{failure}</Text>
++          ) : (
++            <Text dimColor>{shown.fetchedAt === null ? 'Looking for pull requests…' : QUOTE}</Text>
++          )}
+         </Box>
+       )
+     }

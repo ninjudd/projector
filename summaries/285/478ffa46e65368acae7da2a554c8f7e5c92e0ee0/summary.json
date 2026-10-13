@@ -1,0 +1,97 @@
+{
+ "version": 1,
+ "name": "Band quote and quiet errors",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 285,
+  "title": "Show a quote in an empty band and keep GitHub's errors out of it",
+  "head": "478ffa46e65368acae7da2a554c8f7e5c92e0ee0",
+  "headRef": "band-empty-quote",
+  "base": "ac4e40840e4526bb467badf360afab97061485c2",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's band is the strip above the Claude Code prompt that lists the open pull requests your review and fix loops track, plus questions and notices from agents. While it is shown, it reloads every 30 seconds and asks GitHub about each tracked pull request with one <code>gh api graphql</code> call.",
+   "This pull request changes what the band says at two quiet moments:",
+   "<ul><li><b>The band has nothing to list.</b> It used to say <code>No open pull requests are being watched or reviewed.</code> Now it shows a fixed quote of Osho's, dimmed: “Your mind is a projector; it uses everything as a kind of screen, it projects itself on the screen.” The quote is a constant, so it costs no call and keeps no state.</li><li><b>A poll cannot reach GitHub.</b> The band used to show GitHub's error in red beside the rows it kept from the last poll. Now the band keeps those rows and hides the error, and the divider's <code>updated …</code> time says how old the rows are. When it has no rows from GitHub to draw, it still shows the error.</li></ul>",
+   "Both changes are in the band's hook, <code>hooks/register.tsx</code>. Two tests in <code>hooks/band.test.tsx</code> cover them, and <code>docs/plugins.md</code> describes them."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the <code>AbovePrompt</code> component that Projector's hook draws above the prompt.</li><li><b>Snapshot</b>: the session state <code>bandSnapshot</code>. It holds the band's rows, <code>fetchedAt</code> (when a load last finished without an error), and <code>error</code> (why the last load failed).</li><li><b>Divider</b>: the band's first row in a terminal, a dim rule that ends in the <code>updated …</code> time.</li><li><b>Load</b>: one run of <code>load</code>, which reads the tracked files and asks GitHub about their pull requests.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>A Projector review of <code>267507d</code> found that a load that tracked no pull request still set <code>fetchedAt</code>. The error was hidden whenever <code>fetchedAt</code> was set, so a band shown before a loop tracked anything never showed a later GitHub error. It showed the quote instead. <code>bea212f</code> replaced a model-chosen quote with the constant, and <code>478ffa4</code> fixed the finding: the error is now hidden only while the band has rows to draw. The review of <code>478ffa4</code> found the head clean.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "band",
+   "title": "The band's empty state and its error",
+   "kicker": "What the hook draws when it has nothing to list or GitHub fails",
+   "intro": [
+    "The band draws one of three things when it has no rows and no items. GitHub's error comes first, in red, when there is one to show. Otherwise the band says <code>Looking for pull requests…</code> before its first successful load and shows the quote after it. The quote's <code>Text</code> no longer truncates, so on a narrow terminal it wraps rather than losing its author.",
+    "A load that cannot reach GitHub keeps each tracked pull request's row from the previous snapshot. The band hides GitHub's error while it has such rows to draw, and shows the error when it has none."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds the <code>QUOTE</code> constant, hides GitHub's error while the band has rows to draw, and draws the quote in the empty band.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 749,
+       "text": "A band whose first load tracked nothing now shows the error once <code>gh</code> fails. The review restored the earlier <code>fetchedAt</code> condition on this line, and the test <code>says why GitHub failed for a loop added after the band loaded with nothing to track</code> failed. With this line as it is, all 67 hook tests pass."
+      },
+      {
+       "kind": "context",
+       "line": 776,
+       "text": "Before the first successful load, <code>fetchedAt</code> is <code>null</code>, so the band says <code>Looking for pull requests…</code> instead of the quote."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Tests and documentation",
+   "kicker": "Three band tests and the plugin guide's paragraph",
+   "intro": [
+    "The tests' <code>world</code> fixture can now fail GitHub's answers, so a test can drive the error path. <code>docs/plugins.md</code> gains one paragraph that covers both changes."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Replaces the empty-band test with a quote test, and adds two tests of when GitHub's error shows.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 394,
+       "text": "This test covers a band that was shown before any loop tracked a pull request, so its first load asked GitHub nothing."
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Describes when the band shows GitHub's error, and the quote it shows when empty.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 207,
+       "text": "This sentence says the band shows GitHub's error only when it has none of GitHub's pull requests to show, which is the condition on <code>failure</code> in <code>hooks/register.tsx</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
