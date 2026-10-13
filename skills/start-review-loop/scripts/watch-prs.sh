@@ -37,8 +37,8 @@
 # That matters most here, because this watcher's events are pushes: on a
 # shared repository every push by anyone is one, and every line is a Monitor
 # notification counting toward the limit that stops a watcher. The file is
-# re-read every cycle: the loop adds a pull request by appending a line and
-# removes a merged one with `project loop remove`, without a restart. Every
+# re-read every cycle: the loop adds a pull request with `project loop add`
+# and removes a merged one with `project loop remove`, without a restart. Every
 # line is checked before the watch starts, because a bad one would otherwise
 # be a watch that starts cleanly and never mentions the pull request it was
 # meant for; a bad line that appears later is announced once.
@@ -327,7 +327,7 @@ EOF
     if ! row=$(fetch_pr "$slug" "$n") || [ -z "$row" ]; then
       err=$(cat "$STATE.err" 2>/dev/null)
       if not_found "$err"; then
-        announce_once "TRACKED $slug#$n: no such repository or pull request — ignored; fix the tracked file"
+        announce_once "TRACKED $slug#$n: no such repository or pull request — ignored; remove it from the tracked file"
         continue
       fi
       [ -n "$known" ] && new_state="$new_state$slug $n $known $kref $flag

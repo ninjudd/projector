@@ -1,4 +1,4 @@
-"""Change a loop's tracked file: keep a pull request out, let it back in, or forget a finished one.
+"""Change a loop's tracked file: add a pull request, forget a finished one, keep one out, or let it back in.
 
 A tracked file holds one `owner/repo#number` per line, and a line
 `!owner/repo#number` keeps that pull request out of the loop wherever it
@@ -42,20 +42,48 @@ def is_exclusion(line: str, reference: str) -> bool:
     return text.startswith("!") and is_entry(text[1:], reference)
 
 
-def drop(tracked: Path, reference: str) -> bool:
-    """Append `!reference` to the tracked file, answering whether the file changed.
+def append(tracked: Path, text: str, line: str) -> None:
+    """Append `line` to the tracked file whose content is `text`, on a line of its own.
 
     The line is appended rather than the file rewritten, because a watcher
     may be appending a line it adopted at the same moment.
     """
 
+    separator = "\n" if text and not text.endswith("\n") else ""
+    with tracked.open("a", encoding="utf-8") as stream:
+        stream.write(f"{separator}{line}\n")
+
+
+def add(tracked: Path, reference: str) -> bool:
+    """Append `reference` to the tracked file, creating the file, answering whether the file changed.
+
+    A pull request the file drops is refused rather than listed, because its
+    `!reference` line would keep it out of the loop all the same.
+    """
+
+    check_reference(reference)
+    try:
+        text = tracked.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        tracked.parent.mkdir(parents=True, exist_ok=True)
+        text = ""
+    lines = text.splitlines()
+    if any(is_exclusion(line, reference) for line in lines):
+        raise ProjectorError(f"{reference} is dropped from {tracked}; run `project loop restore` to let it back in")
+    if any(is_entry(line, reference) for line in lines):
+        return False
+    append(tracked, text, reference)
+    return True
+
+
+def drop(tracked: Path, reference: str) -> bool:
+    """Append `!reference` to the tracked file, answering whether the file changed."""
+
     check_reference(reference)
     text = read(tracked)
     if any(is_exclusion(line, reference) for line in text.splitlines()):
         return False
-    separator = "\n" if text and not text.endswith("\n") else ""
-    with tracked.open("a", encoding="utf-8") as stream:
-        stream.write(f"{separator}!{reference}\n")
+    append(tracked, text, f"!{reference}")
     return True
 
 

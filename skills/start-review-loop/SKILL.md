@@ -35,11 +35,13 @@ after the request is answered, and every later push gets a review until it
 closes. A line `!owner/repo#number` keeps one pull request out when the user
 asks. `project loop drop owner/repo#number --tracked <file>` appends one, as
 Projector's band does when the user dismisses a pull request, and `project
-loop restore` with the same arguments removes it. `project loop remove` with
-the same arguments removes the pull request's own line once it closes. The
-three commands change different lines: `drop` keeps an open pull request
-out, `restore` lets it back in, and `remove` forgets one that merged or
-closed and leaves any `!` line for it in place, so adoption never brings a
+loop restore` with the same arguments removes it. `project loop add` with the
+same arguments lists a pull request the user assigns, and `project loop
+remove` removes the pull request's own line once it closes. The four commands
+change different lines: `add` lists a pull request, `remove` forgets one that
+merged or closed, `drop` keeps an open one out, and `restore` lets it back
+in. `remove` leaves a `!` line in place, and `add` refuses a pull request that
+has one, so only `restore` undoes a `drop`, and adoption never brings a
 dropped pull request back. Hold validated logins literally in every query you
 run yourself; never use `@me`. Under the default the two roles coincide and
 `@me` looks harmless, but its value follows whichever token is live, so under
@@ -80,12 +82,15 @@ a repository with nothing open.
    model names. Another model's verdict on a head is that model's review,
    not this loop's. Review any current head without a completed exact-head
    review by this model immediately; do not baseline it away.
-6. Write the tracked set to a durable tracked file, one `owner/repo#number`
-   per line, kept beside the state file and outside any checkout. That file
-   is the watcher's whole scope and the record of the set. The watcher
-   appends the operator's pull requests and the requested ones itself;
-   append one the user assigns, and when a pull request closes, remove its
-   line with `project loop remove owner/repo#number --tracked <file>`.
+6. Write the tracked set to a durable tracked file, kept beside the state
+   file and outside any checkout, by running
+   `project loop add owner/repo#number --tracked <file>` for each pull
+   request in it. `add` creates the file and writes one
+   `owner/repo#number` per line. That file is the watcher's whole scope and
+   the record of the set. The watcher appends the operator's pull requests
+   and the requested ones itself; add one the user assigns the same way,
+   and when a pull request closes, remove its line with
+   `project loop remove owner/repo#number --tracked <file>`.
    Start or reuse a persistent recurring goal that records the repository,
    operator, the tracked file's path, the model ID the host
    reports for this session, and this loop's id: a name chosen once for this
@@ -125,8 +130,10 @@ or by replying on an open finding thread, so no head event is coming, and only
 a re-review can settle the findings and sign off. It fires once per answer, and
 the re-review's own replies carry the verify marker, so they never count as
 one. It prevents a response without a push from deadlocking both loops. A `TRACKED` line is
-a problem with the tracked file itself, announced once; fix the file. Keep the
-loop silent while no event needs action.
+a problem with the tracked file itself, announced once. Remove a line that
+names no pull request with `project loop remove`, and tell the user about a
+line that is not `owner/repo#number`, which no `project loop` command writes.
+Keep the loop silent while no event needs action.
 
 The author's hold comment, which `fix-pr` posts with `project review hold`
 while it builds a change, as `../fix-pr/SKILL.md` describes under "Hold the
@@ -227,5 +234,6 @@ resolved threads are evidence about state, not substitutes for review. When a
 pull request closes or merges, close its subagent and remove its line from the
 tracked file with `project loop remove owner/repo#number --tracked <file>`.
 The watcher adopts the operator's new pull requests and new requests for the
-operator's review itself; append one the user assigns, and continue until the
+operator's review itself; add one the user assigns with
+`project loop add owner/repo#number --tracked <file>`, and continue until the
 user stops the loop.

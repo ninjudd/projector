@@ -25,6 +25,74 @@ class LoopCase(unittest.TestCase):
         return code, out.getvalue(), err.getvalue()
 
 
+class AddTests(LoopCase):
+    def test_appends_the_pull_request_and_keeps_every_other_line(self) -> None:
+        self.tracked.write_text("# the loop's pull requests\nacme/app#1\n\n!acme/app#3\n")
+
+        code, out, err = self.run_cli("add", "acme/app#2")
+
+        self.assertEqual((0, ""), (code, err))
+        self.assertEqual(f"added acme/app#2 to {self.tracked}\n", out)
+        self.assertEqual("# the loop's pull requests\nacme/app#1\n\n!acme/app#3\nacme/app#2\n", self.tracked.read_text())
+
+    def test_starts_its_line_on_a_line_of_its_own(self) -> None:
+        self.tracked.write_text("acme/app#1")
+
+        self.assertEqual(0, self.run_cli("add", "acme/app#2")[0])
+
+        self.assertEqual("acme/app#1\nacme/app#2\n", self.tracked.read_text())
+
+    def test_creates_a_missing_file_and_its_directory(self) -> None:
+        self.tracked = self.tracked.parent / "state" / "loop.tracked"
+
+        code, out, err = self.run_cli("add", "acme/app#2", "--json")
+
+        self.assertEqual((0, ""), (code, err))
+        self.assertEqual({"action": "added", "pr": "acme/app#2", "schema_version": 2, "tracked": str(self.tracked)},
+                         json.loads(out))
+        self.assertEqual("acme/app#2\n", self.tracked.read_text())
+
+    def test_changes_nothing_for_a_pull_request_already_listed_in_any_letter_case(self) -> None:
+        self.tracked.write_text("  ACME/App#2  \nacme/app#3\n")
+
+        plain = self.run_cli("add", "acme/app#2")
+        as_json = self.run_cli("add", "acme/app#2", "--json")
+
+        self.assertEqual((0, f"acme/app#2 is already listed in {self.tracked}\n", ""), plain)
+        self.assertEqual((0, ""), (as_json[0], as_json[2]))
+        self.assertEqual("unchanged", json.loads(as_json[1])["action"])
+        self.assertEqual("  ACME/App#2  \nacme/app#3\n", self.tracked.read_text())
+
+    def test_refuses_a_pull_request_the_file_drops_and_names_restore(self) -> None:
+        for written in ("!Acme/App#2\n", "acme/app#2\n!acme/app#2\n"):
+            with self.subTest(written=written):
+                self.tracked.write_text(written)
+
+                code, out, err = self.run_cli("add", "acme/app#2")
+
+                self.assertEqual((65, ""), (code, out))
+                self.assertEqual(f"project: acme/app#2 is dropped from {self.tracked}; run `project loop restore` "
+                                 "to let it back in\n", err)
+                self.assertEqual(written, self.tracked.read_text())
+
+    def test_refuses_a_reference_that_is_not_owner_repo_number_and_creates_nothing(self) -> None:
+        for written in ("acme/app", "acme/app#0", "#12", "acme/app#12 extra", "!acme/app#12"):
+            with self.subTest(written=written):
+                code, out, err = self.run_cli("add", written)
+
+                self.assertEqual((65, ""), (code, out))
+                self.assertEqual(f"project: {written!r} is not owner/repo#number\n", err)
+        self.assertFalse(self.tracked.exists())
+
+    def test_add_then_remove_leaves_the_file_as_it_was(self) -> None:
+        self.tracked.write_text("acme/app#1\n!acme/app#3\n")
+
+        self.assertEqual(0, self.run_cli("add", "acme/app#2")[0])
+        self.assertEqual(0, self.run_cli("remove", "acme/app#2")[0])
+
+        self.assertEqual("acme/app#1\n!acme/app#3\n", self.tracked.read_text())
+
+
 class DropTests(LoopCase):
     def test_appends_an_exclusion_and_keeps_every_other_line(self) -> None:
         self.tracked.write_text("# the loop's pull requests\nacme/app#1\n\nacme/app#2\n")

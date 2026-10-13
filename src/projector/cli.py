@@ -688,10 +688,12 @@ def add_inbox_parser(subcommands) -> None:
 
 
 def add_loop_parser(subcommands) -> None:
-    parser = subcommands.add_parser("loop", help="change a loop's tracked file: keep a pull request out, let it back "
-                                                 "in, or forget one that merged or closed")
+    parser = subcommands.add_parser("loop", help="change a loop's tracked file: add a pull request, forget one that "
+                                                 "merged or closed, keep one out, or let it back in")
     commands = parser.add_subparsers(dest="loop_command", required=True)
-    for name, help_text in (("drop", "append a !owner/repo#number line that keeps the pull request out of the loop"),
+    for name, help_text in (("add", "append an owner/repo#number line that brings the pull request into the loop, "
+                                    "creating the file"),
+                            ("drop", "append a !owner/repo#number line that keeps the pull request out of the loop"),
                             ("restore", "remove the pull request's !owner/repo#number lines"),
                             ("remove", "remove the pull request's owner/repo#number lines, leaving its ! lines")):
         command = commands.add_parser(name, help=help_text)
@@ -704,6 +706,7 @@ def run_loop(arguments: argparse.Namespace) -> int:
     reference = arguments.reference
     tracked = arguments.tracked
     change, action, changed_text, unchanged_text = {
+        "add": (loop.add, "added", f"added {reference} to {tracked}", f"{reference} is already listed in {tracked}"),
         "drop": (loop.drop, "dropped", f"dropped {reference} from {tracked}",
                  f"{reference} is already dropped from {tracked}"),
         "restore": (loop.restore, "restored", f"restored {reference} to {tracked}",
