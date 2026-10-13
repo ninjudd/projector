@@ -577,7 +577,9 @@ marketplace files, and read upstream's new skill against the rules in
 
 ## Work without MCP
 
-Projector currently ships no MCP server. Every core skill uses the public
-`project` CLI and ordinary Git or GitHub commands. A future MCP adapter can
-expose the same versioned project operations without becoming the package that
-contains the skills.
+Projector currently ships no MCP server. The `ask` and `tell` tools carry
+the `mcp__projector__` prefix, but Projector's hooks module in Claude Code
+serves them: no MCP server runs, and no skill depends on them. Every core
+skill uses the public `project` CLI and ordinary Git or GitHub commands. A
+future MCP adapter can expose the same versioned project operations without
+becoming the package that contains the skills.
