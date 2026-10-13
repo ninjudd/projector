@@ -206,9 +206,10 @@ When a poll cannot reach GitHub, the band keeps showing what GitHub said
 last, and the divider's time shows how old that is. It shows GitHub's error
 only while GitHub has not answered once. When your loops track no open pull
 request and your inbox is empty, the band shows a short philosophical quote,
-dimmed. It asks
-Claude's `haiku` model for the quote once a session, and says that no open
-pull requests are being watched or reviewed when the model gives none.
+dimmed. It asks Claude's `haiku` model for the quote once a session. When
+the model gives none, the band shows Osho's: “Mind is always the cause. It
+is the projector, and outside there are only screens — you project
+yourself.”
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer says

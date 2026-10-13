@@ -38,7 +38,8 @@ const POLL_MS = 30_000
 const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
 const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
-const NOTHING_TRACKED = 'No open pull requests are being watched or reviewed.'
+const FALLBACK_QUOTE =
+  '“Mind is always the cause. It is the projector, and outside there are only screens — you project yourself.” — Osho'
 const QUOTE_PROMPT =
   'Reply with one short philosophical quote that you are sure is attributed correctly, ' +
   'as “Quote.” — Author, in at most 100 characters, and nothing else.'
@@ -250,7 +251,7 @@ async function load($: Engine): Promise<void> {
 
 /**
  * Asks the model, once a session, for the quote a band with nothing to list
- * shows, and settles on saying that nothing is tracked when it gives none.
+ * shows, and settles on Osho's when it gives none.
  */
 async function askForQuote($: Engine): Promise<void> {
   if (isQuoteAsked || (await read($, quote)) !== null) return
@@ -259,7 +260,7 @@ async function askForQuote($: Engine): Promise<void> {
     .complete({ model: 'haiku', prompt: QUOTE_PROMPT, maxTokens: 100, timeoutMs: 15_000 })
     .catch(() => undefined)
   const said = reply?.isAnswered === true ? reply.text.trim().replace(/\s+/g, ' ') : ''
-  await update($, quote, () => (said === '' ? NOTHING_TRACKED : said))
+  await update($, quote, () => (said === '' ? FALLBACK_QUOTE : said))
 }
 
 /**

@@ -111,6 +111,8 @@ type Outcome = Ran | { deny: string }
 
 const USAGE = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 const QUOTE = '“The unexamined life is not worth living.” — Socrates'
+const OSHO =
+  '“Mind is always the cause. It is the projector, and outside there are only screens — you project yourself.” — Osho'
 
 /** GitHub's answer to a query, and the model's to a prompt, where a test needs others. */
 type Beneath = { github?: (query: string) => Ran; model?: () => ModelCompleteResult }
@@ -369,7 +371,7 @@ test('shows a quote the model gives, dimmed and once a session, when no loop tra
   expect(prompts[0]).toMatch(/philosophical quote/)
 })
 
-test('says no pull request is tracked when the model gives no quote', async ($, on) => {
+test('shows Osho’s quote when the model gives none', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
   world(on, {}, '', undefined, { model: () => ({ isAnswered: false, reason: 'empty-reply', usage: USAGE }) })
@@ -379,9 +381,7 @@ test('says no pull request is tracked when the model gives no quote', async ($, 
   await clock.settle()
 
   const ui = await $.ui.mount(BAND)
-  expect(
-    (await ui.find({ type: 'Text', text: 'No open pull requests are being watched or reviewed.' }))?.props.dimColor,
-  ).toBe(true)
+  expect((await ui.find({ type: 'Text', text: OSHO }))?.props.dimColor).toBe(true)
   await ui.unmount()
 })
 
