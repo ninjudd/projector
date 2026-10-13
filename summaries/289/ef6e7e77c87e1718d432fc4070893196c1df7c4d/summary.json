@@ -1,0 +1,87 @@
+{
+ "version": 1,
+ "name": "Empty band tagline color",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 289,
+  "title": "Show a tagline in the empty band in the subtle color",
+  "head": "ef6e7e77c87e1718d432fc4070893196c1df7c4d",
+  "headRef": "band-quote-subtle",
+  "base": "16cbccbecb4473b9c6d405173392142eb7c5755b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's Claude Code plugin draws a band above the prompt that lists the pull requests your review and watch loops track. When no loop tracks an open pull request and your inbox is empty, the band shows a one-line tagline under its divider instead: <i>Our minds are projectors, casting ideas onto the world.</i> Before its first poll of GitHub finishes, it shows <code>Looking for pull requests…</code> in the same spot.",
+   "Both of those lines drew with Ink's <code>dimColor</code>, which asks the terminal for faint text. Some terminals ignore that, so the text showed at full strength beside the dimmed divider. The band's pull request labels and ages had the same problem and already draw in the theme's <code>subtle</code> color, a muted gray the host maps per theme. This change moves the tagline and the loading line to <code>subtle</code> too, and starts the tagline one space in from the band's left edge.",
+   "The tagline replaces a quote from Osho that the band showed before, and the code names it <code>TAGLINE</code> in place of <code>QUOTE</code>.",
+   "It also drops the old quote's text from <code>docs/plugins.md</code>, keeping the sentence about when the band shows GitHub's error."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "render",
+   "title": "The empty band draws a tagline in the subtle color",
+   "kicker": "How <code>hooks/register.tsx</code> draws the band when it has nothing to list.",
+   "intro": [
+    "The band's <code>AbovePrompt</code> renderer returns early when it has no pull request rows and no inbox items. Under the divider it then shows one of three lines, in this order of precedence:",
+    "<ol><li><b>GitHub's error</b>, in the <code>error</code> color, when the last poll failed and left nothing to draw.</li><li><b>The loading line</b>, <code>Looking for pull requests…</code>, while the band has no poll result yet (<code>shown.fetchedAt === null</code>).</li><li><b>The tagline</b>, otherwise.</li></ol>",
+    "Before this change the loading line and the quote shared one <code>Text</code> with <code>dimColor</code>, choosing the string inline. Now each has its own branch. Both take <code>color=\"subtle\"</code>, and the tagline's <code>Text</code> draws it after one leading space."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Replaces the <code>QUOTE</code> constant with <code>TAGLINE</code>, splits the loading line and the tagline into separate branches, and draws both in <code>subtle</code>, the tagline one space in.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The leading space is part of the string, so on a terminal narrow enough to wrap the tagline, only its first line starts one space in."
+      },
+      {
+       "kind": "context",
+       "text": "The divider above still draws with <code>dimColor</code>. The pull request body reports that it does look dimmed in the owner's terminal, so only the two text lines moved."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "The test and the docs follow",
+   "kicker": "The band test checks the tagline, its leading space, and its color; the plugin docs stop quoting the old text.",
+   "intro": [
+    "<code>hooks/band.test.tsx</code> mounts the band with no tracked pull requests, on the terminal and on the Desktop surface, and finds the tagline's <code>Text</code> by its text, the tagline after one space. A test cannot see how a terminal paints a color, so it checks the prop: <code>color</code> is <code>subtle</code>. On Desktop it also checks that the tagline is the band's first text, with no divider.",
+    "<code>docs/plugins.md</code> describes the band for users. It no longer quotes the old text or says it is dimmed."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/band.test.tsx",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "With the base's <code>hooks/register.tsx</code> and this pull request's tests, <code>claude plugin test .</code> fails only on this test, so it catches a return to <code>dimColor</code>. With the pull request's code at its head, all 67 tests pass."
+      },
+      {
+       "kind": "verify",
+       "text": "The GitHub-failure test's check that <code>TAGLINE</code> is absent still bites, though the band draws the tagline after a space: a mutation that drew the tagline beside GitHub's error failed that test."
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The page no longer says what an empty band shows. The review suggests one clause saying the band shows a short tagline, without quoting it or naming its color.",
+       "line": 207
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

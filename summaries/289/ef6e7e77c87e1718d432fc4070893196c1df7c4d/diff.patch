@@ -1,0 +1,90 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 9d4e8d8..db68cc3 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -204,10 +204,7 @@ starts with its first row.
+ 
+ When a poll cannot reach GitHub, the band keeps showing the pull requests
+ GitHub gave last, and the divider's time shows how old they are. It shows
+-GitHub's error only when it has none of them to show. When your loops track
+-no open pull request and your inbox is empty, the band shows a quote of
+-Osho's, dimmed: “Your mind is a projector; it uses everything as a kind of
+-screen, it projects itself on the screen.”
++GitHub's error only when it has none of them to show.
+ 
+ Click a pull request's number to open a drawer under it, and click it again
+ to close the drawer; opening one drawer closes any other. The drawer says
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 3725701..aa65c91 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -109,7 +109,7 @@ type Ran = ReturnType<typeof ran>
+  */
+ type Outcome = Ran | { deny: string }
+ 
+-const QUOTE = '“Your mind is a projector; it uses everything as a kind of screen, it projects itself on the screen.” — Osho'
++const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
+ 
+ /** GitHub's answer to a query, where a test needs another. */
+ type Beneath = { github?: (query: string) => Ran }
+@@ -333,7 +333,7 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
+   await ui.unmount()
+ })
+ 
+-test('shows Osho’s quote, dimmed, when no loop tracks an open pull request', async ($, on) => {
++test('shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request', async ($, on) => {
+   const clock = mock.clock(on)
+   mock.env(on, { HOME })
+   world(on, {}, '')
+@@ -343,14 +343,15 @@ test('shows Osho’s quote, dimmed, when no loop tracks an open pull request', a
+   await clock.settle()
+ 
+   const ui = await $.ui.mount(BAND)
+-  expect((await ui.find({ type: 'Text', text: QUOTE }))?.props.dimColor).toBe(true)
++  // `dimColor` does not dim in every terminal, so the tagline takes the theme's subtle color.
++  expect((await ui.find({ type: 'Text', text: ` ${TAGLINE}` }))?.props.color).toBe('subtle')
+   expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
+   await ui.unmount()
+ 
+   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+   const texts = (await desktop.findAll({ type: 'Text' })).map(found => found.text)
+-  expect(texts[0]).toBe(QUOTE)
++  expect(texts[0]).toBe(` ${TAGLINE}`)
+   expect(texts.filter(text => text.includes('─'))).toEqual([])
+   await desktop.unmount()
+ })
+@@ -409,7 +410,7 @@ test('says why GitHub failed for a loop added after the band loaded with nothing
+ 
+   const ui = await $.ui.mount(BAND)
+   expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: QUOTE })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: TAGLINE })).toBeUndefined()
+   await ui.unmount()
+ })
+ 
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 4de645a..323d896 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -38,7 +38,7 @@ const POLL_MS = 30_000
+ const EMPTY: Snapshot = { rows: [], fetchedAt: null, error: null }
+ const ASK_TOOL = 'mcp__projector__ask'
+ const TELL_TOOL = 'mcp__projector__tell'
+-const QUOTE = '“Your mind is a projector; it uses everything as a kind of screen, it projects itself on the screen.” — Osho'
++const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
+ 
+ // Watching first: a pull request both loops track is listed once, where its
+ // watch loop puts it.
+@@ -778,8 +778,10 @@ export const register: Register = on => {
+           {divider}
+           {failure !== undefined ? (
+             <Text color="error">{failure}</Text>
++          ) : shown.fetchedAt === null ? (
++            <Text color="subtle">Looking for pull requests…</Text>
+           ) : (
+-            <Text dimColor>{shown.fetchedAt === null ? 'Looking for pull requests…' : QUOTE}</Text>
++            <Text key="tagline" color="subtle">{` ${TAGLINE}`}</Text>
+           )}
+         </Box>
+       )
