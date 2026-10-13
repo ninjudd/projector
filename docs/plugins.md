@@ -271,10 +271,12 @@ An agent in Claude Code asks you a question with Projector's `ask` tool,
 which the model sees as `mcp__projector__ask`, and tells you something that
 needs no answer with the `tell` tool, `mcp__projector__tell`. Either way it
 keeps working. When an item it posted no longer needs you, such as a question
-you answered in the conversation, the agent takes it back with the `withdraw`
-tool, `mcp__projector__withdraw`, by the number `ask` or `tell` returned. An
-agent that runs `project inbox ask`, `tell`, or `withdraw` from the shell
-reaches the same inbox, as [Use the inbox](cli.md#use-the-inbox) describes.
+your reply settled, the agent takes it back with the `withdraw` tool,
+`mcp__projector__withdraw`, by the number `ask` or `tell` returned. When your
+reply shows that a question was unclear, the agent rewrites the question in
+place with the `revise` tool, `mcp__projector__revise`. An agent that runs
+`project inbox ask`, `tell`, `withdraw`, or `revise` from the shell reaches
+the same inbox, as [Use the inbox](cli.md#use-the-inbox) describes.
 
 The items are a list below the pull requests, oldest first. A question's
 line starts with `-`, and a notice's with `•`, so you can tell which items
@@ -323,27 +325,39 @@ you to send as it stands or change first:
 Add a budget of two retries per host, and keep the total cap
 ```
 
-The drawer stays open until you send. Sending that prompt answers the
-question and closes its drawer, so the band shows its list again. The band
-finds each quoted question whose quote ends its line, and takes the next
-line that is not blank as its answer: the option with that text, or else an
-answer in your own words. Each quote answers one question: when two open
-questions ask the same thing, it answers the one whose drawer last put that
-same answer in your prompt, or else the older one.
+The drawer stays open until you send. Sending the prompt as the option
+filled it in answers the question and closes its drawer, so the band shows
+its list again. The band finds each quoted question whose quote ends its
+line, and reads the text after the quote, up to the next quoted item or the
+end of the prompt. When that text is one of the question's options, whatever
+blank lines and spaces surround it, that option answers the question. Each
+quote answers one question: when two open questions ask the same thing, it
+answers the one whose drawer last put that same answer in your prompt, or
+else the older one that offers it.
 
-Only a prompt you send, at the terminal or through Remote Control, answers a
-question. Another session's message or a notification that quotes one
-answers nothing. Your prompt is what carries the answer to the main loop,
-and when a subagent asked, the main loop also reads a note naming it, so it
-can pass the answer on.
+Anything else you send under a quoted question is a reply, not an answer:
+your own words, an option with more text after it, or a question back. The
+band records nothing and closes the question's drawer, and the question
+stays in the list. Your prompt carries the reply to the agent, which answers
+what you asked and then settles the question. It withdraws the question if
+your reply settles it, revises it if your reply shows it was unclear or the
+choice has changed, or leaves it open while it still needs you. A revised
+question keeps its place in the list, and the band shows its new text as
+soon as the agent revises it.
+
+Only a prompt you send, at the terminal or through Remote Control, answers
+or replies to a question. Another session's message or a notification that
+quotes one does neither. Your prompt is what carries the answer or the reply
+to the main loop, and when a subagent asked, the main loop also reads a note
+naming it, so it can pass the answer or the reply on.
 
 Under the options, a question's drawer has three actions:
 
 - **discuss** puts the quoted question in the prompt, followed by a blank
   line, and leaves the drawer open, so the options and detail stay in view
-  while you type. Type an answer in your own words under the quote and send
-  the prompt, and that answers the question. Text you add on the quote's own
-  line talks the question over and answers nothing.
+  while you type. Type your reply under the quote, or on the quote's own
+  line, and send the prompt. The reply reaches the agent and answers
+  nothing.
 - **dismiss** sets the question aside without an answer.
 - **snooze** hides the question for an hour.
 
@@ -365,9 +379,9 @@ delivered, and a dismissed one is struck through. A dismissed notice is
 delivered at once, since nothing goes back to the agent. An item the agent
 withdrew leaves the band at once, its drawer with it, and sends nothing back,
 not even `DISMISSED` for a question. A question's drawer
-still opens and marks the answer given with `✓`, listing an answer in your
-own words after the options. A dismissed notice's drawer keeps only
-**discuss**.
+still opens and marks the answer given with `✓`, listing an answer typed in
+a terminal with `project inbox answer --text` after the options. A dismissed
+notice's drawer keeps only **discuss**.
 
 An answer you give from a terminal with `project inbox answer` reaches the
 agent through the band of the session that asked. A subagent that is still
@@ -646,9 +660,9 @@ marketplace files, and read upstream's new skill against the rules in
 
 ## Work without MCP
 
-Projector currently ships no MCP server. The `ask`, `tell`, and `withdraw`
-tools carry the `mcp__projector__` prefix, but Projector's hooks module in
-Claude Code serves them: no MCP server runs, and no skill depends on them.
-Every core skill uses the public `project` CLI and ordinary Git or GitHub
-commands. A future MCP adapter can expose the same versioned project
+Projector currently ships no MCP server. The `ask`, `tell`, `withdraw`, and
+`revise` tools carry the `mcp__projector__` prefix, but Projector's hooks
+module in Claude Code serves them: no MCP server runs, and no skill depends
+on them. Every core skill uses the public `project` CLI and ordinary Git or
+GitHub commands. A future MCP adapter can expose the same versioned project
 operations without becoming the package that contains the skills.

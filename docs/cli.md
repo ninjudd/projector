@@ -47,9 +47,12 @@ what it did to each:
   `implement` skill, so a watch loop starts on its pull request, open every
   pull request as a draft until a clean review marks it ready, and, where the
   `ask` and `tell` tools are available, post anything the person must not
-  miss to the inbox as well as saying it in the conversation, and each time
-  the person writes, withdraw any item that no longer needs them with the
-  `withdraw` tool. `init` appends the section to an existing file or creates
+  miss to the inbox as well as saying it in the conversation. It tells an
+  agent whose question the person replied to, rather than picking an option,
+  to answer what they asked and then withdraw the question with the
+  `withdraw` tool, revise it with the `revise` tool, or leave it open, and to
+  withdraw any other item that no longer needs them each time the person
+  writes. `init` appends the section to an existing file or creates
   the file with only that section, and refreshes the section when it falls
   behind the template this command ships. Everything outside the markers is
   yours and is never changed.
@@ -1530,19 +1533,19 @@ need to decide in `--detail`, or `--detail-file`.
 
 Every command names the posting session with `--session`, or reads
 `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
-every session's open items, and `show`, `answer`, `dismiss`, `withdraw`, and
-`snooze` find the session that holds the number. `list` prints each item's
-number, kind, state, and subject, separated by tabs, after the session when it
-lists every session. Every session counts from 1 and keeps the items you
-resolved, so two sessions often hold the same number. Without a session, those
-five commands look first among open items, the ones with no answer recorded: a
-number that one session holds open names that session's item, whatever other
-sessions hold resolved under the same number. Only when no session holds the
-number open do they look among every item. A command that still finds the
-number in more than one session exits 67 and names them; run it again with
-`--session` and the session that `list` prints beside the item. A command
-waits up to five seconds while another command changes the same session, and
-then exits 75, so you can run it again.
+every session's open items, and `show`, `answer`, `dismiss`, `withdraw`,
+`revise`, and `snooze` find the session that holds the number. `list` prints
+each item's number, kind, state, and subject, separated by tabs, after the
+session when it lists every session. Every session counts from 1 and keeps the
+items you resolved, so two sessions often hold the same number. Without a
+session, those six commands look first among open items, the ones with no
+answer recorded: a number that one session holds open names that session's
+item, whatever other sessions hold resolved under the same number. Only when
+no session holds the number open do they look among every item. A command that
+still finds the number in more than one session exits 67 and names them; run
+it again with `--session` and the session that `list` prints beside the item.
+A command waits up to five seconds while another command changes the same
+session, and then exits 75, so you can run it again.
 
 The answers are lettered. `a` is always the recommendation, the other options
 follow as `b`, `c`, and on, and the last letter is a typed answer:
@@ -1566,6 +1569,16 @@ second exits 65. `dismiss` answers it with no letter, and `list` then shows
 it as `dismissed`. Only `answer` takes a letter: every other command refuses
 `3.a` with exit code 65, so `dismiss` never drops the answer you meant to
 give.
+
+In Projector's band, only an option answers a question. The band records an
+answer when a prompt you send quotes the question and follows the quote with
+one of its options' text and nothing else, as clicking the option's number
+fills it in. Anything else you send under a quoted question, such as your own
+words, an option with more after it, or a question back, is a reply. The band
+records nothing, the question stays open, and the reply reaches the agent as
+your prompt. The agent then withdraws the question if the reply settles it,
+revises it if the reply shows it was unclear, or leaves it open while it still
+needs you.
 
 Every command refuses any other form of reference, such as `#337.3`,
 `octo/web#12.1`, or `q2`, with exit code 65, and no command lists, delivers,
@@ -1639,8 +1652,7 @@ snooze, so a resolved item never returns. `snooze` refuses, with exit code
 longer than a day, and it changes nothing when it refuses.
 
 An agent takes back an open item that no longer needs you with `withdraw`,
-such as a question you answered in the conversation or news that has gone
-stale:
+such as a question your reply settled or news that has gone stale:
 
 ```console
 $ project inbox withdraw 3 --session "$SESSION"
@@ -1655,6 +1667,33 @@ once, and `list --all` shows it as `withdrawn`. `withdraw` refuses what
 answered, dismissed, or withdrawn, with exit code 65, and a number no session
 holds, with exit code 66. In Claude Code, the agent withdraws an item with
 Projector's `withdraw` tool rather than from the shell.
+
+When your reply shows that an open question was unclear, or that the choice
+has changed, the agent rewrites the question in place with `revise`. Only the
+parts it names change:
+
+```console
+$ project inbox revise 3 --session "$SESSION" \
+    --question "Decline the finding about the per-host retry budget?" \
+    --option "Add a budget of two retries per host" \
+    --option "Ask the reviewer which hosts they mean"
+revised 3
+```
+
+`--question` replaces the line, and `--recommend` replaces answer `a`. The
+`--option` flags replace every other option, lettered `b`, `c`, and on in the
+order given, and `--no-options` drops them all, which leaves only the
+recommendation. `--detail`, or `--detail-file`, replaces the detail, and
+`--detail ""` clears it. The question keeps its number, the pull request it is
+about, when it was posted, the subagent that asked, and any snooze, so its
+answer reaches the same agent as before. Only a question can be revised:
+`revise` refuses a notice with exit code 65. It also refuses, with exit code
+65, a revision that fails a check `ask` makes, such as a line of 121
+characters or a sixth option, a revision with nothing to change, an answer
+letter such as `3.a`, and a question already answered, dismissed, or
+withdrawn, and it changes nothing when it refuses. A number no session holds
+exits 66. In Claude Code, the agent revises a question with Projector's
+`revise` tool, and the band redraws it at once.
 
 ## Change a loop's tracked file
 
