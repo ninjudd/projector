@@ -242,7 +242,7 @@ the pull request, which appends a `!owner/repo#number` line that both
 watchers honor, so the loops stop acting on it. When the command fails, the
 band shows its error and keeps the line. To bring a dismissed pull request
 back, run `project loop restore` with the same reference and tracked file,
-as [Keep a pull request out of a loop](cli.md#keep-a-pull-request-out-of-a-loop)
+as [Change a loop's tracked file](cli.md#change-a-loops-tracked-file)
 describes.
 
 On the main screen, which Claude Code uses under tmux and when

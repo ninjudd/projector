@@ -38,10 +38,10 @@
 # shared repository every push by anyone is one, and every line is a Monitor
 # notification counting toward the limit that stops a watcher. The file is
 # re-read every cycle: the loop adds a pull request by appending a line and
-# drops a merged one by deleting its line, without a restart. Every line is
-# checked before the watch starts, because a bad one would otherwise be a
-# watch that starts cleanly and never mentions the pull request it was meant
-# for; a bad line that appears later is announced once.
+# removes a merged one with `project loop remove`, without a restart. Every
+# line is checked before the watch starts, because a bad one would otherwise
+# be a watch that starts cleanly and never mentions the pull request it was
+# meant for; a bad line that appears later is announced once.
 #
 # --repo with --author adopts that author's pull requests: each cycle lists
 # the author's open pull requests in the repository and appends every one the
@@ -342,7 +342,7 @@ EOF
     [ "$flag" = "$sha" ] && flag="$sha:-"
 
     if [ "$pstate" != "OPEN" ]; then
-      [ -n "$known" ] && echo "CLOSED $slug#$n (${kref:-$ref}) — no longer open; drop it from the tracked file"
+      [ -n "$known" ] && echo "CLOSED $slug#$n (${kref:-$ref}) — no longer open; remove it from the tracked file"
       continue
     fi
 

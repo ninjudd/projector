@@ -58,14 +58,18 @@ adopted it. Never list a pull request you would not push to.
 4. Write the tracked set to a durable tracked file, one `owner/repo#number`
    per line, kept beside the state file and outside any checkout. That file
    is the record of the set. Append a pull request when this conversation
-   creates or adopts one, delete its line when it closes or merges, and
-   record the file's path in a persistent recurring goal so a later turn
-   edits the same file. The watcher re-reads it every cycle, so neither
-   change needs a restart. A line `!owner/repo#number` keeps that pull
-   request out of the watch wherever it sits in the file, matched without
-   regard to case. `project loop drop owner/repo#number --tracked <file>`
-   appends one, as Projector's band does when the user dismisses a pull
-   request, and `project loop restore` with the same arguments removes it.
+   creates or adopts one, remove its line with
+   `project loop remove owner/repo#number --tracked <file>` when it closes
+   or merges, and record the file's path in a persistent recurring goal so
+   a later turn edits the same file. The watcher re-reads it every cycle,
+   so neither change needs a restart. A line `!owner/repo#number` keeps
+   that pull request out of the watch wherever it sits in the file,
+   matched without regard to case. `project loop drop` with the same
+   arguments appends one, as Projector's band does when the user dismisses
+   a pull request, and `project loop restore` removes it. The three
+   commands change different lines: `drop` keeps an open pull request out,
+   `restore` lets it back in, and `remove` forgets one that merged or
+   closed and leaves any `!` line for it in place.
 5. Run one pass first:
 
    ```sh
@@ -165,14 +169,15 @@ the recurrence it is instead of as new work.
   from, or ended, and the validation results. A question for the user
   comes back to the main loop to ask, and the subagent goes on with the
   pull request's unrelated work meanwhile.
-- When a pull request merges or closes, delete its line from the tracked
-  file at once. Tell its subagent to finish, remove its worktrees, and close
-  only when no layer it owns is still open. The user merges a stack as a
-  unit, the whole of it or any number of layers from the bottom up, so when
-  only the bottom layers merge, the `fix-stack-<number>` subagent keeps its
-  name and goes on fixing the layers left open. It starts with the update
-  the lowest of them needs onto its new base, as `../fix-pr/SKILL.md`
-  describes under "Preserve stacked ownership".
+- When a pull request merges or closes, remove its line from the tracked
+  file at once with `project loop remove owner/repo#number --tracked <file>`.
+  Tell its subagent to finish, remove its worktrees, and close only when
+  no layer it owns is still open. The user merges a stack as a unit, the
+  whole of it or any number of layers from the bottom up, so when only the
+  bottom layers merge, the `fix-stack-<number>` subagent keeps its name and
+  goes on fixing the layers left open. It starts with the update the lowest
+  of them needs onto its new base, as `../fix-pr/SKILL.md` describes under
+  "Preserve stacked ownership".
 - When a subagent is lost, to a session restart for example, start a
   replacement under the same name. It rebuilds its context from GitHub: each
   open layer's review threads, the replies on them, and its review bodies.
@@ -209,7 +214,8 @@ stack by the number GitHub's stacks API gives it, or by its bottom pull
 request for a chain of base branches that GitHub does not record as a
 stack.
 
-Delete closed or merged pull requests from the tracked file. An empty file is
+Remove closed or merged pull requests from the tracked file with
+`project loop remove owner/repo#number --tracked <file>`. An empty file is
 idle, not an instruction to stop; remain ready to append pull requests this
 conversation creates or adopts later. A loop `implement` started is the
 exception: its watcher reports `DONE` and exits once every pull request it
@@ -222,11 +228,12 @@ pull request the tracked file names:
 gh pr view <number> --repo <owner>/<repo> --json state --jq .state
 ```
 
-Delete the line of each one that merged or closed. When one is still open,
-or a check fails, start the watcher again with `--exit-when-closed`; it ends
-the watch itself once they have all closed. Otherwise finish each subagent
-as a merged pull request's subagent finishes, report that the loop stopped
-because its work is done, and leave the next `implement` to start a new one.
+Run `project loop remove owner/repo#number --tracked <file>` for each one
+that merged or closed. When one is still open, or a check fails, start the
+watcher again with `--exit-when-closed`; it ends the watch itself once they
+have all closed. Otherwise finish each subagent as a merged pull request's
+subagent finishes, report that the loop stopped because its work is done,
+and leave the next `implement` to start a new one.
 
 Beyond that, stop a loop only when the user asks, a required user decision
 blocks one finding, validation cannot be restored, or every remaining

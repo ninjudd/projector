@@ -688,10 +688,12 @@ def add_inbox_parser(subcommands) -> None:
 
 
 def add_loop_parser(subcommands) -> None:
-    parser = subcommands.add_parser("loop", help="keep a pull request out of a loop's tracked file, or let it back in")
+    parser = subcommands.add_parser("loop", help="change a loop's tracked file: keep a pull request out, let it back "
+                                                 "in, or forget one that merged or closed")
     commands = parser.add_subparsers(dest="loop_command", required=True)
     for name, help_text in (("drop", "append a !owner/repo#number line that keeps the pull request out of the loop"),
-                            ("restore", "remove the pull request's !owner/repo#number lines")):
+                            ("restore", "remove the pull request's !owner/repo#number lines"),
+                            ("remove", "remove the pull request's owner/repo#number lines, leaving its ! lines")):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("reference", help="the pull request, as owner/repo#number")
         command.add_argument("--tracked", required=True, type=Path, help="the loop's tracked file")
@@ -699,17 +701,21 @@ def add_loop_parser(subcommands) -> None:
 
 
 def run_loop(arguments: argparse.Namespace) -> int:
-    command = arguments.loop_command
     reference = arguments.reference
     tracked = arguments.tracked
-    changed = (loop.drop if command == "drop" else loop.restore)(tracked, reference)
-    action = ("dropped" if command == "drop" else "restored") if changed else "unchanged"
+    change, action, changed_text, unchanged_text = {
+        "drop": (loop.drop, "dropped", f"dropped {reference} from {tracked}",
+                 f"{reference} is already dropped from {tracked}"),
+        "restore": (loop.restore, "restored", f"restored {reference} to {tracked}",
+                    f"{reference} is not dropped from {tracked}"),
+        "remove": (loop.remove, "removed", f"removed {reference} from {tracked}",
+                   f"{reference} is not listed in {tracked}"),
+    }[arguments.loop_command]
+    changed = change(tracked, reference)
     if arguments.json_output:
-        print(json_text({"action": action, "pr": reference, "tracked": str(tracked)}))
-    elif command == "drop":
-        print(f"dropped {reference} from {tracked}" if changed else f"{reference} is already dropped from {tracked}")
+        print(json_text({"action": action if changed else "unchanged", "pr": reference, "tracked": str(tracked)}))
     else:
-        print(f"restored {reference} to {tracked}" if changed else f"{reference} is not dropped from {tracked}")
+        print(changed_text if changed else unchanged_text)
     return 0
 
 
