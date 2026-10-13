@@ -44,8 +44,10 @@ what it did to each:
   `gh stack` is unavailable, and keep every layer on the current head of the
   one below so the stack can merge as a unit. Its last part applies only
   where the Projector plugin is installed: build every change with the
-  `implement` skill, so a watch loop starts on its pull request, and open every
-  pull request as a draft until a clean review marks it ready. `init`
+  `implement` skill, so a watch loop starts on its pull request, open every
+  pull request as a draft until a clean review marks it ready, and, where the
+  `ask` and `tell` tools are available, post anything the person must not
+  miss to the inbox as well as saying it in the conversation. `init`
   appends the section to an existing file or creates the file
   with only that section, and refreshes the section when it falls behind the
   template this command ships. Everything outside the markers is yours and
