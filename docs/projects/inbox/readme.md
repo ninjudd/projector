@@ -1571,7 +1571,8 @@ review threads as a count after `⋮`.
   drawn whole in `subtle`, which made the drawer's main content its
   faintest line. Now what the loops do, `watching`, `reviewing`, or
   `watching and reviewing`, takes the theme color `inactive`; the branch
-  takes `subtle`; the size takes the colors the next bullet but one gives
+  takes the terminal palette's cyan, `ansi256(6)`, in the constant
+  `BRANCH_COLOR`; the size takes the colors the next bullet but one gives
   it; and each ` · ` between them keeps the default color.
 - **Only the checks take the checks' color.** The facts line ended with
   ` · checks pending` drawn whole in the checks' color, so the `·` turned
@@ -1582,11 +1583,15 @@ review threads as a count after `⋮`.
   `error`, green and red as a diff stat draws them, and ` in 2 files` takes
   `subtle`. The theme's `diffAdded` and `diffRemoved` are backgrounds for
   whole diff lines, not text colors, so the band uses `success` and
-  `error`. The owner tried the terminal's `gray` and then the drawer
-  links' color for the branch before choosing `subtle`; Claude Code
-  resolves a `Text` color only as a theme key, `rgb()`, hex, `ansi256()`,
-  or an `ansi:` name, and draws a plain name such as `gray` in the default
-  color.
+  `error`. The owner tried the terminal's `gray`, the drawer links' color,
+  and `subtle` for the branch before choosing cyan. Claude Code resolves a
+  `Text` color only as a theme key, `rgb()`, hex, `ansi256()`, or an
+  `ansi:` name, and draws a plain name such as `gray` or `cyan` in the
+  default color; and the band's surface refuses a color with a `:`, so a
+  plugin cannot use `ansi:cyan`, the form the engine's own links take.
+  `ansi256(6)` passes both: it names the palette's cyan slot, so it
+  follows the person's palette as `ansi:cyan` would. `ansi256(14)`, bright
+  cyan, is the change to make if slot 6 reads too dark.
 - **A pull request's open threads read `5⋮`.** The count of unresolved
   review threads comes before the `⋮` rather than after it, still in
   yellow, `warning`, and still the last note before the age.
@@ -1635,7 +1640,7 @@ review threads as a count after `⋮`.
 
 | Behavior | Test |
 | --- | --- |
-| The drawer's links read `open in github` and `open in projector`; on the facts line what the loops do takes `inactive`, the branch `subtle`, the size's `+N` `success`, its `−N` `error`, and ` in N files` `subtle`, `checks <state>` takes the checks' color, and each `·` stays plain; the open-thread count reads `2⋮`, in `warning`, after the other notes | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt` in `hooks/band.test.tsx` |
+| The drawer's links read `open in github` and `open in projector`; on the facts line what the loops do takes `inactive`, the branch `ansi256(6)`, the size's `+N` `success`, its `−N` `error`, and ` in N files` `subtle`, `checks <state>` takes the checks' color, and each `·` stays plain; the open-thread count reads `2⋮`, in `warning`, after the other notes | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt` in `hooks/band.test.tsx` |
 | Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in the default color` |
 | **snooze** shows the lengths and cancel, runs nothing, and takes no digits; each length runs `snooze --for` with its minutes; **cancel** and closing the drawer put the actions back; Enter carries the ring onto the first length and back onto **snooze** | `snooze asks how long, and only a length it offers snoozes the item`, and the snooze tests § 14.4 lists, which now pick a length |
 | A restored question's line returns to `permission` | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place`, `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` |

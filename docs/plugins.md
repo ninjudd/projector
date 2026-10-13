@@ -232,7 +232,8 @@ Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
 one column past the number, under `draft` or `ready`. It says whether your
 loops are watching or reviewing the pull request, in the theme's
-`inactive` color, then its branch, in `subtle`, its size, and its checks.
+`inactive` color, then its branch, in the terminal palette's cyan, its
+size, and its checks.
 The size reads as a diff stat: the insertions, such as `+84`, in green, the
 deletions, such as `−12`, in red, and ` in 5 files` in `subtle`. The
 checks' state takes a color of its own, and each `·` keeps the default

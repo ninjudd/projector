@@ -69,6 +69,15 @@ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
  */
 const QUESTION_COLOR = 'permission'
 
+/**
+ * The color of a pull request's branch on its drawer's facts line: the
+ * terminal palette's own cyan, slot 6, so it follows the person's palette as
+ * a named color would. Claude Code draws a plain name such as `cyan` in the
+ * default color and refuses `ansi:cyan` on a plugin's Text, but takes
+ * `ansi256()`.
+ */
+const BRANCH_COLOR = 'ansi256(6)'
+
 /** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
 const SNOOZES = [
   { label: '15 min', minutes: 15 },
@@ -1270,14 +1279,14 @@ export const register: Register = on => {
           {opened === key && (
             <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
               {/* The facts line: what the loops do with the pull request in
-                  `inactive`, its branch in `subtle`, and its size as a diff
-                  stat, insertions in `success`, deletions in `error`, and the
-                  files in `subtle`, then its checks in theirs. Each `·` between
-                  them keeps the default color. */}
+                  `inactive`, its branch in cyan, and its size as a diff stat,
+                  insertions in `success`, deletions in `error`, and the files
+                  in `subtle`, then its checks in theirs. Each `·` between them
+                  keeps the default color. */}
               <Text wrap="truncate-end">
                 <Text color="inactive">{kinds.join(' and ')}</Text>
                 {pr.branch !== '' && ' · '}
-                {pr.branch !== '' && <Text color="subtle">{pr.branch}</Text>}
+                {pr.branch !== '' && <Text color={BRANCH_COLOR}>{pr.branch}</Text>}
                 {' · '}
                 <Text color="success">{`+${pr.additions}`}</Text>{' '}
                 <Text color="error">{`−${pr.deletions}`}</Text>

@@ -224,8 +224,8 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   // The drawer's facts name no author, whoever wrote the pull request.
   const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files · checks passing$/ })
   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
-  // What the loops do takes `inactive`, the branch `subtle`, and the size reads as a diff stat: insertions green,
-  // deletions red, the files `subtle`. The checks take theirs, and each `·` keeps the default color.
+  // What the loops do takes `inactive`, the branch the palette's cyan, and the size reads as a diff stat: insertions
+  // green, deletions red, the files `subtle`. The checks take theirs, and each `·` keeps the default color.
   expect([facts?.props.color, facts?.props.dimColor]).toEqual([undefined, undefined])
   const pieces = (facts?.children ?? []) as (string | { props: { color?: string }; children: string[] })[]
   expect(
@@ -233,7 +233,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   ).toEqual([
     ['watching', 'inactive'],
     ' · ',
-    ['fix-branch', 'subtle'],
+    ['fix-branch', 'ansi256(6)'],
     ' · ',
     ['+12', 'success'],
     ' ',
