@@ -109,7 +109,7 @@ type Ran = ReturnType<typeof ran>
  */
 type Outcome = Ran | { deny: string }
 
-const TAGLINE = 'Your mind is a projector, casting ideas onto the world.'
+const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
 
 /** GitHub's answer to a query, where a test needs another. */
 type Beneath = { github?: (query: string) => Ran }
