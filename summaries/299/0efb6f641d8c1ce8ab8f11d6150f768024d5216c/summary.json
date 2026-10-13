@@ -1,0 +1,196 @@
+{
+ "version": 1,
+ "name": "Per-session inbox numbers",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 299,
+  "title": "Number inbox items from 1 in each session",
+  "head": "0efb6f641d8c1ce8ab8f11d6150f768024d5216c",
+  "headRef": "inbox-numbering",
+  "base": "5b21264b8d3dbcdb5003d5fc3824dfa5a929b3df",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox holds the questions and notices an agent posts for you. An agent posts one with the <code>ask</code> or <code>tell</code> tool, or with <code>project inbox ask</code> and <code>project inbox tell</code>. Claude Code's band, the strip above your prompt, lists the items, and an answer goes back to the agent as a line that starts <code>ANSWER</code> or <code>DISMISSED</code>. Each session keeps its items as JSON files in its own directory under Projector's state directory.",
+   "Before this change, an item's <b>reference</b>, the handle the CLI prints and takes, named its pull request: <code>#337.3</code> was the session's third item about #337, <code>octo/web#12.1</code> the first about another repository's #12, and <code>q2</code> the second about no pull request. The forms existed so you could type one in a prompt, but nobody does: the band shows no reference, and you answer by pressing in the band. The forms still cost a count per pull request, a recorded session repository, a <code>git</code> call on every post, and a <code>project inbox context</code> process for any prompt that looked like it held a reference.",
+   "Now each session numbers its items <code>1</code>, <code>2</code>, <code>3</code> in one count across questions and notices, kept in <code>count.json</code>. The reference is that number as a string. The agent reads it in what the tools return and in the <code>ANSWER</code> lines, and a shell user reads it in <code>project inbox list</code>. You never see it: the band, the notifications, and the failed-delivery toast name an item by its subject.",
+   "This builds section 11 of the inbox plan, which #294 added. Nothing migrates: an item stored under an old reference is never read again, and every command refuses the old forms with exit 65. Because every session counts from 1, a number typed in a shell with no session named looks first among open items, so it finds the one session that holds it open rather than every session's resolved item of the same number."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Item</b>: a question, which you answer or dismiss, or a notice, which you read and dismiss.</li><li><b>Reference</b>: the item's handle, stored as <code>ref</code>. Now its number as a string, such as <code>\"3\"</code>; an answer adds a letter, as <code>3.a</code>.</li><li><b>Session</b>: one agent conversation; each has its own store directory and its own count.</li><li><b>The band</b>: Projector's Claude Code plugin view above the prompt, which lists the session's items by running <code>project inbox list --json</code>.</li><li><b>Deliverer</b>: whatever sends an answer back to the agent, the band or <code>project inbox watch</code>.</li></ul>"
+   },
+   {
+    "id": "what-goes",
+    "title": "What goes away",
+    "html": "<ul class=\"tight\"><li><code>project inbox context</code>, which now exits 2 as an unknown subcommand.</li><li>The band's reading of references in a sent prompt: <code>mayReference</code> and <code>explain</code>.</li><li><code>counts.json</code>, <code>session.json</code>, <code>session_repo</code>, <code>checkout_repo</code>, and the <code>repo</code> argument of <code>post</code>.</li><li>The <code>stdin</code> argument of the band's <code>project</code> helper, which only <code>explain</code> used.</li></ul>"
+   },
+   {
+    "id": "history",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li><b>db4b539</b>: clean, with one suggestion: the agent instructions still said <code>dismiss &lt;reference&gt;</code>.</li><li><b>cebd5c8</b>: the instructions now say <code>&lt;number&gt;</code>, and a bare number prefers open items. Clean.</li><li><b>0efb6f6</b>: merges <code>main</code> after #298 and #300, resolving one conflict in <code>docs/cli.md</code> by dropping the <code>project inbox context</code> paragraph beside <code>main</code>'s new loop section. No change of its own. Clean.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "store",
+   "title": "The store and the CLI",
+   "kicker": "How a session numbers its items, and how the CLI names them",
+   "intro": [
+    "The Python side owns the store. <code>post</code>, which records every item, now takes the session's lock, reads <code>last</code> from <code>count.json</code>, writes <code>last + 1</code> back, and then writes the item to <code>&lt;number&gt;.json</code>. The count is written first, so a crash between the two writes skips a number rather than handing it out twice. The count only grows, so pruning, which deletes the oldest delivered items, can never free a number for reuse.",
+    "Two checks keep the old forms out. <code>REFERENCE</code>, the pattern every command parses its argument with, now accepts only a number with an optional letter. <code>item_in</code>, the check that decides whether a file holds an item, now also requires a whole-number <code>ref</code>, so a file written under <code>#337.3</code> or <code>q2</code> is skipped by every reader.",
+    "Every session keeps up to 100 resolved items, and its directory stays after it ends, so most sessions hold a <code>1</code>. To keep a bare <code>answer 3.a</code> from a shell useful, <code>locate</code>, which finds the session holding a number when none is named, now takes <code>prefer_open</code>. With it, the candidates are the sessions whose item has no answer recorded, whenever any does; otherwise every session that holds the number, as before. <code>show</code>, <code>answer</code>, <code>dismiss</code>, and <code>snooze</code> pass it."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A number open in two sessions still exits 67, and the message says to pass the session that <code>list</code> prints beside the item. <code>--session</code> or <code>PROJECTOR_SESSION</code> skips the lookup entirely, and the band and <code>watch</code> always pass a session."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "The count in <code>count.json</code>, the whole-number check on a stored item, the new reference pattern, the lookup that prefers open items, and the removal of the session repository and of <code>context</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 157,
+       "text": "With this check, <code>load_items</code>, <code>list --all</code>, <code>watch</code>, and <code>prune</code> skip an old <code>q1.json</code> or <code>%23337.1.json</code> item and leave it on disk. <code>test_leaves_items_stored_under_old_references_unread_in_place</code> covers it, and the 922-test suite passed at this head."
+      },
+      {
+       "kind": "verify",
+       "line": 249,
+       "text": "The count lands before the item, under the lock taken above, and nothing reads the item files to choose a number. Traced through <code>post</code>; <code>NumberingTests</code> checks <code>1</code>, <code>2</code>, <code>3</code> across pull requests and kinds."
+      },
+      {
+       "kind": "verify",
+       "line": 38,
+       "text": "<code>NUMBER</code> and <code>REFERENCE</code> refuse <code>0</code> and <code>01</code> as well as the old forms; <code>test_refuses_a_reference_in_an_old_form_with_the_new_ones</code> covers each one with exit 65."
+      },
+      {
+       "kind": "verify",
+       "line": 293,
+       "text": "Only <code>find</code>, <code>answer</code>, <code>dismiss</code>, and <code>snooze</code> pass <code>prefer_open</code>; <code>claim</code>, <code>delivered</code>, and <code>reopen</code> act on an answered question and look among every item. <code>update</code> reads the item again under the lock, so an item answered after this unlocked read is refused rather than answered twice. Four new <code>NumberingTests</code> cover it, and the 922-test suite passed at this head."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "<code>ask</code> and <code>tell</code> stop passing the checkout's repository; the <code>context</code> subcommand and <code>checkout_repo</code> go; the help names a number.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1179,
+       "text": "Posting no longer runs <code>git config</code> on the checkout's <code>origin</code>, so <code>ask</code> and <code>tell</code> behave the same from any directory."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_inbox.py",
+     "note": "<code>NumberingTests</code> covers the CLI rows of the plan's acceptance table and the lookup that prefers open items; every other test now names items by number."
+    },
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The instructions <code>project init</code> writes for agents now say <code>dismiss &lt;number&gt;</code>; the block's version goes from 8 to 9 so <code>init</code> refreshes older copies."
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins the version 9 block's hash beside the older versions'."
+    }
+   ]
+  },
+  {
+   "id": "band",
+   "title": "The band and the tools",
+   "kicker": "What the Claude Code plugin returns, shows, and stops reading",
+   "intro": [
+    "The band is the TypeScript plugin in <code>hooks/</code>. Its <code>ask</code> and <code>tell</code> tools run the CLI and return what it prints, so they now answer <code>Asked 3.</code> and <code>Posted 3.</code>, and the tool description gives <code>3</code> as its example.",
+    "Three things you see change. A tool's notification now holds the subject alone. The toast for an answer that did not reach its agent quotes the question's subject in place of its reference. And the <code>prompt.submit</code> hook, which ran when you sent a prompt, no longer looks for references in it or runs <code>project inbox context</code>; it still adds the note that names a subagent whose question your prompt answers."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The band reads only its own session's store, so keying items, drawers, and deliveries by <code>ref</code> stays unambiguous now that every session counts from 1. Traced <code>readStore</code> and its one caller, which passes <code>$.session.id()</code>."
+    },
+    {
+     "kind": "verify",
+     "text": "The band actions <code>main</code> added run <code>project inbox</code> with <code>--session</code>, like every other band call, so the lookup that prefers open items never applies to the band. Checked every <code>['inbox', …]</code> call in <code>register.tsx</code>; <code>claude plugin test .</code> passed 78 of 78."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Notifications without a number, the toast that quotes the subject, and the removal of <code>explain</code> from the prompt hook.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 328,
+       "text": "This lookup runs after <code>replace</code> has stored the reopened item, so the question is normally in the list; when it is not, the toast says \"an answer\" and still names no number. The band test for a dropped submit expects the quoted subject, and <code>claude plugin test .</code> passed 78 of 78."
+      },
+      {
+       "kind": "context",
+       "line": 716,
+       "text": "An older band paired with this CLI still runs <code>project inbox context</code> on a prompt shaped like an old reference. The CLI now exits 2 there, and the older <code>explain</code> already treats any failure as no added context."
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "<code>ASK_DESCRIPTION</code> gives <code>3</code> as its example, and <code>mayReference</code> goes."
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "A comment on <code>Posted.ref</code> says it is the item's number as a string; no type changes."
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Fixtures numbered from 1; tests for the tools' replies and notifications, the toast, a prompt holding a number, and a band that draws no number."
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "Fixtures numbered from 1, and the <code>mayReference</code> test removed."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI and band docs, and what building the plan settled",
+   "intro": [
+    "The CLI guide and the band guide now use numbers in every example, and drop the reference forms, the session repository, and <code>project inbox context</code>. The CLI guide also says how a bare number is looked up. The inbox plan gains section 11.10, which records the points building section 11 settled, such as the toast's wording when it cannot find the question and why a bare number prefers open items. The plan stays <code>in-progress</code> until a check by hand under tmux."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's own copy of the instructions block, regenerated at version 9; <code>CLAUDE.md</code> links to it."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "\"Use the inbox\" numbers its examples, and says how a number with no session is looked up and what to do when it is open in more than one session.",
+     "checks": []
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Says to find an item's number with <code>project inbox list</code> before snoozing it from a terminal, and drops the sentence about typing a reference in a prompt."
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Section 11.10, What building it settled, and step 5 of section 11.2 on looking up a number.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 859,
+       "text": "Section 11.10 matches the code at this head, including the lookup that prefers open items, and opens no question; <code>project check</code> reports the plans valid."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
