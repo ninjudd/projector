@@ -1383,3 +1383,131 @@ and for "unsnooze when an item is snoozed".
 | The tools' descriptions and arguments | `the restore tool is for a dismissal the person calls a mistake, never a question asked again`, `` a call of the restore tool becomes `project inbox restore`, and only a whole number names an item ``, `the ask tool tells the agent that a pick arrives by number and a reply as the person’s prompt`, `word that a question was restored waits for a deliverer until a live claim holds it`, in `hooks/inbox.test.ts` |
 | Codex allows `restore` by name | The `project inbox restore` row of `DECISIONS` and `test_the_codex_rules_name_every_command_or_leave_it_out` in `tests/test_permissions.py` |
 | The Projector section's new sentence is pinned to begin marker 12 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |
+
+## 15. Use the band from the keyboard
+
+You can work the band from the keyboard as you answer Claude Code's own
+surveys. An open question's options are Buttons on the digits `1` to `6`,
+and a digit presses one from the band or typed first into an empty prompt.
+Each drawer action takes a letter by its place: `d` for **discuss**, `x`
+for **dismiss** or **restore**, and `s` for **snooze** or **unsnooze**.
+Enter on a line opens its drawer and moves the focus ring into it, and
+Enter on the open line closes the drawer with the ring on the line.
+`docs/plugins.md` gains a section on the band's keys. This section
+supersedes the bullets of § 2.5 that draw a drawer's actions as their labels
+alone, and the last row of § 4's table, under which an option's number
+takes no press on the main screen.
+
+### 15.1 Problem
+
+Claude Code moves the keyboard into the band with ctrl+x tab, walks a focus
+ring over the band's Buttons with Tab and the arrows, and presses the one
+under the ring with Enter. A question's options did not take part. Each was
+a `Markdown` link, `1.`, which only a click presses, so on the main screen,
+which Claude Code uses under tmux and takes no clicks, a question could be
+answered only by typing its quote and option by hand. Enter on a line
+opened its drawer but left the ring on the line, and the engine keeps the
+ring by position, so after an item's drawer took the band to itself the
+ring sat on whatever element held the line's old place. Every action took
+Tab presses and Enter. The owner asked for the band to work as a survey
+does: digits for the options and letters for the actions.
+
+### 15.2 What changes
+
+- **Options are Buttons on digits.** An open question's options are `plain`
+  Buttons with the hotkeys `1` to `6`, in the order of their letters, the
+  recommendation first with its `(recommended)` mark. The engine draws the
+  digit before the option in the accent color, as `1: Decline it`, so the
+  band draws no number of its own. Pressing an option, by a click, Enter,
+  or its digit, does what clicking its number did: it records the pick
+  through `propose` and fills the prompt with the quote and the option, so
+  `readPrompt` reads the sent prompt as before.
+- **The digits work from an empty prompt.** Claude Code presses a band
+  Button whose hotkey is a digit typed first into an empty prompt, as it
+  answers a survey, so the digits are set whenever an open question's
+  drawer is open. A digit only fills the prompt, so a stray one sends
+  nothing.
+- **A resolved question's options are text.** Its drawer lists the options
+  with no digits and nothing to press, the answer given at full strength
+  and marked `✓`, the rest in `subtle`, and an answer typed with
+  `project inbox answer --text` after them.
+- **Actions take letters by their place.** In the open drawer, **discuss**
+  takes `d`, the second place takes `x`, whether it holds **dismiss** or
+  **restore**, and the third takes `s`, whether it holds **snooze** or
+  **unsnooze**. A pull request's drawer has `d` for **discuss** and `x` for
+  **dismiss**. The engine draws each as `d: discuss`.
+- **The letters show whenever a drawer is open.** The owner wanted them
+  set only while the band holds the keyboard. Claude Code tells the band
+  when it takes the keyboard but not when it gives it back, as § 15.3
+  explains, so the band uses the fallback the owner accepted: it sets the
+  letters on every drawer it draws. A letter presses its action only while
+  the band holds the keyboard, so the fallback changes the drawing, not
+  what a key does.
+- **Enter takes the ring into the drawer.** A `ui.focus` hook records the
+  band element the ring last landed on. When a line is pressed with the
+  ring on it, the press came from Enter, and the band moves the ring with
+  `$.ui.focus`: onto a question's first option when a drawer opens, or
+  onto **discuss** when the drawer has no options to press. Enter on an
+  open item's line moves the ring back onto the item's line in the list. A
+  pull request's drawer opens and closes under its line, which keeps its
+  place, so closing it leaves the ring where it is. A click moves nothing.
+- **An open item's line has a key of its own.** While its drawer is open,
+  an item's line is keyed `close:<number>`, not `item:<number>`, so the
+  move back onto the line waits for the band to draw the list again.
+- **A refused move is logged.** When the engine refuses a move, or the call
+  fails, the band writes `projector: the focus stayed off <key>: <reason>`
+  to the debug log.
+- **A ctrl-click on an option no longer opens the pull request.** The link
+  that carried the option went with it. The pull request's own drawer
+  links it, and the owner accepted the loss.
+
+### 15.3 Why this design
+
+- **Survey keys.** The owner answers Claude Code's surveys with a digit
+  from an empty prompt, and the band's questions are the same kind of
+  choice, so they take the same keys. Filling the prompt rather than
+  answering keeps § 13's rule that only a sent prompt answers.
+- **`1` to `6`, not `1` to `5`.** The `ask` tool takes a recommendation and
+  up to five other options, six answers in all.
+- **Letters by place, not by name.** **restore** and **unsnooze** undo what
+  **dismiss** and **snooze** did, in the places they held, so each keeps
+  the letter of what it undoes. Only one drawer is open at a time, so no
+  two actions share a letter. `x` stands for **dismiss** because `d` is
+  **discuss**.
+- **What the engine says about the keyboard.** `AbovePrompt`'s render
+  props carry no focus state, unlike a `Pane`'s `isFocused`. `ui.focus`
+  fires before the ring moves: on ctrl+x tab, which puts the ring on the
+  band's first element; on a click on the band outside its Buttons; on Tab
+  and the arrows; and on `$.ui.focus`. Esc and a click into the prompt
+  move nothing the band hears, and the band is not drawn again. So the band
+  learns when it takes the keyboard but not when it loses it, and the
+  owner chose the fallback in § 15.2 rather than a guess. If Claude Code
+  comes to report the keyboard leaving the band, the letters can show only
+  while it is there.
+- **The ring tells Enter from a click.** `ui.press` does not say what
+  pressed a Button. A click on a Button presses it without moving the ring
+  or taking the keyboard, and Enter presses the Button under the ring, so a
+  press on the line the ring is on is the keyboard's. The record can be
+  stale after Esc, but the engine refuses `$.ui.focus` for a band that
+  does not hold the keyboard, so a stale record moves nothing.
+- **`close:<number>` rather than a timer.** The engine keeps the ring by
+  position, and an open item's drawer has the band to itself, so the item's
+  line is the top row while the drawer is open and lower in the list once
+  it closes. `$.ui.focus` resolves a key against the band as drawn when
+  the key is already drawn, and waits for the next drawing only when it is
+  not. A key the open line does not share waits for the list, with no
+  timing to guess.
+- **Tests read the debug line.** Claude Code's test kit serves no
+  `$.ui.focus` and lets no test hook see a plugin's call, so a test raises
+  `ui.focus` to place the ring and reads which element the band then tried
+  from the debug line it writes when the kit refuses the move.
+
+### 15.4 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| An open question's options are plain Buttons on `1` to `6` with no number of the band's; the digits are set only while its drawer is open; pressing the sixth fills the prompt and sending it answers; a resolved question's options have no digits | `an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open`, `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer` in `hooks/band.test.tsx` |
+| A pick through a Button speaks to its question as a pick through the link did | The tests § 13.4 lists, which now press the Buttons |
+| A drawer's actions take `d`, `x`, and `s` by place, **restore** and **unsnooze** included, and no line takes a letter | `a drawer’s actions take d, x and s by their place, restore and unsnooze included` |
+| Enter on a line moves the ring into the drawer it opens and back onto an item's line; a click moves nothing; a pull request's drawer closes in place | `Enter on a line moves the ring into the drawer it opens and back onto the line, and a click moves nothing` |
+| The ring on a live terminal, ctrl+x tab, the digits from an empty prompt, and the letters' drawing | Checked by hand by the owner in a preview session |

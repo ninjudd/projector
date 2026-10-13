@@ -1061,6 +1061,17 @@ test('an idle session with no questions starts no project process', async ($, on
   await ui.unmount()
 })
 
+/** The Buttons of a question's options, in the order its drawer draws them. */
+async function optionsOf(ui: Pick<Mounted, 'findAll'>) {
+  return (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('answer:'))
+}
+
+/** The keys of the band's Buttons that a digit presses. */
+async function digitsOf(ui: Pick<Mounted, 'findAll'>) {
+  const buttons = await ui.findAll({ type: 'Button' })
+  return buttons.flatMap(button => (/^\d$/.test(String(button.props.hotkey ?? '')) ? [button.key] : []))
+}
+
 test('an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -1081,11 +1092,16 @@ test('an option puts the question and its answer in the prompt, and sending it a
   expect(await ui.find({ key: 'answer:1.c' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'discuss:1' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeDefined()
-  // A digit typed first in an empty prompt presses a band Button whose hotkey it is.
-  for (const button of await ui.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
+  // Each option is a plain Button on its digit, which the engine draws before it, so the band draws no number.
+  const options = await optionsOf(ui)
+  expect(options.map(option => [option.key, option.props.hotkey, option.props.plain, option.text])).toEqual([
+    ['answer:1.a', '1', true, 'Decline it (recommended)'],
+    ['answer:1.b', '2', true, 'Add a budget'],
+  ])
+  expect(await ui.find({ type: 'Text', text: /^\d\.$/ })).toBeUndefined()
 
   // Choosing an option answers nothing yet: it fills the prompt, and the drawer stays open.
-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.b' })
   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nAdd a budget\n'])
   expect(session.store.store.get('1')?.answer).toBeUndefined()
   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
@@ -1108,17 +1124,17 @@ test('an option puts the question and its answer in the prompt, and sending it a
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
 
-  // The resolved question still opens, its choice marked, the rest muted, and nothing left to press.
+  // The resolved question still opens, its choice marked, the rest muted, and nothing left to press or number.
   await ui.press({ key: 'item:1' })
   expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: /^2\.$/ }))?.props.color).toBe('success')
-  expect((await ui.find({ type: 'Text', text: /^1\.$/ }))?.props.color).toBe('subtle')
+  expect((await ui.find({ type: 'Text', text: /^Add a budget/ }))?.props.color).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: /^Decline it/ }))?.props.color).toBe('subtle')
   expect((await ui.find({ type: 'Text', text: /^Decline the finding\?$/ }))?.props.color).toBe('subtle')
-  expect(await ui.find({ key: 'answer:1.a' })).toBeUndefined()
+  expect(await optionsOf(ui)).toEqual([])
+  expect(await digitsOf(ui)).toEqual([])
   expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeUndefined()
 
-  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'close:1' })
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
   await clock.advance(30_000 + TICK)
@@ -1136,7 +1152,7 @@ test('a question another shares the text of takes only the answer its own drawer
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await ui.press({ key: 'answer:2.a' })
   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nDecline it\n'])
   await $.prompt.submit({ text: '"Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
@@ -1154,11 +1170,11 @@ test('a proposal you cleared from the prompt does not take the answer you sent f
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await ui.press({ key: 'answer:2.a' })
   // You clear that from the prompt, then choose the other answer in the older question's drawer.
-  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'close:2' })
   await ui.press({ key: 'item:1' })
-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.b' })
   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
@@ -1218,14 +1234,16 @@ test('discuss keeps the drawer open with the question above a blank line, a repl
     await ui.press({ key: 'item:1' })
   }
   expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
-  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'close:1' })
 
   // An answer typed from a terminal shows after the options, marked.
   await ui.press({ key: 'item:3' })
-  expect((await ui.find({ type: 'Text', text: /^3\.$/ }))?.props.color).toBe('success')
-  expect(await ui.find({ type: 'Text', text: /^keep the cap/ })).toBeDefined()
+  const typedAnswer = await ui.find({ type: 'Text', text: /^keep the cap ✓$/ })
+  expect(typedAnswer?.props.color).toBeUndefined()
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  expect(texts.indexOf(typedAnswer?.text ?? '')).toBeGreaterThan(texts.findIndex(text => text.startsWith('Add a budget')))
 
-  await ui.press({ key: 'item:3' })
+  await ui.press({ key: 'close:3' })
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'dismiss:2' })
   expect(session.project()).toContain('inbox dismiss 2 --session s1 --json')
@@ -1245,7 +1263,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:1' })
   // You choose an option, then add to it before you send.
-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.b' })
   const text = '"Decline the finding?"\n\nAdd a budget\n\nBut what does the cap cover?\n'
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
@@ -1283,7 +1301,6 @@ test('a prompt about one of two questions that share a subject leaves the other 
   const agents = [fixer('agent-a', 'Fix #7'), fixer('agent-b', 'Fix #8')]
   const session = questionWorld(on, clock, [first, second], { agents })
   await startSession($, clock)
-  const pull8 = { href: 'https://github.com/x/y/pull/8' }
 
   const ui = await $.ui.mount(BAND)
   // You discuss the second question: your reply goes to its subagent alone.
@@ -1301,8 +1318,8 @@ test('a prompt about one of two questions that share a subject leaves the other 
   // Then you pick No in its drawer and open the first question's drawer before you send. The
   // prompt answers the second question, and the first hears nothing and keeps its drawer open.
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.b', link: pull8 })
-  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.b' })
+  await ui.press({ key: 'close:2' })
   await ui.press({ key: 'item:1' })
   const answer = '"Merge it?"\n\nNo\n'
   await $.prompt.submit({ text: answer, wait: false, origin: { kind: 'composer' } })
@@ -1330,8 +1347,8 @@ test('a quote two questions share goes to the one whose drawer you acted in last
   const ui = await $.ui.mount(BAND)
   // You pick Yes in the second question's drawer, think better of it, and discuss the first instead.
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
-  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.a' })
+  await ui.press({ key: 'close:2' })
   await ui.press({ key: 'item:1' })
   await ui.press({ key: 'discuss:1' })
   await $.prompt.submit({ text: '"Merge it?"\n\nYes\n', wait: false, origin: { kind: 'composer' } })
@@ -1581,7 +1598,7 @@ test('no line or drawer shows an item’s number', async ($, on) => {
     await ui.press({ key: `item:${ref}` })
     expect(await ui.find({ key: `detail:${ref}` })).toBeDefined()
     expect(await drawn()).not.toMatch(/42|43/)
-    await ui.press({ key: `item:${ref}` })
+    await ui.press({ key: `close:${ref}` })
   }
   await ui.unmount()
 })
@@ -1651,7 +1668,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   expect(session.submitted).toEqual([])
   expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
 
-  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'close:2' })
   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
   await clock.advance(30_000 - 2 * TICK)
   await clock.settle()
@@ -1732,7 +1749,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:1' })
   // You choose an option from the question as it reads now, and have not sent it yet.
-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.b' })
 
   const options = ['Add a budget of two per host', 'Ask the reviewer']
   const called = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, options, detail: 'The cap is three.' })
@@ -1744,12 +1761,13 @@ test('the revise tool redraws the question with its new text at once, keeping it
   )
   // Before the band reads the store again, the open drawer shows the new text.
   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The cap is three.')
-  expect(await ui.find({ type: 'Text', text: /^Add a budget of two per host/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Ask the reviewer/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Add a budget$/ })).toBeUndefined()
-  expect(await ui.find({ key: 'answer:1.c' })).toBeDefined()
+  expect((await optionsOf(ui)).map(option => [option.props.hotkey, option.text])).toEqual([
+    ['1', 'Decline it (recommended)'],
+    ['2', 'Add a budget of two per host'],
+    ['3', 'Ask the reviewer'],
+  ])
 
-  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'close:1' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 1, question: 'Decline the retry finding?' })
   expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
@@ -1762,7 +1780,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
   expect(session.store.store.get('1')?.answer).toBeUndefined()
 
   await ui.press({ key: 'item:1' })
-  await ui.press({ key: 'answer:1.c', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.c' })
   expect(session.filled.at(-1)).toBe('insert:"Decline the retry finding?"\n\nAsk the reviewer\n')
   await $.prompt.submit({ text: '"Decline the retry finding?"\n\nAsk the reviewer\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
@@ -1781,7 +1799,7 @@ test('an answer chosen before a revise answers no question, and a pick from the 
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
   expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe('The cap is three.')
 
@@ -1803,7 +1821,7 @@ test('an answer chosen before a revise answers no question, and a pick from the 
 
   // The same option, picked again in the revised question's drawer, answers it.
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await ui.press({ key: 'answer:2.a' })
   await $.prompt.submit({ text: decline, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
@@ -1820,7 +1838,7 @@ test('an answer chosen before a revise rewords its question does not answer anot
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, question: 'Decline the retry finding?' })
   expect(await ui.find({ key: 'detail:2' })).toBeDefined()
 
@@ -1863,7 +1881,6 @@ test('an option typed under a quote discussed before a revise answers no questio
 })
 
 const DECLINE = '"Decline the finding?"\n\nDecline it\n'
-const PULL_8 = { href: 'https://github.com/x/y/pull/8' }
 
 test('a pick for a question withdrawn before you send answers no other question', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
@@ -1873,7 +1890,7 @@ test('a pick for a question withdrawn before you send answers no other question'
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: PULL_8 })
+  await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__withdraw', number: 2 })
   await $.prompt.submit({ text: DECLINE, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
@@ -1890,7 +1907,7 @@ test('a pick made before a revise, for a question dismissed before you send, ans
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: PULL_8 })
+  await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
   await ui.press({ key: 'dismiss:2' })
   await clock.settle()
@@ -2166,7 +2183,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
   expect(Object.keys(session.store.store.get('1') ?? {})).not.toContain('restoredAt')
 
   // Picking an option answers it as if it had never been dismissed.
-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.b' })
   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
@@ -2337,4 +2354,150 @@ test('the restore tool refuses what the CLI refuses, asks an old CLI to upgrade,
   )
   expect(session.store.store.get('1')).toEqual(answered)
   expect(session.store.store.get('2')).toEqual(notice())
+})
+
+test('an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  // The recommendation and five more options, the most the ask tool takes.
+  const choices = ['Decline it', 'Add a budget', 'Cap per host', 'Ask the reviewer', 'Wait a day', 'Split the change']
+  const session = questionWorld(on, clock, [held({ choices }), notice()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  const digits = () => digitsOf(ui)
+
+  // A closed drawer leaves the digits to the prompt.
+  expect(await digits()).toEqual([])
+  await ui.press({ key: 'item:2' })
+  expect(await digits()).toEqual([])
+  await ui.press({ key: 'close:2' })
+
+  await ui.press({ key: 'item:1' })
+  expect((await optionsOf(ui)).map(option => [option.key, option.props.hotkey])).toEqual([
+    ['answer:1.a', '1'],
+    ['answer:1.b', '2'],
+    ['answer:1.c', '3'],
+    ['answer:1.d', '4'],
+    ['answer:1.e', '5'],
+    ['answer:1.f', '6'],
+  ])
+  // Pressing the sixth, by its digit or Enter, fills the prompt as clicking its number did, and sending it answers.
+  await ui.press({ key: 'answer:1.f' })
+  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nSplit the change\n'])
+  await $.prompt.submit({ text: '"Decline the finding?"\n\nSplit the change\n', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'f', text: 'Split the change' }))
+
+  // The answered question's drawer lists its options with no digits.
+  await ui.press({ key: 'item:1' })
+  expect(await ui.find({ type: 'Text', text: /^Split the change ✓$/ })).toBeDefined()
+  expect(await digits()).toEqual([])
+  await ui.unmount()
+})
+
+/** Each action of the open drawer, by its key, with the letter that presses it. */
+async function lettersOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
+  const actions = (await ui.findAll({ type: 'Button' })).filter(button =>
+    /^(discuss|dismiss|snooze|unsnooze|restore):/.test(button.key ?? ''),
+  )
+  return actions.map(action => `${action.key ?? ''} ${action.props.hotkey ?? ''}`)
+}
+
+test('a drawer’s actions take d, x and s by their place, restore and unsnooze included', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  questionWorld(on, clock, [held(), notice()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+
+  // No line takes a letter; only the open drawer's actions do.
+  expect((await ui.findAll({ type: 'Button' })).filter(button => button.props.hotkey !== undefined)).toEqual([])
+
+  await ui.press({ key: 'pr:x/y#7' })
+  expect(await lettersOf(ui)).toEqual(['discuss:x/y#7 d', 'dismiss:x/y#7 x'])
+
+  await ui.press({ key: 'item:1' })
+  expect(await lettersOf(ui)).toEqual(['discuss:1 d', 'dismiss:1 x', 'snooze:1 s'])
+
+  // Snoozed, unsnooze takes snooze's letter.
+  await ui.press({ key: 'snooze:1' })
+  await clock.settle()
+  await ui.press({ key: 'item:1' })
+  expect(await lettersOf(ui)).toEqual(['discuss:1 d', 'dismiss:1 x', 'unsnooze:1 s'])
+
+  // Dismissed, restore takes dismiss's letter.
+  await ui.press({ key: 'dismiss:1' })
+  await clock.settle()
+  await ui.press({ key: 'item:1' })
+  expect(await lettersOf(ui)).toEqual(['discuss:1 d', 'restore:1 x'])
+  await ui.unmount()
+})
+
+/**
+ * Moves the band's focus ring as the person's Tab or ctrl+x tab does, and
+ * records each element the band then tried to move the ring onto. The kit
+ * serves no `$.ui.focus`, so it refuses every move the band tries, and the
+ * debug line the band writes for a refused move names the element.
+ */
+function keyboardOf(on: On) {
+  const tried: string[] = []
+  on('ui.focus', () => ({}))
+  on('ui.log', ($, e) => {
+    const element = /^projector: the focus stayed off (\S+): /.exec(e.text)?.[1]
+    if (element !== undefined) tried.push(element)
+    return { value: undefined }
+  })
+  const tab = ($: Engine, element: string) =>
+    $.ui.focus({
+      component: 'AbovePrompt',
+      requestId: 'above-prompt',
+      plugin: 'projector',
+      element,
+      origin: { kind: 'person' },
+    })
+  return { tried, tab }
+}
+
+test('Enter on a line moves the ring into the drawer it opens and back onto the line, and a click moves nothing', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const answered = held({ ref: '3', number: 3, answer, deliveredAt: NOW - 1_000 })
+  questionWorld(on, clock, [held(), notice(), answered])
+  const { tried, tab } = keyboardOf(on)
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+
+  // A click, with the ring on nothing or on another line, leaves the ring alone.
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'close:1' })
+  await tab($, 'pr:x/y#7')
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'close:1' })
+  expect(tried).toEqual([])
+
+  // Enter on a question's line moves the ring onto its first option, and Enter
+  // on the open line moves it back onto the line in the list.
+  await tab($, 'item:1')
+  await ui.press({ key: 'item:1' })
+  expect(tried).toEqual(['answer:1.a'])
+  await tab($, 'close:1')
+  await ui.press({ key: 'close:1' })
+  expect(tried).toEqual(['answer:1.a', 'item:1'])
+
+  // A notice's drawer and an answered question's have no options to press, so the ring goes onto discuss.
+  await tab($, 'item:2')
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'close:2' })
+  await tab($, 'item:3')
+  await ui.press({ key: 'item:3' })
+  await ui.press({ key: 'close:3' })
+  expect(tried).toEqual(['answer:1.a', 'item:1', 'discuss:2', 'discuss:3'])
+
+  // A pull request's drawer opens under its line, so closing it leaves the ring where it is.
+  await tab($, 'pr:x/y#7')
+  await ui.press({ key: 'pr:x/y#7' })
+  await ui.press({ key: 'pr:x/y#7' })
+  expect(tried).toEqual(['answer:1.a', 'item:1', 'discuss:2', 'discuss:3', 'discuss:x/y#7'])
+  await ui.unmount()
 })

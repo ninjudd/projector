@@ -199,7 +199,7 @@ session starts a loop's watcher for the first time.
      reviewing · review-signature · +84 −12 in 5 files · checks passing
      github
      projector
-     discuss | dismiss
+     d: discuss | x: dismiss
 ```
 
 Each line is the pull request's number, `draft` or `ready`, its author when
@@ -259,11 +259,10 @@ dismissed here, dropped from a terminal, or merged, so the line comes back
 with its drawer closed.
 
 On the main screen, which Claude Code uses under tmux and when
-`CLAUDE_CODE_NO_FLICKER=0` is set, press ctrl+x tab to move into the band,
-then Enter on a number to open its drawer and Enter on **discuss** or
-**dismiss** to use it.
-The **github** and **projector** links take no press there; the terminal
-opens them the way it opens any other link.
+`CLAUDE_CODE_NO_FLICKER=0` is set, use the band from the keyboard, as
+[Use the band from the keyboard](#use-the-band-from-the-keyboard)
+describes. The **github** and **projector** links take no press there; the
+terminal opens them the way it opens any other link.
 
 The band lists only this session's loops. It finds a loop by the
 `--tracked` file its watcher reads, and learns that file when the session
@@ -311,11 +310,11 @@ and in a terminal the divider counts the open questions and the open notices.
 ```
 
 Click anywhere on an item to open its drawer, and click it again to close
-it. On the main screen, press ctrl+x tab to move into the band, then Enter on
-an item. While its drawer is open, the item stays highlighted and has the
-band to itself, so the item is the top row. In a terminal, the divider and
-the blank line under it step aside too, which gives the drawer two more rows
-before the band scrolls:
+it. On the main screen, press Enter on it from the keyboard instead. While
+its drawer is open, the item stays highlighted and has the band to itself,
+so the item is the top row. In a terminal, the divider and the blank line
+under it step aside too, which gives the drawer two more rows before the
+band scrolls:
 
 ```text
 - Decline the finding about the retry budget?                 #337  5m [-]
@@ -323,16 +322,16 @@ before the band scrolls:
   The review asks for a retry budget per host. The loop caps retries at
   three in total, which covers the case the finding names.
 
-  1. Decline it: the total cap already bounds retries to one host
-     (recommended)
-  2. Add a budget of two retries per host, and keep the total cap
+  1: Decline it: the total cap already bounds retries to one host
+  (recommended)
+  2: Add a budget of two retries per host, and keep the total cap
 
-  discuss | dismiss | snooze
+  d: discuss | x: dismiss | s: snooze
 ```
 
-The first option is always the agent's recommendation. Click an option's
-number, and the band puts the question and that answer in your prompt, for
-you to send as it stands or change first:
+The first option is always the agent's recommendation. Press an option by
+clicking it, by Enter, or by its digit, and the band puts the question and
+that answer in your prompt, for you to send as it stands or change first:
 
 ```text
 "Decline the finding about the retry budget?"
@@ -390,12 +389,12 @@ Under the options, a question's drawer has three actions:
   drawer.
 - **snooze** puts the question off for an hour and closes the drawer.
 
-A notice's drawer shows its detail, then the same `discuss | dismiss |
-snooze`. **discuss** puts the quoted notice in the prompt. A prompt you send
-that quotes a notice answers nothing, but it closes the notice's drawer; the
-notice stays in the band until you dismiss it. **dismiss** clears the notice
-once you have read it and closes its drawer, and nothing goes back to the
-agent.
+A notice's drawer shows its detail, then the same
+`d: discuss | x: dismiss | s: snooze`. **discuss** puts the quoted notice
+in the prompt. A prompt you send that quotes a notice answers nothing, but
+it closes the notice's drawer; the notice stays in the band until you
+dismiss it. **dismiss** clears the notice once you have read it and closes
+its drawer, and nothing goes back to the agent.
 
 A snoozed item leaves the divider's counts at once, and stays in the list
 for 30 seconds in the `subtle` color, not struck through, so it reads as put
@@ -410,22 +409,24 @@ A resolved item stays in the list, muted, for 30 seconds after it is
 delivered, and a dismissed one is struck through. A dismissed notice is
 delivered at once, since nothing goes back to the agent. An item the agent
 withdrew leaves the band at once, its drawer with it, and sends nothing back,
-not even `DISMISSED` for a question. A question's drawer
-still opens and marks the answer given with `✓`, listing an answer typed in
-a terminal with `project inbox answer --text` after the options.
+not even `DISMISSED` for a question. A question's drawer still opens and
+lists its options, without their digits and with nothing to press, and
+marks the answer given with `✓`, listing an answer typed in a terminal with
+`project inbox answer --text` after the options.
 
 While a dismissed or snoozed item is still listed, click its line to open
 its drawer again. There, **restore** takes the place of **dismiss** for a
-dismissed item, which reads `discuss | restore`, and **unsnooze** takes the
-place of **snooze** for a snoozed one, which reads
-`discuss | dismiss | unsnooze`. Either runs `project inbox restore`, and the
-item is open again at once, in its place in the list, with its drawer still
-open and **dismiss** and **snooze** back in their places. A dismissed question
-whose `DISMISSED` has not gone out sends its agent nothing; one whose agent
-already heard `DISMISSED` sends `RESTORED`. Once the item has left the band,
-ask the agent to restore it, and the band appears with the item open, even
-if you hid it. A drawer closes when its line leaves the band,
-so a pull request or an item that comes back returns with its drawer closed.
+dismissed item, which reads `d: discuss | x: restore`, and **unsnooze**
+takes the place of **snooze** for a snoozed one, which reads
+`d: discuss | x: dismiss | s: unsnooze`. Either runs
+`project inbox restore`, and the item is open again at once, in its place
+in the list, with its drawer still open and **dismiss** and **snooze** back
+in their places. A dismissed question whose `DISMISSED` has not gone out
+sends its agent nothing; one whose agent already heard `DISMISSED` sends
+`RESTORED`. Once the item has left the band, ask the agent to restore it,
+and the band appears with the item open, even if you hid it. A drawer
+closes when its line leaves the band, so a pull request or an item that
+comes back returns with its drawer closed.
 
 An answer you give from a terminal with `project inbox answer` reaches the
 agent through the band of the session that asked. A subagent that is still
@@ -439,6 +440,45 @@ Shown or hidden, the band lists the session's inbox directory every 5
 seconds and runs `project inbox` only when the directory changed since
 its last successful read or an answer is on its way, so a session with an
 empty inbox starts no process. A read that fails runs again 5 seconds later.
+
+### Use the band from the keyboard
+
+Claude Code moves the keyboard between the prompt and the band, and draws
+a focus ring, an inverted highlight, on the band's line or action that has
+it:
+
+- **ctrl+x tab** moves the keyboard into the band, onto its first line.
+  Press it again to move to the next.
+- **Tab** and **→** move the ring to the next line or action, and
+  **shift+Tab** and **←** to the one before. **↑** and **↓** scroll a band
+  taller than the room it has.
+- **Enter** presses what the ring is on, as a click does.
+- **Esc** gives the keyboard back to the prompt.
+- **ctrl+x ctrl+a** collapses the band to one line, and shows it again.
+
+Enter on a line opens its drawer and moves the ring onto the drawer's first
+control: a question's first option, otherwise **discuss**. Tab then walks
+the options and the actions. Enter on the open line closes the drawer and
+leaves the ring on the line. A click opens and closes a drawer without
+moving the ring.
+
+An open question's options read `1:` to `6:`, the digit in the accent
+color. Press a digit while the band has the keyboard, or type it first into
+an empty prompt, as you answer Claude Code's own surveys, and the band puts
+that option in your prompt as a click does. A digit only fills the prompt,
+so nothing reaches the agent until you send. A resolved question's options
+have no digits.
+
+Each drawer action reads with its letter, such as `d: discuss`:
+
+- **d** presses **discuss**.
+- **x** presses **dismiss**, or **restore** in its place.
+- **s** presses **snooze**, or **unsnooze** in its place.
+
+A letter presses its action only while the band has the keyboard. Typed in
+the prompt, it is text. The band shows the letters whenever a drawer is
+open, because Claude Code tells it when the band takes the keyboard but not
+when it gives the keyboard back.
 
 ## Install for Codex
 

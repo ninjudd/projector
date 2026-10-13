@@ -101,6 +101,14 @@ let tickedAt: number | undefined
  * its question or holds the quote it was chosen under.
  */
 let proposed: Proposal[] = []
+/**
+ * Where the band's focus ring last landed, as `ui.focus` reported it: the
+ * band's site, and the key of the band's element under the ring, absent when
+ * the ring is on none of them. The engine says nothing when the band hands
+ * the keyboard back, so the ring can be stale, and the engine refuses a move
+ * once the band no longer holds the keyboard.
+ */
+let ring: { requestId: string; key: string | undefined } | undefined
 
 /**
  * Records what a question's drawer put in the prompt: an option, or an empty
@@ -589,6 +597,16 @@ function show($: Engine): void {
   })
 }
 
+/**
+ * Moves the band's focus ring onto one of its elements, which the engine
+ * waits for when the band has yet to draw it, and writes why the ring stayed
+ * to the debug log when the engine refuses the move.
+ */
+async function focusOn($: Engine, requestId: string, key: string): Promise<void> {
+  const moved = await $.ui.focus({ requestId, key }).catch((error: unknown) => ({ deny: messageOf(error) }))
+  if (moved.deny !== undefined) $.ui.log(`projector: the focus stayed off ${key}: ${moved.deny}`, { to: 'debug' })
+}
+
 /** Refreshes soon, from a timer so the hook that noticed a change returns at once. */
 const soon = ($: Engine) => $.clock.after(1, () => void refresh($))
 
@@ -849,6 +867,16 @@ export const register: Register = on => {
     return entered
   }).catch(($, e, next) => next(e))
 
+  // Enter presses the band's element under the ring, so where the ring is
+  // tells a press from the keyboard from a click.
+  on('ui.focus', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const moved = await next(e)
+    if (moved.deny === undefined) {
+      ring = { requestId: e.requestId, key: e.plugin === 'projector' ? e.element : undefined }
+    }
+    return moved
+  }).catch(($, e, next) => next(e))
+
   // A turn may have pushed, replied or resolved threads.
   on('turn.complete', ($, e, next) => {
     soon($)
@@ -871,7 +899,6 @@ export const register: Register = on => {
     if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
 
     const { Box, Button, Markdown, Text } = $.ui.resolve(e)
-    const env = await envOf($)
     const shown = current(await read($, snapshot))
     const time = await read($, now)
     const opened = await read($, drawer)
@@ -903,8 +930,13 @@ export const register: Register = on => {
     // divider's time says how old they are, so the band says why it failed
     // only when it has none of them to draw.
     const failure = shown.error === null || shown.rows.length > 0 ? undefined : `GitHub: ${shown.error}`
-    const toggle = (key: string) => {
+    // A line's press opens or closes its drawer. Enter with the ring on the
+    // line takes the ring along, `onto` the drawer's first control or back
+    // onto the line; a click leaves the ring where it was.
+    const toggle = (key: string, line: string, onto?: string) => {
+      const from = ring?.key === line ? ring : undefined
       update($, drawer, was => (was === key ? null : key)).catch(() => undefined)
+      if (from !== undefined && onto !== undefined) void focusOn($, from.requestId, onto)
     }
 
     // The engine draws the band's `[-]` just past `bodyColumns` on the first
@@ -937,18 +969,6 @@ export const register: Register = on => {
       )
     }
 
-    // A question's numbered options are Markdown links: a plain click runs
-    // `onPress`, and a ctrl, alt or cmd click opens `href`. Markdown draws
-    // only an `https:`, `http:` or `file:` link as one, so an option links its
-    // question's pull request, or the question's own file in the store when it
-    // has none.
-    const store = (session: string) => storeOf(env, session) ?? ''
-    const hrefOf = (question: Question) => {
-      const pull = question.pr?.match(/^([^#]+)#(\d+)$/)
-      return pull === null || pull === undefined
-        ? `file://${encodeURI(`${store(question.session)}/${encodeURIComponent(question.ref)}.json`)}`
-        : `https://github.com/${pull[1] ?? ''}/pull/${pull[2] ?? ''}`
-    }
     // An item names its pull request as the band labels it, or in full when
     // the band does not list it.
     const pullOf = (item: Item) => {
@@ -957,12 +977,13 @@ export const register: Register = on => {
     }
 
     // The items are a list below the pull requests, oldest first: a question
-    // bulleted `-`, a notice `•`. A question's drawer numbers its options;
-    // choosing one puts the question and that answer in the prompt as text,
-    // for you to send or change, and sending it unchanged is what answers the
-    // question. Discuss puts the question alone, for a reply in your own words,
-    // which answers nothing. A resolved question's drawer shows an answer typed
-    // with `project inbox answer --text` after its options.
+    // bulleted `-`, a notice `•`. An open question's drawer numbers its
+    // options; choosing one puts the question and that answer in the prompt as
+    // text, for you to send or change, and sending it unchanged is what
+    // answers the question. Discuss puts the question alone, for a reply in
+    // your own words, which answers nothing. A resolved question's drawer
+    // lists its options with nothing to press, and an answer typed with
+    // `project inbox answer --text` after them.
 
     // A pull request's line and an item's line each end with an age, in one
     // column as wide as the widest age in the band, so what comes before the
@@ -982,71 +1003,58 @@ export const register: Register = on => {
     const fill = (text: string) => {
       $.prompt.fill({ text, mode: 'insert' }).catch(() => undefined)
     }
-    // A drawer's actions are plain Buttons on one row, `|` between them.
-    const drawActions = (id: string, actions: readonly { name: string; onPress: () => void }[]) => (
+    // A drawer's actions are plain Buttons on one row, `|` between them, each
+    // pressed by its letter while the band holds the keyboard: `d` discusses,
+    // `x` sets the line aside or brings it back, and `s` puts it off or ends
+    // the snooze. The engine draws the letter before the name, as `d: discuss`.
+    type Action = { name: string; hotkey: 'd' | 'x' | 's'; onPress: () => void }
+    const drawActions = (id: string, actions: readonly Action[]) => (
       <Box flexDirection="row" columnGap={1}>
-        {actions.flatMap(({ name, onPress }, at) => [
+        {actions.flatMap(({ name, hotkey, onPress }, at) => [
           ...(at === 0 ? [] : [<Text key={`between:${id}.${at}`} color="subtle">|</Text>]),
-          <Button key={`${name}:${id}`} plain onPress={onPress}>
+          <Button key={`${name}:${id}`} plain hotkey={hotkey} onPress={onPress}>
             <Text>{name}</Text>
           </Button>,
         ])}
       </Box>
     )
+    // An open question's options are plain Buttons on the digits 1 to 6,
+    // which the engine draws before them, as `1: Decline it`. A digit presses
+    // its option from the band, or typed first into an empty prompt, as a
+    // survey's does; either only fills the prompt, so a stray one sends
+    // nothing. A resolved question's options are text, its answer marked.
     const drawAnswers = (question: Question) => {
       const { ref, answer } = question
-      const isOpen = answer === undefined
       const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
-      const href = hrefOf(question)
-      const pick = (answer: string) => {
-        propose(question, answer)
-        fill(`${proposalOf(question, answer)}\n`)
-      }
-      const option = (index: number, content: JSX.Element) => {
-        const letter = letterAt(index)
-        const number = `${index + 1}.`
-        const choice = question.choices[index]
-        return (
-          <Box key={`option:${ref}.${letter}`} flexDirection="row" columnGap={1}>
-            <Box flexShrink={0}>
-              {isOpen && choice !== undefined ? (
-                <Markdown
-                  key={`answer:${ref}.${letter}`}
-                  text={`[${number}](${href})`}
-                  onLinkPress={() => pick(choice)}
-                />
-              ) : (
-                <Text color={letter === chosen ? 'success' : 'subtle'}>{number}</Text>
-              )}
-            </Box>
-            <Box flexShrink={1}>{content}</Box>
-          </Box>
-        )
+      const recommended = <Text color="success"> (recommended)</Text>
+      const marked = <Text color="success"> ✓</Text>
+      const pick = (choice: string) => {
+        propose(question, choice)
+        fill(`${proposalOf(question, choice)}\n`)
       }
 
       return [
         <Text key={`before-answers:${ref}`}> </Text>,
         ...question.choices.map((choice, index) => {
           const letter = letterAt(index)
-          return option(
-            index,
-            <Text color={isOpen || letter === chosen ? undefined : 'subtle'}>
+          return answer === undefined ? (
+            <Button key={`answer:${ref}.${letter}`} plain hotkey={String(index + 1)} onPress={() => pick(choice)}>
+              {index === 0 ? [choice, recommended] : choice}
+            </Button>
+          ) : (
+            <Text key={`option:${ref}.${letter}`} color={letter === chosen ? undefined : 'subtle'}>
               {choice}
-              {index === 0 && <Text color="success"> (recommended)</Text>}
-              {letter === chosen && <Text color="success"> ✓</Text>}
-            </Text>,
+              {index === 0 && recommended}
+              {letter === chosen && marked}
+            </Text>
           )
         }),
-        chosen === typedLetter(question) &&
-          answer !== undefined &&
-          'text' in answer &&
-          option(
-            question.choices.length,
-            <Text>
-              {answer.text}
-              <Text color="success"> ✓</Text>
-            </Text>,
-          ),
+        chosen === typedLetter(question) && answer !== undefined && 'text' in answer && (
+          <Text key={`option:${ref}.${chosen}`}>
+            {answer.text}
+            {marked}
+          </Text>
+        ),
       ]
     }
     const drawItem = (item: Item) => {
@@ -1060,11 +1068,16 @@ export const register: Register = on => {
       const isMuted = !isOpen || isSnoozed
       const pull = pullOf(item)
       // A dismissed or snoozed item's drawer offers to bring it back where it
-      // offered to dismiss or snooze it.
-      const restore = (name: string) => ({ name, onPress: () => void act($, item, 'restore') })
-      const actions = [
+      // offered to dismiss or snooze it, on the same letter.
+      const restore = (name: string, hotkey: Action['hotkey']): Action => ({
+        name,
+        hotkey,
+        onPress: () => void act($, item, 'restore'),
+      })
+      const actions: Action[] = [
         {
           name: 'discuss',
+          hotkey: 'd',
           onPress: () => {
             if (item.kind === 'question') propose(item, '')
             fill(`${quoteOf(item)}\n\n`)
@@ -1072,13 +1085,22 @@ export const register: Register = on => {
         },
         ...(isOpen
           ? [
-              { name: 'dismiss', onPress: () => void act($, item, 'dismiss') },
-              isSnoozed ? restore('unsnooze') : { name: 'snooze', onPress: () => void act($, item, 'snooze') },
+              { name: 'dismiss', hotkey: 'x' as const, onPress: () => void act($, item, 'dismiss') },
+              isSnoozed
+                ? restore('unsnooze', 's')
+                : { name: 'snooze', hotkey: 's' as const, onPress: () => void act($, item, 'snooze') },
             ]
           : isDismissed
-            ? [restore('restore')]
+            ? [restore('restore', 'x')]
             : []),
       ]
+      // An open item's line has the band to itself, so closing its drawer
+      // puts the line back lower in the list. The engine keeps the ring by
+      // position, and the open line's key is one the list never draws, so a
+      // move onto the line in the list waits for the band to draw the list.
+      const isOpened = opened === key
+      const line = isOpened ? `close:${ref}` : key
+      const first = item.kind === 'question' && isOpen ? `answer:${ref}.${letterAt(0)}` : `discuss:${ref}`
 
       return (
         <Box key={`line:${ref}`} flexDirection="column">
@@ -1088,11 +1110,11 @@ export const register: Register = on => {
                 screen. */}
             <Box flexGrow={1} flexShrink={1}>
               {/* An open drawer keeps its item inverted, as the pointer draws it. */}
-              <Button key={key} plain onPress={() => toggle(key)}>
-                <Text color={isMuted ? 'subtle' : undefined} inverse={opened === key}>
+              <Button key={line} plain onPress={() => toggle(key, line, isOpened ? key : first)}>
+                <Text color={isMuted ? 'subtle' : undefined} inverse={isOpened}>
                   {item.kind === 'notice' ? '•' : '-'}{' '}
                 </Text>
-                <Text color={isMuted ? 'subtle' : undefined} strikethrough={isDismissed} inverse={opened === key}>
+                <Text color={isMuted ? 'subtle' : undefined} strikethrough={isDismissed} inverse={isOpened}>
                   {item.subject}
                 </Text>
               </Button>
@@ -1109,7 +1131,7 @@ export const register: Register = on => {
             )}
             {ageColumn(key, item.postedAt)}
           </Box>
-          {opened === key && (
+          {isOpened && (
             <Box flexDirection="column" marginLeft={2}>
               {/* A blank line sets the item apart from its line, and the detail,
                   when there is one, sits between two. */}
@@ -1138,7 +1160,12 @@ export const register: Register = on => {
               beside it. */}
           <Box flexDirection="row" columnGap={1}>
             <Box flexShrink={0} width={labelWidth}>
-              <Button key={`pr:${key}`} plain label={label(pr)} onPress={() => toggle(key)} />
+              <Button
+                key={`pr:${key}`}
+                plain
+                label={label(pr)}
+                onPress={() => toggle(key, `pr:${key}`, opened === key ? undefined : `discuss:${key}`)}
+              />
             </Box>
             <Box flexShrink={0}>
               <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
@@ -1178,8 +1205,8 @@ export const register: Register = on => {
               <Markdown key={`github:${key}`} text={`[github](${pr.url})`} />
               {pr.summaryUrl !== null && <Markdown key={`projector:${key}`} text={`[projector](${pr.summaryUrl})`} />}
               {drawActions(key, [
-                { name: 'discuss', onPress: () => fill(`${reference(pr)} `) },
-                { name: 'dismiss', onPress: () => void dismissPr($, pr) },
+                { name: 'discuss', hotkey: 'd', onPress: () => fill(`${reference(pr)} `) },
+                { name: 'dismiss', hotkey: 'x', onPress: () => void dismissPr($, pr) },
               ])}
             </Box>
           )}
