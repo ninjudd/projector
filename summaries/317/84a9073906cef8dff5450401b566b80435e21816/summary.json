@@ -1,0 +1,138 @@
+{
+ "version": 1,
+ "name": "Config set and unset",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 317,
+  "title": "Change a setting through project config set",
+  "head": "84a9073906cef8dff5450401b566b80435e21816",
+  "headRef": "config-set",
+  "base": "704e57036a773dde917d2399f336d8a3fcdb3704",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector reads its settings from <code>.projector.toml</code> files. It merges them from your home directory, <code>~/.projector.toml</code>, down to the repository's own file, and the nearest file wins. <code>project config</code> could only read those settings, so changing one meant editing TOML by hand.",
+   "This pull request adds <code>project config set &lt;key&gt; &lt;value&gt;</code> and <code>project config unset &lt;key&gt;</code>. Both change one file: the repository's own <code>.projector.toml</code> by default, <code>~/.projector.toml</code> with <code>--user</code>, or any file with <code>--file</code>. The editor works on lines, so it keeps your comments and layout, and it checks its own result before and after it writes.",
+   "A new schema, <code>SETTINGS</code>, lists every key Projector reads and its type. <code>set</code> accepts only those keys. <code>unset</code> also removes a key outside the schema when the file sets it, so you can clean up a setting Projector no longer reads. The existing readers that check a value's type now go through the same schema."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Layer</b>: one <code>.projector.toml</code> file in the merge. The user layer is <code>~/.projector.toml</code>; the repository's file is the nearest layer.</li><li><b><code>SETTINGS</code></b>: the map from each key Projector reads to its type, <code>bool</code> or <code>str</code>.</li><li><b><code>Change</code></b>: what one write did, with an <code>action</code> of <code>set</code>, <code>unset</code>, or <code>unchanged</code>.</li><li><b>Override note</b>: the stderr line that names a nearer file whose value wins over the one just written.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first Projector review, of <code>e305e65</code>, found that <code>set</code> skipped the override note when the value was already in the file. <code>55104e5</code> fixed it, and the thread is resolved.</li><li>Later commits let <code>unset</code> remove a key outside the schema, refuse a <code>--file</code> in a missing directory, and drop integer handling from the schema.</li><li>The review of <code>84a9073</code> is clean. The full test suite, <code>project check</code>, and both plugin validations pass at this head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "schema",
+   "title": "A settings schema and a line editor",
+   "kicker": "SETTINGS names each key and its type; write_value changes one key's line",
+   "intro": [
+    "Before this change, each reader of a typed setting checked the type itself, with its own copy of the error message. <code>SETTINGS</code> in <code>src/projector/config.py</code> now holds every key Projector reads, the ones skills read with <code>project config get</code> included.",
+    "<code>Config.setting(key)</code> returns the merged value, or <code>None</code> when no layer sets it, and raises <code>ConfigError</code>, exit code 78, when a file holds a value of another type. <code>parse_value</code> turns command-line text into the key's type for <code>set</code>.",
+    "<h4>The line editor</h4>",
+    "Python's standard library reads TOML with <code>tomllib</code> but cannot write it, and rewriting the whole file would lose a person's comments. So <code>write_value</code> edits the text:",
+    "<ol><li><b>Scan.</b> <code>_scan</code> walks the lines and records each table header and each <code>key = value</code> statement, with the table it belongs to. A statement that spans lines, such as a multi-line string, ends at the first run of lines that parses on its own.</li><li><b>Edit.</b> A key that is set gets its new value on the same line, and any comment after the value stays. A missing key goes after the last statement of its table, or beside the dotted keys that define the table. A missing table goes at the end of the file. <code>unset</code> deletes the key's lines. <code>unset_value</code> refuses a key outside the schema that the file does not set, so a misspelled key gets the list of keys.</li><li><b>Check before writing.</b> The new text must parse, give the key its new value, and leave every other value unchanged. Otherwise the command refuses with exit code 65 and the file untouched, as for a key inside an inline table.</li><li><b>Write and read back.</b> <code>write_through</code> replaces the file's content and keeps a symlink a link. The editor then reads the file back and restores the original when the check fails.</li></ol>"
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every key that <code>src/</code> reads and every key a skill reads with <code>project config get</code> is in <code>SETTINGS</code>, with the type its readers expect. Checked by searching <code>src/</code>, <code>skills/</code>, and <code>docs/</code> for reads."
+    },
+    {
+     "kind": "verify",
+     "text": "Edits of 18 hand-written files changed only the key's line or refused with the file untouched. The cases included a header with a trailing comment, quoted and dotted keys, a subtable with no parent header, CRLF line endings, a missing final newline, a multi-line array with an inner comment, an array of tables, and control characters in a value. Run against <code>e305e65</code> in a scratch directory. The editor has not changed since that head."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "The schema, the typed reader, and the line editor that <code>set</code> and <code>unset</code> use. The editor is the second group."
+    }
+   ]
+  },
+  {
+   "id": "command",
+   "title": "The set and unset commands",
+   "kicker": "Which file the commands change, what they print, and the override note",
+   "intro": [
+    "<code>change_config</code> in <code>src/projector/cli.py</code> picks the file, calls <code>write_value</code> for <code>set</code> or <code>unset_value</code> for <code>unset</code>, and prints the result as a line or, with <code>--json</code>, as an object with <code>action</code>, <code>key</code>, <code>old</code>, <code>new</code>, and <code>file</code>.",
+    "<code>config_file</code> chooses the file. <code>--file</code> wins, then <code>--user</code>, then the repository root from <code>--root</code> or Git. A <code>--file</code> in a directory that does not exist exits 2, so a mistyped path creates nothing. Outside a repository with neither option, the command exits 69. After the write, <code>report_override</code> loads the merged configuration and prints the override note when the effective value differs from the one written, or says the file is not read here. It runs after every action, <code>unchanged</code> included.",
+    "The same file also moves six readers, such as <code>site_enabled</code> and <code>configured_prepare</code>, onto <code>Config.setting</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "With <code>HOME</code> and the working directory in scratch directories, the command wrote the right file from a repository subdirectory, with <code>--user</code>, and with a relative <code>--file</code>. It exited 2 for a <code>--file</code> in a missing directory, exited 69 outside a repository, and refused <code>--user</code> with <code>--file</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>set</code> and <code>unset</code> parsers, the file choice, the override note, and moves the typed readers onto <code>Config.setting</code>."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "ConfigSetTests drives the commands through main in a temporary repository",
+   "intro": [
+    "<code>ConfigSetTests</code> creates a Git repository under a temporary home directory and patches <code>HOME</code>, so no test touches your own configuration. A final test checks that the key table in <code>docs/cli.md</code> matches <code>SETTINGS</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The full suite, 946 tests, passes at this head on Python 3.12."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_config.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and skills",
+   "kicker": "The docs show the command where they told you to edit a file",
+   "intro": [
+    "<code>docs/cli.md</code> gains a \"Change configuration\" section and says that only the keys in its table can be set. The other documents, and the two review skills, now show <code>project config set</code> where they told you to write a key by hand. The skills still say that the user decides to turn summaries off."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "<code>project config set</code> with no option changes the repository's <code>.projector.toml</code>, which is usually a tracked file. <code>docs/plugins.md</code> suggests <code>--user</code> for <code>watch.auto_start</code> for that reason."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/site.md"
+    },
+    {
+     "path": "skills/review-pr/SKILL.md"
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md"
+    },
+    {
+     "path": "AGENTS.md"
+    }
+   ]
+  }
+ ]
+}
