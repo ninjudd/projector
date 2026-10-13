@@ -233,14 +233,14 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   const opened = await ui.find({ key: 'drawer:x/y#7' })
   expect(opened).toBeDefined()
   expect(opened?.props.marginLeft).toBe(4)
-  // Under the facts, each link has a line of its own, so a terminal without hyperlinks shows the whole URL, and the actions come last, a line each.
+  // Under the facts come the actions, a line each, then the links, each on a line of its own, so a terminal without hyperlinks shows the whole URL.
   const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
   expect(lines.map(line => line.props.key ?? line.type)).toEqual([
     'Text',
-    'github:x/y#7',
-    'projector:x/y#7',
     'discuss:x/y#7',
     'dismiss:x/y#7',
+    'github:x/y#7',
+    'projector:x/y#7',
   ])
   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)

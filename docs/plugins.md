@@ -197,10 +197,10 @@ session starts a loop's watcher for the first time.
 #267 draft List a loop's open pull requests above the Claude Code prompt      2h
 #258 draft grace Name the reviewed head in a review's signature conflict · ⋮5 5m
      reviewing · review-signature · +84 −12 in 5 files · checks passing
-     open in github
-     open in projector
      d: discuss this
      x: dismiss pull request
+     open in github
+     open in projector
 ```
 
 Each line is the pull request's number, `draft` or `ready`, its author when
@@ -233,24 +233,23 @@ to close the drawer; opening one drawer closes any other. The drawer starts
 one column past the number, under `draft` or `ready`. It says whether your
 loops are watching or reviewing the pull request, then its branch, size, and
 checks, in the default text color; only the checks' state takes a color of
-its own. Below that:
+its own. Below that come two actions, a line each, on the letters `d` and
+`x`, as [Use the band from the keyboard](#use-the-band-from-the-keyboard)
+describes, and then two links:
 
-- **open in github** opens the pull request on GitHub.
-- **open in projector** opens its Projector summary, when the pull
-  request's description links one.
 - **discuss this** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` when the band lists more than
   one repository.
 - **dismiss pull request** keeps the pull request out of every loop of this
   session that tracks it, and the band drops its line and says which loops
   stopped, such as `stopped watching and reviewing acme/app#258`.
+- **open in github** opens the pull request on GitHub.
+- **open in projector** opens its Projector summary, when the pull
+  request's description links one.
 
 Each link has a line of its own, because a terminal that does not draw
 hyperlinks shows a link's URL after its text, and a line shared with
-another link would cut the URL off. The two actions come last, a line each,
-on the letters `d` and `x`, as
-[Use the band from the keyboard](#use-the-band-from-the-keyboard)
-describes.
+another link would cut the URL off.
 
 **dismiss** runs `project loop drop` once for each tracked file that lists
 the pull request, which appends a `!owner/repo#number` line that both

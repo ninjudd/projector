@@ -1287,17 +1287,18 @@ export const register: Register = on => {
                 {pr.checks !== null && ' · '}
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
               </Text>
-              {/* Each link has a line of its own: a terminal without hyperlinks
-                  draws a link's URL after its text, and a shared line would
-                  cut the URL off. The actions follow, a line each. */}
-              <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
-              {pr.summaryUrl !== null && (
-                <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
-              )}
+              {/* Under the facts come the actions, a line each, and then the
+                  links. Each link has a line of its own: a terminal without
+                  hyperlinks draws a link's URL after its text, and a shared
+                  line would cut the URL off. */}
               {drawActions(key, [
                 { name: 'discuss', label: 'discuss this', hotkey: 'd', onPress: () => fill(`${reference(pr)} `) },
                 { name: 'dismiss', label: 'dismiss pull request', hotkey: 'x', onPress: () => void dismissPr($, pr) },
               ])}
+              <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
+              {pr.summaryUrl !== null && (
+                <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
+              )}
             </Box>
           )}
         </Box>
