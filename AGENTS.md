@@ -85,11 +85,12 @@ through the root `tsconfig.json`. It compiles against the declarations
 Claude Code writes to `.claude-plugin/types/` each time an interactive
 session loads the checkout as a plugin. Nothing else provides them, so CI
 cannot run this check. Once per checkout, run `npm ci` in `site/`, and start
-a session with `claude --plugin-dir .` from the repository root. The
-declarations depend mainly on the Claude Code version, so a linked worktree
-that has none uses the main checkout's, and the script says so. The script
-fails with the setup instruction when neither checkout has them. Start such
-a session again after you update Claude Code, so the declarations match it.
+a session with `claude --plugin-dir .` from the repository root. In a linked
+worktree that has no `tsc` or no declarations of its own, the script uses the
+main checkout's and says so. The declarations depend mainly on the Claude
+Code version, so a worktree can share them. The script fails with the setup
+instruction when neither checkout has what it needs. Start such a session
+again after you update Claude Code, so the declarations match it.
 
 The site's front end lives in `site/`: TypeScript under `site/src/`, and
 the stylesheets, icon, and compiled JavaScript the site serves under
