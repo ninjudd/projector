@@ -1,0 +1,1425 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index dcf2fbba..a4178a7a 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -190,7 +190,7 @@ what it did to each:
+       decision = "allow",
+   )
+   prefix_rule(
+-      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "publish", "release", "rules", "settle", "setup", "status"]],
++      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "publish", "release", "rules", "settle", "setup", "status", "suggestions"]],
+       decision = "allow",
+   )
+   prefix_rule(
+@@ -1364,6 +1364,7 @@ project review finish 66
+ project review setup 66 --model claude-opus-5-5 --replace 4011
+ project review gate 66
+ project review status 66
++project review suggestions 66
+ project review hold 66 --add "Skip fenced code blocks when looking for headings"
+ project review hold 66 --drop
+ project review rules
+@@ -1498,16 +1499,51 @@ code; `--threads` names a JSON list
+ of findings, each `{"path", "line", "priority", "body"}`; `--covered` gives the
+ files read over the files changed. `publish` writes the signature line and
+ marker itself from the review's state and one reading of the clock, and adds
+-the finding marker to each thread. It refuses, exiting 1 and keeping the lock,
+-when the pull request closed or its head moved, when a finding's line is
+-outside the diff's hunks or its text lacks a priority header or a `**Fix:**`
+-line, when the body is empty, carries its own signature or marker comment, or
+-has no `{census}` outside quoted code, when the verdict disagrees with the finding
+-count, or when the reviewer already has a verdict by this model on the head
+-that this loop's record does not account for. A verdict by another model is a
+-second opinion and never collides, and one whose marker names no model
+-collides with every model. Outside a loop, `--second-verdict <review-id>`
+-publishes beside an earlier verdict the body names.
++the finding marker to each thread.
++
++A finding whose priority is `P3` is a suggestion, which opens no thread. Its
++`line` may be left out and need not be in the diff, and its `body` is the
++suggestion, which `publish` joins onto one line. `publish` ends the review
++body with the suggestions in one form, which `review suggestions` reads back:
++
++```markdown
++<!-- projector-suggestions v=1 count=2 -->
++### Suggestions
++
++- `src/cache.py:42`: Name the helper `warm`, as the cache module calls it.
++- `README.md`: Say that a cold start warms the cache.
++```
++
++The `projector-suggestions` line directly before the label counts the list,
++for `status` and the watch loop to read without parsing it. It is a line of
++its own because every earlier release reads a review marker that holds a
++field it does not know as no verdict at all. The review's marker keeps the
++shape those releases read. A body that carries a suggestions section of its
++own, as a review-pr skill from before P3 entries writes, publishes as
++written, with the count line before its label. A review that lists no
++suggestions has no count line. Where a review has none but lists
++suggestions, as one an earlier release published does, `status` counts its
++list.
++
++`publish` refuses, exiting 1 and keeping the lock, when:
++
++- the pull request closed or its head moved;
++- a finding's line is outside the diff's hunks, or its text lacks a priority
++  header or a `**Fix:**` line;
++- a P3 has no path, a path holding a space, a colon, or a backtick, a `line`
++  that is not a line number, or an empty body;
++- the body is empty, carries its own signature or marker comment, or has no
++  `{census}` outside quoted code;
++- the threads file gives P3 entries and the body carries a suggestions
++  section of its own, which would list them twice;
++- the verdict disagrees with the finding count;
++- the reviewer already has a verdict by this model on the head that this
++  loop's record does not account for.
++
++A verdict by another model is a second opinion and never collides, and one
++whose marker names no model collides with every model. Outside a loop,
++`--second-verdict <review-id>` publishes beside an earlier verdict the body
++names.
+ 
+ On a self-review `publish` submits a `COMMENT`, re-reads it, and sets draft
+ state by the newest Projector verdict on the head, whichever model gave it:
+@@ -1548,13 +1584,18 @@ head, the one `publish` sets draft state by, with the model and the review it
+ came from. When several models gave a verdict on the head, it adds each
+ model's newest one, newest first. Two accounts that run the same model each
+ keep their own line, with the account in parentheses after the model, as
+-`claude-opus-5-5 (teammate)`. Then it lists the open finding threads, and
+-any hold comment the author has open:
++`claude-opus-5-5 (teammate)`. Each verdict gives the number of suggestions
++that stand with its review when there are any: those the review lists and,
++for an incremental review, those of the full review it builds on. These are
++the suggestions `suggestions` lists for the head, picked the same way, so
++after an incremental review the count does not drop to 0 while the full
++review's suggestions wait on `fix-pr`. Then it lists the open finding
++threads, and any hold comment the author has open:
+ 
+ ```
+ $ project review status 66
+-#66 at 4f2a9c1: clean from claude-opus-5-5, https://github.com/example/app/pull/66#pullrequestreview-3301
+-  claude-opus-5-5   clean               review 3301, 14:20 UTC
++#66 at 4f2a9c1: clean with 2 suggestions from claude-opus-5-5, https://github.com/example/app/pull/66#pullrequestreview-3301
++  claude-opus-5-5   clean               review 3301, 14:20 UTC, 2 suggestions
+   gpt-5.5           changes-requested   review 3290, 14:02 UTC
+ ```
+ 
+@@ -1575,12 +1616,49 @@ it cannot read the pull request. With `--json` it prints one object:
+ | `repo`, `number`, `head` | The pull request and its current head SHA. |
+ | `draft` | Whether the pull request is a draft. |
+ | `verdict` | The newest verdict on the head: `clean`, `changes-requested`, or `unreviewed`. |
+-| `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, or `null` when the head is `unreviewed`. |
++| `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, and the number of `suggestions` that stand with its review: those the review lists and, for an incremental review, those of the full review it builds on. Each review's count is its `projector-suggestions` line, or its body's list where it has none. It is `null` when the head is `unreviewed`. |
+ | `models` | Each account's newest verdict by each model on the head in the same shape, newest first. A review loop finds its own by `login` and `model`. |
++| `suggestions` | The number of suggestions every entry of `models` brings, each review counted once: the suggestions `suggestions` lists for the head. |
+ | `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
+ | `held` | Whether the pull request's author has a hold comment open, which keeps the pull request a draft whatever `verdict` says. |
+ | `holds` | Each hold comment the pull request's author has open on it, as its `id` and `url`. A comment by anyone else that carries the marker holds nothing. |
+ 
++`suggestions` lists the suggestions the `fix-pr` skill decides on the pull
++request's current head: those of each account's newest Projector review by
++each model on the head, among the reviews `status` counts, newest first. An
++incremental review lists none of its own, so after one it also lists those
++of the full review whose link opens its lead. It prints a block for each
++suggestion, naming the file and line, the head of the review it comes from,
++and that review's URL, with the suggestion below:
++
++```
++$ project review suggestions 66
++src/cache.py:42, in the review of 4f2a9c1: https://github.com/example/app/pull/66#pullrequestreview-3301
++Name the helper `warm`, as the cache module calls it.
++
++README.md, in the review of 4f2a9c1: https://github.com/example/app/pull/66#pullrequestreview-3301
++Say that a cold start warms the cache.
++```
++
++It reads the section `publish` writes and every form a reviewer has written by
++hand: a `Suggestions` heading of level 1 to 4, a `**Suggestions**` line in
++bold, or a plain `Suggestions:` line, in any case. The section ends at the
++next heading, line in bold, or label line such as `What was checked:`, or at
++a paragraph after a blank line. Each list item is one suggestion, with the
++lines under it joined to its text. An item that opens with no `path:line`, in
++code font or bare, names no file. It finds the repository and the reviewer as
++`status` does, and runs from any directory. With no suggestion it prints
++nothing and exits 0. It exits 1 only when it cannot read the pull request or
++its reviews. With `--json` it prints a list, empty when there is none, of one
++object for each suggestion:
++
++| Field | Value |
++| --- | --- |
++| `url` | The review that lists the suggestion. |
++| `sha` | The head that review read, which for a full review an incremental review builds on is an earlier head. |
++| `path`, `line` | The file and line the suggestion names, or `null` where it names none. |
++| `text` | The suggestion, on one line. |
++
+ `hold` holds your pull request in draft while you build changes no review has
+ read, as the `fix-pr` skill does, and ends the hold once a push carries them.
+ Pass `--add` or `--drop`. Each repeats, one change each, and `--drop` with no
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index c803cbc6..9f7ce6e2 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -67,8 +67,8 @@ are resolved. The work outstanding on the head is:
+ - **A standing `CHANGES_REQUESTED`** from a cross-author reviewer, including
+   one whose findings exist only in its body.
+ - **A body-only finding** in a `COMMENT` review.
+-- **Every suggestion you have not decided** in the newest Projector review
+-  of the current head by each model, as
++- **Every suggestion you have not decided** among those
++  `project review suggestions <number>` lists, as
+   [Decide each suggestion](#decide-each-suggestion) describes.
+ - **A change the owner asks for** in the conversation.
+ - **Your open hold comment.** The changes it lists are outstanding until a
+@@ -89,9 +89,10 @@ body carries a verdict line; read it rather than inferring the outcome. Dispose
+ of a body-only finding in a pull-request-level comment because there is no
+ thread to reply to or resolve.
+ 
+-A `Suggestions` list in a Projector review body is not a body-only finding.
+-Its items never hold a head back from clean and need no reply, but you
+-decide each one.
++The suggestions a Projector review lists in its body are not body-only
++findings. They never hold a head back from clean and need no reply, but you
++decide each one, and you take them from `project review suggestions` rather
++than from the body you read.
+ 
+ Draft state is not itself a finding. It says the head has not been signed
+ off, so look for the work in the threads and review bodies. A draft with no
+@@ -138,12 +139,23 @@ can change a count or a path they name.
+ ## Decide each suggestion
+ 
+ A Projector review lists its P3 items, changes the code is correct without,
+-under a `## Suggestions` heading in its body. A suggestion never holds a head
+-back from clean, so a review can sign a head off and mark the pull request
+-ready above a list of them. Each one still gets a decision: you implement it
+-or you defer it. Decide every suggestion in the newest Projector review of
+-the current head by each model. An incremental review lists none, so read
+-its suggestions from the full review it builds on, which its lead links.
++as suggestions in its body. A suggestion never holds a head back from clean,
++so a review can sign a head off and mark the pull request ready above a list
++of them. Each one still gets a decision: you implement it or you defer it.
++List them with the command, never by reading review bodies yourself, whose
++label and list style vary with the model and the release that wrote them:
++
++```sh
++project review suggestions <number> --repo <owner>/<repo>
++```
++
++It lists every suggestion in the newest Projector review of the current head
++by each model. An incremental review lists none of its own, so the command
++also lists those of the full review it builds on. Each block names the file
++and line, the head of the review the suggestion comes from, and that review's
++URL, with the suggestion below them. With `--json` it gives each as an
++object with `url`, `sha`, `path`, `line`, and `text`. It prints nothing when
++no review lists a suggestion. Decide every suggestion it lists.
+ 
+ - **Implement** a suggestion that is small and clearly right. That is the
+   default. Verify it first, as you verify a finding under
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index f94f2d93..e2f87cdf 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -189,9 +189,9 @@ resolved before a merge, hold the merge where they apply.
+ 
+ `project review status <number>` prints the newest verdict on the current
+ head, the model and review it came from, each account's newest verdict by
+-each model there when several gave one, the open finding threads, and any
+-open hold, as `docs/cli.md` describes; `fix-pr` reads it to tell whether a
+-head is signed off.
++each model there when several gave one, the number of suggestions standing
++with each, the open finding threads, and any open hold, as `docs/cli.md`
++describes; `fix-pr` reads it to tell whether a head is signed off.
+ 
+ ## Review an exact head
+ 
+@@ -478,7 +478,7 @@ run `project review gate <number>`, and go on only when it exits 0. Where
+ Then write the body: a few sentences on what changed and what you checked
+ about it, at most 600 characters once its placeholders are filled. Leave out
+ the intent paragraph, the census, the coverage line, disclosures,
+-`Suggestions`, and the list of checks, because the full review already says
++suggestions, and the list of checks, because the full review already says
+ them. Publish it:
+ 
+ ```sh
+@@ -572,15 +572,17 @@ findings. `clean` requires that last number to be zero, and printing it
+ lets a reader see the verdict was earned.
+ 
+ `findings=` is the number of P1 and P2 threads this review opens. P3 items
+-are listed in the body rather than posted as threads, and are not counted.
+-`covered=` is how many of the changed files a pass or the reviewer read, over
+-how many files the head changed; the body's coverage line prints the same two
+-numbers.
++are listed in the body rather than posted as threads, and `findings=` does
++not count them. `covered=` is how many of the changed files a pass or the
++reviewer read, over how many files the head changed; the body's coverage
++line prints the same two numbers. The marker holds no other field: every
++earlier release reads a marker with a field it does not know as no verdict,
++so a new fact about a review goes on a line of its own.
+ 
+ The body follows the order `method.md` § 7 gives: the signature line and
+ marker, the intent paragraph, the census, the coverage line, any disclosures,
+-a `Suggestions` list of P3 items when there are any, and on a clean head what
+-was checked.
++on a clean head what was checked, and last the suggestions `publish` lists
++from the P3 entries you give it.
+ 
+ **An incremental review adds one line.** Its signature line carries
+ `incremental from <short-sha>` between the verdict word and the duration, and
+@@ -618,8 +620,8 @@ threads:
+   `../guidelines.md`. A thread; blocks.
+ - **P3.** A change the code is correct without: a simplification, dead code,
+   a gap between a written rule and practice, a defect already present at the
+-  base that the change does not worsen. One line in the body's `Suggestions`
+-  list; never a thread, never blocks.
++  base that the change does not worsen. An entry of the threads file that
++  `publish` lists in the body as a suggestion; never a thread, never blocks.
+ 
+ The visible text of a thread's first comment has three parts, the shape
+ `method.md` § 7 shows with an example:
+@@ -700,8 +702,9 @@ author speaking, and it is what you weigh when a finding is declined.
+ 
+ P1 and P2 findings always go out as inline threads in **one** review, each
+ carrying the finding marker, and every review body carries the signature and
+-verdict line. P3 items are not threads: list them in the body under a
+-`Suggestions` heading, as `method.md` § 7 describes. Do not drip-feed findings
++verdict line. P3 items are not threads: give them to `publish` as P3
++entries, and it lists them in the body, as `method.md` § 7 describes. Never
++write a suggestions section into the body yourself. Do not drip-feed findings
+ or use ordinary issue comments for them. What differs between the modes is
+ only the review state and what marks the outcome.
+ 
+@@ -723,24 +726,43 @@ project review publish <number> --verdict <clean|changes-requested> \
+ ```
+ 
+ The body file is the review below its signature line: the intent paragraph,
+-the census, the coverage line, disclosures, `Suggestions`, and what was
+-checked. Put `{census}` where the census goes; `publish` fills it with the
+-count the verdict rests on, and also fills `{took}`, `{seconds}`, `{sha}`, and
++the census, the coverage line, disclosures, and what was checked. Put
++`{census}` where the census goes; `publish` fills it with the count the
++verdict rests on, and also fills `{took}`, `{seconds}`, `{sha}`, and
+ `{short_sha}` where you use them. It fills them in prose and in a backtick
+ span that holds one placeholder alone, so `` `{short_sha}` `` shows the SHA in
+ code font. Longer code in backticks, a fenced block, and any other text in
+ braces go out exactly as written. The threads file is a JSON list of findings,
+ each `{"path", "line", "priority", "body"}`, where `body` is the visible text
+-below — `publish` adds the finding marker with the head's SHA. It refuses,
+-exiting 1 with what to fix and keeping the lock so you can correct the input
+-and run it again, when:
++below — `publish` adds the finding marker with the head's SHA. A P3 entry has
++the same shape, with `"priority": "P3"`, a `line` you may leave out, and a
++`body` of one sentence saying the change:
++
++```json
++{"path": "src/cache.py", "line": 42, "priority": "P3", "body": "Name the helper `warm`, as the cache module calls it."}
++```
++
++`publish` opens no thread for a P3 entry and needs no diff line for it. It
++ends the body with a `### Suggestions` list of them, each item opening with
++its `path:line` in code font. Directly before the label it writes
++`<!-- projector-suggestions v=1 count=<n> -->`, the number of items, which
++`project review status` and the watch loop read. A body that carries a
++suggestions section of its own, as one an older release of this skill
++wrote, still publishes as written, with the count line before its label.
++
++`publish` refuses, exiting 1 with what to fix and keeping the lock so you
++can correct the input and run it again, when:
+ 
+ - the pull request is closed or its head moved since `setup`;
+ - a finding's line is outside the pull request's diff hunks, it has no line,
+   its text does not open with its priority header or lacks a `**Fix:**` line,
+   or it opens a `<!-- projector-… -->` marker comment of its own;
++- a P3 entry has no path, a path holding a space, a colon, or a backtick, a
++  `line` that is not a line number, or an empty body;
+ - the body is missing or empty, opens with its own signature line or carries
+   a marker comment, or has no `{census}` outside quoted code;
++- the threads file gives P3 entries and the body carries a suggestions
++  section of its own, which would list them twice;
+ - the verdict disagrees with the census: `clean` with a finding open or
+   being posted, or `changes-requested` with none;
+ - the collision check below trips.
+@@ -769,9 +791,9 @@ and a second verdict on a head this loop already published needs
+ 
+ A head is *clean* only when, after you have settled every earlier finding as
+ above, no Projector finding thread is open **and this review posts no P1 or P2
+-thread**. A `Suggestions` list in the body does not count against it: a review
+-whose only output is that list is clean. Settle the earlier findings now,
+-before choosing a branch, and re-run the query to confirm none is open. Both
++thread**. Suggestions do not count against it: a review whose only output is
++P3 entries is clean. Settle the earlier findings now, before choosing a
++branch, and re-run the query to confirm none is open. Both
+ tests are one-way: a finding you kept or reopened makes the head not clean
+ whatever else inspection found, and a new thread makes it not clean whatever
+ the earlier findings came to. Because you resolve what you verify, a clean
+@@ -846,13 +868,13 @@ fails partway exits non-zero and running it again finishes that review
+ instead of posting a second one.
+ 
+ Report the review as done only after `publish` exits 0. Report the SHA, the
+-verdict, the review id, how many threads it opened, the head of the full
+-review an incremental review builds on, a newer verdict that set the draft
+-state when `publish` names one, and the summary's URL when the next section
+-publishes one. Before a `clean` verdict, settle every earlier finding first;
+-`publish` refuses one while a finding is open. Never resolve another
+-reviewer's thread, resolve a finding you have not verified at this head,
+-claim a newer SHA was reviewed, or merge.
++verdict, the review id, how many threads it opened and suggestions it
++listed, the head of the full review an incremental review builds on, a newer
++verdict that set the draft state when `publish` names one, and the summary's
++URL when the next section publishes one. Before a `clean` verdict, settle
++every earlier finding first; `publish` refuses one while a finding is open.
++Never resolve another reviewer's thread, resolve a finding you have not
++verified at this head, claim a newer SHA was reviewed, or merge.
+ 
+ Once the summary below has run or been skipped, run
+ `project review finish <number>`, which removes the scratch worktree a
+diff --git a/skills/review-pr/method.md b/skills/review-pr/method.md
+index 2aeb0f41..c1c4e008 100644
+--- a/skills/review-pr/method.md
++++ b/skills/review-pr/method.md
+@@ -266,7 +266,8 @@ Then assign a priority, as `SKILL.md` defines them: P1 and P2 are defects the
+ change introduces or worsens and violations of a written rule, a section of
+ `../guidelines.md` included, and they post as threads and block; P3 is a
+ change the code is correct without and no written rule requires, and it goes
+-in the review body under a `Suggestions` heading, never as a thread.
++to `publish` as a P3 entry, which lists it in the review body as a
++suggestion, never as a thread.
+ 
+ There is no cap on the number of findings. The rules above are the filter,
+ and every thread is one the author must answer, so post nothing you would not
+@@ -296,9 +297,26 @@ reads in this order:
+ 4. Disclosures, when any: an advisory check skipped for a new dependency, a
+    file too large for a pass to read in full, a test that could not run, a
+    head reviewed without running its code because the head is not trusted.
+-5. `Suggestions`, the P3 list, when any, each as one line naming the
+-   `path:line` and the change.
+-6. On a clean head, what was checked, as `SKILL.md` requires.
++5. On a clean head, what was checked, as `SKILL.md` requires.
++
++Never write the suggestions into the body yourself. Give each P3 to
++`publish` as an entry of the threads file, with priority `P3`, the file's
++`path`, a `line` when the suggestion has one, and a `body` of one sentence
++saying the change. `publish` ends the review body with them in one form, a
++`### Suggestions` heading and an item for each, opening with its
++`path:line` in code font, after a line that counts them:
++
++```markdown
++<!-- projector-suggestions v=1 count=2 -->
++### Suggestions
++
++- `src/cache.py:42`: Name the helper `warm`, as the cache module calls it.
++- `README.md`: Say that a cold start warms the cache.
++```
++
++The one form is what lets `project review suggestions` hand `fix-pr` every
++item: a section written by hand comes out in whatever label and list style
++the reviewing model chose.
+ 
+ Each P1 or P2 thread's first comment, after its marker, has three parts:
+ 
+diff --git a/skills/start-watch-loop/SKILL.md b/skills/start-watch-loop/SKILL.md
+index 232c2ea8..cea25cca 100644
+--- a/skills/start-watch-loop/SKILL.md
++++ b/skills/start-watch-loop/SKILL.md
+@@ -125,9 +125,12 @@ The watcher is level-triggered:
+ - `CONFLICT` reports a branch that conflicts with its base. It clears when a
+   push makes the branch mergeable again.
+ - `REVIEW` reports a review body that has no inline thread, the shape every
+-  `COMMENT` review posts. A Projector review whose body lists `Suggestions`
+-  is work even under a clean verdict, because `fix-pr` implements or defers
+-  each one.
++  `COMMENT` review posts. A Projector review that lists suggestions is work
++  even under a clean verdict, because `fix-pr` implements or defers each one,
++  reading them with `project review suggestions`. The line says how many the
++  review's `projector-suggestions` line counts, as `listing 2 suggestions`. A
++  review an earlier release published has no such line, so its line names no
++  count, and `fix-pr` still finds its suggestions through the command.
+ - `DRAFT` reports a pull request a review loop has not signed off. It clears
+   when the pull request is marked ready, which a review loop's `publish`
+   does when the newest verdict on the current head is clean, whichever model
+diff --git a/skills/start-watch-loop/scripts/watch-threads.sh b/skills/start-watch-loop/scripts/watch-threads.sh
+index 2e1c5367..1a8e8712 100755
+--- a/skills/start-watch-loop/scripts/watch-threads.sh
++++ b/skills/start-watch-loop/scripts/watch-threads.sh
+@@ -15,7 +15,8 @@
+ #             verdict can land it until the base is merged in
+ #   REVIEW    a submitted review carrying a body — the shape every COMMENT
+ #             review posts, Projector's own included, which never moves
+-#             reviewDecision
++#             reviewDecision. A Projector review whose body counts its
++#             suggestions says how many it lists
+ #   TRACKED   a problem with the tracked file: a line that is not
+ #             owner/repo#number, or a number that names no pull request.
+ #             Announced once each, so a mistake in the file is heard rather
+@@ -200,11 +201,15 @@ not_found() {
+ # empty COMMENTED review, so `last:10` returns ten replies and the bot review
+ # has been displaced. Bodies empty once HTML comments are stripped are
+ # skipped, which is also what keeps the loop's own replies from coming back
+-# to it as work.
++# to it as work. The fourth field is the count `project review publish` writes
++# before a review's suggestions, and 0 where there is none, as in a review an
++# earlier release published: parsing the list itself is the CLI's job, and
++# `project review suggestions` does it for fix-pr.
+ REVIEWS_JQ='.[] | select(.state == "COMMENTED")
++  | ((.body // "" | capture("<!-- projector-suggestions v=1 count=(?<n>[0-9]+) -->") | .n) // "0") as $suggestions
+   | (.body // "" | gsub("<!--([^-]|-[^-]|--[^>])*-->"; "") | gsub("<[^>]*>"; "") | gsub("[\r\n]+"; " ")) as $body
+   | select(($body | gsub("[[:space:]]+"; "")) != "")
+-  | "\(.id)\t\(.user.login // "?")\t\(.commit_id // "?")\t\($body[0:130])"'
++  | "\(.id)\t\(.user.login // "?")\t\(.commit_id // "?")\t\($suggestions)\t\($body[0:130])"'
+ fetch_reviews() {
+   gh api "repos/$1/pulls/$2/reviews" --paginate --jq "$REVIEWS_JQ" 2>/dev/null
+ }
+@@ -394,12 +399,17 @@ EOF
+     # nothing, so its body-only findings are lost. Never re-announced: a
+     # COMMENTED review has no resolved state to clear, so "(still open)" would
+     # be a reminder with no off switch.
+-    while IFS=$'\t' read -r crid cwho csha csnip; do
++    while IFS=$'\t' read -r crid cwho csha csug csnip; do
+       [ -n "${crid:-}" ] || continue
+       cid="review:$crid"
+       last=$(awk -v t="$cid" '$1==t {print $4}' "$STATE" 2>/dev/null)
++      case "$csug" in
++        0) listing="" ;;
++        1) listing=", listing 1 suggestion" ;;
++        *) listing=", listing $csug suggestions" ;;
++      esac
+       if [ -z "$last" ]; then
+-        echo "REVIEW $slug#$n by [$cwho] on ${csha:0:8} — $csnip"
++        echo "REVIEW $slug#$n by [$cwho] on ${csha:0:8}$listing — $csnip"
+         last=$now
+       fi
+       new_state="$new_state$cid $slug $n $last
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 725a8c2c..66975ee2 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -516,18 +516,23 @@ def parser() -> argparse.ArgumentParser:
+     review_status = review_commands.add_parser(
+         "status", help="report the newest Projector verdict on a pull request's current head"
+     )
++    review_suggestions = review_commands.add_parser(
++        "suggestions", help="list the suggestions the newest Projector reviews of a pull request's current head "
++                            "give, for fix-pr to implement or defer"
++    )
+     review_hold = review_commands.add_parser(
+         "hold", help="hold your pull request in draft while changes for it are built, and end the hold once they "
+                      "are pushed"
+     )
+-    review_status.add_argument("pr", type=int, help="the pull request number")
+-    review_status.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
+-                                              "this checkout's origin)")
+-    review_status.add_argument("--reviewer", help="a GitHub login whose reviews count beside the repository's owner, "
+-                                                  "members, and collaborators (default: review.username, then you)")
+-    review_status.add_argument("--state-dir", type=Path,
+-                               help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
+-    add_output(review_status)
++    for command in (review_status, review_suggestions):
++        command.add_argument("pr", type=int, help="the pull request number")
++        command.add_argument("--repo", help="owner/name (default: the review set up for this pull request, then "
++                                            "this checkout's origin)")
++        command.add_argument("--reviewer", help="a GitHub login whose reviews count beside the repository's owner, "
++                                                "members, and collaborators (default: review.username, then you)")
++        command.add_argument("--state-dir", type=Path,
++                             help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
++        add_output(command)
+     review_hold.add_argument("pr", type=int, help="the pull request number")
+     review_hold.add_argument("--repo", help="owner/name (default: this checkout's origin, never a review set up here)")
+     add_output(review_hold)
+@@ -1113,21 +1118,38 @@ def incremental_enabled(checkout: Path) -> bool:
+     return load_config(checkout).setting("review.incremental") is not False
+ 
+ 
+-def review_status(root: Path, arguments: argparse.Namespace) -> int:
+-    """`review status`: the newest Projector verdict on a pull request's head, whatever it is; exit 1 only
+-    when the pull request cannot be read. The reviewer is found as `setup` finds it."""
+-    repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
++def counted_reviewer(arguments: argparse.Namespace) -> str:
++    """The reviewer whose reviews `review status` and `review suggestions` count beside the repository's
++    accounts, found as `setup` finds it: --reviewer, then review.username, then the authenticated user."""
+     try:
+         configured = load_config(review.checkout_root(Path.cwd())).get("review.username")
+     except ProjectorError:
+         configured = None
+-    reviewer = arguments.reviewer or (configured if isinstance(configured, str) and configured else None) \
++    return arguments.reviewer or (configured if isinstance(configured, str) and configured else None) \
+         or review.authenticated_login()
+-    result = review.status(repo, arguments.pr, reviewer)
++
++
++def review_status(root: Path, arguments: argparse.Namespace) -> int:
++    """`review status`: the newest Projector verdict on a pull request's head, whatever it is; exit 1 only
++    when the pull request cannot be read."""
++    repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
++    result = review.status(repo, arguments.pr, counted_reviewer(arguments))
+     print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.status_lines(result)))
+     return 0
+ 
+ 
++def review_suggestions(root: Path, arguments: argparse.Namespace) -> int:
++    """`review suggestions`: the suggestions fix-pr decides on a pull request's head, printing nothing when
++    there are none; exit 1 only when the pull request cannot be read."""
++    repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
++    items = review.suggestions(repo, arguments.pr, counted_reviewer(arguments))
++    if arguments.json_output:
++        print(json.dumps(items, indent=2))
++    elif items:
++        print(review.suggestions_text(items))
++    return 0
++
++
+ def review_hold(arguments: argparse.Namespace) -> int:
+     """`review hold`: post, extend, shrink, or end your hold on a pull request in `--repo`, or else in the
+     repository of the checkout it runs in."""
+@@ -1145,6 +1167,8 @@ def run_review(arguments: argparse.Namespace) -> int:
+     root = review.state_dir(arguments.state_dir)
+     if arguments.review_command == "status":
+         return review_status(root, arguments)
++    if arguments.review_command == "suggestions":
++        return review_suggestions(root, arguments)
+     loop = review.valid_loop(arguments.loop)
+     command = arguments.review_command
+     if command == "finish":
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index f939c7b9..96ed319e 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -113,7 +113,7 @@
+      "Posts, revises, reads, withdraws, restores, or delivers an inbox item, but never records the person's "
+      "answer to one."),
+     (["project", "review", ["census", "finish", "hold", "interdiff", "move", "publish", "release", "rules",
+-                            "settle", "setup", "status"]],
++                            "settle", "setup", "status", "suggestions"]],
+      "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),
+     (["project", "site", ["page", "status", "workflow"]],
+      "Builds a summary page, says where the site is hosted, or writes the site's workflow file."),
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 15b6d65e..1ad98ca2 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -376,12 +376,17 @@ def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False) -
+ 
+ # The pull request
+ 
+-def pull_request(repo: str, number: int) -> dict:
+-    """The open pull request, or a refusal saying why it cannot be reviewed."""
++def read_pull_request(repo: str, number: int) -> dict:
++    """The pull request as GitHub's REST API gives it, open or not, or a refusal when it cannot be read."""
+     try:
+-        pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
++        return gh_json(["api", f"repos/{repo}/pulls/{number}"])
+     except NotFound as exc:
+         raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
++
++
++def pull_request(repo: str, number: int) -> dict:
++    """The open pull request, or a refusal saying why it cannot be reviewed."""
++    pr = read_pull_request(repo, number)
+     if pr.get("state") != "open":
+         raise ReviewError(f"{repo}#{number} is {pr.get('state') or 'not open'}; only an open pull request is reviewed")
+     return pr
+@@ -558,10 +563,7 @@ def hold(repo: str, number: int, add: list[str], drop: list[Optional[str]]) -> d
+         raise ReviewError("a bare --drop ends the whole hold, so it cannot be combined with --drop TEXT; run "
+                           "--drop TEXT to remove a change, or --drop alone to end the hold")
+     changes = hold_changes(add, "--add") if add else [] if end else hold_changes(drop, "--drop")
+-    try:
+-        pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
+-    except NotFound as exc:
+-        raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
++    pr = read_pull_request(repo, number)
+     author = (pr.get("user") or {}).get("login") or ""
+     login = authenticated_login()
+     if login.lower() != author.lower():
+@@ -1369,14 +1371,16 @@ def change_size(result: dict) -> str:
+ # as `{short_sha}` does, so it is filled; a placeholder inside longer code is quoted code.
+ LONE_PLACEHOLDER = re.compile(r"`" + PLACEHOLDER.pattern + r"`")
+ # A comment of Projector's own at the start of a line, as a review or finding carries it.
+-OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding|incremental)\b", re.M)
++OWN_MARKER = re.compile(r"^\s*<!--\s*projector-(review|finding|incremental|suggestions)\b", re.M)
+ SIGNATURE = re.compile(
+     r"^" + re.escape(MARK) + r" \*\*Projector review\*\* of `[0-9a-f]{7}` · `[^`\n]+` · model `[^`\n]+` · "
+     r"(?:effort `[^`\n]+` · )?\*\*(CLEAN|CHANGES REQUESTED)\*\* · (?:incremental from `[0-9a-f]{7}` · )?"
+     r"took (\d+m \d{2}s|\d+h \d{2}m)( over \d+ heads)?$"
+ )
+ # A review's marker line. Publish writes `projector=` and `clean`, but a marker an earlier release wrote
+-# may name no version or spell a clean verdict `approved`, and it still reads as the verdict it gives.
++# may name no version or spell a clean verdict `approved`, and it still reads as the verdict it gives. Every
++# earlier release reads a marker holding a field it does not know as no verdict, so a new fact about a review
++# goes on a line of its own, as the incremental line and the suggestions count do.
+ MARKER = re.compile(
+     r"^<!-- projector-review v=1 verdict=(clean|approved|changes-requested) (?:projector=(\S+) )?model=(\S+) "
+     r"(?:effort=(\S+) )?sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
+@@ -1474,12 +1478,20 @@ def load_threads(path: Optional[Path]) -> list[dict]:
+     return threads
+ 
+ 
++def is_suggestion(entry: object) -> bool:
++    """Whether an entry of the threads file is a P3, which `publish` lists in the body rather than posting."""
++    return isinstance(entry, dict) and entry.get("priority") == "P3"
++
++
+ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]]) -> None:
+-    """Refuse a finding GitHub could not anchor or a reader could not act on."""
++    """Refuse a P1 or P2 finding GitHub could not anchor or a reader could not act on. `suggestion_entries`
++    checks the P3 entries."""
+     for i, t in enumerate(threads, 1):
+         where = f"finding {i}"
+         if not isinstance(t, dict):
+             raise ReviewError(f"{where} is not an object with path, line, priority, and body")
++        if is_suggestion(t):
++            continue
+         path, line, priority, body = t.get("path"), t.get("line"), t.get("priority"), t.get("body") or ""
+         if not path or not isinstance(line, int) or isinstance(line, bool) or line < 1:
+             raise ReviewError(f"{where} needs a path and a line number (got {path!r}:{line!r}); "
+@@ -1493,7 +1505,7 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
+             raise ReviewError(f"{where}: {path}:{line} is outside the pull request's diff hunks ({listed}); "
+                               "anchor it to a changed line")
+         if priority not in ("P1", "P2"):
+-            raise ReviewError(f"{where}: priority must be P1 or P2; a P3 goes in the body's Suggestions list")
++            raise ReviewError(f"{where}: priority must be P1, P2, or P3")
+         if OWN_MARKER.search(body):
+             raise ReviewError(f"{where}: leave the finding marker out of the body; publish writes it with "
+                               "the head's SHA")
+@@ -1504,6 +1516,153 @@ def check_threads(threads: list[dict], ranges: dict[str, list[tuple[int, int]]])
+             raise ReviewError(f"{where}: the body must carry a `**Fix:**` line")
+ 
+ 
++# Suggestions
++
++# The label of a review body's suggestions section, in every form a reviewer has written one: a heading of
++# level 1 to 4, a line in bold, or a plain `Suggestions:` line, in any case, with an aside such as `(P3)`.
++SUGGESTIONS_NAME = r"suggestions(?:\s*\([^)\n]*\))?"
++SUGGESTIONS_LABEL = re.compile(rf"^(?:#{{1,4}}\s*{SUGGESTIONS_NAME}:?|\*\*{SUGGESTIONS_NAME}:?\*\*:?|"
++                               rf"{SUGGESTIONS_NAME}:)$", re.I)
++# A line that ends the section: another heading, a line in bold, or a `Label:` line such as `What was checked:`.
++SECTION_END = re.compile(r"^(?:#{1,6}(?:\s|$)|\*\*[^*\n].*\*\*:?$|[A-Z][^:\n]*:$)")
++# A list item's indent and text.
++LIST_ITEM = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$")
++FENCE = re.compile(r"^(```|~~~)")
++# The file and line a suggestion opens with: in code font, as `publish` writes it, or bare as path:line.
++CODE_PLACE = re.compile(r"`([^`\s:]+)(?::(\d+)(?:[-–]\d+)?)?`(\s*:)?")
++BARE_PLACE = re.compile(r"([^`\s:]+):(\d+)(?:[-–]\d+)?(?=[\s:,;.]|$)")
++# What joins that place to the suggestion's text.
++SEPARATOR = re.compile(r"^\s*(?:[:,;.—–]|--?(?=\s))?\s*")
++SUGGESTION_PATH = re.compile(r"[^\s`:]+")
++# The line `publish` writes directly before a suggestions section's label, counting its items. It is a line of
++# its own rather than a field of the review's marker, which every earlier release would then read as no verdict.
++SUGGESTIONS_COUNT = re.compile(r"^<!-- projector-suggestions v=1 count=(\d+) -->$", re.M)
++
++
++def suggestion_entries(threads: list) -> list[dict]:
++    """The threads file's P3 entries, as the suggestions `publish` lists in the review body: each its `path`,
++    its `line` or None, and its `body` joined onto one line as its `text`. Refuses an entry the list could not
++    show as `suggestions_section` writes it."""
++    entries = []
++    for i, t in enumerate(threads, 1):
++        if not is_suggestion(t):
++            continue
++        where, path, line, body = f"finding {i}", t.get("path"), t.get("line"), t.get("body")
++        text = " ".join(part.strip() for part in body.splitlines() if part.strip()) if isinstance(body, str) else ""
++        if not isinstance(path, str) or not SUGGESTION_PATH.fullmatch(path):
++            raise ReviewError(f"{where} is a P3 and needs the path of the file it suggests changing, with no space, "
++                              f"colon, or backtick (got {path!r})")
++        if line is not None and (not isinstance(line, int) or isinstance(line, bool) or line < 1):
++            raise ReviewError(f"{where}: a P3's line is a line number, or left out (got {line!r})")
++        if not text:
++            raise ReviewError(f"{where}: a P3 needs a body that says the change")
++        if re.search(r"<!--\s*projector-", text):
++            raise ReviewError(f"{where}: leave Projector's markers out of a P3's body")
++        entries.append({"path": path, "line": line, "text": text})
++    return entries
++
++
++def place(item: dict) -> str:
++    """The file and line a suggestion names, as `path:line`, or `path` when it names no line."""
++    return item["path"] + ("" if item["line"] is None else f":{item['line']}")
++
++
++def suggestions_section(entries: list[dict]) -> str:
++    """The suggestions section `publish` ends a review body with, in the one form `method.md` § 7 gives: a
++    `### Suggestions` heading and an item per suggestion, opening with its `path:line` in code font."""
++    return "### Suggestions\n\n" + "\n".join(f"- `{place(entry)}`: {entry['text']}" for entry in entries)
++
++
++def suggestions_label(lines: list[str]) -> Optional[int]:
++    """The index of the first line outside fenced code that `SUGGESTIONS_LABEL` matches, or None."""
++    fenced = False
++    for i, line in enumerate(lines):
++        if FENCE.match(line.strip()):
++            fenced = not fenced
++        elif not fenced and SUGGESTIONS_LABEL.match(line.strip()):
++            return i
++    return None
++
++
++def with_suggestions_count(body: str) -> str:
++    """`body` with the line that counts its suggestions directly before their label, or as it is when it lists
++    none."""
++    items = parse_suggestions(body)
++    if not items:
++        return body
++    lines = body.splitlines()
++    lines.insert(suggestions_label(lines), f"<!-- projector-suggestions v=1 count={len(items)} -->")
++    return "\n".join(lines)
++
++
++def parse_suggestions(body: str) -> Optional[list[dict]]:
++    """The items of a review body's suggestions section, each its `path` and `line`, None where the item names
++    none, and its `text`, or None when the body has no such section.
++
++    The section opens at the first line outside fenced code that `SUGGESTIONS_LABEL` matches, and ends at a
++    line `SECTION_END` matches or at a paragraph after a blank line. Each list item at the first item's indent
++    is a suggestion, and the lines under it, a deeper list included, join its text."""
++    lines = body.splitlines()
++    start = suggestions_label(lines)
++    if start is None:
++        return None
++    items: list[list[str]] = []
++    indent: Optional[int] = None
++    blank = fenced = False
++    for line in lines[start + 1:]:
++        stripped = line.strip()
++        fence = bool(FENCE.match(stripped))
++        fenced = fenced != fence
++        item = LIST_ITEM.match(line)
++        if fenced or fence:
++            if items:
++                items[-1].append(stripped)
++        elif item and (indent is None or len(item.group(1)) <= indent):
++            indent = len(item.group(1)) if indent is None else indent
++            items.append([item.group(2).strip()])
++            blank = False
++        elif not stripped:
++            blank = True
++        elif SECTION_END.match(stripped) or blank and items and not line[0].isspace():
++            break
++        elif items:
++            items[-1].append(stripped)
++            blank = False
++    return [suggestion_item(" ".join(parts)) for parts in items]
++
++
++def suggestion_item(text: str) -> dict:
++    """A suggestion's `path`, `line`, and `text`, from an item that opens with the place it names, or with
++    neither when it opens with none. A code span opens with a place when it holds a line number, a `/` or a
++    `.`, or a colon follows it."""
++    code, bare = CODE_PLACE.match(text), BARE_PLACE.match(text)
++    if code and (code.group(2) or code.group(3) or re.search(r"[/.]", code.group(1))):
++        path, line, rest = code.group(1), code.group(2), text[code.end():]
++    elif bare:
++        path, line, rest = bare.group(1), bare.group(2), text[bare.end():]
++    else:
++        return {"path": None, "line": None, "text": text}
++    return {"path": path, "line": int(line) if line else None, "text": SEPARATOR.sub("", rest)}
++
++
++def listed_suggestions(review: dict) -> int:
++    """How many suggestions a review lists: the count `publish` wrote before their label, or, in a review an
++    earlier release published, the items of its body's section."""
++    body = review.get("body") or ""
++    found = SUGGESTIONS_COUNT.search(body)
++    return int(found.group(1)) if found else len(parse_suggestions(body) or [])
++
++
++def with_full_review(review: dict, reviews: list[dict]) -> list[dict]:
++    """The reviews whose suggestions stand with `review`: `review` itself and, when it is incremental, the full
++    review among `reviews` that its lead links, whose suggestions it leaves unrepeated."""
++    body = review.get("body") or ""
++    marker = verdict_marker(body)
++    link = FULL_REVIEW_LINK.search(body) if marker is not None and marker.incremental_from else None
++    full = next((r for r in reviews if link and r.get("url") == link.group(1)), None)
++    return [review] if full is None else [review, full]
++
++
+ def reviewer_reviews(repo: str, number: int, reviewer: str) -> list[dict]:
+     """Every Projector review the reviewer posted on the pull request, from every page, each with
+     its `id`, `url`, `at`, and `body`."""
+@@ -1633,11 +1792,12 @@ def verdicts(repo: str, number: int, reviewer: str, visibility: Optional[str]) -
+ def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
+     """Each account's newest Projector verdict by each model on `head` among `reviews`, newest first, so the
+     first is the head's newest verdict, whichever account and model gave it. Each has the `model`, by
+-    identity, its `verdict`, and the `review` id, `url`, `at`, and `login` of the review that gave it.
++    identity, its `verdict`, the `review` id, `url`, `at`, and `login` of the review that gave it, and how
++    many `suggestions` stand with that review, as `with_full_review` finds them.
+ 
+     One entry per account, not per model, because a reviewer is a model within an account: a teammate whose
+     loop runs the same model must not hide the verdict a review loop looks for as its own."""
+-    newest: dict[tuple[str, str], dict] = {}
++    newest: dict[tuple[str, str], tuple[dict, dict]] = {}
+ 
+     def order(entry: dict) -> tuple[datetime, int]:
+         return parse_time(entry["at"]), entry["review"] or 0
+@@ -1650,9 +1810,20 @@ def order(entry: dict) -> tuple[datetime, int]:
+                  "url": found.get("url"), "at": found["at"], "login": found.get("login")}
+         key = (entry["model"], (entry["login"] or "").lower())
+         known = newest.get(key)
+-        if known is None or order(entry) >= order(known):
+-            newest[key] = entry
+-    return sorted(newest.values(), key=order, reverse=True)
++        if known is None or order(entry) >= order(known[0]):
++            newest[key] = (entry, found)
++    for entry, found in newest.values():
++        entry["suggestions"] = sum(map(listed_suggestions, with_full_review(found, reviews)))
++    return sorted((entry for entry, _ in newest.values()), key=order, reverse=True)
++
++
++def suggesting_reviews(head: str, reviews: list[dict]) -> list[dict]:
++    """The reviews among `reviews` whose suggestions `fix-pr` decides on `head`: those `with_full_review` finds
++    for each verdict `newest_verdicts` gives, newest first, each once."""
++    by_id = {r.get("id"): r for r in reviews}
++    chosen = {found.get("id"): found for entry in newest_verdicts(head, reviews)
++              for found in with_full_review(by_id[entry["review"]], reviews)}
++    return list(chosen.values())
+ 
+ 
+ FINDING_MODEL = re.compile(r"<!--\s*projector-finding\b[^>]*?\smodel=(\S+) -->")
+@@ -1667,29 +1838,30 @@ def thread_model(thread: dict) -> Optional[str]:
+ def status(repo: str, number: int, reviewer: str) -> dict:
+     """The newest Projector verdict on the pull request's current head, the verdict `publish` sets draft
+     state by, with each account's newest verdict by each model on it, every open Projector finding thread,
+-    and every open hold comment."""
+-    try:
+-        pr = gh_json(["api", f"repos/{repo}/pulls/{number}"])
+-    except NotFound as exc:
+-        raise ReviewError(f"{repo}#{number} does not exist or is not visible to this account") from exc
++    and every open hold comment. Its `suggestions` count those `review suggestions` lists for the head."""
++    pr = read_pull_request(repo, number)
+     head = pr["head"]["sha"]
+-    models = newest_verdicts(head, verdicts(repo, number, reviewer, repo_visibility(pr)))
++    found = verdicts(repo, number, reviewer, repo_visibility(pr))
++    models = newest_verdicts(head, found)
+     threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
+     held = holds(repo, number, (pr.get("user") or {}).get("login") or "")
+     newest = models[0] if models else None
+     return {"repo": repo, "number": number, "head": head, "draft": bool(pr.get("draft")),
+             "verdict": newest["verdict"] if newest else "unreviewed", "newest": newest, "models": models,
++            "suggestions": sum(map(listed_suggestions, suggesting_reviews(head, found))),
+             "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads],
+             "held": bool(held), "holds": held}
+ 
+ 
+ def status_lines(result: dict) -> list[str]:
+     """`review status` without --json: whether the head is held, the newest verdict on it, each account's
+-    and model's when several gave one, naming the account where two share a model, the open threads, and
+-    the hold comments."""
++    and model's when several gave one, naming the account where two share a model, each with the number of
++    suggestions standing with it when there are any, the open threads, and the hold comments."""
+     newest = result["newest"]
+     held = "held; " if result["held"] else ""
+-    lines = [f"#{result['number']} at {result['head'][:7]}: {held}{result['verdict']}"
++    count = newest["suggestions"] if newest else 0
++    listing = f" with {count} suggestion{'' if count == 1 else 's'}" if count else ""
++    lines = [f"#{result['number']} at {result['head'][:7]}: {held}{result['verdict']}{listing}"
+              + (f" from {newest['model']}, {newest['url'] or 'review ' + str(newest['review'])}" if newest else "")]
+     rows = result["models"]
+     if len(rows) > 1:
+@@ -1698,7 +1870,9 @@ def status_lines(result: dict) -> list[str]:
+         width = max(len(name) for name in names) + 3
+         for row, name in zip(rows, names):
+             at = parse_time(row["at"]).strftime("%H:%M UTC")
+-            lines.append(f"  {name:<{width}}{row['verdict']:<20}review {row['review']}, {at}")
++            count = row["suggestions"]
++            listing = f", {count} suggestion{'' if count == 1 else 's'}" if count else ""
++            lines.append(f"  {name:<{width}}{row['verdict']:<20}review {row['review']}, {at}{listing}")
+     threads = result["open_threads"]
+     if threads:
+         named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "") for t in threads)
+@@ -1708,6 +1882,24 @@ def status_lines(result: dict) -> list[str]:
+     return lines
+ 
+ 
++def suggestions(repo: str, number: int, reviewer: str) -> list[dict]:
++    """`review suggestions`: the suggestions `fix-pr` decides on the pull request's current head, from the
++    reviews `suggesting_reviews` picks among those `status` counts, which `status` counts them from too. Each
++    has its review's `url` and the head `sha` that review's marker names, and the item's `path`, `line`, and
++    `text`."""
++    pr = read_pull_request(repo, number)
++    reviews = suggesting_reviews(pr["head"]["sha"], verdicts(repo, number, reviewer, repo_visibility(pr)))
++    return [{"url": r.get("url"), "sha": verdict_marker(r.get("body") or "").sha, **item}
++            for r in reviews for item in parse_suggestions(r.get("body") or "") or []]
++
++
++def suggestions_text(items: list[dict]) -> str:
++    """`review suggestions` without --json: a block for each suggestion, naming the place it names and the
++    head of the review it comes from, with its text below."""
++    return "\n\n".join(f"{place(item) if item['path'] else '(no file named)'}, in the review of {item['sha'][:7]}: "
++                       f"{item['url']}\n{item['text']}" for item in items)
++
++
+ def check_body(body: str) -> None:
+     if not body.strip():
+         raise ReviewError("the body is empty; write the review below the signature line")
+@@ -1761,15 +1953,23 @@ def heading(state: dict, verdict: str, findings: int, covered: str, at: datetime
+ 
+ 
+ def compose(state: dict, verdict: str, body: str, covered: str, findings: int, census_line: str,
+-            at: datetime) -> str:
+-    """The review's text: the signature line and marker, then the body with its placeholders filled."""
++            at: datetime, entries: list[dict]) -> str:
++    """The review's text: the signature line and marker, then the body with its placeholders filled, then
++    the section listing the suggestions `entries` gives. A body that lists suggestions of its own, as one an
++    older skill wrote, publishes as written, but never beside `entries`. Either way the line that counts the
++    suggestions comes directly before their label."""
+     check_body(body)
+     if "{census}" not in prose(body):
+         raise ReviewError("the body must print the census the verdict rests on; put {census} where it goes, "
+                           "outside code")
++    if entries and parse_suggestions(body) is not None:
++        raise ReviewError("the body has a suggestions section of its own, and the threads file gives P3 entries; "
++                          "take the section out of the body, and publish lists the P3 entries in its place")
+     signature, marker, values = heading(state, verdict, findings, covered, at)
+-    filled = fill(body, dict(values, census=census_line))
+-    return f"{signature}\n\n{marker}\n\n{filled.strip()}\n"
++    filled = fill(body, dict(values, census=census_line)).strip()
++    if entries:
++        filled += f"\n\n{suggestions_section(entries)}"
++    return f"{signature}\n\n{marker}\n\n{with_suggestions_count(filled)}\n"
+ 
+ 
+ def listed(items: list[str]) -> str:
+@@ -1778,6 +1978,10 @@ def listed(items: list[str]) -> str:
+     return ", ".join(items[:-1]) + ", and " + items[-1]
+ 
+ 
++# The link `incremental_lead` writes to the full review an incremental review builds on.
++FULL_REVIEW_LINK = re.compile(r"since the full review of \[`[0-9a-f]{7}`\]\((\S+?)\)")
++
++
+ def incremental_lead(rules: dict, base_ref: str) -> str:
+     """The sentence that opens an incremental review: the full review it builds on, how the head
+     moved since, the size of the change, and any conflict the author resolved."""
+@@ -1856,6 +2060,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+             raise ReviewError(f"the body file {body_path} does not exist; compose the review there first")
+         body = body_path.read_text(encoding="utf-8")
+         threads = load_threads(threads_path)
++        entries = suggestion_entries(threads)
+         pr = pull_request(repo, number)
+         if pr["head"]["sha"] != sha:
+             raise ReviewError(f"the head moved to {pr['head']['sha'][:7]} since {sha[:7]} was set up; "
+@@ -1873,7 +2078,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+             text = compose_incremental(state, body, rules, not mine, now())
+             event = "COMMENT"
+         else:
+-            check_threads(threads, diff_lines(repo, number) if threads else {})
++            check_threads(threads, diff_lines(repo, number) if any(not is_suggestion(t) for t in threads) else {})
++            threads = [t for t in threads if not is_suggestion(t)]
+             tally = census(repo, number)
+             open_now = tally["open"] + len(threads)
+             if verdict == "clean" and open_now:
+@@ -1885,7 +2091,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
+             total = tally["total"] + len(threads)
+             noun = "thread" if total == 1 else "threads"
+             census_line = f"{total} finding {noun}: {tally['resolved']} resolved, {open_now} open"
+-            text = compose(state, verdict, body, covered, len(threads), census_line, now())
++            text = compose(state, verdict, body, covered, len(threads), census_line, now(), entries)
+             if mine or verdict == "clean" and not allow_approve:
+                 event = "COMMENT"
+             elif verdict == "changes-requested":
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index 391cf792..e04dd3b9 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -25,6 +25,7 @@
+     ("project review setup 12 --model claude", "allow", "allow"),
+     ("project review finish 12 --force", "allow", "allow"),
+     ("project review settle 12 --thread T --result fixed --body reply.md", "allow", "allow"),
++    ("project review suggestions 12 --json", "allow", "allow"),
+     ("project review gate 12", "allow", "none"),
+     ("project summary publish --summary summary.json", "allow", "allow"),
+     ("project inbox ask question --recommend yes --session s1", "allow", "allow"),
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 77a48973..fd7e9b11 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -720,6 +720,7 @@ def test_publishes_a_clean_self_review_marks_it_ready_and_cleans_up_in_order(sel
+             review_body.splitlines()[0])
+         self.assertIn(f"<!-- projector-review v=1 verdict=clean projector=1.2.3 model=claude-opus-5-5 "
+                       f"sha={self.head} findings=0 seconds=754 covered=3/3 -->", review_body)
++        self.assertNotIn("projector-suggestions", review_body, "a review that lists none counts none")
+         self.assertIn("0 finding threads: 0 resolved, 0 open", review_body)
+         self.assertEqual(("COMMENT", self.head, "token-operator"),
+                          (self.posted()["event"], self.posted()["commit_id"], "token-" + self.posted()["user"]["login"]))
+@@ -1047,6 +1048,146 @@ def test_publish_without_a_review_holding_the_lock_is_refused(self) -> None:
+         self.assertIn("project review setup 1", err)
+ 
+ 
++# A full review's body below its marker, in the order method.md § 7 gives, and the suggestions sections
++# reviewers have written by hand, which the label forms below wrap.
++INTENT = ("This change caches the parsed configuration, so each command reads `.projector.toml` once.\n\n"
++          "2 finding threads: 2 resolved, 0 open\n\nCovered 4 of 4 changed files; none generated.\n")
++CHECKED = ("- **The cache.** `load_config` keys the cache on the checkout's path, and nothing writes the file "
++           "between two reads.\n"
++           "- **The gate.** The unit tests pass at this head.\n")
++ITEMS = ("- `src/app/config.py:42`: name the cache `_parsed`, as the module's other caches are named.\n"
++         "- `docs/cli.md`, the configuration section: say that an edit to `.projector.toml` takes effect on the\n"
++         "  next command, not the next session.\n"
++         "- Split `load` in two, so reading and checking the file can be tested apart.")
++WRITTEN = [{"path": "src/app/config.py", "line": 42,
++            "text": "name the cache `_parsed`, as the module's other caches are named."},
++           {"path": "docs/cli.md", "line": None,
++            "text": "the configuration section: say that an edit to `.projector.toml` takes effect on the next "
++                    "command, not the next session."},
++           {"path": None, "line": None, "text": "Split `load` in two, so reading and checking the file can be "
++                                               "tested apart."}]
++LABELED = {
++    "level 2 heading": f"{INTENT}\nThe rest holds at this head:\n\n{CHECKED}\n## Suggestions\n\n{ITEMS}\n",
++    "level 3 heading": f"{INTENT}\n### Suggestions\n\n{ITEMS}\n\n### What was checked\n\n{CHECKED}",
++    "bold line": f"{INTENT}\n**Suggestions**\n\n{ITEMS}\n\n**What was checked**\n\n{CHECKED}",
++    "plain line": f"{INTENT}\nSuggestions:\n{ITEMS}\nWhat was checked:\n{CHECKED}",
++}
++P3 = [{"path": "src/x.py", "line": 12, "priority": "P3", "body": "Name the helper `warm`, as\nthe cache calls it."},
++      {"path": "README.md", "priority": "P3", "body": "Say that a cold start warms the cache."}]
++LISTED = [{"path": "src/x.py", "line": 12, "text": "Name the helper `warm`, as the cache calls it."},
++          {"path": "README.md", "line": None, "text": "Say that a cold start warms the cache."}]
++
++
++# The review marker as release 0.7.19 reads it, copied from that release. A review loop on another machine
++# may run it, and it reads a marker with any field it does not know as no verdict at all.
++MARKER_0_7_19 = re.compile(
++    r"^<!-- projector-review v=1 verdict=(clean|approved|changes-requested) (?:projector=(\S+) )?model=(\S+) "
++    r"(?:effort=(\S+) )?sha=([0-9a-f]{40}) findings=\d+ seconds=\d+ covered=\d+/\d+ -->$"
++)
++
++
++def verdict_0_7_19(body: str) -> tuple[str, str] | None:
++    """The verdict and head release 0.7.19 reads from a review body, or None when it reads none."""
++    found = next(filter(None, map(MARKER_0_7_19.match, body.splitlines())), None)
++    return (found.group(1), found.group(5)) if found else None
++
++
++class PublishSuggestionTests(PublishCase):
++    def test_a_release_from_before_suggestions_reads_the_verdict_of_every_review_this_one_writes(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("changes-requested", "--threads", str(self.threads(*P3, finding())))[0])
++        listing = self.posted()["body"]
++        # The fake's census reads no thread the first review opened, so the re-review may be clean.
++        self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++
++        self.assertEqual(("changes-requested", self.head), verdict_0_7_19(listing))
++        self.assertEqual(("clean", self.head), verdict_0_7_19(self.posted()["body"]))
++
++    def test_lists_p3_entries_in_one_form_after_the_body_and_counts_them_before_the_list(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        code, _, err = self.publish("changes-requested", "--threads", str(self.threads(P3[0], finding(), P3[1])))
++
++        self.assertEqual(0, code, err)
++        posted = self.posted()
++        self.assertTrue(posted["body"].endswith(
++            "Covered 3 of 3 changed files.\n\n"
++            "<!-- projector-suggestions v=1 count=2 -->\n"
++            "### Suggestions\n\n"
++            "- `src/x.py:12`: Name the helper `warm`, as the cache calls it.\n"
++            "- `README.md`: Say that a cold start warms the cache.\n"), posted["body"])
++        self.assertIn(" covered=3/3 -->\n", posted["body"], "the review's marker keeps the shape every release reads")
++        self.assertIn(" findings=1 ", posted["body"], "a P3 is no finding")
++        self.assertIn("1 finding thread: 0 resolved, 1 open", posted["body"])
++        self.assertEqual([("src/x.py", 3)], [(c["path"], c["line"]) for c in posted["comments"]],
++                         "a P3 opens no thread, and its line need not be in the diff")
++        self.assertEqual(LISTED, review.parse_suggestions(posted["body"]))
++        self.assertEqual(2, review.listed_suggestions(posted))
++
++    def test_a_head_whose_only_entries_are_p3_is_clean(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        code, _, err = self.publish("clean", "--threads", str(self.threads(*P3)))
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(([], "COMMENT"), (self.posted()["comments"], self.posted()["event"]))
++        self.assertIn(" findings=0 seconds=754 covered=3/3 -->", self.posted()["body"])
++        self.assertIn("\n<!-- projector-suggestions v=1 count=2 -->\n### Suggestions\n", self.posted()["body"])
++        self.assertFalse(self.github.pr["draft"])
++
++    def test_a_body_that_lists_suggestions_by_hand_publishes_as_written_and_is_counted(self) -> None:
++        # Another host may run a skill that predates P3 entries and write the section itself.
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        text = LABELED["level 3 heading"].replace("2 finding threads: 2 resolved, 0 open", "{census}")
++
++        code, _, err = self.publish("clean", body=self.body(text))
++
++        self.assertEqual(0, code, err)
++        self.assertIn("\n<!-- projector-suggestions v=1 count=3 -->\n### Suggestions\n", self.posted()["body"],
++                      "the count goes directly before the body's own label")
++        self.assertTrue(self.posted()["body"].endswith(CHECKED), "the body publishes as written")
++        self.assertEqual(WRITTEN, review.parse_suggestions(self.posted()["body"]))
++
++    def test_refuses_a_body_that_lists_suggestions_beside_p3_entries(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        for label, text in LABELED.items():
++            with self.subTest(label):
++                body = self.body(text.replace("2 finding threads: 2 resolved, 0 open", "{census}"))
++
++                code, _, err = self.publish("clean", "--threads", str(self.threads(*P3)), body=body)
++
++                self.assertEqual(1, code)
++                self.assertIn("the body has a suggestions section of its own, and the threads file gives P3 "
++                              "entries", err)
++                self.assertEqual([], self.github.reviews, "nothing was posted")
++                self.assertTrue(self.lock(self.head).exists(), "the refusal keeps the lock")
++
++    def test_refuses_a_p3_entry_the_list_could_not_show(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        for entry, words in (({"priority": "P3", "body": "Rename it."}, "finding 2 is a P3 and needs the path"),
++                             ({"path": "a b.py", "priority": "P3", "body": "Rename it."}, "with no space"),
++                             ({"path": "a.py", "line": 0, "priority": "P3", "body": "Rename it."},
++                              "a P3's line is a line number"),
++                             ({"path": "a.py", "priority": "P3", "body": " \n"}, "a P3 needs a body"),
++                             ({"path": "a.py", "priority": "P3", "body": "<!-- projector-finding v=1 --> x"},
++                              "leave Projector's markers out")):
++            with self.subTest(words):
++                code, _, err = self.publish("clean", "--threads", str(self.threads(P3[0], entry)))
++
++                self.assertEqual(1, code)
++                self.assertIn(words, err)
++                self.assertEqual([], self.github.reviews, "nothing was posted")
++
++    def test_a_priority_outside_p1_p2_and_p3_is_refused(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        code, _, err = self.publish("changes-requested", "--threads", str(self.threads(finding(priority="P4"))))
++
++        self.assertEqual(1, code)
++        self.assertIn("priority must be P1, P2, or P3", err)
++
++
+ def verdict_body(sha: str, model: str | None, verdict: str = "clean") -> str:
+     """A Projector review's signature line and marker for `sha` by `model`, or in an older shape naming no model."""
+     if model is None:
+@@ -2097,7 +2238,7 @@ def test_reports_the_newest_verdict_each_models_and_the_open_threads_whatever_th
+         self.assertEqual((REPO, 1, self.head, True, "clean"),
+                          (as_json["repo"], as_json["number"], as_json["head"], as_json["draft"], as_json["verdict"]))
+         self.assertEqual({"model": "claude-opus-5-5", "verdict": "clean", "review": newest, "url": review_page(newest),
+-                          "at": "2026-09-27T14:20:00Z", "login": "operator"}, as_json["newest"])
++                          "at": "2026-09-27T14:20:00Z", "login": "operator", "suggestions": 0}, as_json["newest"])
+         self.assertEqual([("claude-opus-5-5", "clean", newest), ("gpt-5.5", "changes-requested", older)],
+                          [(m["model"], m["verdict"], m["review"]) for m in as_json["models"]],
+                          "a verdict on an earlier head and a start comment are not on the list")
+@@ -2150,6 +2291,27 @@ def test_one_model_prints_one_line(self) -> None:
+         self.assertEqual([f"#1 at {self.head[:7]}: clean from claude-opus-5-5, {review_page(newest)}"],
+                          self.status()[1].splitlines())
+ 
++    def test_shows_how_many_suggestions_each_review_lists_from_its_count_or_else_its_list(self) -> None:
++        older = self.add_verdict("gpt-5.5", at="2026-09-27T14:02:00Z")
++        newest = self.add_verdict("claude-opus-5-5", at="2026-09-27T14:20:00Z")
++        counted, written = self.github.reviews
++        counted["body"] += "\n<!-- projector-suggestions v=1 count=1 -->\nThe list this line counts is not read.\n"
++        written["body"] += "\n" + LABELED["bold line"]
++
++        code, out, err = self.status()
++        result = json.loads(self.status("--json")[1])
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([f"#1 at {self.head[:7]}: clean with 3 suggestions from claude-opus-5-5, "
++                          f"{review_page(newest)}",
++                          f"  claude-opus-5-5   clean               review {newest}, 14:20 UTC, 3 suggestions",
++                          f"  gpt-5.5           clean               review {older}, 14:02 UTC, 1 suggestion"],
++                         out.splitlines())
++        self.assertEqual([(newest, 3), (older, 1)], [(m["review"], m["suggestions"]) for m in result["models"]],
++                         "a review with no count line, as 0.7.19 publishes, is counted by its list")
++        self.assertEqual((3, 4), (result["newest"]["suggestions"], result["suggestions"]),
++                         "the head's count is every model's, as `review suggestions` lists them")
++
+     def test_every_account_the_repository_lets_in_counts_so_fix_pr_runs_it_once(self) -> None:
+         skill = (Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text()
+         self.assertIn("`project review status <number>` reports `clean`", skill)
+@@ -2239,6 +2401,85 @@ def test_a_pull_request_that_cannot_be_read_exits_one(self) -> None:
+         self.assertIn("does not exist", err)
+ 
+ 
++class SuggestionsCommandTests(LatestWinsCase):
++    def suggestions(self, *extra: str) -> tuple[int, str, str]:
++        return self.project("suggestions", "1", "--repo", REPO, *extra, cwd=Path(tempfile.mkdtemp()))
++
++    def add_review(self, model: str, listing: str, at: str, sha: str | None = None, login: str = "operator") -> int:
++        """A full review by `model` on `sha` whose body, below its marker, is `listing`."""
++        review_id = self.add_verdict(model, at=at, sha=sha, login=login)
++        self.github.reviews[-1]["body"] += f"\n{listing}"
++        return review_id
++
++    def test_prints_nothing_and_exits_0_when_no_review_lists_a_suggestion(self) -> None:
++        self.assertEqual((0, ""), self.suggestions()[:2], "an unreviewed head")
++        self.add_review("claude-opus-5-5", f"{INTENT}\n### What was checked\n\n{CHECKED}", "2026-09-27T14:02:00Z")
++
++        self.assertEqual((0, ""), self.suggestions()[:2])
++        self.assertEqual((0, []), (self.suggestions("--json")[0], json.loads(self.suggestions("--json")[1])))
++
++    def test_lists_each_suggestion_of_the_newest_review_by_each_model_on_the_head(self) -> None:
++        self.add_review("claude-opus-5-5", LABELED["level 2 heading"], "2026-09-27T14:00:00Z")
++        newest = self.add_review("claude-opus-5-5", LABELED["plain line"], "2026-09-27T14:20:00Z")
++        other = self.add_review("gpt-5.5", "### Suggestions\n\n- `src/z.py:11`: Return early.\n",
++                                "2026-09-27T14:10:00Z")
++        self.add_review("gpt-5.5", "### Suggestions\n\n- `src/z.py:3`: A suggestion on an earlier head.\n",
++                        "2026-09-27T14:30:00Z", sha=self.base)
++
++        code, out, err = self.suggestions()
++        listed = json.loads(self.suggestions("--json")[1])
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([dict(item, url=review_page(newest), sha=self.head) for item in WRITTEN]
++                         + [{"url": review_page(other), "sha": self.head, "path": "src/z.py", "line": 11,
++                             "text": "Return early."}], listed,
++                         "the older review by the same model and a review of an earlier head give none")
++        self.assertEqual(
++            f"src/app/config.py:42, in the review of {self.head[:7]}: {review_page(newest)}\n"
++            "name the cache `_parsed`, as the module's other caches are named.\n\n"
++            f"docs/cli.md, in the review of {self.head[:7]}: {review_page(newest)}\n"
++            "the configuration section: say that an edit to `.projector.toml` takes effect on the next command, "
++            "not the next session.\n\n"
++            f"(no file named), in the review of {self.head[:7]}: {review_page(newest)}\n"
++            "Split `load` in two, so reading and checking the file can be tested apart.\n\n"
++            f"src/z.py:11, in the review of {self.head[:7]}: {review_page(other)}\n"
++            "Return early.\n", out)
++
++    def test_reads_every_label_a_reviewer_has_written(self) -> None:
++        for label, text in LABELED.items():
++            with self.subTest(label):
++                self.github.reviews = []
++                found = self.add_review("claude-opus-5-5", text, "2026-09-27T14:20:00Z")
++
++                listed = json.loads(self.suggestions("--json")[1])
++
++                self.assertEqual([dict(item, url=review_page(found), sha=self.head) for item in WRITTEN], listed)
++
++    def test_reads_the_review_publish_wrote(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean", "--threads", str(self.threads(*P3)))[0])
++
++        listed = json.loads(self.suggestions("--json")[1])
++
++        self.assertEqual([dict(item, url=review_page(901), sha=self.head) for item in LISTED], listed)
++
++    def test_a_pull_request_that_cannot_be_read_exits_one(self) -> None:
++        self.github.missing = True
++
++        code, out, err = self.suggestions()
++
++        self.assertEqual((1, ""), (code, out))
++        self.assertIn("does not exist", err)
++
++    def test_a_github_failure_exits_one(self) -> None:
++        self.github.fail = "pulls/1/reviews"
++
++        code, out, err = self.suggestions()
++
++        self.assertEqual((1, ""), (code, out))
++        self.assertIn("HTTP 502", err)
++
++
+ class HoldTests(ReviewCase):
+     """`project review hold` on pull request 1, which the operator, signed in to gh, opened."""
+ 
+@@ -3185,6 +3426,81 @@ def test_every_kind_has_one_phrase_that_the_output_and_the_lead_both_use(self) -
+                     "conflicts=0 -->"))
+ 
+ 
++class IncrementalSuggestionsTests(IncrementalCase):
++    def build_on_suggestions(self) -> tuple[int, str]:
++        """Publish a full review of the reviewed head that lists two suggestions, then an incremental review of a
++        push that builds on it, and return the full review's id and the new head. The setup's full review listed
++        none; the re-review of the same head is the newest full review, which the incremental review links."""
++        self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
++        self.assertEqual(0, self.publish("clean", "--threads", str(self.threads(*P3)))[0])
++        full = self.posted()["id"]
++        head = self.pushed()
++        self.assertEqual(0, self.publish_incremental()[0])
++        self.assertIn(f"({review_page(full)})", self.posted()["body"])
++        self.assertIsNotNone(verdict_0_7_19(self.posted()["body"]), "0.7.19 reads the incremental verdict")
++        self.assertNotIn("projector-suggestions", self.posted()["body"])
++        return full, head
++
++    def test_an_incremental_review_brings_the_suggestions_of_the_full_review_its_lead_links(self) -> None:
++        full, head = self.build_on_suggestions()
++
++        code, out, err = self.project("suggestions", "1", "--repo", REPO, "--json")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([dict(item, url=review_page(full), sha=self.reviewed) for item in LISTED], json.loads(out),
++                         f"the suggestions name the full review's head, not {head[:7]}")
++
++    def test_status_counts_the_suggestions_of_the_full_review_an_incremental_review_builds_on(self) -> None:
++        # The incremental review lists none of its own, so a count of its own would read 0 while fix-pr still
++        # has the full review's two to decide.
++        _, head = self.build_on_suggestions()
++        incremental = self.posted()["id"]
++
++        code, out, err = self.project("status", "1", "--repo", REPO)
++        result = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
++        listed = json.loads(self.project("suggestions", "1", "--repo", REPO, "--json")[1])
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([f"#1 at {head[:7]}: clean with 2 suggestions from claude-opus-5-5, "
++                          f"{review_page(incremental)}"], out.splitlines())
++        self.assertEqual((incremental, 2, 2, len(listed)),
++                         (result["newest"]["review"], result["newest"]["suggestions"], result["suggestions"], 2))
++
++
++class SuggestionParsingTests(unittest.TestCase):
++    def test_reads_each_label_a_reviewer_has_written_in_any_case(self) -> None:
++        for label, text in LABELED.items():
++            for body in (text, text.replace("Suggestions", "SUGGESTIONS")):
++                with self.subTest(label, body=body[len(INTENT):len(INTENT) + 30]):
++                    self.assertEqual(WRITTEN, review.parse_suggestions(body))
++
++    def test_reads_the_form_publish_writes_back_as_it_was_given(self) -> None:
++        self.assertEqual(LISTED, review.parse_suggestions(f"{INTENT}\n{review.suggestions_section(LISTED)}\n"))
++
++    def test_a_body_without_the_section_has_none(self) -> None:
++        for body in (f"{INTENT}\n### What was checked\n\n{CHECKED}",
++                     f"{INTENT}\nThe suggestions below are optional.\n\n{CHECKED}",
++                     f"{INTENT}\n```markdown\n## Suggestions\n\n- `a.py:1`: quoted, not listed.\n```\n",
++                     f"{INTENT}\n##### Suggestions\n\n{ITEMS}\n"):
++            with self.subTest(body[len(INTENT):len(INTENT) + 40]):
++                self.assertIsNone(review.parse_suggestions(body))
++
++    def test_an_empty_section_lists_none(self) -> None:
++        self.assertEqual([], review.parse_suggestions(f"{INTENT}\n### Suggestions\n\n### What was checked\n"))
++
++    def test_the_section_ends_at_a_paragraph_and_a_deeper_list_joins_its_item(self) -> None:
++        body = (f"{INTENT}\n### Suggestions (P3)\n\n"
++                "- `src/x.py:3-9`: Inline the helper.\n"
++                "  - It has one caller.\n"
++                "1. src/y.py:4 — Drop the unused import.\n\n"
++                "The rest holds at this head.\n\n"
++                "- **The gate.** It passes.\n")
++
++        self.assertEqual([{"path": "src/x.py", "line": 3, "text": "Inline the helper. - It has one caller."},
++                          {"path": "src/y.py", "line": 4, "text": "Drop the unused import."}],
++                         review.parse_suggestions(body))
++
++
+ class VerdictMarkerTests(unittest.TestCase):
+     SHA, FROM = "a" * 40, "b" * 40
+     MARKER = (f"<!-- projector-review v=1 verdict=clean projector=0.7.2 model=claude-opus-5-5 effort=high sha={'a' * 40} "
+diff --git a/tests/test_watchers.py b/tests/test_watchers.py
+index da93a615..e7f367ac 100644
+--- a/tests/test_watchers.py
++++ b/tests/test_watchers.py
+@@ -289,6 +289,30 @@ def test_reports_every_kind_of_outstanding_work_on_a_tracked_pull_request(self)
+             {tuple(row[:3]) for row in self.state_rows()},
+         )
+ 
++    def test_a_projector_review_says_how_many_suggestions_its_body_counts(self) -> None:
++        def projector_review(review_id, count):
++            marker = (f"<!-- projector-review v=1 verdict=clean projector=0.7.20 model=claude-opus-5-5 sha={SHA_A} "
++                      "findings=0 seconds=60 covered=1/1 -->")
++            counted = "" if count is None else f"<!-- projector-suggestions v=1 count={count} -->\n"
++            return review(review_id, who="operator", body=f"Projector review\n\n{marker}\n\n{counted}Clean.")
++
++        self.pull_request(1, reviews=[projector_review(81, 2), projector_review(82, 1), projector_review(83, 0),
++                                      projector_review(84, None)])
++        self.track("acme/app#1")
++
++        result = self.run_watcher(THREADS)
++
++        self.assert_ok(result)
++        self.assertEqual(
++            [
++                "REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 2 suggestions — Projector review Clean.",
++                "REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 1 suggestion — Projector review Clean.",
++                "REVIEW acme/app#1 by [operator] on aaaaaaaa — Projector review Clean.",
++                "REVIEW acme/app#1 by [operator] on aaaaaaaa — Projector review Clean.",
++            ],
++            result.stdout.splitlines(),
++        )
++
+     def test_a_later_pass_repeats_only_after_the_renotify_interval(self) -> None:
+         self.pull_request(1, draft=True, threads=[thread("T1")], reviews=[review(5)])
+         self.track("acme/app#1")

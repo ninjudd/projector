@@ -1,0 +1,187 @@
+{
+ "version": 1,
+ "name": "Review suggestions in the CLI",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 326,
+  "title": "Publish and list review suggestions through the CLI",
+  "head": "46658cc594f5d88be6fec8308a692da86890ed05",
+  "headRef": "review-suggestions-cli",
+  "base": "759ee62a2423d5aa12b81e470024e13ff4f90e50",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's review loop publishes each review of a pull request through <code>project review publish</code>. A review sorts what it finds by priority. P1 and P2 findings become inline threads that block the pull request. P3 items, called <b>suggestions</b>, are changes the code is correct without. They never block, but the <code>fix-pr</code> skill must implement or defer each one.",
+   "Until now the reviewing agent typed the suggestions section into the review body by hand, and it came out as <code>## Suggestions</code>, <code>### Suggestions</code>, a bold line, or a plain <code>Suggestions:</code> line. <code>fix-pr</code> was told to look for one of those forms, so it missed suggestions written in another. This pull request moves both ends of the job into the CLI:",
+   "<ol><li><b>Writing.</b> <code>publish</code> takes suggestions as P3 entries in its threads file, ends the body with one canonical <code>### Suggestions</code> list, and writes a hidden <code>&lt;!-- projector-suggestions v=1 count=N --&gt;</code> line directly before the list's label.</li><li><b>Reading.</b> A new <code>project review suggestions</code> command parses the canonical list and every hand-written form, and <code>fix-pr</code> now takes its suggestions from that command instead of reading review bodies.</li><li><b>Counting.</b> <code>project review status</code> and the watch loop's <code>REVIEW</code> line show how many suggestions a review lists.</li></ol>",
+   "The skills change to match: <code>review-pr</code> and its method stop telling the reviewer to write the section, and <code>fix-pr</code> calls the new command."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Review marker</b>: the hidden <code>&lt;!-- projector-review v=1 … --&gt;</code> HTML comment on the second line of every Projector review. Every Projector reader, such as <code>status</code>, <code>publish</code>, and the site, finds a review's verdict through it.</li><li><b>Incremental review</b>: a short clean review of a small push. It lists no suggestions of its own and links the full review it builds on.</li><li><b>Threads file</b>: the JSON list of findings an agent passes to <code>publish --threads</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review status at 46658cc",
+    "html": "<p>The Projector review of <code>46658cc</code> is clean. The review of <code>9e82443</code> found that a <code>suggestions=</code> field inside the review marker made every earlier release read the review as no verdict. This head keeps the marker in the shape 0.7.19 reads and moves the count to a line of its own. A review composed with this head's code reads as a verdict under 0.7.19's <code>verdict_marker</code>.</p><p class=\"note\">The gate passed: 1079 tests OK with 1 skipped, plus <code>project check</code> and both plugin validations.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "cli",
+   "title": "The CLI writes, reads, and counts suggestions",
+   "kicker": "publish lists P3 entries in one form; review suggestions and review status read them back",
+   "intro": [
+    "All of the behavior lives in <code>src/projector/review.py</code>. A review's <b>marker</b> is the hidden HTML comment that carries its verdict, the head it judged, and its counts. Every earlier release reads a marker that holds a field it does not know as no verdict, so this change leaves the marker alone and puts the suggestion count on a line of its own. A <b>P3 entry</b> is an item in the threads file with <code>\"priority\": \"P3\"</code>. It names a file, optionally a line, and the suggestion in its <code>body</code>.",
+    "<ol><li><b>Publish.</b> <code>suggestion_entries</code> checks each P3 entry. <code>check_threads</code> skips P3 entries, so they need no diff line, and they are removed before the comments go out, so they open no thread and <code>findings=</code> excludes them. <code>compose</code> appends <code>suggestions_section</code>, and <code>with_suggestions_count</code> writes the count line directly before the suggestions label. A body that already has a hand-written section publishes unchanged, with its items counted, unless P3 entries are given too. In that case publish refuses, because the list would appear twice.</li><li><b>Read.</b> <code>parse_suggestions</code> finds the first suggestions label outside fenced code, and treats each list item after it as one suggestion until the next heading, bold line, <code>Label:</code> line, or new paragraph. <code>suggestions</code> applies it to each model's newest review of the head and, for an incremental review, to the full review its lead links.</li><li><b>Count.</b> <code>newest_verdicts</code> gives each verdict a <code>suggestions</code> count, taken from the count line or, for a review an earlier release published, from the list itself. After an incremental review, the count includes the full review's suggestions.</li></ol>"
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "<code>with_full_review</code> is shared by <code>status</code> and <code>suggestions</code>, so the count <code>status</code> prints matches the items <code>suggestions</code> lists."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Marker grammar, P3 entries in publish, the section writer and parser, and the suggestions and status readers.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1587,
+       "text": "Composed a clean review with one P3 entry using this head's <code>compose</code>, and ran Projector 0.7.19's <code>verdict_marker</code> on it: it read the verdict, head, and model. The marker ends at <code>covered=1/1 --&gt;</code>, and the count line sits directly before <code>### Suggestions</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 1598,
+       "text": "Ran <code>parse_suggestions</code> at this head on the bodies of 28 Projector reviews from #300 to #325. It found every listed item in the <code>##</code>, <code>###</code>, and plain <code>Suggestions:</code> forms, and stopped at each <code>What was checked</code> or <code>Checked:</code> label."
+      },
+      {
+       "kind": "verify",
+       "line": 1570,
+       "text": "A P3 body with several lines, a code span holding a colon, or text opening with <code>1.</code> round-trips through <code>suggestions_section</code> and <code>parse_suggestions</code> unchanged."
+      },
+      {
+       "kind": "context",
+       "line": 1527,
+       "text": "A hand-written section ends at any line that looks like <code>Label:</code>. An intro line such as <code>Two small things:</code> right after the heading therefore ends the section before its list. The canonical form <code>publish</code> writes never has such a line."
+      },
+      {
+       "kind": "verify",
+       "line": 1982,
+       "text": "<code>FULL_REVIEW_LINK</code> matches the sentence <code>incremental_lead</code> writes, and both it and <code>verdicts</code> use the review's <code>html_url</code>, so the incremental review's link finds the full review."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>review suggestions</code> subcommand, sharing <code>status</code>'s arguments and its reviewer lookup, now factored into <code>counted_reviewer</code>."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds <code>suggestions</code> to the Codex allow list beside <code>status</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 116,
+       "text": "The command only reads from GitHub. Claude Code already allows it through <code>Bash(project *)</code>, and this pull request adds no command that writes to GitHub, so no ask rule is needed."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "watch",
+   "title": "The watch loop says how many suggestions a review lists",
+   "kicker": "The REVIEW line gains a count read from the review marker",
+   "intro": [
+    "The watch loop's script polls tracked pull requests and prints a <code>REVIEW</code> line for each review body with no inline thread. A clean Projector review can still carry suggestions for <code>fix-pr</code>, so the line now ends with <code>, listing 2 suggestions</code> when the review's <code>projector-suggestions</code> line counts any. A review published by an earlier release has no count, and its line names none."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/start-watch-loop/scripts/watch-threads.sh",
+     "note": "Captures <code>suggestions=N</code> from the review's count line as a new tab-separated field and prints it in the <code>REVIEW</code> line.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 209,
+       "text": "jq's <code>capture</code> gives no output on a body without the field, so <code>// \"0\"</code> applies. The new field is never empty, so <code>read</code> still puts the snippet in <code>csnip</code>. <code>test_a_projector_review_says_how_many_suggestions_its_marker_counts</code> passes."
+      }
+     ]
+    },
+    {
+     "path": "skills/start-watch-loop/SKILL.md",
+     "note": "Describes the count on the <code>REVIEW</code> line."
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "The skills hand suggestions to the CLI",
+   "kicker": "review-pr gives P3 entries to publish; fix-pr reads them with review suggestions",
+   "intro": [
+    "The reviewer no longer writes a suggestions section. <code>review-pr</code> and <code>method.md</code> section 7 tell it to pass each P3 to <code>publish</code> as a threads-file entry, and they document the count line <code>publish</code> writes before the list. <code>fix-pr</code> takes its suggestions from <code>project review suggestions &lt;number&gt; --repo &lt;owner&gt;/&lt;repo&gt;</code> and is told never to parse review bodies itself."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "P3 entries in the threads file, the count line, the new refusals, and the count in the report."
+    },
+    {
+     "path": "skills/review-pr/method.md",
+     "note": "Section 7 drops the hand-written suggestions list and shows the canonical form <code>publish</code> writes."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "\"Decide each suggestion\" now runs <code>project review suggestions</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Reference documentation",
+   "kicker": "docs/cli.md documents the publish input, the marker field, status, and the new command",
+   "intro": [
+    "<code>docs/cli.md</code> adds P3 entries and their refusals to <code>publish</code>, the <code>suggestions</code> count to <code>status</code> and its JSON, and a section for <code>review suggestions</code> with its text and JSON output."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Parser forms, publish with P3 entries, the new command end to end, and the watcher count",
+   "intro": [
+    "<code>SuggestionParsingTests</code> reads each hand-written label and the canonical form. <code>PublishSuggestionTests</code> covers P3 entries, a hand-written section, and the refusal when both appear. <code>SuggestionsCommandTests</code> and <code>IncrementalSuggestionsTests</code> run the command against the fake <code>gh</code>, the second through a real full review, a push, and an incremental review."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran <code>PYTHONPATH=src python3.12 -m unittest discover</code> at 46658cc: 1079 tests, OK, 1 skipped."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_review.py"
+    },
+    {
+     "path": "tests/test_watchers.py"
+    },
+    {
+     "path": "tests/test_permissions.py"
+    }
+   ]
+  }
+ ]
+}
