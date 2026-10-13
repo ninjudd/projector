@@ -84,10 +84,12 @@ and `*.test.tsx` files. Codex has no separate public validation command.
 through the root `tsconfig.json`. It compiles against the declarations
 Claude Code writes to `.claude-plugin/types/` each time an interactive
 session loads the checkout as a plugin. Nothing else provides them, so CI
-cannot run this check. Once per checkout, run `npm ci` in `site/` and start
-a session with `claude --plugin-dir .` from the repository root. The script
-fails with that instruction while the declarations are missing. Start such a
-session again after you update Claude Code, so the declarations match it.
+cannot run this check. Once per checkout, run `npm ci` in `site/`, and start
+a session with `claude --plugin-dir .` from the repository root. The
+declarations depend only on the Claude Code version, so a linked worktree
+that has none uses the main checkout's, and the script says so. The script
+fails with the setup instruction when neither checkout has them. Start such
+a session again after you update Claude Code, so the declarations match it.
 
 The site's front end lives in `site/`: TypeScript under `site/src/`, and
 the stylesheets, icon, and compiled JavaScript the site serves under

@@ -96,7 +96,9 @@ first:
    `.claude-plugin/types/`, which Git ignores. They stay after you quit the
    session. Projector loads only when its `gh-stack` dependency is installed,
    as [Install for Claude Code](plugins.md#install-for-claude-code)
-   describes. Start such a session again after you update Claude Code.
+   describes. Start such a session again after you update Claude Code. A
+   linked worktree can skip this step when the main checkout has the
+   declarations.
 
 ```sh
 PYTHONPATH=src python3 -m unittest discover -v
@@ -110,7 +112,10 @@ git diff --check
 
 `hooks/typecheck.sh` runs `site/`'s `tsc` over `hooks/` with the root
 `tsconfig.json`, which extends the one Claude Code writes beside its
-declarations. While the declarations are missing, the script fails and says
+declarations. The declarations depend only on the Claude Code version, so in
+a linked worktree that has none, the script uses the main checkout's, the
+first one `git worktree list` prints, and names it. It writes nothing to
+either checkout. When neither has the declarations, the script fails and says
 how to get them.
 
 The Check workflow runs `npm run check`, the tests, and `project check` on
