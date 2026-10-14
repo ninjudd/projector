@@ -1094,7 +1094,7 @@ def prune(root: Path, repo: Optional[str], apply: bool) -> dict:
     candidates: list[tuple[Path, str]] = []
     for folder in sorted(base.glob("*/*/*")) if base.is_dir() else []:
         owner, name, number = folder.parts[-3:]
-        if not wanted(f"{owner}/{name}") or not folder.is_dir() or folder.is_symlink():
+        if not wanted(f"{owner}/{name}") or not is_folder(folder):
             continue
         for child in sorted(folder.iterdir()):
             if not is_folder(child):
