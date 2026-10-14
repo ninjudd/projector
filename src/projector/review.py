@@ -17,6 +17,11 @@ under its model key. Layout of the state directory:
     prs/<owner>/<repo>/<pr>/<model-key>/review.json        the review publish is submitting
     worktrees/<owner>/<repo>/<pr>/<model-key>/<short-sha>  scratch worktrees, never inside the checkout
     loops/<id>/published.json                              a loop's record of the review ids it published
+
+A review keeps one scratch worktree, its current head's: `setup` and `move` remove the worktrees of the
+model's earlier heads of the pull request, `finish` removes the last, and `prune` sweeps what none of
+them reached, such as the `worktrees/<owner>/<repo>/<pr>/<short-sha>` folders made before each model kept
+its own.
 """
 
 from __future__ import annotations
@@ -787,6 +792,7 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
         if comment["id"] in (recorded, replace):
             delete_comment(repo, comment["id"], token)
     ensure_loop(root, loop)
+    kept, removed = remove_superseded(paths, earlier.get("checkout"), earlier.get("worktrees", []), worktree)
     state = {
         "repo": repo,
         "number": number,
@@ -798,8 +804,9 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
         "untrusted_because": why or None,
         "checkout": str(checkout),
         "worktree": str(worktree),
-        # A loop keeps each head's worktree until the pull request closes, so `finish` removes them all.
-        "worktrees": list(dict.fromkeys([*earlier.get("worktrees", []), str(worktree)])),
+        # The worktrees `finish` removes: this head's, and an earlier head's that a held lock kept or that
+        # would not come out.
+        "worktrees": kept + [str(worktree)],
         "operator": operator,
         "reviewer": reviewer,
         "model": model,
@@ -810,7 +817,7 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
         "heads": 1,
     }
     write_state(paths, state)
-    return state
+    return dict(state, removed=removed)
 
 
 def check_replaceable(starts: list[dict], comment: int, model: str, reviewer: str, repo: str, number: int) -> None:
@@ -875,12 +882,61 @@ def move(paths: Paths, loop: Optional[str]) -> dict:
         lock.unlink(missing_ok=True)
         raise
     paths.lock(old).unlink(missing_ok=True)
+    kept, removed = remove_superseded(paths, state["checkout"], state["worktrees"], worktree)
     state.update(sha=sha, base=merge_base, base_ref=pr["base"]["ref"], worktree=str(worktree),
                  trusted=trusted, untrusted_because=why or None,
                  cross_repository=((pr["head"].get("repo") or {}).get("full_name")) != state["repo"],
-                 heads=state["heads"] + 1, worktrees=state["worktrees"] + [str(worktree)])
+                 heads=state["heads"] + 1, worktrees=kept + [str(worktree)])
     write_state(paths, state)
-    return state
+    return dict(state, removed=removed)
+
+
+def held_heads(paths: Paths) -> set[str]:
+    """The short SHAs of the heads whose lock this model holds and is not yet stale: a review that may still
+    be reading its worktree."""
+    return {lock.stem[:SHORT] for lock in paths.locks() if lock_age(lock) <= STALE_AFTER}
+
+
+def remove_superseded(paths: Paths, checkout: Optional[str], listed: list[str],
+                      current: Path) -> tuple[list[str], list[str]]:
+    """Remove the worktrees of the model's earlier heads of the pull request that `listed` names, once
+    `current` exists for the head under review, and return the worktrees kept and those removed.
+
+    A worktree whose head's lock is held stays, since a review may still be reading it, and so does one
+    that will not come out; `finish` removes both. A failure here never fails the setup or move that
+    called it, which has already posted or edited its start comment."""
+    held = held_heads(paths)
+    kept, removed = [], []
+    for path in map(Path, dict.fromkeys(listed)):
+        if path == current or not path.exists():
+            continue
+        if path.name in held:
+            kept.append(str(path))
+            continue
+        try:
+            remove_worktree(checkout, path, paths.worktrees)
+        except (ReviewError, OSError):
+            kept.append(str(path))
+            continue
+        removed.append(str(path))
+    if removed and checkout:
+        with suppress(ReviewError):
+            git("-C", checkout, "worktree", "prune")
+    return kept, removed
+
+
+def remove_worktree(checkout: Optional[str], path: Path, folder: Path) -> None:
+    """Remove one scratch worktree with `git worktree remove` in the checkout that made it. When that
+    checkout is gone or no longer lists it, a worktree inside `folder` is deleted outright; Git refuses to
+    remove any other path."""
+    try:
+        if checkout is None:
+            raise ReviewError(f"no checkout is recorded for {path}")
+        git("-C", checkout, "worktree", "remove", "--force", str(path))
+    except ReviewError:
+        if not path.is_relative_to(folder):
+            raise
+        shutil.rmtree(path)
 
 
 def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], force: bool, cwd: Path) -> dict:
@@ -967,12 +1023,7 @@ def remove_worktrees(paths: Paths, state: dict) -> list[str]:
     for path in map(Path, dict.fromkeys(state["worktrees"])):
         if not path.exists():
             continue
-        try:
-            git("-C", checkout, "worktree", "remove", "--force", str(path))
-        except ReviewError:
-            if not path.is_relative_to(paths.worktrees):
-                raise
-            shutil.rmtree(path)
+        remove_worktree(checkout, path, paths.worktrees)
         removed.append(str(path))
     with suppress(ReviewError):
         git("-C", checkout, "worktree", "prune")
@@ -992,6 +1043,171 @@ def finish_lines(result: dict) -> list[str]:
             + [f"removed worktree {path}" for path in result["worktrees"]]
             + ([f"released {count} lock{'' if count == 1 else 's'}"] if count else [])
             + (["deleted its state; the loop's record of published reviews stays"] if result["state"] else []))
+
+
+def prune(root: Path, repo: Optional[str], apply: bool) -> dict:
+    """`review prune`: find every scratch worktree under the state directory that no review needs, and with
+    `apply` remove it. A review needs the worktree of its current head while its pull request is open, and
+    the worktree of any head whose lock is held and not yet stale. Everything else goes: an earlier head's
+    worktree, one made before each model kept its own folder, one no review set up here names, and a closed
+    pull request's. Asks GitHub only whether each pull request with a review set up here is still open, and
+    keeps that review's worktree when it cannot tell. Reads the locks and states once before those requests,
+    and again for each worktree just before removing it, so a review set up meanwhile keeps its own. `repo`
+    limits the sweep to one repository."""
+    base = root / "worktrees"
+    wanted = (lambda slug: slug.lower() == repo.lower()) if repo else (lambda slug: True)
+    keep: dict[Path, str] = {}
+    current: dict[Path, tuple[str, int]] = {}
+    reviewed: set[tuple[str, ...]] = set()
+    if (root / "prs").is_dir():
+        for lock in (root / "prs").glob("*/*/*/*/*.lock"):
+            owner, name, number, key = lock.parts[-5:-1]
+            if wanted(f"{owner}/{name}") and lock_age(lock) <= STALE_AFTER:
+                keep[(base / owner / name / number / key / lock.stem[:SHORT]).resolve()] = "its head's lock is held"
+        for found in (root / "prs").glob("*/*/*/*/state.json"):
+            owner, name, number, key = found.parts[-5:-1]
+            if not wanted(f"{owner}/{name}"):
+                continue
+            reviewed.add((owner, name, number, key))
+            try:
+                worktree = json.loads(found.read_text(encoding="utf-8")).get("worktree")
+            except (OSError, ValueError):
+                worktree = None
+            if worktree and number.isdigit():
+                current[Path(worktree).resolve()] = (f"{owner}/{name}", int(number))
+    open_states: dict[tuple[str, int], str] = {}
+    for path, (slug, number) in sorted(current.items()):
+        if path in keep or not path.exists():
+            continue
+        if (slug, number) not in open_states:
+            try:
+                open_states[(slug, number)] = read_pull_request(slug, number).get("state") or "unknown"
+            except ReviewError as exc:
+                open_states[(slug, number)] = f"unreadable: {exc}"
+        state = open_states[(slug, number)]
+        if state == "open":
+            keep[path] = "the current head of an open pull request's review"
+        elif state.startswith("unreadable"):
+            keep[path] = f"GitHub could not say whether {slug}#{number} is open ({state.split(': ', 1)[1]})"
+    result: dict = {"repo": repo, "apply": apply, "removed": [], "kept": [], "failed": []}
+    candidates: list[tuple[Path, str]] = []
+    for folder in sorted(base.glob("*/*/*")) if base.is_dir() else []:
+        owner, name, number = folder.parts[-3:]
+        if not wanted(f"{owner}/{name}") or not folder.is_dir() or folder.is_symlink():
+            continue
+        for child in sorted(folder.iterdir()):
+            if child.is_symlink() or not child.is_dir() or (child / ".git").exists():
+                candidates.append((child, "made before each model kept its own worktree folder"))
+                continue
+            for path in sorted(child.iterdir()):
+                if (owner, name, number, child.name) not in reviewed:
+                    why = "no review of the pull request by this model is set up here"
+                elif path.resolve() in current:
+                    why = (f"{owner}/{name}#{number} is closed; `project review finish {number} --repo "
+                           f"{owner}/{name} --force` ends its review")
+                else:
+                    why = "the worktree of an earlier head"
+                candidates.append((path, why))
+    repositories: set[Path] = set()
+    for path, why in candidates:
+        reason = keep.get(path.resolve()) or needed_now(root, base, path, current)
+        if reason:
+            result["kept"].append({"path": str(path), "reason": reason})
+            continue
+        entry = {"path": str(path), "reason": why}
+        if apply:
+            try:
+                repositories.update(remove_scratch(path, base))
+            except (ReviewError, OSError) as exc:
+                result["failed"].append(dict(entry, error=str(exc)))
+                continue
+            for parent in path.parents:
+                if parent == base or not parent.is_relative_to(base):
+                    break
+                with suppress(OSError):
+                    parent.rmdir()
+        result["removed"].append(entry)
+    for repository in sorted(repositories):
+        with suppress(ReviewError):
+            git("--git-dir", str(repository), "worktree", "prune")
+    return result
+
+
+def needed_now(root: Path, base: Path, path: Path, current: dict[Path, tuple[str, int]]) -> Optional[str]:
+    """Why a review set up since `prune` read the locks and states needs the worktree at `path` after all,
+    checked again just before `prune` removes it: its head's lock is held and not yet stale, or the review's
+    state now names it as the current head's when it named another before. None when nothing needs it."""
+    parts = path.relative_to(base).parts
+    if len(parts) != 5:
+        return None
+    folder = root / "prs" / Path(*parts[:4])
+    for lock in folder.glob("*.lock"):
+        try:
+            if lock.stem[:SHORT] == parts[4] and lock_age(lock) <= STALE_AFTER:
+                return "its head's lock is held"
+        except OSError:
+            continue
+    try:
+        named = json.loads((folder / "state.json").read_text(encoding="utf-8")).get("worktree")
+    except (OSError, ValueError):
+        return None
+    if named and Path(named).resolve() == path.resolve() and path.resolve() not in current:
+        return "the current head of a review set up while prune ran"
+    return None
+
+
+def scratch_repository(path: Path) -> Optional[Path]:
+    """The Git directory of the checkout that made the worktree at `path`, read from the worktree's `.git`
+    file, or None when it names none that still exists."""
+    try:
+        pointer = (path / ".git").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not pointer.startswith("gitdir:"):
+        return None
+    admin = Path(pointer.removeprefix("gitdir:").strip())
+    try:
+        common = (admin / (admin / "commondir").read_text(encoding="utf-8").strip()).resolve()
+    except OSError:
+        return None
+    return common if common.is_dir() else None
+
+
+def remove_scratch(path: Path, base: Path) -> list[Path]:
+    """Remove one entry of the worktree folder: a worktree with `git worktree remove` in the checkout that
+    made it, or outright when that fails; a link or a file is unlinked, never followed. Returns the Git
+    directories to prune."""
+    if not path.resolve().is_relative_to(base.resolve()) and not path.is_symlink():
+        raise ReviewError(f"{path} is outside {base}, so prune leaves it alone")
+    if path.is_symlink() or not path.is_dir():
+        path.unlink()
+        return []
+    repository = scratch_repository(path)
+    if repository is not None:
+        with suppress(ReviewError):
+            git("--git-dir", str(repository), "worktree", "remove", "--force", str(path))
+    if path.exists():
+        shutil.rmtree(path)
+    return [repository] if repository is not None else []
+
+
+def prune_lines(result: dict) -> list[str]:
+    """`review prune` without --json: what it removed or would remove, what it kept and why, and how to
+    remove the rest."""
+    verb = "removed" if result["apply"] else "would remove"
+    lines = ([f"{verb} {entry['path']}: {entry['reason']}" for entry in result["removed"]]
+             + [f"kept {entry['path']}: {entry['reason']}" for entry in result["kept"]]
+             + [f"could not remove {entry['path']}: {entry['error']}" for entry in result["failed"]])
+    count = len(result["removed"])
+    noun = f"{count} scratch worktree{'' if count == 1 else 's'}"
+    if not count and not result["failed"]:
+        lines.append("no scratch worktree is left over; there is nothing to prune")
+    elif result["apply"]:
+        lines.append(f"removed {noun}")
+    else:
+        named = f" --repo {result['repo']}" if result["repo"] else ""
+        lines.append(f"{noun} can go; run `project review prune --apply{named}` to remove them")
+    return lines
 
 
 THREADS_QUERY = """query($o:String!,$r:String!,$n:Int!,$after:String){ repository(owner:$o,name:$r){

@@ -24,6 +24,7 @@ DECISIONS = (
     ("project review hold 12 --drop", "allow", "allow"),
     ("project review setup 12 --model claude", "allow", "allow"),
     ("project review finish 12 --force", "allow", "allow"),
+    ("project review prune --apply", "allow", "allow"),
     ("project review settle 12 --thread T --result fixed --body reply.md", "allow", "allow"),
     ("project review suggestions 12 --json", "allow", "allow"),
     ("project review gate 12", "allow", "none"),
@@ -173,6 +174,12 @@ class PermissionRulesTests(unittest.TestCase):
                 else:
                     self.assertIn(command, CODEX_LEFT_OUT, "a new command is either allowed or deliberately left out")
                     self.assertIsNone(CODEX_LEFT_OUT[command])
+
+    def test_the_documented_codex_rules_are_the_ones_init_writes(self) -> None:
+        documentation = (Path(__file__).resolve().parents[1] / "docs" / "cli.md").read_text()
+        documented = re.findall(r"^ *pattern = (\[.*\]),$", documentation, re.MULTILINE)
+
+        self.assertEqual([pattern for pattern, _ in permissions.CODEX_ALLOW], list(map(json.loads, documented)))
 
     def test_each_command_line_is_one_the_parser_runs(self) -> None:
         incomplete = {"project", "project config", "project --version", "projector list"}
