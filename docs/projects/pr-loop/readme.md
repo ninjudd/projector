@@ -253,7 +253,8 @@ names the holder.
   `prs/<owner>/<repo>/<number>/<model-key>/` in the review state directory,
   not to a session. So a review the departed holder left unpublished passes
   to the taker with the role, and its reviewer may still be running if only
-  the departed watcher stopped. One verdict at most lands on the head:
+  the departed watcher stopped. One verdict at most lands on the head
+  unless the user asks for a second:
   1. On the pass that takes the lease, the watcher finds each head whose
      lock names an earlier loop id of this role and has no verdict, and
      marks it on its `NEW PR` line.
@@ -270,6 +271,17 @@ names the holder.
      take-over and submits after it, its verdict is not in the taker's
      record. So the taker's `publish` refuses and asks the user, through the
      branch of the collision check that a different loop id reaches.
+  5. That refusal needs the taker's state and lock intact. Today `publish`
+     writes the state it read at its start, once after it submits and once
+     at its end, and then removes `<sha>.lock`. So each of those writes, the
+     start comment's deletion, and the lock's removal happen only while the
+     lock still names the publishing loop id. A departed `publish` that
+     finds the lock taken over records its verdict in its own loop's record,
+     leaves the shared state, the start comment, and the lock to the taker,
+     and reports that the review was taken over. `setup --take-over` and
+     these steps of `publish` each hold the review folder's exclusive lock,
+     through the inbox's `locked`, so a check and the write after it never
+     straddle a take-over.
 - **Losing.** A loop with review lines that finds the `.json` naming
   another loop's tracked file removes the review role from its lines and
   prints `ROLE`. Its conversation stops its reviewer subagents and runs no
@@ -439,7 +451,7 @@ ID gives it a lease of its own.
 | `src/projector/watch.py` (new) | The loop: passes, conditional requests, the machine cache, the GraphQL result, and events by role |
 | `src/projector/cli.py` | `loop watch`, `loop lease`, and `--role` |
 | `src/projector/config.py` | `loop.review` |
-| `src/projector/review.py` | `setup --take-over`, and `publish`, `move`, and `settle` refusing a head whose lock names another loop id |
+| `src/projector/review.py` | `setup --take-over`, `publish`, `move`, and `settle` refusing a head whose lock names another loop id, and `publish` writing its state, deleting its start comment, and removing the lock only while the lock names its own loop id |
 | `skills/start-pr-loop/SKILL.md` (new) | The one loop skill |
 | `skills/start-watch-loop/`, `skills/start-review-loop/` | Removed, with both watcher scripts |
 | `skills/implement/SKILL.md`, `skills/fix-pr/SKILL.md`, `skills/review-pr/SKILL.md` | Name `start-pr-loop`, drop "leave the review loop alone" from `implement`, and teach `review-pr` the take-over and the refusal it stops on |
@@ -565,7 +577,7 @@ ID gives it a lease of its own.
 | Leave a review lock on a head under the departed loop id, with no verdict, and hand the lease over | The taker's `NEW PR` line marks the head, and `setup --take-over` succeeds for it |
 | After that take-over, run the departed reviewer's `publish`, `move`, or `settle` with its own `--loop` | Each refuses, names the loop that took the review over, and says to stop rather than set up again. Only the taker's verdict lands. |
 | Publish the departed reviewer's verdict before the take-over | `setup --take-over` refuses because the head has a verdict by this model |
-| Let the departed reviewer's `publish` pass its lock check before the take-over and submit after it | The taker's `publish` refuses with the branch that asks the user, not the one that suggests `--rereview` |
+| Let the departed reviewer's `publish` pass its lock check before the take-over and submit after it | The departed `publish` reports the take-over and leaves the taker's state, start comment, and lock as they were. The taker's `publish` then refuses with the branch that asks the user, not on a missing lock, and not with the one that suggests `--rereview`. |
 | Exclude the operator's pull request A from `fix` in the taker's file, and pull request B, which the taker fixes, from `review` in the holder's file, then hand the lease over | The taker reviews A but does not fix it, and fixes B but does not review it |
 | Restart the first watcher within 5 minutes | It takes its lease back, and the second stays fix-only |
 | Run with `--no-review`, or with `loop.review = false` | The lease files are never touched |
