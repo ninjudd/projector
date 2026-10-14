@@ -58,12 +58,17 @@ panel, and the CLI learns only that these keys hold strings.
 
 ### 2.1 The roles
 
-Every role but the background defaults to one of three things. A Claude
-Code theme key resolves per theme: dark, light, their daltonized variants,
-the ANSI themes, and a custom theme's overrides. A terminal palette slot,
-`ansi256(n)` for `n` under 16, follows the terminal's palette. No color
-leaves the text to the engine. So one default serves every theme, and only
-the background's default depends on the theme, by its base.
+Every role but the background defaults either to a Claude Code theme key
+or to no color. A theme key resolves per theme: dark, light, their
+daltonized variants, the ANSI themes, and a custom theme's overrides. No
+color leaves the text to the engine. So one default serves every theme,
+and only the background's default depends on the theme, by its base.
+
+`watching` and `branch` draw in the terminal palette's blue and cyan today,
+`ansi256(4)` and `ansi256(6)`, which follow the terminal's palette but not
+the Claude Code theme. They move to theme keys, so they adapt to light and
+dark themes like every other role. The owner picks the two keys by preview,
+as § 7 says, and until then step 1 of § 6 keeps the palette slots.
 
 | Role | What draws in it | Default |
 | --- | --- | --- |
@@ -77,9 +82,9 @@ the background's default depends on the theme, by its base.
 | `error` | `conflict`, `changes requested`, `checks failing`, a GitHub error | `error` |
 | `added` | A drawer's insertions, such as `+84` | `success` |
 | `removed` | A drawer's deletions, such as `−12` | `error` |
-| `watching` | `watching` in a pull request's drawer | `ansi256(4)` |
+| `watching` | `watching` in a pull request's drawer | A theme key, picked by preview |
 | `reviewing` | `reviewing` in a pull request's drawer | `claude` |
-| `branch` | A pull request's branch in its drawer | `ansi256(6)` |
+| `branch` | A pull request's branch in its drawer | A theme key, picked by preview |
 
 Some text stays outside every role, because Claude Code draws it and a
 plugin cannot set its color: a plain `Button`'s label and its key, such as
@@ -230,6 +235,10 @@ palette's slots 0 to 15, so it compares those only for an exact match.
   defaults keep today's choices, so step 1 of § 6 changes nothing anyone
   sees. Only the background needs a table by base, because no theme key
   means "a step darker than the terminal".
+- **`watching` and `branch` follow the theme too.** A palette slot keeps
+  the terminal's own blue or cyan on every theme, and those can be faint
+  on the light background. The owner chose theme keys for both, so they
+  adapt to light and dark as the other roles do.
 - **Settings, not theme files.** `.projector.toml` already merges per file,
   and `project config set` already writes it, so a person's own theme is a
   `[panel.colors]` table in `~/.projector.toml`. A theme file format would
@@ -268,6 +277,7 @@ palette's slots 0 to 15, so it compares those only for an exact match.
 | Do | Expect | Test |
 | --- | --- | --- |
 | Draw the panel with no settings on `dark`, `light`, both daltonized themes, both ANSI themes, custom themes on each base, one with no `base`, and one with no file | Every element draws exactly the color it draws before the change | `with no settings every role draws today's color on the <theme> theme` in `hooks/panel.test.tsx`, one test per theme |
+| Open a pull request's drawer with no settings on `dark`, then on `light` | `watching` and the branch draw the theme keys the owner picked, not `ansi256(4)` or `ansi256(6)` | `watching and the branch draw theme keys, so they follow the theme` |
 | Set `panel.colors.muted` to `ansi256(244)` | The header, hint, ages, author, labels, and resolved items draw `ansi256(244)` | `panel.colors overrides the elements of its role` |
 | Set `panel.colors.question` to `suggestion` | An open question's line draws `suggestion` | the same test |
 | Set `panel.colors.mutd`, or `panel.theme` to `nope` | Defaults draw, and one toast names the roles or the themes | `an unknown role or theme leaves the defaults and says so once` |
@@ -282,7 +292,9 @@ palette's slots 0 to 15, so it compares those only for an exact match.
 | Read the settings table in `docs/cli.md` | `panel.theme` and `panel.colors.<role>` are listed with their types | `test_the_documented_keys_are_the_known_keys` |
 
 The first row's tests pass before the change and after step 1 of § 6,
-because they pin today's look. Every other test fails before the change.
+because they pin today's look. Step 2 changes the colors they expect for
+`watching` and the branch to the picked theme keys. Every other test fails
+before the change.
 
 ## 5. Cost
 
@@ -302,20 +314,20 @@ seconds, and the render reads one state key, so cost does not matter here.
    the key until `project upgrade`, while the panel still reads a table
    written by hand. From this step, the panel refuses `white` on a dark
    theme and `black` on a light one, which #341 draws, so `docs/plugins.md`
-   says so in the same change.
+   says so in the same change. The step also moves `watching` and `branch`
+   to the theme keys the owner picks by preview.
 3. Add `panel.theme` and the first built-in theme the owner chooses. It
    needs step 2.
 
 ## 7. Open questions
 
-- **Which built-in themes ship.** Owner, before step 3, chosen by
-  previewing in a session mod. Candidates: one with no background, drawing
-  on the terminal's own, and one that draws on `sidebar`, which looks
-  raised.
-- **Whether `watching` and `branch` should follow the theme.** Owner, during
-  step 3's preview. Their palette slots, `ansi256(4)` and `ansi256(6)`, keep
-  the terminal's blue and cyan, which can be faint on the light background.
-  A theme key such as `suggestion` would follow the theme instead.
+- **Which built-in themes ship besides `auto`.** Owner, before step 3. The
+  owner decides by previewing both candidates in a session mod: `none`,
+  which draws no background so the panel sits on the terminal's own, and
+  `sidebar`, which draws on Claude Code's side-panel grey and looks raised.
+- **Which theme keys `watching` and `branch` take.** Owner, before step 2.
+  Both move to theme keys, as § 2.1 says, and the owner picks the two keys
+  by preview.
 - **Whether a repository can set the panel's colors.** Deferred. The CLI
   merges a repository's `.projector.toml` over `~/.projector.toml`, so a
   repository can already set `panel.background`. Keep that until a
