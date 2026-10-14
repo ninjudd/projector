@@ -88,8 +88,8 @@ request.
    repository's open pull requests. On a changed page, it appends
    `owner/repo#number review` for each open pull request that the operator
    wrote or that requests the operator by login, unless the file already
-   lists it for review or keeps it out. A failed request adopts nothing that
-   pass.
+   lists it for review or keeps it out of review. A failed request adopts
+   nothing that pass.
 4. **Ask the conditional questions.** For each tracked pull request, the
    loop sends a conditional request for the pull request and for the page
    its next review lands on. For each base branch of a pull request it
@@ -152,6 +152,7 @@ headers, and then the body, and never relies on the exit status.
 | `200` | Stores the new `ETag` and marks the pull request dirty. For the open-pulls list, it adopts from the body. |
 | `304 Not Modified` | Changes nothing. |
 | `404` for a pull request | Announces `TRACKED … no such repository or pull request` once, as today. |
+| `404` for a base ref | Treats the base as gone, usually because the layer below merged and its branch was deleted. The loop queries the pull request once, which reads its new base, and asks for that base's ref from then on. |
 | Any other status, or none | Treats the request as failed and marks the pull request dirty, so the GraphQL query runs. |
 
 The GraphQL query is the union of the two queries the watchers run today,
@@ -178,6 +179,7 @@ acme/app#12
 acme/app#12 review
 acme/app#14 review
 !acme/app#9
+!acme/app#15 review
 ```
 
 - **`owner/repo#number`** lists the pull request in the `fix` role, so a
@@ -186,14 +188,18 @@ acme/app#14 review
 - **`owner/repo#number review`** lists it in the `review` role.
 - **Several lines for one pull request** give it the union of their roles,
   and one line may name both, as `acme/app#12 fix review`.
-- **`!owner/repo#number`** keeps the pull request out of every role, as
-  today.
+- **`!` before any of these** keeps the pull request out of the roles the
+  line names, wherever the line sits. `!acme/app#9` keeps it out of `fix`,
+  as the same line keeps it out of a watch loop today, and
+  `!acme/app#15 review` keeps it out of `review` alone. A session that stops
+  fixing a pull request never stops another session from reviewing it, and
+  the other way round.
 
 References match without regard to case, as today. Only the CLI writes the
-file. `project loop add` writes a role-less line for `fix`, so a watcher from
-an earlier release, which reports any other shape as `TRACKED`, still reads a
-file that `implement` adds to. Only the new loop's review lines carry a
-word.
+file. `project loop add` and `drop` write a role-less line for `fix`, so a
+watcher from an earlier release, which reports any other shape as `TRACKED`,
+still reads a file that `implement` adds to. Only the new loop's review
+lines carry a word.
 
 ### 2.4 The review lease
 
@@ -218,10 +224,10 @@ names the holder.
 - **Holding.** The holder keeps an exclusive lock on the `.lock` file for
   as long as its watcher runs, through the portable `try_lock` the inbox
   uses. It rewrites `renewed_at` each pass, and once more when it exits on
-  a signal it can catch. The operating system drops the
-  lock when the process ends, however it ends, so a session that closes
-  passes the lease on without writing anything. A process keeps its locks
-  while the machine sleeps, so waking from sleep moves no lease.
+  a signal it can catch. The operating system drops the lock when the
+  process ends, however it ends, so a session that closes passes the lease
+  on without writing anything. A process keeps its locks while the machine
+  sleeps, so waking from sleep moves no lease.
 - **Taking.** Every other loop tries the lock once a pass, without
   waiting. When it gets the lock, it keeps it if the `.json` is missing,
   names this loop's own tracked file, or holds a `renewed_at` older than 5
@@ -229,18 +235,35 @@ names the holder.
   watcher restarts, as a host's monitor restarts a command that expires,
   take its lease back before another session does.
 - **Handing over.** On taking the lease, a loop reads the tracked file the
-  `.json` names. It copies every review line from that file into its own,
-  and every `!` line for a pull request it does not fix. A review the user
-  assigned and a dismissal from review both survive the handover. Then it
-  writes the `.json`, prints `ROLE`, and adopts. A pull request that is new
-  to this loop reports `NEW PR` unless its head already has a verdict by
-  this model from the reviewer's account, as `watch-prs.sh` decides today,
-  so a handover reviews no head twice.
+  `.json` names. It copies every review line and every review exclusion,
+  such as `!acme/app#15 review`, from that file into its own, whatever this
+  loop fixes. A review the user assigned and a dismissal from review both
+  survive the handover, and an exclusion from `fix` stays with the session
+  that wrote it. Then the loop writes the `.json`, prints `ROLE`, and adopts.
+  A pull request that is new to this loop reports `NEW PR` unless its head
+  already has a verdict by this model from the reviewer's account, as
+  `watch-prs.sh` decides today, so a handover reviews no head twice.
+- **Reviews in flight.** A review's state, start comment, and lock belong
+  to the machine and the model, under
+  `prs/<owner>/<repo>/<number>/<model-key>/` in the review state directory,
+  not to a session. So a review the departed holder left unpublished passes
+  to the taker with the role. Its lock names the same loop id,
+  `<repo>-review-<model-key>`, and host as a live review, so only the
+  handover can say that it is safe to clear. On the pass that takes the
+  lease, the watcher finds each head locked under that loop id with no
+  verdict and marks it on its `NEW PR` line, and the reviewer runs
+  `project review release <number> --model <id>` before `setup`. `setup`
+  then replaces the departed review's start comment, because this machine's
+  state records it. If the departed holder's reviewer is in fact still
+  running, the two reviews meet at `publish`, whose collision check holds
+  the second verdict and asks the user, as it does today.
 - **Losing.** A loop with review lines that finds the `.json` naming
   another loop's tracked file removes the review role from its lines and
-  prints `ROLE`. Only the `.json` decides this. A restarted holder that
-  finds the lock taken for a moment, by a loop that then lets it go, keeps
-  its review lines and tries again next pass.
+  prints `ROLE`. Its conversation stops its reviewer subagents and runs no
+  `project review finish`, which would delete the review state that now
+  belongs to the taker. Only the `.json` decides the loss. A restarted
+  holder that finds the lock taken for a moment, by a loop that then lets
+  it go, keeps its review lines and tries again next pass.
 - **Staying out.** `--no-review`, or `loop.review = false`, keeps a loop
   away from the lease entirely.
 
@@ -268,7 +291,7 @@ loop prints an event only for a role the pull request holds.
 | `BRANCH` | `review`, with `--worktree` | The main loop, which looks for an open pull request on the branch |
 | `CLOSED` | Any | The main loop, which removes the pull request and finishes its subagents |
 | `TRACKED` | Any | The main loop, which fixes the file |
-| `ROLE` | `review` | The main loop, which says whether this session reviews and finishes its reviewers when it does not |
+| `ROLE` | `review` | The main loop, which says whether this session reviews, and stops its reviewers without `project review finish` when it does not |
 | `DONE` | `fix`, with `--exit-when-closed` | The main loop, which ends the watch |
 
 `DONE` means that every pull request the loop fixes has merged or closed
@@ -281,7 +304,7 @@ a pass with a failed query or a bad line never reports `DONE`.
 ```text
 ROLE acme/app review taken for claude-opus-5-5 — this loop reviews the repository's pull requests
 ROLE acme/app review held for claude-opus-5-5 by host-a pid 4182 (~/loops/a/tracked) — this loop only fixes
-ROLE acme/app review lost for claude-opus-5-5 to host-a pid 4182 (~/loops/a/tracked) — finish this loop's reviewers
+ROLE acme/app review lost for claude-opus-5-5 to host-a pid 4182 (~/loops/a/tracked) — stop this loop's reviewers, and leave their review state to that loop
 ```
 
 ### 2.6 Commands and settings
@@ -309,14 +332,16 @@ The other commands change as follows:
 - **`project loop add <ref> --tracked <file> [--role fix|review]`** appends
   a line for the role, `fix` by default, unless the file lists the pull
   request in that role already. It still refuses a pull request the file
-  drops.
+  keeps out of that role.
+- **`project loop drop` and `restore`** take the same `--role`, `fix` by
+  default. `drop` appends an exclusion for the role, and `restore` removes
+  the role's exclusions.
 - **`project loop remove <ref> --tracked <file> [--role fix|review]`**
   removes only that role with `--role`, and every line that lists the pull
-  request without it.
+  request without it. It leaves every exclusion, as today.
 - **`project loop lease <owner/repo> [--model <id>] [--json]`** prints each
   review lease of the repository: its model, reviewer, holder, tracked file,
   `renewed_at`, and whether a watcher holds its lock now. It writes nothing.
-- **`project loop drop` and `restore`** are unchanged.
 - **`loop.review`** is a new boolean setting, `true` by default. `false`
   keeps every loop it applies to out of the review role.
 
@@ -345,7 +370,8 @@ now does:
   reviewer passes the loop id `<repo>-review-<model-key>` to `project review`
   as `--loop`. Whichever session holds the lease uses that id, so the record
   of published reviews moves with the role, and one loop writes it at a
-  time.
+  time. A reviewer whose `NEW PR` line marks a review left in flight runs
+  `project review release` before `setup`, as § 2.4 describes.
 - **Subagents.** A fix-role pull request gets one fixer and a review-role
   pull request one reviewer, named and briefed as the two skills do today,
   each in its own worktree. A pull request in both roles has both.
@@ -355,7 +381,8 @@ now does:
 - **Reports.** The skill reports clean state and stack readiness as
   `start-watch-loop` does today. On `CLOSED` it removes the pull request,
   finishes its fixer, and runs `project review finish --force` for its
-  reviewer.
+  reviewer. On a `ROLE` line that loses the role, it stops its reviewers
+  and finishes no review.
 
 `implement` starts `start-pr-loop` with `--exit-when-closed` on the pull
 request it opens, or adds the pull request to the loop the conversation
@@ -377,8 +404,10 @@ lists the pull requests in its tracked file.
   started lists correctly until its session ends.
 - **Name the roles.** A pull request's drawer says `fixing` in the blue
   that `watching` uses today, `reviewing` in `claude` orange, or both.
-- **Dismiss as today.** Dismissing a pull request runs `project loop drop`
-  on each file that lists it.
+- **Dismiss by role.** Dismissing a pull request runs `project loop drop`
+  with `--role` for each role a `loop` file lists it in, so the session
+  stops only what it does. In a file an earlier watcher reads, the panel
+  writes the role-less line that watcher understands, as today.
 
 ### 2.9 Both hosts
 
@@ -466,7 +495,19 @@ ID gives it a lease of its own.
   while any session on the machine runs a loop, and the role passes on by
   itself when a session ends. If only a loop the user starts could review,
   reviewing would again depend on the user keeping a dedicated session
-  open.
+  open. The cost is that the session that wrote a pull request can also
+  review it. A host's automatic approval has refused a reviewer subagent's
+  report to its main loop as self-approval, and a clean self-review's
+  `publish` needs the rules that `project review rules` checks for. The
+  skill warns once when those rules are missing, as the review loop does
+  today, and the open question in § 7 weighs this cost.
+- **Exclusions carry a role.** One exclusion for every role would let a
+  session that stops fixing a pull request also stop the repository's
+  review of it, and would make the handover choose between losing a review
+  dismissal and copying a fix dismissal. With a role on each exclusion, a
+  dismissal stops only what the dismissing session does, and the handover
+  copies review exclusions alone. The role-less form keeps the `fix`
+  meaning a watch loop's file gives it today.
 - **A cache shared across sessions.** The usual layout is one session
   fixing a pull request and another reviewing it. Without the cache, both
   query it on every change.
@@ -496,12 +537,16 @@ ID gives it a lease of its own.
 | Give a `fix`, a `review`, and a two-role pull request an unresolved thread, a changes request, and a new head | `fix` prints `FINDING` and `VERDICT`, `review` prints `NEW HEAD`, the two-role one prints all three from one query and no `DRAFT` |
 | Start two watchers with different tracked files, one repository, reviewer, and model | The first prints `ROLE` taking the lease, the second prints `ROLE` naming the holder, and only the first adopts |
 | Repeat with two models | Each takes a lease |
-| Stop the first watcher, and pass the second more than 5 minutes after the lease's `renewed_at` | The second takes the lease and copies the first file's review lines and its `!` lines for pull requests the second does not fix. A restarted first watcher prints `ROLE` and keeps no review line. |
+| Stop the first watcher, and pass the second more than 5 minutes after the lease's `renewed_at` | The second takes the lease and copies the first file's review lines and review exclusions, including those for pull requests the second fixes. A restarted first watcher prints `ROLE`, keeps no review line, and runs no `project review finish`. |
+| Leave a review lock on a head under the role's loop id, with no verdict, and hand the lease over | The taker's `NEW PR` line marks the head, and `project review release` then `setup` succeed for it |
+| Exclude the operator's pull request A from `fix` in the taker's file, and pull request B, which the taker fixes, from `review` in the holder's file, then hand the lease over | The taker reviews A but does not fix it, and fixes B but does not review it |
 | Restart the first watcher within 5 minutes | It takes its lease back, and the second stays fix-only |
 | Run with `--no-review`, or with `loop.review = false` | The lease files are never touched |
 | Track one pull request from two loops on one machine and change it | One GraphQL query in all |
 | Under `--exit-when-closed`, close every `fix` pull request, with and without the lease | `DONE` only without the lease |
 | Run `project loop add`, `add --role review`, and `remove --role review` | A role-less line, a `review` line, and the `review` word or line gone, the `fix` line kept |
+| Run `project loop drop --role review` on a pull request listed in both roles | The pull request leaves `review` and stays in `fix` |
+| Answer `404` for the base ref of a pull request whose base was deleted | One query reads the new base, and the next pass asks for the new base's ref |
 | Start `project loop watch --tracked <file>` in a Claude Code session | The panel lists each pull request with `fixing`, `reviewing`, or both, and still lists an earlier watcher's file by its kind |
 | Run the loop for an hour on a live repository with `N` quiet pull requests | `gh api rate_limit` shows the GraphQL count growing by about `12N` an hour, and not between full passes |
 
@@ -556,6 +601,14 @@ within the 10 minutes a slowed watcher allows.
 
 The panel's own query is unchanged, at about 120 points an hour per session
 while shown, whatever `N` is. § 7 defers it.
+
+These figures count only polling. Each reviewer and fixer also spends
+GraphQL, through `project review census` and `publish`, summaries, and
+`gh pr view`, and the shared quota has run out in the middle of a review.
+That spend grows with the number of heads reviewed and fixed, not with the
+interval, and this plan leaves it unchanged and unmeasured. So the loop's
+210 points are a floor on the hour's total, not the total, and the
+back-off that § 7 defers protects the subagents' calls too.
 
 ## 6. Rollout
 
