@@ -2050,6 +2050,47 @@ test('a submit an earlier copy of the module left keeps its claim and settles wh
   expect(pending).toEqual({})
 })
 
+test('a submit the release before the rename left under bandSending keeps its claim and settles when its prompt arrives', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const text = 'ANSWER 1.a Decline the finding? → Decline it'
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [held({ answer, claim: { token: 'old', renewedAt: NOW } })])
+  // The release before the rename kept the panel's deliveries under `bandSending`.
+  const stored = {
+    bandSending: {
+      value: { '1': { ref: '1', session: SESSION, token: 'old', route: 'submit', text } } as object,
+      version: 1,
+    },
+    panelSending: { value: {} as object, version: 1 },
+  }
+  const put = (key: keyof typeof stored, value: unknown) => {
+    stored[key] = { value: value as object, version: stored[key].version + 1 }
+    return { value: { isSet: true as const, version: stored[key].version } }
+  }
+  on('state.get', { plugin: 'projector', key: 'bandSending' }, () => ({
+    value: { value: stored.bandSending.value as never, version: stored.bandSending.version },
+  }))
+  on('state.set', { plugin: 'projector', key: 'bandSending' }, ($, e) => put('bandSending', e.value))
+  on('state.get', { plugin: 'projector', key: 'panelSending' }, () => ({
+    value: { value: stored.panelSending.value as never, version: stored.panelSending.version },
+  }))
+  on('state.set', { plugin: 'projector', key: 'panelSending' }, ($, e) => put('panelSending', e.value))
+  await startSession($, clock, false)
+  await clock.advance(90_000)
+  await clock.settle()
+
+  // The panel takes the entry over, so it keeps renewing the claim past its 60 seconds and submits nothing again.
+  expect(session.submitted).toEqual([])
+  expect(stored.bandSending.value).toEqual({})
+  const claims = session.project().filter(command => command.startsWith('inbox claim'))
+  expect(claims.length).toBeGreaterThanOrEqual(2)
+  for (const claim of claims) expect(claim).toBe('inbox claim 1 --renew old --session s1')
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'plugin', name: 'projector' } })
+  expect(session.project()).toContain('inbox delivered 1 --claim old --session s1 --json')
+  expect(stored.panelSending.value).toEqual({})
+})
+
 test('a number or an old reference typed in the prompt reaches the agent as plain text', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

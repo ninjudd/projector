@@ -171,6 +171,13 @@ const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
 const themeBackground = atom({ plugin: 'projector', key: 'panelThemeBackground' } as const, OTHER_BACKGROUND)
 const background = atom({ plugin: 'projector', key: 'panelBackground' } as const, AUTO)
 const isFocused = atom({ plugin: 'projector', key: 'isPanelFocused' } as const, false)
+/**
+ * The deliveries the release before the panel's rename recorded, under the
+ * key it gave them. A submit it made can still wait behind a running turn
+ * when the session updates, so the panel takes them over rather than letting
+ * their claims lapse and delivering those answers a second time.
+ */
+const oldSending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
 
 // The session keeps its state across a reload or an update of the plugin,
 // so a value an earlier version wrote can have another shape.
@@ -609,6 +616,22 @@ async function deliver($: Engine, question: Question): Promise<void> {
   }
 }
 
+/** The panel's takeover of `oldSending`, which runs once per load of the module. */
+let adoption: Promise<void> | undefined
+
+/** Moves the deliveries under `oldSending` into `sending`, once per load, and again after a failure. */
+function adoptOldSending($: Engine): Promise<void> {
+  adoption ??= (async () => {
+    const old = await read($, oldSending)
+    if (Object.keys(old).length === 0) return
+    await update($, sending, all => ({ ...old, ...all }))
+    await update($, oldSending, () => ({}))
+  })().catch(() => {
+    adoption = undefined
+  })
+  return adoption
+}
+
 /**
  * Keeps each delivery's claim live while it waits, as a submit behind a long
  * turn does. A submit that an earlier copy of the module made still waits in
@@ -617,6 +640,7 @@ async function deliver($: Engine, question: Question): Promise<void> {
  * its claim lapses for the panel to deliver again.
  */
 async function renewClaims($: Engine): Promise<void> {
+  await adoptOldSending($)
   for (const entry of Object.values(await read($, sending))) {
     if (entry.route === 'send' && !delivering.has(entry.ref)) {
       await update($, sending, all => Object.fromEntries(Object.entries(all).filter(([key]) => key !== entry.ref)))
@@ -1031,6 +1055,7 @@ export const register: Register = on => {
     if (e.origin.kind === 'plugin' && e.origin.name === 'projector') {
       const entered = await next(e)
       if (entered.drop === undefined) {
+        await adoptOldSending($)
         const entry = Object.values(await read($, sending)).find(one => one.route === 'submit' && one.text === e.text)
         if (entry !== undefined) await settle($, entry.ref, 'delivered')
       }

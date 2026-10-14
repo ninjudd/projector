@@ -119,6 +119,8 @@ declare module 'claude-code' {
       panelInbox: Item[]
       /** The answers the panel is delivering, by reference. */
       panelSending: Record<string, Sending>
+      /** What the release before the rename kept as `panelSending`, which the panel takes over. */
+      bandSending: Record<string, Sending>
       /** The panel's background for the session's Claude Code theme, which `panel.background = "auto"` takes. */
       panelThemeBackground: string
       /** `panel.background` as the panel last read it: `auto`, or a color a surface can draw. */
