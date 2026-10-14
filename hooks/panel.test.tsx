@@ -509,11 +509,24 @@ test('panel.background colors the panel, and auto or no value leaves the color t
   const ui = await $.ui.mount(PANEL)
   expect(await backgroundOf(ui)).toBe('#202830')
 
-  // Each reload reads it again, so an edit to the file shows without a restart.
-  for (const value of ['ansi256(236)', 'rgb(30,30,40)', 'composerSidebarBackground']) {
+  // Each reload reads it again, so an edit to the file shows without a restart. A literal color draws as written,
+  // to the ends of its range, with a space after `(`, a comma, or before `)` as Claude Code reads one.
+  const literals = ['#abc', '#FFFFFF', 'rgb(0,0,0)', 'rgb(255, 255, 255)', 'rgb( 30,30,40 )', 'ansi256(0)', 'ansi256(255)']
+  for (const value of literals) {
     settings['panel.background'] = value
     await reload()
     expect(await backgroundOf(ui)).toBe(value)
+  }
+  // Each alias draws its color: `black` and `white` as literal colors, so they stay put whatever the theme.
+  for (const [alias, color] of [
+    ['subtle', 'subtle'],
+    ['sidebar', 'composerSidebarBackground'],
+    ['black', 'rgb(0,0,0)'],
+    ['white', 'rgb(255,255,255)'],
+  ]) {
+    settings['panel.background'] = alias
+    await reload()
+    expect(await backgroundOf(ui)).toBe(color)
   }
   settings['panel.background'] = 'auto'
   await reload()
@@ -525,7 +538,7 @@ test('panel.background colors the panel, and auto or no value leaves the color t
   await ui.unmount()
 })
 
-test('a panel.background no surface can draw leaves the color to the theme, and the panel says so once', async ($, on) => {
+test('a panel.background the panel does not take leaves the color to the theme, and the panel says so once', async ($, on) => {
   const settings: Record<string, unknown> = { 'panel.background': 'ansi:black' }
   const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
   await startSession($, clock)
@@ -541,21 +554,36 @@ test('a panel.background no surface can draw leaves the color to the theme, and 
   expect(await ui.drawn()).toMatchObject(inPanel(DARK))
   await reload()
   expect(await backgroundOf(ui)).toBe(DARK)
-  for (const value of ['', '   ', 'a/b', 'x'.repeat(41), 3]) {
+  // Past the ends of a literal color's range, a theme key's name, which the panel no longer takes, a misspelled
+  // alias, a color's plain name, and a value that is no string.
+  const refused = [
+    'rgb(256,0,0)',
+    'rgb(1,2)',
+    'ansi256(256)',
+    '#12345',
+    '#abcd',
+    'inverseText',
+    'composerSidebarBackground',
+    'text',
+    'sidebr',
+    'gray',
+    '',
+    3,
+  ]
+  for (const value of refused) {
     settings['panel.background'] = value
     await reload()
     expect(await backgroundOf(ui)).toBe(DARK)
   }
-  const told = (value: string) =>
-    `projector: panel.background is ${value}, not a color the panel can draw, so the panel takes its color from the theme`
-  expect(toasts).toEqual([
-    told('"ansi:black"'),
-    told('""'),
-    told('"   "'),
-    told('"a/b"'),
-    told(`"${'x'.repeat(41)}"`),
-    told('3'),
-  ])
+  // Each refused value is said once, however many reloads read it.
+  settings['panel.background'] = 'sidebr'
+  await reload()
+  expect(toasts).toEqual(
+    ['ansi:black', ...refused].map(
+      value =>
+        `projector: panel.background is ${JSON.stringify(value)}, which is not rgb(r,g,b), #rrggbb, ansi256(n), subtle, sidebar, black or white, so the panel takes its color from the theme`,
+    ),
+  )
   await ui.unmount()
 })
 

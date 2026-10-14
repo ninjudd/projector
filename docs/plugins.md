@@ -338,14 +338,23 @@ repository:
 project config set panel.background 'rgb(30,30,40)' --user
 ```
 
-The panel draws any color Claude Code takes as written: `rgb(r,g,b)`,
-`#rrggbb`, `ansi256(n)`, or the name of a theme color, such as
-`inverseText`. The default, `auto`, leaves the color to the theme, and
-`project config unset panel.background --user` returns to it. The panel
-reads the setting when the session starts and each time it reloads, so a
-change shows within 30 seconds, without a restart. A value that Claude Code
-cannot draw, such as `ansi:black` or an empty string, leaves the color to
-the theme, and the panel says so once.
+`panel.background` takes these values:
+
+- **`auto`**, the default, leaves the color to the theme, and
+  `project config unset panel.background --user` returns to it.
+- **A literal color** draws as written: `rgb(r,g,b)` with each number from
+  0 to 255, `#rgb` or `#rrggbb`, or `ansi256(n)` with `n` from 0 to 255.
+- **`subtle`** draws the theme's `subtle` color.
+- **`sidebar`** draws the grey of Claude Code's side panel, its theme's
+  `composerSidebarBackground`.
+- **`black`** draws `rgb(0,0,0)`, and **`white`** draws `rgb(255,255,255)`,
+  whatever the theme.
+
+Any other value, such as another theme color's name like `inverseText`, a
+misspelling like `sidebr`, or `ansi:black`, leaves the color to the theme,
+and the panel says so once. The panel reads the setting when the session
+starts and each time it reloads, so a change shows within 30 seconds,
+without a restart.
 
 ### Read your inbox in Projector's panel
 
