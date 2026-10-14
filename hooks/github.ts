@@ -15,9 +15,15 @@ export type Fetched = {
 
 const FIELDS = `number title url state isDraft reviewDecision mergeable body
   author { login } headRefName additions deletions changedFiles updatedAt
-  reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine
-    comments(first: 1) { nodes { url bodyText author { login } } } } }
+  reviewThreads(first: 100) { nodes { isResolved } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`
+
+// What an open drawer lists of its pull request's threads. GitHub counts
+// `comments` under `reviewThreads(first: 100)` as 100 requests, a point of
+// the account's quota, for each pull request. So the poll reads only
+// `isResolved`, and the panel asks for these for the open drawer's alone.
+const THREAD_FIELDS = `reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine
+  comments(first: 1) { nodes { url bodyText author { login } } } } }`
 
 // The line `project summary publish` leaves at the bottom of a description.
 const SUMMARY = /^<!-- projector-summary v=1 sha=[0-9a-f]{40} -->\r?\n\S* ?\*\*Projector summary\*\* [^\r\n]*?(https?:\/\/\S+)\s*$/m
@@ -37,6 +43,18 @@ const CHECKS: Record<string, Checks> = {
  * safe inside a string literal.
  */
 export function buildQuery(prs: readonly TrackedPr[]): Query {
+  const query = queryOf(prs, FIELDS)
+  return { ...query, text: `query { viewer { login } ${query.text} }` }
+}
+
+/** Builds the query for one pull request's unresolved threads, which its open drawer lists. */
+export function buildThreadsQuery(pr: TrackedPr): Query {
+  const query = queryOf([pr], THREAD_FIELDS)
+  return { ...query, text: `query { ${query.text} }` }
+}
+
+/** The repositories' part of a query that asks for `fields` of each pull request. */
+function queryOf(prs: readonly TrackedPr[], fields: string): Query {
   const byRepo = new Map<string, TrackedPr[]>()
   for (const pr of prs) {
     byRepo.set(pr.repo, [...(byRepo.get(pr.repo) ?? []), pr])
@@ -49,12 +67,12 @@ export function buildQuery(prs: readonly TrackedPr[]): Query {
     const pulls = list.map(pr => {
       const prAlias = `p${pr.number}`
       slots.push({ pr, repoAlias, prAlias })
-      return `${prAlias}: pullRequest(number: ${pr.number}) { ${FIELDS} }`
+      return `${prAlias}: pullRequest(number: ${pr.number}) { ${fields} }`
     })
     return `${repoAlias}: repository(owner: "${owner}", name: "${name}") { ${pulls.join(' ')} }`
   })
 
-  return { text: `query { viewer { login } ${repos.join(' ')} }`, slots }
+  return { text: repos.join(' '), slots }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -99,6 +117,7 @@ function checksOf(node: Record<string, unknown>): Checks | null {
 }
 
 function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullRequest {
+  const threads = nodesOf(node.reviewThreads)
   const state = node.state === 'MERGED' || node.state === 'CLOSED' ? node.state : 'OPEN'
   const decision = node.reviewDecision
   const updatedAt = typeof node.updatedAt === 'string' ? Date.parse(node.updatedAt) : Number.NaN
@@ -115,9 +134,7 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
         ? decision
         : null,
     isConflicting: node.mergeable === 'CONFLICTING',
-    threads: nodesOf(node.reviewThreads)
-      .map(threadOf)
-      .filter(thread => thread !== null),
+    openThreads: threads.filter(thread => isRecord(thread) && thread.isResolved === false).length,
     author: isRecord(node.author) && typeof node.author.login === 'string' ? node.author.login : null,
     branch: typeof node.headRefName === 'string' ? node.headRefName : '',
     additions: numberOf(node.additions),
@@ -129,39 +146,58 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
   }
 }
 
+type Result = { exitCode: number; stdout: string; stderr: string }
+
 /**
- * Reads what `gh api graphql` printed. A pull request that does not exist
- * leaves its slot null and adds an error, but the rest still answer, so
+ * The data in what `gh api graphql` printed. A pull request that does not
+ * exist leaves its slot null and adds an error, but the rest still answer, so
  * errors fail the fetch only when no data came back at all.
  */
-export function parseResponse(
-  query: Query,
-  result: { exitCode: number; stdout: string; stderr: string },
-): Fetched {
+function dataOf(result: Result): { data: Record<string, unknown> } | { error: string } {
   let body: unknown
   try {
     body = JSON.parse(result.stdout)
   } catch {
-    const reason = firstLine(result.stderr) || `gh exited with ${result.exitCode}`
-    return { prs: new Map(), viewer: null, error: reason }
+    return { error: firstLine(result.stderr) || `gh exited with ${result.exitCode}` }
   }
+  if (isRecord(body) && isRecord(body.data)) return { data: body.data }
+  return { error: messageOf(body) ?? (firstLine(result.stderr) || 'GitHub returned no data') }
+}
 
-  const data = isRecord(body) && isRecord(body.data) ? body.data : undefined
-  if (data === undefined) {
-    return {
-      prs: new Map(),
-      viewer: null,
-      error: messageOf(body) ?? (firstLine(result.stderr) || 'GitHub returned no data'),
-    }
-  }
+/** The node a slot names in a query's data, when GitHub gave one. */
+function nodeAt(data: Record<string, unknown>, slot: Slot): Record<string, unknown> | undefined {
+  const repo = data[slot.repoAlias]
+  const node = isRecord(repo) ? repo[slot.prAlias] : undefined
+  return isRecord(node) ? node : undefined
+}
+
+/** Reads what `gh api graphql` printed for `buildQuery`. */
+export function parseResponse(query: Query, result: Result): Fetched {
+  const read = dataOf(result)
+  if ('error' in read) return { prs: new Map(), viewer: null, error: read.error }
+  const { data } = read
 
   const prs = new Map<string, PullRequest>()
   for (const slot of query.slots) {
-    const repo = data[slot.repoAlias]
-    const node = isRecord(repo) ? repo[slot.prAlias] : undefined
-    if (isRecord(node)) prs.set(keyOf(slot.pr), toPullRequest(slot.pr, node))
+    const node = nodeAt(data, slot)
+    if (node !== undefined) prs.set(keyOf(slot.pr), toPullRequest(slot.pr, node))
   }
 
   const viewer = isRecord(data.viewer) && typeof data.viewer.login === 'string' ? data.viewer.login : null
   return { prs, viewer, error: null }
+}
+
+/**
+ * Reads what `gh api graphql` printed for `buildThreadsQuery`: the pull
+ * request's unresolved threads, oldest first, or null when GitHub gave none
+ * of it.
+ */
+export function parseThreads(query: Query, result: Result): Thread[] | null {
+  const read = dataOf(result)
+  const [slot] = query.slots
+  const node = 'error' in read || slot === undefined ? undefined : nodeAt(read.data, slot)
+  if (node === undefined) return null
+  return nodesOf(node.reviewThreads)
+    .map(threadOf)
+    .filter(thread => thread !== null)
 }

@@ -30,8 +30,7 @@ export type PullRequest = {
   isDraft: boolean
   reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null
   isConflicting: boolean
-  /** The unresolved review threads, oldest first. */
-  threads: Thread[]
+  openThreads: number
   author: string | null
   branch: string
   additions: number
@@ -131,6 +130,11 @@ declare module 'claude-code' {
        * `panelDrawer` holds.
        */
       panelAsked: { drawer: string; about: 'snooze' | 'dismiss' } | null
+      /**
+       * The unresolved threads of the pull request whose drawer is open, as
+       * GitHub last gave them. `drawer` is the key `panelDrawer` holds.
+       */
+      panelThreads: { drawer: string; threads: Thread[] } | null
       /** The session's inbox, as the panel last read it. */
       panelInbox: Item[]
       /** The answers the panel is delivering, by reference. */

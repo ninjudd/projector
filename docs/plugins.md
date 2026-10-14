@@ -302,7 +302,9 @@ describes, and then the links:
   and ends in `outdated` when a later push changed the lines it is on. These
   are the threads the yellow `*` counts. GitHub folds an outdated thread
   away, and hides an older one on a long timeline behind **Load more**, so
-  the link reaches a thread the pull request's page does not show.
+  the link reaches a thread the pull request's page does not show. The
+  threads appear once GitHub answers the drawer's own query, a moment
+  after the drawer opens.
 
 Each link has a line of its own, because a terminal that does not draw
 hyperlinks shows a link's URL after its text, and a line shared with
@@ -334,8 +336,14 @@ says so once and leaves that loop out.
 The panel reloads when one of the session's watchers reports a change and
 when a turn ends, and every 30 seconds otherwise, only while it is shown.
 Each reload asks GitHub for every pull request in one `gh api graphql` call
-and reads `panel.background` with `project config get`. The skills never
-depend on the panel, and Codex has no equivalent.
+and reads `panel.background` with `project config get`. That call costs one
+point of the account's hourly GraphQL quota for each 50 or so pull
+requests, because it asks only whether each thread is resolved. An open
+drawer's threads cost a point of their own, because GitHub charges for each
+thread's first comment. So the panel asks for them in a second call, for
+that one pull request, when the drawer opens and on each reload while it
+stays open. It skips the call when the pull request has no unresolved
+thread. The skills never depend on the panel, and Codex has no equivalent.
 
 #### Choose the panel's color
 
