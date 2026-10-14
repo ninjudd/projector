@@ -95,6 +95,9 @@ const CLOSE_HOTKEY = '0'
  */
 const DRAWER_INDENT = `${CLOSE_HOTKEY}: `.length
 
+/** The shortest rule an open item's line draws; a title that leaves less draws none. */
+const MIN_RULE = 3
+
 /** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
 const SNOOZES = [
   { label: '15 min', minutes: 15 },
@@ -333,15 +336,19 @@ async function replace($: Engine, item: Item): Promise<void> {
 }
 
 /**
- * Forgets what an item's drawer was asking once the item is resolved or
- * snoozed, wherever that happened, so the drawer opens on its actions when
- * the item comes back rather than on the question it asked before.
+ * Forgets what an item's drawer was asking once the question no longer fits
+ * the item, wherever that happened: either question once the item is
+ * resolved, and how long to snooze once it is snoozed. The drawer then opens
+ * on its actions when the item comes back. A snoozed item can still be
+ * dismissed, so its dismiss confirmation stands.
  */
 async function forgetAsked($: Engine, changed: readonly Item[]): Promise<void> {
   const was = await read($, asked)
   const item = changed.find(one => `item:${one.ref}` === was?.drawer)
   if (was === null || item === undefined) return
-  if (item.answer === undefined && !isSnoozedAt(item, await $.clock.now())) return
+  const isMoot =
+    item.answer !== undefined || (was.about === 'snooze' && isSnoozedAt(item, await $.clock.now()))
+  if (!isMoot) return
   await update($, asked, now => (now?.drawer === was.drawer && now.about === was.about ? null : now))
 }
 
@@ -1139,10 +1146,7 @@ export const register: Register = on => {
       // through, so it reads as put off rather than dismissed.
       const isSnoozed = isSnoozedAt(item, time)
       const isOpened = opened === key
-      // An open question stands out in the list; at the top of its own drawer
-      // it reads as plain text.
-      const color =
-        !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' && !isOpened ? QUESTION_COLOR : undefined
+      const color = !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' ? QUESTION_COLOR : undefined
       const pull = pullOf(item)
       // Each action names the kind of item it acts on. A dismissed or snoozed
       // item's drawer offers to bring it back where it offered to dismiss or
@@ -1245,6 +1249,16 @@ export const register: Register = on => {
       // move onto the line in the list waits for the band to draw the list.
       const line = isOpened ? `close:${ref}` : key
       const first = item.kind === 'question' && isOpen ? `answer:${ref}.${letterAt(0)}` : `discuss:${ref}`
+      const isSending = !isOpen && item.deliveredAt === undefined
+      // An open item's line is the band's top bar while the divider steps
+      // aside, so in a terminal a rule fills it to `bodyColumns`, as the
+      // divider's does: a space and `─` from after the `0: ` and the subject
+      // to the columns its notes and age take, each with the gap before it.
+      // A title too long for one row with room for a short rule draws none.
+      const notesWidth =
+        (isSending ? 'sending'.length + 1 : 0) + (pull === '' ? 0 : [...pull].length + 1) + ageWidth + 1
+      const ruleWidth = e.props.bodyColumns - DRAWER_INDENT - [...item.subject].length - 1 - notesWidth
+      const rule = isOpened && e.surface === 'terminal' && ruleWidth >= MIN_RULE ? ` ${'─'.repeat(ruleWidth)}` : ''
 
       return (
         <Box key={`line:${ref}`} flexDirection="column">
@@ -1268,8 +1282,11 @@ export const register: Register = on => {
                   {item.subject}
                 </Text>
               </Button>
+              {/* Beside the Button, not in it, so a hover or the focus ring
+                  inverts the title alone. */}
+              {rule !== '' && <Text key={`rule:${ref}`}>{rule}</Text>}
             </Box>
-            {!isOpen && item.deliveredAt === undefined && (
+            {isSending && (
               <Box flexShrink={0}>
                 <Text color="subtle">sending</Text>
               </Box>

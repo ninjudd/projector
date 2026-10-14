@@ -1739,15 +1739,23 @@ that the snooze lengths take no hotkeys and sit on one `|`-separated row.
   on `9: cancel` back onto **snooze**.
 - **The open item's line is plain.** An open item's own line, at the top
   of its drawer, drops its `- ` bullet, so the engine's `0: ` takes the
-  bullet's place, and it is no longer inverted. Its subject reads in the
-  default text color, an open question's included, since the owner wants
-  the drawer's top line as regular text; only the list marks an open
-  question in `permission`. A resolved or snoozed item keeps `subtle`,
-  which shows its state, and the `0` keeps the engine's accent. The focus
-  ring still inverts the line when the ring is on it, as it does any
-  Button. A pull
-  request's number was never inverted while its drawer is open, so it is
-  unchanged. Items in the list keep their bullets.
+  bullet's place, and it is no longer inverted: its subject keeps the
+  item's color, `permission` for an open question, the default for a
+  notice, and `subtle` for a resolved or snoozed item. The owner tried the
+  default color for an open question there before keeping `permission`.
+  The focus ring still inverts the line when the ring is on it, as it does
+  any Button. A pull request's number was never inverted while its drawer
+  is open, so it is unchanged. Items in the list keep their bullets.
+- **The open line is the band's top bar.** With the divider stepped aside,
+  in a terminal the open item's line ends in a rule like the divider's, in
+  the default text color whatever the subject's color: a space and `─` to
+  the gap before the item's pull request and age, so the row ends at
+  `bodyColumns`, where the engine draws `[-]`. The width counts the `0: `
+  the engine draws. The rule is a `Text` beside the line's Button, so a
+  hover or the focus ring inverts the subject alone. A subject that leaves
+  fewer than three cells for the rule, which a subject that wraps always
+  does, draws none rather than filling a wrapped row. Another surface
+  draws the subject alone, as it draws no divider.
 - **The drawer lines up under the open line's text.** The `0: ` the
   engine draws before the open line moved its text right of where the
   drawer started, so a question's `1:` sat left of the question. The
@@ -1757,9 +1765,12 @@ that the snooze lengths take no hotkeys and sit on one `|`-separated row.
 - **One atom holds what a drawer asks.** `bandAsked` records the drawer
   and whether it asks how long to snooze or whether to dismiss, in place
   of § 16's `bandSnoozing`. The band forgets the question when the drawer
-  closes by any path, when it is answered, and when the item is resolved
-  or snoozed anywhere, in the band, by a tool, or from a terminal, so a
-  restored or unsnoozed item's drawer always opens on its actions.
+  closes by any path and when it is answered. It also forgets it when the
+  question no longer fits the item, wherever that happened, in the band,
+  by a tool, or from a terminal: either question once the item is
+  resolved, and the snooze lengths once it is snoozed. A restored or
+  unsnoozed item's drawer then opens on its actions. A snoozed item can
+  still be dismissed, so its dismiss confirmation stands.
 
 ### 18.2 Why this design
 
@@ -1786,6 +1797,8 @@ that the snooze lengths take no hotkeys and sit on one `|`-separated row.
 | No line of an open drawer takes a letter; dismiss shows the confirmation and runs nothing; `8` `8` dismisses; `9` and closing the drawer put the actions back; the ring moves onto the confirmation and back; a notice's and a pull request's confirmations; restore and unsnooze act at once | `dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once` |
 | While snooze asks, a question's options are hidden and the lengths take `1` to `4` and cancel `9`; a notice shows the same lines; each digit's minutes; `9` and closing restore the drawer | `snooze asks how long on 1 to 4 in the options’ place, and only a length it offers snoozes the item` |
 | Each dismiss the other tests make now confirms it | The pull request and item dismiss tests § 14.4 and § 15.4 list |
-| An open item's line has no bullet and no inverse, in the default color for an open question or notice and `subtle` for a resolved or snoozed item; the drawer of a question, a notice, and a resolved question is indented by the width of the `0: ` prefix, so its lines start under the item's text | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a drawer’s actions follow its options a line each, on 7, 8 and 9, named for what they act on` |
+| An open item's line has no bullet and no inverse, in `permission` for an open question, the default for a notice, and `subtle` for a resolved or snoozed item; the drawer of a question, a notice, and a resolved question is indented by the width of the `0: ` prefix, so its lines start under the item's text | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a drawer’s actions follow its options a line each, on 7, 8 and 9, named for what they act on` |
 | A question asked before the item was dismissed or snoozed elsewhere is forgotten, so restoring or unsnoozing the item opens its drawer on its actions | `a question a drawer asked is forgotten once its item is resolved or snoozed, so a restored item opens on its actions` |
+| In a terminal, an open item's line ends in a default-colored rule beside its Button, out to `bodyColumns`; a long subject draws none, and another surface none | `an open item’s line ends in a rule to the band’s edge on a terminal, beside its Button` |
+| A dismiss confirmation on a snoozed item stands across an unrelated read of the store | `a dismiss confirmation on a snoozed item survives an unrelated change to the store` |
 | The digits from an empty prompt, and the confirmation's look | Checked by hand by the owner in a preview session |

@@ -1064,12 +1064,12 @@ test('every item takes the `-` bullet, an open question the permission color, an
   ])
   expect((await ui.findAll({ type: 'Text' })).filter(text => text.props.dimColor !== undefined)).toEqual([])
 
-  // An open item's line drops its bullet, for the `0` the engine draws in its place, and is not inverted. An open
-  // question's subject, `permission` in the list, reads in the default color at the top of its own drawer.
+  // An open item's line drops its bullet, for the `0` the engine draws in its place, and is not inverted: its subject
+  // keeps the item's color, `permission` for an open question.
   await ui.press({ key: 'item:1' })
   const opened = ((await ui.find({ type: 'Button', key: 'close:1' }))?.children ?? []) as Part[]
   expect(opened.map(part => [part.children.join(''), part.props?.color, part.props?.inverse])).toEqual([
-    ['Decline the finding?', undefined, undefined],
+    ['Decline the finding?', 'permission', undefined],
   ])
   await ui.press({ key: 'close:1' })
   await ui.press({ key: 'item:2' })
@@ -2281,9 +2281,8 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
   expect(await ui.find({ key: 'answer:1.a' })).toBeDefined()
   expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
-  // Open again at the top of its drawer, its line reads in the default color, not struck through.
   const restored = await line()
-  expect([restored?.props.color, restored?.props.strikethrough]).toEqual([undefined, false])
+  expect([restored?.props.color, restored?.props.strikethrough]).toEqual(['permission', false])
   expect(session.store.store.get('1')).toEqual(held())
 
   // The dismissal had not gone out, so the restore sends nothing.
@@ -3015,5 +3014,67 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
   await clock.settle()
   expect(await lines()).toEqual(actions)
   expect((await optionsOf(ui)).map(option => option.key)).toEqual(['answer:1.a', 'answer:1.b'])
+  await ui.unmount()
+})
+
+test('an open item’s line ends in a rule to the band’s edge on a terminal, beside its Button', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const long = 'Should the band '.padEnd(112, 'x')
+  questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: null, subject: long })])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  const rule = async () => (await ui.find({ type: 'Text', text: /^ ─+$/ }))?.text
+
+  // The rule fills the row: `0: `, the subject, a space and the rule, then ` #7` and ` 2m`, end at bodyColumns.
+  await ui.press({ key: 'item:1' })
+  const drawn = await rule()
+  expect(drawn).toBe(` ${'─'.repeat(90)}`)
+  expect('0: '.length + 'Decline the finding?'.length + (drawn ?? '').length + ' #7'.length + ' 2m'.length).toBe(
+    BAND.props.bodyColumns,
+  )
+  // It sits beside the line's Button, so a hover or the focus ring inverts the title alone, and it draws in the
+  // default color while an open question's title takes `permission`.
+  expect((await ui.find({ type: 'Button', key: 'close:1' }))?.text).toBe('Decline the finding?')
+  expect((await ui.find({ type: 'Text', text: /^ ─+$/ }))?.props.color).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: 'Decline the finding?' }))?.props.color).toBe('permission')
+  await ui.press({ key: 'close:1' })
+  // No line in the list draws one.
+  expect(await rule()).toBeUndefined()
+
+  // A title that leaves too little room draws none.
+  await ui.press({ key: 'item:2' })
+  expect(await rule()).toBeUndefined()
+  await ui.unmount()
+
+  // Another surface draws the title alone, as it draws no divider.
+  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  await desktop.press({ key: 'close:2' })
+  await desktop.press({ key: 'item:1' })
+  expect(await desktop.find({ type: 'Text', text: /─/ })).toBeUndefined()
+  await desktop.unmount()
+})
+
+test('a dismiss confirmation on a snoozed item survives an unrelated change to the store', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held({ snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR })])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  const lines = async () =>
+    (await ui.findAll({ type: 'Button' }))
+      .map(button => button.key ?? '')
+      .filter(key => /^(discuss|dismiss|unsnooze|confirm|keep):1$/.test(key))
+
+  // The item is snoozed already when dismiss asks to be sure.
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'dismiss:1' })
+  expect(await lines()).toEqual(['confirm:1', 'keep:1'])
+
+  // Another item arriving makes the band read the store, and the question stands.
+  session.store.write(notice())
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await lines()).toEqual(['confirm:1', 'keep:1'])
   await ui.unmount()
 })
