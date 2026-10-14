@@ -1,0 +1,128 @@
+{
+ "version": 1,
+ "name": "Drawer action digits",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 330,
+  "title": "Count a drawer's actions down from 9, and ask before a dismiss",
+  "head": "865462fdc92331b2963469e86d276bac66d44e93",
+  "headRef": "action-digits",
+  "base": "167107967f0ffc4ed0861ac76a9726ffee573a12",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's band is a panel above the Claude Code prompt that lists your pull requests and your agents' questions and notices. Pressing an item's line opens its <b>drawer</b>: the item's detail, a question's options, and action lines such as <b>discuss</b>, <b>dismiss</b>, and <b>snooze</b>. Options already took the digits <code>1</code> to <code>6</code>, which work both while the band holds the keyboard and when typed first into an empty prompt. The actions took the letters <code>d</code>, <code>x</code>, and <code>s</code>, which work only from the band.",
+   "This pull request gives the actions digits too, counting down from 9: <code>7</code> discusses, <code>8</code> dismisses or restores, and <code>9</code> snoozes or unsnoozes. A digit that works from the prompt makes a stray dismiss easy, so dismiss now asks first: <code>8: yes, dismiss question</code> and <code>9: no, keep it</code>. While snooze asks how long, its four lengths take <code>1</code> to <code>4</code> in place of the hidden options, with <code>9: cancel</code>.",
+   "One atom, <code>bandAsked</code>, records which question an open drawer is asking, replacing <code>bandSnoozing</code>. An atom is a small piece of state the Claude Code plugin engine keeps and redraws the band from."
+  ],
+  "cards": [
+   {
+    "id": "keys",
+    "title": "Which digit does what in an open drawer",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Drawer shows</th><th>Digits</th></tr></thead><tbody><tr><td>Actions</td><td><code>0</code> closes, <code>1</code>–<code>6</code> options, <code>7</code> discuss, <code>8</code> dismiss or restore, <code>9</code> snooze or unsnooze</td></tr><tr><td>Dismiss confirmation</td><td><code>0</code>, options <code>1</code>–<code>6</code>, <code>8</code> yes, <code>9</code> keep it</td></tr><tr><td>Snooze lengths</td><td><code>0</code>, <code>1</code>–<code>4</code> lengths, <code>9</code> cancel; options hidden</td></tr><tr><td>Pull request</td><td><code>7</code> discuss PR, <code>8</code> dismiss PR, then <code>8</code> yes or <code>9</code> keep it</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One open finding: after an item is dismissed elsewhere while its confirmation shows, restoring it brings the confirmation back, so the next <code>8</code> dismisses without asking. The flag on <code>hooks/register.tsx</code> carries it.</li><li>The user has tried the digits from an empty prompt in a live session and kept that behavior.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "band",
+   "title": "The drawer's digits and its two questions",
+   "kicker": "How the band draws action lines, the confirmation, and the snooze lengths",
+   "intro": [
+    "All drawer lines now draw through one helper, <code>drawLines</code>, which renders a plain Button with a digit before its label, as <code>7: discuss question</code>. The action lines, the dismiss confirmation, and the snooze lengths are three lists of the same <code>Line</code> shape, and the drawer picks one of them by what <code>bandAsked</code> holds.",
+    "<b>bandAsked</b> is <code>null</code>, or names the open drawer and whether it asks how long to snooze or whether to dismiss. Pressing <b>dismiss</b> or <b>snooze</b> sets it. Picking a length, confirming, keeping, cancelling, opening or closing a drawer, and anything that closes the drawer through <code>closeDrawer</code> clear it."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The confirmation and the length lines replace lines in place, so a digit from the prompt presses whatever line holds that digit now. That is why dismiss asks on <code>8</code> and confirms on <code>8</code>: a deliberate dismiss is <code>8</code> <code>8</code>, and a single stray <code>8</code> only asks."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Replaces the letters with digits, adds the dismiss confirmation for items and pull requests, and draws the snooze lengths as keyed lines in the options' place.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 971,
+       "text": "<code>ask(key, null)</code> clears the question whatever drawer it names. <code>closeDrawer</code> is the narrower path: it clears the question only when it belongs to the drawer being closed."
+      },
+      {
+       "kind": "verify",
+       "line": 1170,
+       "text": "No digit is shared in a drawer. <code>inbox.check</code> caps a question at six choices, so options use at most <code>1</code>–<code>6</code>; the lengths use <code>1</code>–<code>4</code> only while the options are hidden; the actions, the confirmation, and cancel use <code>7</code>–<code>9</code>. Traced through each state and confirmed by the <code>digitsOf</code> assertions in <code>hooks/band.test.tsx</code>, which pass."
+      },
+      {
+       "kind": "flag",
+       "line": 1266,
+       "text": "Open review finding: a restore can bring back a stale dismiss confirmation. If the item is dismissed elsewhere, such as by <code>project inbox dismiss</code>, while its confirmation shows, the drawer stays open on <b>restore</b>, and <code>bandAsked</code> still says dismiss. Pressing <code>8</code> restores, the item is open again, and this line draws the confirmation, so the next <code>8</code> dismisses and tells the agent without asking. A test written for the review reproduces it. Fix: call <code>ask(key, null)</code> in <code>restore</code>'s <code>onPress</code>."
+      },
+      {
+       "kind": "context",
+       "line": 1345,
+       "text": "A pull request's drawer gets the same confirmation, with <code>yes, dismiss PR</code>. Dismissing a pull request stops every loop of this session that tracks it."
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Declares the <code>bandAsked</code> atom in place of <code>bandSnoozing</code>."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Every dismiss in the suite now confirms, plus three tests that pin the new keys",
+   "intro": [
+    "Each existing test that dismisses an item or a pull request now presses <code>confirm:&lt;id&gt;</code> after <code>dismiss:&lt;id&gt;</code>. Three tests pin the change: the action digits and labels, the dismiss confirmation with its ring moves, and the snooze lengths on <code>1</code> to <code>4</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>claude plugin test .</code> passes 119 of 119 at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Updates the letter assertions to digits, confirms each dismiss, and adds <code>dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the inbox plan",
+   "kicker": "The user guide and plan § 18 describe the digits and the two questions",
+   "intro": [
+    "<code>docs/plugins.md</code> is the user guide for the band. Its drawer examples and its keyboard section now show the digits, the confirmation, and the length lines. The inbox plan, already <code>completed</code>, gains § 18, which records this change and replaces § 15's letters and § 16's keyless length row."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Swaps the letters for digits and adds the dismiss confirmation and the keyed snooze lengths.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 421,
+       "text": "The confirmation applies to notices as well as questions, and a notice's line reads <code>yes, dismiss notice</code>."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Adds § 18: what changes, why digits count down from 9, why only dismiss confirms, and the tests that show it."
+    }
+   ]
+  }
+ ]
+}
