@@ -1,8 +1,20 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-code'
 
-import type { Checks, Item, LoopKind, Notice, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
-import { buildQuery, parseResponse, type Fetched } from './github'
+import type {
+  Checks,
+  Item,
+  LoopKind,
+  Notice,
+  PullRequest,
+  Question,
+  Row,
+  SeenLoop,
+  Sending,
+  Snapshot,
+  Thread,
+} from './types'
+import { buildQuery, buildThreadsQuery, parseResponse, parseThreads, type Fetched } from './github'
 import { findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
 import {
   ASK_DESCRIPTION,
@@ -190,6 +202,7 @@ const now = atom({ plugin: 'projector', key: 'panelNow' } as const, 0)
 const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, false)
 const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
 const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
+const drawerThreads = atom({ plugin: 'projector', key: 'panelThreads' } as const, null)
 const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
 const themeBackground = atom({ plugin: 'projector', key: 'panelThemeBackground' } as const, OTHER_BACKGROUND)
@@ -339,6 +352,36 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> 
   }
 }
 
+/** One pull request's unresolved threads, or null when GitHub cannot say. */
+async function fetchThreads($: Engine, pr: TrackedPr): Promise<Thread[] | null> {
+  const query = buildThreadsQuery(pr)
+  try {
+    const result = await $.process.run(['gh', 'api', 'graphql', '-f', `query=${query.text}`], {
+      timeoutMs: 30_000,
+    })
+    return parseThreads(query, result)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Reads the threads of the pull request whose drawer is open, for the drawer
+ * to list: when the drawer opens, and on each poll while it stays open. Each
+ * read costs a point of the account's GraphQL quota, so the panel reads only
+ * the open drawer's threads, and none when the poll counted none. When GitHub
+ * cannot say, the drawer keeps what it listed.
+ */
+async function loadThreads($: Engine): Promise<void> {
+  const opened = await read($, drawer)
+  const row = current(await read($, snapshot)).rows.find(one => keyOf(one.pr) === opened)
+  if (opened === null || row === undefined) return
+  const found = row.pr.openThreads === 0 ? [] : await fetchThreads($, row.pr)
+  // Another drawer may have opened while GitHub answered.
+  if (found === null || (await read($, drawer)) !== opened) return
+  await update($, drawerThreads, () => ({ drawer: opened, threads: found }))
+}
+
 /**
  * The panel's background for a Claude Code theme: by the theme's name, or
  * for a custom theme, `custom:<slug>`, by the theme its file builds on,
@@ -444,6 +487,7 @@ async function load($: Engine): Promise<void> {
   }))
   await update($, now, () => time)
   await closeLeftDrawer($, time)
+  await loadThreads($)
 }
 
 /**
@@ -880,6 +924,22 @@ function notesOf(pr: PullRequest): Note[] {
   return notes
 }
 
+/** How much of a thread's first line its drawer line shows. */
+const EXCERPT_LENGTH = 60
+
+/**
+ * A thread's line in its pull request's drawer: where it is, who opened it,
+ * how it starts, and whether a later push left it outdated.
+ */
+function threadLabel(thread: Thread): string {
+  const place = thread.line === null ? thread.path : `${thread.path}:${thread.line}`
+  const excerpt =
+    thread.excerpt.length > EXCERPT_LENGTH ? `${thread.excerpt.slice(0, EXCERPT_LENGTH - 1).trimEnd()}…` : thread.excerpt
+  return [place, thread.author, excerpt, thread.isOutdated ? 'outdated' : null]
+    .filter(piece => piece !== null && piece !== '')
+    .join(' · ')
+}
+
 /** Whether the account the panel's `gh` is signed in as wrote a pull request. */
 const isOwn = (pr: PullRequest, viewer: string | null) => viewer !== null && pr.author === viewer
 
@@ -1170,10 +1230,11 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
 
-    const { Box, Button, Markdown, Text } = $.ui.resolve(e)
+    const { Box, Button, Link, Markdown, Text } = $.ui.resolve(e)
     const shown = current(await read($, snapshot))
     const time = await read($, now)
     const opened = await read($, drawer)
+    const shownThreads = await read($, drawerThreads)
     const asking = await read($, asked)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
     const counts = [
@@ -1216,9 +1277,12 @@ export const register: Register = on => {
     const isAsked = (key: string, about: 'snooze' | 'dismiss') => asking?.drawer === key && asking.about === about
     // A line's press opens or closes its drawer, and the ring goes onto the
     // drawer's first control or back onto the line. A drawer always opens on
-    // its actions, never on a question it asked before.
+    // its actions, never on a question it asked before. A pull request's
+    // drawer reads its threads as it opens.
     const toggle = (key: string, line: string, onto?: string) => {
-      update($, drawer, was => (was === key ? null : key)).catch(() => undefined)
+      update($, drawer, was => (was === key ? null : key))
+        .then(() => loadThreads($))
+        .catch(() => undefined)
       ask(key, null)
       carry(line, onto)
     }
@@ -1663,6 +1727,15 @@ export const register: Register = on => {
               {pr.summaryUrl !== null && (
                 <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
               )}
+              {/* Each unresolved thread links to its first comment, since GitHub
+                  folds an outdated thread and an old one on a long timeline away.
+                  The text goes in as a Link's children, so nothing in it is read
+                  as markdown. */}
+              {(shownThreads?.drawer === key ? shownThreads.threads : []).map((thread, at) => (
+                <Text key={`thread:${key}:${at}`}>
+                  <Link href={thread.url ?? pr.url}>{threadLabel(thread)}</Link>
+                </Text>
+              ))}
             </Box>
           )}
         </Box>
