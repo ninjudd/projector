@@ -186,11 +186,11 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "revise", "show", "tell", "watch", "withdraw"]],
+      pattern = ["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "restore", "revise", "show", "tell", "watch", "withdraw"]],
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "publish", "release", "rules", "settle", "setup", "status", "suggestions"]],
+      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "release", "rules", "settle", "setup", "status", "suggestions"]],
       decision = "allow",
   )
   prefix_rule(
