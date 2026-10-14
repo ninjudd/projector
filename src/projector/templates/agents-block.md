@@ -1,4 +1,4 @@
-<!-- projector:begin 12 -->
+<!-- projector:begin 13 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -57,7 +57,7 @@ reply too. Always post it when it sits among a lot of other text, such as a
 decision in the middle of a long report, where the person could skim past
 it. Post news they need to act on, such as a failure that needs them, and
 anything that comes up while they are away. Leave out what they already see
-elsewhere, such as a pull request's state, which the band lists. An item
+elsewhere, such as a pull request's state, which the panel lists. An item
 stays above their prompt until they answer or dismiss it, so keep the inbox
 for what matters, not as a log of everything you did.
 

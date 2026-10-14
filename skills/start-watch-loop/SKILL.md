@@ -70,7 +70,7 @@ push to.
    cycle, so neither change needs a restart. A line `!owner/repo#number`
    keeps that pull request out of the watch wherever it sits in the file,
    matched without regard to case. `project loop drop` with the same
-   arguments appends one, as Projector's band does when the user dismisses
+   arguments appends one, as Projector's panel does when the user dismisses
    a pull request, and `project loop restore` removes it. The four
    commands change different lines: `add` lists a pull request, `remove`
    forgets one that merged or closed, `drop` keeps an open one out, and

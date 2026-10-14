@@ -3,7 +3,7 @@ import type { AgentInfo, FsEntry } from 'claude-code'
 import type { Item, Question } from './types'
 import type { Env } from './parse'
 
-/** How long a delivered item stays in the band. */
+/** How long a delivered item stays in the panel. */
 export const RESOLVED_MS = 30_000
 
 /** How long a claim lasts without renewal, as `project inbox claim` counts it. */
@@ -23,7 +23,7 @@ export const isSnoozedAt = (item: Item, time: number) => item.snoozedUntil !== u
 const isWithdrawn = (item: Item) => item.answer !== undefined && 'withdrawn' in item.answer
 
 /**
- * Whether the band shows an item: not withdrawn, not snoozed or snoozed
+ * Whether the panel shows an item: not withdrawn, not snoozed or snoozed
  * within the last 30 seconds, and open, being delivered, or delivered within
  * the last 30 seconds.
  */
@@ -32,7 +32,7 @@ export const isShownAt = (item: Item, time: number) =>
   (!isSnoozedAt(item, time) || (item.snoozedAt !== undefined && time - item.snoozedAt < RESOLVED_MS)) &&
   (item.deliveredAt === undefined || time - item.deliveredAt < RESOLVED_MS)
 
-/** The open items whose snooze ended after `since` and by `time`, which bring a hidden band back. */
+/** The open items whose snooze ended after `since` and by `time`, which bring a hidden panel back. */
 export const wokeBetween = (items: readonly Item[], since: number, time: number) =>
   items.filter(
     item =>
@@ -48,10 +48,10 @@ export const needsDelivery = (item: Item, time: number): item is Question =>
   (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined)) &&
   (item.claim === undefined || time - item.claim.renewedAt >= CLAIM_MS)
 
-/** What the band puts in the prompt to discuss an item: its subject, in quotes. */
+/** What the panel puts in the prompt to discuss an item: its subject, in quotes. */
 export const quoteOf = (item: Item) => `"${item.subject}"`
 
-/** What the band puts in the prompt for an answer: the quoted question, a blank line, and the answer's text. */
+/** What the panel puts in the prompt for an answer: the quoted question, a blank line, and the answer's text. */
 export const proposalOf = (question: Question, answer: string) => `${quoteOf(question)}\n\n${answer}`
 
 /** One answer a sent prompt gives: the letter of the option it picks. */
@@ -68,7 +68,7 @@ export type Proposal = { ref: string; quote: string; answer: string; isStale?: b
 export type Read = { answers: Given[]; replies: Question[] }
 
 /**
- * Reads a sent prompt as the band writes it, each quote speaking to one
+ * Reads a sent prompt as the panel writes it, each quote speaking to one
  * question. A quoted open question takes an answer only when its quote ends
  * its line and the text after it, up to the next quoted item or the prompt's
  * end, is one of its options, whatever blank lines and spaces surround it:
@@ -179,7 +179,7 @@ export function storeOf(env: Env, session: string): string | undefined {
 /**
  * What the store's directory holds: each item file's name, size and
  * time, leaving out the lock and any file being written. A file whose claim
- * the band itself renews counts by name alone, so the band's own renewal
+ * the panel itself renews counts by name alone, so the panel's own renewal
  * never makes it read the store again.
  */
 export function signatureOf(entries: readonly FsEntry[], renewing: ReadonlySet<string>): string {
@@ -206,7 +206,7 @@ export const span = (seconds: number) =>
     : seconds < 86_400 ? `${Math.floor(seconds / 3600)}h` : `${Math.floor(seconds / 86_400)}d`
 
 export const ASK_DESCRIPTION = [
-  'Ask the person a question without stopping: it appears in Projector’s band above their prompt, and you keep working.',
+  'Ask the person a question without stopping: it appears in Projector’s panel above their prompt, and you keep working.',
   'Ask in one short line of at most 120 characters, and put what they need to decide in `detail`.',
   'Always recommend an answer, and write it and each option as a full answer they can pick as it stands.',
   'Name the pull request the question is about in `pr`, as owner/repo#number.',
@@ -270,7 +270,7 @@ export function askArguments(
 }
 
 export const TELL_DESCRIPTION = [
-  'Tell the person something without stopping: it appears in Projector’s band above their prompt until they dismiss it.',
+  'Tell the person something without stopping: it appears in Projector’s panel above their prompt until they dismiss it.',
   'Use it for the answer to a question they asked you, or for something you did that they should know about.',
   'Write one short line of at most 120 characters, and put the rest in `detail`.',
   'Name the pull request it is about in `pr`, as owner/repo#number.',
@@ -307,7 +307,7 @@ export function tellArguments(
 export const WITHDRAW_DESCRIPTION = [
   'Withdraw a question or notice you posted that no longer needs the person,',
   'such as a question their reply settled or news that has gone stale.',
-  'Name it by the number `ask` or `tell` returned. It leaves Projector’s band at once.',
+  'Name it by the number `ask` or `tell` returned. It leaves Projector’s panel at once.',
   'Nothing comes back to you: a withdrawn question sends no `DISMISSED` message.',
 ].join(' ')
 
@@ -343,7 +343,7 @@ const itemArguments =
 export const withdrawArguments = itemArguments('withdraw')
 
 export const RESTORE_DESCRIPTION = [
-  'Restore a question or notice you posted that the person dismissed or snoozed: it reopens in Projector’s band',
+  'Restore a question or notice you posted that the person dismissed or snoozed: it reopens in Projector’s panel',
   'under the same number, with the same text. Use it only when the person says a dismissal was a mistake or asks',
   'for the item back, never on your own judgement, and never ask a dismissed question again as a new one.',
   'Name it by the number `ask` or `tell` returned. A restored question’s answer arrives as before, as a message',
@@ -359,7 +359,7 @@ export const REVISE_DESCRIPTION = [
   'Revise a question you asked that is still open, keeping its number, when the person’s reply shows it was unclear',
   'or the choice has changed. Name it by the number `ask` returned, and give only what changes:',
   'the question, its detail, the recommendation, or the other options, which `options` replaces as a whole.',
-  'Projector’s band redraws it at once, and its answer still arrives as a message that starts',
+  'Projector’s panel redraws it at once, and its answer still arrives as a message that starts',
   '`ANSWER 3.<letter>` or `DISMISSED 3`.',
 ].join(' ')
 

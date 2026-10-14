@@ -29,12 +29,12 @@ export type PullRequest = {
   summaryUrl: string | null
 }
 
-/** One line of the band: an open pull request and what the loops do with it. */
+/** One line of the panel: an open pull request and what the loops do with it. */
 export type Row = { pr: PullRequest; kinds: LoopKind[] }
 
 export type Snapshot = {
   rows: Row[]
-  /** The login of the account the band's `gh` is signed in as; null until GitHub says. */
+  /** The login of the account the panel's `gh` is signed in as; null until GitHub says. */
   viewer: string | null
   fetchedAt: number | null
   error: string | null
@@ -88,7 +88,7 @@ export type Notice = Posted & {
 export type Item = Question | Notice
 
 /**
- * An answer the band claimed and is delivering: the claim's token, the route
+ * An answer the panel claimed and is delivering: the claim's token, the route
  * it took, and the text sent, so a later copy of the module keeps renewing
  * the claim and knows the prompt when it arrives.
  */
@@ -104,27 +104,27 @@ declare module 'claude-code' {
   interface PluginState {
     projector: {
       seenLoops: SeenLoop[]
-      bandSnapshot: Snapshot
-      bandNow: number
-      isBandShown: boolean
+      panelSnapshot: Snapshot
+      panelNow: number
+      isPanelShown: boolean
       /** The drawer that is open: a pull request's by `keyOf`, or `item:` and an item's reference. */
-      bandDrawer: string | null
+      panelDrawer: string | null
       /**
        * What an open drawer asks before it acts, in its actions' place: how
        * long to snooze, or whether to dismiss. `drawer` is the key
-       * `bandDrawer` holds.
+       * `panelDrawer` holds.
        */
-      bandAsked: { drawer: string; about: 'snooze' | 'dismiss' } | null
-      /** The session's inbox, as the band last read it. */
-      bandInbox: Item[]
-      /** The answers the band is delivering, by reference. */
-      bandSending: Record<string, Sending>
+      panelAsked: { drawer: string; about: 'snooze' | 'dismiss' } | null
+      /** The session's inbox, as the panel last read it. */
+      panelInbox: Item[]
+      /** The answers the panel is delivering, by reference. */
+      panelSending: Record<string, Sending>
       /** The panel's background for the session's Claude Code theme, which `panel.background = "auto"` takes. */
-      bandThemeBackground: string
-      /** `panel.background` as the band last read it: `auto`, or a color a surface can draw. */
-      bandBackground: string
-      /** Whether the band took the keyboard since the last keystroke in the prompt, so its hint names its own keys. */
-      isBandFocused: boolean
+      panelThemeBackground: string
+      /** `panel.background` as the panel last read it: `auto`, or a color a surface can draw. */
+      panelBackground: string
+      /** Whether the panel took the keyboard since the last keystroke in the prompt, so its hint names its own keys. */
+      isPanelFocused: boolean
     }
   }
 }
