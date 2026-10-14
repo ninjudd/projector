@@ -1372,7 +1372,11 @@ project review rules
 
 `setup` checks that pull request 66 is open, fetches its head into the
 checkout — from its branch, or from `pull/66/head` when the head is in a fork —
-and fetches the base. It creates a scratch worktree at the exact SHA GitHub
+and fetches the base. It reads each fetched commit from a ref of its own under
+`refs/projector/review-fetch/`, which it deletes at once. It neither reads
+nor writes `FETCH_HEAD`, so another fetch in the same checkout cannot change
+what it reads, and your own `FETCH_HEAD` stays as your last fetch left it.
+It creates a scratch worktree at the exact SHA GitHub
 reports, verifies the worktree's `HEAD`, computes the merge base, and posts the
 start comment the skill describes as the reviewer. It records the SHA, the
 merge base, the worktree, whether the head is trusted, and the start comment's

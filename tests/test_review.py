@@ -273,6 +273,33 @@ class SetupTests(ReviewCase):
         )
         self.assertIn(f"reviewing {REPO}#1 at {self.head}", out)
 
+    def test_another_fetch_rewriting_fetch_head_does_not_read_as_a_moved_head(self) -> None:
+        real = review.git
+
+        def racing(*args: str) -> str:
+            out = real(*args)
+            if "fetch" in args:
+                # Another review's fetch, or a summary publish's, lands in the same checkout right after this one.
+                (self.checkout / ".git" / "FETCH_HEAD").write_text(f"{self.base}\t\tbranch 'trunk' of origin\n")
+            return out
+
+        with mock.patch.object(review, "git", racing):
+            code, _, err = self.setup_review()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(self.head, self.read_state()["sha"])
+        self.assertEqual("", git(self.checkout, "for-each-ref", "refs/projector/"), "the fetch's own refs are gone")
+
+    def test_leaves_the_operators_fetch_head_alone(self) -> None:
+        # The operator's own `git fetch` may have just written it, for a `git checkout FETCH_HEAD` to follow.
+        fetch_head = self.checkout / ".git" / "FETCH_HEAD"
+        fetch_head.write_text(f"{self.base}\t\tbranch 'trunk' of origin\n")
+
+        code, _, err = self.setup_review()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(f"{self.base}\t\tbranch 'trunk' of origin\n", fetch_head.read_text())
+
     def test_holds_the_lock_after_setup_recording_who_took_it(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
