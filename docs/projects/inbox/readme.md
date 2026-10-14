@@ -1427,8 +1427,9 @@ does: digits for the options and letters for the actions.
   `readPrompt` reads the sent prompt as before.
 - **The digits work from an empty prompt.** Claude Code presses a band
   Button whose hotkey is a digit typed first into an empty prompt, as it
-  answers a survey, so the digits are set whenever an open question's
-  drawer is open. A digit only fills the prompt, so a stray one sends
+  answers a survey, while the Button is wholly inside the band's visible
+  window, so the digits are set whenever an open question's drawer is
+  open. A digit only fills the prompt, so a stray one sends
   nothing.
 - **A resolved question's options are text.** Its drawer lists the options
   with no digits and nothing to press, the answer given at full strength

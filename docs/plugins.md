@@ -499,8 +499,9 @@ question's options.
 
 An open question's options read `1:` to `6:`, the digit in the accent
 color. Press a digit while the band has the keyboard, or type it first into
-an empty prompt, as you answer Claude Code's own surveys, and the band puts
-that option in your prompt as a click does. A digit only fills the prompt,
+an empty prompt while the option is wholly in view in the band, as you
+answer Claude Code's own surveys, and the band puts that option in your
+prompt as a click does. A digit only fills the prompt,
 so nothing reaches the agent until you send. A resolved question's options
 have no digits.
 
