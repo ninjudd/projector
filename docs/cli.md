@@ -1472,9 +1472,9 @@ closes. It takes these steps:
    stay.
 2. It removes every scratch worktree the review's state lists: the current
    head's, and any earlier head's that `setup` or `move` kept because its
-   lock was held or it would not come out. It removes each with `git worktree remove` in the checkout, then
-   runs `git worktree prune`. When the checkout is gone, it deletes a
-   worktree under the state directory itself.
+   lock was held or it would not come out. It removes each with
+   `git worktree remove` in the checkout, then runs `git worktree prune`. When
+   the checkout is gone, it deletes a worktree under the state directory itself.
 3. It clears the locks and deletes the state. The loop's record of published
    reviews stays.
 
@@ -1516,8 +1516,9 @@ it removes each worktree, it reads that review's lock and state again, so a
 review that `setup` or `move` starts while `prune` runs keeps its worktree.
 It leaves the review's state, locks, and start comment alone. To end a closed
 pull request's review, run
-`project review finish <pr> --repo <owner>/<repo> --force`. `prune` removes each worktree with `git worktree remove` in the checkout that made it, and
-deletes the folder outright when that fails. It unlinks a symbolic link without
+`project review finish <pr> --repo <owner>/<repo> --force`. `prune` removes each
+worktree with `git worktree remove` in the checkout that made it, and deletes
+the folder outright when that fails. It unlinks a symbolic link without
 following it, then runs `git worktree prune` in each checkout and removes the
 folders it emptied. `--repo` limits the sweep to one repository. With `--json`
 it prints the `repo`, whether it ran with `apply`, and the `removed`, `kept`,
