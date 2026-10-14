@@ -1,0 +1,114 @@
+{
+ "version": 1,
+ "name": "Inbox items named by text",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 340,
+  "title": "Name inbox items by their text, not their number",
+  "head": "c9b066fc5dfa14d0a78c507f9f0789536f45478f",
+  "headRef": "inbox-number-unseen",
+  "base": "bcac00197cb06550913633b812fba9e78d411dc3",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox lets an agent post a question (with the <code>ask</code> tool) or a notice (with the <code>tell</code> tool) to a panel above the person's prompt. Each item gets a number in its session, such as <code>17</code>. The agent uses that number to act on the item later, with the <code>withdraw</code>, <code>revise</code>, and <code>restore</code> tools, and it reads the number back in the <code>ANSWER 17.a</code>, <code>DISMISSED 17</code>, and <code>RESTORED 17</code> messages that report what the person did.",
+   "The panel never draws that number. Agents still wrote \"question 17\" to the person, who had no way to tell which item that meant. This pull request leaves the panel alone and changes what agents read: every text that teaches an agent the inbox tools now says to name an item to the person by what it asks or tells.",
+   "<ul class=\"tight\"><li><b>Tool descriptions.</b> All five inbox tools end with one shared sentence, added in one place.</li><li><b>Tool results.</b> The <code>ask</code> and <code>tell</code> results end with a sentence that says the same about the number they just returned.</li><li><b>Agent instructions.</b> The <code>Projector conventions</code> block that <code>project init</code> writes into a repository's <code>AGENTS.md</code> says it, as version 14 of the block.</li><li><b>Documentation.</b> <code>docs/plugins.md</code> and <code>docs/cli.md</code> each gain a sentence.</li></ul>",
+   "The numbers stay wherever a tool call or a <code>project inbox</code> command needs them."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review of <code>c9b066f</code> found it clean, with no finding threads.</li><li>It listed one suggestion: say that the <em>panel</em> never shows the number, rather than that the person never sees it, because <code>project inbox list</code> prints the number in a terminal.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "tools",
+   "title": "What the inbox tools tell the agent",
+   "kicker": "The tool descriptions and results the agent reads during a session",
+   "intro": [
+    "An agent learns the inbox tools from their descriptions, which <code>hooks/inbox.ts</code> defines, and it learns each item's number from the result of <code>ask</code> or <code>tell</code>, which <code>hooks/register.tsx</code> returns. Both now say that the person never sees the number.",
+    "The descriptions share one sentence, <code>UNSEEN_NUMBER</code>, which a small helper, <code>described</code>, appends to each description's own lines before joining them with spaces. Each description reads as before, with that sentence added at the end."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>claude plugin test .</code> passes 144 of 144 at this head, including the new test that checks all five descriptions end with the shared sentence, and the panel tests that pin the full <code>ask</code> and <code>tell</code> results."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Adds the shared sentence and the <code>described</code> helper, and builds the five tool descriptions with it.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 209,
+       "text": "The sentence says the person <em>never</em> sees an item's number. That holds for the panel, but <code>project inbox list</code> prints the number in a terminal, and <code>docs/plugins.md</code> sends the person there to snooze an item by number. The review listed this wording as a suggestion, not a finding."
+      }
+     ]
+    },
+    {
+     "path": "hooks/register.tsx",
+     "note": "Ends the <code>ask</code> result with \"name the question to them by what it asks\" and the <code>tell</code> result with \"name the notice to them by what it tells\"."
+    },
+    {
+     "path": "hooks/inbox.test.ts"
+    },
+    {
+     "path": "hooks/panel.test.tsx"
+    }
+   ]
+  },
+  {
+   "id": "instructions",
+   "title": "What the generated agent instructions say",
+   "kicker": "Version 14 of the block that project init writes into AGENTS.md",
+   "intro": [
+    "<code>project init</code> writes a <code>Projector conventions</code> block into a repository's <code>AGENTS.md</code>, between <code>projector:begin</code> and <code>projector:end</code> markers. The begin marker carries the block's version, so the CLI can tell when a repository's copy is behind the template. The template lives in <code>src/projector/templates/agents-block.md</code>.",
+    "This change edits the last sentence of the block's inbox paragraph: name an item to the tools by its number, and to the person by what it asks or tells. Because the text changed, the version moves from 13 to 14, and <code>tests/test_instructions.py</code> pins the new text's hash. This repository's own <code>AGENTS.md</code>, which its <code>CLAUDE.md</code> links to, carries the refreshed block."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The block in <code>AGENTS.md</code> matches the template line for line, apart from the <code>{projects_dir}</code> placeholder the CLI fills in, and the Python suite, including <code>test_the_template_text_is_pinned_to_its_version</code>, passes at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The template: the version moves to 14 and the inbox paragraph's last sentence splits the number's two audiences."
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's copy of the block, refreshed by <code>project init</code>."
+    },
+    {
+     "path": "tests/test_instructions.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "What the documentation tells people",
+   "kicker": "One sentence each in the plugin and CLI references",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the panel and the tools for the person using them. <code>docs/cli.md</code> describes the <code>project inbox</code> commands that the tools run. Each gains one sentence: the panel never shows the number, so an agent names an item to the person by its text. The rest of each changed paragraph is the same text, rewrapped."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/cli.md"
+    }
+   ]
+  }
+ ]
+}

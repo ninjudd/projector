@@ -1,0 +1,289 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 46e740e4..c1583072 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -143,7 +143,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 13 -->
++<!-- projector:begin 14 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -215,6 +215,7 @@ open while it still needs them. Each time the person writes to you, also
+ look over the other items you posted that are still open, and withdraw any
+ that no longer need them, such as news that has gone stale. When the person
+ says they dismissed an item by mistake, restore it with the `restore` tool or
+-`project inbox restore` rather than asking again. Name an item by the number
+-`ask` or `tell` returned.
++`project inbox restore` rather than asking again. Name an item to the tools
++by the number `ask` or `tell` returned. The person never sees that number, so
++in what you write to them, name an item by what it asks or tells.
+ <!-- projector:end -->
+diff --git a/docs/cli.md b/docs/cli.md
+index c8309d79..be0113ff 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1917,12 +1917,13 @@ $ project inbox ask "Decline the finding about the retry budget?" \
+ The command prints the question's number at once. Each session numbers its
+ items 1, 2, 3, and on, in one count that questions and notices share, so `3`
+ is the third item the session posted. `--pr` records the pull request the
+-item is about, as `owner/repo#number`, and does not change its number. `ask`
+-refuses, with exit code 65, a question longer than one line or 120
+-characters, a question that holds a tab, a missing recommendation, a
+-recommendation or option longer than one line, more than five other options,
+-or an option that repeats the recommendation or another option. Put what you
+-need to decide in `--detail`, or `--detail-file`.
++item is about, as `owner/repo#number`, and does not change its number.
++Projector's panel never shows the number, so in what you write to the person,
++name an item by what it asks or tells. `ask` refuses, with exit code 65, a
++question longer than one line or 120 characters, a question that holds a tab,
++a missing recommendation, a recommendation or option longer than one line,
++more than five other options, or an option that repeats the recommendation or
++another option. Put what you need to decide in `--detail`, or `--detail-file`.
+ 
+ Every command names the posting session with `--session`, or reads
+ `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 289ceefb..10837c0e 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -354,13 +354,14 @@ which the model sees as `mcp__projector__ask`, and tells you something that
+ needs no answer with the `tell` tool, `mcp__projector__tell`. Either way it
+ keeps working. When an item it posted no longer needs you, such as a question
+ your reply settled, the agent takes it back with the `withdraw` tool,
+-`mcp__projector__withdraw`, by the number `ask` or `tell` returned. When your
+-reply shows that a question was unclear, the agent rewrites the question in
+-place with the `revise` tool, `mcp__projector__revise`. When you tell it you
+-dismissed or snoozed an item by mistake, the agent brings the item back
+-under its number with the `restore` tool, `mcp__projector__restore`, rather
+-than asking again. An agent that runs `project inbox ask`, `tell`, `withdraw`,
+-`revise`, or `restore` from the shell reaches the same inbox, as
++`mcp__projector__withdraw`, by the number `ask` or `tell` returned. The panel
++never shows that number, so the agent names an item to you by what it asks or
++tells. When your reply shows that a question was unclear, the agent rewrites
++the question in place with the `revise` tool, `mcp__projector__revise`. When
++you tell it you dismissed or snoozed an item by mistake, the agent brings the
++item back under its number with the `restore` tool, `mcp__projector__restore`,
++rather than asking again. An agent that runs `project inbox ask`, `tell`,
++`withdraw`, `revise`, or `restore` from the shell reaches the same inbox, as
+ [Use the inbox](cli.md#use-the-inbox) describes.
+ 
+ The items are a list below the pull requests, oldest first, each line
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index 4df29fe2..9cadfffb 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -17,12 +17,15 @@ import {
+   RESTORE_DESCRIPTION,
+   RESTORE_SCHEMA,
+   restoreArguments,
++  REVISE_DESCRIPTION,
+   reviseArguments,
+   signatureOf,
+   span,
+   storeOf,
++  TELL_DESCRIPTION,
+   tellArguments,
+   typedLetter,
++  WITHDRAW_DESCRIPTION,
+   WITHDRAW_SCHEMA,
+   withdrawArguments,
+   wokeBetween,
+@@ -93,6 +96,20 @@ test('the restore tool is for a dismissal the person calls a mistake, never a qu
+   expect(RESTORE_SCHEMA).toEqual(WITHDRAW_SCHEMA)
+ })
+ 
++test('every inbox tool tells the agent to name an item to the person by its text, since the person never sees its number', () => {
++  for (const description of [
++    ASK_DESCRIPTION,
++    TELL_DESCRIPTION,
++    WITHDRAW_DESCRIPTION,
++    REVISE_DESCRIPTION,
++    RESTORE_DESCRIPTION,
++  ]) {
++    expect(description).toMatch(
++      / The person never sees an item’s number, so name the item to them by what it asks or tells, never by its number\.$/,
++    )
++  }
++})
++
+ test('letters run from the recommendation to the typed answer', () => {
+   expect(typedLetter(question())).toBe('c')
+ })
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index cb487b53..5463a53b 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -205,7 +205,13 @@ export const span = (seconds: number) =>
+   seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m`
+     : seconds < 86_400 ? `${Math.floor(seconds / 3600)}h` : `${Math.floor(seconds / 86_400)}d`
+ 
+-export const ASK_DESCRIPTION = [
++const UNSEEN_NUMBER =
++  'The person never sees an item’s number, so name the item to them by what it asks or tells, never by its number.'
++
++/** A tool's description: its own lines, then the sentence every inbox tool ends with about an item's number. */
++const described = (lines: readonly string[]) => [...lines, UNSEEN_NUMBER].join(' ')
++
++export const ASK_DESCRIPTION = described([
+   'Ask the person a question without stopping: it appears in Projector’s panel above their prompt, and you keep working.',
+   'Ask in one short line of at most 120 characters, and put what they need to decide in `detail`.',
+   'Always recommend an answer, and write it and each option as a full answer they can pick as it stands.',
+@@ -216,7 +222,7 @@ export const ASK_DESCRIPTION = [
+   'When they reply in their own words instead, the reply arrives as their prompt, quoting the question, and the question stays open:',
+   'answer what they asked, then withdraw the question if the reply settles it, revise it if it was unclear or the choice has changed,',
+   'or leave it open while it still needs them.',
+-].join(' ')
++])
+ 
+ export const ASK_SCHEMA = {
+   type: 'object',
+@@ -269,13 +275,13 @@ export function askArguments(
+   ]
+ }
+ 
+-export const TELL_DESCRIPTION = [
++export const TELL_DESCRIPTION = described([
+   'Tell the person something without stopping: it appears in Projector’s panel above their prompt until they dismiss it.',
+   'Use it for the answer to a question they asked you, or for something you did that they should know about.',
+   'Write one short line of at most 120 characters, and put the rest in `detail`.',
+   'Name the pull request it is about in `pr`, as owner/repo#number.',
+   'Nothing comes back to you; when you need the person to decide something, use `ask` instead.',
+-].join(' ')
++])
+ 
+ export const TELL_SCHEMA = {
+   type: 'object',
+@@ -304,12 +310,12 @@ export function tellArguments(
+   return ['inbox', 'tell', `--session=${session}`, ...postedFlags(detail, pr, agentId), '--', notice]
+ }
+ 
+-export const WITHDRAW_DESCRIPTION = [
++export const WITHDRAW_DESCRIPTION = described([
+   'Withdraw a question or notice you posted that no longer needs the person,',
+   'such as a question their reply settled or news that has gone stale.',
+   'Name it by the number `ask` or `tell` returned. It leaves Projector’s panel at once.',
+   'Nothing comes back to you: a withdrawn question sends no `DISMISSED` message.',
+-].join(' ')
++])
+ 
+ /** The schema of a tool that takes one item, by the number `ask` or `tell` returned. */
+ const ITEM_SCHEMA = {
+@@ -342,26 +348,26 @@ const itemArguments =
+ /** The arguments of `project inbox withdraw` for one call of the tool, or why the call cannot be one. */
+ export const withdrawArguments = itemArguments('withdraw')
+ 
+-export const RESTORE_DESCRIPTION = [
++export const RESTORE_DESCRIPTION = described([
+   'Restore a question or notice you posted that the person dismissed or snoozed: it reopens in Projector’s panel',
+   'under the same number, with the same text. Use it only when the person says a dismissal was a mistake or asks',
+   'for the item back, never on your own judgement, and never ask a dismissed question again as a new one.',
+   'Name it by the number `ask` or `tell` returned. A restored question’s answer arrives as before, as a message',
+   'that starts `ANSWER 3.<letter>` or `DISMISSED 3`.',
+-].join(' ')
++])
+ 
+ export const RESTORE_SCHEMA = ITEM_SCHEMA
+ 
+ /** The arguments of `project inbox restore` for one call of the tool, or why the call cannot be one. */
+ export const restoreArguments = itemArguments('restore')
+ 
+-export const REVISE_DESCRIPTION = [
++export const REVISE_DESCRIPTION = described([
+   'Revise a question you asked that is still open, keeping its number, when the person’s reply shows it was unclear',
+   'or the choice has changed. Name it by the number `ask` returned, and give only what changes:',
+   'the question, its detail, the recommendation, or the other options, which `options` replaces as a whole.',
+   'Projector’s panel redraws it at once, and its answer still arrives as a message that starts',
+   '`ANSWER 3.<letter>` or `DISMISSED 3`.',
+-].join(' ')
++])
+ 
+ export const REVISE_SCHEMA = {
+   type: 'object',
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index b3643a5c..d05f5125 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -1397,7 +1397,7 @@ test('asks through the tool, and the panel lists the question below the pull req
+     pr: 'x/y#7',
+   })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Asked 1. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER 1 or DISMISSED 1.',
++    'Asked 1. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER 1 or DISMISSED 1. The person never sees this number, so name the question to them by what it asks.',
+   )
+   expect(session.registered).toEqual([
+     expect.objectContaining({ name: 'ask', isDeferred: false }),
+@@ -2119,7 +2119,7 @@ test('a subagent tells through the tool, and the panel lists the notice in gray'
+ 
+   const called = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, pr: 'x/y#7', agentId: 'agent-1' })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Posted 1. It waits in Projector’s panel until the person dismisses it; nothing comes back to you.',
++    'Posted 1. It waits in Projector’s panel until the person dismisses it; nothing comes back to you. The person never sees this number, so name the notice to them by what it tells.',
+   )
+   expect(session.project()).toContain(`inbox tell --session=s1 --pr=x/y#7 --agent=agent-1 -- ${FORCE_PUSHED}`)
+   expect(session.notified).toEqual([FORCE_PUSHED])
+@@ -2146,7 +2146,7 @@ test('the tools number a session’s items in one count, and notify with the sub
+     recommendation: 'Decline it',
+     agentId: 'agent-1',
+   })
+-  expect(String(asked.text ?? asked.result)).toMatch(/^Asked 1\. .*ANSWER 1 or DISMISSED 1\.$/)
++  expect(String(asked.text ?? asked.result)).toMatch(/^Asked 1\. .*ANSWER 1 or DISMISSED 1\. /)
+   const told = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, agentId: 'agent-1' })
+   expect(String(told.text ?? told.result)).toMatch(/^Posted 2\. /)
+   expect(session.notified).toEqual(['Decline the finding?', FORCE_PUSHED])
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 1f208338..c8f9f728 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -956,7 +956,7 @@ export const register: Register = on => {
+     const ref = posted.stdout.trim()
+     void $.ui.notify(String(e.question), { title: 'Projector question' }).catch(() => undefined)
+     return {
+-      result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
++      result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. The person never sees this number, so name the question to them by what it asks.`,
+     }
+   }).catch(() => ({ deny: 'Projector could not record the question; ask it in the conversation instead' }))
+ 
+@@ -967,7 +967,7 @@ export const register: Register = on => {
+     const ref = posted.stdout.trim()
+     void $.ui.notify(String(e.notice), { title: 'Projector notice' }).catch(() => undefined)
+     return {
+-      result: `Posted ${ref}. It waits in Projector’s panel until the person dismisses it; nothing comes back to you.`,
++      result: `Posted ${ref}. It waits in Projector’s panel until the person dismisses it; nothing comes back to you. The person never sees this number, so name the notice to them by what it tells.`,
+     }
+   }).catch(() => ({ deny: 'Projector could not record the notice; tell the person in the conversation instead' }))
+ 
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 9a0a09a3..62d5ddcd 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 13 -->
++<!-- projector:begin 14 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -70,6 +70,7 @@ open while it still needs them. Each time the person writes to you, also
+ look over the other items you posted that are still open, and withdraw any
+ that no longer need them, such as news that has gone stale. When the person
+ says they dismissed an item by mistake, restore it with the `restore` tool or
+-`project inbox restore` rather than asking again. Name an item by the number
+-`ask` or `tell` returned.
++`project inbox restore` rather than asking again. Name an item to the tools
++by the number `ask` or `tell` returned. The person never sees that number, so
++in what you write to them, name an item by what it asks or tells.
+ <!-- projector:end -->
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 441edebe..508051c5 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -25,6 +25,7 @@
+     11: "76b426bb38c4943dfcf471b3b9aa958f36b988d766f153df5a120aa325a7db05",
+     12: "63875baaa115d20fb8662ce521fdebf9bc7a10e84a4d0ea53698fd935d9b06f8",
+     13: "d0a5ecaad619d65f4bf6f445cc85be91dddcdf13e2f776fdcefe0a2f26390150",
++    14: "bea4e1318b851f82e5f69b8a4d0b647fc953fbef049465adaa831a97e6d8e885",
+ }
+ 
+ 
