@@ -1,0 +1,89 @@
+{
+ "version": 1,
+ "name": "One pull request loop",
+ "project": "pr-loop",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 347,
+  "title": "Spec one loop that fixes and reviews pull requests",
+  "head": "5c69842c18178fa6d4f0169e81a9081bf8d80ad7",
+  "headRef": "spec-pr-loop",
+  "base": "04a11fa5517c5079c0285efcad7d7c4b3e0999c5",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector drives a pull request to a clean review with two background loops. The <b>watch loop</b> runs in the session that opened a pull request and fixes the review findings that arrive on it. The <b>review loop</b> runs once per repository and reviews every new head of the operator's pull requests, keeping each one a draft until a review finds its head clean. Each loop runs a bash watcher that queries GitHub's GraphQL API for every pull request on every pass, whether or not anything changed.",
+   "That polling spends a quota GitHub shares across every session and machine on the account: 5,000 GraphQL points an hour. At 10 pull requests and a 60-second interval, the two loops spend about 2,000 points an hour, and the quota has run out in practice.",
+   "This pull request adds a plan, not code. The plan merges both loops into one skill, <code>start-pr-loop</code>, backed by a new CLI command, <code>project loop watch</code>. Each pull request in the loop's tracked file gets a <code>fix</code> role, a <code>review</code> role, or both. Each pass asks GitHub a conditional REST question per pull request, which is free when GitHub answers <code>304 Not Modified</code>, and runs the GraphQL query only for a pull request that changed, plus a full pass every 10 minutes. One loop per repository and model holds the review role through a lease: a file lock that the operating system releases when the holder's watcher ends. The plan estimates about 210 GraphQL points an hour at 10 pull requests.",
+   "The plan is at <code>draft</code> with priority <code>now</code>. It leaves four choices to the owner in § 7: whether the loop lives in the CLI, whether every loop competes for the review role, how two machines share it, and the skill's name."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Operator</b>: the GitHub account <code>gh</code> is signed in as.</li><li><b>Tracked file</b>: a loop's list of <code>owner/repo#number</code> lines, its whole scope. A <code>!</code> line keeps a pull request out.</li><li><b>Conditional request</b>: a REST request that sends the resource's last <code>ETag</code> in <code>If-None-Match</code>, so GitHub answers <code>304</code> when nothing changed.</li><li><b>Lease</b>: the right to hold the review role for one repository and model, held through an exclusive lock on a file.</li><li><b>Handover</b>: another loop taking the lease once the holder's watcher ends, along with its review lines.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review of this head opened two findings, both on the handover in § 2.4:</p><ul class=\"tight\"><li>Review state and its lock live per machine, so a holder that ends mid-review leaves a lock that refuses the new holder's <code>setup</code> on that head.</li><li>A <code>!</code> line has no role, so the handover loses a review dismissal or turns a fix dismissal into one.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The pr-loop plan",
+   "kicker": "One new plan: the merged loop, its conditional polling, and the review lease",
+   "intro": [
+    "The plan follows the repository's plan layout: the problem in § 1, the design in § 2, the reasons in § 3, then acceptance criteria, cost, rollout, open questions, and the measurements behind its claims. § 2 carries the substance. § 2.1 walks one pass, § 2.2 lists the conditional requests and marks which of their behaviors were observed and which are inferred, § 2.3 adds roles to the tracked file, and § 2.4 defines the review lease.",
+    "Read § 2.4 most closely. The lease decides which session reviews, and its handover moves review work between sessions on one machine, where the review commands already keep state of their own."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/pr-loop/readme.md",
+     "note": "The new plan for one loop that fixes and reviews pull requests.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 46,
+       "text": "The cost figures hold: the watch watcher's query costs 1 point and the review watcher's 2 by GitHub's documented formula, giving about 2,000 points an hour for both at 10 pull requests."
+      },
+      {
+       "kind": "verify",
+       "line": 143,
+       "text": "A live conditional request for this pull request answered <code>HTTP/2.0 304 Not Modified</code>, made <code>gh api</code> exit 1, and left <code>X-Ratelimit-Used</code> unchanged, as the plan says."
+      },
+      {
+       "kind": "context",
+       "line": 157,
+       "text": "This query is the union of the two watchers' queries, so one result serves both roles. It still costs 2 points."
+      },
+      {
+       "kind": "context",
+       "line": 193,
+       "text": "A role-less line stays the fix role, so a watcher from an earlier release still reads a file that <code>project loop add</code> wrote."
+      },
+      {
+       "kind": "flag",
+       "line": 234,
+       "text": "A <code>!</code> line keeps a pull request out of every role. At a handover, a review dismissal is lost when the taker fixes the pull request, and the taker's own fix dismissal stops the pull request's reviews."
+      },
+      {
+       "kind": "flag",
+       "line": 238,
+       "text": "Review state and its lock are per machine. A holder that ends mid-review leaves a lock that refuses the taker's <code>project review setup</code> on that head for up to a day, and a loop that loses the role and runs <code>project review finish --force</code> would delete the taker's review."
+      },
+      {
+       "kind": "context",
+       "line": 584,
+       "text": "The four questions marked <b>Owner, before implementation</b> keep the plan at <code>draft</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
