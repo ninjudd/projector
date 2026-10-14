@@ -72,7 +72,7 @@ export type Read = { answers: Given[]; replies: Question[] }
  * question. A quoted open question takes an answer only when its quote ends
  * its line and the text after it, up to the next quoted item or the prompt's
  * end, is one of its options, whatever blank lines and spaces surround it:
- * what an option's number puts in the prompt. A quote that a drawer put in
+ * what pressing an option puts in the prompt. A quote that a drawer put in
  * the prompt, with that answer or alone through discuss, speaks to the
  * question of the drawer that did so last, `proposed` holding them oldest
  * first: one of its options answers it, and any other text replies to it.
