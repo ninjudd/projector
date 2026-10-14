@@ -1,0 +1,719 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 70d471ca..4e4f7ef1 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -194,12 +194,14 @@ session starts a loop's watcher for the first time.
+ ```text
+   /projector                                              2 pull requests  12s   [-]
+    #267 draft List a loop's open pull requests above the Claude Code prompt 2h
+-   #258 draft grace Name the reviewed head in a review's sig… conflict · 5* 5m
++   #258 draft grace Name the reviewed head in a review's sig… conflict · 2* 5m
+         reviewing · review-signature · +84 −12 in 5 files · checks passing
+         7: discuss PR
+         8: dismiss PR
+         open in github
+         open in projector
++        src/review.py:412 · ada · P2 · The signature names the base, not the head
++        docs/cli.md:88 · ada · P3 · Say which head the line names · outdated
+                                                            ctrl+x tab to focus
+ ```
+ 
+@@ -207,7 +209,7 @@ Each line is the pull request's number, `draft` or `ready`, its author when
+ someone else wrote it, and the title. Notes follow when the pull request
+ has them: `conflict` or `changes requested` in red, `approved` in green,
+ and last the number of unresolved review threads before a `*` in yellow,
+-such as `5*`. The ` · ` between two notes keeps the default text color. The
++such as `2*`. The ` · ` between two notes keeps the default text color. The
+ line ends with how long ago the pull request last changed, in the column
+ where the inbox's items end with their ages. Only the title shortens on a
+ narrow terminal.
+@@ -281,7 +283,7 @@ checks' state takes a color of its own, and the rest, ` in 5 files` and
+ each `·` included, keeps the default text color. Below that come two
+ actions, a line each, on the digits `7` and `8`, as
+ [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+-describes, and then two links:
++describes, and then the links:
+ 
+ - **discuss PR** puts the pull request's number in the prompt at the
+   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
+@@ -294,6 +296,15 @@ describes, and then two links:
+ - **open in github** opens the pull request on GitHub.
+ - **open in projector** opens its Projector summary, when the pull
+   request's description links one.
++- **Each unresolved review thread**, oldest first, opens the thread's first
++  comment on GitHub. Its line names the file and line the thread is on, who
++  opened it, and the first line of its first comment, cut to 60 characters,
++  and ends in `outdated` when a later push changed the lines it is on. These
++  are the threads the yellow `*` counts. GitHub folds an outdated thread
++  away, and hides an older one on a long timeline behind **Load more**, so
++  the link reaches a thread the pull request's page does not show. The
++  threads appear once GitHub answers the drawer's own query, a moment
++  after the drawer opens.
+ 
+ Each link has a line of its own, because a terminal that does not draw
+ hyperlinks shows a link's URL after its text, and a line shared with
+@@ -312,8 +323,8 @@ with its drawer closed.
+ On the main screen, which Claude Code uses under tmux and when
+ `CLAUDE_CODE_NO_FLICKER=0` is set, use the panel from the keyboard, as
+ [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+-describes. The **open in github** and **open in projector** links take no
+-press there; the terminal opens them the way it opens any other link.
++describes. The **open in github**, **open in projector**, and thread links take
++no press there; the terminal opens them the way it opens any other link.
+ 
+ The panel lists only this session's loops. It finds a loop by the
+ `--tracked` file its watcher reads, and learns that file when the session
+@@ -325,8 +336,14 @@ says so once and leaves that loop out.
+ The panel reloads when one of the session's watchers reports a change and
+ when a turn ends, and every 30 seconds otherwise, only while it is shown.
+ Each reload asks GitHub for every pull request in one `gh api graphql` call
+-and reads `panel.background` with `project config get`. The skills never
+-depend on the panel, and Codex has no equivalent.
++and reads `panel.background` with `project config get`. That call costs one
++point of the account's hourly GraphQL quota for each 50 or so pull
++requests, because it asks only whether each thread is resolved. An open
++drawer's threads cost a point of their own, because GitHub charges for each
++thread's first comment. So the panel asks for them in a second call, for
++that one pull request, when the drawer opens and on each reload while it
++stays open. It skips the call when the pull request has no unresolved
++thread. The skills never depend on the panel, and Codex has no equivalent.
+ 
+ #### Choose the panel's color
+ 
+diff --git a/hooks/github.ts b/hooks/github.ts
+index d44530d1..a0cc58f1 100644
+--- a/hooks/github.ts
++++ b/hooks/github.ts
+@@ -1,4 +1,4 @@
+-import type { Checks, PullRequest } from './types'
++import type { Checks, PullRequest, Thread } from './types'
+ import { keyOf, type TrackedPr } from './parse'
+ 
+ /** Where one pull request's node sits in the response. */
+@@ -18,6 +18,13 @@ const FIELDS = `number title url state isDraft reviewDecision mergeable body
+   reviewThreads(first: 100) { nodes { isResolved } }
+   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`
+ 
++// What an open drawer lists of its pull request's threads. GitHub counts
++// `comments` under `reviewThreads(first: 100)` as 100 requests, a point of
++// the account's quota, for each pull request. So the poll reads only
++// `isResolved`, and the panel asks for these for the open drawer's alone.
++const THREAD_FIELDS = `reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine
++  comments(first: 1) { nodes { url bodyText author { login } } } } }`
++
+ // The line `project summary publish` leaves at the bottom of a description.
+ const SUMMARY = /^<!-- projector-summary v=1 sha=[0-9a-f]{40} -->\r?\n\S* ?\*\*Projector summary\*\* [^\r\n]*?(https?:\/\/\S+)\s*$/m
+ 
+@@ -36,6 +43,18 @@ const CHECKS: Record<string, Checks> = {
+  * safe inside a string literal.
+  */
+ export function buildQuery(prs: readonly TrackedPr[]): Query {
++  const query = queryOf(prs, FIELDS)
++  return { ...query, text: `query { viewer { login } ${query.text} }` }
++}
++
++/** Builds the query for one pull request's unresolved threads, which its open drawer lists. */
++export function buildThreadsQuery(pr: TrackedPr): Query {
++  const query = queryOf([pr], THREAD_FIELDS)
++  return { ...query, text: `query { ${query.text} }` }
++}
++
++/** The repositories' part of a query that asks for `fields` of each pull request. */
++function queryOf(prs: readonly TrackedPr[], fields: string): Query {
+   const byRepo = new Map<string, TrackedPr[]>()
+   for (const pr of prs) {
+     byRepo.set(pr.repo, [...(byRepo.get(pr.repo) ?? []), pr])
+@@ -48,12 +67,12 @@ export function buildQuery(prs: readonly TrackedPr[]): Query {
+     const pulls = list.map(pr => {
+       const prAlias = `p${pr.number}`
+       slots.push({ pr, repoAlias, prAlias })
+-      return `${prAlias}: pullRequest(number: ${pr.number}) { ${FIELDS} }`
++      return `${prAlias}: pullRequest(number: ${pr.number}) { ${fields} }`
+     })
+     return `${repoAlias}: repository(owner: "${owner}", name: "${name}") { ${pulls.join(' ')} }`
+   })
+ 
+-  return { text: `query { viewer { login } ${repos.join(' ')} }`, slots }
++  return { text: repos.join(' '), slots }
+ }
+ 
+ const isRecord = (value: unknown): value is Record<string, unknown> =>
+@@ -72,6 +91,24 @@ const nodesOf = (value: unknown): unknown[] =>
+ 
+ const numberOf = (value: unknown) => (typeof value === 'number' ? value : 0)
+ 
++const stringOf = (value: unknown) => (typeof value === 'string' ? value : null)
++
++/** An unresolved thread as the drawer lists it, or null for a resolved one. */
++function threadOf(node: unknown): Thread | null {
++  if (!isRecord(node) || node.isResolved !== false) return null
++  const [first] = nodesOf(node.comments)
++  const comment = isRecord(first) ? first : {}
++  const line = typeof node.line === 'number' ? node.line : node.originalLine
++  return {
++    path: stringOf(node.path) ?? '',
++    line: typeof line === 'number' ? line : null,
++    isOutdated: node.isOutdated === true,
++    author: isRecord(comment.author) ? stringOf(comment.author.login) : null,
++    excerpt: firstLine(stringOf(comment.bodyText) ?? ''),
++    url: stringOf(comment.url),
++  }
++}
++
+ function checksOf(node: Record<string, unknown>): Checks | null {
+   const [last] = nodesOf(node.commits)
+   const commit = isRecord(last) ? last.commit : undefined
+@@ -109,39 +146,58 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
+   }
+ }
+ 
++type Result = { exitCode: number; stdout: string; stderr: string }
++
+ /**
+- * Reads what `gh api graphql` printed. A pull request that does not exist
+- * leaves its slot null and adds an error, but the rest still answer, so
++ * The data in what `gh api graphql` printed. A pull request that does not
++ * exist leaves its slot null and adds an error, but the rest still answer, so
+  * errors fail the fetch only when no data came back at all.
+  */
+-export function parseResponse(
+-  query: Query,
+-  result: { exitCode: number; stdout: string; stderr: string },
+-): Fetched {
++function dataOf(result: Result): { data: Record<string, unknown> } | { error: string } {
+   let body: unknown
+   try {
+     body = JSON.parse(result.stdout)
+   } catch {
+-    const reason = firstLine(result.stderr) || `gh exited with ${result.exitCode}`
+-    return { prs: new Map(), viewer: null, error: reason }
++    return { error: firstLine(result.stderr) || `gh exited with ${result.exitCode}` }
+   }
++  if (isRecord(body) && isRecord(body.data)) return { data: body.data }
++  return { error: messageOf(body) ?? (firstLine(result.stderr) || 'GitHub returned no data') }
++}
+ 
+-  const data = isRecord(body) && isRecord(body.data) ? body.data : undefined
+-  if (data === undefined) {
+-    return {
+-      prs: new Map(),
+-      viewer: null,
+-      error: messageOf(body) ?? (firstLine(result.stderr) || 'GitHub returned no data'),
+-    }
+-  }
++/** The node a slot names in a query's data, when GitHub gave one. */
++function nodeAt(data: Record<string, unknown>, slot: Slot): Record<string, unknown> | undefined {
++  const repo = data[slot.repoAlias]
++  const node = isRecord(repo) ? repo[slot.prAlias] : undefined
++  return isRecord(node) ? node : undefined
++}
++
++/** Reads what `gh api graphql` printed for `buildQuery`. */
++export function parseResponse(query: Query, result: Result): Fetched {
++  const read = dataOf(result)
++  if ('error' in read) return { prs: new Map(), viewer: null, error: read.error }
++  const { data } = read
+ 
+   const prs = new Map<string, PullRequest>()
+   for (const slot of query.slots) {
+-    const repo = data[slot.repoAlias]
+-    const node = isRecord(repo) ? repo[slot.prAlias] : undefined
+-    if (isRecord(node)) prs.set(keyOf(slot.pr), toPullRequest(slot.pr, node))
++    const node = nodeAt(data, slot)
++    if (node !== undefined) prs.set(keyOf(slot.pr), toPullRequest(slot.pr, node))
+   }
+ 
+   const viewer = isRecord(data.viewer) && typeof data.viewer.login === 'string' ? data.viewer.login : null
+   return { prs, viewer, error: null }
+ }
++
++/**
++ * Reads what `gh api graphql` printed for `buildThreadsQuery`: the pull
++ * request's unresolved threads, oldest first, or null when GitHub gave none
++ * of it.
++ */
++export function parseThreads(query: Query, result: Result): Thread[] | null {
++  const read = dataOf(result)
++  const [slot] = query.slots
++  const node = 'error' in read || slot === undefined ? undefined : nodeAt(read.data, slot)
++  if (node === undefined) return null
++  return nodesOf(node.reviewThreads)
++    .map(threadOf)
++    .filter(thread => thread !== null)
++}
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index e5dbbe53..e340371c 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -87,7 +87,36 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+       url: SEVEN,
+       isDraft: true,
+       mergeable: 'CONFLICTING',
+-      reviewThreads: { nodes: [{ isResolved: false }, { isResolved: false }] },
++      reviewThreads: {
++        nodes: [
++          {
++            isResolved: false,
++            isOutdated: false,
++            path: 'src/fetch.ts',
++            line: 40,
++            comments: {
++              nodes: [
++                {
++                  url: `${SEVEN}#discussion_r1`,
++                  bodyText: 'P2 · The retry loop never sleeps between attempts, so a flaky server gets hammered\nMore.',
++                  author: { login: 'grace' },
++                },
++              ],
++            },
++          },
++          { isResolved: true, path: 'src/old.ts', line: 1 },
++          {
++            isResolved: false,
++            isOutdated: true,
++            path: 'src/[draft]_notes.md',
++            line: null,
++            originalLine: 3,
++            comments: {
++              nodes: [{ url: `${SEVEN}#discussion_r2`, bodyText: 'Why *this*?', author: { login: 'bob' } }],
++            },
++          },
++        ],
++      },
+       author: { login: 'ada' },
+       headRefName: 'fix-branch',
+       additions: 12,
+@@ -413,17 +442,18 @@ type PanelOptions = {
+   env?: Record<string, string>
+   files?: Record<string, string>
+   settings?: Record<string, unknown>
++  github?: Beneath['github']
+ }
+ 
+ /**
+  * A session on a Claude Code theme whose review loop tracks o/r#1, with the
+- * theme's `/config` row, the files and the settings beneath the plugin. A
+- * change of theme to `dark-ansi` is refused.
++ * theme's `/config` row, the files, the settings and GitHub's answers beneath
++ * the plugin. A change of theme to `dark-ansi` is refused.
+  */
+-function panelWorld(on: On, { theme = 'dark', env = {}, files = {}, settings = {} }: PanelOptions = {}) {
++function panelWorld(on: On, { theme = 'dark', env = {}, files = {}, settings = {}, github }: PanelOptions = {}) {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME, ...env })
+-  const { commands } = world(on, { [REVIEW]: 'o/r#1\n', ...files }, undefined, { settings })
++  const { commands } = world(on, { [REVIEW]: 'o/r#1\n', ...files }, undefined, { settings, github })
+   const toasts = toastsOf(on)
+   on('session.start', ($, e) => ({ cwd: e.cwd }))
+   on('command.register', () => ({ value: { command: 'projector' } }))
+@@ -635,6 +665,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   ])
+ 
+   await ui.press({ key: 'pr:x/y#7' })
++  await clock.settle()
+   // The drawer's facts name no author, whoever wrote the pull request.
+   const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files · checks passing$/ })
+   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
+@@ -663,16 +694,32 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   expect(opened).toBeDefined()
+   expect(opened?.props.marginLeft).toBe(4)
+   // Under the facts come the actions, a line each, then the links, each on a line of its own, so a terminal without hyperlinks shows the whole URL.
+-  const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
+-  expect(lines.map(line => line.props.key ?? line.type)).toEqual([
++  // The thread lines come as one list among the children, so the children are flattened first. A thread's line
++  // is a Text, which carries no key of its own.
++  type Line = { type: string; props?: { key?: string }; children?: unknown[] }
++  const lines = ((opened?.children ?? []) as unknown[]).flat() as Line[]
++  expect(lines.map(line => line.props?.key ?? line.type)).toEqual([
+     'Text',
+     'discuss:x/y#7',
+     'dismiss:x/y#7',
+     'github:x/y#7',
+     'projector:x/y#7',
++    'Text',
++    'Text',
+   ])
+   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
+   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
++  // Each unresolved thread links to its first comment: where it is, who opened it, how it starts, cut to fit,
++  // and whether a push left it outdated. Its text is a Link's children, so brackets and stars stay as written.
++  const links = lines.slice(-2).map(line => (line.children as { type: string; props: { href: string }; children: string[] }[])[0])
++  expect(links.map(link => [link?.type, link?.props.href, link?.children.join('')])).toEqual([
++    [
++      'Link',
++      `${SEVEN}#discussion_r1`,
++      'src/fetch.ts:40 · grace · P2 · The retry loop never sleeps between attempts, so a fla…',
++    ],
++    ['Link', `${SEVEN}#discussion_r2`, 'src/[draft]_notes.md:3 · bob · Why *this*? · outdated'],
++  ])
+   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
+ 
+   // discuss is a plain Button, so Enter fills the prompt on the main screen too.
+@@ -685,6 +732,84 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   await ui.unmount()
+ })
+ 
++test('reads a pull request’s threads only while its drawer is open, and only when the poll counted one', async ($, on) => {
++  const { clock, commands } = panelWorld(on, { files: { [WATCH]: 'x/y#7\n' } })
++  // The queries the panel sent GitHub since the last call.
++  let read = 0
++  const fresh = () => {
++    const sent = commands.filter(argv => argv[0] === 'gh').map(argv => argv.join(' '))
++    const since = sent.slice(read)
++    read = sent.length
++    return since
++  }
++  const isThreads = (query: string) => query.includes('comments(')
++
++  await startSession($, clock)
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++  // Each thread's first comment is a connection of its own, which would cost a point per pull request on every poll,
++  // so the poll asks only whether each thread is resolved.
++  const polls = fresh()
++  expect(polls.length).toBeGreaterThan(0)
++  expect(polls.filter(isThreads)).toEqual([])
++
++  const ui = await $.ui.mount(PANEL)
++  // GitHub counted no open thread on #1, so its drawer asks it nothing.
++  await ui.press({ key: 'pr:o/r#1' })
++  await clock.settle()
++  expect(fresh()).toEqual([])
++
++  // #7's drawer asks for #7's threads alone as it opens, and again on each poll while it stays open.
++  await ui.press({ key: 'pr:x/y#7' })
++  await clock.settle()
++  const [opening, ...rest] = fresh()
++  expect(rest).toEqual([])
++  expect(opening).toContain('r0: repository(owner: "x", name: "y") { p7: pullRequest(number: 7) { reviewThreads')
++  expect(opening).not.toContain('name: "r"')
++  expect(isThreads(opening ?? '')).toBe(true)
++  expect((await ui.findAll({ type: 'Link' })).map(link => link.props.href)).toEqual([
++    `${SEVEN}#discussion_r1`,
++    `${SEVEN}#discussion_r2`,
++  ])
++  await clock.advance(30_000 + TICK)
++  await clock.settle()
++  expect(fresh().map(isThreads)).toEqual([false, true])
++
++  // Once it closes, the poll reads no threads.
++  await ui.press({ key: 'pr:x/y#7' })
++  await clock.settle()
++  await clock.advance(30_000 + TICK)
++  await clock.settle()
++  expect(fresh().map(isThreads)).toEqual([false])
++  await ui.unmount()
++})
++
++test('keeps listing a drawer’s threads when GitHub cannot say what they are now', async ($, on) => {
++  let isOffline = false
++  const offline = { ...ran(''), exitCode: 1, stderr: 'error connecting to api.github.com\n' }
++  const { clock } = panelWorld(on, {
++    files: { [WATCH]: 'x/y#7\n' },
++    github: query => (isOffline && query.includes('comments(') ? offline : ran(answer(query))),
++  })
++
++  await startSession($, clock)
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'pr:x/y#7' })
++  await clock.settle()
++  expect(await ui.findAll({ type: 'Link' })).toHaveLength(2)
++
++  isOffline = true
++  await clock.advance(30_000 + TICK)
++  await clock.settle()
++  expect(await ui.findAll({ type: 'Link' })).toHaveLength(2)
++  await ui.unmount()
++})
++
+ test('ends each pull request’s line with its age, in one column as wide as the widest', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+diff --git a/hooks/parse.test.ts b/hooks/parse.test.ts
+index 87c45f4e..bb009791 100644
+--- a/hooks/parse.test.ts
++++ b/hooks/parse.test.ts
+@@ -1,6 +1,6 @@
+ import { describe, expect, test } from 'claude-code/testing'
+ 
+-import { buildQuery, parseResponse } from './github'
++import { buildQuery, buildThreadsQuery, parseResponse, parseThreads } from './github'
+ import { findWatchers, parseTracked } from './parse'
+ 
+ const VARIABLES: Record<string, string> = { HOME: '/home/ada' }
+@@ -85,6 +85,13 @@ describe('GitHub', () => {
+     expect(query.text).toContain('r1: repository(owner: "x", name: "y") { p3: pullRequest(number: 3)')
+   })
+ 
++  test('asks the poll only whether each thread is resolved, which costs no point per pull request', () => {
++    // A connection under `reviewThreads(first: 100)`, such as each thread's comments, makes GitHub count 100 more
++    // requests, a point more, for each pull request. The poll reads every tracked pull request every 30 seconds.
++    expect(query.text).toContain('reviewThreads(first: 100) { nodes { isResolved } }')
++    expect(query.text).not.toContain('comments(')
++  })
++
+   test('reads what came back even when one pull request is missing', () => {
+     const body = {
+       data: {
+@@ -161,4 +168,71 @@ describe('GitHub', () => {
+     })
+     expect(refused).toEqual({ prs: new Map(), viewer: null, error: 'Bad credentials' })
+   })
++
++  describe('an open drawer’s threads', () => {
++    const threadsQuery = buildThreadsQuery({ repo: 'o/r', number: 1 })
++
++    test('asks for one pull request’s threads and each one’s first comment', () => {
++      expect(threadsQuery.text).toMatch(
++        /^query \{ r0: repository\(owner: "o", name: "r"\) \{ p1: pullRequest\(number: 1\) \{ reviewThreads/,
++      )
++      expect(threadsQuery.text).toContain('comments(first: 1) { nodes { url bodyText author { login } } }')
++      expect(threadsQuery.text).not.toContain('viewer')
++    })
++
++    test('reads the unresolved threads, oldest first', () => {
++      const body = {
++        data: {
++          r0: {
++            p1: {
++              reviewThreads: {
++                nodes: [
++                  {
++                    isResolved: false,
++                    isOutdated: false,
++                    path: 'src/app.ts',
++                    line: 12,
++                    originalLine: 10,
++                    comments: {
++                      nodes: [
++                        {
++                          url: 'https://github.com/o/r/pull/1#discussion_r1',
++                          bodyText: 'P2 · Retry the fetch\nIt gives up after one try.',
++                          author: { login: 'grace' },
++                        },
++                      ],
++                    },
++                  },
++                  { isResolved: true, path: 'src/done.ts', line: 3 },
++                  { isResolved: false, isOutdated: true, path: 'README.md', line: null, originalLine: 7 },
++                  { isResolved: false, path: 'docs/guide.md', line: null, originalLine: null },
++                ],
++              },
++            },
++          },
++        },
++      }
++      const threads = parseThreads(threadsQuery, { exitCode: 0, stdout: JSON.stringify(body), stderr: '' })
++      // An outdated thread keeps the line it was on, and a comment on the whole file has none.
++      expect(threads).toEqual([
++        {
++          path: 'src/app.ts',
++          line: 12,
++          isOutdated: false,
++          author: 'grace',
++          excerpt: 'P2 · Retry the fetch',
++          url: 'https://github.com/o/r/pull/1#discussion_r1',
++        },
++        { path: 'README.md', line: 7, isOutdated: true, author: null, excerpt: '', url: null },
++        { path: 'docs/guide.md', line: null, isOutdated: false, author: null, excerpt: '', url: null },
++      ])
++    })
++
++    test('reads nothing when GitHub gave no threads', () => {
++      const missing = { data: { r0: { p1: null } }, errors: [{ message: 'Could not resolve to a PullRequest' }] }
++      expect(parseThreads(threadsQuery, { exitCode: 1, stdout: JSON.stringify(missing), stderr: '' })).toBeNull()
++      const offline = { exitCode: 1, stdout: '', stderr: 'error connecting to api.github.com\n' }
++      expect(parseThreads(threadsQuery, offline)).toBeNull()
++    })
++  })
+ })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index d84c5438..59b6ad1e 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1,8 +1,20 @@
+ import { atom, read, update } from 'claude-code'
+ import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-code'
+ 
+-import type { Checks, Item, LoopKind, Notice, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
+-import { buildQuery, parseResponse, type Fetched } from './github'
++import type {
++  Checks,
++  Item,
++  LoopKind,
++  Notice,
++  PullRequest,
++  Question,
++  Row,
++  SeenLoop,
++  Sending,
++  Snapshot,
++  Thread,
++} from './types'
++import { buildQuery, buildThreadsQuery, parseResponse, parseThreads, type Fetched } from './github'
+ import { findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
+ import {
+   ASK_DESCRIPTION,
+@@ -190,6 +202,7 @@ const now = atom({ plugin: 'projector', key: 'panelNow' } as const, 0)
+ const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, false)
+ const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
+ const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
++const drawerThreads = atom({ plugin: 'projector', key: 'panelThreads' } as const, null)
+ const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
+ const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
+ const themeBackground = atom({ plugin: 'projector', key: 'panelThemeBackground' } as const, OTHER_BACKGROUND)
+@@ -339,6 +352,36 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched>
+   }
+ }
+ 
++/** One pull request's unresolved threads, or null when GitHub cannot say. */
++async function fetchThreads($: Engine, pr: TrackedPr): Promise<Thread[] | null> {
++  const query = buildThreadsQuery(pr)
++  try {
++    const result = await $.process.run(['gh', 'api', 'graphql', '-f', `query=${query.text}`], {
++      timeoutMs: 30_000,
++    })
++    return parseThreads(query, result)
++  } catch {
++    return null
++  }
++}
++
++/**
++ * Reads the threads of the pull request whose drawer is open, for the drawer
++ * to list: when the drawer opens, and on each poll while it stays open. Each
++ * read costs a point of the account's GraphQL quota, so the panel reads only
++ * the open drawer's threads, and none when the poll counted none. When GitHub
++ * cannot say, the drawer keeps what it listed.
++ */
++async function loadThreads($: Engine): Promise<void> {
++  const opened = await read($, drawer)
++  const row = current(await read($, snapshot)).rows.find(one => keyOf(one.pr) === opened)
++  if (opened === null || row === undefined) return
++  const found = row.pr.openThreads === 0 ? [] : await fetchThreads($, row.pr)
++  // Another drawer may have opened while GitHub answered.
++  if (found === null || (await read($, drawer)) !== opened) return
++  await update($, drawerThreads, () => ({ drawer: opened, threads: found }))
++}
++
+ /**
+  * The panel's background for a Claude Code theme: by the theme's name, or
+  * for a custom theme, `custom:<slug>`, by the theme its file builds on,
+@@ -444,6 +487,7 @@ async function load($: Engine): Promise<void> {
+   }))
+   await update($, now, () => time)
+   await closeLeftDrawer($, time)
++  await loadThreads($)
+ }
+ 
+ /**
+@@ -880,6 +924,22 @@ function notesOf(pr: PullRequest): Note[] {
+   return notes
+ }
+ 
++/** How much of a thread's first line its drawer line shows. */
++const EXCERPT_LENGTH = 60
++
++/**
++ * A thread's line in its pull request's drawer: where it is, who opened it,
++ * how it starts, and whether a later push left it outdated.
++ */
++function threadLabel(thread: Thread): string {
++  const place = thread.line === null ? thread.path : `${thread.path}:${thread.line}`
++  const excerpt =
++    thread.excerpt.length > EXCERPT_LENGTH ? `${thread.excerpt.slice(0, EXCERPT_LENGTH - 1).trimEnd()}…` : thread.excerpt
++  return [place, thread.author, excerpt, thread.isOutdated ? 'outdated' : null]
++    .filter(piece => piece !== null && piece !== '')
++    .join(' · ')
++}
++
+ /** Whether the account the panel's `gh` is signed in as wrote a pull request. */
+ const isOwn = (pr: PullRequest, viewer: string | null) => viewer !== null && pr.author === viewer
+ 
+@@ -1170,10 +1230,11 @@ export const register: Register = on => {
+   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+     if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
+ 
+-    const { Box, Button, Markdown, Text } = $.ui.resolve(e)
++    const { Box, Button, Link, Markdown, Text } = $.ui.resolve(e)
+     const shown = current(await read($, snapshot))
+     const time = await read($, now)
+     const opened = await read($, drawer)
++    const shownThreads = await read($, drawerThreads)
+     const asking = await read($, asked)
+     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
+     const counts = [
+@@ -1216,9 +1277,12 @@ export const register: Register = on => {
+     const isAsked = (key: string, about: 'snooze' | 'dismiss') => asking?.drawer === key && asking.about === about
+     // A line's press opens or closes its drawer, and the ring goes onto the
+     // drawer's first control or back onto the line. A drawer always opens on
+-    // its actions, never on a question it asked before.
++    // its actions, never on a question it asked before. A pull request's
++    // drawer reads its threads as it opens.
+     const toggle = (key: string, line: string, onto?: string) => {
+-      update($, drawer, was => (was === key ? null : key)).catch(() => undefined)
++      update($, drawer, was => (was === key ? null : key))
++        .then(() => loadThreads($))
++        .catch(() => undefined)
+       ask(key, null)
+       carry(line, onto)
+     }
+@@ -1663,6 +1727,15 @@ export const register: Register = on => {
+               {pr.summaryUrl !== null && (
+                 <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
+               )}
++              {/* Each unresolved thread links to its first comment, since GitHub
++                  folds an outdated thread and an old one on a long timeline away.
++                  The text goes in as a Link's children, so nothing in it is read
++                  as markdown. */}
++              {(shownThreads?.drawer === key ? shownThreads.threads : []).map((thread, at) => (
++                <Text key={`thread:${key}:${at}`}>
++                  <Link href={thread.url ?? pr.url}>{threadLabel(thread)}</Link>
++                </Text>
++              ))}
+             </Box>
+           )}
+         </Box>
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 8df723e6..ba290795 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -6,6 +6,21 @@ export type SeenLoop = { kind: LoopKind; tracked: string }
+ 
+ export type Checks = 'passing' | 'failing' | 'pending'
+ 
++/** A review thread no one has resolved, as a pull request's drawer lists it. */
++export type Thread = {
++  path: string
++  /** The line the thread is on, or was on once its line changed; null for a comment on the whole file. */
++  line: number | null
++  /** Whether a later push changed the lines the thread is on, which GitHub then folds away. */
++  isOutdated: boolean
++  /** Who opened the thread; null when GitHub did not say. */
++  author: string | null
++  /** The first line of the thread's first comment, as plain text. */
++  excerpt: string
++  /** The thread's first comment on GitHub; null when GitHub did not say. */
++  url: string | null
++}
++
+ export type PullRequest = {
+   repo: string
+   number: number
+@@ -115,6 +130,11 @@ declare module 'claude-code' {
+        * `panelDrawer` holds.
+        */
+       panelAsked: { drawer: string; about: 'snooze' | 'dismiss' } | null
++      /**
++       * The unresolved threads of the pull request whose drawer is open, as
++       * GitHub last gave them. `drawer` is the key `panelDrawer` holds.
++       */
++      panelThreads: { drawer: string; threads: Thread[] } | null
+       /** The session's inbox, as the panel last read it. */
+       panelInbox: Item[]
+       /** The answers the panel is delivering, by reference. */
