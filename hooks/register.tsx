@@ -65,9 +65,16 @@ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
 /**
  * The theme color of an open question's line: the one Claude Code gives its
  * own permission prompts, since an agent's question usually asks leave to do
- * something. A notice keeps the default color.
+ * something.
  */
 const QUESTION_COLOR = 'permission'
+
+/**
+ * The color of an open notice's line: the theme's mid gray, which stays
+ * apart from the `subtle` of a resolved or snoozed item. A plain `gray` would
+ * draw in the default color.
+ */
+const NOTICE_COLOR = 'inactive'
 
 /**
  * The color of a pull request's branch on its drawer's facts line: the
@@ -723,8 +730,6 @@ function byAuthor(rows: readonly Row[], viewer: string | null): Row[] {
   ]
 }
 
-const ago = (seconds: number) => (seconds < 5 ? 'just now' : `${span(seconds)} ago`)
-
 const secondsSince = (time: number, then: number) => Math.max(0, Math.round((time - then) / 1000))
 
 /** Labels a pull request `#12` when the band shows one repository, else by its repository's name. */
@@ -982,13 +987,11 @@ export const register: Register = on => {
       0,
       ...shown.rows.filter(row => !isOwn(row.pr, shown.viewer)).map(row => (row.pr.author ?? '').length),
     )
-    const heading = [
-      ...counts,
-      shown.fetchedAt === null ? undefined : `updated ${ago(secondsSince(time, shown.fetchedAt))}`,
-    ]
-      .filter(part => part !== undefined)
-      .join(' · ')
-    const updated = heading === '' ? '' : ` ${heading}`
+    // The divider starts with the counts and ends with how long ago the band
+    // reloaded, in the short form and the color of the rows' ages, so the
+    // time ends in their column.
+    const tally = counts.filter(part => part !== undefined).join(' · ')
+    const reloaded = shown.fetchedAt === null ? '' : span(secondsSince(time, shown.fetchedAt))
     // A failed poll keeps drawing the pull requests GitHub last gave, and the
     // divider's time says how old they are, so the band says why it failed
     // only when it has none of them to draw.
@@ -1016,14 +1019,19 @@ export const register: Register = on => {
 
     // The engine draws the band's `[-]` just past `bodyColumns` on the first
     // row, so a divider that fills the body ends at the mark, and a blank line
-    // sets it apart from the rows under it. Only a terminal lays text out in
+    // sets it apart from the rows under it. The counts follow one `─` at its
+    // start, and its rule runs from them to the time, as an open item's rule
+    // runs from its subject to its age. Only a terminal lays text out in
     // those columns; any other surface would wrap the rule, so it draws none.
+    const lead = tally === '' ? '' : `─ ${tally} `
+    const tail = reloaded === '' ? '' : ` ${reloaded}`
+    const rule = `${lead}${'─'.repeat(Math.max(0, e.props.bodyColumns - lead.length - tail.length))}`
     const divider =
       e.surface === 'terminal'
         ? [
             <Text key="divider">
-              {'─'.repeat(Math.max(0, e.props.bodyColumns - updated.length))}
-              {updated}
+              {reloaded === '' ? rule : `${rule} `}
+              {reloaded !== '' && <Text color="subtle">{reloaded}</Text>}
             </Text>,
             <Text key="under-divider"> </Text>,
           ]
@@ -1146,7 +1154,7 @@ export const register: Register = on => {
       // through, so it reads as put off rather than dismissed.
       const isSnoozed = isSnoozedAt(item, time)
       const isOpened = opened === key
-      const color = !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' ? QUESTION_COLOR : undefined
+      const color = !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' ? QUESTION_COLOR : NOTICE_COLOR
       const pull = pullOf(item)
       // Each action names the kind of item it acts on. A dismissed or snoozed
       // item's drawer offers to bring it back where it offered to dismiss or

@@ -192,7 +192,7 @@ line each. Run `/projector` to show or hide the band. It also appears when the
 session starts a loop's watcher for the first time.
 
 ```text
-──────────────────────────────────────────────────────────────── updated 12s ago [-]
+──────────────────────────────────────────────────────────────────────────── 12s [-]
 
 #267 draft List a loop's open pull requests above the Claude Code prompt      2h
 #258 draft grace Name the reviewed head in a review's signature conflict · 5⋮ 5m
@@ -217,12 +217,14 @@ asks for in the same query as the pull requests. A pull request that both a
 `start-watch-loop` watcher, `watch-threads.sh`, and a `start-review-loop`
 watcher, `watch-prs.sh`, track is listed once.
 
-The divider says how long ago the band reloaded, and Claude Code's `[-]` at
-its end collapses the band. A blank line sets the divider apart from the
-rows under it. Only a terminal draws the divider and that blank line. Claude
-Desktop, VS Code, and the mobile app do not set the band's text in a
-terminal's columns, so a rule sized to them would wrap, and there the band
-starts with its first row.
+The divider ends with how long ago the band reloaded, drawn as the rows
+draw their ages: in the short form, such as `12s`, in the `subtle` color,
+and ending in their column. A reload just now reads `0s`, as an item posted
+just now does. Claude Code's `[-]` at the divider's end collapses the band.
+A blank line sets the divider apart from the rows under it. Only a terminal
+draws the divider and that blank line. Claude Desktop, VS Code, and the
+mobile app do not set the band's text in a terminal's columns, so a rule
+sized to them would wrap, and there the band starts with its first row.
 
 When a poll cannot reach GitHub, the band keeps showing the pull requests
 GitHub gave last, and the divider's time shows how old they are. It shows
@@ -305,14 +307,16 @@ The items are a list below the pull requests, oldest first, each line
 starting with `-`. An open question's line is drawn in the theme's
 `permission` color, the one Claude Code gives its own permission prompts,
 because an agent's question usually asks leave to do something. An open
-notice's line keeps the default text color, so you can tell which items
-want an answer and which want a read. Each line ends with the pull request
-the item is about, as the band labels it, and how long ago it was posted.
-The band appears when an item arrives or is restored, even after you hid it,
-and in a terminal the divider counts the open questions and the open notices.
+notice's line is drawn in the theme's mid gray, `inactive`, apart from the
+`subtle` of a resolved or snoozed item, so you can tell which items want an
+answer and which want a read. Each line ends with the pull request the item
+is about, as the band labels it, and how long ago it was posted. The band
+appears when an item arrives or is restored, even after you hid it, and in
+a terminal the divider starts with one `─` and the count of open
+questions and open notices, its rule running from the count to its time.
 
 ```text
-──────────────────────────────── 2 questions · 1 notice · updated 12s ago [-]
+─ 2 questions · 1 notice ───────────────────────────────────────────── 12s [-]
 
 #337 draft Retry failed webhook deliveries with backoff                 1h
 

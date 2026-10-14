@@ -170,14 +170,26 @@ test('draws one line per open pull request of the session’s own loops', async 
   expect((await ui.findAll({ type: 'Text', text: '1⋮' })).map(found => found.props.color)).toContain('warning')
   expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-  const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
+  // The divider ends with how long ago the band reloaded as the rows end with their ages: in the short form,
+  // `0s` for a reload just now as for an item posted just now, in `subtle`, and ending at bodyColumns.
+  const divider = await ui.find({ type: 'Text', text: /^─+ 0s$/ })
   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
-  // The divider is drawn at full strength, not muted like the rows' details.
+  expect(await ui.find({ type: 'Text', text: /updated|ago|just now/ })).toBeUndefined()
+  const parts = (divider?.children ?? []) as (string | { props: { color?: string }; children: string[] })[]
+  expect(parts.map(part => (typeof part === 'string' ? part : [part.children.join(''), part.props.color]))).toEqual([
+    expect.stringMatching(/^─+ $/),
+    ['0s', 'subtle'],
+  ])
+  // The rule is drawn at full strength, not muted like the rows' details.
   expect(divider?.props.color).toBeUndefined()
   expect(divider?.props.dimColor).toBeUndefined()
   // A blank line sets the divider apart from the rows under it.
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts[texts.indexOf(divider?.text ?? '') + 1]).toBe(' ')
+  expect(texts.slice(texts.indexOf(divider?.text ?? ''), texts.indexOf(divider?.text ?? '') + 3)).toEqual([
+    divider?.text,
+    '0s',
+    ' ',
+  ])
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
@@ -621,7 +633,7 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
   // `dimColor` does not dim in every terminal, so the tagline takes the theme's subtle color.
   expect((await ui.find({ type: 'Text', text: ` ${TAGLINE}` }))?.props.color).toBe('subtle')
   expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─+ \d+s$/ })).toBeDefined()
   await ui.unmount()
 
   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
@@ -1011,7 +1023,10 @@ test('asks through the tool, and the band lists the question below the pull requ
   await clock.advance(1)
   await clock.settle()
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated (just now|\d+s ago)$/ })).toBeDefined()
+  // The divider starts with one `─` and the count, and its rule runs from the count to the reload's age, so the
+  // row still ends at bodyColumns.
+  const divider = await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })
+  expect(divider?.text.length).toBe(BAND.props.bodyColumns)
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts).toContain('Conflicting change')
   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
@@ -1021,7 +1036,7 @@ test('asks through the tool, and the band lists the question below the pull requ
   await ui.unmount()
 })
 
-test('every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle', async ($, on) => {
+test('every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
@@ -1046,9 +1061,10 @@ test('every item takes the `-` bullet, an open question the permission color, an
     ['- ', 'permission', false],
     ['Decline the finding?', 'permission', false],
   ])
+  // An open notice's line takes the theme's mid gray, `inactive`, apart from the `subtle` of a resolved item.
   expect(await lineOf('item:2')).toEqual([
-    ['- ', undefined, false],
-    [FORCE_PUSHED, undefined, false],
+    ['- ', 'inactive', false],
+    [FORCE_PUSHED, 'inactive', false],
   ])
   expect(await lineOf('item:3')).toEqual([
     ['- ', 'subtle', false],
@@ -1075,8 +1091,10 @@ test('every item takes the `-` bullet, an open question the permission color, an
   await ui.press({ key: 'item:2' })
   const openNotice = ((await ui.find({ type: 'Button', key: 'close:2' }))?.children ?? []) as Part[]
   expect(openNotice.map(part => [part.children.join(''), part.props?.color, part.props?.inverse])).toEqual([
-    [FORCE_PUSHED, undefined, undefined],
+    [FORCE_PUSHED, 'inactive', undefined],
   ])
+  // The rule after it stays in the default color.
+  expect((await ui.find({ type: 'Text', text: /^ ─+$/ }))?.props.color).toBeUndefined()
   await ui.press({ key: 'close:2' })
   // A resolved or snoozed item's open line keeps `subtle`, which shows its state.
   await ui.press({ key: 'item:3' })
@@ -1169,7 +1187,7 @@ test('an idle session with no questions starts no project process', async ($, on
 
   expect(session.project()).toEqual([])
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─+ \d+s$/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -1195,7 +1213,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
   await ui.press({ key: 'item:1' })
   // The open question has the band to itself, the divider included, so it is the top row.
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /─+ \d+s$/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The loop caps retries at three.')
   // An answer in your own words goes through discuss, so only the options are numbered.
@@ -1248,7 +1266,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
 
   await ui.press({ key: 'close:1' })
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
   await clock.advance(30_000 + TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
@@ -1392,7 +1410,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   expect(session.store.store.get('1')).toEqual(asked)
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
 
   // The question waits for its agent to settle it, and the band sends nothing.
   await clock.advance(TICK)
@@ -1656,7 +1674,7 @@ test('a number or an old reference typed in the prompt reaches the agent as plai
 
 const FORCE_PUSHED = 'Force-pushed #7 to drop a stray file'
 
-test('a subagent tells through the tool, and the band lists the notice in the default color', async ($, on) => {
+test('a subagent tells through the tool, and the band lists the notice in gray', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
@@ -1672,8 +1690,8 @@ test('a subagent tells through the tool, and the band lists the notice in the de
   await clock.advance(1)
   await clock.settle()
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated (just now|\d+s ago)$/ })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 notice ─+ \d+s$/ })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBe('inactive')
   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
   await ui.unmount()
@@ -1743,10 +1761,10 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   await startSession($, clock)
 
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question · 1 notice ─+ \d+s$/ })).toBeDefined()
   await ui.press({ key: 'item:2' })
   // An open notice has the band to itself, the divider included, as an open question does.
-  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /─+ \d+s$/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe('The file held a debug token.')
   expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeUndefined()
@@ -1787,7 +1805,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
 
   await ui.press({ key: 'close:2' })
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
   await clock.advance(30_000 - 2 * TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
@@ -1815,7 +1833,7 @@ test('the withdraw tool takes an item out of the band at once, and nothing goes 
   // Before the band reads the store again, the item has gone and its drawer with it.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 notice ─+ \d+s$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
 
   await clock.advance(TICK)
@@ -1890,7 +1908,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
   expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
 
   // The answer you chose from the old text answers nothing.
   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
@@ -2089,7 +2107,7 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
   // Each stays listed for 30 seconds, out of the divider's counts, and then leaves the band.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─+ \d+s$/ })).toBeDefined()
   await clock.advance(30_000 + TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
@@ -2110,7 +2128,7 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
   expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
-  expect(await woken.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
+  expect(await woken.find({ type: 'Text', text: /^─ 1 question · 1 notice ─+ \d+s$/ })).toBeDefined()
   await woken.unmount()
 })
 
@@ -2235,7 +2253,7 @@ test('an item whose snooze ends while the band is hidden is drawn the moment the
   await clock.settle()
   const woken = await $.ui.mount(BAND)
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
-  expect(await woken.find({ type: 'Text', text: /^─+ 1 notice · updated/ })).toBeDefined()
+  expect(await woken.find({ type: 'Text', text: /^─ 1 notice ─+ \d+s$/ })).toBeDefined()
 
   await clock.advance(10 * TICK)
   await clock.settle()
@@ -2335,7 +2353,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
     undefined,
     false,
   ])
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
 
   // Its line opens the drawer again, where unsnooze takes snooze's place.
   await ui.press({ key: 'item:2' })
@@ -2345,7 +2363,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
   expect(session.project()).toContain('inbox restore 2 --session s1 --json')
   expect(await ui.find({ key: 'detail:2' })).toBeDefined()
   expect(await actionsOf(ui, '2')).toEqual(['discuss:2', 'dismiss:2', 'snooze:2'])
-  expect((await line())?.props.color).toBeUndefined()
+  expect((await line())?.props.color).toBe('inactive')
   expect(session.store.store.get('2')).toEqual(notice())
 
   // Snoozed again, it leaves the band 30 seconds later, and nothing reached the agent.
@@ -2388,7 +2406,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
   const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
   expect([line?.props.color, line?.props.strikethrough]).toEqual(['permission', false])
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
   await clock.advance(TICK)
   await clock.settle()
   expect(session.submitted.map(one => one.text)).toEqual(['RESTORED 1 Decline the finding?'])
@@ -2443,7 +2461,7 @@ test('a restore brings a hidden band back, from the tool or from a terminal, as 
     expect(await isHidden()).toBe(false)
   }
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─+ 2 questions · 1 notice · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 2 questions · 1 notice ─+ \d+s$/ })).toBeDefined()
   await ui.unmount()
 })
 

@@ -1647,7 +1647,7 @@ review threads as a count after `⋮`.
 | Behavior | Test |
 | --- | --- |
 | The drawer's links read `open in github` and `open in projector`; on the facts line watching takes `ansi256(4)` and reviewing `claude`, each word its own when both loops track it, the branch `ansi256(6)`, the size's `+N` `success` and its `−N` `error`, `checks <state>` the checks' color, and ` in N files`, ` and `, and each `·` stay plain; the open-thread count reads `2⋮`, in `warning`, after the other notes | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `opening one drawer closes the one that was open`, and `lists a pull request both loops track once, as watched and reviewed` in `hooks/band.test.tsx` |
-| Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in the default color` |
+| Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color, `inactive` since § 18; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in gray` |
 | **snooze** shows the lengths and cancel, runs nothing, and takes no digits; each length runs `snooze --for` with its minutes; **cancel** and closing the drawer put the actions back; Enter carries the ring onto the first length and back onto **snooze** | `snooze asks how long, and only a length it offers snoozes the item`, and the snooze tests § 14.4 lists, which now pick a length |
 | A restored question's line returns to `permission` | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place`, `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` |
 
@@ -1705,8 +1705,10 @@ A drawer's action lines take the digits `7`, `8`, and `9` in place of the
 letters `d`, `x`, and `s`. Dismiss asks to be sure before it dismisses
 anything, and snooze's lengths take digits too, on lines of their own in
 the options' place. This section supersedes § 15's letters, the bullet of
-§ 15.2 under which actions take letters by their place, and § 16's note
-that the snooze lengths take no hotkeys and sit on one `|`-separated row.
+§ 15.2 under which actions take letters by their place, § 16's note that
+the snooze lengths take no hotkeys and sit on one `|`-separated row,
+§ 16's default color for an open notice, and § 10's note that the
+divider's "updated" time stays.
 
 ### 18.1 What changes
 
@@ -1740,7 +1742,7 @@ that the snooze lengths take no hotkeys and sit on one `|`-separated row.
 - **The open item's line is plain.** An open item's own line, at the top
   of its drawer, drops its `- ` bullet, so the engine's `0: ` takes the
   bullet's place, and it is no longer inverted: its subject keeps the
-  item's color, `permission` for an open question, the default for a
+  item's color, `permission` for an open question, `inactive` for a
   notice, and `subtle` for a resolved or snoozed item. The owner tried the
   default color for an open question there before keeping `permission`.
   The focus ring still inverts the line when the ring is on it, as it does
@@ -1771,6 +1773,28 @@ that the snooze lengths take no hotkeys and sit on one `|`-separated row.
   resolved, and the snooze lengths once it is snoozed. A restored or
   unsnoozed item's drawer then opens on its actions. A snoozed item can
   still be dismissed, so its dismiss confirmation stands.
+- **An open notice is gray.** An open notice's line is drawn in the
+  theme's mid gray, `inactive`, rgb(153,153,153) on a dark theme: its
+  bullet and subject in the list, and its subject as the open line at the
+  top of its drawer. It stays apart from the `subtle` of a resolved or
+  snoozed item, which is unchanged, as are an open question's `permission` and the
+  default color of the rule after an open item's subject. A plain `gray`
+  would draw in the default color, so the band names the theme key. The
+  color lives in one constant, `NOTICE_COLOR`, beside `QUESTION_COLOR` in
+  `hooks/register.tsx`, so trying another gray, such as the terminal's own
+  `ansi256(8)`, changes one line.
+- **The divider's time reads as an age.** The divider ends with how long
+  ago the band reloaded as the rows end with their ages: in `span`'s short
+  form, such as `12s`, in `subtle`, and ending at `bodyColumns`, where the
+  rows' ages end, just before the engine's `[-]`. It drops "updated" and
+  "ago", and a reload just now reads `0s`, as an item posted just now does,
+  in place of "just now". The counts of open questions and open notices
+  follow one `─` and a space at the divider's start, and its rule runs from
+  them to the time, as an open item's rule runs from its subject to its
+  age: `─ 2 questions · 1 notice ───── 12s`. The rule's length leaves room
+  for the `─ ` and the counts, so the row still ends at `bodyColumns`. With
+  no open item, the divider is the rule and the time. The time ends where
+  the ages end without joining the width of their column.
 
 ### 18.2 Why this design
 
@@ -1788,6 +1812,10 @@ that the snooze lengths take no hotkeys and sit on one `|`-separated row.
 - **The lengths take the options' digits.** While snooze asks, the options
   have nothing to do, so hiding them frees `1` to `6` for the lengths, and
   `9` cancels both questions a drawer asks.
+- **The divider's time stays out of the age column's width.** The reload's
+  age changes with every poll, from `0s` to `59s` to `1m`. Counting it in
+  the column's width would move every row's notes a column whenever its
+  length changed, so it only ends where the column ends.
 
 ### 18.3 Evidence
 
@@ -1797,8 +1825,10 @@ that the snooze lengths take no hotkeys and sit on one `|`-separated row.
 | No line of an open drawer takes a letter; dismiss shows the confirmation and runs nothing; `8` `8` dismisses; `9` and closing the drawer put the actions back; the ring moves onto the confirmation and back; a notice's and a pull request's confirmations; restore and unsnooze act at once | `dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once` |
 | While snooze asks, a question's options are hidden and the lengths take `1` to `4` and cancel `9`; a notice shows the same lines; each digit's minutes; `9` and closing restore the drawer | `snooze asks how long on 1 to 4 in the options’ place, and only a length it offers snoozes the item` |
 | Each dismiss the other tests make now confirms it | The pull request and item dismiss tests § 14.4 and § 15.4 list |
-| An open item's line has no bullet and no inverse, in `permission` for an open question, the default for a notice, and `subtle` for a resolved or snoozed item; the drawer of a question, a notice, and a resolved question is indented by the width of the `0: ` prefix, so its lines start under the item's text | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a drawer’s actions follow its options a line each, on 7, 8 and 9, named for what they act on` |
+| An open item's line has no bullet and no inverse, in `permission` for an open question, `inactive` for a notice, and `subtle` for a resolved or snoozed item; the drawer of a question, a notice, and a resolved question is indented by the width of the `0: ` prefix, so its lines start under the item's text | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle ``, `a drawer’s actions follow its options a line each, on 7, 8 and 9, named for what they act on` |
 | A question asked before the item was dismissed or snoozed elsewhere is forgotten, so restoring or unsnoozing the item opens its drawer on its actions | `a question a drawer asked is forgotten once its item is resolved or snoozed, so a restored item opens on its actions` |
 | In a terminal, an open item's line ends in a default-colored rule beside its Button, out to `bodyColumns`; a long subject draws none, and another surface none | `an open item’s line ends in a rule to the band’s edge on a terminal, beside its Button` |
 | A dismiss confirmation on a snoozed item stands across an unrelated read of the store | `a dismiss confirmation on a snoozed item survives an unrelated change to the store` |
+| An open notice's line, in the list and at the top of its drawer, takes `inactive`, and the rule after it the default color; an unsnoozed notice's line returns to `inactive` | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in gray`, `snooze closes an item’s drawer and mutes it for 30 seconds, and its drawer offers unsnooze in snooze’s place` |
+| The divider ends with the reload's age, `0s` just after a reload, in `subtle`, ending at `bodyColumns`, with no "updated", "ago", or "just now"; the counts follow a `─ ` at its start, and its rule runs from them to the time, the row still ending at `bodyColumns` | `draws one line per open pull request of the session’s own loops`, `asks through the tool, and the band lists the question below the pull requests`, and the tests that find the divider by its counts |
 | The digits from an empty prompt, and the confirmation's look | Checked by hand by the owner in a preview session |
