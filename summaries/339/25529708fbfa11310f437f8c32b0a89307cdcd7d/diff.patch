@@ -1,0 +1,169 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 289ceefb..65cc5e3c 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -391,15 +391,14 @@ its drawer is open, the item has the panel to itself, so its line is the
+ top row, in its usual colors, with `0` in its bullet's place to close the
+ drawer. In a terminal, the header steps aside too, which gives the drawer
+ another row before the panel scrolls, and the item's line takes the
+-header's place as the panel's top bar: a rule in the default text color
+-runs from its subject to its pull request and age, so the row ends at the
+-panel's edge, where the panel's `[-]` begins. A subject too long to leave a
+-few columns for the rule draws none. The drawer is indented to start under
+-the item's text, so its detail and the digits of its lines sit under the
+-item's first letter:
++header's place as the panel's top row: its subject, then its pull request
++and age at the right, with nothing drawn between them, since the panel's
++background already sets the drawer apart. The drawer is indented to start
++under the item's text, so its detail and the digits of its lines sit under
++the item's first letter:
+ 
+ ```text
+-   0: Decline the finding about the retry budget? ───────────── #337  5m   [-]
++   0: Decline the finding about the retry budget?               #337  5m   [-]
+ 
+       The review asks for a retry budget per host. The loop caps retries at
+       three in total, which covers the case the finding names.
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index da5352a3..183738cf 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -2091,3 +2091,35 @@ panel wherever Projector names it.
+ | A submit left under `bandSending` keeps its claim past 60 seconds, is not submitted again, and settles when its prompt arrives | `a submit the release before the rename left under bandSending keeps its claim and settles when its prompt arrives` |
+ | The template's text is pinned under version 13 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |
+ | No "band" names the feature outside Claude Code's terms, the plans' history, and the old `bandSending` key the panel takes over | `git grep -n -i band`, by hand |
++
++## 22. Drop the rule after an open item's title
++
++Since § 18, an open item's line ended in a ` ───` rule from its subject to
++its pull request and age, standing in for the divider as the band's top
++bar, and § 20 sized it to the panel's rows. Inside the panel, the owner
++found it no longer needed: "we should not have ────── after the question in
++the drawer anymore".
++
++### 22.1 What changes
++
++- **An open item's line draws no rule.** A question's or a notice's open
++  line draws its subject in its Button, then its pull request and its age at
++  the right, with nothing between them. `MIN_RULE` and the code that sized
++  and drew the rule are gone.
++- **A pull request's line is unchanged.** Its drawer opens under its line,
++  which never drew a rule.
++
++### 22.2 Why this design
++
++- **The panel sets the drawer apart.** The rule made an open line read as
++  the band's top bar when the band drew on the terminal's own background.
++  The panel's background now marks where it begins, so the rule only added
++  a line of dashes. The owner previewed the line without it in a session
++  mod.
++
++### 22.3 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| An open question's line is its subject in `permission`, its pull request, and its age, with no `─`, on a terminal and on another surface, and a subject too long for the line draws none either | `an open item’s line draws its title with no rule after it` in `hooks/panel.test.tsx` |
++| An open notice's line draws no `─` either | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle `` |
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index b3643a5c..a9c9b895 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -1484,8 +1484,8 @@ test('every item takes the `-` bullet, an open question the permission color, an
+   expect(openNotice.map(part => [part.children.join(''), part.props?.color, part.props?.inverse])).toEqual([
+     [FORCE_PUSHED, 'inactive', undefined],
+   ])
+-  // The rule after it stays in the default color.
+-  expect((await ui.find({ type: 'Text', text: /^ ─+$/ }))?.props.color).toBeUndefined()
++  // No rule follows it.
++  expect(await ui.find({ type: 'Text', text: /─/ })).toBeUndefined()
+   await ui.press({ key: 'close:2' })
+   // A resolved or snoozed item's open line keeps `subtle`, which shows its state.
+   await ui.press({ key: 'item:3' })
+@@ -3473,38 +3473,28 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
+   await ui.unmount()
+ })
+ 
+-test('an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button', async ($, on) => {
++test('an open item’s line draws its title with no rule after it', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const long = 'Should the panel '.padEnd(112, 'x')
+   questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: null, subject: long })])
+   await startSession($, clock)
+   const ui = await $.ui.mount(PANEL)
+-  const rule = async () => (await ui.find({ type: 'Text', text: /^ ─+$/ }))?.text
++  const texts = async () => (await ui.findAll({ type: 'Text' })).map(found => found.text)
+ 
+-  // The rule fills the panel's line: `0: `, the subject, a space and the rule, then ` #7` and ` 2m`, end at the
+-  // rows' edge, five columns short of bodyColumns, where the rows' ages end.
++  // The open line is the title in its Button, then its pull request and its age; the panel's background, not a rule,
++  // sets the drawer apart. The title keeps `permission`.
+   await ui.press({ key: 'item:1' })
+-  const drawn = await rule()
+-  expect(drawn).toBe(` ${'─'.repeat(85)}`)
+-  expect('0: '.length + 'Decline the finding?'.length + (drawn ?? '').length + ' #7'.length + ' 2m'.length).toBe(
+-    COLUMNS,
+-  )
+-  // It sits beside the line's Button, so a hover or the focus ring inverts the title alone, and it draws in the
+-  // default color while an open question's title takes `permission`.
+   expect((await ui.find({ type: 'Button', key: 'close:1' }))?.text).toBe('Decline the finding?')
+-  expect((await ui.find({ type: 'Text', text: /^ ─+$/ }))?.props.color).toBeUndefined()
+   expect((await ui.find({ type: 'Text', text: 'Decline the finding?' }))?.props.color).toBe('permission')
+-  await ui.press({ key: 'close:1' })
+-  // No line in the list draws one.
+-  expect(await rule()).toBeUndefined()
++  expect((await texts()).slice(0, 3)).toEqual(['Decline the finding?', '#7', '2m'])
++  expect((await texts()).filter(text => text.includes('─'))).toEqual([])
+ 
+-  // A title that leaves too little room draws none.
++  // Nor does a title too long for the line, or any surface.
++  await ui.press({ key: 'close:1' })
+   await ui.press({ key: 'item:2' })
+-  expect(await rule()).toBeUndefined()
++  expect((await texts()).filter(text => text.includes('─'))).toEqual([])
+   await ui.unmount()
+-
+-  // Another surface draws the title alone, as it draws no header.
+   const desktop = await $.ui.mount({ ...PANEL, surface: 'desktop' })
+   await desktop.press({ key: 'close:2' })
+   await desktop.press({ key: 'item:1' })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 1f208338..04323f0d 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -102,9 +102,6 @@ const CLOSE_HOTKEY = '0'
+  */
+ const DRAWER_INDENT = `${CLOSE_HOTKEY}: `.length
+ 
+-/** The shortest rule an open item's line draws; a title that leaves less draws none. */
+-const MIN_RULE = 3
+-
+ /**
+  * In a terminal the panel is inset `PANEL_INSET` columns in the terminal's
+  * own background, then padded `PANEL_PADDING` columns at each side in its
+@@ -1471,15 +1468,6 @@ export const register: Register = on => {
+       const line = isOpened ? `close:${ref}` : key
+       const first = item.kind === 'question' && isOpen ? `answer:${ref}.${letterAt(0)}` : `discuss:${ref}`
+       const isSending = !isOpen && item.deliveredAt === undefined
+-      // An open item's line is the panel's top bar while the header steps
+-      // aside, so a rule fills it to the panel's `columns`: a space and `─`
+-      // from after the `0: ` and the subject to the columns its notes and age
+-      // take, each with the gap before it. A title too long for one row with
+-      // room for a short rule draws none.
+-      const notesWidth =
+-        (isSending ? 'sending'.length + 1 : 0) + (pull === '' ? 0 : [...pull].length + 1) + ageWidth + 1
+-      const ruleWidth = columns - DRAWER_INDENT - [...item.subject].length - 1 - notesWidth
+-      const rule = isOpened && isTerminal && ruleWidth >= MIN_RULE ? ` ${'─'.repeat(ruleWidth)}` : ''
+ 
+       return (
+         <Box key={`line:${ref}`} flexDirection="column">
+@@ -1503,9 +1491,6 @@ export const register: Register = on => {
+                   {item.subject}
+                 </Text>
+               </Button>
+-              {/* Beside the Button, not in it, so a hover or the focus ring
+-                  inverts the title alone. */}
+-              {rule !== '' && <Text key={`rule:${ref}`}>{rule}</Text>}
+             </Box>
+             {isSending && (
+               <Box flexShrink={0}>

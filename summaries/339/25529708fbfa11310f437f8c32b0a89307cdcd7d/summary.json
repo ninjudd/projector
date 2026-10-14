@@ -1,0 +1,89 @@
+{
+ "version": 1,
+ "name": "Open item line without rule",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 339,
+  "title": "Drop the rule after an open item's title",
+  "head": "25529708fbfa11310f437f8c32b0a89307cdcd7d",
+  "headRef": "drop-open-item-rule",
+  "base": "bcac00197cb06550913633b812fba9e78d411dc3",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the list Claude Code draws above your prompt: your open pull requests, then the questions and notices agents left in your inbox. Opening an item's <b>drawer</b>, its detail and the actions under it, gives that item the panel to itself, and the item's own line becomes the panel's top row.",
+   "Until now that top row ended in a rule of <code>─</code> characters running from the item's subject out to its pull request and age. The rule made the line read as a top bar back when the band drew straight onto the terminal's background. The panel now draws on a background of its own, which already sets the drawer apart, so the rule only added a line of dashes. The owner asked for it to go.",
+   "This pull request deletes the rule and everything that sized it, rewrites the tests that pinned it to check that no rule is drawn, and updates the documentation and the inbox plan to match. A pull request's line never drew this rule, so it is unchanged."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One full review at <code>2552970</code>, clean, with no finding threads.</li><li>The hooks tests, the type check, plugin validation, <code>project check</code> and <code>git diff --check</code> all pass at the head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "panel",
+   "title": "The open line draws no rule",
+   "kicker": "The panel code that drew the rule, and the tests that now check it is gone",
+   "intro": [
+    "In <code>hooks/register.tsx</code>, each inbox item renders as one row: a Button holding its subject, then its pull request and its age in fixed-width boxes at the right. The Button's box grows to fill the row, which is what pushes the pull request and age to the panel's edge.",
+    "The rule was a separate <code>Text</code> beside the Button, as long as the columns left over after the subject, the pull request, the age and the gaps. The change deletes that <code>Text</code>, the arithmetic that sized it, and <code>MIN_RULE</code>, the shortest rule worth drawing. The growing Button box still pushes the pull request and age to the right, so the row keeps its shape with background where the dashes were."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Deletes <code>MIN_RULE</code>, the <code>notesWidth</code> and <code>ruleWidth</code> arithmetic, and the <code>Text</code> that drew the rule beside an open item's Button.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>columns</code>, <code>isTerminal</code> and <code>ageWidth</code>, which the deleted arithmetic read, each still have other readers, and nothing in the repository names <code>MIN_RULE</code>, <code>ruleWidth</code> or <code>notesWidth</code> any more. <code>hooks/typecheck.sh</code> passes at the head."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Replaces the test that measured the rule with one that checks an open line is its subject, pull request and age with no <code>─</code>, and turns the colors test's rule check into a check for no rule.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "All 143 hooks tests pass at the head. With the base's <code>hooks/register.tsx</code> put back, both rewritten tests fail by name, so a rule drawn again is caught.",
+       "line": 3476
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and plan",
+   "kicker": "The plugin docs and the inbox plan describe the line without the rule",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the open line as its subject, then its pull request and age at the right, and redraws its example without dashes. The inbox plan records the change in a new § 22, leaving §§ 18 and 20, which introduced and sized the rule, as the history of what shipped then."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Rewrites the paragraph on an open item's line and its example row."
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Adds § 22, with what changes, why, and the tests that show it.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "§ 22's account of the rule matches §§ 18 and 20, the plan stays <code>completed</code>, and <code>project check</code> passes.",
+       "line": 2095
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
