@@ -1,0 +1,719 @@
+diff --git a/docs/projects/pr-loop/readme.md b/docs/projects/pr-loop/readme.md
+new file mode 100644
+index 00000000..d8b874e8
+--- /dev/null
++++ b/docs/projects/pr-loop/readme.md
+@@ -0,0 +1,713 @@
++---
++status: draft
++priority: now
++---
++
++# Fix and review pull requests from one loop
++
++One loop per session fixes and reviews its pull requests, polls each one
++once, and spends GraphQL only on a pull request that changed.
++
++## 1. Problem
++
++Projector drives a pull request to a clean review with two loops. Each is a
++skill that keeps a watcher script running and starts one subagent per pull
++request. The operator is the GitHub account `gh` is signed in as.
++
++- **The watch loop**, `start-watch-loop`, runs once per session, in the
++  top-level conversation. Its scope is a tracked file of `owner/repo#number`
++  lines: the pull requests that conversation created or adopted. Its watcher,
++  `skills/start-watch-loop/scripts/watch-threads.sh`, reports `FINDING`,
++  `VERDICT`, `CONFLICT`, `REVIEW`, `DRAFT`, `TRACKED`, and `DONE`, and a
++  fixer subagent, `fix-<n>` or `fix-stack-<n>`, runs `fix-pr` on the pull
++  request.
++- **The review loop**, `start-review-loop`, runs once per repository. It
++  tracks every open pull request the operator wrote and every one that
++  requests the operator's review. Its watcher,
++  `skills/start-review-loop/scripts/watch-prs.sh`, reports `NEW PR`,
++  `NEW HEAD`, `RESPONDED`, and `CLOSED`, and a reviewer subagent,
++  `review-<n>`, runs `review-pr` on each new head. A pull request stays in
++  draft until its head reviews clean.
++
++Two problems follow from running them apart:
++
++1. **Each pull request is polled twice.** A pull request that a session
++   opens is in both loops' sets, and each watcher queries it on its own
++   schedule.
++   Projector's panel, which lists the loops' pull requests above the prompt,
++   queries them a third time.
++2. **Every pass spends GraphQL whether or not anything changed.** The watch
++   loop spends 1 GraphQL point per pull request per pass, plus a REST call
++   for its reviews. The review loop spends 2 points per pull request per
++   pass, plus 2 to 4 points to find new pull requests. GitHub gives an
++   account 5,000 GraphQL points an hour, shared by every session, loop, and
++   machine signed in as that account. At the default 60-second interval with
++   10 pull requests, the two loops spend about 2,000 points an hour, and
++   each further review loop, for another model or on another machine, adds
++   about 1,400. When the budget runs out, every query fails until the hour
++   resets, and a watcher carries its last answer forward, so no new finding
++   surfaces. The limit is reached in practice: one session slowed its
++   watcher to a 10-minute interval to cope, so findings took up to 10
++   minutes to surface.
++
++A single loop per session must also decide who reviews. The review loop
++runs once per repository because two loops reviewing as one model under one
++account duplicate every review. Today nothing but the user's care keeps a
++second one from starting, and a second machine already collides this way.
++
++## 2. Solution
++
++One skill, `start-pr-loop`, replaces both loops, and it runs one loop per
++session through a new CLI command, `project loop watch`. The loop's tracked
++file gives each pull request one or both of two roles: `fix` for a pull
++request this conversation owns, and `review` for the operator's pull
++requests and those that request the operator's review. Each pass asks GitHub
++a conditional REST question per pull request, which costs nothing when
++GitHub answers `304 Not Modified`. The loop runs the GraphQL query only for
++a pull request whose answer changed, and for every pull request in a full
++pass every 10 minutes, which covers what no conditional request sees. It
++dispatches each event by role: a new head goes to the pull request's
++reviewer, and a finding, verdict, conflict, or review body goes to its
++fixer. One loop per repository and model holds the review role, through a
++lease that the operating system releases when the holder's watcher ends.
++Every other loop only fixes, and the next one to pass takes the lease and
++the holder's review lines. Loops on one machine share their ETags and query
++results, so a change costs one query however many sessions track the pull
++request.
++
++### 2.1 One pass
++
++1. **Read the tracked file.** The loop re-reads its roles and exclusions
++   every pass, as both watchers do today, and announces a bad line once as
++   `TRACKED`.
++2. **Settle the review role.** Unless review is off for this loop, it tries
++   the lease for its repository and model as § 2.4 describes. It prints
++   `ROLE` when it takes the lease, when it finds another loop holding it on
++   the first pass, and when it loses it.
++3. **Adopt.** The holder sends one conditional request per page of the
++   repository's open pull requests. On a changed page, it appends
++   `owner/repo#number review` for each open pull request that the operator
++   wrote or that requests the operator by login, unless the file already
++   lists it for review or keeps it out of review. A failed request adopts
++   nothing that pass.
++4. **Ask the conditional questions.** For each tracked pull request, the
++   loop sends a conditional request for the pull request and for the page
++   its next review lands on. For each base branch of a pull request it
++   fixes, it sends one for the branch's ref. § 2.2 lists the requests.
++5. **Pick the dirty pull requests.** A pull request is dirty when one of
++   its requests answered `200` or failed, when its base moved and the loop
++   fixes it, when its last result left `mergeable` at `UNKNOWN`, when it has
++   no result yet, or when its result is older than `--full-every`. When
++   another loop on the machine queried a clean pull request since this loop
++   last read it, this loop reads that cached result and queries nothing.
++6. **Query each dirty pull request.** The loop runs one GraphQL query, and
++   reads the REST reviews when the reviews page changed or the full pass is
++   due. It writes the new ETags and the result to the machine's cache. A
++   failed query carries the pull request's rows forward, as both watchers
++   do today.
++7. **Announce by role.** The loop works out what is outstanding on each
++   pull request from its result, for each role it holds, and prints each new
++   event and each reminder that is due, as § 2.5 lists.
++8. **Write state and sleep.** The loop writes its `--state` file, checks
++   `--exit-when-closed`, and sleeps `--interval` seconds.
++
++The loop stays level-triggered. The conditional requests only decide which
++pull requests to query sooner. Every event is still worked out from what is
++outstanding, every pull request still gets a full query within
++`--full-every`, and a request that fails leads to the query rather than to
++silence.
++
++### 2.2 The conditional requests
++
++Each request sends the `ETag` its resource last answered with in an
++`If-None-Match` header. GitHub documents that a `304` answer does not count
++against the primary rate limit, and in a probe three `304`s in a row left
++`X-Ratelimit-Used` unchanged. Observed means seen in a probe of two open
++pull requests in this repository. Inferred means read from the fields the
++response carries, on the assumption that the `ETag` hashes the body, and not
++yet tested by triggering the event.
++
++| Request | Sent | Its `ETag` moves on | Status |
++| --- | --- | --- | --- |
++| `GET repos/{owner}/{repo}/pulls/{n}` | Per tracked pull request | A push (`head.sha`), a draft toggle (`draft`), a merge or close (`state`, `merged`), an issue comment such as a hold (`comments`, `updated_at`), an inline comment or reply (`review_comments`), and a change in mergeability or CI (`mergeable`, `mergeable_state`) | The fields are observed. An issue comment moving `updated_at` is observed. The rest is inferred. |
++| `GET repos/{owner}/{repo}/pulls/{n}/reviews?per_page=100&page=<p>`, where `<p>` is `floor(R / 100) + 1` for `R` reviews | Per tracked pull request | A new review, including a body-only `COMMENT` review, which no count on the pull request shows | Inferred |
++| `GET repos/{owner}/{repo}/git/ref/heads/{base}` | Per base branch of a pull request the loop fixes | A push to the base, which can bring a conflict while the head stands still | Inferred |
++| `GET repos/{owner}/{repo}/pulls?state=open&per_page=100`, each page | Per repository, by the review role's holder | A new pull request, a review request (`requested_reviewers`), and a push or draft toggle on any open pull request | The fields are observed. |
++
++No request covers a thread that is resolved or unresolved without a reply
++(inferred). A `RESPONDED` that comes from the author resolving every thread
++without pushing, and a `FINDING` that comes from a reopened thread, wait for
++the full pass unless a reply arrives with them. A reply moves
++`review_comments`, and `fix-pr` always replies before it resolves.
++
++`gh api` reports a conditional answer only in the status line that `-i`
++prints. It exits `1` on a `304`, as it does on a `404`, a server error, and
++a network failure, and with `--jq` a `304` prints
++`unexpected end of JSON input`. So the loop runs
++`gh api -i -H 'If-None-Match: <etag>' <path>`, reads the status line, the
++headers, and then the body, and never relies on the exit status.
++
++| Status line | The loop |
++| --- | --- |
++| `200` | Stores the new `ETag` and marks the pull request dirty. For the open-pulls list, it adopts from the body. |
++| `304 Not Modified` | Changes nothing. |
++| `404` for a pull request | Announces `TRACKED … no such repository or pull request` once, as today. |
++| `404` for a base ref | Treats the base as gone, usually because the layer below merged and its branch was deleted. The loop queries the pull request once, which reads its new base, and asks for that base's ref from then on. |
++| Any other status, or none | Treats the request as failed and marks the pull request dirty, so the GraphQL query runs. |
++
++The GraphQL query is the union of the two queries the watchers run today,
++so one result serves both roles:
++
++```graphql
++repository(owner: $o, name: $r) { visibility
++  pullRequest(number: $n) {
++    state isDraft reviewDecision mergeable headRefOid headRefName baseRefName author { login }
++    comments(last: 100) { nodes { author { login } body } }
++    reviews(last: 100) { nodes { author { login } authorAssociation submittedAt body } }
++    changesRequested: reviews(states: [CHANGES_REQUESTED], last: 1) { nodes { author { login } body commit { oid } } }
++    reviewThreads(first: 100) { nodes { id isResolved path line
++      first: comments(first: 1) { nodes { databaseId body } }
++      last: comments(last: 1) { nodes { databaseId author { login } body } } } } } }
++```
++
++### 2.3 The tracked file
++
++A tracked file lists each pull request with its roles:
++
++```text
++acme/app#12
++acme/app#12 review
++acme/app#14 review
++!acme/app#9
++!acme/app#15 review
++```
++
++- **`owner/repo#number`** lists the pull request in the `fix` role, so a
++  file written before roles reads as it always has. `owner/repo#number fix`
++  means the same.
++- **`owner/repo#number review`** lists it in the `review` role.
++- **Several lines for one pull request** give it the union of their roles,
++  and one line may name both, as `acme/app#12 fix review`.
++- **`!` before any of these** keeps the pull request out of the roles the
++  line names, wherever the line sits. `!acme/app#9` keeps it out of `fix`,
++  as the same line keeps it out of a watch loop today, and
++  `!acme/app#15 review` keeps it out of `review` alone. A session that stops
++  fixing a pull request never stops another session from reviewing it, and
++  the other way round.
++
++References match without regard to case, as today. Only the CLI writes the
++file. `project loop add` and `drop` write a role-less line for `fix`, so a
++watcher from an earlier release, which reports any other shape as `TRACKED`,
++still reads a file that `implement` adds to. Only the new loop's review
++lines carry a word.
++
++### 2.4 The review lease
++
++One loop per repository, reviewer account, and model holds the review role.
++A Claude Code loop and a Codex loop on different models each hold their own
++lease and give separate opinions, as review loops on several models do
++today. Two sessions on one model share one lease.
++
++The lease is two files in
++`$XDG_STATE_HOME/projector/loops/leases/<owner>/<repo>/<reviewer>/`, where
++`<model-key>` is the folder name `project review` derives from the model ID:
++`<model-key>.lock`, which the holder locks, and `<model-key>.json`, which
++names the holder.
++
++| `.json` field | Value |
++| --- | --- |
++| `tracked` | The holder's tracked file, resolved, which identifies the holder loop |
++| `host`, `pid` | Where the holder's watcher runs |
++| `model`, `reviewer` | The model ID and the login the review role posts as |
++| `taken_at`, `renewed_at` | When the holder took the lease, and when it last passed |
++
++- **Holding.** The holder keeps an exclusive lock on the `.lock` file for
++  as long as its watcher runs, through the portable `try_lock` the inbox
++  uses. It rewrites `renewed_at` each pass, and once more when it exits on
++  a signal it can catch. The operating system drops the lock when the
++  process ends, however it ends, so a session that closes passes the lease
++  on without writing anything. A process keeps its locks while the machine
++  sleeps, so waking from sleep moves no lease.
++- **Taking.** Every other loop tries the lock once a pass, without
++  waiting. When it gets the lock, it keeps it if the `.json` is missing,
++  names this loop's own tracked file, or holds a `renewed_at` older than 5
++  minutes. Otherwise it lets the lock go. The 5 minutes let a holder whose
++  watcher restarts, as a host's monitor restarts a command that expires,
++  take its lease back before another session does.
++- **Handing over.** On taking the lease, a loop reads the tracked file the
++  `.json` names. It copies every review line and every review exclusion,
++  such as `!acme/app#15 review`, from that file into its own, whatever this
++  loop fixes. A review the user assigned and a dismissal from review both
++  survive the handover, and an exclusion from `fix` stays with the session
++  that wrote it. Then the loop writes the `.json`, prints `ROLE`, and adopts.
++  A pull request that is new to this loop reports `NEW PR` unless its head
++  already has a verdict by this model from the reviewer's account, as
++  `watch-prs.sh` decides today, so a handover reviews no head twice.
++- **Reviews in flight.** A review's state, start comment, and lock belong
++  to the machine and the model, under
++  `prs/<owner>/<repo>/<number>/<model-key>/` in the review state directory,
++  not to a session. So a review the departed holder left unpublished passes
++  to the taker with the role. Its lock names the same loop id,
++  `<repo>-review-<model-key>`, and host as a live review, so only the
++  handover can say that it is safe to clear. On the pass that takes the
++  lease, the watcher finds each head locked under that loop id with no
++  verdict and marks it on its `NEW PR` line, and the reviewer runs
++  `project review release <number> --model <id>` before `setup`. `setup`
++  then replaces the departed review's start comment, because this machine's
++  state records it. If the departed holder's reviewer is in fact still
++  running, the two reviews meet at `publish`, whose collision check holds
++  the second verdict and asks the user, as it does today.
++- **Losing.** A loop with review lines that finds the `.json` naming
++  another loop's tracked file removes the review role from its lines and
++  prints `ROLE`. Its conversation stops its reviewer subagents and runs no
++  `project review finish`, which would delete the review state that now
++  belongs to the taker. Only the `.json` decides the loss. A restarted
++  holder that finds the lock taken for a moment, by a loop that then lets
++  it go, keeps its review lines and tries again next pass.
++- **Staying out.** `--no-review`, or `loop.review = false`, keeps a loop
++  away from the lease entirely.
++
++The lock is local, so two machines signed in as one account can each hold
++a lease for one repository and model. The per-head guards that exist today
++catch the duplicate. `project review setup` refuses while another session's
++live start comment shows the same model reviewing the pull request, on this
++machine or another. `project review publish` refuses a second verdict by
++the same model on one head that this loop's record does not hold. The skill
++reads the first such refusal as a second machine reviewing, tells the user
++once, and names the remedy: run
++`project config set loop.review false --user` on the machine that is to
++only fix.
++
++### 2.5 Events and where they go
++
++Every event both watchers print today keeps its wording and meaning. The
++loop prints an event only for a role the pull request holds.
++
++| Event | Role | Goes to |
++| --- | --- | --- |
++| `FINDING`, `VERDICT`, `CONFLICT`, `REVIEW` | `fix` | The pull request's fixer, `fix-<n>`, or `fix-stack-<n>` for a stack |
++| `DRAFT` | `fix`, only when the loop does not also review the pull request | Nobody. It reports that no review has signed off the head, and the loop's own reviewer already covers a pull request it reviews. |
++| `NEW PR`, `NEW HEAD`, `RESPONDED` | `review` | The pull request's reviewer, `review-<n>` |
++| `BRANCH` | `review`, with `--worktree` | The main loop, which looks for an open pull request on the branch |
++| `CLOSED` | Any | The main loop, which removes the pull request and finishes its subagents |
++| `TRACKED` | Any | The main loop, which fixes the file |
++| `ROLE` | `review` | The main loop, which says whether this session reviews, and stops its reviewers without `project review finish` when it does not |
++| `DONE` | `fix`, with `--exit-when-closed` | The main loop, which ends the watch |
++
++`DONE` means that every pull request the loop fixes has merged or closed
++and that the loop does not hold the review lease. A loop that holds the
++lease keeps running, because it reviews for the whole repository. As today,
++a pass with a failed query or a bad line never reports `DONE`.
++
++`ROLE` names the repository, the model, and what changed:
++
++```text
++ROLE acme/app review taken for claude-opus-5-5 — this loop reviews the repository's pull requests
++ROLE acme/app review held for claude-opus-5-5 by host-a pid 4182 (~/loops/a/tracked) — this loop only fixes
++ROLE acme/app review lost for claude-opus-5-5 to host-a pid 4182 (~/loops/a/tracked) — stop this loop's reviewers, and leave their review state to that loop
++```
++
++### 2.6 Commands and settings
++
++`project loop watch` runs the loop and prints one event a line, as
++`project inbox watch` prints answers:
++
++| Option | Default | Meaning |
++| --- | --- | --- |
++| `--tracked <file>` | Required | The loop's tracked file |
++| `--state <file>` | Required | The loop's own record: what it announced and when, the head it last saw for review, and which cached result it last read for each pull request |
++| `--model <id>` | Required | The session's model ID. It keys the lease and recognizes a head this model already reviewed. |
++| `--repo <owner/repo>` | This checkout's origin | The repository whose review role the loop may hold and whose pull requests it adopts |
++| `--reviewer <login>` | `review.username`, then the operator | The account the review role posts as |
++| `--no-review` | Off | Fix only |
++| `--interval <seconds>` | `60`, at least `30` | Time between passes |
++| `--full-every <seconds>` | `600` | The longest a pull request goes without a GraphQL query |
++| `--renotify <seconds>` | `900` | When an outstanding finding, verdict, conflict, or draft is announced again |
++| `--worktree <dir>` | None | The checkout whose branch changes `BRANCH` reports |
++| `--once` | Off | Make one pass and exit |
++| `--exit-when-closed` | Off | End with `DONE`, as § 2.5 defines it |
++
++The other commands change as follows:
++
++- **`project loop add <ref> --tracked <file> [--role fix|review]`** appends
++  a line for the role, `fix` by default, unless the file lists the pull
++  request in that role already. It still refuses a pull request the file
++  keeps out of that role.
++- **`project loop drop` and `restore`** take the same `--role`, `fix` by
++  default. `drop` appends an exclusion for the role, and `restore` removes
++  the role's exclusions.
++- **`project loop remove <ref> --tracked <file> [--role fix|review]`**
++  removes only that role with `--role`, and every line that lists the pull
++  request without it. It leaves every exclusion, as today.
++- **`project loop lease <owner/repo> [--model <id>] [--json]`** prints each
++  review lease of the repository: its model, reviewer, holder, tracked file,
++  `renewed_at`, and whether a watcher holds its lock now. It writes nothing.
++- **`loop.review`** is a new boolean setting, `true` by default. `false`
++  keeps every loop it applies to out of the review role.
++
++Loops on one machine share a cache under
++`$XDG_STATE_HOME/projector/loops/cache/<operator>/<owner>/<repo>/`: one file
++per pull request with each request's last `ETag` and the last GraphQL result
++with the time it was fetched, one per base branch, and one per page of the
++open-pulls list. The cache is keyed by the operator because GitHub varies an
++`ETag` with the token. Each write replaces the file whole, and two loops
++that race on one pull request at worst both query it.
++
++### 2.7 The skill and its callers
++
++`start-pr-loop` holds what both loop skills hold today, minus what the CLI
++now does:
++
++- **Scope.** The skill runs only in the top-level conversation. It adds each
++  pull request the conversation creates or adopts with `project loop add`,
++  keeps the tracked and state files beside each other outside any checkout,
++  and records their paths in a persistent recurring goal.
++- **Start.** It resolves the operator, the reviewer, and the model, runs one
++  pass with `--once`, dispatches that pass's events, and then runs the
++  watcher under the host's persistent process or monitor facility.
++- **Review role.** The first time the loop takes the role, the skill runs
++  `project review rules` once and warns as the review loop does today. Every
++  reviewer passes the loop id `<repo>-review-<model-key>` to `project review`
++  as `--loop`. Whichever session holds the lease uses that id, so the record
++  of published reviews moves with the role, and one loop writes it at a
++  time. A reviewer whose `NEW PR` line marks a review left in flight runs
++  `project review release` before `setup`, as § 2.4 describes.
++- **Subagents.** A fix-role pull request gets one fixer and a review-role
++  pull request one reviewer, named and briefed as the two skills do today,
++  each in its own worktree. A pull request in both roles has both.
++- **Assigned reviews.** To review a pull request the user names, the skill
++  adds it with `--role review` to its own file when it holds the lease, and
++  otherwise to the holder's file, which `project loop lease --json` names.
++- **Reports.** The skill reports clean state and stack readiness as
++  `start-watch-loop` does today. On `CLOSED` it removes the pull request,
++  finishes its fixer, and runs `project review finish --force` for its
++  reviewer. On a `ROLE` line that loses the role, it stops its reviewers
++  and finishes no review.
++
++`implement` starts `start-pr-loop` with `--exit-when-closed` on the pull
++request it opens, or adds the pull request to the loop the conversation
++already runs. Its rule to leave reviewing to a separate loop goes, because
++its loop takes the review role itself when no other loop on the machine
++holds it. `fix-pr` and `review-pr` change only where they name
++the loop that runs them.
++
++### 2.8 The panel
++
++The panel learns about a loop from the command that starts its watcher, and
++lists the pull requests in its tracked file.
++
++- **Recognize the new command.** `project loop watch … --tracked <file>` in
++  a Bash or Monitor call records a loop of kind `loop`, as `watch-threads.sh`
++  and `watch-prs.sh` record `watching` and `reviewing` today.
++- **Read roles.** A role-less line means `fix` in a `loop` or `watching`
++  file and `review` in a `reviewing` file, so a loop that an earlier watcher
++  started lists correctly until its session ends.
++- **Name the roles.** A pull request's drawer says `fixing` in the blue
++  that `watching` uses today, `reviewing` in `claude` orange, or both.
++- **Dismiss by role.** Dismissing a pull request runs `project loop drop`
++  with `--role` for each role a `loop` file lists it in, so the session
++  stops only what it does. In a file an earlier watcher reads, the panel
++  writes the role-less line that watcher understands, as today.
++
++### 2.9 Both hosts
++
++A loop needs only the CLI and the shared skill. The panel, which only Claude
++Code draws, reads what the CLI writes, and nothing depends on MCP. Codex runs
++the same `project loop watch` under its own process facility, and its model
++ID gives it a lease of its own.
++
++### 2.10 The files
++
++| File | Change |
++| --- | --- |
++| `src/projector/loop.py` | Roles in the tracked format, `add --role` and `remove --role`, and the review lease |
++| `src/projector/watch.py` (new) | The loop: passes, conditional requests, the machine cache, the GraphQL result, and events by role |
++| `src/projector/cli.py` | `loop watch`, `loop lease`, and `--role` |
++| `src/projector/config.py` | `loop.review` |
++| `skills/start-pr-loop/SKILL.md` (new) | The one loop skill |
++| `skills/start-watch-loop/`, `skills/start-review-loop/` | Removed, with both watcher scripts |
++| `skills/implement/SKILL.md`, `skills/fix-pr/SKILL.md`, `skills/review-pr/SKILL.md` | Name `start-pr-loop`, and drop "leave the review loop alone" from `implement` |
++| `src/projector/templates/agents-block.md`, and this repository's `AGENTS.md` and `CLAUDE.md` through `project init` | Name the loop `implement` starts |
++| `hooks/types.d.ts`, `hooks/parse.ts`, `hooks/register.tsx` | Roles, the new command, and the old kinds |
++| `hooks/parse.test.ts`, `hooks/panel.test.tsx` | Roles, the new command, and old files |
++| `tests/test_loop_watch.py` (new) | The loop, through a fake `gh` that prints status lines and honors `If-None-Match` |
++| `tests/test_watchers.py` | Removed, its cases ported to `tests/test_loop_watch.py` |
++| `tests/test_loop.py` | Roles and the lease |
++| `tests/test_packaging.py`, `tests/test_review.py` | The published skill set, and the tests that read the old skills or the review watcher's script |
++| `docs/cli.md`, `docs/plugins.md`, `README.md` | The commands, the setting, the skill, and the panel's roles |
++| `web/components/sections/review-loop.tsx`, `web/lib/links.ts` | Name and link the one skill |
++| `docs/projects/panel-themes/readme.md` | Its `watching` color role becomes `fixing` |
++
++## 3. Why this design
++
++- **One loop with roles, not two loops that share a cache.** A shared cache
++  would stop the double polling but keep two skills, two watchers with
++  different state shapes, and two subagent schemes for one pull request. A
++  role per pull request lets one pass serve both jobs, and lets a session
++  that owns a pull request and reviews it drive it to a clean head alone.
++- **A conditional request per pull request detects change.** One request
++  for the repository's open pull requests costs less, but it cannot see a
++  conflict, which shows only in `mergeable` on a single pull request, and
++  its `ETag` moves whenever any pull request in the repository changes. A
++  `304` per pull request is just as free and names the pull request that
++  changed. The list fits adoption, which needs every open pull request's
++  author and review requests, and it replaces the two `gh pr list` searches
++  that cost 2 to 4 GraphQL points every pass.
++- **Reviews and the base get requests of their own.** A body-only review
++  appears in no count on the pull request, so only the reviews resource
++  shows it for certain. Whether a conditional request makes GitHub
++  recompute mergeability is untested, so the base's ref tells the loop when
++  to look for a conflict. Rollout step 1 removes either request that a
++  measurement shows to be redundant.
++- **A full pass every 10 minutes.** It bounds the delay for what no request
++  sees, such as a thread resolved without a reply, at a cost of 12 points an
++  hour per pull request. It also catches any inference in § 2.2 that proves
++  wrong.
++- **The CLI, not a script in the skill.** Both plugins ship the skill tree,
++  and both hosts' skills already run the CLI, so either place reaches both
++  hosts. The CLI is the better place. It already parses the tracked file,
++  which today the two scripts parse again in bash. The watcher reuses
++  `verdict_marker`, `HOLD_MARKER`, `model_key`, `reviewer_login`, and
++  `authenticated_login` from `src/projector/review.py`, so the hold marker
++  that `project review hold` writes is the one the watcher reads by import
++  rather than by a copied pattern. The lease takes `try_lock` and `unlock`
++  from `src/projector/inbox.py`, which work on Windows as well as on POSIX.
++  The bash 3.2 that macOS ships, which the scripts must run on, has no
++  portable lock. `project inbox watch` is already a long-running CLI
++  watcher. The cost is version skew: a machine's CLI can lag its plugin.
++  The CLI and both plugins share one version, `project` warns when it is
++  behind, and the skill tells the user to run `project upgrade` when
++  `project loop watch` is missing.
++- **A lock, not an expiring lease file.** An expiring lease needs a clock,
++  so a laptop that wakes from sleep finds every lease expired and hands the
++  role to whichever session passes first. The operating system releases a
++  lock the moment its process ends, and keeps it while the process sleeps.
++  The `.json` beside the lock only names the holder and gives a restarting
++  holder 5 minutes to return.
++- **A local lease, not one on GitHub.** A lease on GitHub would need a
++  write on every pass to a place every machine can read. In a repository
++  that is a public mutation that needs write access, and a gist has no
++  compare-and-swap. The per-head guards already stop a second machine's
++  duplicate review before or as it publishes, so the local lease only has to
++  keep one machine's sessions apart, and `loop.review` lets the user settle
++  which machine reviews.
++- **Every loop competes for the review role.** Reviewing then never stops
++  while any session on the machine runs a loop, and the role passes on by
++  itself when a session ends. If only a loop the user starts could review,
++  reviewing would again depend on the user keeping a dedicated session
++  open. The cost is that the session that wrote a pull request can also
++  review it. A host's automatic approval has refused a reviewer subagent's
++  report to its main loop as self-approval, and a clean self-review's
++  `publish` needs the rules that `project review rules` checks for. The
++  skill warns once when those rules are missing, as the review loop does
++  today, and the open question in § 7 weighs this cost.
++- **Exclusions carry a role.** One exclusion for every role would let a
++  session that stops fixing a pull request also stop the repository's
++  review of it, and would make the handover choose between losing a review
++  dismissal and copying a fix dismissal. With a role on each exclusion, a
++  dismissal stops only what the dismissing session does, and the handover
++  copies review exclusions alone. The role-less form keeps the `fix`
++  meaning a watch loop's file gives it today.
++- **A cache shared across sessions.** The usual layout is one session
++  fixing a pull request and another reviewing it. Without the cache, both
++  query it on every change.
++- **What is replaced.** Both watcher scripts and both loop skills go. Every
++  caller moves to `start-pr-loop` or `project loop watch`: `implement`,
++  `fix-pr`, `review-pr`, the agent instructions template, the panel, the
++  docs, the homepage, and the tests that read the old files.
++- **The name `start-pr-loop`.** It follows the `start-*-loop` pattern and
++  the `-pr` set of `review-pr`, `fix-pr`, and `summarize-pr`. Claude Code
++  bundles a `/loop` skill, so a bare `loop` collides and `start-loop` reads
++  as a variant of it. No Claude Code 2.1.300 command or bundled skill is
++  named `start-pr-loop`.
++- **`watch.auto_start` keeps its name.** It still says whether `implement`
++  starts a loop, and renaming a setting would break every file that sets it.
++
++## 4. Acceptance criteria
++
++| Do | Expect |
++| --- | --- |
++| Run two passes over a tracked pull request whose requests answer `304` on the second | The second pass makes no `graphql` call |
++| Answer `200` for one pull request's request on the second pass | One GraphQL query, for that pull request |
++| Fail a request with a server error, a rate-limit `403`, or no status line | The GraphQL query runs for that pull request. When it fails too, the rows carry forward. |
++| Answer `404` for a pull request | `TRACKED … no such repository or pull request`, once |
++| Let `--full-every` pass while every request answers `304` | Each tracked pull request gets one query |
++| Leave `mergeable` at `UNKNOWN` | The pull request is queried each pass until it settles, and only `CONFLICTING` announces `CONFLICT` |
++| Move the base of a `fix` pull request and of a `review`-only one | Only the `fix` pull request is queried |
++| Give a `fix`, a `review`, and a two-role pull request an unresolved thread, a changes request, and a new head | `fix` prints `FINDING` and `VERDICT`, `review` prints `NEW HEAD`, the two-role one prints all three from one query and no `DRAFT` |
++| Start two watchers with different tracked files, one repository, reviewer, and model | The first prints `ROLE` taking the lease, the second prints `ROLE` naming the holder, and only the first adopts |
++| Repeat with two models | Each takes a lease |
++| Stop the first watcher, and pass the second more than 5 minutes after the lease's `renewed_at` | The second takes the lease and copies the first file's review lines and review exclusions, including those for pull requests the second fixes. A restarted first watcher prints `ROLE`, keeps no review line, and runs no `project review finish`. |
++| Leave a review lock on a head under the role's loop id, with no verdict, and hand the lease over | The taker's `NEW PR` line marks the head, and `project review release` then `setup` succeed for it |
++| Exclude the operator's pull request A from `fix` in the taker's file, and pull request B, which the taker fixes, from `review` in the holder's file, then hand the lease over | The taker reviews A but does not fix it, and fixes B but does not review it |
++| Restart the first watcher within 5 minutes | It takes its lease back, and the second stays fix-only |
++| Run with `--no-review`, or with `loop.review = false` | The lease files are never touched |
++| Track one pull request from two loops on one machine and change it | One GraphQL query in all |
++| Under `--exit-when-closed`, close every `fix` pull request, with and without the lease | `DONE` only without the lease |
++| Run `project loop add`, `add --role review`, and `remove --role review` | A role-less line, a `review` line, and the `review` word or line gone, the `fix` line kept |
++| Run `project loop drop --role review` on a pull request listed in both roles | The pull request leaves `review` and stays in `fix` |
++| Answer `404` for the base ref of a pull request whose base was deleted | One query reads the new base, and the next pass asks for the new base's ref |
++| Start `project loop watch --tracked <file>` in a Claude Code session | The panel lists each pull request with `fixing`, `reviewing`, or both, and still lists an earlier watcher's file by its kind |
++| Run the loop for an hour on a live repository with `N` quiet pull requests | `gh api rate_limit` shows the GraphQL count growing by about `12N` an hour, and not between full passes |
++
++These tests fail before the change: `tests/test_loop_watch.py`, the role
++and lease cases in `tests/test_loop.py`, the role and command cases in
++`hooks/parse.test.ts` and `hooks/panel.test.tsx`, and the skill set in
++`tests/test_packaging.py`.
++
++## 5. Cost
++
++The hot path is the pass, which runs every `--interval` seconds for as long
++as a session lives, in every session with a loop. Both budgets are per
++account: 5,000 GraphQL points and 5,000 counted REST requests an hour.
++
++Today, at the default 60-second interval, for `N` pull requests that both
++loops track, where `R` is a pull request's review count:
++
++| Consumer | GraphQL points an hour | REST requests an hour |
++| --- | --- | --- |
++| Watch loop | `60N`, and `N` more at start | `60N × ceil(R / 30)`, at least `60N` |
++| Review loop | `120N` plus 120 to 240 for adoption | None |
++| Panel, while shown | About 120, unmeasured | None |
++| Both loops at `N = 10` | About 1,920 to 2,040 | At least 600 |
++| Both loops at `N = 20` | About 3,720 to 3,840 | At least 1,200 |
++
++After the change, at the same interval, with a full pass every 10 minutes,
++`C` changes an hour across the tracked pull requests, and `B` pushes an hour
++to a base that `F` fixed pull requests share:
++
++| Item | GraphQL points an hour | Counted REST requests an hour |
++| --- | --- | --- |
++| Quiet passes | 0 | 0 |
++| Full passes | `12N` | `6N × ceil(R / 100)` for reviews |
++| Changes | About `2C`, more when mergeability settles a pass later | About `C`, plus the reviews read on a change |
++| Base pushes | `2BF` | `B` |
++| Adoption | 0 | One per changed list page |
++
++At `N = 10`, `C = 20`, `B = 5`, and `F = 5`, the loop spends about 210
++points an hour, against about 2,000 today. A further session on the same
++machine, on any model, adds nothing for the pull requests it shares with the
++first, because it reads the shared cache. A loop on another machine adds
++about 210 more, where a further review loop adds about 1,400 today.
++
++The loop sends `2N + 2` conditional requests a pass, about 1,300 an hour at
++`N = 10`. A `304` does not count against the primary limit. Whether it
++counts toward GitHub's secondary limits is untested. GitHub documents a
++secondary limit of 900 points a minute for REST, where a `GET` costs 1, and
++the loop sends about 22 requests a minute at `N = 10`. Halving the interval
++to 30 seconds doubles the conditional requests and adds no GraphQL on a
++quiet pass, so a new finding surfaces within about 30 seconds rather than
++within the 10 minutes a slowed watcher allows.
++
++The panel's own query is unchanged, at about 120 points an hour per session
++while shown, whatever `N` is. § 7 defers it.
++
++These figures count only polling. Each reviewer and fixer also spends
++GraphQL, through `project review census` and `publish`, summaries, and
++`gh pr view`, and the shared quota has run out in the middle of a review.
++That spend grows with the number of heads reviewed and fixed, not with the
++interval, and this plan leaves it unchanged and unmeasured. So the loop's
++210 points are a floor on the hour's total, not the total, and the
++back-off that § 7 defers protects the subagents' calls too.
++
++## 6. Rollout
++
++1. **Measure the inferences first.** On a scratch pull request in a
++   repository you own, test whether each of these moves the pull request's
++   `ETag`: resolving a thread without a reply, a body-only `COMMENT`
++   review, and a push to the base. Test whether a conditional request makes
++   GitHub recompute `mergeable`, and whether `304` answers count toward the
++   secondary limits. Record each result in § 8. Remove the reviews request
++   or the base request only where a result shows it redundant, and raise
++   `--full-every` only if resolving a thread moves the `ETag`.
++2. **Ship the change in one release.** The skill calls `project loop watch`,
++   and the CLI and both plugins share one version. When the change is too
++   large to review as one pull request, open it as a stack: the CLI command
++   and its tests, then the skill, its callers, the docs, and the packaging
++   tests, then the panel.
++3. **Let running loops end on their own.** After the upgrade, a session
++   keeps its old watcher until it restarts its loop, and the panel lists the
++   old watcher's file by its kind meanwhile. A watch loop's tracked file
++   carries over as is. A review loop's file does not: the new holder adopts
++   its pull requests again from GitHub on its first pass, so a pull request
++   dismissed from the old review loop returns until dismissed again.
++
++## 7. Open questions
++
++- **Where the loop lives.** Owner, before implementation. This plan puts it
++  in the CLI, as `project loop watch`, for the reasons in § 3. The
++  alternative is one bash script in `skills/start-pr-loop/scripts/`, which
++  avoids version skew but repeats the tracked-file parser and the review
++  markers in bash 3.2 and still calls the CLI for the lease.
++- **Whether every loop competes for the review role.** Owner, before
++  implementation. This plan says yes. The alternative is that only a loop
++  the user starts reviews, and a loop `implement` starts only fixes, which
++  keeps reviewing out of an implementing session at the cost of a dedicated
++  review session.
++- **How two machines share the review role.** Owner, before
++  implementation. This plan relies on the per-head guards and
++  `loop.review`. A lease on GitHub is deferred until two machines collide
++  often enough to need it.
++- **The skill's name.** Owner, before implementation: `start-pr-loop`.
++- **The inferences in § 2.2.** Deferred to rollout step 1. The design holds
++  whichever way each one comes out, and the results only tune
++  `--full-every` and remove requests.
++- **The panel's own query.** Deferred. It costs a constant 120 points an
++  hour per session, whatever `N` is. A follow-up can let the panel read the
++  loop's cache instead.
++- **Backing off when GraphQL runs out.** Deferred. A rate-limited query
++  fails like any other, and the loop carries the rows forward. A loop that
++  waits for the reset and says once why findings are late needs the reset
++  time from GitHub's answer.
++
++## 8. Background
++
++What each loop spends today was measured with `rateLimit { cost }` and
++`GH_DEBUG=api`, against two open pull requests in this repository, with
++`gh` 2.97.0:
++
++- **`watch-threads.sh`** spends 1 GraphQL point per pull request per pass
++  (`fetch_pr`, line 178). It reads reviews with
++  `gh api repos/<repo>/pulls/<n>/reviews --paginate` and no `per_page`
++  (`fetch_reviews`, line 214), which is `ceil(R / 30)` requests. Every reply
++  inside a thread files a review, so `R` grows over a pull request's life.
++  The check before the first pass spends one more point per pull request
++  (lines 234 to 248). The default interval is 60 seconds, with a floor of
++  30.
++- **`watch-prs.sh`** adopts with two `gh pr list` calls per pass (`listed`,
++  lines 273 to 278). Each is a GraphQL search costing 1 point, plus a
++  `SearchType` introspection costing 1 point unless `gh`'s local cache
++  answers. It spends 2 points per pull request per pass (`fetch_pr`, line
++  254) and makes no REST call.
++- **The panel** sends one batched GraphQL query every 30 seconds while it is
++  shown (`POLL_MS` in `hooks/register.tsx`). This was not measured.
++
++How `gh api` handles a conditional request, as observed:
++
++- A `200` carries a weak `ETag` (`W/"…"`), a `Last-Modified` equal to the
++  pull request's `updated_at`, and `Cache-Control: private, max-age=60`.
++- A `304` exits `1`, as a `404`, a server error, and a network failure do.
++  Only the status line that `-i` prints, `HTTP/2.0 304 Not Modified`, tells
++  them apart. Without `-i`, a `304` prints `gh: HTTP 304` to standard error.
++- `-i --jq` on a `200` prints the headers, a blank line, and then the `jq`
++  output.
++- A `304` echoes the `ETag` in its strong form, and either form gets a
++  `304`.
++
++What the REST representations hold, as observed: `GET pulls/{n}` has
++`mergeable`, `mergeable_state`, `comments`, `review_comments`, `commits`,
++`head.sha`, `draft`, `state`, `merged`, and `updated_at`. The open-pulls
++list lacks `mergeable`, `mergeable_state`, and the counts, and has `head`,
++`draft`, `updated_at`, `user`, `requested_reviewers`, and
++`requested_teams`. `requested_teams` is separate, which matches the review
++loop's rule that only a request to the login itself adopts a pull request.
++An issue comment was observed to move `updated_at`. Every other entry in the
++`Status` column of § 2.2 marked inferred was not triggered.
++
++Both manifests, `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`,
++point at `./skills/`, and `tests/test_packaging.py` checks that the
++directories holding a `SKILL.md` are exactly the published set. The CLI on
++one machine was observed at 0.7.20 while its plugin was at 0.8.0, which is
++the version skew § 3 accepts. `tests/test_watchers.py` holds 50 tests
++through a fake `gh` that refuses any argument it does not know, `-i` and
++`-H` among them.
