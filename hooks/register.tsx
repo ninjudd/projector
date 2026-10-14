@@ -709,7 +709,7 @@ function notesOf(pr: PullRequest): Note[] {
   if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
   // The open threads' count comes last, beside the age.
-  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}⋮`, color: 'warning' })
+  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, color: 'warning' })
   return notes
 }
 
@@ -1374,12 +1374,12 @@ export const register: Register = on => {
             {notes.length > 0 && (
               <Box flexShrink={0}>
                 <Text>
-                  {notes.map((note, at) => (
-                    <Text color={note.color}>
-                      {at > 0 ? ' · ' : ''}
+                  {notes.flatMap((note, at) => [
+                    ...(at > 0 ? [' · '] : []),
+                    <Text key={note.text} color={note.color}>
                       {note.text}
-                    </Text>
-                  ))}
+                    </Text>,
+                  ])}
                 </Text>
               </Box>
             )}

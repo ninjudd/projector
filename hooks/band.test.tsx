@@ -62,6 +62,15 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
     p5: pr(5, 'Change by bob', { author: { login: 'bob' } }),
     p6: pr(6, 'Second change by grace', { author: { login: 'grace' } }),
     p9: pr(9, 'Another change of my own', { author: { login: VIEWER } }),
+    p10: pr(10, 'Change held back', {
+      mergeable: 'CONFLICTING',
+      reviewDecision: 'CHANGES_REQUESTED',
+      reviewThreads: { nodes: [{ isResolved: false }] },
+    }),
+    p11: pr(11, 'Approved change', {
+      reviewDecision: 'APPROVED',
+      reviewThreads: { nodes: [{ isResolved: false }, { isResolved: false }, { isResolved: false }] },
+    }),
   },
   'x/y': {
     p7: pr(7, 'Conflicting change', {
@@ -172,8 +181,8 @@ test('draws one line per open pull request of the session’s own loops', async 
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
-  // Open threads show as their count before a `⋮`, in yellow.
-  expect((await ui.findAll({ type: 'Text', text: '1⋮' })).map(found => found.props.color)).toContain('warning')
+  // Open threads show as their count before a `*`, in yellow.
+  expect((await ui.findAll({ type: 'Text', text: '1*' })).map(found => found.props.color)).toContain('warning')
   expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   // The divider counts the two open pull requests the band lists, not the merged one, in `subtle`. It ends with
@@ -222,6 +231,31 @@ test('draws no divider on a surface that does not lay text out in columns', asyn
   await ui.unmount()
 })
 
+test('a pull request’s notes take their own colors, and each ` · ` between them the default color', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#10\no/r#11\n' })
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  expect(partsOf(await ui.find({ type: 'Text', text: 'conflict · changes requested · 1*' }))).toEqual([
+    ['conflict', 'error'],
+    ' · ',
+    ['changes requested', 'error'],
+    ' · ',
+    ['1*', 'warning'],
+  ])
+  expect(partsOf(await ui.find({ type: 'Text', text: 'approved · 3*' }))).toEqual([
+    ['approved', 'success'],
+    ' · ',
+    ['3*', 'warning'],
+  ])
+  expect(await ui.find({ type: 'Text', text: /⋮/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a press on a pull request’s number opens its drawer, and discuss puts it in the prompt', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -237,9 +271,12 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
   expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
-  // The threads' count comes after the other notes, beside the age.
-  const notes = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(notes.indexOf(' · 2⋮')).toBeGreaterThan(notes.indexOf('conflict'))
+  // The threads' count comes after the other notes, beside the age, and the ` · ` between them keeps the default color.
+  expect(partsOf(await ui.find({ type: 'Text', text: 'conflict · 2*' }))).toEqual([
+    ['conflict', 'error'],
+    ' · ',
+    ['2*', 'warning'],
+  ])
 
   await ui.press({ key: 'pr:x/y#7' })
   // The drawer's facts name no author, whoever wrote the pull request.

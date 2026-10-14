@@ -1646,7 +1646,7 @@ review threads as a count after `⋮`.
 
 | Behavior | Test |
 | --- | --- |
-| The drawer's links read `open in github` and `open in projector`; on the facts line watching takes `ansi256(4)` and reviewing `claude`, each word its own when both loops track it, the branch `ansi256(6)`, the size's `+N` `success` and its `−N` `error`, `checks <state>` the checks' color, and ` in N files`, ` and `, and each `·` stay plain; the open-thread count reads `2⋮`, in `warning`, after the other notes | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `opening one drawer closes the one that was open`, and `lists a pull request both loops track once, as watched and reviewed` in `hooks/band.test.tsx` |
+| The drawer's links read `open in github` and `open in projector`; on the facts line watching takes `ansi256(4)` and reviewing `claude`, each word its own when both loops track it, the branch `ansi256(6)`, the size's `+N` `success` and its `−N` `error`, `checks <state>` the checks' color, and ` in N files`, ` and `, and each `·` stay plain; the open-thread count reads `2⋮`, `2*` since § 19, in `warning`, after the other notes | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `opening one drawer closes the one that was open`, and `lists a pull request both loops track once, as watched and reviewed` in `hooks/band.test.tsx` |
 | Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color, `inactive` since § 18; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in gray` |
 | **snooze** shows the lengths and cancel, runs nothing, and takes no digits; each length runs `snooze --for` with its minutes; **cancel** and closing the drawer put the actions back; Enter carries the ring onto the first length and back onto **snooze** | `snooze asks how long, and only a length it offers snoozes the item`, and the snooze tests § 14.4 lists, which now pick a length |
 | A restored question's line returns to `permission` | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place`, `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` |
@@ -1833,13 +1833,15 @@ divider's "updated" time stays.
 | The divider ends with the reload's age, `0s` just after a reload, in `subtle`, ending at `bodyColumns`, with no "updated", "ago", or "just now"; the counts follow a `─ ` at its start, and its rule runs from them to the time, the row still ending at `bodyColumns` | `draws one line per open pull request of the session’s own loops`, `asks through the tool, and the band lists the question below the pull requests`, and the tests that find the divider by its counts |
 | The digits from an empty prompt, and the confirmation's look | Checked by hand by the owner in a preview session |
 
-## 19. Count the band's pull requests in its divider
+## 19. Count the band's pull requests in its divider, and mark open threads with an asterisk
 
 The divider counted the open questions and the open notices, § 2.5, but
 not the pull requests listed above them, so it said nothing about the rows
 that usually fill the band. It now starts with how many pull requests the
 band lists, before the item counts, and draws the counts in `subtle`, as
-§ 18 draws the time:
+§ 18 draws the time. A pull request's line marks its open threads with an
+asterisk, `3*`, in place of § 16's `3⋮`, and the ` · ` between its notes
+keeps the default color:
 
 ```text
 ─ 3 pull requests · 2 questions · 1 notice ─────────────────────────── 12s [-]
@@ -1862,6 +1864,16 @@ band lists, before the item counts, and draws the counts in `subtle`, as
 - **The rest of the divider is unchanged.** With nothing to count, it is
   the rule and the time, and while an item's drawer has the band to itself,
   it stays hidden.
+- **Open threads read `3*`.** A pull request's count of unresolved review
+  threads is followed by `*` rather than `⋮`, still in `warning` and still
+  the last note before the age. This supersedes § 16's `5⋮`.
+- **A note's ` · ` is plain.** The ` · ` before a note was drawn inside the
+  note's own `Text`, so it took the note's color: red before
+  `changes requested` and yellow before the thread count. Each note is now
+  its own `Text` in its color, and the ` · ` between two notes sits outside
+  them in the default color, as the `·` between the drawer's facts does.
+  `conflict` and `changes requested` keep `error`, `approved` keeps
+  `success`, and the thread count keeps `warning`.
 
 ### 19.2 Why this design
 
@@ -1876,6 +1888,11 @@ band lists, before the item counts, and draws the counts in `subtle`, as
 - **Quiet labels on a rule.** In `subtle`, the counts read as labels set
   in the rule, as the time at its end does, and the rule in the default
   color stays the band's top edge.
+- **An asterisk for open threads.** The owner chose `*` over `⋮`.
+- **Color only the notes.** A separator in a note's color reads as part of
+  that note. The drawer's facts line already keeps every `·` plain, so the
+  pull request's line now follows the same rule, and color marks only what
+  it describes.
 
 ### 19.3 Evidence
 
@@ -1887,3 +1904,5 @@ band lists, before the item counts, and draws the counts in `subtle`, as
 | A dismissed pull request leaves the count | `dismiss drops a pull request from each loop that tracks it, and its line goes` |
 | With pull requests and items, the pull request count comes first, as `─ 1 pull request · 1 question ─…─ Ns` | `asks through the tool, and the band lists the question below the pull requests`, and the inbox tests that find the divider by its counts |
 | With nothing to count, the divider is the rule and a `subtle` time, `bodyColumns` wide | `shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request` |
+| `conflict` and `changes requested` take `error`, `approved` takes `success`, and the thread count reads `N*` in `warning`; every ` · ` between notes takes the default color, and no line draws `⋮` | `` a pull request’s notes take their own colors, and each ` · ` between them the default color `` |
+| The thread count comes last, after `conflict`, as `conflict · 2*` | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `draws one line per open pull request of the session’s own loops` |
