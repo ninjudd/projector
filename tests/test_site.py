@@ -4112,7 +4112,7 @@ class InitSiteTests(SiteRepoCase):
              mock.patch.object(cli.shutil, "which", return_value="/usr/bin/gh"), \
              redirect_stdout(out), redirect_stderr(err):
             # The site is under test; the Claude Code settings step has its own tests.
-            code = cli.main(["--root", str(self.repo), "init", "--no-publish-rule", *extra])
+            code = cli.main(["init", "--root", str(self.repo), "--no-publish-rule", *extra])
         return code, out.getvalue(), err.getvalue()
 
     def workflow(self) -> Path:
@@ -4175,7 +4175,7 @@ class InitSiteTests(SiteRepoCase):
                     self.workflow().write_text(text)
                 out, err = io.StringIO(), io.StringIO()
                 with redirect_stdout(out), redirect_stderr(err):
-                    code = cli.main(["--root", str(self.repo), "check"])
+                    code = cli.main(["check", "--root", str(self.repo)])
 
                 self.assertEqual(0, code, err.getvalue())
                 self.assertEqual(warns, warning in err.getvalue().splitlines(), err.getvalue())

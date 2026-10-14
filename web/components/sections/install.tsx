@@ -25,7 +25,7 @@ const rows: { title: string; body: ReactNode; commands: string[] }[] = [
         release.
       </>
     ),
-    commands: [INSTALL.pipx, "project --help"],
+    commands: [INSTALL.pipx, "project help"],
   },
   {
     title: "Claude Code",

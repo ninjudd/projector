@@ -540,7 +540,7 @@ A review whose signature misstates what produced it is worse than an unlabeled
 one: a reader weighs a finding by what reviewed it.
 
 The version segment and `projector=` name the version of the `project`
-command that wrote them, as `project --version` reports it, so a reader can
+command that wrote them, as `project version` reports it, so a reader can
 tell which release of this method produced a review. `project review` reads
 the version itself; a command run from a checkout that was never installed
 reports `unknown`.

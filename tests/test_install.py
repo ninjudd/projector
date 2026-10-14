@@ -711,21 +711,26 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(f"pipx install --force {ROOT}", log[-2])
         self.assertEqual("PIPX_DEFAULT_PYTHON=/opt/py/bin/python3.12", log[-1])
 
-    def fake_project(self, package_dir: str | None) -> None:
+    def fake_project(self, package_dir: str | None, *, options: bool = False) -> None:
         """A `project` on PATH ahead of any real one.
 
-        Answers `--package-dir` with `package_dir`, or fails the way a command
-        too old to know the flag would when it is None.
+        Answers `version --package-dir` with `package_dir` and `version` with
+        its version, or, with `options`, `--package-dir` and `--version`, as a
+        command older than the `version` command does. It fails the way a
+        command too old to know `--package-dir` would when `package_dir` is
+        None, and refuses every other command line as a usage error.
         """
 
         path = self.fake_bin / "project"
         if package_dir is None:
             body = 'echo "usage: project" >&2; exit 2'
         else:
+            directory, version = ("--package-dir", "--version") if options else ("version --package-dir", "version")
             body = (
-                'case "$1" in\n'
-                f'  --package-dir) echo "{package_dir}" ;;\n'
-                '  --version) echo "project 9.9.9" ;;\n'
+                'case "$*" in\n'
+                f'  "{directory}") echo "{package_dir}" ;;\n'
+                f'  "{version}") echo "project 9.9.9" ;;\n'
+                '  *) echo "usage: project" >&2; exit 2 ;;\n'
                 'esac'
             )
         path.write_text(f"#!/bin/sh\n{body}\n")
@@ -753,13 +758,18 @@ class InstallTests(unittest.TestCase):
         return str(target)
 
     def test_status_reports_a_cli_matching_the_checkout(self) -> None:
-        self.fake_project(self.installed_copy(diverge=False))
+        installed = self.installed_copy(diverge=False)
+        # A command older than `project version` takes the questions as
+        # options before the command, and still reads as current.
+        for options in (False, True):
+            with self.subTest(options=options):
+                self.fake_project(installed, options=options)
 
-        result = self.install("status")
+                result = self.install("status")
 
-        self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn("cli-current", result.stdout)
-        self.assertNotIn("cli-stale", result.stdout)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertIn("cli-current    9.9.9", result.stdout)
+                self.assertNotIn("cli-stale", result.stdout)
 
     def test_status_reports_a_cli_left_behind_by_the_checkout(self) -> None:
         # The case a version comparison misses: the CLI changed and nobody
@@ -884,7 +894,7 @@ class ReleaseInstallTests(unittest.TestCase):
         path.chmod(0o755)
 
     def test_status_compares_the_installed_versions_with_the_release(self) -> None:
-        self.fake_project("/unused")  # answers --version with 9.9.9
+        self.fake_project("/unused")  # answers `version` with 9.9.9
         self.fake_curl("9.9.9")
         (self.state / "claude-plugins.json").write_text(json.dumps([{"id": "projector@projector", "version": "9.9.8"}]))
         environment = {k: v for k, v in self.environment.items() if k != "PROJECTOR_OFFLINE"}
@@ -899,13 +909,16 @@ class ReleaseInstallTests(unittest.TestCase):
                       "https://raw.githubusercontent.com/ninjudd/projector/v0/.claude-plugin/plugin.json", self.logged())
 
     def test_status_offline_reports_versions_without_a_verdict(self) -> None:
-        self.fake_project("/unused")
+        # A command older than `project version` answers only `--version`.
+        for options in (False, True):
+            with self.subTest(options=options):
+                self.fake_project("/unused", options=options)
 
-        result = self.piped("status")
+                result = self.piped("status")
 
-        self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn("cli-installed  9.9.9 (no release version to compare against)", result.stdout)
-        self.assertNotIn("repo-", result.stdout, "no checkout, so nothing to compare with an upstream")
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertIn("cli-installed  9.9.9 (no release version to compare against)", result.stdout)
+                self.assertNotIn("repo-", result.stdout, "no checkout, so nothing to compare with an upstream")
 
     def fake_python(self, *, new_enough: bool = True) -> Path:
         """A python3 that passes or fails the version check and makes a fake venv."""

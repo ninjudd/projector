@@ -286,42 +286,37 @@ def warn_of_stale_release() -> None:
         )
 
 
-class PackageDir(argparse.Action):
-    """Print where this command's package actually lives, and exit.
+class CommandFirst(argparse.ArgumentParser):
+    """`project`'s own parser, which refuses an option before the command, `--` and `--help` included.
 
-    `install.sh status` diffs that directory against the checkout. argparse's
-    own `version` action reflows its text to the terminal width, which would
-    fold a long path across lines and defeat the caller reading it.
+    Each command's ask rule, such as `Bash(project init *)`, matches a command
+    line only when the command comes first.
     """
 
-    def __call__(self, parser, namespace, values, option_string=None):  # noqa: D102
-        print(Path(__file__).resolve().parent)
-        parser.exit()
+    def parse_known_args(self, args=None, namespace=None):  # noqa: D102
+        args = sys.argv[1:] if args is None else list(args)
+        if args and args[0].startswith("-"):
+            self.error(f"{args[0]}: options go after the command, as in `project init --root .`; for the version "
+                       "or the help, run `project version` or `project help`")
+        return super().parse_known_args(args, namespace)
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="project")
-    result.add_argument(
-        "--version",
-        action="version",
-        version=f"project {distribution_version()}",
-    )
-    result.add_argument(
-        "--package-dir",
-        nargs=0,
-        action=PackageDir,
-        help=argparse.SUPPRESS,
-    )
-    result.add_argument("--root", type=Path, help="Git repository root")
-    result.add_argument(
+    root_option = argparse.ArgumentParser(add_help=False)
+    root_option.add_argument("--root", type=Path, help="Git repository root")
+    store_options = argparse.ArgumentParser(add_help=False, parents=[root_option])
+    store_options.add_argument(
         "--projects-dir",
         type=Path,
         help="project directory, relative to the Git root unless absolute",
     )
-    subcommands = result.add_subparsers(dest="command", required=True)
+    result = CommandFirst(prog="project", add_help=False)
+    # A plain parser for each command, which takes the options that follow the command's name.
+    subcommands = result.add_subparsers(dest="command", required=True, parser_class=argparse.ArgumentParser)
 
     init = subcommands.add_parser(
-        "init", help="adopt the project convention; outside a repository, set up only the permission rules"
+        "init", help="adopt the project convention; outside a repository, set up only the permission rules",
+        parents=[store_options],
     )
     site_choice = init.add_mutually_exclusive_group()
     site_choice.add_argument(
@@ -353,23 +348,23 @@ def parser() -> argparse.ArgumentParser:
     )
     add_output(init)
 
-    listing = subcommands.add_parser("list", help="list projects")
+    listing = subcommands.add_parser("list", help="list projects", parents=[store_options])
     listing.add_argument("--status", choices=STATUSES)
     listing.add_argument("--priority", choices=PRIORITIES)
     listing.add_argument("--owner", help="only the projects this person owns, ignoring case")
     add_output(listing)
 
-    show = subcommands.add_parser("show", help="show one project")
+    show = subcommands.add_parser("show", help="show one project", parents=[store_options])
     show.add_argument("project")
     add_output(show)
 
-    search = subcommands.add_parser("search", help="search project content")
+    search = subcommands.add_parser("search", help="search project content", parents=[store_options])
     search.add_argument("query")
     search.add_argument("--status", choices=STATUSES)
     search.add_argument("--priority", choices=PRIORITIES)
     add_output(search)
 
-    create = subcommands.add_parser("create", help="create a project")
+    create = subcommands.add_parser("create", help="create a project", parents=[store_options])
     create.add_argument("project")
     create.add_argument("--status", choices=STATUSES, default="draft")
     create.add_argument("--priority", choices=PRIORITIES, default="later")
@@ -377,56 +372,60 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--no-edit", action="store_true")
     add_output(create)
 
-    edit = subcommands.add_parser("edit", help="open a project plan")
+    edit = subcommands.add_parser("edit", help="open a project plan", parents=[store_options])
     edit.add_argument("project")
 
-    status = subcommands.add_parser("status", help="change project status")
+    status = subcommands.add_parser("status", help="change project status", parents=[store_options])
     status.add_argument("project")
     status.add_argument("status", choices=STATUSES)
     add_output(status)
 
-    priority = subcommands.add_parser("priority", help="change project priority")
+    priority = subcommands.add_parser("priority", help="change project priority", parents=[store_options])
     priority.add_argument("project")
     priority.add_argument("priority", choices=PRIORITIES)
     add_output(priority)
 
-    owner = subcommands.add_parser("owner", help="set or clear a project's owner")
+    owner = subcommands.add_parser("owner", help="set or clear a project's owner", parents=[store_options])
     owner.add_argument("project")
     owner_value = owner.add_mutually_exclusive_group(required=True)
     owner_value.add_argument("owner", nargs="?", help="who owns the project, preferably a GitHub login")
     owner_value.add_argument("--clear", action="store_true", help="remove the owner field")
     add_output(owner)
 
-    done = subcommands.add_parser("done", help="mark a project completed")
+    done = subcommands.add_parser("done", help="mark a project completed", parents=[store_options])
     done.add_argument("project")
     add_output(done)
 
-    add_output(subcommands.add_parser("check", help="validate all projects"))
+    add_output(subcommands.add_parser("check", help="validate all projects", parents=[store_options]))
 
     config = subcommands.add_parser("config", help="read and change layered configuration")
     config_commands = config.add_subparsers(dest="config_command", required=True)
 
-    config_get = config_commands.add_parser("get", help="print one value")
+    config_get = config_commands.add_parser("get", help="print one value", parents=[root_option])
     config_get.add_argument("key", help="dotted key, for example review.username")
     config_get.add_argument("--default", help="printed when the key is unset")
     add_output(config_get)
 
-    config_set = config_commands.add_parser("set", help="set one value in one configuration file")
+    config_set = config_commands.add_parser(
+        "set", help="set one value in one configuration file", parents=[root_option]
+    )
     config_set.add_argument("key", help="a key Projector reads, for example watch.auto_start")
     config_set.add_argument("value", help="true or false, or text, as the key takes")
     add_config_file(config_set)
     add_output(config_set)
 
-    config_unset = config_commands.add_parser("unset", help="remove one value from one configuration file")
+    config_unset = config_commands.add_parser(
+        "unset", help="remove one value from one configuration file", parents=[root_option]
+    )
     config_unset.add_argument("key", help="a key Projector reads, or any other key the file sets")
     add_config_file(config_unset)
     add_output(config_unset)
 
-    config_list = config_commands.add_parser("list", help="print the merged configuration")
+    config_list = config_commands.add_parser("list", help="print the merged configuration", parents=[root_option])
     add_output(config_list)
 
     config_paths = config_commands.add_parser(
-        "paths", help="print the files that contribute, lowest precedence first"
+        "paths", help="print the files that contribute, lowest precedence first", parents=[root_option]
     )
     add_output(config_paths)
 
@@ -687,6 +686,12 @@ def parser() -> argparse.ArgumentParser:
     site_workflow.add_argument(
         "--branch", help="the default branch whose README and docs changes rebuild the site (default: origin's)"
     )
+
+    version = subcommands.add_parser("version", help="print the version of this command")
+    # Where this command's package lives, which `install.sh status` diffs against the checkout.
+    version.add_argument("--package-dir", action="store_true", help=argparse.SUPPRESS)
+    help_command = subcommands.add_parser("help", help="print this help, or one command's")
+    help_command.add_argument("topic", nargs="*", metavar="command", help="the command, such as init or review publish")
     return result
 
 
@@ -1927,7 +1932,23 @@ def emit_site(pages: dict) -> None:
         print(f"updated repository website {summary.homepage_url(pages['url'])}")
 
 
+def show_help(topic: list[str]) -> int:
+    """`help`: print the help of `project`, or of the command `topic` names, such as `["review", "publish"]`."""
+
+    if not topic:
+        parser().print_help()
+        return 0
+    # argparse prints the command's help and exits, or refuses a command that does not exist.
+    parse([*topic, "--help"])
+    return 0
+
+
 def run(arguments: argparse.Namespace) -> int:
+    if arguments.command == "version":
+        print(Path(__file__).resolve().parent if arguments.package_dir else f"project {distribution_version()}")
+        return 0
+    if arguments.command == "help":
+        return show_help(arguments.topic)
     if arguments.command == "config":
         return run_config(arguments)
     if arguments.command == "upgrade":
@@ -2090,7 +2111,7 @@ def run_command(argv: list[str] | None) -> int:
 
     try:
         arguments = parse(argv)
-        if arguments.command != "upgrade":
+        if arguments.command not in ("upgrade", "version", "help"):
             warn_of_stale_release()
         return run(arguments)
     except BrokenPipeError:

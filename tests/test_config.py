@@ -191,7 +191,7 @@ class ConfigCommandTests(unittest.TestCase):
     def invoke(self, *arguments: str) -> tuple[int, str, str]:
         stdout, stderr = StringIO(), StringIO()
         with redirect_stdout(stdout), redirect_stderr(stderr):
-            code = main(["--root", str(self.root), *arguments])
+            code = main([*arguments, "--root", str(self.root)])
         return code, stdout.getvalue(), stderr.getvalue()
 
     def test_a_toml_date_renders_as_iso_rather_than_crashing(self) -> None:
@@ -276,7 +276,7 @@ class ConfigCommandTests(unittest.TestCase):
         )
         self.config('[projects]\ndir = "plans"\n')
 
-        code, stdout, _ = self.invoke("--projects-dir", "flagged", "list", "--json")
+        code, stdout, _ = self.invoke("list", "--projects-dir", "flagged", "--json")
 
         self.assertEqual(0, code)
         self.assertEqual("alpha", json.loads(stdout)["projects"][0]["name"])
@@ -317,7 +317,7 @@ class ConfigSetTests(unittest.TestCase):
     def invoke(self, *arguments: str) -> tuple[int, str, str]:
         stdout, stderr = StringIO(), StringIO()
         with redirect_stdout(stdout), redirect_stderr(stderr):
-            code = main(["--root", str(self.root), *arguments])
+            code = main([*arguments, "--root", str(self.root)])
         return code, stdout.getvalue(), stderr.getvalue()
 
     def assert_set(self, key: str, value: str, *scope: str) -> str:

@@ -52,11 +52,18 @@ DECISIONS = (
     ("project upgrade status", "ask", "none"),
     ("project config set review.allow_approve true", "ask", "none"),
     ("project config unset review.allow_approve", "ask", "none"),
-    ("project --root . init", "ask", "none"),
-    ("project --root=. upgrade", "ask", "none"),
-    ("project --projects-dir=plans config set review.allow_approve true", "ask", "none"),
-    ("project --root=. list", "ask", "none"),
-    ("project --version", "ask", "none"),
+    ("project init --root .", "ask", "none"),
+    ("project config set review.allow_approve true --root=.", "ask", "none"),
+    ("project list --root=. --projects-dir=plans", "allow", "allow"),
+    ("project version", "allow", "allow"),
+    ("project help review publish", "allow", "allow"),
+    # A line that starts with an option matches no command's ask rule, and the
+    # CLI refuses it.
+    ("project --root . init", "allow", "none"),
+    ("project --projects-dir=plans config set review.allow_approve true", "allow", "none"),
+    ("project -- init", "allow", "none"),
+    ("project --version", "allow", "none"),
+    ("project --help", "allow", "none"),
     ("project site page --summary summary.json --out page", "allow", "allow"),
     ("project site status --repo owner/name", "allow", "allow"),
     ("project site workflow --write", "allow", "allow"),
@@ -67,7 +74,7 @@ DECISIONS = (
     ("project site serve --prepare make", "ask", "none"),
     ("project site serve --allow-prepare", "ask", "none"),
     ("project site build --out site --no-prepare", "ask", "none"),
-    ("project --root . site serve --prepare make", "ask", "none"),
+    ("project --root . site serve --prepare make", "allow", "none"),
     ("project edit plan", "allow", "none"),
     ("project create plan --no-edit", "allow", "none"),
     ("VISUAL='sh -c make' project edit plan", "none", "none"),
@@ -181,8 +188,8 @@ class PermissionRulesTests(unittest.TestCase):
 
         self.assertEqual([pattern for pattern, _ in permissions.CODEX_ALLOW], list(map(json.loads, documented)))
 
-    def test_each_command_line_is_one_the_parser_runs(self) -> None:
-        incomplete = {"project", "project config", "project --version", "projector list"}
+    def test_each_command_line_is_one_the_parser_runs_or_refuses_for_its_leading_option(self) -> None:
+        incomplete = {"project", "project config", "projector list"}
         for command, _, _ in DECISIONS:
             if command in incomplete:
                 continue
@@ -190,7 +197,14 @@ class PermissionRulesTests(unittest.TestCase):
                 words = shlex.split(command)
                 while re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0], re.DOTALL):
                     words.pop(0)
-                cli.parser().parse_args(words[1:])
+                if not words[1].startswith("-"):
+                    cli.parser().parse_args(words[1:])
+                    continue
+                stderr = StringIO()
+                with redirect_stderr(stderr), self.assertRaises(SystemExit) as stop:
+                    cli.parser().parse_args(words[1:])
+                self.assertEqual(2, stop.exception.code)
+                self.assertIn(f"error: {words[1]}: options go after the command", stderr.getvalue())
 
     def test_site_build_and_serve_take_the_prepare_flags_only_spelled_in_full(self) -> None:
         for command in (["site", "build", "--out", "site"], ["site", "serve"]):

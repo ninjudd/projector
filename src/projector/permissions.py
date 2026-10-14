@@ -39,13 +39,15 @@ Claude Code evaluates deny rules, then ask rules, then allow rules, and the
 first match decides, so an ask rule prompts for a command that `Bash(project *)`
 also allows. A trailing ` *` matches the bare command too, so
 `Bash(project init *)` asks for `project init` with or without arguments.
-The CLI's own options, such as `--root`, come before its command, so
-`project --root . init` matches the allow rule and no command's ask rule;
-`Bash(project -*)` asks for every command line that starts with an option,
-`project --version` included. `Bash(project site *prepare*)` asks for both
-`--prepare` flags in either spelling, `--prepare x` or `--prepare=x`, and
-`site build` and `serve` refuse an abbreviated option such as `--prep`, so
-no shorter spelling slips past it; it asks for `--no-prepare` too.
+The CLI refuses an option before the command, so every command line it runs
+starts with its command, and the command's own ask rule matches it wherever
+its options go: `Bash(project init *)` asks for `project init --root .`. A
+line that starts with an option, such as `project --root . init`, matches
+only the allow rule, and the CLI refuses it. `Bash(project site *prepare*)`
+asks for both `--prepare` flags in either spelling, `--prepare x` or
+`--prepare=x`, and `site build` and `serve` refuse an abbreviated option such
+as `--prep`, so no shorter spelling slips past it; it asks for `--no-prepare`
+too.
 
 Two commands open the person's editor, `$VISUAL` or `$EDITOR`: `project edit`,
 and `project create` without `--no-edit`. They need not ask. Each opens the
@@ -65,18 +67,15 @@ rules against the command text an agent writes, so they keep an agent from
 running a command unasked, not from spelling it another way, such as with a
 quoted command name.
 
-Codex's `prefix_rule` matches exact tokens with no wildcard, so no rule can
-match an option such as `--root=.` before the command. Codex applies the
-strictest decision when several rules match, but a `prompt` rule for
-`["project", "init"]` would miss `project --root=. init` under a rule allowing
-`["project"]`. The Codex rules therefore allow commands by name, and anything
-else, a command line that starts with an option included, falls through to
-Codex's usual approval. Codex runs an allowed command outside its sandbox,
-and can give it a terminal the agent types into, so the rules also leave out
-every command that can run another program: `create` and `edit`, whose
-editor an agent could drive, `review gate`, and `site build` and `serve`.
-They leave out `inbox answer`, `dismiss`, and `snooze` too. A new command
-reaches Codex once it is added here and `init` rewrites the file.
+Codex's `prefix_rule` matches exact tokens with no wildcard. The Codex rules
+allow commands by name, and anything else, a command line that starts with an
+option included, falls through to Codex's usual approval. Codex runs an
+allowed command outside its sandbox, and can give it a terminal the agent
+types into, so the rules also leave out every command that can run another
+program: `create` and `edit`, whose editor an agent could drive,
+`review gate`, and `site build` and `serve`. They leave out `inbox answer`,
+`dismiss`, and `snooze` too. A new command reaches Codex once it is added
+here and `init` rewrites the file.
 """
 
 from __future__ import annotations
@@ -92,11 +91,14 @@ from .core import FileAction, write_through
 ALLOW = ("Bash(project *)",)
 ASK = ("Bash(project init *)", "Bash(project upgrade *)", "Bash(project config set *)",
        "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
-       "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project -*)")
+       "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)")
 # The narrower rules Projector wrote before `Bash(project *)` covered them,
 # which `init` removes from `permissions.allow`.
 SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
               "Bash(project review settle *)", "Bash(project summary publish *)")
+# The ask rule Projector wrote before the CLI refused an option before the
+# command, which `init` removes from `permissions.ask`.
+RETIRED_ASK = ("Bash(project -*)",)
 
 ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
          "`--prepare` or `--allow-prepare`, and `project inbox answer`, `dismiss`, and `snooze`")
@@ -105,8 +107,10 @@ COMMANDS = "every `project` command but the few that reach outside Projector's o
 # Each pattern Codex may run without asking, and outside its sandbox, with the
 # justification Codex shows for it.
 CODEX_ALLOW = (
-    (["project", ["check", "done", "list", "loop", "owner", "priority", "search", "show", "status", "summary"]],
-     "Runs a Projector command that works on plans, loops, or pull request summaries."),
+    (["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary",
+                  "version"]],
+     "Runs a Projector command that works on plans, loops, or pull request summaries, or prints its version or "
+     "help."),
     (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
     (["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "restore", "revise", "show", "tell",
                            "watch", "withdraw"]],
@@ -194,11 +198,13 @@ def allow_commands(apply: bool = True, environ: Mapping[str, str] = os.environ,
 def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ, hint: bool = True) -> FileAction:
     """Add `ALLOW` to `permissions.allow` and `ASK` to `permissions.ask` in the user's Claude Code settings.
 
-    The `SUPERSEDED` rules leave `permissions.allow`, and everything else in
-    the file is kept. A file linked into a dotfiles repository is written
-    through its link. A file `init` cannot read as settings is left alone with
-    a note. Without `apply`, only a missing rule is reported, because a
-    superseded rule left in place allows nothing that `ALLOW` does not.
+    The `SUPERSEDED` rules leave `permissions.allow`, the `RETIRED_ASK` rules
+    leave `permissions.ask`, and everything else in the file is kept. A file
+    linked into a dotfiles repository is written through its link. A file
+    `init` cannot read as settings is left alone with a note. Without `apply`,
+    only a missing rule is reported, because a superseded rule left in place
+    allows nothing that `ALLOW` does not, and a retired one asks only before a
+    command line the CLI refuses.
     """
 
     path = settings_path(environ)
@@ -228,7 +234,7 @@ def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ,
     allow, ask = permissions["allow"], permissions["ask"]
     missing_allow = [rule for rule in ALLOW if rule not in allow]
     missing_ask = [rule for rule in ASK if rule not in ask]
-    superseded = any(rule in SUPERSEDED for rule in allow)
+    superseded = any(rule in SUPERSEDED for rule in allow) or any(rule in RETIRED_ASK for rule in ask)
     if not missing_allow and not missing_ask and not (apply and superseded):
         return FileAction(name, "unchanged")
     if not apply:
@@ -242,7 +248,7 @@ def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ,
                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
                                            "add them" if hint else ""))
     allow[:] = [rule for rule in allow if rule not in SUPERSEDED] + missing_allow
-    ask.extend(missing_ask)
+    ask[:] = [rule for rule in ask if rule not in RETIRED_ASK] + missing_ask
     try:
         write_through(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
     except OSError as error:

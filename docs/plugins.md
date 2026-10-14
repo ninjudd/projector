@@ -136,7 +136,7 @@ archive. It needs Python 3.11 or newer:
 
 ```sh
 pipx install https://github.com/ninjudd/projector/archive/v0.tar.gz
-project --help
+project help
 ```
 
 ## Install for Claude Code
