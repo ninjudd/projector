@@ -1698,3 +1698,72 @@ anywhere in it, not only with the ring on its line.
 | No line of the list and no pull request's drawer takes `0`; each open item's line takes it, open, answered, dismissed, or snoozed, and pressing it closes the drawer | `an open item’s line closes its drawer on 0, and no other line takes 0` in `hooks/band.test.tsx` |
 | The only digit in a resolved question's, a notice's, or a snoozing drawer is the line's `0` | `an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open`, `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `snooze asks how long, and only a length it offers snoozes the item` |
 | `0` from an empty prompt and the line's look with the prefix | Checked by hand by the owner in a preview session |
+
+## 18. Count a drawer's actions down from 9, and confirm a dismiss
+
+A drawer's action lines take the digits `7`, `8`, and `9` in place of the
+letters `d`, `x`, and `s`. Dismiss asks to be sure before it dismisses
+anything, and snooze's lengths take digits too, on lines of their own in
+the options' place. This section supersedes § 15's letters, the bullet of
+§ 15.2 under which actions take letters by their place, and § 16's note
+that the snooze lengths take no hotkeys and sit on one `|`-separated row.
+
+### 18.1 What changes
+
+- **Actions count down from 9.** **discuss** takes `7`, the second place
+  `8`, whether it holds **dismiss** or **restore**, and the third `9`,
+  whether it holds **snooze** or **unsnooze**. They draw as
+  `7: discuss question`, `8: dismiss question`, and `9: snooze question`,
+  with `notice` for a notice. A pull request's drawer reads
+  `7: discuss PR` and `8: dismiss PR`. An action's digit works as an
+  option's does: while the band holds the keyboard, and typed first into
+  an empty prompt while its line is wholly in the band's view, under the
+  engine's 600 ms and 400 ms rules.
+- **Dismiss asks to confirm.** Pressing **dismiss**, by its digit or a
+  click, runs nothing. The action lines give way to
+  `8: yes, dismiss question` and `9: no, keep it`, or `notice`, or `PR` on
+  a pull request's drawer. `8` again, or a click on the first line,
+  dismisses as before. `9`, closing the drawer, or opening another puts the
+  action lines back. So a deliberate dismiss from the keyboard is `8` `8`,
+  and a lone stray `8` only asks. **restore** and **unsnooze** act at once.
+- **Snooze's lengths take digits.** While snooze asks how long, a
+  question's options are hidden, which frees `1` to `6`, and the lengths
+  draw as keyed lines in their place: `1: 15 min`, `2: 1 hour`,
+  `3: 4 hours`, and `4: 1 day`, then `9: cancel` in the actions' place,
+  matching `9: no, keep it`. A notice shows the same lines. Picking a
+  length snoozes as before; `9`, closing the drawer, or opening another
+  brings the options and the action lines back.
+- **The ring moves with each question.** Enter on **dismiss** moves the
+  focus ring onto the confirmation and Enter on `no, keep it` back onto
+  **dismiss**, as Enter on **snooze** moves it onto `1: 15 min` and Enter
+  on `9: cancel` back onto **snooze**.
+- **One atom holds what a drawer asks.** `bandAsked` records the drawer
+  and whether it asks how long to snooze or whether to dismiss, in place
+  of § 16's `bandSnoozing`.
+
+### 18.2 Why this design
+
+- **Digits rather than letters.** A digit works from an empty prompt as
+  well as from the band, where a letter works only from the band, so the
+  actions now work the same two ways as the options. Counting down from
+  `9` leaves `1` to `6` to the options and `0` to the item's line, so no
+  two keys in a drawer clash.
+- **A confirmation for the one action that loses something.** Dismissing
+  resolves an item and tells its agent. With digits that work from an
+  empty prompt, one stray `8` could do that, so dismiss asks first, on the
+  same digit, which keeps the deliberate case to two presses of one key.
+  Restore and unsnooze bring an item back and lose nothing, so they act at
+  once.
+- **The lengths take the options' digits.** While snooze asks, the options
+  have nothing to do, so hiding them frees `1` to `6` for the lengths, and
+  `9` cancels both questions a drawer asks.
+
+### 18.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| A drawer's actions take `7`, `8`, and `9` by place, labelled by kind, **restore** and **unsnooze** included; a pull request's take `7` and `8` | `a drawer’s actions follow its options a line each, on 7, 8 and 9, named for what they act on` in `hooks/band.test.tsx` |
+| No line of an open drawer takes a letter; dismiss shows the confirmation and runs nothing; `8` `8` dismisses; `9` and closing the drawer put the actions back; the ring moves onto the confirmation and back; a notice's and a pull request's confirmations; restore and unsnooze act at once | `dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once` |
+| While snooze asks, a question's options are hidden and the lengths take `1` to `4` and cancel `9`; a notice shows the same lines; each digit's minutes; `9` and closing restore the drawer | `snooze asks how long on 1 to 4 in the options’ place, and only a length it offers snoozes the item` |
+| Each dismiss the other tests make now confirms it | The pull request and item dismiss tests § 14.4 and § 15.4 list |
+| The digits from an empty prompt, and the confirmation's look | Checked by hand by the owner in a preview session |

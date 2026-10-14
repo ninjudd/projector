@@ -197,8 +197,8 @@ session starts a loop's watcher for the first time.
 #267 draft List a loop's open pull requests above the Claude Code prompt      2h
 #258 draft grace Name the reviewed head in a review's signature conflict · 5⋮ 5m
      reviewing · review-signature · +84 −12 in 5 files · checks passing
-     d: discuss PR
-     x: dismiss PR
+     7: discuss PR
+     8: dismiss PR
      open in github
      open in projector
 ```
@@ -237,16 +237,18 @@ its size, and its checks. The size reads as a diff stat: the insertions,
 such as `+84`, in green and the deletions, such as `−12`, in red. The
 checks' state takes a color of its own, and the rest, ` in 5 files` and
 each `·` included, keeps the default text color. Below that come two
-actions, a line each, on the letters `d` and `x`, as
+actions, a line each, on the digits `7` and `8`, as
 [Use the band from the keyboard](#use-the-band-from-the-keyboard)
 describes, and then two links:
 
 - **discuss PR** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` when the band lists more than
   one repository.
-- **dismiss PR** keeps the pull request out of every loop of this session
-  that tracks it, and the band drops its line and says which loops
-  stopped, such as `stopped watching and reviewing acme/app#258`.
+- **dismiss PR** asks to be sure first, as
+  [dismissing an item](#read-your-inbox-in-projectors-band) does, then
+  keeps the pull request out of every loop of this session that tracks
+  it, and the band drops its line and says which loops stopped, such as
+  `stopped watching and reviewing acme/app#258`.
 - **open in github** opens the pull request on GitHub.
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
@@ -336,9 +338,9 @@ gives the drawer two more rows before the band scrolls:
   (recommended)
   2: Add a budget of two retries per host, and keep the total cap
 
-  d: discuss question
-  x: dismiss question
-  s: snooze question
+  7: discuss question
+  8: dismiss question
+  9: snooze question
 ```
 
 The first option is always the agent's recommendation. Press an option by
@@ -398,12 +400,13 @@ the focus ring the line inverts as the key and one block after it. A
 question's drawer has three actions:
 
 - **discuss question** puts the quoted question in the prompt, followed
-  by a blank line, and leaves the drawer open, so the options and detail stay in
-  view while you type. Type your reply under the quote, or on the quote's
-  own line, and send the prompt. The reply reaches the agent and answers
-  nothing.
-- **dismiss question** sets the question aside without an answer and closes
-  the drawer.
+  by a blank line, and leaves the drawer open, so the options and detail
+  stay in view while you type. Type your reply under the quote, or on the
+  quote's own line, and send the prompt. The reply reaches the agent and
+  answers nothing.
+- **dismiss question** asks to be sure, as the paragraph after the next
+  describes, then sets the question aside without an answer and closes the
+  drawer.
 - **snooze question** asks how long to put the question off, as the next
   paragraph but one describes.
 
@@ -415,17 +418,35 @@ stays in the band until you dismiss it. **dismiss notice** clears the
 notice once you have read it and closes its drawer, and nothing goes back
 to the agent.
 
-**snooze** snoozes nothing at once. It replaces the drawer's action lines
-with the lengths it offers and a way back, on one row:
+**dismiss** dismisses nothing at once. It replaces the action lines with
+a confirmation, so a stray `8` only asks:
 
 ```text
-  15 min | 1 hour | 4 hours | 1 day | cancel
+  8: yes, dismiss question
+  9: no, keep it
+```
+
+Press `8` again, or click the first line, to dismiss; a notice's reads
+`yes, dismiss notice`. `9`, closing the drawer, or opening another keeps
+the item and puts the actions back. **restore** and **unsnooze** act at
+once.
+
+**snooze** snoozes nothing at once either. A question's options give way
+to the lengths it offers, and the action lines to a way back:
+
+```text
+  1: 15 min
+  2: 1 hour
+  3: 4 hours
+  4: 1 day
+  9: cancel
 ```
 
 Pick a length, and the band runs
 `project inbox snooze <number> --for <minutes>` with 15, 60, 240, or 1440
-minutes, a day being the longest the CLI takes, and closes the drawer.
-**cancel** puts the actions back, and so does closing the drawer or opening
+minutes, a day being the longest the CLI takes, and closes the drawer. A
+notice, which has no options, shows the same lines. **cancel** puts the
+options and the actions back, and so does closing the drawer or opening
 another, so a drawer always opens on its actions.
 
 A snoozed item leaves the divider's counts at once, and stays in the list
@@ -494,8 +515,8 @@ the options and the actions. Enter on the open line closes the drawer and
 leaves the ring on the line. A click opens and closes a drawer without
 moving the ring. In the same way, Enter on the **snooze** line moves the
 ring onto the first length, and Enter on **cancel** moves it back onto the
-**snooze** line. The lengths take no keys, since the digits belong to a
-question's options.
+**snooze** line. Enter on **dismiss** moves it onto the confirmation, and
+Enter on `no, keep it` back onto **dismiss**.
 
 An open question's options read `1:` to `6:`, the digit in the accent
 color. Press a digit while the band has the keyboard, or type it first into
@@ -512,18 +533,23 @@ while the line is wholly in view in the band, and the drawer closes, as a
 click or Enter on that line closes it. A pull
 request's drawer has no `0`, since its number closes it.
 
-A drawer's actions follow its options, a line each, with the letter that
+A drawer's actions follow its options, a line each, with the digit that
 presses it before the label in the accent color, such as
-`d: discuss question`. Each label ends with what the action acts on:
-`question`, `notice`, or `PR`.
+`7: discuss question`. The digits count down from 9, so the options keep
+`1` to `6` and the item's line `0`. Each label ends with what the action
+acts on: `question`, `notice`, or `PR`.
 
-- **d** presses **discuss**.
-- **x** presses **dismiss**, or **restore** in its place.
-- **s** presses **snooze**, or **unsnooze** in its place, which a pull
-  request's drawer does not offer.
+- **7** presses **discuss**.
+- **8** presses **dismiss**, or **restore** in its place. Dismiss asks to
+  be sure, on `8` again to dismiss and `9` to keep the item, so dismissing
+  from the keyboard is `8` `8`.
+- **9** presses **snooze**, or **unsnooze** in its place, which a pull
+  request's drawer does not offer. While snooze asks how long, the lengths
+  take `1` to `4` in the options' place and `9` cancels.
 
-A letter presses its action only while the band has the keyboard. Typed in
-the prompt, it is text.
+An action's digit works the two ways an option's does: while the band has
+the keyboard, or first into an empty prompt while its line is wholly in
+view in the band.
 
 ## Install for Codex
 
