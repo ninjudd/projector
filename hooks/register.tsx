@@ -975,8 +975,6 @@ export const register: Register = on => {
     const opened = await read($, drawer)
     const asking = await read($, asked)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
-    // The divider counts the pull requests the band lists, a row each, then
-    // its open questions and notices.
     const counts = [
       countOf(shown.rows.length, 'pull request'),
       ...(['question', 'notice'] as const).map(kind =>
@@ -1031,9 +1029,10 @@ export const register: Register = on => {
     // row, so a divider that fills the body ends at the mark, and a blank line
     // sets it apart from the rows under it. The counts follow one `─` at its
     // start, and its rule runs from them to the time, as an open item's rule
-    // runs from its subject to its age. The counts and the time are `subtle`,
-    // and the rule keeps the default color. Only a terminal lays text out in
-    // those columns; any other surface would wrap the rule, so it draws none.
+    // runs from its subject to its age. The counts and the time draw quieter
+    // than the rule, so the line still reads as a rule with labels on it.
+    // Only a terminal lays text out in those columns; any other surface would
+    // wrap the rule, so it draws none.
     const lead = tally === '' ? '' : `─ ${tally} `
     const tail = reloaded === '' ? '' : ` ${reloaded}`
     const rule = '─'.repeat(Math.max(0, e.props.bodyColumns - lead.length - tail.length))
