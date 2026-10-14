@@ -1,4 +1,4 @@
-import type { Checks, PullRequest } from './types'
+import type { Checks, PullRequest, Thread } from './types'
 import { keyOf, type TrackedPr } from './parse'
 
 /** Where one pull request's node sits in the response. */
@@ -15,7 +15,8 @@ export type Fetched = {
 
 const FIELDS = `number title url state isDraft reviewDecision mergeable body
   author { login } headRefName additions deletions changedFiles updatedAt
-  reviewThreads(first: 100) { nodes { isResolved } }
+  reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine
+    comments(first: 1) { nodes { url bodyText author { login } } } } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`
 
 // The line `project summary publish` leaves at the bottom of a description.
@@ -72,6 +73,24 @@ const nodesOf = (value: unknown): unknown[] =>
 
 const numberOf = (value: unknown) => (typeof value === 'number' ? value : 0)
 
+const stringOf = (value: unknown) => (typeof value === 'string' ? value : null)
+
+/** An unresolved thread as the drawer lists it, or null for a resolved one. */
+function threadOf(node: unknown): Thread | null {
+  if (!isRecord(node) || node.isResolved !== false) return null
+  const [first] = nodesOf(node.comments)
+  const comment = isRecord(first) ? first : {}
+  const line = typeof node.line === 'number' ? node.line : node.originalLine
+  return {
+    path: stringOf(node.path) ?? '',
+    line: typeof line === 'number' ? line : null,
+    isOutdated: node.isOutdated === true,
+    author: isRecord(comment.author) ? stringOf(comment.author.login) : null,
+    excerpt: firstLine(stringOf(comment.bodyText) ?? ''),
+    url: stringOf(comment.url),
+  }
+}
+
 function checksOf(node: Record<string, unknown>): Checks | null {
   const [last] = nodesOf(node.commits)
   const commit = isRecord(last) ? last.commit : undefined
@@ -80,7 +99,6 @@ function checksOf(node: Record<string, unknown>): Checks | null {
 }
 
 function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullRequest {
-  const threads = nodesOf(node.reviewThreads)
   const state = node.state === 'MERGED' || node.state === 'CLOSED' ? node.state : 'OPEN'
   const decision = node.reviewDecision
   const updatedAt = typeof node.updatedAt === 'string' ? Date.parse(node.updatedAt) : Number.NaN
@@ -97,7 +115,9 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
         ? decision
         : null,
     isConflicting: node.mergeable === 'CONFLICTING',
-    openThreads: threads.filter(thread => isRecord(thread) && thread.isResolved === false).length,
+    threads: nodesOf(node.reviewThreads)
+      .map(threadOf)
+      .filter(thread => thread !== null),
     author: isRecord(node.author) && typeof node.author.login === 'string' ? node.author.login : null,
     branch: typeof node.headRefName === 'string' ? node.headRefName : '',
     additions: numberOf(node.additions),

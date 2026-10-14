@@ -87,7 +87,36 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       url: SEVEN,
       isDraft: true,
       mergeable: 'CONFLICTING',
-      reviewThreads: { nodes: [{ isResolved: false }, { isResolved: false }] },
+      reviewThreads: {
+        nodes: [
+          {
+            isResolved: false,
+            isOutdated: false,
+            path: 'src/fetch.ts',
+            line: 40,
+            comments: {
+              nodes: [
+                {
+                  url: `${SEVEN}#discussion_r1`,
+                  bodyText: 'P2 · The retry loop never sleeps between attempts, so a flaky server gets hammered\nMore.',
+                  author: { login: 'grace' },
+                },
+              ],
+            },
+          },
+          { isResolved: true, path: 'src/old.ts', line: 1 },
+          {
+            isResolved: false,
+            isOutdated: true,
+            path: 'src/[draft]_notes.md',
+            line: null,
+            originalLine: 3,
+            comments: {
+              nodes: [{ url: `${SEVEN}#discussion_r2`, bodyText: 'Why *this*?', author: { login: 'bob' } }],
+            },
+          },
+        ],
+      },
       author: { login: 'ada' },
       headRefName: 'fix-branch',
       additions: 12,
@@ -663,16 +692,32 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect(opened).toBeDefined()
   expect(opened?.props.marginLeft).toBe(4)
   // Under the facts come the actions, a line each, then the links, each on a line of its own, so a terminal without hyperlinks shows the whole URL.
-  const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
-  expect(lines.map(line => line.props.key ?? line.type)).toEqual([
+  // The thread lines come as one list among the children, so the children are flattened first. A thread's line
+  // is a Text, which carries no key of its own.
+  type Line = { type: string; props?: { key?: string }; children?: unknown[] }
+  const lines = ((opened?.children ?? []) as unknown[]).flat() as Line[]
+  expect(lines.map(line => line.props?.key ?? line.type)).toEqual([
     'Text',
     'discuss:x/y#7',
     'dismiss:x/y#7',
     'github:x/y#7',
     'projector:x/y#7',
+    'Text',
+    'Text',
   ])
   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
+  // Each unresolved thread links to its first comment: where it is, who opened it, how it starts, cut to fit,
+  // and whether a push left it outdated. Its text is a Link's children, so brackets and stars stay as written.
+  const links = lines.slice(-2).map(line => (line.children as { type: string; props: { href: string }; children: string[] }[])[0])
+  expect(links.map(link => [link?.type, link?.props.href, link?.children.join('')])).toEqual([
+    [
+      'Link',
+      `${SEVEN}#discussion_r1`,
+      'src/fetch.ts:40 · grace · P2 · The retry loop never sleeps between attempts, so a fla…',
+    ],
+    ['Link', `${SEVEN}#discussion_r2`, 'src/[draft]_notes.md:3 · bob · Why *this*? · outdated'],
+  ])
   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
 
   // discuss is a plain Button, so Enter fills the prompt on the main screen too.
@@ -1027,6 +1072,30 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
 
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('draws over a snapshot whose pull requests an earlier version counted threads in', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#1\n' })
+  const earlier = {
+    rows: [{ pr: { repo: 'o/r', number: 1, title: 'Counted', openThreads: 2 }, kinds: ['reviewing'] }],
+    viewer: VIEWER,
+    fetchedAt: null,
+    error: null,
+  }
+  on('state.get', { plugin: 'projector', key: 'panelSnapshot' }, () => ({
+    value: { value: earlier as never, version: 1 },
+  }))
+
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(PANEL)
+  expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Counted' })).toBeUndefined()
   await ui.unmount()
 })
 

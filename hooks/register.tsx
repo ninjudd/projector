@@ -1,7 +1,19 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-code'
 
-import type { Checks, Item, LoopKind, Notice, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
+import type {
+  Checks,
+  Item,
+  LoopKind,
+  Notice,
+  PullRequest,
+  Question,
+  Row,
+  SeenLoop,
+  Sending,
+  Snapshot,
+  Thread,
+} from './types'
 import { buildQuery, parseResponse, type Fetched } from './github'
 import { findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
 import {
@@ -207,7 +219,9 @@ const oldSending = atom({ plugin: 'projector', key: 'bandSending' } as const, {}
 // so a value an earlier version wrote can have another shape.
 const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
 const current = (value: Snapshot): Snapshot =>
-  Array.isArray(value.rows) ? { ...value, viewer: value.viewer ?? null } : EMPTY
+  Array.isArray(value.rows) && value.rows.every(row => Array.isArray(row.pr.threads))
+    ? { ...value, viewer: value.viewer ?? null }
+    : EMPTY
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -876,8 +890,24 @@ function notesOf(pr: PullRequest): Note[] {
   if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
   // The open threads' count comes last, beside the age.
-  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, color: 'warning' })
+  if (pr.threads.length > 0) notes.push({ text: `${pr.threads.length}*`, color: 'warning' })
   return notes
+}
+
+/** How much of a thread's first line its drawer line shows. */
+const EXCERPT_LENGTH = 60
+
+/**
+ * A thread's line in its pull request's drawer: where it is, who opened it,
+ * how it starts, and whether a later push left it outdated.
+ */
+function threadLabel(thread: Thread): string {
+  const place = thread.line === null ? thread.path : `${thread.path}:${thread.line}`
+  const excerpt =
+    thread.excerpt.length > EXCERPT_LENGTH ? `${thread.excerpt.slice(0, EXCERPT_LENGTH - 1).trimEnd()}…` : thread.excerpt
+  return [place, thread.author, excerpt, thread.isOutdated ? 'outdated' : null]
+    .filter(piece => piece !== null && piece !== '')
+    .join(' · ')
 }
 
 /** Whether the account the panel's `gh` is signed in as wrote a pull request. */
@@ -1170,7 +1200,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
 
-    const { Box, Button, Markdown, Text } = $.ui.resolve(e)
+    const { Box, Button, Link, Markdown, Text } = $.ui.resolve(e)
     const shown = current(await read($, snapshot))
     const time = await read($, now)
     const opened = await read($, drawer)
@@ -1663,6 +1693,15 @@ export const register: Register = on => {
               {pr.summaryUrl !== null && (
                 <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
               )}
+              {/* Each unresolved thread links to its first comment, since GitHub
+                  folds an outdated thread and an old one on a long timeline away.
+                  The text goes in as a Link's children, so nothing in it is read
+                  as markdown. */}
+              {pr.threads.map((thread, at) => (
+                <Text key={`thread:${key}:${at}`}>
+                  <Link href={thread.url ?? pr.url}>{threadLabel(thread)}</Link>
+                </Text>
+              ))}
             </Box>
           )}
         </Box>

@@ -98,7 +98,29 @@ describe('GitHub', () => {
             isDraft: true,
             reviewDecision: 'CHANGES_REQUESTED',
             mergeable: 'CONFLICTING',
-            reviewThreads: { nodes: [{ isResolved: false }, { isResolved: true }, { isResolved: false }] },
+            reviewThreads: {
+              nodes: [
+                {
+                  isResolved: false,
+                  isOutdated: false,
+                  path: 'src/app.ts',
+                  line: 12,
+                  originalLine: 10,
+                  comments: {
+                    nodes: [
+                      {
+                        url: 'https://github.com/o/r/pull/1#discussion_r1',
+                        bodyText: 'P2 · Retry the fetch\nIt gives up after one try.',
+                        author: { login: 'grace' },
+                      },
+                    ],
+                  },
+                },
+                { isResolved: true, path: 'src/done.ts', line: 3 },
+                { isResolved: false, isOutdated: true, path: 'README.md', line: null, originalLine: 7 },
+                { isResolved: false, path: 'docs/guide.md', line: null, originalLine: null },
+              ],
+            },
             author: { login: 'ada' },
             headRefName: 'first-change',
             additions: 120,
@@ -131,7 +153,20 @@ describe('GitHub', () => {
       isDraft: true,
       reviewDecision: 'CHANGES_REQUESTED',
       isConflicting: true,
-      openThreads: 2,
+      // Only unresolved threads, oldest first. An outdated one keeps the line it was on, and a comment on
+      // the whole file has none.
+      threads: [
+        {
+          path: 'src/app.ts',
+          line: 12,
+          isOutdated: false,
+          author: 'grace',
+          excerpt: 'P2 · Retry the fetch',
+          url: 'https://github.com/o/r/pull/1#discussion_r1',
+        },
+        { path: 'README.md', line: 7, isOutdated: true, author: null, excerpt: '', url: null },
+        { path: 'docs/guide.md', line: null, isOutdated: false, author: null, excerpt: '', url: null },
+      ],
       author: 'ada',
       branch: 'first-change',
       additions: 120,

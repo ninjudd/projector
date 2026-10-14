@@ -6,6 +6,21 @@ export type SeenLoop = { kind: LoopKind; tracked: string }
 
 export type Checks = 'passing' | 'failing' | 'pending'
 
+/** A review thread no one has resolved, as a pull request's drawer lists it. */
+export type Thread = {
+  path: string
+  /** The line the thread is on, or was on once its line changed; null for a comment on the whole file. */
+  line: number | null
+  /** Whether a later push changed the lines the thread is on, which GitHub then folds away. */
+  isOutdated: boolean
+  /** Who opened the thread; null when GitHub did not say. */
+  author: string | null
+  /** The first line of the thread's first comment, as plain text. */
+  excerpt: string
+  /** The thread's first comment on GitHub; null when GitHub did not say. */
+  url: string | null
+}
+
 export type PullRequest = {
   repo: string
   number: number
@@ -15,7 +30,8 @@ export type PullRequest = {
   isDraft: boolean
   reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null
   isConflicting: boolean
-  openThreads: number
+  /** The unresolved review threads, oldest first. */
+  threads: Thread[]
   author: string | null
   branch: string
   additions: number

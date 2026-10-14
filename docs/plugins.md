@@ -194,12 +194,14 @@ session starts a loop's watcher for the first time.
 ```text
   /projector                                              2 pull requests  12s   [-]
    #267 draft List a loop's open pull requests above the Claude Code prompt 2h
-   #258 draft grace Name the reviewed head in a review's sig… conflict · 5* 5m
+   #258 draft grace Name the reviewed head in a review's sig… conflict · 2* 5m
         reviewing · review-signature · +84 −12 in 5 files · checks passing
         7: discuss PR
         8: dismiss PR
         open in github
         open in projector
+        src/review.py:412 · ada · P2 · The signature names the base, not the head
+        docs/cli.md:88 · ada · P3 · Say which head the line names · outdated
                                                            ctrl+x tab to focus
 ```
 
@@ -207,7 +209,7 @@ Each line is the pull request's number, `draft` or `ready`, its author when
 someone else wrote it, and the title. Notes follow when the pull request
 has them: `conflict` or `changes requested` in red, `approved` in green,
 and last the number of unresolved review threads before a `*` in yellow,
-such as `5*`. The ` · ` between two notes keeps the default text color. The
+such as `2*`. The ` · ` between two notes keeps the default text color. The
 line ends with how long ago the pull request last changed, in the column
 where the inbox's items end with their ages. Only the title shortens on a
 narrow terminal.
@@ -281,7 +283,7 @@ checks' state takes a color of its own, and the rest, ` in 5 files` and
 each `·` included, keeps the default text color. Below that come two
 actions, a line each, on the digits `7` and `8`, as
 [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
-describes, and then two links:
+describes, and then the links:
 
 - **discuss PR** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
@@ -294,6 +296,13 @@ describes, and then two links:
 - **open in github** opens the pull request on GitHub.
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
+- **Each unresolved review thread**, oldest first, opens the thread's first
+  comment on GitHub. Its line names the file and line the thread is on, who
+  opened it, and the first line of its first comment, cut to 60 characters,
+  and ends in `outdated` when a later push changed the lines it is on. These
+  are the threads the yellow `*` counts. GitHub folds an outdated thread
+  away, and hides an older one on a long timeline behind **Load more**, so
+  the link reaches a thread the pull request's page does not show.
 
 Each link has a line of its own, because a terminal that does not draw
 hyperlinks shows a link's URL after its text, and a line shared with
@@ -312,8 +321,8 @@ with its drawer closed.
 On the main screen, which Claude Code uses under tmux and when
 `CLAUDE_CODE_NO_FLICKER=0` is set, use the panel from the keyboard, as
 [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
-describes. The **open in github** and **open in projector** links take no
-press there; the terminal opens them the way it opens any other link.
+describes. The **open in github**, **open in projector**, and thread links take
+no press there; the terminal opens them the way it opens any other link.
 
 The panel lists only this session's loops. It finds a loop by the
 `--tracked` file its watcher reads, and learns that file when the session
