@@ -324,11 +324,13 @@ and in a terminal the divider counts the open questions and the open notices.
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press Enter on it from the keyboard instead. While
 its drawer is open, the item has the band to itself, so its line is the
-top row, in its usual colors, with `0` in its bullet's place to close the
-drawer. The drawer is indented to start under the item's text, so its
-detail and the digits of its lines sit under the item's first letter. In a
-terminal, the divider and the blank line under it step aside too, which
-gives the drawer two more rows before the band scrolls:
+top row, with `0` in its bullet's place to close the drawer. There an open
+question reads in the default text color rather than the color that marks
+it in the list, and a resolved or snoozed item stays muted. The drawer is
+indented to start under the item's text, so its detail and the digits of
+its lines sit under the item's first letter. In a terminal, the divider
+and the blank line under it step aside too, which gives the drawer two
+more rows before the band scrolls:
 
 ```text
 0: Decline the finding about the retry budget?                #337  5m [-]

@@ -1138,7 +1138,11 @@ export const register: Register = on => {
       // A snoozed item stays listed for 30 seconds, muted but not struck
       // through, so it reads as put off rather than dismissed.
       const isSnoozed = isSnoozedAt(item, time)
-      const color = !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' ? QUESTION_COLOR : undefined
+      const isOpened = opened === key
+      // An open question stands out in the list; at the top of its own drawer
+      // it reads as plain text.
+      const color =
+        !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' && !isOpened ? QUESTION_COLOR : undefined
       const pull = pullOf(item)
       // Each action names the kind of item it acts on. A dismissed or snoozed
       // item's drawer offers to bring it back where it offered to dismiss or
@@ -1239,7 +1243,6 @@ export const register: Register = on => {
       // puts the line back lower in the list. The engine keeps the ring by
       // position, and the open line's key is one the list never draws, so a
       // move onto the line in the list waits for the band to draw the list.
-      const isOpened = opened === key
       const line = isOpened ? `close:${ref}` : key
       const first = item.kind === 'question' && isOpen ? `answer:${ref}.${letterAt(0)}` : `discuss:${ref}`
 

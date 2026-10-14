@@ -1064,12 +1064,12 @@ test('every item takes the `-` bullet, an open question the permission color, an
   ])
   expect((await ui.findAll({ type: 'Text' })).filter(text => text.props.dimColor !== undefined)).toEqual([])
 
-  // An open item's line drops its bullet, for the `0` the engine draws in its place, and is not inverted: its subject
-  // keeps the item's color.
+  // An open item's line drops its bullet, for the `0` the engine draws in its place, and is not inverted. An open
+  // question's subject, `permission` in the list, reads in the default color at the top of its own drawer.
   await ui.press({ key: 'item:1' })
   const opened = ((await ui.find({ type: 'Button', key: 'close:1' }))?.children ?? []) as Part[]
   expect(opened.map(part => [part.children.join(''), part.props?.color, part.props?.inverse])).toEqual([
-    ['Decline the finding?', 'permission', undefined],
+    ['Decline the finding?', undefined, undefined],
   ])
   await ui.press({ key: 'close:1' })
   await ui.press({ key: 'item:2' })
@@ -1077,6 +1077,15 @@ test('every item takes the `-` bullet, an open question the permission color, an
   expect(openNotice.map(part => [part.children.join(''), part.props?.color, part.props?.inverse])).toEqual([
     [FORCE_PUSHED, undefined, undefined],
   ])
+  await ui.press({ key: 'close:2' })
+  // A resolved or snoozed item's open line keeps `subtle`, which shows its state.
+  await ui.press({ key: 'item:3' })
+  const resolved = ((await ui.find({ type: 'Button', key: 'close:3' }))?.children ?? []) as Part[]
+  expect(resolved.map(part => [part.children.join(''), part.props?.color])).toEqual([['Rebase first?', 'subtle']])
+  await ui.press({ key: 'close:3' })
+  await ui.press({ key: 'item:5' })
+  const snoozed = ((await ui.find({ type: 'Button', key: 'close:5' }))?.children ?? []) as Part[]
+  expect(snoozed.map(part => [part.children.join(''), part.props?.color])).toEqual([['Merged #6', 'subtle']])
   await ui.unmount()
 })
 
@@ -2272,8 +2281,9 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
   expect(await ui.find({ key: 'answer:1.a' })).toBeDefined()
   expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
+  // Open again at the top of its drawer, its line reads in the default color, not struck through.
   const restored = await line()
-  expect([restored?.props.color, restored?.props.strikethrough]).toEqual(['permission', false])
+  expect([restored?.props.color, restored?.props.strikethrough]).toEqual([undefined, false])
   expect(session.store.store.get('1')).toEqual(held())
 
   // The dismissal had not gone out, so the restore sends nothing.
