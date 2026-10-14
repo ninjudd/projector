@@ -1,0 +1,571 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index a6fd5eb..5388461 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -192,10 +192,10 @@ line each. Run `/projector` to show or hide the band. It also appears when the
+ session starts a loop's watcher for the first time.
+ 
+ ```text
+-──────────────────────────────────────────────────────────────────────────── 12s [-]
++─ 2 pull requests ────────────────────────────────────────────────────────── 12s [-]
+ 
+ #267 draft List a loop's open pull requests above the Claude Code prompt      2h
+-#258 draft grace Name the reviewed head in a review's signature conflict · 5⋮ 5m
++#258 draft grace Name the reviewed head in a review's signature conflict · 5* 5m
+      reviewing · review-signature · +84 −12 in 5 files · checks passing
+      7: discuss PR
+      8: dismiss PR
+@@ -204,11 +204,13 @@ session starts a loop's watcher for the first time.
+ ```
+ 
+ Each line is the pull request's number, `draft` or `ready`, its author when
+-someone else wrote it, the title, and, when the pull request has them, a
+-merge conflict or a change request, then the number of unresolved review
+-threads before a `⋮` in yellow, such as `5⋮`. The line ends with how long
+-ago the pull request last changed, in the column where the inbox's items
+-end with their ages. Only the title shortens on a narrow terminal.
++someone else wrote it, and the title. Notes follow when the pull request
++has them: `conflict` or `changes requested` in red, `approved` in green,
++and last the number of unresolved review threads before a `*` in yellow,
++such as `5*`. The ` · ` between two notes keeps the default text color. The
++line ends with how long ago the pull request last changed, in the column
++where the inbox's items end with their ages. Only the title shortens on a
++narrow terminal.
+ 
+ Your own pull requests come first, then everyone else's, each author's
+ together and the authors in order of login, with no line between the groups.
+@@ -217,11 +219,15 @@ asks for in the same query as the pull requests. A pull request that both a
+ `start-watch-loop` watcher, `watch-threads.sh`, and a `start-review-loop`
+ watcher, `watch-prs.sh`, track is listed once.
+ 
+-The divider ends with how long ago the band reloaded, drawn as the rows
+-draw their ages: in the short form, such as `12s`, in the `subtle` color,
+-and ending in their column. A reload just now reads `0s`, as an item posted
+-just now does. Claude Code's `[-]` at the divider's end collapses the band.
+-A blank line sets the divider apart from the rows under it. Only a terminal
++The divider starts with one `─` and how many pull requests the band lists,
++a line each, such as `2 pull requests`. It ends with how long ago the band
++reloaded, drawn as the rows draw their ages: in the short form, such as
++`12s`, and ending in their column. A reload just now reads `0s`, as an item
++posted just now does. The count and the time are drawn in the `subtle`
++color, and the rule between them in the default text color. A count of
++zero is left out, so a band with nothing to count draws the rule and the
++time alone. Claude Code's `[-]` at the divider's end collapses the band. A
++blank line sets the divider apart from the rows under it. Only a terminal
+ draws the divider and that blank line. Claude Desktop, VS Code, and the
+ mobile app do not set the band's text in a terminal's columns, so a rule
+ sized to them would wrap, and there the band starts with its first row.
+@@ -312,11 +318,12 @@ notice's line is drawn in the theme's mid gray, `inactive`, apart from the
+ answer and which want a read. Each line ends with the pull request the item
+ is about, as the band labels it, and how long ago it was posted. The band
+ appears when an item arrives or is restored, even after you hid it, and in
+-a terminal the divider starts with one `─` and the count of open
+-questions and open notices, its rule running from the count to its time.
++a terminal the divider counts the open questions and the open notices after
++the pull requests, in the same `subtle` color, its rule running from the
++counts to its time.
+ 
+ ```text
+-─ 2 questions · 1 notice ───────────────────────────────────────────── 12s [-]
++─ 1 pull request · 2 questions · 1 notice ──────────────────────────── 12s [-]
+ 
+ #337 draft Retry failed webhook deliveries with backoff                 1h
+ 
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 8e0e0d0..af0696a 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -1646,7 +1646,7 @@ review threads as a count after `⋮`.
+ 
+ | Behavior | Test |
+ | --- | --- |
+-| The drawer's links read `open in github` and `open in projector`; on the facts line watching takes `ansi256(4)` and reviewing `claude`, each word its own when both loops track it, the branch `ansi256(6)`, the size's `+N` `success` and its `−N` `error`, `checks <state>` the checks' color, and ` in N files`, ` and `, and each `·` stay plain; the open-thread count reads `2⋮`, in `warning`, after the other notes | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `opening one drawer closes the one that was open`, and `lists a pull request both loops track once, as watched and reviewed` in `hooks/band.test.tsx` |
++| The drawer's links read `open in github` and `open in projector`; on the facts line watching takes `ansi256(4)` and reviewing `claude`, each word its own when both loops track it, the branch `ansi256(6)`, the size's `+N` `success` and its `−N` `error`, `checks <state>` the checks' color, and ` in N files`, ` and `, and each `·` stay plain; the open-thread count reads `2⋮`, `2*` since § 19, in `warning`, after the other notes | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `opening one drawer closes the one that was open`, and `lists a pull request both loops track once, as watched and reviewed` in `hooks/band.test.tsx` |
+ | Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color, `inactive` since § 18; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in gray` |
+ | **snooze** shows the lengths and cancel, runs nothing, and takes no digits; each length runs `snooze --for` with its minutes; **cancel** and closing the drawer put the actions back; Enter carries the ring onto the first length and back onto **snooze** | `snooze asks how long, and only a length it offers snoozes the item`, and the snooze tests § 14.4 lists, which now pick a length |
+ | A restored question's line returns to `permission` | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place`, `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` |
+@@ -1832,3 +1832,77 @@ divider's "updated" time stays.
+ | An open notice's line, in the list and at the top of its drawer, takes `inactive`, and the rule after it the default color; an unsnoozed notice's line returns to `inactive` | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in gray`, `snooze closes an item’s drawer and mutes it for 30 seconds, and its drawer offers unsnooze in snooze’s place` |
+ | The divider ends with the reload's age, `0s` just after a reload, in `subtle`, ending at `bodyColumns`, with no "updated", "ago", or "just now"; the counts follow a `─ ` at its start, and its rule runs from them to the time, the row still ending at `bodyColumns` | `draws one line per open pull request of the session’s own loops`, `asks through the tool, and the band lists the question below the pull requests`, and the tests that find the divider by its counts |
+ | The digits from an empty prompt, and the confirmation's look | Checked by hand by the owner in a preview session |
++
++## 19. Count the band's pull requests in its divider, and mark open threads with an asterisk
++
++The divider counted the open questions and the open notices, § 2.5, but
++not the pull requests listed above them, so it said nothing about the rows
++that usually fill the band. It now starts with how many pull requests the
++band lists, before the item counts, and draws the counts in `subtle`, as
++§ 18 draws the time. A pull request's line marks its open threads with an
++asterisk, `3*`, in place of § 16's `3⋮`, and the ` · ` between its notes
++keeps the default color:
++
++```text
++─ 3 pull requests · 2 questions · 1 notice ─────────────────────────── 12s [-]
++```
++
++### 19.1 What changes
++
++- **The divider counts the band's pull requests.** The count is the band's
++  own rows, `shown.rows`: every pull request it lists, the session's own
++  and other people's. A pull request both loops track is one row, so it
++  counts once. A merged or closed pull request is neither listed nor
++  counted, and one you dismiss leaves the count when its line leaves the
++  band. The count reads `1 pull request` or `3 pull requests` and comes
++  before the open questions and notices. A count of zero is left out, as
++  theirs is.
++- **The counts are `subtle`.** The counts and the ` · ` between them are
++  one `Text` in `subtle`, nested in the divider's `Text` as the time is.
++  The leading `─ ` and the rule keep the default color. The rule's length
++  leaves room for the counts, so the row still ends at `bodyColumns`.
++- **The rest of the divider is unchanged.** With nothing to count, it is
++  the rule and the time, and while an item's drawer has the band to itself,
++  it stays hidden.
++- **Open threads read `3*`.** A pull request's count of unresolved review
++  threads is followed by `*` rather than `⋮`, still in `warning` and still
++  the last note before the age. This supersedes § 16's `5⋮`.
++- **A note's ` · ` is plain.** The ` · ` before a note was drawn inside the
++  note's own `Text`, so it took the note's color: red before
++  `changes requested` and yellow before the thread count. Each note is now
++  its own `Text` in its color, and the ` · ` between two notes sits outside
++  them in the default color, as the `·` between the drawer's facts does.
++  `conflict` and `changes requested` keep `error`, `approved` keeps
++  `success`, and the thread count keeps `warning`.
++
++### 19.2 Why this design
++
++- **The rows the band draws, not the tracked files.** Counting the band's
++  rows keeps the count equal to the lines you see. Counting the tracked
++  files would count twice a pull request both loops track, which the band
++  lists once, and count one GitHub reports merged, which it does not list.
++  The rows are in hand when the band draws, so the count costs no query
++  and no read.
++- **Spelled out.** The owner chose `pull request` over `PR`, which reads
++  as a phrase beside `questions` and `notices`.
++- **Quiet labels on a rule.** In `subtle`, the counts read as labels set
++  in the rule, as the time at its end does, and the rule in the default
++  color stays the band's top edge.
++- **An asterisk for open threads.** The owner chose `*` over `⋮`.
++- **Color only the notes.** A separator in a note's color reads as part of
++  that note. The drawer's facts line already keeps every `·` plain, so the
++  pull request's line now follows the same rule, and color marks only what
++  it describes.
++
++### 19.3 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| With pull requests only, the divider reads `─ 2 pull requests ─…─ 0s`, leaving out a merged pull request, the counts and the time in `subtle` and the `─ ` and the rule in the default color, `bodyColumns` wide | `draws one line per open pull request of the session’s own loops` in `hooks/band.test.tsx` |
++| The session's own pull requests and other people's count together | `lists your pull requests first, then everyone else’s by author, naming theirs before the title` |
++| A pull request both loops track counts once, in the singular | `lists a pull request both loops track once, as watched and reviewed, and counts it once` |
++| A dismissed pull request leaves the count | `dismiss drops a pull request from each loop that tracks it, and its line goes` |
++| With pull requests and items, the pull request count comes first, as `─ 1 pull request · 1 question ─…─ Ns` | `asks through the tool, and the band lists the question below the pull requests`, and the inbox tests that find the divider by its counts |
++| With nothing to count, the divider is the rule and a `subtle` time, `bodyColumns` wide | `shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request` |
++| `conflict` and `changes requested` take `error`, `approved` takes `success`, and the thread count reads `N*` in `warning`; every ` · ` between notes takes the default color, and no line draws `⋮` | `` a pull request’s notes take their own colors, and each ` · ` between them the default color `` |
++| The thread count comes last, after `conflict`, as `conflict · 2*` | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `draws one line per open pull request of the session’s own loops` |
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 594bedd..45586d0 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -62,6 +62,15 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+     p5: pr(5, 'Change by bob', { author: { login: 'bob' } }),
+     p6: pr(6, 'Second change by grace', { author: { login: 'grace' } }),
+     p9: pr(9, 'Another change of my own', { author: { login: VIEWER } }),
++    p10: pr(10, 'Change held back', {
++      mergeable: 'CONFLICTING',
++      reviewDecision: 'CHANGES_REQUESTED',
++      reviewThreads: { nodes: [{ isResolved: false }] },
++    }),
++    p11: pr(11, 'Approved change', {
++      reviewDecision: 'APPROVED',
++      reviewThreads: { nodes: [{ isResolved: false }, { isResolved: false }, { isResolved: false }] },
++    }),
+   },
+   'x/y': {
+     p7: pr(7, 'Conflicting change', {
+@@ -149,6 +158,12 @@ function world(
+   return { commands, filled }
+ }
+ 
++/** A Text's pieces as drawn: its strings, and each nested Text's text and color. */
++function partsOf(text: { children: unknown[] } | undefined) {
++  const parts = (text?.children ?? []) as (string | { props: { color?: string }; children: string[] })[]
++  return parts.map(part => (typeof part === 'string' ? part : [part.children.join(''), part.props.color]))
++}
++
+ test('draws one line per open pull request of the session’s own loops', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -166,18 +181,20 @@ test('draws one line per open pull request of the session’s own loops', async
+   const ui = await $.ui.mount(BAND)
+   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
+-  // Open threads show as their count before a `⋮`, in yellow.
+-  expect((await ui.findAll({ type: 'Text', text: '1⋮' })).map(found => found.props.color)).toContain('warning')
++  // Open threads show as their count before a `*`, in yellow.
++  expect((await ui.findAll({ type: 'Text', text: '1*' })).map(found => found.props.color)).toContain('warning')
+   expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+-  // The divider ends with how long ago the band reloaded as the rows end with their ages: in the short form,
+-  // `0s` for a reload just now as for an item posted just now, in `subtle`, and ending at bodyColumns.
+-  const divider = await ui.find({ type: 'Text', text: /^─+ 0s$/ })
++  // The divider counts the two open pull requests the band lists, not the merged one, in `subtle`. It ends with
++  // how long ago the band reloaded as the rows end with their ages: in the short form, `0s` for a reload just now
++  // as for an item posted just now, in `subtle`, and ending at bodyColumns.
++  const divider = await ui.find({ type: 'Text', text: /^─ 2 pull requests ─+ 0s$/ })
+   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
+   expect(await ui.find({ type: 'Text', text: /updated|ago|just now/ })).toBeUndefined()
+-  const parts = (divider?.children ?? []) as (string | { props: { color?: string }; children: string[] })[]
+-  expect(parts.map(part => (typeof part === 'string' ? part : [part.children.join(''), part.props.color]))).toEqual([
+-    expect.stringMatching(/^─+ $/),
++  expect(partsOf(divider)).toEqual([
++    '─ ',
++    ['2 pull requests', 'subtle'],
++    expect.stringMatching(/^ ─+ $/),
+     ['0s', 'subtle'],
+   ])
+   // The rule is drawn at full strength, not muted like the rows' details.
+@@ -185,8 +202,9 @@ test('draws one line per open pull request of the session’s own loops', async
+   expect(divider?.props.dimColor).toBeUndefined()
+   // A blank line sets the divider apart from the rows under it.
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+-  expect(texts.slice(texts.indexOf(divider?.text ?? ''), texts.indexOf(divider?.text ?? '') + 3)).toEqual([
++  expect(texts.slice(texts.indexOf(divider?.text ?? ''), texts.indexOf(divider?.text ?? '') + 4)).toEqual([
+     divider?.text,
++    '2 pull requests',
+     '0s',
+     ' ',
+   ])
+@@ -213,6 +231,31 @@ test('draws no divider on a surface that does not lay text out in columns', asyn
+   await ui.unmount()
+ })
+ 
++test('a pull request’s notes take their own colors, and each ` · ` between them the default color', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#10\no/r#11\n' })
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  expect(partsOf(await ui.find({ type: 'Text', text: 'conflict · changes requested · 1*' }))).toEqual([
++    ['conflict', 'error'],
++    ' · ',
++    ['changes requested', 'error'],
++    ' · ',
++    ['1*', 'warning'],
++  ])
++  expect(partsOf(await ui.find({ type: 'Text', text: 'approved · 3*' }))).toEqual([
++    ['approved', 'success'],
++    ' · ',
++    ['3*', 'warning'],
++  ])
++  expect(await ui.find({ type: 'Text', text: /⋮/ })).toBeUndefined()
++  await ui.unmount()
++})
++
+ test('a press on a pull request’s number opens its drawer, and discuss puts it in the prompt', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -228,9 +271,12 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
+   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
+   expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
+-  // The threads' count comes after the other notes, beside the age.
+-  const notes = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+-  expect(notes.indexOf(' · 2⋮')).toBeGreaterThan(notes.indexOf('conflict'))
++  // The threads' count comes after the other notes, beside the age, and the ` · ` between them keeps the default color.
++  expect(partsOf(await ui.find({ type: 'Text', text: 'conflict · 2*' }))).toEqual([
++    ['conflict', 'error'],
++    ' · ',
++    ['2*', 'warning'],
++  ])
+ 
+   await ui.press({ key: 'pr:x/y#7' })
+   // The drawer's facts name no author, whoever wrote the pull request.
+@@ -327,6 +373,8 @@ test('lists your pull requests first, then everyone else’s by author, naming t
+   // Yours keep their order, then bob's, then grace's two in theirs, with nothing between the groups.
+   const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
+   expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
++  // The divider counts everyone's pull requests the band lists, the session's own and others'.
++  expect(await ui.find({ type: 'Text', text: /^─ 5 pull requests ─+ \d+s$/ })).toBeDefined()
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+   expect(texts.filter(text => text === ' ')).toHaveLength(1)
+ 
+@@ -368,6 +416,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
+   await clock.settle()
+ 
+   const ui = await $.ui.mount(BAND)
++  expect(await ui.find({ type: 'Text', text: /^─ 2 pull requests ─+ \d+s$/ })).toBeDefined()
+   await ui.press({ key: 'pr:x/y#7' })
+   // The drawer's actions are lines of their own, as an item's are.
+   expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
+@@ -386,6 +435,8 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
++  // The divider stops counting the dismissed pull request.
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request ─+ \d+s$/ })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -486,7 +537,7 @@ test('opening one drawer closes the one that was open', async ($, on) => {
+   await ui.unmount()
+ })
+ 
+-test('lists a pull request both loops track once, as watched and reviewed', async ($, on) => {
++test('lists a pull request both loops track once, as watched and reviewed, and counts it once', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'o/r#1\n' })
+@@ -497,6 +548,8 @@ test('lists a pull request both loops track once, as watched and reviewed', asyn
+   await clock.settle()
+ 
+   const ui = await $.ui.mount(BAND)
++  // The divider counts its one line once, in the singular.
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request ─+ \d+s$/ })).toBeDefined()
+   await ui.press({ key: 'pr:o/r#1' })
+   expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
+   // Each loop takes its own color, and the `and` between them the default color.
+@@ -633,7 +686,10 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
+   // `dimColor` does not dim in every terminal, so the tagline takes the theme's subtle color.
+   expect((await ui.find({ type: 'Text', text: ` ${TAGLINE}` }))?.props.color).toBe('subtle')
+   expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
+-  expect(await ui.find({ type: 'Text', text: /^─+ \d+s$/ })).toBeDefined()
++  // With nothing to count, the divider is the rule and the time, the full width of the band.
++  const divider = await ui.find({ type: 'Text', text: /^─+ \d+s$/ })
++  expect(divider?.text.length).toBe(BAND.props.bodyColumns)
++  expect(partsOf(divider)).toEqual([expect.stringMatching(/^─+ $/), [expect.stringMatching(/^\d+s$/), 'subtle']])
+   await ui.unmount()
+ 
+   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+@@ -1025,7 +1081,7 @@ test('asks through the tool, and the band lists the question below the pull requ
+   const ui = await $.ui.mount(BAND)
+   // The divider starts with one `─` and the count, and its rule runs from the count to the reload's age, so the
+   // row still ends at bodyColumns.
+-  const divider = await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })
++  const divider = await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })
+   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+   expect(texts).toContain('Conflicting change')
+@@ -1187,7 +1243,7 @@ test('an idle session with no questions starts no project process', async ($, on
+ 
+   expect(session.project()).toEqual([])
+   const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Text', text: /^─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request ─+ \d+s$/ })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -1266,7 +1322,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
+ 
+   await ui.press({ key: 'close:1' })
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
+   await clock.advance(30_000 + TICK)
+   await clock.settle()
+   expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
+@@ -1410,7 +1466,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
+   expect(session.store.store.get('1')).toEqual(asked)
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
+ 
+   // The question waits for its agent to settle it, and the band sends nothing.
+   await clock.advance(TICK)
+@@ -1690,7 +1746,7 @@ test('a subagent tells through the tool, and the band lists the notice in gray',
+   await clock.advance(1)
+   await clock.settle()
+   const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 notice ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 notice ─+ \d+s$/ })).toBeDefined()
+   expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBe('inactive')
+   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
+   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
+@@ -1761,7 +1817,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 question · 1 notice ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question · 1 notice ─+ \d+s$/ })).toBeDefined()
+   await ui.press({ key: 'item:2' })
+   // An open notice has the band to itself, the divider included, as an open question does.
+   expect(await ui.find({ type: 'Text', text: /─+ \d+s$/ })).toBeUndefined()
+@@ -1805,7 +1861,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+   expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
+ 
+   await ui.press({ key: 'close:2' })
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
+   await clock.advance(30_000 - 2 * TICK)
+   await clock.settle()
+   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+@@ -1833,7 +1889,7 @@ test('the withdraw tool takes an item out of the band at once, and nothing goes
+   // Before the band reads the store again, the item has gone and its drawer with it.
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 notice ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 notice ─+ \d+s$/ })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+ 
+   await clock.advance(TICK)
+@@ -1908,7 +1964,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
+   expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
+   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
+ 
+   // The answer you chose from the old text answers nothing.
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
+@@ -2107,7 +2163,7 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
+   expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
+   // Each stays listed for 30 seconds, out of the divider's counts, and then leaves the band.
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: /^─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request ─+ \d+s$/ })).toBeDefined()
+   await clock.advance(30_000 + TICK)
+   await clock.settle()
+   expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
+@@ -2128,7 +2184,7 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
+   expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
+   expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+-  expect(await woken.find({ type: 'Text', text: /^─ 1 question · 1 notice ─+ \d+s$/ })).toBeDefined()
++  expect(await woken.find({ type: 'Text', text: /^─ 1 pull request · 1 question · 1 notice ─+ \d+s$/ })).toBeDefined()
+   await woken.unmount()
+ })
+ 
+@@ -2253,7 +2309,7 @@ test('an item whose snooze ends while the band is hidden is drawn the moment the
+   await clock.settle()
+   const woken = await $.ui.mount(BAND)
+   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+-  expect(await woken.find({ type: 'Text', text: /^─ 1 notice ─+ \d+s$/ })).toBeDefined()
++  expect(await woken.find({ type: 'Text', text: /^─ 1 pull request · 1 notice ─+ \d+s$/ })).toBeDefined()
+ 
+   await clock.advance(10 * TICK)
+   await clock.settle()
+@@ -2353,7 +2409,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
+     undefined,
+     false,
+   ])
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
+ 
+   // Its line opens the drawer again, where unsnooze takes snooze's place.
+   await ui.press({ key: 'item:2' })
+@@ -2406,7 +2462,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
+   const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
+   expect([line?.props.color, line?.props.strikethrough]).toEqual(['permission', false])
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
+   await clock.advance(TICK)
+   await clock.settle()
+   expect(session.submitted.map(one => one.text)).toEqual(['RESTORED 1 Decline the finding?'])
+@@ -2461,7 +2517,7 @@ test('a restore brings a hidden band back, from the tool or from a terminal, as
+     expect(await isHidden()).toBe(false)
+   }
+   const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Text', text: /^─ 2 questions · 1 notice ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 2 questions · 1 notice ─+ \d+s$/ })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 2136cb0..a778c73 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -709,7 +709,7 @@ function notesOf(pr: PullRequest): Note[] {
+   if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
+   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
+   // The open threads' count comes last, beside the age.
+-  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}⋮`, color: 'warning' })
++  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, color: 'warning' })
+   return notes
+ }
+ 
+@@ -732,6 +732,10 @@ function byAuthor(rows: readonly Row[], viewer: string | null): Row[] {
+ 
+ const secondsSince = (time: number, then: number) => Math.max(0, Math.round((time - then) / 1000))
+ 
++/** `1 question` or `3 questions`, or nothing for none. */
++const countOf = (count: number, noun: string) =>
++  count === 0 ? undefined : `${count} ${noun}${count === 1 ? '' : 's'}`
++
+ /** Labels a pull request `#12` when the band shows one repository, else by its repository's name. */
+ function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+   const repos = [...new Set(prs.map(pr => pr.repo))]
+@@ -971,12 +975,16 @@ export const register: Register = on => {
+     const opened = await read($, drawer)
+     const asking = await read($, asked)
+     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
+-    const counts = (['question', 'notice'] as const).map(kind => {
+-      const count = shownItems.filter(
+-        item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time),
+-      ).length
+-      return count === 0 ? undefined : `${count} ${kind}${count === 1 ? '' : 's'}`
+-    })
++    const counts = [
++      countOf(shown.rows.length, 'pull request'),
++      ...(['question', 'notice'] as const).map(kind =>
++        countOf(
++          shownItems.filter(item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time))
++            .length,
++          kind,
++        ),
++      ),
++    ]
+     const label = labeler(shown.rows.map(row => row.pr))
+     const reference = referencer(shown.rows.map(row => row.pr))
+     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
+@@ -1021,18 +1029,22 @@ export const register: Register = on => {
+     // row, so a divider that fills the body ends at the mark, and a blank line
+     // sets it apart from the rows under it. The counts follow one `─` at its
+     // start, and its rule runs from them to the time, as an open item's rule
+-    // runs from its subject to its age. Only a terminal lays text out in
+-    // those columns; any other surface would wrap the rule, so it draws none.
++    // runs from its subject to its age. The counts and the time draw quieter
++    // than the rule, so the line still reads as a rule with labels on it.
++    // Only a terminal lays text out in those columns; any other surface would
++    // wrap the rule, so it draws none.
+     const lead = tally === '' ? '' : `─ ${tally} `
+     const tail = reloaded === '' ? '' : ` ${reloaded}`
+-    const rule = `${lead}${'─'.repeat(Math.max(0, e.props.bodyColumns - lead.length - tail.length))}`
++    const rule = '─'.repeat(Math.max(0, e.props.bodyColumns - lead.length - tail.length))
++    const ruled = [
++      ...(tally === '' ? [] : ['─ ', <Text key="counts" color="subtle">{tally}</Text>]),
++      `${tally === '' ? '' : ' '}${rule}${reloaded === '' ? '' : ' '}`,
++      ...(reloaded === '' ? [] : [<Text key="age" color="subtle">{reloaded}</Text>]),
++    ]
+     const divider =
+       e.surface === 'terminal'
+         ? [
+-            <Text key="divider">
+-              {reloaded === '' ? rule : `${rule} `}
+-              {reloaded !== '' && <Text color="subtle">{reloaded}</Text>}
+-            </Text>,
++            <Text key="divider">{ruled}</Text>,
+             <Text key="under-divider"> </Text>,
+           ]
+         : []
+@@ -1361,12 +1373,12 @@ export const register: Register = on => {
+             {notes.length > 0 && (
+               <Box flexShrink={0}>
+                 <Text>
+-                  {notes.map((note, at) => (
+-                    <Text color={note.color}>
+-                      {at > 0 ? ' · ' : ''}
++                  {notes.flatMap((note, at) => [
++                    ...(at > 0 ? [' · '] : []),
++                    <Text key={note.text} color={note.color}>
+                       {note.text}
+-                    </Text>
+-                  ))}
++                    </Text>,
++                  ])}
+                 </Text>
+               </Box>
+             )}

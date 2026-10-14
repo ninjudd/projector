@@ -1,0 +1,117 @@
+{
+ "version": 1,
+ "name": "Band divider count and thread mark",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 334,
+  "title": "Count the band's pull requests in its divider, and mark open threads with an asterisk",
+  "head": "c6a9d298bb1220fe7d595f60b7576b6d308fc807",
+  "headRef": "divider-pr-count",
+  "base": "7eefa44306955cd3116bfa21ffe814322edfc4e0",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's band is the panel Claude Code draws above the prompt. It lists the pull requests the session's review and watch loops track, one line each, and below them the agents' open questions and notices. In a terminal, a divider tops the band: a horizontal rule that ends with how long ago the band reloaded, and that starts with counts such as <code>2 questions · 1 notice</code>. Each pull request's line ends with short colored notes, such as <code>conflict</code> or a count of open review threads.",
+   "Before this change the divider counted the questions and notices but not the pull requests, which are usually most of the band. Now it starts with the pull request count, so a band reads <code>─ 3 pull requests · 2 questions · 1 notice ─…─ 12s</code>. The count is the number of pull request lines the band draws, so it costs no extra query. The counts are drawn in the theme's quiet <code>subtle</code> color, like the reload time, while the rule stays in the default color.",
+   "The pull request lines change too. The open-thread count now reads <code>3*</code> instead of <code>3⋮</code>, still in yellow. The <code> · </code> separators between notes used to take the color of the note after them, so a separator before <code>changes requested</code> was red. They now sit outside the notes in the default color, as on the drawer's facts line.",
+   "The review checked the code, the tests, and the documentation, and found the head clean. Its one finding, about two comments that restated the code beneath them, was fixed in the last commit, which keeps only the reason the counts draw quieter than the rule."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the panel above the Claude Code prompt that lists tracked pull requests and inbox items.</li><li><b>Divider</b>: the band's top line in a terminal, a rule with counts at its start and the reload age at its end.</li><li><b><code>shown.rows</code></b>: the pull request rows the band draws, one per pull request, only while it is open on GitHub.</li><li><b><code>bodyColumns</code></b>: how many columns the band's body may fill; the divider ends there, just before Claude Code's <code>[-]</code> collapse mark.</li><li><b><code>subtle</code></b>: the theme's muted text color.</li><li><b>Notes</b>: the colored words after a pull request's title: <code>conflict</code> and <code>changes requested</code> in red, <code>approved</code> in green, and the open-thread count, <code>N*</code>, in yellow.</li></ul>"
+   },
+   {
+    "id": "checks",
+    "title": "What the review ran",
+    "html": "<ul class=\"tight\"><li><code>claude plugin test .</code>: 123 pass, 0 fail.</li><li><code>hooks/typecheck.sh</code>: no errors.</li><li><code>claude plugin validate .</code>: validation passed.</li><li><code>project check</code>: plans are valid.</li><li><code>git diff --check</code>: no output.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "divider",
+   "title": "The divider counts pull requests, and notes keep plain separators",
+   "kicker": "How the band builds the divider's counts, and how a line draws its notes",
+   "intro": [
+    "The band's render handler now puts a pull request count ahead of the question and notice counts. A small helper, <code>countOf</code>, turns a number and a noun into <code>1 pull request</code> or <code>3 pull requests</code>, and returns nothing for zero, so an empty count drops out of the <code> · </code>-joined label as before.",
+    "The divider used to be one string with the age nested in <code>subtle</code>. It is now a list of pieces, <code>ruled</code>: the leading <code>─ </code>, the counts in a nested <code>subtle</code> <code>Text</code>, the rule, and the age in <code>subtle</code>. The rule's length still subtracts the counts and the age from <code>bodyColumns</code>, so the line ends where it did.",
+    "Separately, <code>notesOf</code> now writes the thread count as <code>N*</code>, and the row draws each note as its own keyed <code>Text</code> in the note's color, with each <code> · </code> as a plain string between them. Before, each separator sat inside the next note's colored <code>Text</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds <code>countOf</code>, counts <code>shown.rows</code> first, splits the divider into pieces so the counts can take <code>subtle</code>, marks open threads with <code>*</code>, and draws the notes' separators outside their colors.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The count equals the lines drawn: the render draws every row with <code>byAuthor(shown.rows, …).map(drawRow)</code>, and <code>refresh</code> builds one row per tracked key and keeps only <code>OPEN</code> pull requests. Traced in the code; the band tests pass.",
+       "line": 979
+      },
+      {
+       "kind": "context",
+       "text": "When <code>bodyColumns</code> is narrower than the counts plus the age, the rule shrinks to nothing and the divider runs past <code>bodyColumns</code>. That already happened at the base with the item counts; the pull request count makes the label longer.",
+       "line": 1038
+      },
+      {
+       "kind": "verify",
+       "text": "Each note's <code>key</code> is its text, and the texts are unique within a line: <code>changes requested</code> and <code>approved</code> both come from <code>reviewDecision</code>, so they never appear together. Checked in <code>notesOf</code>; the new notes test passes.",
+       "line": 1376
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests pin the count and its colors",
+   "kicker": "Band tests that find the divider by its new text",
+   "intro": [
+    "Every band test that found the divider by its counts now expects the pull request count first, such as <code>─ 1 pull request · 1 question</code>. A new helper, <code>partsOf</code>, lists a <code>Text</code>'s pieces with each nested piece's color, so tests check that the counts and the age are <code>subtle</code> and the rule is not.",
+    "A new test, <code>a pull request’s notes take their own colors, and each ` · ` between them the default color</code>, draws <code>conflict · changes requested · 1*</code> and <code>approved · 3*</code>, checks each piece's color, and checks that no line draws <code>⋮</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Updates divider and thread-mark expectations, and adds checks for merged, shared, dismissed, empty, and note-color cases.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Covers a merged pull request left out, a pull request both loops track counted once, a dismiss lowering the count, and an empty band drawing only the rule and age at full width."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The band guide and the inbox plan describe both changes",
+   "intro": [
+    "<code>docs/plugins.md</code> now says the divider starts with the pull request count, lists the notes and their colors with plain separators, and shows <code>5*</code> in its example. The completed inbox plan gains § 19, which records both changes, why the count uses the drawn rows rather than the loops' tracked files, and which tests cover it. Its § 16 evidence table notes that <code>2⋮</code> reads <code>2*</code> since § 19."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Describes the pull request count, the notes' colors and plain separators, and the <code>*</code> mark, and updates the examples.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Both edited example dividers keep their earlier widths (84 and 78 characters), so they still line up with the rows beneath them. Measured at the head."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Appends § 19 to the completed inbox plan and points § 16's evidence at it."
+    }
+   ]
+  }
+ ]
+}
