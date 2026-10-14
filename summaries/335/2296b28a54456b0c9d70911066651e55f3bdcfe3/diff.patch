@@ -1,0 +1,161 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 184bc15..b902ed8 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1522,9 +1522,11 @@ It leaves the review's state, locks, and start comment alone. To end a closed
+ pull request's review, run
+ `project review finish <pr> --repo <owner>/<repo> --force`. `prune` removes each
+ worktree with `git worktree remove` in the checkout that made it, and deletes
+-the folder outright when that fails. It unlinks a symbolic link without
+-following it, then runs `git worktree prune` in each checkout and removes the
+-folders it emptied. `--repo` limits the sweep to one repository. With `--json`
++the folder outright when that fails. It removes only folders: a file or a
++symbolic link where it looks for worktrees, such as a summary a reviewer saved
++in a pull request's folder, is listed as kept. It then runs
++`git worktree prune` in each checkout and removes the folders it emptied.
++`--repo` limits the sweep to one repository. With `--json`
+ it prints the `repo`, whether it ran with `apply`, and the `removed`, `kept`,
+ and `failed` entries, each with its `path` and `reason`. It exits 1 when a
+ worktree could not be removed.
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 12e99d0..92bc520 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -53,6 +53,7 @@
+ # review-pr/SKILL.md § Label every review and finding writes it.
+ MARK = "📽️"
+ SHORT = 12
++SHORT_SHA = re.compile(r"^[0-9a-f]{12}$")
+ STALE_AFTER = timedelta(days=1)
+ LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+ # A trailing bracketed variant of a model ID, such as the context window in `claude-opus-5-5[1m]`.
+@@ -1093,14 +1094,21 @@ def prune(root: Path, repo: Optional[str], apply: bool) -> dict:
+     candidates: list[tuple[Path, str]] = []
+     for folder in sorted(base.glob("*/*/*")) if base.is_dir() else []:
+         owner, name, number = folder.parts[-3:]
+-        if not wanted(f"{owner}/{name}") or not folder.is_dir() or folder.is_symlink():
++        if not wanted(f"{owner}/{name}") or not is_folder(folder):
+             continue
+         for child in sorted(folder.iterdir()):
+-            if child.is_symlink() or not child.is_dir() or (child / ".git").exists():
++            if not is_folder(child):
++                result["kept"].append(not_a_worktree(child))
++                continue
++            reviewed_model = (owner, name, number, child.name) in reviewed
++            if (child / ".git").exists() or (SHORT_SHA.match(child.name) and not reviewed_model):
+                 candidates.append((child, "made before each model kept its own worktree folder"))
+                 continue
+             for path in sorted(child.iterdir()):
+-                if (owner, name, number, child.name) not in reviewed:
++                if not is_folder(path):
++                    result["kept"].append(not_a_worktree(path))
++                    continue
++                if not reviewed_model:
+                     why = "no review of the pull request by this model is set up here"
+                 elif path.resolve() in current:
+                     why = (f"{owner}/{name}#{number} is closed; `project review finish {number} --repo "
+@@ -1133,6 +1141,18 @@ def prune(root: Path, repo: Optional[str], apply: bool) -> dict:
+     return result
+ 
+ 
++def is_folder(path: Path) -> bool:
++    """Whether `path` is a directory itself, not a link to one: the only entry `prune` removes."""
++    return path.is_dir() and not path.is_symlink()
++
++
++def not_a_worktree(path: Path) -> dict:
++    """The kept entry for a file or link that sits where `prune` looks for worktrees, such as a summary a
++    reviewer saved there; it is no scratch worktree, so `prune` leaves it."""
++    kind = "a link" if path.is_symlink() else "a file"
++    return {"path": str(path), "reason": f"{kind}, not a worktree; prune removes only worktree folders"}
++
++
+ def needed_now(root: Path, base: Path, path: Path, current: dict[Path, tuple[str, int]]) -> Optional[str]:
+     """Why a review set up since `prune` read the locks and states needs the worktree at `path` after all,
+     checked again just before `prune` removes it: its head's lock is held and not yet stale, or the review's
+@@ -1174,14 +1194,10 @@ def scratch_repository(path: Path) -> Optional[Path]:
+ 
+ 
+ def remove_scratch(path: Path, base: Path) -> list[Path]:
+-    """Remove one entry of the worktree folder: a worktree with `git worktree remove` in the checkout that
+-    made it, or outright when that fails; a link or a file is unlinked, never followed. Returns the Git
+-    directories to prune."""
+-    if not path.resolve().is_relative_to(base.resolve()) and not path.is_symlink():
+-        raise ReviewError(f"{path} is outside {base}, so prune leaves it alone")
+-    if path.is_symlink() or not path.is_dir():
+-        path.unlink()
+-        return []
++    """Remove one worktree folder with `git worktree remove` in the checkout that made it, or outright when
++    that fails. Returns the Git directories to prune."""
++    if not is_folder(path) or not path.resolve().is_relative_to(base.resolve()):
++        raise ReviewError(f"{path} is no folder inside {base}, so prune leaves it alone")
+     repository = scratch_repository(path)
+     if repository is not None:
+         with suppress(ReviewError):
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 07abd97..e6ae5f1 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -1830,14 +1830,10 @@ def set_up_meanwhile(slug: str, number: int) -> dict:
+         self.assertIn(f"kept {published}: the current head of a review set up while prune ran\n", out)
+         self.assertIn(f"kept {locked}: its head's lock is held\n", out)
+ 
+-    def test_repo_limits_the_sweep_and_a_link_is_unlinked_without_following_it(self) -> None:
++    def test_repo_limits_the_sweep(self) -> None:
+         elsewhere = self.state / "worktrees" / "other" / "app" / "5" / "old-model" / ("e" * 12)
+         elsewhere.mkdir(parents=True)
+-        target = Path(tempfile.mkdtemp())
+-        (target / "keep.txt").write_text("keep\n")
+-        link = self.pull_folder() / "linked"
+-        link.parent.mkdir(parents=True, exist_ok=True)
+-        link.symlink_to(target, target_is_directory=True)
++        old_layout = self.worktree_at(self.pull_folder() / ("b" * 12))
+ 
+         code, out, err = self.prune("--repo", REPO)
+ 
+@@ -1848,8 +1844,7 @@ def test_repo_limits_the_sweep_and_a_link_is_unlinked_without_following_it(self)
+         code, out, err = self.prune("--repo", REPO, "--apply")
+ 
+         self.assertEqual(0, code, err)
+-        self.assertFalse(link.is_symlink())
+-        self.assertEqual("keep\n", (target / "keep.txt").read_text())
++        self.assertFalse(old_layout.exists())
+         self.assertTrue(elsewhere.is_dir())
+ 
+         code, out, err = self.prune("--apply")
+@@ -1858,6 +1853,35 @@ def test_repo_limits_the_sweep_and_a_link_is_unlinked_without_following_it(self)
+         self.assertFalse(elsewhere.exists(), "a folder that is no worktree goes too")
+         self.assertFalse((self.state / "worktrees" / "other").exists())
+ 
++    def test_a_file_or_a_link_where_worktrees_live_is_kept_and_named_as_no_worktree(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        key = review.model_key(self.model)
++        summary = self.pull_folder() / "summary-1.json"
++        summary.write_text('{"version": 1}\n')
++        note = self.pull_folder() / key / "notes.md"
++        note.write_text("notes\n")
++        target = Path(tempfile.mkdtemp())
++        (target / "keep.txt").write_text("keep\n")
++        link = self.pull_folder() / "linked"
++        link.symlink_to(target, target_is_directory=True)
++        broken = self.pull_folder() / ("f" * 12)
++        (broken / "src").mkdir(parents=True)
++
++        code, out, err = self.prune("--apply")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual('{"version": 1}\n', summary.read_text())
++        self.assertEqual("notes\n", note.read_text())
++        self.assertTrue(link.is_symlink())
++        self.assertEqual("keep\n", (target / "keep.txt").read_text())
++        self.assertIn(f"kept {summary}: a file, not a worktree; prune removes only worktree folders\n", out)
++        self.assertIn(f"kept {note}: a file, not a worktree; prune removes only worktree folders\n", out)
++        self.assertIn(f"kept {link}: a link, not a worktree; prune removes only worktree folders\n", out)
++        self.assertIn(f"removed {broken}: made before each model kept its own worktree folder\n", out)
++        self.assertFalse(broken.exists(), "a short-SHA folder that lost its .git file is an old worktree")
++        self.assertIn("removed 1 scratch worktree\n", out)
++
+     def test_with_no_state_directory_there_is_nothing_to_prune(self) -> None:
+         code, out, err = self.prune("--apply")
+ 

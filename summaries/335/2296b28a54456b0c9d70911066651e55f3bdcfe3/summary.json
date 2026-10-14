@@ -1,0 +1,100 @@
+{
+ "version": 1,
+ "name": "Review prune file safety",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 335,
+  "title": "Keep files that sit among review worktrees out of review prune",
+  "head": "2296b28a54456b0c9d70911066651e55f3bdcfe3",
+  "headRef": "review-prune-keep-files",
+  "base": "7eefa44306955cd3116bfa21ffe814322edfc4e0",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Each Projector review checks out the pull request's head in a <b>scratch worktree</b>, a Git worktree under the state directory, at <code>reviews/worktrees/&lt;owner&gt;/&lt;repo&gt;/&lt;pr&gt;/&lt;model-key&gt;/&lt;short-sha&gt;</code>. The <b>model key</b> is the folder name for the model that runs the review, such as <code>claude-opus-5-5</code>. Older releases put worktrees one level higher, at <code>&lt;pr&gt;/&lt;short-sha&gt;</code>, which this summary calls the <b>old layout</b>. <code>project review prune</code> sweeps the worktrees that no review on the machine still needs.",
+   "Before this change, <code>prune</code> treated every entry in a pull request's folder that was not a folder holding model worktrees as an old-layout worktree, and its removal helper unlinked files and links. So a summary JSON that a reviewer had saved in a pull request's folder was listed as an old worktree, and <code>prune --apply</code> deleted it.",
+   "This change makes <code>prune</code> remove only folders. Each file or symbolic link in a pull request's folder or in a model's folder is listed as kept, with the reason that it is not a worktree. The removal helper refuses anything but a real folder inside the worktrees directory. One case now goes the other way: a folder in a pull request's folder whose name is 12 hex characters and which has lost its <code>.git</code> file is removed whole as an old-layout worktree, unless a review set up on this machine uses that name as its model key."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>Full Projector review of <code>65e5689</code> by <code>claude-opus-5-5</code>: clean, with no finding threads and one suggestion.</li><li>Incremental review of <code>2296b28</code>: clean. The push takes that suggestion, testing the pull request folder with <code>is_folder</code>, which skips the same entries as before.</li><li>The new test fails against the merge base's <code>review.py</code> and passes at this head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "prune",
+   "title": "Prune removes only folders",
+   "kicker": "What prune treats as a worktree, and what it now leaves alone",
+   "intro": [
+    "<code>prune</code> walks each pull request's folder under the worktrees directory. For each entry there, it decides whether the entry is an old-layout worktree to remove whole, or a model folder whose worktrees it judges one by one. A worktree's <code>.git</code> file is what marks it as a worktree, because Git writes one into each worktree it creates.",
+    "The change adds two helpers. <code>is_folder</code> says whether a path is a real directory and not a link to one. <code>not_a_worktree</code> builds the kept entry that <code>prune</code> lists for a file or a link. <code>prune</code> checks <code>is_folder</code> at both levels, in the pull request's folder and in each model's folder, before it considers an entry for removal.",
+    "<code>SHORT_SHA</code> matches a folder name of exactly 12 lowercase hex characters, the length that <code>SHORT</code> gives every worktree name. A matching folder without a <code>.git</code> file was read as a model folder, so <code>prune</code> removed its contents one entry at a time with reasons about a model. It is now removed whole as an old-layout worktree, unless a review's state under <code>prs/</code> uses that name as its model key."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "No file or link was deleted in a scratch run of this head's <code>prune</code> with <code>apply</code>. The scratch state held files at every level of the worktrees tree, a dangling link, a link to a file, links to outside folders at the pull request, model, and worktree levels, and a symlinked owner folder that <code>Path.glob</code> walks through. Every file and link stayed. <code>remove_scratch</code> refused the two folders reached through the symlinked owner, because each resolves outside the worktrees directory."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "The sweep in <code>prune</code>, the two new helpers, and the narrowed <code>remove_scratch</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A file or a link here, such as a saved summary JSON, is listed as kept and never reaches <code>remove_scratch</code>.",
+       "line": 1101
+      },
+      {
+       "kind": "verify",
+       "text": "A model key of 12 hex characters with a <code>state.json</code> under <code>prs/</code> is read as a model folder: a scratch run kept its notes file and removed only its earlier head's worktree. Without a state, the folder goes whole. The merge base already removed every entry in such a folder, files included, so the rule deletes nothing the merge base kept.",
+       "line": 1104
+      },
+      {
+       "kind": "context",
+       "text": "<code>setup</code> creates new worktrees at <code>&lt;pr&gt;/&lt;model-key&gt;/&lt;short-sha&gt;</code>, one level below where the 12-hex rule applies, so the rule cannot match a worktree that <code>setup</code> is creating. The lock and state checks for those worktrees are unchanged.",
+       "line": 1104
+      },
+      {
+       "kind": "context",
+       "text": "<code>prune</code> is the only caller of <code>remove_scratch</code>, so dropping its branch that unlinked files changes no other path.",
+       "line": 1199
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "A new test puts a summary JSON, a notes file, a link, and a 12-hex folder without <code>.git</code> among the worktrees, and checks what <code>prune --apply</code> keeps and removes. The old link test becomes a <code>--repo</code> test.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "With the merge base's <code>review.py</code>, this test fails with <code>FileNotFoundError</code> on the deleted <code>summary-1.json</code>. At this head it passes, and the full suite runs 1093 tests with 1 skipped.",
+       "line": 1856
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The prune reference in docs/cli.md",
+   "intro": [
+    "The <code>prune</code> paragraph in <code>docs/cli.md</code> now says that <code>prune</code> removes only folders, and that a file or a link where it looks for worktrees is listed as kept."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Replaces the sentence about unlinking a link with the folders-only rule."
+    }
+   ]
+  }
+ ]
+}
