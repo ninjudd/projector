@@ -1,0 +1,93 @@
+{
+ "version": 1,
+ "name": "Review fetch race fix",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 332,
+  "title": "Read a review's fetched head from its own ref, not FETCH_HEAD",
+  "head": "5a9221cd5994dca5cb21606227a041c2a4d47be2",
+  "headRef": "review-fetch-named-ref",
+  "base": "167107967f0ffc4ed0861ac76a9726ffee573a12",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "When a review starts, <code>project review setup</code> fetches the pull request's head into the operator's checkout, the repository clone the review runs beside. It then confirms that the commit it fetched is the head SHA that GitHub reports, and refuses with <i>the head moved</i> when the two differ. <code>project review move</code> does the same when a review follows the head to a new commit.",
+   "Both commands read the fetched commit from <code>FETCH_HEAD</code>. Git rewrites that one file on every fetch in the checkout, so a fetch by another review, or by a summary publish, could land between the fetch and the read. <code>setup</code> then compared the wrong commit and refused, naming a SHA that was not on the pull request. A review loop running several reviews in one checkout hit this three times in one day.",
+   "This pull request makes each fetch write its commit to a ref that only this call uses, <code>refs/projector/review-fetch/&lt;pid&gt;-&lt;random&gt;</code>. The call reads the commit from that ref and deletes the ref. The check that the head moved keeps its meaning: it still compares the tip of the head branch, or of <code>pull/&lt;n&gt;/head</code> for a fork, with GitHub's SHA."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Operator checkout</b>: the clone of the repository that a review runs beside. Several reviews can share it.</li><li><b><code>FETCH_HEAD</code></b>: a file in <code>.git/</code> where Git records what the latest fetch brought in. Every fetch rewrites it.</li><li><b>Temporary ref</b>: <code>refs/projector/review-fetch/&lt;pid&gt;-&lt;random&gt;</code>, written by one fetch and deleted right after the read.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>One Projector review of <code>5a9221c</code> found the head clean, with no finding threads. It ran a concurrency reproduction: at the base, 52 of 80 parallel fetches read the wrong commit or a half-written <code>FETCH_HEAD</code>, and at this head all 80 read the right commit.</p><p class=\"note\">One suggestion stands: the fetch still writes <code>FETCH_HEAD</code>, which nothing reads now.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "fetch",
+   "title": "Each fetch reads its own ref",
+   "kicker": "The fix in the review fetch, its test, and the docs that describe it",
+   "intro": [
+    "<code>fetch</code> in <code>review.py</code> is the one function that brings a commit into the operator checkout for a review. <code>fetch_head</code> calls it twice, once for the head and once for the base, and both <code>setup</code> and <code>move</code> call <code>fetch_head</code>.",
+    "The function now passes Git a refspec, <code>+&lt;ref&gt;:refs/projector/review-fetch/&lt;pid&gt;-&lt;random&gt;</code>, so the fetched commit lands in a ref named for this process and eight random hex digits. It reads that ref with <code>rev-parse --verify &lt;ref&gt;^{commit}</code>, and a <code>finally</code> block deletes the ref whether the read succeeds or fails. No other process writes that ref, so a concurrent fetch cannot change what the read returns.",
+    "The new test simulates the race by rewriting <code>FETCH_HEAD</code> to another commit right after every fetch, and checks that setup still succeeds and leaves no ref under <code>refs/projector/</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Concurrent fetches read the right commit. In a scratch clone, 8 worker processes ran <code>fetch</code> 80 times for two branches while another process kept fetching a third. At this head all 80 returned the right commit. With the base's <code>fetch</code>, 25 returned the other branch's commit and 27 failed on a half-written <code>FETCH_HEAD</code>. Neither run left a ref behind."
+    },
+    {
+     "kind": "verify",
+     "text": "The full test suite passes at this head: 1080 tests with 1 skipped, under Python 3.12. <code>project check</code> and both <code>claude plugin validate</code> runs pass."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "<code>fetch</code> writes the fetched commit to a temporary ref, reads it, and deletes the ref.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The name joins the process ID with 32 random bits. The process ID is unique among live processes on one machine, and the random suffix separates two processes that share an ID across machines or PID namespaces. Nothing else in the repository reads or pushes <code>refs/projector/review-fetch/</code>.",
+       "line": 400
+      },
+      {
+       "kind": "context",
+       "text": "The fetch still writes <code>FETCH_HEAD</code>, as it did before, so each review overwrites the operator's own <code>FETCH_HEAD</code>. Nothing reads it here any more. <code>fetch_summaries</code> in <code>site/serve.py</code> passes <code>--no-write-fetch-head</code> for the same reason, and the review suggested doing the same here.",
+       "line": 401
+      },
+      {
+       "kind": "verify",
+       "text": "The ref is deleted on every path that reaches the read. A <code>KeyboardInterrupt</code> raised during <code>rev-parse</code> still runs the deletion, and a fetch of a missing branch raises <code>ReviewError</code> without writing a ref. Both were run in a scratch clone.",
+       "line": 405
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "A setup test that rewrites <code>FETCH_HEAD</code> after every fetch, as a concurrent fetch would.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Run against the base's <code>review.py</code>, this test fails with <code>the head moved to 7fcf168 while it was fetched</code>. It passes at this head.",
+       "line": 276
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The <code>setup</code> reference says where the command reads each fetched commit."
+    }
+   ]
+  }
+ ]
+}

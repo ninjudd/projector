@@ -1,0 +1,75 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index cc01db92..25e21cf3 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1372,7 +1372,10 @@ project review rules
+ 
+ `setup` checks that pull request 66 is open, fetches its head into the
+ checkout — from its branch, or from `pull/66/head` when the head is in a fork —
+-and fetches the base. It creates a scratch worktree at the exact SHA GitHub
++and fetches the base. It reads each fetched commit from a ref of its own under
++`refs/projector/review-fetch/`, which it deletes at once, never from
++`FETCH_HEAD`, so another fetch in the same checkout cannot change what it
++reads. It creates a scratch worktree at the exact SHA GitHub
+ reports, verifies the worktree's `HEAD`, computes the merge base, and posts the
+ start comment the skill describes as the reviewer. It records the SHA, the
+ merge base, the worktree, whether the head is trusted, and the start comment's
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 1ad98ca2..874a9c4b 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -24,6 +24,7 @@
+ import json
+ import os
+ import re
++import secrets
+ import shutil
+ import socket
+ import subprocess
+@@ -393,8 +394,16 @@ def pull_request(repo: str, number: int) -> dict:
+ 
+ 
+ def fetch(checkout: Path, ref: str) -> str:
+-    git("-C", str(checkout), "fetch", "--quiet", "--no-tags", "origin", ref)
+-    return git("-C", str(checkout), "rev-parse", "FETCH_HEAD")
++    """Fetch `ref` from origin and return the commit it names, read from a ref this call alone writes and
++    then deletes. `FETCH_HEAD` is shared by every fetch in the checkout, so another review's fetch, or a
++    summary publish's, can rewrite it between this fetch and the read."""
++    local = f"refs/projector/review-fetch/{os.getpid()}-{secrets.token_hex(4)}"
++    git("-C", str(checkout), "fetch", "--quiet", "--no-tags", "origin", f"+{ref}:{local}")
++    try:
++        return git("-C", str(checkout), "rev-parse", "--verify", f"{local}^{{commit}}")
++    finally:
++        with suppress(ReviewError):
++            git("-C", str(checkout), "update-ref", "-d", local)
+ 
+ 
+ def fetch_head(checkout: Path, repo: str, pr: dict) -> str:
+diff --git a/tests/test_review.py b/tests/test_review.py
+index fd7e9b11..686304e3 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -273,6 +273,23 @@ def test_sets_up_the_exact_head_and_posts_the_start_comment_as_the_reviewer(self
+         )
+         self.assertIn(f"reviewing {REPO}#1 at {self.head}", out)
+ 
++    def test_another_fetch_rewriting_fetch_head_does_not_read_as_a_moved_head(self) -> None:
++        real = review.git
++
++        def racing(*args: str) -> str:
++            out = real(*args)
++            if "fetch" in args:
++                # Another review's fetch, or a summary publish's, lands in the same checkout right after this one.
++                (self.checkout / ".git" / "FETCH_HEAD").write_text(f"{self.base}\t\tbranch 'trunk' of origin\n")
++            return out
++
++        with mock.patch.object(review, "git", racing):
++            code, _, err = self.setup_review()
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(self.head, self.read_state()["sha"])
++        self.assertEqual("", git(self.checkout, "for-each-ref", "refs/projector/"), "the fetch's own refs are gone")
++
+     def test_holds_the_lock_after_setup_recording_who_took_it(self) -> None:
+         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+ 
