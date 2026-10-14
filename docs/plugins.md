@@ -507,8 +507,9 @@ have no digits.
 
 An open item's own line, at the top of its drawer, reads `0:` before it,
 for every item, open or resolved, question or notice. Press `0` the same
-two ways, while the band has the keyboard or first into an empty prompt,
-and the drawer closes, as a click or Enter on that line closes it. A pull
+two ways, while the band has the keyboard or first into an empty prompt
+while the line is wholly in view in the band, and the drawer closes, as a
+click or Enter on that line closes it. A pull
 request's drawer has no `0`, since its number closes it.
 
 A drawer's actions follow its options, a line each, with the letter that

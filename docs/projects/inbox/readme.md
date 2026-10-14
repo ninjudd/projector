@@ -1668,7 +1668,9 @@ anywhere in it, not only with the ring on its line.
   item's line in the list takes none.
 - **`0` works as the option digits do.** It presses the line while the
   band holds the keyboard, and typed first into an empty prompt while the
-  drawer is open, as Claude Code takes a digit for a survey.
+  drawer is open and the line is wholly inside the band's visible window,
+  as Claude Code takes a digit for a survey. A `0` typed while a tall
+  drawer is scrolled past its line reaches the prompt as text.
 - **Closing is unchanged.** The press runs the line's `toggle`, so it
   closes the drawer and moves the focus ring exactly as a click or Enter
   on the line does: the ring follows the line back into the list only when
