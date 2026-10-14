@@ -242,15 +242,15 @@ A theme you pick with `/theme` recolors the panel at once. To choose
 another shade, set `panel.background`, as
 [Choose the panel's color](#choose-the-panels-color) describes.
 
-The panel's first line is its header, drawn in the `subtle` color. It
-starts with `/projector`, the command that shows and hides the band, at its
-left. At its right, it counts the pull
-requests the band lists, a line each, such as `2 pull requests`, and two
-spaces on, it says how long ago the band reloaded, drawn as the rows draw
-their ages: in the short form, such as `12s`, and ending in their column. A
-reload just now reads `0s`, as an item posted just now does. A count of zero
-is left out, so a band with nothing to count shows `/projector` and the
-time alone. The rows start on the line under the header.
+The panel's first line is its header, drawn in the `subtle` color. It starts
+with `/projector`, the command that shows and hides the band, at its left.
+At its right, it counts the pull requests the band lists, a line each, such
+as `2 pull requests`, and two spaces on, it says how long ago the band
+reloaded, drawn as the rows draw their ages: in the short form, such as
+`12s`, and ending in their column. A reload just now reads `0s`, as an item
+posted just now does. A count of zero is left out, so a band with nothing to
+count shows `/projector` and the time alone. The rows start on the line
+under the header.
 
 The panel's last line is a key hint, also in `subtle`, at its right, so it
 ends in the ages' column. While the prompt has the keyboard, it reads
@@ -342,8 +342,9 @@ The band draws any color Claude Code takes as written: `rgb(r,g,b)`,
 `inverseText`. The default, `auto`, leaves the color to the theme, and
 `project config unset panel.background --user` returns to it. The band reads
 the setting when the session starts and each time it reloads, so a change
-shows within 30 seconds, without a restart. A value that Claude Code cannot draw, such as `ansi:black`
-or an empty string, leaves the color to the theme, and the band says so once.
+shows within 30 seconds, without a restart. A value that Claude Code cannot
+draw, such as `ansi:black` or an empty string, leaves the color to the
+theme, and the band says so once.
 
 ### Read your inbox in Projector's band
 
