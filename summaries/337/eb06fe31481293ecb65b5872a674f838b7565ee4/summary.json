@@ -1,0 +1,173 @@
+{
+ "version": 1,
+ "name": "Projector's panel above the prompt",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 337,
+  "title": "Rename the band to the panel",
+  "head": "eb06fe31481293ecb65b5872a674f838b7565ee4",
+  "headRef": "rename-band-to-panel",
+  "base": "42f2c735da92b297341b8b52a9b081081ba637b1",
+  "baseRef": "band-as-panel",
+  "basePr": 336
+ },
+ "overview": {
+  "summary": [
+   "In Claude Code, the Projector plugin draws a list above the prompt: the pull requests your review and watch loops track, and your inbox of questions and notices that agents post with the <code>ask</code> and <code>tell</code> tools. Until now everything called that list the <b>band</b>. The pull request beneath this one, #336, draws it as one panel on a background of its own, and the owner asked for the feature to be called the <b>panel</b> everywhere, so no reader wonders whether the band and the panel are two things.",
+   "This pull request is that rename and nothing else. It changes what people read (the docs, the README, two loop skills), what agents read (the <code>/projector</code> command's description, the inbox tools' descriptions and results, and the agent instructions' template), and the hooks module's code: identifiers, comments, test names, the test file's name, and the keys under which the module stores its state in the Claude Code session. Claude Code's own terms, such as the <code>AbovePrompt</code> site, keep their names, and the earlier sections of the <code>inbox</code> and <code>questions</code> plans keep \"band\" as their history.",
+   "One part of the rename is not cosmetic. The hooks module keeps its state in the session, which outlives a reload or an update of the plugin, and the module now reads that state under new key names. A session that updates therefore starts with empty state. The pull request accepts that the panel starts hidden after the update. The review found that the empty state also loses the record of an answer the panel was still delivering, so that answer reaches the agent twice; the flag on <code>hooks/register.tsx</code> explains how."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Panel</b> (formerly the band): the plugin's list above the prompt, of loop pull requests and inbox items.</li><li><b>Session state</b>: values the hooks module stores in the Claude Code session through <code>atom</code>, by plugin and key. They survive a reload or an update of the module.</li><li><b>Claim</b>: a lease of 60 seconds that <code>project inbox claim</code> gives one deliverer of an answered question, renewed while the delivery waits, so two deliverers never send the same answer.</li><li><b>Begin marker</b>: the <code>&lt;!-- projector:begin N --&gt;</code> line that versions the generated block of agent instructions.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One review, at <code>eb06fe3</code>: changes requested, with one finding, on the renamed <code>panelSending</code> key.</li><li>Apart from the rename, the tests changed in wording only. No assertion changed.</li><li>The gate passed at this head: the Python suite, <code>claude plugin test .</code>, the typecheck, both validations, <code>project check</code>, and <code>git diff --check</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "hooks",
+   "title": "The hooks module",
+   "kicker": "The code that draws the panel, renamed, including the session-state keys it stores",
+   "intro": [
+    "The hooks module, under <code>hooks/</code>, is the TypeScript the Claude Code plugin runs: it draws the panel, registers the inbox tools, and delivers the answers you pick to the agent that asked. Its identifiers, comments, and the strings it shows say \"panel\" now. The local <code>isPanel</code>, which was true when the surface is a terminal, becomes <code>isTerminal</code>, since every surface now draws the panel.",
+    "The module stores nine values in the session through <code>atom</code>, and eight of their keys change, such as <code>bandSending</code> to <code>panelSending</code>; <code>seenLoops</code> keeps its name. <code>hooks/types.d.ts</code> declares the keys, and the typecheck fails when the declaration and the atoms disagree. Nothing reads the old keys, so after an update each of them starts from its default."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Compared the old and new lines of every hooks file with \"band\" replaced by \"panel\": the only other changes are the <code>isPanel</code> rename, the reworded comments where \"the panel draws as one panel\" would repeat itself, and the test constant <code>ENGINE_PANEL</code>, now <code>ENGINE_SITE</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The panel's hooks: state keys, comments, the strings the tools return, and <code>isPanel</code> renamed to <code>isTerminal</code>.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 158,
+       "text": "Updating mid-delivery sends a queued answer to the agent twice. When you answer while the agent is busy, the panel submits the answer as a prompt that waits behind the running turn, and records that delivery under this key so a reloaded module keeps renewing the claim. The previous release recorded it under <code>bandSending</code>, which nothing reads now. After an update, the old claim lapses in 60 seconds and the panel claims and submits the answer again. A copy of the existing test for this case, seeded under <code>bandSending</code>, shows the second submit. The fix is to move the old entries into <code>panelSending</code> on load, or to keep the stored key's name."
+      },
+      {
+       "kind": "context",
+       "line": 1138,
+       "text": "<code>isTerminal</code> is the old <code>isPanel</code>: whether the surface is a terminal, which decides the inset, padding, background, header, and drawer rule."
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Declares the renamed session-state keys, and rewords the comments."
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Comments, and the descriptions of the <code>ask</code>, <code>tell</code>, <code>withdraw</code>, <code>restore</code>, and <code>revise</code> tools, which agents read."
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Renamed from <code>hooks/band.test.tsx</code>. Test names, comments, and the seeded state keys follow the rename."
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "Test names follow the rename."
+    }
+   ]
+  },
+  {
+   "id": "instructions",
+   "title": "Agent instructions and the Python side",
+   "kicker": "The generated instructions block moves to version 13, and Python comments follow",
+   "intro": [
+    "<code>project init</code> writes a block of instructions into a repository's <code>AGENTS.md</code> from <code>src/projector/templates/agents-block.md</code>. Its begin marker carries a version, and <code>tests/test_instructions.py</code> pins each version's text by hash, so a change to the text must raise the version. One line of that text named the band, so the block moves to version 13, and this repository's own <code>AGENTS.md</code> is refreshed with it.",
+    "In <code>src/projector</code>, only comments and docstrings change."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Version 13 of the instructions block: one word changes."
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins version 13's hash."
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's block, refreshed by <code>project init</code>."
+    },
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Docstrings only."
+    },
+    {
+     "path": "src/projector/loop.py",
+     "note": "The module docstring only."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "The module docstring only."
+    },
+    {
+     "path": "tests/test_config.py",
+     "note": "One test name."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation, skills, and the plan",
+   "kicker": "What people read says \"panel\", and the inbox plan records why",
+   "intro": [
+    "The docs and two loop skills say \"panel\". The headings in <code>docs/plugins.md</code> change, and so do their anchors, such as <code>#read-your-inbox-in-projectors-panel</code>; the README's link follows. The <code>inbox</code> plan, already <code>completed</code>, gains § 21, which records the rename, the reason for it, and the state keys starting fresh after an update."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Searched the repository for links into <code>docs/plugins.md</code>: each anchor matches a heading at this head, and nothing links to an old <code>-band</code> anchor."
+    },
+    {
+     "kind": "verify",
+     "text": "Outside <code>docs/projects</code>, <code>git grep -i band</code> finds only the site's hover and observer bands."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The panel's sections, headings and anchors included."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The inbox commands and the <code>panel.background</code> setting."
+    },
+    {
+     "path": "README.md"
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md"
+    },
+    {
+     "path": "skills/start-watch-loop/SKILL.md"
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "New § 21, \"Call the band the panel\".",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 2035,
+       "text": "§ 21.1 says a session that updates starts with the panel hidden. Starting from empty state also drops the record of an answer still being delivered; see the flag on <code>hooks/register.tsx</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
