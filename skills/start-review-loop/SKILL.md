@@ -214,7 +214,8 @@ reads the new head against that history instead of rediscovering it.
   instructions forbid description edits, a subagent publishes with
   `--no-describe`, so the comment alone links the summary, as `review-pr`
   describes.
-- Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
+- Between heads the subagent keeps its review set up, and each head's
+  `setup` removes the worktree of the head before it. On `CLOSED`, tell it
   to run `project review finish <number> --repo <owner>/<repo> --force`
   with the loop's `--loop` and `--model`. A closed pull request takes no
   review, so `--force` discards one still in progress, and `--repo` keeps

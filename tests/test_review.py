@@ -1421,12 +1421,11 @@ class FinishTests(PublishCase):
         return [(args, token) for args, token in self.github.calls if args[:3] == ["api", "-X", "DELETE"]]
 
     def test_removes_every_worktree_the_reviews_made_and_the_state_and_keeps_the_loop_record(self) -> None:
+        # A second setup while the first head's lock is still held, as a restarted session runs, keeps that
+        # head's worktree, so the state lists two.
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        self.assertEqual(0, self.publish("clean")[0])
         self.github.pr["head"]["sha"] = self.push_head("second head")
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        self.github.pr["head"]["sha"] = self.push_head("third head")
-        self.assertEqual(0, self.later("move")[0])
         self.assertEqual(0, self.publish("clean")[0])
         made = [Path(path) for path in self.read_state()["worktrees"]]
         record = (self.state / "loops" / "l1" / "published.json").read_text()
@@ -1434,7 +1433,7 @@ class FinishTests(PublishCase):
         code, out, err = self.finish("--repo", REPO, "--loop", "l1", cwd=Path(tempfile.mkdtemp()))
 
         self.assertEqual(0, code, err)
-        self.assertEqual(3, len(made), "a later setup keeps the worktrees the earlier heads made")
+        self.assertEqual(2, len(made), "the held lock's worktree and the current head's")
         for path in made:
             self.assertFalse(path.exists())
             self.assertNotIn(path.resolve(), self.registered())
@@ -1613,6 +1612,204 @@ class FinishTests(PublishCase):
         for text in (review_pr, review_loop):
             self.assertNotIn("issues/comments", text)
             self.assertNotIn("git worktree", text)
+
+
+class SupersededWorktreeTests(PublishCase):
+    """A review keeps one scratch worktree, its current head's, so a long-lived pull request does not keep a
+    full checkout of every head it ever had."""
+
+    def registered(self) -> set[Path]:
+        listing = git(self.checkout, "worktree", "list", "--porcelain").splitlines()
+        return {Path(line.removeprefix("worktree ")).resolve() for line in listing if line.startswith("worktree ")}
+
+    def test_setup_of_the_next_head_removes_the_published_heads_worktree(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        old = Path(self.read_state()["worktree"])
+        self.github.pr["head"]["sha"] = self.push_head("second head")
+
+        code, out, err = self.setup_review("--loop", "l1")
+
+        self.assertEqual(0, code, err)
+        state = self.read_state()
+        self.assertFalse(old.exists())
+        self.assertNotIn(old.resolve(), self.registered())
+        self.assertEqual([state["worktree"]], state["worktrees"])
+        self.assertTrue(Path(state["worktree"]).is_dir())
+        self.assertIn(f"removed the earlier head's worktree {old}\n", out)
+        self.assertNotIn("removed", state, "what setup removed is reported, not recorded")
+
+    def test_move_removes_the_worktree_of_the_head_it_moves_from(self) -> None:
+        self.assertEqual(0, self.setup_review()[0])
+        old = Path(self.read_state()["worktree"])
+        self.github.pr["head"]["sha"] = self.push_head("second head")
+
+        code, out, err = self.later("move", "--json")
+
+        self.assertEqual(0, code, err)
+        self.assertFalse(old.exists())
+        self.assertEqual([str(old)], json.loads(out)["removed"])
+        self.assertEqual([self.read_state()["worktree"]], self.read_state()["worktrees"])
+
+    def test_a_held_lock_keeps_its_heads_worktree_and_a_stale_one_does_not(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        first, first_sha = Path(self.read_state()["worktree"]), self.head
+        self.lock(first_sha).write_text(json.dumps({"taken_at": self.clock.isoformat()}))
+        self.github.pr["head"]["sha"] = self.push_head("second head")
+
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.assertTrue(first.is_dir(), "a review may still be reading a locked head's worktree")
+        self.assertEqual([str(first), self.read_state()["worktree"]], self.read_state()["worktrees"])
+
+        self.lock(first_sha).write_text(json.dumps({"taken_at": (self.clock - timedelta(days=2)).isoformat()}))
+        self.github.pr["head"]["sha"] = self.push_head("third head")
+        self.assertEqual(0, self.later("move")[0])
+
+        self.assertFalse(first.exists(), "a lock older than a day is stale")
+
+    def test_another_models_worktree_stays(self) -> None:
+        self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
+        gpt = Path(self.read_state("gpt-5.5")["worktree"])
+        self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
+        self.github.pr["head"]["sha"] = self.push_head("second head")
+
+        self.assertEqual(0, self.later("move", "--model", "claude-opus-5-5")[0])
+
+        self.assertTrue(gpt.is_dir())
+
+    def test_a_worktree_that_will_not_come_out_stays_listed_and_setup_succeeds(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        old = Path(self.read_state()["worktree"])
+        self.github.pr["head"]["sha"] = self.push_head("second head")
+
+        with mock.patch.object(review, "remove_worktree", side_effect=OSError("busy")):
+            code, out, err = self.setup_review("--loop", "l1")
+
+        self.assertEqual(0, code, err)
+        self.assertTrue(old.is_dir())
+        self.assertEqual([str(old), self.read_state()["worktree"]], self.read_state()["worktrees"])
+        self.assertNotIn("removed the earlier head's worktree", out)
+
+
+class PruneTests(PublishCase):
+    """`prune` sweeps the scratch worktrees no review needs, listing them until --apply removes them."""
+
+    def prune(self, *extra: str) -> tuple[int, str, str]:
+        return self.project("prune", "--state-dir", str(self.state), *extra, cwd=Path(tempfile.mkdtemp()))
+
+    def registered(self) -> set[Path]:
+        listing = git(self.checkout, "worktree", "list", "--porcelain").splitlines()
+        return {Path(line.removeprefix("worktree ")).resolve() for line in listing if line.startswith("worktree ")}
+
+    def worktree_at(self, path: Path, sha: str | None = None) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        git(self.checkout, "worktree", "add", "--quiet", "--detach", str(path), sha or self.base)
+        return path
+
+    def pull_folder(self, repo: str = REPO, number: int = 1) -> Path:
+        return self.state / "worktrees" / repo / str(number)
+
+    def test_lists_leftovers_without_apply_and_removes_them_with_it(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        current = Path(self.read_state()["worktree"])
+        key = review.model_key(self.model)
+        earlier = self.worktree_at(self.pull_folder() / key / ("a" * 12))
+        old_layout = self.worktree_at(self.pull_folder() / ("b" * 12))
+        unreviewed = self.worktree_at(self.pull_folder() / review.model_key("gpt-5.5") / ("c" * 12))
+        locked = self.worktree_at(self.pull_folder() / key / ("d" * 12))
+        (self.folder() / f"{'d' * 40}.lock").write_text(json.dumps({"taken_at": self.clock.isoformat()}))
+
+        code, out, err = self.prune()
+
+        self.assertEqual(0, code, err)
+        for path in (current, earlier, old_layout, unreviewed, locked):
+            self.assertTrue(path.is_dir(), "a dry run removes nothing")
+        self.assertIn(f"would remove {earlier}: the worktree of an earlier head\n", out)
+        self.assertIn(f"would remove {old_layout}: made before each model kept its own worktree folder\n", out)
+        self.assertIn(f"would remove {unreviewed}: no review of the pull request by this model is set up here\n",
+                      out)
+        self.assertIn(f"kept {current}: the current head of an open pull request's review\n", out)
+        self.assertIn(f"kept {locked}: its head's lock is held\n", out)
+        self.assertIn("3 scratch worktrees can go; run `project review prune --apply` to remove them", out)
+
+        code, out, err = self.prune("--apply", "--json")
+
+        self.assertEqual(0, code, err)
+        result = json.loads(out)
+        self.assertEqual({str(earlier), str(old_layout), str(unreviewed)}, {e["path"] for e in result["removed"]})
+        self.assertEqual({str(current), str(locked)}, {e["path"] for e in result["kept"]})
+        for path in (earlier, old_layout, unreviewed):
+            self.assertFalse(path.exists())
+            self.assertNotIn(path.resolve(), self.registered())
+        self.assertFalse(unreviewed.parent.exists(), "an emptied model folder goes too")
+        self.assertTrue(current.is_dir())
+        self.assertTrue(locked.is_dir())
+
+        code, out, err = self.prune()
+
+        self.assertEqual(0, code, err)
+        self.assertIn("there is nothing to prune", out)
+
+    def test_a_closed_pull_requests_current_worktree_goes_and_an_unreadable_ones_stays(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        current = Path(self.read_state()["worktree"])
+        self.github.missing = True
+
+        code, out, err = self.prune("--apply")
+
+        self.assertEqual(0, code, err)
+        self.assertTrue(current.is_dir())
+        self.assertIn(f"kept {current}: GitHub could not say whether {REPO}#1 is open", out)
+
+        self.github.missing = False
+        self.github.pr["state"] = "closed"
+        code, out, err = self.prune("--apply")
+
+        self.assertEqual(0, code, err)
+        self.assertFalse(current.exists())
+        self.assertIn(f"removed {current}: {REPO}#1 is closed; `project review finish 1 --repo {REPO} --force` "
+                      "ends its review\n", out)
+        self.assertTrue((self.folder() / "state.json").is_file(), "prune leaves the review's state to finish")
+
+    def test_repo_limits_the_sweep_and_a_link_is_unlinked_without_following_it(self) -> None:
+        elsewhere = self.state / "worktrees" / "other" / "app" / "5" / "old-model" / ("e" * 12)
+        elsewhere.mkdir(parents=True)
+        target = Path(tempfile.mkdtemp())
+        (target / "keep.txt").write_text("keep\n")
+        link = self.pull_folder() / "linked"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target, target_is_directory=True)
+
+        code, out, err = self.prune("--repo", REPO)
+
+        self.assertEqual(0, code, err)
+        self.assertIn(f"run `project review prune --apply --repo {REPO}`", out)
+        self.assertNotIn("other/app", out)
+
+        code, out, err = self.prune("--repo", REPO, "--apply")
+
+        self.assertEqual(0, code, err)
+        self.assertFalse(link.is_symlink())
+        self.assertEqual("keep\n", (target / "keep.txt").read_text())
+        self.assertTrue(elsewhere.is_dir())
+
+        code, out, err = self.prune("--apply")
+
+        self.assertEqual(0, code, err)
+        self.assertFalse(elsewhere.exists(), "a folder that is no worktree goes too")
+        self.assertFalse((self.state / "worktrees" / "other").exists())
+
+    def test_with_no_state_directory_there_is_nothing_to_prune(self) -> None:
+        code, out, err = self.prune("--apply")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual("no scratch worktree is left over; there is nothing to prune\n", out)
+        self.assertEqual([], self.github.calls)
 
 
 class SettleTests(PublishCase):

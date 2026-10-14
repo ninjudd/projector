@@ -1361,6 +1361,7 @@ project review interdiff 66
 project review publish 66 --incremental --body body.md
 project review release 66
 project review finish 66
+project review prune --apply
 project review setup 66 --model claude-opus-5-5 --replace 4011
 project review gate 66
 project review status 66
@@ -1376,7 +1377,11 @@ and fetches the base. It creates a scratch worktree at the exact SHA GitHub
 reports, verifies the worktree's `HEAD`, computes the merge base, and posts the
 start comment the skill describes as the reviewer. It records the SHA, the
 merge base, the worktree, whether the head is trusted, and the start comment's
-id and `created_at` in a state file, and prints them. A head is trusted when it
+id and `created_at` in a state file, and prints them. Once the new worktree
+exists, `setup` removes the worktrees of the model's earlier heads of the pull
+request and prints a line for each, so a review keeps one checkout at a time.
+It keeps an earlier head's worktree while that head's lock is held, since a
+review may still be reading it. A head is trusted when it
 is a branch in this repository, the pull request's author is you or has write
 access, and no commit names another author; a fork's head, or an untrusted
 one, is recorded so and reviewed by reading. `--rereview` records a re-review
@@ -1414,7 +1419,8 @@ effort out rather than guess it.
 
 `move` follows a head that moved mid-review: it creates a worktree for the new
 head, rechecks trust, edits the start comment in place to name it, re-reads the
-comment to confirm the edit, and updates the state file. `census` lists every
+comment to confirm the edit, and updates the state file. It then removes the
+worktree of the head it moved from, as `setup` does. `census` lists every
 thread whose first comment carries the `projector-finding` marker, reading
 every page, and prints how many are resolved and open and each open thread's
 `path:line`; with `--json` each thread also carries its comments. It counts
@@ -1464,9 +1470,9 @@ closes. It takes these steps:
    head after the comment, or once a day passes since its last edit. Another
    model's start comments, and the model's live ones from another session,
    stay.
-2. It removes every scratch worktree the review's state lists: each one the
-   model's reviews of the pull request made on this machine since its last
-   `finish`. It removes each with `git worktree remove` in the checkout, then
+2. It removes every scratch worktree the review's state lists: the current
+   head's, and any earlier head's that a held lock kept from `setup` or
+   `move`. It removes each with `git worktree remove` in the checkout, then
    runs `git worktree prune`. When the checkout is gone, it deletes a
    worktree under the state directory itself.
 3. It clears the locks and deletes the state. The loop's record of published
@@ -1490,6 +1496,31 @@ machine, `finish` asks GitHub nothing, prints that there is nothing to
 finish, and exits 0, so running it twice is safe. With `--json` it prints the `repo`, `number`, and
 `model`, the `comments` it deleted, the `worktrees` it removed, the locks it
 `released`, and whether it deleted the `state`.
+
+`prune` sweeps the scratch worktrees that no review on this machine needs. A
+review needs the worktree of its current head while its pull request is open,
+and the worktree of any head whose lock is held and less than a day old.
+Without `--apply`, `prune` lists each worktree it would remove and each one it
+keeps, with the reason, and removes nothing. With `--apply`, it removes them:
+
+| Worktree | Why it can go |
+| --- | --- |
+| `worktrees/<owner>/<repo>/<pr>/<model-key>/<short-sha>` other than the review's current head | The worktree of an earlier head |
+| `worktrees/<owner>/<repo>/<pr>/<short-sha>` | Made by a release that kept no folder per model |
+| Under a model key with no review set up | No review of the pull request by that model is set up here |
+| The current head of a closed pull request | The pull request is closed |
+
+`prune` asks GitHub only whether each pull request with a review set up here
+is open. When GitHub cannot say, it keeps that review's worktree. It leaves the
+review's state, locks, and start comment alone. To end a closed pull request's
+review, run `project review finish <pr> --repo <owner>/<repo> --force`. `prune`
+removes each worktree with `git worktree remove` in the checkout that made it, and
+deletes the folder outright when that fails. It unlinks a symbolic link without
+following it, then runs `git worktree prune` in each checkout and removes the
+folders it emptied. `--repo` limits the sweep to one repository. With `--json`
+it prints the `repo`, whether it ran with `apply`, and the `removed`, `kept`,
+and `failed` entries, each with its `path` and `reason`. It exits 1 when a
+worktree could not be removed.
 
 `publish` submits the review. `--body` names a file holding the review below
 its signature line, with `{census}` where the census goes and, wherever used,

@@ -882,8 +882,9 @@ summary reads for context. It also deletes every start comment of this
 model's that no longer means a review in progress, clears the locks, and
 deletes the review's state, keeping the loop's record. It refuses while the
 review is unpublished. A `start-review-loop` subagent may instead keep the
-worktree for the pull request's next head and run `finish` when the pull
-request closes.
+review set up for the pull request's next head and run `finish` when the pull
+request closes. The next head's `setup` removes the published head's worktree,
+so the review keeps one checkout at a time.
 
 ## Summarize the pull request
 

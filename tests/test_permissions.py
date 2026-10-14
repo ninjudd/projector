@@ -24,6 +24,7 @@ DECISIONS = (
     ("project review hold 12 --drop", "allow", "allow"),
     ("project review setup 12 --model claude", "allow", "allow"),
     ("project review finish 12 --force", "allow", "allow"),
+    ("project review prune --apply", "allow", "allow"),
     ("project review settle 12 --thread T --result fixed --body reply.md", "allow", "allow"),
     ("project review suggestions 12 --json", "allow", "allow"),
     ("project review gate 12", "allow", "none"),

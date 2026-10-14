@@ -500,6 +500,17 @@ def parser() -> argparse.ArgumentParser:
         "finish", help="end a review on this machine: delete its start comments that no longer mean a review in "
                        "progress, and remove its scratch worktrees, locks, and state"
     )
+    review_prune = review_commands.add_parser(
+        "prune", help="find the scratch worktrees no review needs, such as earlier heads' and closed pull "
+                      "requests', and remove them with --apply"
+    )
+    review_prune.add_argument("--repo", help="owner/name: sweep only this repository's worktrees (default: all)")
+    review_prune.add_argument("--state-dir", type=Path,
+                              help="where review state and worktrees live "
+                                   "(default: $XDG_STATE_HOME/projector/reviews)")
+    review_prune.add_argument("--apply", action="store_true",
+                              help="remove what the sweep finds; without it, only list it")
+    add_output(review_prune)
     review_publish = review_commands.add_parser(
         "publish", help="check and submit the review, set draft state, and delete the start comment"
     )
@@ -1169,6 +1180,10 @@ def run_review(arguments: argparse.Namespace) -> int:
         return review_status(root, arguments)
     if arguments.review_command == "suggestions":
         return review_suggestions(root, arguments)
+    if arguments.review_command == "prune":
+        result = review.prune(root, arguments.repo, arguments.apply)
+        print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.prune_lines(result)))
+        return 1 if result["failed"] else 0
     loop = review.valid_loop(arguments.loop)
     command = arguments.review_command
     if command == "finish":
@@ -1274,6 +1289,8 @@ def run_review(arguments: argparse.Namespace) -> int:
         print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
         if command == "setup" and arguments.replace is not None:
             print(f"deleted start comment {arguments.replace}, which this review replaces")
+        for path in state["removed"]:
+            print(f"removed the earlier head's worktree {path}")
     return 0
 
 
