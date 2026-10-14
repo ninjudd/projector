@@ -1471,8 +1471,8 @@ closes. It takes these steps:
    model's start comments, and the model's live ones from another session,
    stay.
 2. It removes every scratch worktree the review's state lists: the current
-   head's, and any earlier head's that a held lock kept from `setup` or
-   `move`. It removes each with `git worktree remove` in the checkout, then
+   head's, and any earlier head's that `setup` or `move` kept because its
+   lock was held or it would not come out. It removes each with `git worktree remove` in the checkout, then
    runs `git worktree prune`. When the checkout is gone, it deletes a
    worktree under the state directory itself.
 3. It clears the locks and deletes the state. The loop's record of published

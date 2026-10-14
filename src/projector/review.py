@@ -794,7 +794,8 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
         "untrusted_because": why or None,
         "checkout": str(checkout),
         "worktree": str(worktree),
-        # The worktrees `finish` removes: this head's, and an earlier head's that a held lock kept.
+        # The worktrees `finish` removes: this head's, and an earlier head's that a held lock kept or that
+        # would not come out.
         "worktrees": kept + [str(worktree)],
         "operator": operator,
         "reviewer": reviewer,
