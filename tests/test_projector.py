@@ -218,7 +218,7 @@ class DiscoveryTests(RepositoryTestCase):
         )
 
         code, stdout, _ = self.invoke(
-            "--root", str(self.root), "--projects-dir", "plans", "list", "--json"
+            "list", "--root", str(self.root), "--projects-dir", "plans", "--json"
         )
 
         self.assertEqual(0, code)
@@ -230,10 +230,10 @@ class DiscoveryTests(RepositoryTestCase):
             (plans / "README.md").write_text("# Plans\n")
 
             code, stdout, stderr = self.invoke(
-                "--projects-dir",
-                str(plans),
                 "create",
                 "alpha",
+                "--projects-dir",
+                str(plans),
                 "--no-edit",
                 "--json",
             )
@@ -243,6 +243,22 @@ class DiscoveryTests(RepositoryTestCase):
                 str((plans / "alpha" / "readme.md").resolve()),
                 json.loads(stdout)["path"],
             )
+
+    def test_an_option_before_the_command_is_refused_and_runs_nothing(self) -> None:
+        (self.root / "CLAUDE.md").unlink()
+        for argv in (["--root", str(self.root), "init"], ["--root=.", "init"], ["--projects-dir", "plans", "list"],
+                     ["--", "init"], ["--version"], ["--help"], ["-h"], ["--ver"]):
+            with self.subTest(argv=argv):
+                stdout, stderr = StringIO(), StringIO()
+                with redirect_stdout(stdout), redirect_stderr(stderr), self.assertRaises(SystemExit) as stop:
+                    main(argv)
+
+                self.assertEqual(2, stop.exception.code)
+                self.assertEqual("", stdout.getvalue())
+                self.assertIn(f"project: error: {argv[0]}: options go after the command, as in "
+                              "`project init --root .`; for the version or the help, run `project version` or "
+                              "`project help`", stderr.getvalue())
+                self.assertFalse((self.root / "CLAUDE.md").exists(), "init never ran")
 
     def test_invalid_plan_fails_discovery_with_a_diagnostic(self) -> None:
         self.plan("good", "in-progress", priority="now")
@@ -1097,8 +1113,27 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("unchanged ~/.claude/settings.json\n", self.invoke("init")[1])
         self.assertEqual(before, self.settings().read_bytes())
 
+    def test_init_removes_the_ask_rule_for_an_option_before_the_command(self) -> None:
+        self.at_a_terminal()
+        self.settings().write_text(json.dumps({"permissions": {
+            "allow": list(permissions.ALLOW),
+            "ask": ["Bash(rm *)", *permissions.ASK, "Bash(project -*)"],
+            "deny": ["Bash(project -*)"],
+        }}), encoding="utf-8")
+
+        code, stdout, stderr = self.invoke("init")
+
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated ~/.claude/settings.json\n", stdout)
+        self.assertEqual({"permissions": {**granted(ask=("Bash(rm *)",))["permissions"],
+                                          "deny": ["Bash(project -*)"]}},
+                         json.loads(self.settings().read_text()), "only the ask rule Projector wrote is removed")
+        before = self.settings().read_bytes()
+        self.assertIn("unchanged ~/.claude/settings.json\n", self.invoke("init")[1])
+        self.assertEqual(before, self.settings().read_bytes())
+
     def test_init_removes_a_leftover_narrower_rule_only_when_it_writes(self) -> None:
-        leftover = granted("Bash(project review hold *)")
+        leftover = granted("Bash(project review hold *)", ask=("Bash(project -*)",))
         self.settings().write_text(json.dumps(leftover), encoding="utf-8")
 
         code, stdout, stderr = self.invoke("init")
@@ -1461,6 +1496,12 @@ class ReviewRulesTests(RepositoryTestCase):
                          "a narrower rule left beside the broad one takes nothing away")
         self.assertEqual(before, self.home_tree())
 
+        self.settings().write_text(json.dumps(granted(ask=("Bash(project -*)",))))
+        before = self.home_tree()
+        self.assertEqual((0, "allows ~/.claude/settings.json\n", ""), self.invoke("review", "rules"),
+                         "the ask rule for an option before the command asks only before what the CLI refuses")
+        self.assertEqual(before, self.home_tree())
+
     def test_missing_rules_exit_1_and_ask_for_init_without_writing(self) -> None:
         def write(permissions: dict) -> None:
             self.settings().write_text(json.dumps({"permissions": permissions}))
@@ -1468,9 +1509,9 @@ class ReviewRulesTests(RepositoryTestCase):
         narrower = ["Bash(project review publish *)", "Bash(project review hold *)", "Bash(project summary publish *)"]
         cases = {
             "only the narrower rules": (lambda: write({"allow": narrower}), "Bash(project *)"),
-            "ask rules missing": (lambda: write({"allow": list(permissions.ALLOW)}), "Bash(project -*)"),
+            "ask rules missing": (lambda: write({"allow": list(permissions.ALLOW)}), "Bash(project init *)"),
             "one ask rule missing": (lambda: write(granted()["permissions"] | {"ask": list(permissions.ASK[:-1])}),
-                                     "Bash(project -*)"),
+                                     "Bash(project inbox snooze *)"),
             "settings absent": (self.settings().unlink, "Bash(project *)"),
         }
         for name, (arrange, missing) in cases.items():
@@ -1809,34 +1850,61 @@ class SelfReportingTests(unittest.TestCase):
     def test_version_exits_zero_and_names_the_distribution(self) -> None:
         stdout = StringIO()
 
-        with self.assertRaises(SystemExit) as raised:
-            with redirect_stdout(stdout):
-                main(["--version"])
+        with redirect_stdout(stdout):
+            code = main(["version"])
 
-        # argparse's version action short-circuits the required subparser, so
-        # this exits 0 rather than failing on the absent command.
-        self.assertEqual(0, raised.exception.code)
+        # What `--version` printed before the command came first, which
+        # `install.sh` reads the version's last word from.
+        self.assertEqual(0, code)
+        self.assertEqual(f"project {distribution_version()}\n", stdout.getvalue())
         self.assertRegex(stdout.getvalue().strip(), r"^project \S+$")
 
     def test_package_dir_names_where_this_package_runs_from(self) -> None:
         stdout = StringIO()
 
-        # A narrow width, because argparse's own version action reflows to the
-        # terminal and would fold a long path. `install.sh` reads this with
-        # `$(...)` and tests the result with `-d`, so a folded path reports
-        # every install stale forever. Pinning COLUMNS checks that at any
-        # width rather than at whatever depth this checkout happens to sit.
+        # A narrow width, so a path folded to the terminal's width would show.
+        # `install.sh` reads this with `$(...)` and tests the result with
+        # `-d`, so a folded path reports every install stale forever. Pinning
+        # COLUMNS checks that at any width rather than at whatever depth this
+        # checkout happens to sit.
         with mock.patch.dict(os.environ, {"COLUMNS": "20"}):
-            with self.assertRaises(SystemExit) as raised:
-                with redirect_stdout(stdout):
-                    main(["--package-dir"])
+            with redirect_stdout(stdout):
+                code = main(["version", "--package-dir"])
 
-        self.assertEqual(0, raised.exception.code)
+        self.assertEqual(0, code)
         printed = stdout.getvalue().splitlines()
         self.assertEqual(1, len(printed), printed)
         reported = Path(printed[0])
         self.assertEqual(Path(cli.__file__).resolve().parent, reported)
         self.assertTrue((reported / "cli.py").is_file())
+
+    def test_help_prints_the_help_of_project_or_of_the_command_it_names(self) -> None:
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            code = main(["help"])
+
+        self.assertEqual(0, code)
+        self.assertEqual(cli.parser().format_help(), stdout.getvalue())
+        self.assertRegex(stdout.getvalue(), r"\n +version +print the version of this command\n")
+        self.assertNotIn("--", stdout.getvalue(), "project itself takes no option")
+
+        for command in (["init"], ["review", "publish"]):
+            with self.subTest(command=command):
+                printed = []
+                for argv in (["help", *command], [*command, "--help"]):
+                    stdout = StringIO()
+                    with redirect_stdout(stdout), self.assertRaises(SystemExit) as stop:
+                        main(argv)
+                    self.assertEqual(0, stop.exception.code)
+                    printed.append(stdout.getvalue())
+                self.assertEqual(printed[1], printed[0])
+                self.assertTrue(printed[0].startswith(f"usage: project {' '.join(command)} "), printed[0])
+
+        stderr = StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as stop:
+            main(["help", "nothing"])
+        self.assertEqual(2, stop.exception.code)
+        self.assertIn("invalid choice: 'nothing'", stderr.getvalue())
 
     def test_the_queried_distribution_is_the_one_pyproject_installs(self) -> None:
         # A wrong name here is invisible: `version()` raises, the unknown
@@ -1924,9 +1992,9 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(3, code)
         self.assertEqual("", stdout)
         self.assertIn(shlex.join([str(self.checkout / "install.sh"), "all"]), stderr)
-        # Every lookup -- `--version` makes one too -- asks for the distribution
-        # pyproject.toml installs; a wrong name here would report every command
-        # as not installed and exit 69 while the suite stayed green.
+        # Every lookup asks for the distribution pyproject.toml installs; a
+        # wrong name here would report every command as not installed and exit
+        # 69 while the suite stayed green.
         project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]
         self.assertEqual(
             {project["name"]},
@@ -2276,7 +2344,7 @@ class StaleReleaseWarningTests(unittest.TestCase):
         self.release("0.6.6")
         self.patch(mock.patch.object(cli, "run_upgrade", return_value=0))
 
-        for argv in (["--help"], ["--version"], ["upgrade"]):
+        for argv in (["help"], ["help", "init"], ["version"], ["upgrade"]):
             with self.subTest(argv=argv):
                 code, _, stderr = self.invoke(*argv)
 
@@ -2335,7 +2403,7 @@ class ClosedReaderTests(RepositoryTestCase):
         # Short output waits in Python's buffer until exit, so a reader gone
         # before then fails only the flush at exit.
         self.plan("small")
-        for arguments in (["show", "small"], ["--help"]):
+        for arguments in (["show", "small"], ["help"], ["help", "show"]):
             for entry in self.ENTRY_POINTS:
                 read, write = os.pipe()
                 os.close(read)

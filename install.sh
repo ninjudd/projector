@@ -424,6 +424,15 @@ sys.exit(0 if parts(sys.argv[1]) < parts(sys.argv[2]) else 1)
 ' "$1" "$2" 2>/dev/null
 }
 
+# Ask the installed CLI about itself: `project version` prints its version,
+# and `project version --package-dir` where its package lives. The fallback
+# reads a CLI older than the `version` command, which took the question as an
+# option before the command: `--version` or `--package-dir`.
+ask_cli() {
+  local option="${1:-}"
+  project version ${option:+"$option"} 2>/dev/null || project "${option:---version}" 2>/dev/null
+}
+
 # pipx and `pip install --user` both install a copy of the source, so a
 # checkout that has moved on leaves the command behind with nothing saying so.
 # The symlink still resolves and every old subcommand still works, while a
@@ -445,7 +454,7 @@ report_cli() {
   # Without a checkout there is no source to diff, and a release bumps the
   # version on every change, so the version is the comparison.
   if [ -z "$REPO" ]; then
-    version="$(project --version 2>/dev/null | awk '{print $NF}')"
+    version="$(ask_cli | awk '{print $NF}')"
     expected="$(expected_version)"
     if [ -z "$expected" ]; then
       printf '%-14s %s\n' "cli-installed" "${version:-unknown} (no release version to compare against)"
@@ -457,7 +466,7 @@ report_cli() {
     return
   fi
 
-  installed_dir="$(project --package-dir 2>/dev/null)" || true
+  installed_dir="$(ask_cli --package-dir)" || true
   if [ -z "$installed_dir" ] || [ ! -d "$installed_dir" ]; then
     # Too old to say where it lives, which is itself the staleness.
     printf '%-14s %s\n' "cli-stale" "installed command cannot report its source -- run ./install.sh cli"
@@ -466,7 +475,7 @@ report_cli() {
   # half is compared against its own source.
   elif diff -rq --exclude=__pycache__ --exclude=assets "$installed_dir" "$REPO/src/projector" >/dev/null 2>&1 &&
        diff -rq "$installed_dir/site/assets" "$REPO/site/assets" >/dev/null 2>&1; then
-    version="$(project --version 2>/dev/null | awk '{print $NF}')"
+    version="$(ask_cli | awk '{print $NF}')"
     printf '%-14s %s\n' "cli-current" "${version:-matches checkout}"
   else
     printf '%-14s %s\n' "cli-stale" "installed command differs from this checkout -- run ./install.sh cli"

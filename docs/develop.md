@@ -12,7 +12,7 @@ anything:
 ```sh
 git clone https://github.com/ninjudd/projector.git
 cd projector
-PYTHONPATH=src python3 -m projector --help
+PYTHONPATH=src python3 -m projector help
 ```
 
 For a `project` command that follows your edits, install the clone in editable
@@ -21,7 +21,7 @@ mode in a virtual environment:
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -e .
-.venv/bin/project --help
+.venv/bin/project help
 ```
 
 Keep the `project` on your `PATH` the released one, from

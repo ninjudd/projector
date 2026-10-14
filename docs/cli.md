@@ -1,9 +1,16 @@
 # Use the Projector CLI
 
 Projector installs one command, `project`. It discovers the Git root from your
-current directory and reads projects under `docs/projects/`. Pass
-`--root <path>` to select a repository explicitly, or `--projects-dir <path>` to
-use another project-plan directory.
+current directory and reads projects under `docs/projects/`. A command that
+reads plans takes `--root <path>` to select a repository explicitly, and
+`--projects-dir <path>` to use another project-plan directory; the `config`
+commands take `--root` too.
+
+The command comes first, and every option goes after it, as in
+`project list --root ../other`. `project` refuses an option before the
+command, `--` and `--help` included, and exits 2. That keeps each command's
+permission rule matching every way to run it, as
+[Adopt a repository](#adopt-a-repository) describes.
 
 Running the package as a module is equivalent when the command is not on your
 `PATH`:
@@ -12,10 +19,13 @@ Running the package as a module is equivalent when the command is not on your
 python3 -m projector check
 ```
 
-Print the version of the installed command:
+Print the version of the installed command, the list of commands, or one
+command's help:
 
 ```sh
-project --version
+project version
+project help
+project help review publish
 ```
 
 ## Adopt a repository
@@ -82,8 +92,7 @@ what it did to each:
     "Bash(project site *prepare*)",
     "Bash(project inbox answer *)",
     "Bash(project inbox dismiss *)",
-    "Bash(project inbox snooze *)",
-    "Bash(project -*)"
+    "Bash(project inbox snooze *)"
   ]
   ```
 
@@ -101,10 +110,11 @@ what it did to each:
   them itself, not through an agent's shell, so answering from the panel never
   asks. Claude Code checks ask rules before allow rules, so an ask rule
   prompts for a command that `Bash(project *)` also allows, and a trailing
-  ` *` matches the command with no arguments too. `Bash(project -*)` covers an
-  option before the command, as in `project --root . init`, which no
-  command's own ask rule matches; it asks before `project --version` and
-  `project --help` as well.
+  ` *` matches the command with no arguments too. `project` refuses an option
+  before the command, so every command line it runs starts with its command,
+  and that command's ask rule matches wherever the options go:
+  `Bash(project init *)` asks before `project init --root .`. A line such as
+  `project --root . init` matches no ask rule, and `project` refuses it.
 
   `project edit`, and `project create` without `--no-edit`, open your
   `$VISUAL` or `$EDITOR`, and need no ask rule. They open it only at a
@@ -150,12 +160,14 @@ what it did to each:
   `project review rules`, which writes nothing. `init` adds the rules to the
   file's existing settings, removes from `permissions.allow` the narrower
   rules `Bash(project *)` replaces, such as `Bash(project review publish *)`,
-  keeps every other setting, writes through a symlink such as one into a
-  dotfiles repository, and writes the file back as two-space JSON. It keeps a
-  file that is not valid UTF-8 JSON, holds settings of an unexpected shape,
-  sits under a `.claude` that is not a directory, or cannot be written, as one
-  linked into a read-only directory such as the Nix store cannot, and says on
-  stderr how to add the rules yourself. `init` still exits 0.
+  removes `Bash(project -*)` from `permissions.ask`, because `project`
+  refuses every line that rule asks before, keeps every other setting,
+  writes through a symlink such as one into a dotfiles repository, and
+  writes the file back as two-space JSON. It keeps a file that is not valid
+  UTF-8 JSON, holds settings of an unexpected shape, sits under a `.claude`
+  that is not a directory, or cannot be written, as one linked into a
+  read-only directory such as the Nix store cannot, and says on stderr how to
+  add the rules yourself. `init` still exits 0.
 - `~/.codex/rules/projector.rules`, a Codex rules file, allows the same
   commands for Codex, whose approval reviewer otherwise can refuse
   `project summary publish` as sending repository content to another host.
@@ -168,17 +180,16 @@ what it did to each:
   `review.publish_rule` decide it exactly as they decide the Claude Code
   rules.
 
-  A Codex rule matches exact words with no wildcard, so an ask rule for
-  `init` would miss an option before it, as in `project --root=. init`.
-  Instead, the file allows commands by name. Codex runs a command that an
-  `allow` rule matches without asking, and outside its sandbox, so a publish
-  reaches GitHub and the site. Codex can also give a command a terminal that
-  the agent types into, so the file leaves out every command that can run
-  another program, as well as those that reach outside Projector's own state:
+  A Codex rule matches exact words with no wildcard, and the file allows
+  commands by name. Codex runs a command that an `allow` rule matches without
+  asking, and outside its sandbox, so a publish reaches GitHub and the site.
+  Codex can also give a command a terminal that the agent types into, so the
+  file leaves out every command that can run another program, as well as
+  those that reach outside Projector's own state:
 
   ```text
   prefix_rule(
-      pattern = ["project", ["check", "done", "list", "loop", "owner", "priority", "search", "show", "status", "summary"]],
+      pattern = ["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary", "version"]],
       decision = "allow",
   )
   prefix_rule(
@@ -794,7 +805,7 @@ warning: project 0.6.4 is behind the 0.6.6 release; run 'project upgrade' to upd
 
 The warning also follows a usage error, because a usage error is what a newer
 skill meets when it calls a subcommand or flag an older command lacks. It
-never changes stdout or the exit status, and `--help`, `--version`, and
+never changes stdout or the exit status, and `help`, `version`, and
 `upgrade` itself do not print it.
 
 The command reads the release's version from the plugin manifest at
@@ -1415,7 +1426,7 @@ nothing, any other comment: another model's start comment, another account's,
 a comment that is no start comment, or one that does not exist.
 
 The start comment and the review's signature line name the head under review
-by its short SHA, the Projector version that `project --version` reports, the
+by its short SHA, the Projector version that `project version` reports, the
 model from `--model`, and the reasoning effort from `CLAUDE_EFFORT` in the
 environment, which Claude Code sets for the Bash tool and keeps current
 through a mid-session `/effort` change. When `CLAUDE_EFFORT` is unset or
