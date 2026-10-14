@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -393,8 +394,16 @@ def pull_request(repo: str, number: int) -> dict:
 
 
 def fetch(checkout: Path, ref: str) -> str:
-    git("-C", str(checkout), "fetch", "--quiet", "--no-tags", "origin", ref)
-    return git("-C", str(checkout), "rev-parse", "FETCH_HEAD")
+    """Fetch `ref` from origin and return the commit it names, read from a ref this call alone writes and
+    then deletes. `FETCH_HEAD` is shared by every fetch in the checkout, so another review's fetch, or a
+    summary publish's, can rewrite it between this fetch and the read."""
+    local = f"refs/projector/review-fetch/{os.getpid()}-{secrets.token_hex(4)}"
+    git("-C", str(checkout), "fetch", "--quiet", "--no-tags", "origin", f"+{ref}:{local}")
+    try:
+        return git("-C", str(checkout), "rev-parse", "--verify", f"{local}^{{commit}}")
+    finally:
+        with suppress(ReviewError):
+            git("-C", str(checkout), "update-ref", "-d", local)
 
 
 def fetch_head(checkout: Path, repo: str, pr: dict) -> str:
