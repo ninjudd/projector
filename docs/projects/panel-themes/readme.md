@@ -121,7 +121,9 @@ A literal color is `rgb(r,g,b)` or `ansi256(n)` with each number from 0 to
 ones Claude Code's `ThemeKey` type lists, from `text` to `diffRemovedWord`.
 A role refuses every name Claude Code would not draw as meant:
 
-- **A plain name**, such as `gray`, which draws in the default color.
+- **A plain name**, such as `gray`, which draws in the default color. A live
+  preview of the panel in a Claude Code session showed this, though Claude
+  Code's `Color` type documents a name such as `"red"` as a raw color.
 - **An `ansi:` name**, which makes Claude Code refuse the panel's whole
   tree.
 - **A theme key outside the public 23**, such as
@@ -416,6 +418,13 @@ What Claude Code does with a plugin's color, which the design depends on:
 - An `ansi:` name makes Claude Code refuse the plugin's whole tree.
 - A mod cannot list the theme's keys at run time. Claude Code's `ThemeKey`
   type lists the 23 public ones.
+
+A live preview of the panel's colors in a Claude Code session showed how
+each kind of name draws: theme keys, `rgb()`, hex, and `ansi256()` drew as
+named, `gray` and `cyan` drew in the default color, and an `ansi:` name made
+Claude Code refuse the tree. The plain names are where the types mislead.
+Claude Code's `Color` type documents a raw color as "a name such as `"red"`,
+or hex", so the panel's refusal of them rests on what the preview showed.
 
 `project config get` reads any key, a table included. Under Projector
 0.7.20, which predates every panel setting,
