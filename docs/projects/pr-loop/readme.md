@@ -219,6 +219,8 @@ names the holder.
 | `tracked` | The holder's tracked file, resolved, which identifies the holder loop |
 | `host`, `pid` | Where the holder's watcher runs |
 | `model`, `reviewer` | The model ID and the login the review role posts as |
+| `generation` | How many times the lease has changed hands. Each take by another loop raises it by one, and a holder that takes its own lease back keeps it. |
+| `loop` | The holder's loop id, `<repo>-review-<model-key>-<generation>`, which its reviewers pass to `project review` as `--loop` |
 | `taken_at`, `renewed_at` | When the holder took the lease, and when it last passed |
 
 - **Holding.** The holder keeps an exclusive lock on the `.lock` file for
@@ -239,7 +241,10 @@ names the holder.
   such as `!acme/app#15 review`, from that file into its own, whatever this
   loop fixes. A review the user assigned and a dismissal from review both
   survive the handover, and an exclusion from `fix` stays with the session
-  that wrote it. Then the loop writes the `.json`, prints `ROLE`, and adopts.
+  that wrote it. It also copies the departed loop id's record of published
+  reviews into its own, so an incremental review can still build on a full
+  review the departed holder published. Then the loop writes the `.json`
+  with the next `generation` and its own loop id, prints `ROLE`, and adopts.
   A pull request that is new to this loop reports `NEW PR` unless its head
   already has a verdict by this model from the reviewer's account, as
   `watch-prs.sh` decides today, so a handover reviews no head twice.
@@ -247,16 +252,24 @@ names the holder.
   to the machine and the model, under
   `prs/<owner>/<repo>/<number>/<model-key>/` in the review state directory,
   not to a session. So a review the departed holder left unpublished passes
-  to the taker with the role. Its lock names the same loop id,
-  `<repo>-review-<model-key>`, and host as a live review, so only the
-  handover can say that it is safe to clear. On the pass that takes the
-  lease, the watcher finds each head locked under that loop id with no
-  verdict and marks it on its `NEW PR` line, and the reviewer runs
-  `project review release <number> --model <id>` before `setup`. `setup`
-  then replaces the departed review's start comment, because this machine's
-  state records it. If the departed holder's reviewer is in fact still
-  running, the two reviews meet at `publish`, whose collision check holds
-  the second verdict and asks the user, as it does today.
+  to the taker with the role, and its reviewer may still be running if only
+  the departed watcher stopped. One verdict at most lands on the head:
+  1. On the pass that takes the lease, the watcher finds each head whose
+     lock names an earlier loop id of this role and has no verdict, and
+     marks it on its `NEW PR` line.
+  2. The taker's reviewer runs `project review setup --take-over`. It
+     refuses when the head already has a verdict by this model, and the
+     reviewer stops. Otherwise it rewrites the lock to name the taker's loop
+     id and sets the review up in the departed one's place, replacing its
+     start comment because this machine's state records it.
+  3. `publish`, `move`, and `settle` refuse when the head's lock names
+     another loop id, and say that another loop took the review over. The
+     departed reviewer stops and reports there, and never runs `setup`
+     again.
+  4. If the departed reviewer's `publish` passed its lock check before the
+     take-over and submits after it, its verdict is not in the taker's
+     record. So the taker's `publish` refuses and asks the user, through the
+     branch of the collision check that a different loop id reaches.
 - **Losing.** A loop with review lines that finds the `.json` naming
   another loop's tracked file removes the review role from its lines and
   prints `ROLE`. Its conversation stops its reviewer subagents and runs no
@@ -302,7 +315,7 @@ a pass with a failed query or a bad line never reports `DONE`.
 `ROLE` names the repository, the model, and what changed:
 
 ```text
-ROLE acme/app review taken for claude-opus-5-5 — this loop reviews the repository's pull requests
+ROLE acme/app review taken for claude-opus-5-5 as loop app-review-claude-opus-5-5-3 — this loop reviews the repository's pull requests
 ROLE acme/app review held for claude-opus-5-5 by host-a pid 4182 (~/loops/a/tracked) — this loop only fixes
 ROLE acme/app review lost for claude-opus-5-5 to host-a pid 4182 (~/loops/a/tracked) — stop this loop's reviewers, and leave their review state to that loop
 ```
@@ -340,8 +353,9 @@ The other commands change as follows:
   removes only that role with `--role`, and every line that lists the pull
   request without it. It leaves every exclusion, as today.
 - **`project loop lease <owner/repo> [--model <id>] [--json]`** prints each
-  review lease of the repository: its model, reviewer, holder, tracked file,
-  `renewed_at`, and whether a watcher holds its lock now. It writes nothing.
+  review lease of the repository: its model, reviewer, holder, loop id,
+  tracked file, `renewed_at`, and whether a watcher holds its lock now. It
+  writes nothing.
 - **`loop.review`** is a new boolean setting, `true` by default. `false`
   keeps every loop it applies to out of the review role.
 
@@ -367,11 +381,12 @@ now does:
   watcher under the host's persistent process or monitor facility.
 - **Review role.** The first time the loop takes the role, the skill runs
   `project review rules` once and warns as the review loop does today. Every
-  reviewer passes the loop id `<repo>-review-<model-key>` to `project review`
-  as `--loop`. Whichever session holds the lease uses that id, so the record
-  of published reviews moves with the role, and one loop writes it at a
-  time. A reviewer whose `NEW PR` line marks a review left in flight runs
-  `project review release` before `setup`, as § 2.4 describes.
+  reviewer passes the loop id that the `ROLE` line and the lease name to
+  `project review` as `--loop`. Each holding of the lease has its own id,
+  so one loop writes each record and the collision check tells two holders
+  apart. A reviewer whose `NEW PR` line marks a review left in flight runs
+  `setup --take-over`, and a reviewer told that another loop took its
+  review over stops and reports, as § 2.4 describes.
 - **Subagents.** A fix-role pull request gets one fixer and a review-role
   pull request one reviewer, named and briefed as the two skills do today,
   each in its own worktree. A pull request in both roles has both.
@@ -424,16 +439,17 @@ ID gives it a lease of its own.
 | `src/projector/watch.py` (new) | The loop: passes, conditional requests, the machine cache, the GraphQL result, and events by role |
 | `src/projector/cli.py` | `loop watch`, `loop lease`, and `--role` |
 | `src/projector/config.py` | `loop.review` |
+| `src/projector/review.py` | `setup --take-over`, and `publish`, `move`, and `settle` refusing a head whose lock names another loop id |
 | `skills/start-pr-loop/SKILL.md` (new) | The one loop skill |
 | `skills/start-watch-loop/`, `skills/start-review-loop/` | Removed, with both watcher scripts |
-| `skills/implement/SKILL.md`, `skills/fix-pr/SKILL.md`, `skills/review-pr/SKILL.md` | Name `start-pr-loop`, and drop "leave the review loop alone" from `implement` |
+| `skills/implement/SKILL.md`, `skills/fix-pr/SKILL.md`, `skills/review-pr/SKILL.md` | Name `start-pr-loop`, drop "leave the review loop alone" from `implement`, and teach `review-pr` the take-over and the refusal it stops on |
 | `src/projector/templates/agents-block.md`, and this repository's `AGENTS.md` and `CLAUDE.md` through `project init` | Name the loop `implement` starts |
 | `hooks/types.d.ts`, `hooks/parse.ts`, `hooks/register.tsx` | Roles, the new command, and the old kinds |
 | `hooks/parse.test.ts`, `hooks/panel.test.tsx` | Roles, the new command, and old files |
 | `tests/test_loop_watch.py` (new) | The loop, through a fake `gh` that prints status lines and honors `If-None-Match` |
 | `tests/test_watchers.py` | Removed, its cases ported to `tests/test_loop_watch.py` |
 | `tests/test_loop.py` | Roles and the lease |
-| `tests/test_packaging.py`, `tests/test_review.py` | The published skill set, and the tests that read the old skills or the review watcher's script |
+| `tests/test_packaging.py`, `tests/test_review.py` | The published skill set, the tests that read the old skills or the review watcher's script, and the take-over and its refusals |
 | `docs/cli.md`, `docs/plugins.md`, `README.md` | The commands, the setting, the skill, and the panel's roles |
 | `web/components/sections/review-loop.tsx`, `web/lib/links.ts` | Name and link the one skill |
 | `docs/projects/panel-themes/readme.md` | Its `watching` color role becomes `fixing` |
@@ -478,6 +494,14 @@ ID gives it a lease of its own.
   The CLI and both plugins share one version, `project` warns when it is
   behind, and the skill tells the user to run `project upgrade` when
   `project loop watch` is missing.
+- **A loop id for each holding of the lease.** One id shared by every
+  holder makes a departed reviewer and the taker's reviewer one loop to
+  `project review`. The collision check then finds the first verdict in
+  "this loop's" record and points the second reviewer at `--rereview`, and
+  the missing lock points it at `setup`, so following both posts a second
+  verdict. A new id per holding lets the lock fence the departed reviewer
+  out and lets the collision check ask the user. Copying the departed
+  record at the handover keeps incremental reviews going across it.
 - **A lock, not an expiring lease file.** An expiring lease needs a clock,
   so a laptop that wakes from sleep finds every lease expired and hands the
   role to whichever session passes first. The operating system releases a
@@ -538,7 +562,10 @@ ID gives it a lease of its own.
 | Start two watchers with different tracked files, one repository, reviewer, and model | The first prints `ROLE` taking the lease, the second prints `ROLE` naming the holder, and only the first adopts |
 | Repeat with two models | Each takes a lease |
 | Stop the first watcher, and pass the second more than 5 minutes after the lease's `renewed_at` | The second takes the lease and copies the first file's review lines and review exclusions, including those for pull requests the second fixes. A restarted first watcher prints `ROLE`, keeps no review line, and runs no `project review finish`. |
-| Leave a review lock on a head under the role's loop id, with no verdict, and hand the lease over | The taker's `NEW PR` line marks the head, and `project review release` then `setup` succeed for it |
+| Leave a review lock on a head under the departed loop id, with no verdict, and hand the lease over | The taker's `NEW PR` line marks the head, and `setup --take-over` succeeds for it |
+| After that take-over, run the departed reviewer's `publish`, `move`, or `settle` with its own `--loop` | Each refuses, names the loop that took the review over, and says to stop rather than set up again. Only the taker's verdict lands. |
+| Publish the departed reviewer's verdict before the take-over | `setup --take-over` refuses because the head has a verdict by this model |
+| Let the departed reviewer's `publish` pass its lock check before the take-over and submit after it | The taker's `publish` refuses with the branch that asks the user, not the one that suggests `--rereview` |
 | Exclude the operator's pull request A from `fix` in the taker's file, and pull request B, which the taker fixes, from `review` in the holder's file, then hand the lease over | The taker reviews A but does not fix it, and fixes B but does not review it |
 | Restart the first watcher within 5 minutes | It takes its lease back, and the second stays fix-only |
 | Run with `--no-review`, or with `loop.review = false` | The lease files are never touched |
