@@ -732,6 +732,10 @@ function byAuthor(rows: readonly Row[], viewer: string | null): Row[] {
 
 const secondsSince = (time: number, then: number) => Math.max(0, Math.round((time - then) / 1000))
 
+/** `1 question` or `3 questions`, or nothing for none. */
+const countOf = (count: number, noun: string) =>
+  count === 0 ? undefined : `${count} ${noun}${count === 1 ? '' : 's'}`
+
 /** Labels a pull request `#12` when the band shows one repository, else by its repository's name. */
 function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
   const repos = [...new Set(prs.map(pr => pr.repo))]
@@ -971,12 +975,18 @@ export const register: Register = on => {
     const opened = await read($, drawer)
     const asking = await read($, asked)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
-    const counts = (['question', 'notice'] as const).map(kind => {
-      const count = shownItems.filter(
-        item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time),
-      ).length
-      return count === 0 ? undefined : `${count} ${kind}${count === 1 ? '' : 's'}`
-    })
+    // The divider counts the pull requests the band lists, a row each, then
+    // its open questions and notices.
+    const counts = [
+      countOf(shown.rows.length, 'pull request'),
+      ...(['question', 'notice'] as const).map(kind =>
+        countOf(
+          shownItems.filter(item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time))
+            .length,
+          kind,
+        ),
+      ),
+    ]
     const label = labeler(shown.rows.map(row => row.pr))
     const reference = referencer(shown.rows.map(row => row.pr))
     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
@@ -1021,18 +1031,21 @@ export const register: Register = on => {
     // row, so a divider that fills the body ends at the mark, and a blank line
     // sets it apart from the rows under it. The counts follow one `─` at its
     // start, and its rule runs from them to the time, as an open item's rule
-    // runs from its subject to its age. Only a terminal lays text out in
+    // runs from its subject to its age. The counts and the time are `subtle`,
+    // and the rule keeps the default color. Only a terminal lays text out in
     // those columns; any other surface would wrap the rule, so it draws none.
     const lead = tally === '' ? '' : `─ ${tally} `
     const tail = reloaded === '' ? '' : ` ${reloaded}`
-    const rule = `${lead}${'─'.repeat(Math.max(0, e.props.bodyColumns - lead.length - tail.length))}`
+    const rule = '─'.repeat(Math.max(0, e.props.bodyColumns - lead.length - tail.length))
+    const ruled = [
+      ...(tally === '' ? [] : ['─ ', <Text key="counts" color="subtle">{tally}</Text>]),
+      `${tally === '' ? '' : ' '}${rule}${reloaded === '' ? '' : ' '}`,
+      ...(reloaded === '' ? [] : [<Text key="age" color="subtle">{reloaded}</Text>]),
+    ]
     const divider =
       e.surface === 'terminal'
         ? [
-            <Text key="divider">
-              {reloaded === '' ? rule : `${rule} `}
-              {reloaded !== '' && <Text color="subtle">{reloaded}</Text>}
-            </Text>,
+            <Text key="divider">{ruled}</Text>,
             <Text key="under-divider"> </Text>,
           ]
         : []
