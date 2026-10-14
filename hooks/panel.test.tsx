@@ -892,9 +892,19 @@ test('a set of a panel key through Bash re-reads the settings at once', async ($
   await run('project config unset panel.colors.muted --user')
   expect(await headerColorOf(ui)).toBe('subtle')
 
-  // A command that sets no panel key reads nothing.
+  // The CLI takes its options before the key too, a value-taking one included.
+  settings['panel.theme'] = 'umber'
+  await run('project config set --user panel.theme umber')
+  expect(await backgroundOf(ui)).toBe('#171510')
+  delete settings['panel.theme']
+  await run(`project config unset --file ${HOME}/.projector.toml --json panel.theme`)
+  expect(await backgroundOf(ui)).toBe(INK_DARK)
+  expect(reads()).toBe(before + 4)
+
+  // A command that sets no panel key reads nothing, whatever its value names.
   await run('project config set watch.auto_start false')
-  expect(reads()).toBe(before + 2)
+  await run('project config set --user review.gate "make panel.check"')
+  expect(reads()).toBe(before + 4)
   await ui.unmount()
 })
 

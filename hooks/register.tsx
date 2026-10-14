@@ -348,8 +348,12 @@ async function readSettings($: Engine): Promise<void> {
   }
 }
 
-/** A `project config set` or `unset` of a panel setting, which the panel reads again at once. */
-const SETS_PANEL = /\bconfig\s+(?:un)?set\s+['"]?panel\./
+/**
+ * A `project config set` or `unset` of a panel setting, which the panel reads
+ * again at once. The CLI takes options before the key as well as after it,
+ * and `--root` and `--file` take a value.
+ */
+const SETS_PANEL = /\bconfig\s+(?:un)?set\s+(?:--(?:root|file)(?:=|\s+)\S+\s+|-\S+\s+)*['"]?panel\./
 
 /** The session's own loops, the watchers it started, each with the pull requests its tracked file lists. */
 async function trackedSets($: Engine): Promise<(SeenLoop & { entries: TrackedPr[] })[]> {
