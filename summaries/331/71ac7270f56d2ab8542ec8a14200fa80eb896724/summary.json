@@ -1,0 +1,143 @@
+{
+ "version": 1,
+ "name": "Review worktree cleanup",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 331,
+  "title": "Keep one review worktree per pull request, and prune the rest",
+  "head": "71ac7270f56d2ab8542ec8a14200fa80eb896724",
+  "headRef": "review-prune-worktrees",
+  "base": "167107967f0ffc4ed0861ac76a9726ffee573a12",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "A Projector review runs in a <b>scratch worktree</b>: a full Git checkout of the head under review that <code>project review setup</code> creates under the review state directory, <code>~/.local/state/projector/reviews/worktrees/&lt;owner&gt;/&lt;repo&gt;/&lt;pr&gt;/&lt;model-key&gt;/&lt;short-sha&gt;</code>. Before this change, only <code>project review finish</code>, run when the pull request closes, removed those checkouts. A review loop creates one for every head it reviews, so a long-lived pull request kept dozens of them. On a large monorepo, where reviewers also install dependencies in each checkout, that filled a 500 GB disk.",
+   "This pull request makes each review keep one checkout at a time, and adds a command that sweeps what is left over:",
+   "<ul><li><b>Setup and move remove the earlier heads' worktrees.</b> Once the new head's worktree exists, <code>setup</code> and <code>move</code> remove the worktrees that the model's state lists for earlier heads. A worktree whose head lock is held and less than a day old stays, because a review may still be reading it.</li><li><b><code>project review prune</code> sweeps the rest.</b> It lists every worktree under the state directory that no review needs, and removes them only with <code>--apply</code>. That covers earlier heads' worktrees, folders from the older layout with no model folder, worktrees under a model with no review set up, and the current worktree of a closed pull request.</li></ul>",
+   "The automated review found two problems at this head. A <code>setup</code> or <code>move</code> that starts while <code>prune --apply</code> waits on GitHub can lose its new worktree, and the Codex rules shown in <code>docs/cli.md</code> still leave out <code>prune</code>. The change does not touch the fetch in <code>setup</code>, so the separately reported <code>FETCH_HEAD</code> race is out of scope."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Scratch worktree</b>: the checkout of one head that a review reads and runs tests in.</li><li><b>Model key</b>: the folder name made from a model ID, so each model reviewing a pull request keeps its own state and worktrees.</li><li><b>Head lock</b>: the file <code>prs/&lt;owner&gt;/&lt;repo&gt;/&lt;pr&gt;/&lt;model-key&gt;/&lt;sha&gt;.lock</code> that a review holds from <code>setup</code> until <code>publish</code>. A lock older than a day is stale.</li><li><b>State</b>: <code>state.json</code> beside the locks, which names the review's current worktree.</li></ul>"
+   },
+   {
+    "id": "decisions",
+    "title": "What prune keeps",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Worktree</th><th class=\"r\">Prune</th></tr></thead><tbody><tr><td>Head lock held, under a day old</td><td class=\"r\">Keeps</td></tr><tr><td>A review's current head, pull request open</td><td class=\"r\">Keeps</td></tr><tr><td>A review's current head, GitHub cannot say</td><td class=\"r\">Keeps</td></tr><tr><td>A review's current head, pull request closed</td><td class=\"r\">Removes</td></tr><tr><td>Any other head under a model with a review</td><td class=\"r\">Removes</td></tr><tr><td>Under a model with no review set up</td><td class=\"r\">Removes</td></tr><tr><td><code>&lt;pr&gt;/&lt;short-sha&gt;</code>, the older layout</td><td class=\"r\">Removes</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "One worktree per review, and a sweep for the rest",
+   "kicker": "The review module removes superseded worktrees on setup and move, and adds prune.",
+   "intro": [
+    "Each review's state lists the worktrees it made, under <code>worktrees</code>, and names the current one under <code>worktree</code>. <code>remove_superseded</code> now runs at the end of <code>setup</code> and <code>move</code>. It removes every listed worktree except the new head's, unless that head's lock is held, and keeps one whose removal fails so that <code>finish</code> can try again. It never fails the command that called it, because that command has already posted or edited its start comment.",
+    "<code>prune</code> works from the state directory alone. It reads every head lock and every review state, asks GitHub whether each reviewed pull request is open, and then walks the worktree folders, as the table in the overview describes. To remove a worktree, it runs <code>git worktree remove</code> in the repository named by the worktree's <code>.git</code> file. When that fails, or the checkout is gone, it deletes the folder directly, and it unlinks a symbolic link without following it."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A head lock is the only signal that a review is in progress before its state is written. <code>setup</code> takes the lock first, then fetches, creates the worktree, posts the start comment, and writes the state last."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>remove_superseded</code>, used by <code>setup</code> and <code>move</code>, and the <code>prune</code> sweep with its helpers.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 1050,
+       "text": "Open review finding: <code>prune</code> reads the head locks and review states once, before its GitHub requests, and does not check them again before removing. A <code>setup</code> or <code>move</code> that starts during those requests loses its new worktree. A test that runs <code>setup</code> from inside <code>prune</code>'s pull request lookup shows the new head's worktree removed while its lock is held."
+      },
+      {
+       "kind": "verify",
+       "line": 1087,
+       "text": "An older-layout <code>&lt;pr&gt;/&lt;short-sha&gt;</code> folder holds a <code>.git</code> file, so <code>prune</code> treats it as one worktree rather than as a model folder. The current release reads no state from that layout, so no live review owns one. Checked by reading and by <code>test_lists_leftovers_without_apply_and_removes_them_with_it</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 889,
+       "text": "<code>remove_superseded</code> only touches worktrees listed in this model's own state, so another model's review keeps its worktree. Checked by reading and by <code>test_another_models_worktree_stays</code>, which passes at this head."
+      },
+      {
+       "kind": "context",
+       "line": 797,
+       "text": "The comment lists the current head's worktree and those a held lock kept. <code>remove_superseded</code> also keeps a worktree whose removal failed, which the review suggests naming here and in <code>docs/cli.md</code>."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds the <code>review prune</code> subcommand with <code>--repo</code>, <code>--state-dir</code>, <code>--apply</code>, and <code>--json</code>, and prints each worktree that <code>setup</code> or <code>move</code> removed.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1183,
+       "text": "<code>prune</code> runs before the loop and model are read, so it takes no <code>--loop</code> or <code>--model</code>. It exits 1 when any removal fails."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "Adds <code>SupersededWorktreeTests</code> and <code>PruneTests</code>, which run real Git against a fake GitHub, and updates a <code>finish</code> test to the new count of listed worktrees."
+    }
+   ]
+  },
+  {
+   "id": "permissions",
+   "title": "Letting Codex run prune",
+   "kicker": "The Codex rules that project init writes now allow review prune.",
+   "intro": [
+    "<code>project init</code> writes a Codex rules file that allows Projector's review steps by name. This change adds <code>prune</code> to that list, beside <code>finish</code> and the other steps that only touch Projector's own state."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds <code>prune</code> to the allowed <code>project review</code> subcommands.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 115,
+       "text": "Open review finding: <code>docs/cli.md</code> line 193 shows the rules file that <code>init</code> writes, and its <code>review</code> rule still leaves out <code>prune</code>."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Expects <code>prune</code> in the allowed list."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and skills",
+   "kicker": "The CLI reference describes prune, and the loop skills say each head's setup cleans up.",
+   "intro": [
+    "The CLI reference documents what <code>setup</code>, <code>move</code>, and <code>finish</code> now remove, and adds a section on <code>prune</code> with a table of what it removes. The <code>review-pr</code> and <code>start-review-loop</code> skills tell a loop subagent to keep its review set up between heads, since the next head's <code>setup</code> removes the earlier checkout."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents the cleanup in <code>setup</code>, <code>move</code>, and <code>finish</code>, and adds the <code>prune</code> section."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Says a loop keeps the review set up between heads, and the next <code>setup</code> removes the published head's worktree."
+    },
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "Says the same for the loop's subagents."
+    }
+   ]
+  }
+ ]
+}
