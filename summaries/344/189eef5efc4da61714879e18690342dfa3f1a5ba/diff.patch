@@ -1,0 +1,992 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index a942fdca..64a2de88 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1,9 +1,16 @@
+ # Use the Projector CLI
+ 
+ Projector installs one command, `project`. It discovers the Git root from your
+-current directory and reads projects under `docs/projects/`. Pass
+-`--root <path>` to select a repository explicitly, or `--projects-dir <path>` to
+-use another project-plan directory.
++current directory and reads projects under `docs/projects/`. A command that
++reads plans takes `--root <path>` to select a repository explicitly, and
++`--projects-dir <path>` to use another project-plan directory; the `config`
++commands take `--root` too.
++
++The command comes first, and every option goes after it, as in
++`project list --root ../other`. `project` refuses an option before the
++command, `--` and `--help` included, and exits 2. That keeps each command's
++permission rule matching every way to run it, as
++[Adopt a repository](#adopt-a-repository) describes.
+ 
+ Running the package as a module is equivalent when the command is not on your
+ `PATH`:
+@@ -12,10 +19,13 @@ Running the package as a module is equivalent when the command is not on your
+ python3 -m projector check
+ ```
+ 
+-Print the version of the installed command:
++Print the version of the installed command, the list of commands, or one
++command's help:
+ 
+ ```sh
+-project --version
++project version
++project help
++project help review publish
+ ```
+ 
+ ## Adopt a repository
+@@ -82,8 +92,7 @@ what it did to each:
+     "Bash(project site *prepare*)",
+     "Bash(project inbox answer *)",
+     "Bash(project inbox dismiss *)",
+-    "Bash(project inbox snooze *)",
+-    "Bash(project -*)"
++    "Bash(project inbox snooze *)"
+   ]
+   ```
+ 
+@@ -101,10 +110,11 @@ what it did to each:
+   them itself, not through an agent's shell, so answering from the panel never
+   asks. Claude Code checks ask rules before allow rules, so an ask rule
+   prompts for a command that `Bash(project *)` also allows, and a trailing
+-  ` *` matches the command with no arguments too. `Bash(project -*)` covers an
+-  option before the command, as in `project --root . init`, which no
+-  command's own ask rule matches; it asks before `project --version` and
+-  `project --help` as well.
++  ` *` matches the command with no arguments too. `project` refuses an option
++  before the command, so every command line it runs starts with its command,
++  and that command's ask rule matches wherever the options go:
++  `Bash(project init *)` asks before `project init --root .`. A line such as
++  `project --root . init` matches no ask rule, and `project` refuses it.
+ 
+   `project edit`, and `project create` without `--no-edit`, open your
+   `$VISUAL` or `$EDITOR`, and need no ask rule. They open it only at a
+@@ -150,12 +160,14 @@ what it did to each:
+   `project review rules`, which writes nothing. `init` adds the rules to the
+   file's existing settings, removes from `permissions.allow` the narrower
+   rules `Bash(project *)` replaces, such as `Bash(project review publish *)`,
+-  keeps every other setting, writes through a symlink such as one into a
+-  dotfiles repository, and writes the file back as two-space JSON. It keeps a
+-  file that is not valid UTF-8 JSON, holds settings of an unexpected shape,
+-  sits under a `.claude` that is not a directory, or cannot be written, as one
+-  linked into a read-only directory such as the Nix store cannot, and says on
+-  stderr how to add the rules yourself. `init` still exits 0.
++  removes `Bash(project -*)` from `permissions.ask`, because `project`
++  refuses every line that rule asks before, keeps every other setting,
++  writes through a symlink such as one into a dotfiles repository, and
++  writes the file back as two-space JSON. It keeps a file that is not valid
++  UTF-8 JSON, holds settings of an unexpected shape, sits under a `.claude`
++  that is not a directory, or cannot be written, as one linked into a
++  read-only directory such as the Nix store cannot, and says on stderr how to
++  add the rules yourself. `init` still exits 0.
+ - `~/.codex/rules/projector.rules`, a Codex rules file, allows the same
+   commands for Codex, whose approval reviewer otherwise can refuse
+   `project summary publish` as sending repository content to another host.
+@@ -168,17 +180,16 @@ what it did to each:
+   `review.publish_rule` decide it exactly as they decide the Claude Code
+   rules.
+ 
+-  A Codex rule matches exact words with no wildcard, so an ask rule for
+-  `init` would miss an option before it, as in `project --root=. init`.
+-  Instead, the file allows commands by name. Codex runs a command that an
+-  `allow` rule matches without asking, and outside its sandbox, so a publish
+-  reaches GitHub and the site. Codex can also give a command a terminal that
+-  the agent types into, so the file leaves out every command that can run
+-  another program, as well as those that reach outside Projector's own state:
++  A Codex rule matches exact words with no wildcard, and the file allows
++  commands by name. Codex runs a command that an `allow` rule matches without
++  asking, and outside its sandbox, so a publish reaches GitHub and the site.
++  Codex can also give a command a terminal that the agent types into, so the
++  file leaves out every command that can run another program, as well as
++  those that reach outside Projector's own state:
+ 
+   ```text
+   prefix_rule(
+-      pattern = ["project", ["check", "done", "list", "loop", "owner", "priority", "search", "show", "status", "summary"]],
++      pattern = ["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary", "version"]],
+       decision = "allow",
+   )
+   prefix_rule(
+@@ -794,7 +805,7 @@ warning: project 0.6.4 is behind the 0.6.6 release; run 'project upgrade' to upd
+ 
+ The warning also follows a usage error, because a usage error is what a newer
+ skill meets when it calls a subcommand or flag an older command lacks. It
+-never changes stdout or the exit status, and `--help`, `--version`, and
++never changes stdout or the exit status, and `help`, `version`, and
+ `upgrade` itself do not print it.
+ 
+ The command reads the release's version from the plugin manifest at
+@@ -1415,7 +1426,7 @@ nothing, any other comment: another model's start comment, another account's,
+ a comment that is no start comment, or one that does not exist.
+ 
+ The start comment and the review's signature line name the head under review
+-by its short SHA, the Projector version that `project --version` reports, the
++by its short SHA, the Projector version that `project version` reports, the
+ model from `--model`, and the reasoning effort from `CLAUDE_EFFORT` in the
+ environment, which Claude Code sets for the Bash tool and keeps current
+ through a mid-session `/effort` change. When `CLAUDE_EFFORT` is unset or
+diff --git a/docs/develop.md b/docs/develop.md
+index d88d9347..3f103285 100644
+--- a/docs/develop.md
++++ b/docs/develop.md
+@@ -12,7 +12,7 @@ anything:
+ ```sh
+ git clone https://github.com/ninjudd/projector.git
+ cd projector
+-PYTHONPATH=src python3 -m projector --help
++PYTHONPATH=src python3 -m projector help
+ ```
+ 
+ For a `project` command that follows your edits, install the clone in editable
+@@ -21,7 +21,7 @@ mode in a virtual environment:
+ ```sh
+ python3 -m venv .venv
+ .venv/bin/pip install -e .
+-.venv/bin/project --help
++.venv/bin/project help
+ ```
+ 
+ Keep the `project` on your `PATH` the released one, from
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 70d471ca..fa2b3943 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -136,7 +136,7 @@ archive. It needs Python 3.11 or newer:
+ 
+ ```sh
+ pipx install https://github.com/ninjudd/projector/archive/v0.tar.gz
+-project --help
++project help
+ ```
+ 
+ ## Install for Claude Code
+diff --git a/install.sh b/install.sh
+index d9c715b5..023c20ec 100755
+--- a/install.sh
++++ b/install.sh
+@@ -424,6 +424,15 @@ sys.exit(0 if parts(sys.argv[1]) < parts(sys.argv[2]) else 1)
+ ' "$1" "$2" 2>/dev/null
+ }
+ 
++# Ask the installed CLI about itself: `project version` prints its version,
++# and `project version --package-dir` where its package lives. The fallback
++# reads a CLI older than the `version` command, which took the question as an
++# option before the command: `--version` or `--package-dir`.
++ask_cli() {
++  local option="${1:-}"
++  project version ${option:+"$option"} 2>/dev/null || project "${option:---version}" 2>/dev/null
++}
++
+ # pipx and `pip install --user` both install a copy of the source, so a
+ # checkout that has moved on leaves the command behind with nothing saying so.
+ # The symlink still resolves and every old subcommand still works, while a
+@@ -445,7 +454,7 @@ report_cli() {
+   # Without a checkout there is no source to diff, and a release bumps the
+   # version on every change, so the version is the comparison.
+   if [ -z "$REPO" ]; then
+-    version="$(project --version 2>/dev/null | awk '{print $NF}')"
++    version="$(ask_cli | awk '{print $NF}')"
+     expected="$(expected_version)"
+     if [ -z "$expected" ]; then
+       printf '%-14s %s\n' "cli-installed" "${version:-unknown} (no release version to compare against)"
+@@ -457,7 +466,7 @@ report_cli() {
+     return
+   fi
+ 
+-  installed_dir="$(project --package-dir 2>/dev/null)" || true
++  installed_dir="$(ask_cli --package-dir)" || true
+   if [ -z "$installed_dir" ] || [ ! -d "$installed_dir" ]; then
+     # Too old to say where it lives, which is itself the staleness.
+     printf '%-14s %s\n' "cli-stale" "installed command cannot report its source -- run ./install.sh cli"
+@@ -466,7 +475,7 @@ report_cli() {
+   # half is compared against its own source.
+   elif diff -rq --exclude=__pycache__ --exclude=assets "$installed_dir" "$REPO/src/projector" >/dev/null 2>&1 &&
+        diff -rq "$installed_dir/site/assets" "$REPO/site/assets" >/dev/null 2>&1; then
+-    version="$(project --version 2>/dev/null | awk '{print $NF}')"
++    version="$(ask_cli | awk '{print $NF}')"
+     printf '%-14s %s\n' "cli-current" "${version:-matches checkout}"
+   else
+     printf '%-14s %s\n' "cli-stale" "installed command differs from this checkout -- run ./install.sh cli"
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index ff6e20b6..7fd6c8df 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -540,7 +540,7 @@ A review whose signature misstates what produced it is worse than an unlabeled
+ one: a reader weighs a finding by what reviewed it.
+ 
+ The version segment and `projector=` name the version of the `project`
+-command that wrote them, as `project --version` reports it, so a reader can
++command that wrote them, as `project version` reports it, so a reader can
+ tell which release of this method produced a review. `project review` reads
+ the version itself; a command run from a checkout that was never installed
+ reports `unknown`.
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 12d3c526..03e1c607 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -286,42 +286,37 @@ def warn_of_stale_release() -> None:
+         )
+ 
+ 
+-class PackageDir(argparse.Action):
+-    """Print where this command's package actually lives, and exit.
++class CommandFirst(argparse.ArgumentParser):
++    """`project`'s own parser, which refuses an option before the command, `--` and `--help` included.
+ 
+-    `install.sh status` diffs that directory against the checkout. argparse's
+-    own `version` action reflows its text to the terminal width, which would
+-    fold a long path across lines and defeat the caller reading it.
++    Each command's ask rule, such as `Bash(project init *)`, matches a command
++    line only when the command comes first.
+     """
+ 
+-    def __call__(self, parser, namespace, values, option_string=None):  # noqa: D102
+-        print(Path(__file__).resolve().parent)
+-        parser.exit()
++    def parse_known_args(self, args=None, namespace=None):  # noqa: D102
++        args = sys.argv[1:] if args is None else list(args)
++        if args and args[0].startswith("-"):
++            self.error(f"{args[0]}: options go after the command, as in `project init --root .`; for the version "
++                       "or the help, run `project version` or `project help`")
++        return super().parse_known_args(args, namespace)
+ 
+ 
+ def parser() -> argparse.ArgumentParser:
+-    result = argparse.ArgumentParser(prog="project")
+-    result.add_argument(
+-        "--version",
+-        action="version",
+-        version=f"project {distribution_version()}",
+-    )
+-    result.add_argument(
+-        "--package-dir",
+-        nargs=0,
+-        action=PackageDir,
+-        help=argparse.SUPPRESS,
+-    )
+-    result.add_argument("--root", type=Path, help="Git repository root")
+-    result.add_argument(
++    root_option = argparse.ArgumentParser(add_help=False)
++    root_option.add_argument("--root", type=Path, help="Git repository root")
++    store_options = argparse.ArgumentParser(add_help=False, parents=[root_option])
++    store_options.add_argument(
+         "--projects-dir",
+         type=Path,
+         help="project directory, relative to the Git root unless absolute",
+     )
+-    subcommands = result.add_subparsers(dest="command", required=True)
++    result = CommandFirst(prog="project", add_help=False)
++    # A plain parser for each command, which takes the options that follow the command's name.
++    subcommands = result.add_subparsers(dest="command", required=True, parser_class=argparse.ArgumentParser)
+ 
+     init = subcommands.add_parser(
+-        "init", help="adopt the project convention; outside a repository, set up only the permission rules"
++        "init", help="adopt the project convention; outside a repository, set up only the permission rules",
++        parents=[store_options],
+     )
+     site_choice = init.add_mutually_exclusive_group()
+     site_choice.add_argument(
+@@ -353,23 +348,23 @@ def parser() -> argparse.ArgumentParser:
+     )
+     add_output(init)
+ 
+-    listing = subcommands.add_parser("list", help="list projects")
++    listing = subcommands.add_parser("list", help="list projects", parents=[store_options])
+     listing.add_argument("--status", choices=STATUSES)
+     listing.add_argument("--priority", choices=PRIORITIES)
+     listing.add_argument("--owner", help="only the projects this person owns, ignoring case")
+     add_output(listing)
+ 
+-    show = subcommands.add_parser("show", help="show one project")
++    show = subcommands.add_parser("show", help="show one project", parents=[store_options])
+     show.add_argument("project")
+     add_output(show)
+ 
+-    search = subcommands.add_parser("search", help="search project content")
++    search = subcommands.add_parser("search", help="search project content", parents=[store_options])
+     search.add_argument("query")
+     search.add_argument("--status", choices=STATUSES)
+     search.add_argument("--priority", choices=PRIORITIES)
+     add_output(search)
+ 
+-    create = subcommands.add_parser("create", help="create a project")
++    create = subcommands.add_parser("create", help="create a project", parents=[store_options])
+     create.add_argument("project")
+     create.add_argument("--status", choices=STATUSES, default="draft")
+     create.add_argument("--priority", choices=PRIORITIES, default="later")
+@@ -377,56 +372,60 @@ def parser() -> argparse.ArgumentParser:
+     create.add_argument("--no-edit", action="store_true")
+     add_output(create)
+ 
+-    edit = subcommands.add_parser("edit", help="open a project plan")
++    edit = subcommands.add_parser("edit", help="open a project plan", parents=[store_options])
+     edit.add_argument("project")
+ 
+-    status = subcommands.add_parser("status", help="change project status")
++    status = subcommands.add_parser("status", help="change project status", parents=[store_options])
+     status.add_argument("project")
+     status.add_argument("status", choices=STATUSES)
+     add_output(status)
+ 
+-    priority = subcommands.add_parser("priority", help="change project priority")
++    priority = subcommands.add_parser("priority", help="change project priority", parents=[store_options])
+     priority.add_argument("project")
+     priority.add_argument("priority", choices=PRIORITIES)
+     add_output(priority)
+ 
+-    owner = subcommands.add_parser("owner", help="set or clear a project's owner")
++    owner = subcommands.add_parser("owner", help="set or clear a project's owner", parents=[store_options])
+     owner.add_argument("project")
+     owner_value = owner.add_mutually_exclusive_group(required=True)
+     owner_value.add_argument("owner", nargs="?", help="who owns the project, preferably a GitHub login")
+     owner_value.add_argument("--clear", action="store_true", help="remove the owner field")
+     add_output(owner)
+ 
+-    done = subcommands.add_parser("done", help="mark a project completed")
++    done = subcommands.add_parser("done", help="mark a project completed", parents=[store_options])
+     done.add_argument("project")
+     add_output(done)
+ 
+-    add_output(subcommands.add_parser("check", help="validate all projects"))
++    add_output(subcommands.add_parser("check", help="validate all projects", parents=[store_options]))
+ 
+     config = subcommands.add_parser("config", help="read and change layered configuration")
+     config_commands = config.add_subparsers(dest="config_command", required=True)
+ 
+-    config_get = config_commands.add_parser("get", help="print one value")
++    config_get = config_commands.add_parser("get", help="print one value", parents=[root_option])
+     config_get.add_argument("key", help="dotted key, for example review.username")
+     config_get.add_argument("--default", help="printed when the key is unset")
+     add_output(config_get)
+ 
+-    config_set = config_commands.add_parser("set", help="set one value in one configuration file")
++    config_set = config_commands.add_parser(
++        "set", help="set one value in one configuration file", parents=[root_option]
++    )
+     config_set.add_argument("key", help="a key Projector reads, for example watch.auto_start")
+     config_set.add_argument("value", help="true or false, or text, as the key takes")
+     add_config_file(config_set)
+     add_output(config_set)
+ 
+-    config_unset = config_commands.add_parser("unset", help="remove one value from one configuration file")
++    config_unset = config_commands.add_parser(
++        "unset", help="remove one value from one configuration file", parents=[root_option]
++    )
+     config_unset.add_argument("key", help="a key Projector reads, or any other key the file sets")
+     add_config_file(config_unset)
+     add_output(config_unset)
+ 
+-    config_list = config_commands.add_parser("list", help="print the merged configuration")
++    config_list = config_commands.add_parser("list", help="print the merged configuration", parents=[root_option])
+     add_output(config_list)
+ 
+     config_paths = config_commands.add_parser(
+-        "paths", help="print the files that contribute, lowest precedence first"
++        "paths", help="print the files that contribute, lowest precedence first", parents=[root_option]
+     )
+     add_output(config_paths)
+ 
+@@ -687,6 +686,12 @@ def parser() -> argparse.ArgumentParser:
+     site_workflow.add_argument(
+         "--branch", help="the default branch whose README and docs changes rebuild the site (default: origin's)"
+     )
++
++    version = subcommands.add_parser("version", help="print the version of this command")
++    # Where this command's package lives, which `install.sh status` diffs against the checkout.
++    version.add_argument("--package-dir", action="store_true", help=argparse.SUPPRESS)
++    help_command = subcommands.add_parser("help", help="print this help, or one command's")
++    help_command.add_argument("topic", nargs="*", metavar="command", help="the command, such as init or review publish")
+     return result
+ 
+ 
+@@ -1927,7 +1932,23 @@ def emit_site(pages: dict) -> None:
+         print(f"updated repository website {summary.homepage_url(pages['url'])}")
+ 
+ 
++def show_help(topic: list[str]) -> int:
++    """`help`: print the help of `project`, or of the command `topic` names, such as `["review", "publish"]`."""
++
++    if not topic:
++        parser().print_help()
++        return 0
++    # argparse prints the command's help and exits, or refuses a command that does not exist.
++    parse([*topic, "--help"])
++    return 0
++
++
+ def run(arguments: argparse.Namespace) -> int:
++    if arguments.command == "version":
++        print(Path(__file__).resolve().parent if arguments.package_dir else f"project {distribution_version()}")
++        return 0
++    if arguments.command == "help":
++        return show_help(arguments.topic)
+     if arguments.command == "config":
+         return run_config(arguments)
+     if arguments.command == "upgrade":
+@@ -2090,7 +2111,7 @@ def run_command(argv: list[str] | None) -> int:
+ 
+     try:
+         arguments = parse(argv)
+-        if arguments.command != "upgrade":
++        if arguments.command not in ("upgrade", "version", "help"):
+             warn_of_stale_release()
+         return run(arguments)
+     except BrokenPipeError:
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index c190eb5e..8b540e02 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -39,13 +39,15 @@
+ first match decides, so an ask rule prompts for a command that `Bash(project *)`
+ also allows. A trailing ` *` matches the bare command too, so
+ `Bash(project init *)` asks for `project init` with or without arguments.
+-The CLI's own options, such as `--root`, come before its command, so
+-`project --root . init` matches the allow rule and no command's ask rule;
+-`Bash(project -*)` asks for every command line that starts with an option,
+-`project --version` included. `Bash(project site *prepare*)` asks for both
+-`--prepare` flags in either spelling, `--prepare x` or `--prepare=x`, and
+-`site build` and `serve` refuse an abbreviated option such as `--prep`, so
+-no shorter spelling slips past it; it asks for `--no-prepare` too.
++The CLI refuses an option before the command, so every command line it runs
++starts with its command, and the command's own ask rule matches it wherever
++its options go: `Bash(project init *)` asks for `project init --root .`. A
++line that starts with an option, such as `project --root . init`, matches
++only the allow rule, and the CLI refuses it. `Bash(project site *prepare*)`
++asks for both `--prepare` flags in either spelling, `--prepare x` or
++`--prepare=x`, and `site build` and `serve` refuse an abbreviated option such
++as `--prep`, so no shorter spelling slips past it; it asks for `--no-prepare`
++too.
+ 
+ Two commands open the person's editor, `$VISUAL` or `$EDITOR`: `project edit`,
+ and `project create` without `--no-edit`. They need not ask. Each opens the
+@@ -65,18 +67,15 @@
+ running a command unasked, not from spelling it another way, such as with a
+ quoted command name.
+ 
+-Codex's `prefix_rule` matches exact tokens with no wildcard, so no rule can
+-match an option such as `--root=.` before the command. Codex applies the
+-strictest decision when several rules match, but a `prompt` rule for
+-`["project", "init"]` would miss `project --root=. init` under a rule allowing
+-`["project"]`. The Codex rules therefore allow commands by name, and anything
+-else, a command line that starts with an option included, falls through to
+-Codex's usual approval. Codex runs an allowed command outside its sandbox,
+-and can give it a terminal the agent types into, so the rules also leave out
+-every command that can run another program: `create` and `edit`, whose
+-editor an agent could drive, `review gate`, and `site build` and `serve`.
+-They leave out `inbox answer`, `dismiss`, and `snooze` too. A new command
+-reaches Codex once it is added here and `init` rewrites the file.
++Codex's `prefix_rule` matches exact tokens with no wildcard. The Codex rules
++allow commands by name, and anything else, a command line that starts with an
++option included, falls through to Codex's usual approval. Codex runs an
++allowed command outside its sandbox, and can give it a terminal the agent
++types into, so the rules also leave out every command that can run another
++program: `create` and `edit`, whose editor an agent could drive,
++`review gate`, and `site build` and `serve`. They leave out `inbox answer`,
++`dismiss`, and `snooze` too. A new command reaches Codex once it is added
++here and `init` rewrites the file.
+ """
+ 
+ from __future__ import annotations
+@@ -92,11 +91,14 @@
+ ALLOW = ("Bash(project *)",)
+ ASK = ("Bash(project init *)", "Bash(project upgrade *)", "Bash(project config set *)",
+        "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
+-       "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project -*)")
++       "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)")
+ # The narrower rules Projector wrote before `Bash(project *)` covered them,
+ # which `init` removes from `permissions.allow`.
+ SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
+               "Bash(project review settle *)", "Bash(project summary publish *)")
++# The ask rule Projector wrote before the CLI refused an option before the
++# command, which `init` removes from `permissions.ask`.
++RETIRED_ASK = ("Bash(project -*)",)
+ 
+ ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
+          "`--prepare` or `--allow-prepare`, and `project inbox answer`, `dismiss`, and `snooze`")
+@@ -105,8 +107,10 @@
+ # Each pattern Codex may run without asking, and outside its sandbox, with the
+ # justification Codex shows for it.
+ CODEX_ALLOW = (
+-    (["project", ["check", "done", "list", "loop", "owner", "priority", "search", "show", "status", "summary"]],
+-     "Runs a Projector command that works on plans, loops, or pull request summaries."),
++    (["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary",
++                  "version"]],
++     "Runs a Projector command that works on plans, loops, or pull request summaries, or prints its version or "
++     "help."),
+     (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
+     (["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "restore", "revise", "show", "tell",
+                            "watch", "withdraw"]],
+@@ -194,11 +198,13 @@ def allow_commands(apply: bool = True, environ: Mapping[str, str] = os.environ,
+ def allow_in_claude(apply: bool = True, environ: Mapping[str, str] = os.environ, hint: bool = True) -> FileAction:
+     """Add `ALLOW` to `permissions.allow` and `ASK` to `permissions.ask` in the user's Claude Code settings.
+ 
+-    The `SUPERSEDED` rules leave `permissions.allow`, and everything else in
+-    the file is kept. A file linked into a dotfiles repository is written
+-    through its link. A file `init` cannot read as settings is left alone with
+-    a note. Without `apply`, only a missing rule is reported, because a
+-    superseded rule left in place allows nothing that `ALLOW` does not.
++    The `SUPERSEDED` rules leave `permissions.allow`, the `RETIRED_ASK` rules
++    leave `permissions.ask`, and everything else in the file is kept. A file
++    linked into a dotfiles repository is written through its link. A file
++    `init` cannot read as settings is left alone with a note. Without `apply`,
++    only a missing rule is reported, because a superseded rule left in place
++    allows nothing that `ALLOW` does not, and a retired one asks only before a
++    command line the CLI refuses.
+     """
+ 
+     path = settings_path(environ)
+@@ -228,7 +234,7 @@ def kept(reason: str) -> FileAction:
+     allow, ask = permissions["allow"], permissions["ask"]
+     missing_allow = [rule for rule in ALLOW if rule not in allow]
+     missing_ask = [rule for rule in ASK if rule not in ask]
+-    superseded = any(rule in SUPERSEDED for rule in allow)
++    superseded = any(rule in SUPERSEDED for rule in allow) or any(rule in RETIRED_ASK for rule in ask)
+     if not missing_allow and not missing_ask and not (apply and superseded):
+         return FileAction(name, "unchanged")
+     if not apply:
+@@ -242,7 +248,7 @@ def kept(reason: str) -> FileAction:
+                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
+                                            "add them" if hint else ""))
+     allow[:] = [rule for rule in allow if rule not in SUPERSEDED] + missing_allow
+-    ask.extend(missing_ask)
++    ask[:] = [rule for rule in ask if rule not in RETIRED_ASK] + missing_ask
+     try:
+         write_through(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+     except OSError as error:
+diff --git a/tests/test_config.py b/tests/test_config.py
+index bbf8e8c5..9ef4ab4f 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -191,7 +191,7 @@ def config(self, text: str) -> Path:
+     def invoke(self, *arguments: str) -> tuple[int, str, str]:
+         stdout, stderr = StringIO(), StringIO()
+         with redirect_stdout(stdout), redirect_stderr(stderr):
+-            code = main(["--root", str(self.root), *arguments])
++            code = main([*arguments, "--root", str(self.root)])
+         return code, stdout.getvalue(), stderr.getvalue()
+ 
+     def test_a_toml_date_renders_as_iso_rather_than_crashing(self) -> None:
+@@ -276,7 +276,7 @@ def test_the_flag_beats_configuration(self) -> None:
+         )
+         self.config('[projects]\ndir = "plans"\n')
+ 
+-        code, stdout, _ = self.invoke("--projects-dir", "flagged", "list", "--json")
++        code, stdout, _ = self.invoke("list", "--projects-dir", "flagged", "--json")
+ 
+         self.assertEqual(0, code)
+         self.assertEqual("alpha", json.loads(stdout)["projects"][0]["name"])
+@@ -317,7 +317,7 @@ def setUp(self) -> None:
+     def invoke(self, *arguments: str) -> tuple[int, str, str]:
+         stdout, stderr = StringIO(), StringIO()
+         with redirect_stdout(stdout), redirect_stderr(stderr):
+-            code = main(["--root", str(self.root), *arguments])
++            code = main([*arguments, "--root", str(self.root)])
+         return code, stdout.getvalue(), stderr.getvalue()
+ 
+     def assert_set(self, key: str, value: str, *scope: str) -> str:
+diff --git a/tests/test_install.py b/tests/test_install.py
+index 4d02aa55..93594f52 100644
+--- a/tests/test_install.py
++++ b/tests/test_install.py
+@@ -711,21 +711,26 @@ def test_cli_reinstall_keeps_the_interpreter_the_venv_was_made_with(self) -> Non
+         self.assertEqual(f"pipx install --force {ROOT}", log[-2])
+         self.assertEqual("PIPX_DEFAULT_PYTHON=/opt/py/bin/python3.12", log[-1])
+ 
+-    def fake_project(self, package_dir: str | None) -> None:
++    def fake_project(self, package_dir: str | None, *, options: bool = False) -> None:
+         """A `project` on PATH ahead of any real one.
+ 
+-        Answers `--package-dir` with `package_dir`, or fails the way a command
+-        too old to know the flag would when it is None.
++        Answers `version --package-dir` with `package_dir` and `version` with
++        its version, or, with `options`, `--package-dir` and `--version`, as a
++        command older than the `version` command does. It fails the way a
++        command too old to know `--package-dir` would when `package_dir` is
++        None, and refuses every other command line as a usage error.
+         """
+ 
+         path = self.fake_bin / "project"
+         if package_dir is None:
+             body = 'echo "usage: project" >&2; exit 2'
+         else:
++            directory, version = ("--package-dir", "--version") if options else ("version --package-dir", "version")
+             body = (
+-                'case "$1" in\n'
+-                f'  --package-dir) echo "{package_dir}" ;;\n'
+-                '  --version) echo "project 9.9.9" ;;\n'
++                'case "$*" in\n'
++                f'  "{directory}") echo "{package_dir}" ;;\n'
++                f'  "{version}") echo "project 9.9.9" ;;\n'
++                '  *) echo "usage: project" >&2; exit 2 ;;\n'
+                 'esac'
+             )
+         path.write_text(f"#!/bin/sh\n{body}\n")
+@@ -753,13 +758,18 @@ def installed_copy(self, *, diverge: bool = False, diverge_asset: bool = False)
+         return str(target)
+ 
+     def test_status_reports_a_cli_matching_the_checkout(self) -> None:
+-        self.fake_project(self.installed_copy(diverge=False))
++        installed = self.installed_copy(diverge=False)
++        # A command older than `project version` takes the questions as
++        # options before the command, and still reads as current.
++        for options in (False, True):
++            with self.subTest(options=options):
++                self.fake_project(installed, options=options)
+ 
+-        result = self.install("status")
++                result = self.install("status")
+ 
+-        self.assertEqual(0, result.returncode, result.stderr)
+-        self.assertIn("cli-current", result.stdout)
+-        self.assertNotIn("cli-stale", result.stdout)
++                self.assertEqual(0, result.returncode, result.stderr)
++                self.assertIn("cli-current    9.9.9", result.stdout)
++                self.assertNotIn("cli-stale", result.stdout)
+ 
+     def test_status_reports_a_cli_left_behind_by_the_checkout(self) -> None:
+         # The case a version comparison misses: the CLI changed and nobody
+@@ -884,7 +894,7 @@ def fake_curl(self, version: str) -> None:
+         path.chmod(0o755)
+ 
+     def test_status_compares_the_installed_versions_with_the_release(self) -> None:
+-        self.fake_project("/unused")  # answers --version with 9.9.9
++        self.fake_project("/unused")  # answers `version` with 9.9.9
+         self.fake_curl("9.9.9")
+         (self.state / "claude-plugins.json").write_text(json.dumps([{"id": "projector@projector", "version": "9.9.8"}]))
+         environment = {k: v for k, v in self.environment.items() if k != "PROJECTOR_OFFLINE"}
+@@ -899,13 +909,16 @@ def test_status_compares_the_installed_versions_with_the_release(self) -> None:
+                       "https://raw.githubusercontent.com/ninjudd/projector/v0/.claude-plugin/plugin.json", self.logged())
+ 
+     def test_status_offline_reports_versions_without_a_verdict(self) -> None:
+-        self.fake_project("/unused")
++        # A command older than `project version` answers only `--version`.
++        for options in (False, True):
++            with self.subTest(options=options):
++                self.fake_project("/unused", options=options)
+ 
+-        result = self.piped("status")
++                result = self.piped("status")
+ 
+-        self.assertEqual(0, result.returncode, result.stderr)
+-        self.assertIn("cli-installed  9.9.9 (no release version to compare against)", result.stdout)
+-        self.assertNotIn("repo-", result.stdout, "no checkout, so nothing to compare with an upstream")
++                self.assertEqual(0, result.returncode, result.stderr)
++                self.assertIn("cli-installed  9.9.9 (no release version to compare against)", result.stdout)
++                self.assertNotIn("repo-", result.stdout, "no checkout, so nothing to compare with an upstream")
+ 
+     def fake_python(self, *, new_enough: bool = True) -> Path:
+         """A python3 that passes or fails the version check and makes a fake venv."""
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index 7243e845..c8b6eceb 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -52,11 +52,18 @@
+     ("project upgrade status", "ask", "none"),
+     ("project config set review.allow_approve true", "ask", "none"),
+     ("project config unset review.allow_approve", "ask", "none"),
+-    ("project --root . init", "ask", "none"),
+-    ("project --root=. upgrade", "ask", "none"),
+-    ("project --projects-dir=plans config set review.allow_approve true", "ask", "none"),
+-    ("project --root=. list", "ask", "none"),
+-    ("project --version", "ask", "none"),
++    ("project init --root .", "ask", "none"),
++    ("project config set review.allow_approve true --root=.", "ask", "none"),
++    ("project list --root=. --projects-dir=plans", "allow", "allow"),
++    ("project version", "allow", "allow"),
++    ("project help review publish", "allow", "allow"),
++    # A line that starts with an option matches no command's ask rule, and the
++    # CLI refuses it.
++    ("project --root . init", "allow", "none"),
++    ("project --projects-dir=plans config set review.allow_approve true", "allow", "none"),
++    ("project -- init", "allow", "none"),
++    ("project --version", "allow", "none"),
++    ("project --help", "allow", "none"),
+     ("project site page --summary summary.json --out page", "allow", "allow"),
+     ("project site status --repo owner/name", "allow", "allow"),
+     ("project site workflow --write", "allow", "allow"),
+@@ -67,7 +74,7 @@
+     ("project site serve --prepare make", "ask", "none"),
+     ("project site serve --allow-prepare", "ask", "none"),
+     ("project site build --out site --no-prepare", "ask", "none"),
+-    ("project --root . site serve --prepare make", "ask", "none"),
++    ("project --root . site serve --prepare make", "allow", "none"),
+     ("project edit plan", "allow", "none"),
+     ("project create plan --no-edit", "allow", "none"),
+     ("VISUAL='sh -c make' project edit plan", "none", "none"),
+@@ -181,8 +188,8 @@ def test_the_documented_codex_rules_are_the_ones_init_writes(self) -> None:
+ 
+         self.assertEqual([pattern for pattern, _ in permissions.CODEX_ALLOW], list(map(json.loads, documented)))
+ 
+-    def test_each_command_line_is_one_the_parser_runs(self) -> None:
+-        incomplete = {"project", "project config", "project --version", "projector list"}
++    def test_each_command_line_is_one_the_parser_runs_or_refuses_for_its_leading_option(self) -> None:
++        incomplete = {"project", "project config", "projector list"}
+         for command, _, _ in DECISIONS:
+             if command in incomplete:
+                 continue
+@@ -190,7 +197,14 @@ def test_each_command_line_is_one_the_parser_runs(self) -> None:
+                 words = shlex.split(command)
+                 while re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0], re.DOTALL):
+                     words.pop(0)
+-                cli.parser().parse_args(words[1:])
++                if not words[1].startswith("-"):
++                    cli.parser().parse_args(words[1:])
++                    continue
++                stderr = StringIO()
++                with redirect_stderr(stderr), self.assertRaises(SystemExit) as stop:
++                    cli.parser().parse_args(words[1:])
++                self.assertEqual(2, stop.exception.code)
++                self.assertIn(f"error: {words[1]}: options go after the command", stderr.getvalue())
+ 
+     def test_site_build_and_serve_take_the_prepare_flags_only_spelled_in_full(self) -> None:
+         for command in (["site", "build", "--out", "site"], ["site", "serve"]):
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 793c5ae4..3824b6fc 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -218,7 +218,7 @@ def test_root_and_projects_dir_overrides_work(self) -> None:
+         )
+ 
+         code, stdout, _ = self.invoke(
+-            "--root", str(self.root), "--projects-dir", "plans", "list", "--json"
++            "list", "--root", str(self.root), "--projects-dir", "plans", "--json"
+         )
+ 
+         self.assertEqual(0, code)
+@@ -230,10 +230,10 @@ def test_absolute_projects_directory_outside_root_emits_a_usable_path(self) -> N
+             (plans / "README.md").write_text("# Plans\n")
+ 
+             code, stdout, stderr = self.invoke(
+-                "--projects-dir",
+-                str(plans),
+                 "create",
+                 "alpha",
++                "--projects-dir",
++                str(plans),
+                 "--no-edit",
+                 "--json",
+             )
+@@ -244,6 +244,22 @@ def test_absolute_projects_directory_outside_root_emits_a_usable_path(self) -> N
+                 json.loads(stdout)["path"],
+             )
+ 
++    def test_an_option_before_the_command_is_refused_and_runs_nothing(self) -> None:
++        (self.root / "CLAUDE.md").unlink()
++        for argv in (["--root", str(self.root), "init"], ["--root=.", "init"], ["--projects-dir", "plans", "list"],
++                     ["--", "init"], ["--version"], ["--help"], ["-h"], ["--ver"]):
++            with self.subTest(argv=argv):
++                stdout, stderr = StringIO(), StringIO()
++                with redirect_stdout(stdout), redirect_stderr(stderr), self.assertRaises(SystemExit) as stop:
++                    main(argv)
++
++                self.assertEqual(2, stop.exception.code)
++                self.assertEqual("", stdout.getvalue())
++                self.assertIn(f"project: error: {argv[0]}: options go after the command, as in "
++                              "`project init --root .`; for the version or the help, run `project version` or "
++                              "`project help`", stderr.getvalue())
++                self.assertFalse((self.root / "CLAUDE.md").exists(), "init never ran")
++
+     def test_invalid_plan_fails_discovery_with_a_diagnostic(self) -> None:
+         self.plan("good", "in-progress", priority="now")
+         self.plan("bad", "shipped")
+@@ -1097,8 +1113,27 @@ def test_init_replaces_the_narrower_rules_projector_wrote_before(self) -> None:
+         self.assertIn("unchanged ~/.claude/settings.json\n", self.invoke("init")[1])
+         self.assertEqual(before, self.settings().read_bytes())
+ 
++    def test_init_removes_the_ask_rule_for_an_option_before_the_command(self) -> None:
++        self.at_a_terminal()
++        self.settings().write_text(json.dumps({"permissions": {
++            "allow": list(permissions.ALLOW),
++            "ask": ["Bash(rm *)", *permissions.ASK, "Bash(project -*)"],
++            "deny": ["Bash(project -*)"],
++        }}), encoding="utf-8")
++
++        code, stdout, stderr = self.invoke("init")
++
++        self.assertEqual(0, code, stderr)
++        self.assertIn("updated ~/.claude/settings.json\n", stdout)
++        self.assertEqual({"permissions": {**granted(ask=("Bash(rm *)",))["permissions"],
++                                          "deny": ["Bash(project -*)"]}},
++                         json.loads(self.settings().read_text()), "only the ask rule Projector wrote is removed")
++        before = self.settings().read_bytes()
++        self.assertIn("unchanged ~/.claude/settings.json\n", self.invoke("init")[1])
++        self.assertEqual(before, self.settings().read_bytes())
++
+     def test_init_removes_a_leftover_narrower_rule_only_when_it_writes(self) -> None:
+-        leftover = granted("Bash(project review hold *)")
++        leftover = granted("Bash(project review hold *)", ask=("Bash(project -*)",))
+         self.settings().write_text(json.dumps(leftover), encoding="utf-8")
+ 
+         code, stdout, stderr = self.invoke("init")
+@@ -1461,6 +1496,12 @@ def test_rules_present_exits_0_and_writes_nothing(self) -> None:
+                          "a narrower rule left beside the broad one takes nothing away")
+         self.assertEqual(before, self.home_tree())
+ 
++        self.settings().write_text(json.dumps(granted(ask=("Bash(project -*)",))))
++        before = self.home_tree()
++        self.assertEqual((0, "allows ~/.claude/settings.json\n", ""), self.invoke("review", "rules"),
++                         "the ask rule for an option before the command asks only before what the CLI refuses")
++        self.assertEqual(before, self.home_tree())
++
+     def test_missing_rules_exit_1_and_ask_for_init_without_writing(self) -> None:
+         def write(permissions: dict) -> None:
+             self.settings().write_text(json.dumps({"permissions": permissions}))
+@@ -1468,9 +1509,9 @@ def write(permissions: dict) -> None:
+         narrower = ["Bash(project review publish *)", "Bash(project review hold *)", "Bash(project summary publish *)"]
+         cases = {
+             "only the narrower rules": (lambda: write({"allow": narrower}), "Bash(project *)"),
+-            "ask rules missing": (lambda: write({"allow": list(permissions.ALLOW)}), "Bash(project -*)"),
++            "ask rules missing": (lambda: write({"allow": list(permissions.ALLOW)}), "Bash(project init *)"),
+             "one ask rule missing": (lambda: write(granted()["permissions"] | {"ask": list(permissions.ASK[:-1])}),
+-                                     "Bash(project -*)"),
++                                     "Bash(project inbox snooze *)"),
+             "settings absent": (self.settings().unlink, "Bash(project *)"),
+         }
+         for name, (arrange, missing) in cases.items():
+@@ -1809,35 +1850,62 @@ class SelfReportingTests(unittest.TestCase):
+     def test_version_exits_zero_and_names_the_distribution(self) -> None:
+         stdout = StringIO()
+ 
+-        with self.assertRaises(SystemExit) as raised:
+-            with redirect_stdout(stdout):
+-                main(["--version"])
++        with redirect_stdout(stdout):
++            code = main(["version"])
+ 
+-        # argparse's version action short-circuits the required subparser, so
+-        # this exits 0 rather than failing on the absent command.
+-        self.assertEqual(0, raised.exception.code)
++        # What `--version` printed before the command came first, which
++        # `install.sh` reads the version's last word from.
++        self.assertEqual(0, code)
++        self.assertEqual(f"project {distribution_version()}\n", stdout.getvalue())
+         self.assertRegex(stdout.getvalue().strip(), r"^project \S+$")
+ 
+     def test_package_dir_names_where_this_package_runs_from(self) -> None:
+         stdout = StringIO()
+ 
+-        # A narrow width, because argparse's own version action reflows to the
+-        # terminal and would fold a long path. `install.sh` reads this with
+-        # `$(...)` and tests the result with `-d`, so a folded path reports
+-        # every install stale forever. Pinning COLUMNS checks that at any
+-        # width rather than at whatever depth this checkout happens to sit.
++        # A narrow width, so a path folded to the terminal's width would show.
++        # `install.sh` reads this with `$(...)` and tests the result with
++        # `-d`, so a folded path reports every install stale forever. Pinning
++        # COLUMNS checks that at any width rather than at whatever depth this
++        # checkout happens to sit.
+         with mock.patch.dict(os.environ, {"COLUMNS": "20"}):
+-            with self.assertRaises(SystemExit) as raised:
+-                with redirect_stdout(stdout):
+-                    main(["--package-dir"])
++            with redirect_stdout(stdout):
++                code = main(["version", "--package-dir"])
+ 
+-        self.assertEqual(0, raised.exception.code)
++        self.assertEqual(0, code)
+         printed = stdout.getvalue().splitlines()
+         self.assertEqual(1, len(printed), printed)
+         reported = Path(printed[0])
+         self.assertEqual(Path(cli.__file__).resolve().parent, reported)
+         self.assertTrue((reported / "cli.py").is_file())
+ 
++    def test_help_prints_the_help_of_project_or_of_the_command_it_names(self) -> None:
++        stdout = StringIO()
++        with redirect_stdout(stdout):
++            code = main(["help"])
++
++        self.assertEqual(0, code)
++        self.assertEqual(cli.parser().format_help(), stdout.getvalue())
++        self.assertRegex(stdout.getvalue(), r"\n +version +print the version of this command\n")
++        self.assertNotIn("--", stdout.getvalue(), "project itself takes no option")
++
++        for command in (["init"], ["review", "publish"]):
++            with self.subTest(command=command):
++                printed = []
++                for argv in (["help", *command], [*command, "--help"]):
++                    stdout = StringIO()
++                    with redirect_stdout(stdout), self.assertRaises(SystemExit) as stop:
++                        main(argv)
++                    self.assertEqual(0, stop.exception.code)
++                    printed.append(stdout.getvalue())
++                self.assertEqual(printed[1], printed[0])
++                self.assertTrue(printed[0].startswith(f"usage: project {' '.join(command)} "), printed[0])
++
++        stderr = StringIO()
++        with redirect_stderr(stderr), self.assertRaises(SystemExit) as stop:
++            main(["help", "nothing"])
++        self.assertEqual(2, stop.exception.code)
++        self.assertIn("invalid choice: 'nothing'", stderr.getvalue())
++
+     def test_the_queried_distribution_is_the_one_pyproject_installs(self) -> None:
+         # A wrong name here is invisible: `version()` raises, the unknown
+         # branch answers, and every install reports `cli-stale installed
+@@ -1924,9 +1992,9 @@ def test_a_target_is_forwarded_to_the_checkout_installer(self) -> None:
+         self.assertEqual(3, code)
+         self.assertEqual("", stdout)
+         self.assertIn(shlex.join([str(self.checkout / "install.sh"), "all"]), stderr)
+-        # Every lookup -- `--version` makes one too -- asks for the distribution
+-        # pyproject.toml installs; a wrong name here would report every command
+-        # as not installed and exit 69 while the suite stayed green.
++        # Every lookup asks for the distribution pyproject.toml installs; a
++        # wrong name here would report every command as not installed and exit
++        # 69 while the suite stayed green.
+         project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]
+         self.assertEqual(
+             {project["name"]},
+@@ -2276,7 +2344,7 @@ def test_help_version_and_upgrade_do_not_warn(self) -> None:
+         self.release("0.6.6")
+         self.patch(mock.patch.object(cli, "run_upgrade", return_value=0))
+ 
+-        for argv in (["--help"], ["--version"], ["upgrade"]):
++        for argv in (["help"], ["help", "init"], ["version"], ["upgrade"]):
+             with self.subTest(argv=argv):
+                 code, _, stderr = self.invoke(*argv)
+ 
+@@ -2335,7 +2403,7 @@ def test_output_still_buffered_at_exit_ends_the_command_quietly(self) -> None:
+         # Short output waits in Python's buffer until exit, so a reader gone
+         # before then fails only the flush at exit.
+         self.plan("small")
+-        for arguments in (["show", "small"], ["--help"]):
++        for arguments in (["show", "small"], ["help"], ["help", "show"]):
+             for entry in self.ENTRY_POINTS:
+                 read, write = os.pipe()
+                 os.close(read)
+diff --git a/tests/test_site.py b/tests/test_site.py
+index 9b176c59..f3d5250b 100644
+--- a/tests/test_site.py
++++ b/tests/test_site.py
+@@ -4112,7 +4112,7 @@ def init(self, github: FakeGitHub, *extra: str) -> tuple[int, str, str]:
+              mock.patch.object(cli.shutil, "which", return_value="/usr/bin/gh"), \
+              redirect_stdout(out), redirect_stderr(err):
+             # The site is under test; the Claude Code settings step has its own tests.
+-            code = cli.main(["--root", str(self.repo), "init", "--no-publish-rule", *extra])
++            code = cli.main(["init", "--root", str(self.repo), "--no-publish-rule", *extra])
+         return code, out.getvalue(), err.getvalue()
+ 
+     def workflow(self) -> Path:
+@@ -4175,7 +4175,7 @@ def test_check_warns_only_while_the_workflow_is_an_earlier_shape_projector_wrote
+                     self.workflow().write_text(text)
+                 out, err = io.StringIO(), io.StringIO()
+                 with redirect_stdout(out), redirect_stderr(err):
+-                    code = cli.main(["--root", str(self.repo), "check"])
++                    code = cli.main(["check", "--root", str(self.repo)])
+ 
+                 self.assertEqual(0, code, err.getvalue())
+                 self.assertEqual(warns, warning in err.getvalue().splitlines(), err.getvalue())
+diff --git a/web/components/sections/install.tsx b/web/components/sections/install.tsx
+index f5fba8ba..5815e8a7 100644
+--- a/web/components/sections/install.tsx
++++ b/web/components/sections/install.tsx
+@@ -25,7 +25,7 @@ const rows: { title: string; body: ReactNode; commands: string[] }[] = [
+         release.
+       </>
+     ),
+-    commands: [INSTALL.pipx, "project --help"],
++    commands: [INSTALL.pipx, "project help"],
+   },
+   {
+     title: "Claude Code",

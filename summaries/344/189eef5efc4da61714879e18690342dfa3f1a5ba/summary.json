@@ -1,0 +1,183 @@
+{
+ "version": 1,
+ "name": "Command-first CLI",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 344,
+  "title": "Put the command first on project's command line",
+  "head": "189eef5efc4da61714879e18690342dfa3f1a5ba",
+  "headRef": "command-first",
+  "base": "1b126163f94eee2ba6d4423d7a1dae8ebdc4d2a8",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project init</code> writes Claude Code permission rules into the person's own settings: <code>Bash(project *)</code> allows every <code>project</code> command, and ask rules such as <code>Bash(project init *)</code> make Claude Code ask before the few commands that change settings or run other programs. An ask rule matches by the start of the command line, so an option placed before the command, as in <code>project --root . init</code>, slipped past it. Projector closed that gap with one more ask rule, <code>Bash(project -*)</code>. But that rule also asked before <code>project --version</code> and <code>project --help</code>, which only print, and an ask rule beats both allow rules and auto mode, so every version check an agent ran prompted the person.",
+   "This pull request removes the shape the rule guarded against. <code>project</code> now refuses any option before its command and exits 2, so every command line it runs starts with the command and that command's own ask rule matches it. With nothing left for it to catch, <code>Bash(project -*)</code> leaves the rule set, and <code>init</code> removes it from settings that already have it.",
+   "<ul><li><b>New commands.</b> <code>project version</code> and <code>project help [command…]</code> replace <code>--version</code> and <code>--help</code>. The hidden <code>--package-dir</code> that <code>install.sh</code> reads becomes <code>project version --package-dir</code>.</li><li><b>Options move.</b> <code>--root</code> and <code>--projects-dir</code> now follow the commands that read plans; the <code>config</code> subcommands take <code>--root</code>. <code>review</code>, <code>inbox</code>, <code>loop</code>, <code>site</code>, <code>summary</code> and <code>upgrade</code> never read either option and now refuse them.</li><li><b>Older installs.</b> <code>install.sh</code> asks the installed CLI with the new command first and falls back to the old leading option, so it still reads a CLI from before this change.</li></ul>"
+  ],
+  "cards": [
+   {
+    "id": "compat",
+    "title": "What keeps working",
+    "html": "<ul class=\"tight\"><li>Every command line in the shipped skills, hooks, scripts and GitHub Action already puts the command first, so none of them changes.</li><li>The review loop's calls parse unchanged: <code>project review &lt;sub&gt; &lt;pr&gt; --repo … --loop … --model …</code>, <code>project review status &lt;pr&gt; --repo …</code>, and <code>project loop add|remove owner/repo#N --tracked &lt;file&gt;</code>.</li><li>An installed <code>Bash(project *)</code> allow rule keeps matching every command. A leftover <code>Bash(project -*)</code> ask rule only asks before lines the CLI now refuses, and <code>project review rules</code> accepts settings with or without it.</li><li>A Codex user's <code>projector.rules</code> reads as outdated until <code>project init</code> runs again, because the allowed command list gains <code>version</code> and <code>help</code>.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Allow rule / ask rule.</b> Entries in Claude Code's <code>permissions.allow</code> and <code>permissions.ask</code>. Claude Code checks ask rules before allow rules, and the first match decides.</li><li><b>Leading option.</b> An option such as <code>--root</code> placed between <code>project</code> and its command.</li><li><b>Parent parser.</b> An argparse parser whose options are copied into each parser that names it in <code>parents=</code>, so an option is defined once.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "parser",
+   "title": "The command comes first",
+   "kicker": "The top-level parser refuses leading options; version and help become commands",
+   "intro": [
+    "The top-level parser is now <code>CommandFirst</code>, an <code>argparse.ArgumentParser</code> whose <code>parse_known_args</code> refuses any first word that starts with <code>-</code>, <code>--</code> and <code>-h</code> included, with an error that says options go after the command and names <code>project version</code> and <code>project help</code>. It is built with <code>add_help=False</code>, so it takes no option at all.",
+    "<code>--root</code> and <code>--projects-dir</code> are defined once, in two parent parsers, and attached to the commands that read plans and to the <code>config</code> subcommands. The subcommand parsers are plain <code>ArgumentParser</code>s, because each of them sees its options as its first words."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran the PR's CLI: <code>project version</code>, <code>version --package-dir</code>, <code>help</code>, <code>help init</code> and <code>help review publish</code> succeed; a leading <code>--version</code>, <code>--root</code> or <code>--</code> exits 2 with the new error; <code>project list --root . --projects-dir docs/projects</code> lists the plans."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Swaps the top-level parser for <code>CommandFirst</code>, moves <code>--root</code>/<code>--projects-dir</code> into parent parsers, and adds the <code>version</code> and <code>help</code> commands.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 298,
+       "text": "The refusal checks only the first word. A command's own options come after its name, and the subcommand parser that reads them is a plain <code>ArgumentParser</code>, so they are unaffected."
+      },
+      {
+       "kind": "verify",
+       "line": 315,
+       "text": "<code>parser_class=argparse.ArgumentParser</code> keeps every subcommand parser, and the nested <code>review</code>, <code>inbox</code>, <code>loop</code>, <code>site</code> and <code>config</code> parsers under it, from inheriting the refusal. Checked by parsing each review-loop command line with this head's parser."
+      },
+      {
+       "kind": "verify",
+       "line": 1947,
+       "text": "Only the plan-reading commands and <code>config</code> read <code>arguments.root</code> or <code>arguments.projects_dir</code>, so dropping the options from the other commands leaves no attribute lookup behind. Checked by searching <code>src/</code>."
+      },
+      {
+       "kind": "context",
+       "line": 1935,
+       "text": "<code>help &lt;command…&gt;</code> re-parses <code>[*topic, \"--help\"]</code>, so its output is exactly the command's own <code>--help</code>, and an unknown command exits 2 as any usage error does."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "permissions",
+   "title": "Retiring the ask rule for a leading option",
+   "kicker": "Bash(project -*) leaves the rule set, and Codex allows version and help",
+   "intro": [
+    "<code>ASK</code> loses <code>Bash(project -*)</code>, and a new <code>RETIRED_ASK</code> tuple names it so <code>init</code> can remove it from <code>permissions.ask</code>, the way <code>SUPERSEDED</code> already removes old allow rules. When <code>init</code> only reports, without writing, a leftover retired rule is not counted as missing anything.",
+    "The Codex rules allow commands by name, so they never needed the ask rule. They gain <code>help</code> and <code>version</code> beside the other read-only commands."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Drops <code>Bash(project -*)</code> from <code>ASK</code>, adds <code>RETIRED_ASK</code> so <code>init</code> removes it, and adds <code>help</code>/<code>version</code> to the Codex allow list.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 251,
+       "text": "Only the exact retired rule is removed; every other ask rule, including the person's own, stays in its order."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "install",
+   "title": "Reading an installed CLI of either age",
+   "kicker": "install.sh asks with the new command and falls back to the old option",
+   "intro": [
+    "<code>install.sh status</code> reads the installed CLI's version and package directory. Before an upgrade, that CLI can be older than the <code>version</code> command, so the new <code>ask_cli</code> function tries <code>project version [--package-dir]</code> first and falls back to <code>project --version</code> or <code>project --package-dir</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "install.sh",
+     "note": "Adds <code>ask_cli</code> and routes the two version reads and the package-directory read through it.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 431,
+       "text": "Ran <code>ask_cli</code> against the installed 0.8.0 CLI, which refuses <code>version</code>: it fell back and printed <code>0.8.0</code> and the pipx package directory. Against this head's CLI it read <code>version</code> and <code>version --package-dir</code> directly."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the site",
+   "kicker": "Every example now puts the command first",
+   "intro": [
+    "The CLI reference says the command comes first, documents <code>project version</code> and <code>project help</code>, drops <code>Bash(project -*)</code> from the example settings, and explains why each command's ask rule now matches every way to run it. The other pages swap <code>project --help</code> and <code>project --version</code> for the new commands."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "States the command-first rule, documents <code>version</code> and <code>help</code>, and rewrites the ask-rule and Codex-rule explanations."
+    },
+    {
+     "path": "docs/develop.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Names <code>project version</code> as the source of a review's version segment."
+    },
+    {
+     "path": "web/components/sections/install.tsx",
+     "note": "The site's install section shows <code>project help</code>."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Leading options refused, new commands, rule removal, and install fallbacks",
+   "intro": [
+    "Existing tests move their leading <code>--root</code> and <code>--projects-dir</code> after the command. New tests check that every leading option, abbreviations such as <code>--ver</code> included, is refused before <code>init</code> can run; that <code>help</code> prints exactly what <code>--help</code> on the command prints; that <code>init</code> removes only the retired ask rule; and that <code>install.sh status</code> reads a fake CLI of either age."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran the full suite at this head with Python 3.12: 1097 tests, OK, one skip. Also ran <code>project check</code>, <code>claude plugin validate</code> on the root and <code>skills</code>, <code>claude plugin test .</code> (144 pass), <code>hooks/typecheck.sh</code>, and <code>git diff --check</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_projector.py"
+    },
+    {
+     "path": "tests/test_permissions.py"
+    },
+    {
+     "path": "tests/test_install.py"
+    },
+    {
+     "path": "tests/test_config.py"
+    },
+    {
+     "path": "tests/test_site.py"
+    }
+   ]
+  }
+ ]
+}
