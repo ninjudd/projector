@@ -1832,3 +1832,58 @@ divider's "updated" time stays.
 | An open notice's line, in the list and at the top of its drawer, takes `inactive`, and the rule after it the default color; an unsnoozed notice's line returns to `inactive` | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in gray`, `snooze closes an item’s drawer and mutes it for 30 seconds, and its drawer offers unsnooze in snooze’s place` |
 | The divider ends with the reload's age, `0s` just after a reload, in `subtle`, ending at `bodyColumns`, with no "updated", "ago", or "just now"; the counts follow a `─ ` at its start, and its rule runs from them to the time, the row still ending at `bodyColumns` | `draws one line per open pull request of the session’s own loops`, `asks through the tool, and the band lists the question below the pull requests`, and the tests that find the divider by its counts |
 | The digits from an empty prompt, and the confirmation's look | Checked by hand by the owner in a preview session |
+
+## 19. Count the band's pull requests in its divider
+
+The divider counted the open questions and the open notices, § 2.5, but
+not the pull requests listed above them, so it said nothing about the rows
+that usually fill the band. It now starts with how many pull requests the
+band lists, before the item counts, and draws the counts in `subtle`, as
+§ 18 draws the time:
+
+```text
+─ 3 pull requests · 2 questions · 1 notice ─────────────────────────── 12s [-]
+```
+
+### 19.1 What changes
+
+- **The divider counts the band's pull requests.** The count is the band's
+  own rows, `shown.rows`: every pull request it lists, the session's own
+  and other people's. A pull request both loops track is one row, so it
+  counts once. A merged or closed pull request is neither listed nor
+  counted, and one you dismiss leaves the count when its line leaves the
+  band. The count reads `1 pull request` or `3 pull requests` and comes
+  before the open questions and notices. A count of zero is left out, as
+  theirs is.
+- **The counts are `subtle`.** The counts and the ` · ` between them are
+  one `Text` in `subtle`, nested in the divider's `Text` as the time is.
+  The leading `─ ` and the rule keep the default color. The rule's length
+  leaves room for the counts, so the row still ends at `bodyColumns`.
+- **The rest of the divider is unchanged.** With nothing to count, it is
+  the rule and the time, and while an item's drawer has the band to itself,
+  it stays hidden.
+
+### 19.2 Why this design
+
+- **The rows the band draws, not the tracked files.** Counting the band's
+  rows keeps the count equal to the lines you see. Counting the tracked
+  files would count twice a pull request both loops track, which the band
+  lists once, and count one GitHub reports merged, which it does not list.
+  The rows are in hand when the band draws, so the count costs no query
+  and no read.
+- **Spelled out.** The owner chose `pull request` over `PR`, which reads
+  as a phrase beside `questions` and `notices`.
+- **Quiet labels on a rule.** In `subtle`, the counts read as labels set
+  in the rule, as the time at its end does, and the rule in the default
+  color stays the band's top edge.
+
+### 19.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| With pull requests only, the divider reads `─ 2 pull requests ─…─ 0s`, leaving out a merged pull request, the counts and the time in `subtle` and the `─ ` and the rule in the default color, `bodyColumns` wide | `draws one line per open pull request of the session’s own loops` in `hooks/band.test.tsx` |
+| The session's own pull requests and other people's count together | `lists your pull requests first, then everyone else’s by author, naming theirs before the title` |
+| A pull request both loops track counts once, in the singular | `lists a pull request both loops track once, as watched and reviewed, and counts it once` |
+| A dismissed pull request leaves the count | `dismiss drops a pull request from each loop that tracks it, and its line goes` |
+| With pull requests and items, the pull request count comes first, as `─ 1 pull request · 1 question ─…─ Ns` | `asks through the tool, and the band lists the question below the pull requests`, and the inbox tests that find the divider by its counts |
+| With nothing to count, the divider is the rule and a `subtle` time, `bodyColumns` wide | `shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request` |

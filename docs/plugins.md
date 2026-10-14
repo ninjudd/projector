@@ -192,7 +192,7 @@ line each. Run `/projector` to show or hide the band. It also appears when the
 session starts a loop's watcher for the first time.
 
 ```text
-──────────────────────────────────────────────────────────────────────────── 12s [-]
+─ 2 pull requests ────────────────────────────────────────────────────────── 12s [-]
 
 #267 draft List a loop's open pull requests above the Claude Code prompt      2h
 #258 draft grace Name the reviewed head in a review's signature conflict · 5⋮ 5m
@@ -217,11 +217,15 @@ asks for in the same query as the pull requests. A pull request that both a
 `start-watch-loop` watcher, `watch-threads.sh`, and a `start-review-loop`
 watcher, `watch-prs.sh`, track is listed once.
 
-The divider ends with how long ago the band reloaded, drawn as the rows
-draw their ages: in the short form, such as `12s`, in the `subtle` color,
-and ending in their column. A reload just now reads `0s`, as an item posted
-just now does. Claude Code's `[-]` at the divider's end collapses the band.
-A blank line sets the divider apart from the rows under it. Only a terminal
+The divider starts with one `─` and how many pull requests the band lists,
+a line each, such as `2 pull requests`. It ends with how long ago the band
+reloaded, drawn as the rows draw their ages: in the short form, such as
+`12s`, and ending in their column. A reload just now reads `0s`, as an item
+posted just now does. The count and the time are drawn in the `subtle`
+color, and the rule between them in the default text color. A count of
+zero is left out, so a band with nothing to count draws the rule and the
+time alone. Claude Code's `[-]` at the divider's end collapses the band. A
+blank line sets the divider apart from the rows under it. Only a terminal
 draws the divider and that blank line. Claude Desktop, VS Code, and the
 mobile app do not set the band's text in a terminal's columns, so a rule
 sized to them would wrap, and there the band starts with its first row.
@@ -312,11 +316,12 @@ notice's line is drawn in the theme's mid gray, `inactive`, apart from the
 answer and which want a read. Each line ends with the pull request the item
 is about, as the band labels it, and how long ago it was posted. The band
 appears when an item arrives or is restored, even after you hid it, and in
-a terminal the divider starts with one `─` and the count of open
-questions and open notices, its rule running from the count to its time.
+a terminal the divider counts the open questions and the open notices after
+the pull requests, in the same `subtle` color, its rule running from the
+counts to its time.
 
 ```text
-─ 2 questions · 1 notice ───────────────────────────────────────────── 12s [-]
+─ 1 pull request · 2 questions · 1 notice ──────────────────────────── 12s [-]
 
 #337 draft Retry failed webhook deliveries with backoff                 1h
 
