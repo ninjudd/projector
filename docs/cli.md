@@ -625,7 +625,7 @@ reads, which are these:
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | `implement`, to start `start-watch-loop` on each pull request it opens, or add the pull request to the watch loop the conversation already runs; `false` leaves starting the loop to you |
-| `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme, and any other value, such as `rgb(30,30,40)`, `#1e1e28`, `ansi256(236)`, or a theme color's name such as `inverseText`, is drawn as written |
+| `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own
@@ -1917,12 +1917,13 @@ $ project inbox ask "Decline the finding about the retry budget?" \
 The command prints the question's number at once. Each session numbers its
 items 1, 2, 3, and on, in one count that questions and notices share, so `3`
 is the third item the session posted. `--pr` records the pull request the
-item is about, as `owner/repo#number`, and does not change its number. `ask`
-refuses, with exit code 65, a question longer than one line or 120
-characters, a question that holds a tab, a missing recommendation, a
-recommendation or option longer than one line, more than five other options,
-or an option that repeats the recommendation or another option. Put what you
-need to decide in `--detail`, or `--detail-file`.
+item is about, as `owner/repo#number`, and does not change its number.
+Projector's panel never shows the number, so in what you write to the person,
+name an item by what it asks or tells. `ask` refuses, with exit code 65, a
+question longer than one line or 120 characters, a question that holds a tab,
+a missing recommendation, a recommendation or option longer than one line,
+more than five other options, or an option that repeats the recommendation or
+another option. Put what you need to decide in `--detail`, or `--detail-file`.
 
 Every command names the posting session with `--session`, or reads
 `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows

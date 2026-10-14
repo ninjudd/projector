@@ -338,14 +338,23 @@ repository:
 project config set panel.background 'rgb(30,30,40)' --user
 ```
 
-The panel draws any color Claude Code takes as written: `rgb(r,g,b)`,
-`#rrggbb`, `ansi256(n)`, or the name of a theme color, such as
-`inverseText`. The default, `auto`, leaves the color to the theme, and
-`project config unset panel.background --user` returns to it. The panel
-reads the setting when the session starts and each time it reloads, so a
-change shows within 30 seconds, without a restart. A value that Claude Code
-cannot draw, such as `ansi:black` or an empty string, leaves the color to
-the theme, and the panel says so once.
+`panel.background` takes these values:
+
+- **`auto`**, the default, leaves the color to the theme, and
+  `project config unset panel.background --user` returns to it.
+- **A literal color** draws as written: `rgb(r,g,b)` with each number from
+  0 to 255, `#rgb` or `#rrggbb`, or `ansi256(n)` with `n` from 0 to 255.
+- **`sidebar`** draws the grey of Claude Code's side panel, its theme's
+  `composerSidebarBackground`.
+- **`black`** draws `rgb(0,0,0)`, and **`white`** draws `rgb(255,255,255)`,
+  whatever the theme.
+
+Any other value, such as another theme color's name like `inverseText`, a
+misspelling like `sidebr`, or `ansi:black`, leaves the color to the theme,
+and the panel says so once. `subtle` is refused too, because the panel draws
+its own muted text in `subtle`, which would vanish on it. The panel reads
+the setting when the session starts and each time it reloads, so a change
+shows within 30 seconds, without a restart.
 
 ### Read your inbox in Projector's panel
 
@@ -354,13 +363,14 @@ which the model sees as `mcp__projector__ask`, and tells you something that
 needs no answer with the `tell` tool, `mcp__projector__tell`. Either way it
 keeps working. When an item it posted no longer needs you, such as a question
 your reply settled, the agent takes it back with the `withdraw` tool,
-`mcp__projector__withdraw`, by the number `ask` or `tell` returned. When your
-reply shows that a question was unclear, the agent rewrites the question in
-place with the `revise` tool, `mcp__projector__revise`. When you tell it you
-dismissed or snoozed an item by mistake, the agent brings the item back
-under its number with the `restore` tool, `mcp__projector__restore`, rather
-than asking again. An agent that runs `project inbox ask`, `tell`, `withdraw`,
-`revise`, or `restore` from the shell reaches the same inbox, as
+`mcp__projector__withdraw`, by the number `ask` or `tell` returned. The panel
+never shows that number, so the agent names an item to you by what it asks or
+tells. When your reply shows that a question was unclear, the agent rewrites
+the question in place with the `revise` tool, `mcp__projector__revise`. When
+you tell it you dismissed or snoozed an item by mistake, the agent brings the
+item back under its number with the `restore` tool, `mcp__projector__restore`,
+rather than asking again. An agent that runs `project inbox ask`, `tell`,
+`withdraw`, `revise`, or `restore` from the shell reaches the same inbox, as
 [Use the inbox](cli.md#use-the-inbox) describes.
 
 The items are a list below the pull requests, oldest first, each line
