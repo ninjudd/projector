@@ -1,0 +1,109 @@
+{
+ "version": 1,
+ "name": "One pull request loop",
+ "project": "pr-loop",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 347,
+  "title": "Spec one loop that fixes and reviews pull requests",
+  "head": "7a17fa38a1bac50d5b265749feb12bb96b61898d",
+  "headRef": "spec-pr-loop",
+  "base": "04a11fa5517c5079c0285efcad7d7c4b3e0999c5",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector drives a pull request to a clean review with two background loops. The <b>watch loop</b> runs in the session that opened a pull request and fixes the review findings that arrive on it. The <b>review loop</b> runs once per repository and reviews every new head of the operator's pull requests, keeping each one a draft until a review finds its head clean. Each loop runs a bash watcher that queries GitHub's GraphQL API for every pull request on every pass, whether or not anything changed.",
+   "That polling spends a quota GitHub shares across every session and machine on the account: 5,000 GraphQL points an hour. At 10 pull requests and a 60-second interval, the two loops spend about 2,000 points an hour, and the quota has run out in practice.",
+   "This pull request adds a plan, not code. The plan merges both loops into one skill, <code>start-pr-loop</code>, backed by a new CLI command, <code>project loop watch</code>. Each pull request in the loop's tracked file gets a <code>fix</code> role, a <code>review</code> role, or both. Each pass asks GitHub a conditional REST question per pull request, which is free when GitHub answers <code>304 Not Modified</code>, and runs the GraphQL query only for a pull request that changed, plus a full pass every 10 minutes. One loop per repository and model holds the review role through a lease: a file lock that the operating system releases when the holder's watcher ends. The plan estimates about 210 GraphQL points an hour at 10 pull requests.",
+   "The plan is at <code>draft</code> with priority <code>now</code>. It leaves four choices to the owner in § 7: whether the loop lives in the CLI, whether every loop competes for the review role, how two machines share it, and the skill's name. § 3 now names the cost of letting every loop compete: the session that wrote a pull request can also review it."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Operator</b>: the GitHub account <code>gh</code> is signed in as.</li><li><b>Tracked file</b>: a loop's list of <code>owner/repo#number</code> lines, its whole scope. A <code>!</code> line keeps a pull request out of the roles it names; a line with no role means <code>fix</code>.</li><li><b>Conditional request</b>: a REST request that sends the resource's last <code>ETag</code> in <code>If-None-Match</code>, so GitHub answers <code>304</code> when nothing changed.</li><li><b>Lease</b>: the right to hold the review role for one repository and model, held through an exclusive lock on a file.</li><li><b>Handover</b>: another loop taking the lease once the holder's watcher ends, along with its review lines.</li><li><b>Loop id</b>: the name a review loop passes to <code>project review</code> as <code>--loop</code>, which keys its record of published reviews. Each holding of the lease gets its own, <code>&lt;repo&gt;-review-&lt;model-key&gt;-lease-&lt;generation&gt;</code>.</li><li><b>Mutex</b>: an operating-system lock on a <code>.mutex</code> file, which the system releases when its holder exits. A <code>.lock</code> file, by contrast, is a claim a command creates and removes.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review opened two findings on the handover in § 2.4, and the next head fixed both. A new <b>Reviews in flight</b> rule moves a half-done review to the new holder, and each exclusion now names its role, such as <code>!acme/app#15 review</code>. That head also answered the first review's three questions, on a deleted base, self-approval, and subagents' GraphQL spend.</p><p>The second review found that one loop id shared by every holder let the collision check steer a second reviewer to <code>--rereview</code>. This head gives each holding of the lease its own loop id, so the check now asks the user. The third review was clean, with one suggestion: a departed <code>publish</code> racing the take-over would overwrite the taker's state and lock.</p><p>This head takes that suggestion as step 5 of <b>Reviews in flight</b>, and the fourth review is clean. Its one suggestion was to keep the folder lock that step 5 uses out of the review folder's <code>*.lock</code> pattern.</p><p>This head takes it. The review mutex is now <code>&lt;model-key&gt;.mutex</code>, beside the review folder, and a fifth, incremental review found the head clean.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The pr-loop plan",
+   "kicker": "One new plan: the merged loop, its conditional polling, and the review lease",
+   "intro": [
+    "The plan follows the repository's plan layout: the problem in § 1, the design in § 2, the reasons in § 3, then acceptance criteria, cost, rollout, open questions, and the measurements behind its claims. § 2 carries the substance. § 2.1 walks one pass, § 2.2 lists the conditional requests and marks which of their behaviors were observed and which are inferred, § 2.3 adds roles to the tracked file, and § 2.4 defines the review lease.",
+    "Read § 2.4 most closely. The lease decides which session reviews, and its handover moves review work between sessions on one machine, where the review commands keep their state per machine and model rather than per session. Its <b>Reviews in flight</b> rule says how a review the departed holder left unpublished passes to the taker."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/pr-loop/readme.md",
+     "note": "The new plan for one loop that fixes and reviews pull requests.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 45,
+       "text": "The cost figures hold: the watch watcher's query costs 1 point and the review watcher's 2 by GitHub's documented formula, giving about 2,000 points an hour for both at 10 pull requests."
+      },
+      {
+       "kind": "verify",
+       "line": 143,
+       "text": "A live conditional request for this pull request answered <code>HTTP/2.0 304 Not Modified</code>, made <code>gh api</code> exit 1, and left <code>X-Ratelimit-Used</code> unchanged, as the plan says."
+      },
+      {
+       "kind": "context",
+       "line": 155,
+       "text": "A stacked pull request's base branch is usually deleted when the layer below merges, so its ref answers <code>404</code> until the loop reads the new base."
+      },
+      {
+       "kind": "context",
+       "line": 158,
+       "text": "This query is the union of the two watchers' queries, so one result serves both roles. It still costs 2 points."
+      },
+      {
+       "kind": "context",
+       "line": 191,
+       "text": "Each exclusion names its roles, so a session that stops fixing a pull request never stops another session from reviewing it."
+      },
+      {
+       "kind": "verify",
+       "line": 253,
+       "text": "Review state, start comment, and lock live per machine under <code>prs/&lt;owner&gt;/&lt;repo&gt;/&lt;number&gt;/&lt;model-key&gt;/</code>, so a half-done review passes to the taker. Calling <code>check_collision</code> with the taker's own loop id refuses the departed reviewer's verdict with the branch that asks the user, even under <code>--rereview</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 271,
+       "text": "<code>publish</code> today writes the state it read at its start after it submits and again at its end, deletes the start comment, and unlinks <code>&lt;sha&gt;.lock</code>. Holding the mutex from the lock check through those writes keeps a take-over from landing between them."
+      },
+      {
+       "kind": "verify",
+       "line": 281,
+       "text": "<code>&lt;model-key&gt;.mutex</code> sits beside the review folder. <code>Paths.locks()</code>, <code>needed_now</code>, and <code>prune</code> glob only <code>*.lock</code> inside a model's folder, and <code>find_model</code> reads <code>*/state.json</code>, so <code>release</code> and <code>finish</code> never reach it."
+      },
+      {
+       "kind": "context",
+       "line": 519,
+       "text": "A new loop id for each holding lets the lock shut out the departed reviewer and lets the collision check tell the two holders apart. Copying the departed record keeps incremental reviews and re-reviews working across the handover."
+      },
+      {
+       "kind": "context",
+       "line": 656,
+       "text": "The 210-point estimate covers polling only. Reviewers and fixers spend GraphQL of their own, which grows with the heads they handle."
+      },
+      {
+       "kind": "context",
+       "line": 688,
+       "text": "The four questions marked <b>Owner, before implementation</b> keep the plan at <code>draft</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
