@@ -392,15 +392,14 @@ its drawer is open, the item has the panel to itself, so its line is the
 top row, in its usual colors, with `0` in its bullet's place to close the
 drawer. In a terminal, the header steps aside too, which gives the drawer
 another row before the panel scrolls, and the item's line takes the
-header's place as the panel's top bar: a rule in the default text color
-runs from its subject to its pull request and age, so the row ends at the
-panel's edge, where the panel's `[-]` begins. A subject too long to leave a
-few columns for the rule draws none. The drawer is indented to start under
-the item's text, so its detail and the digits of its lines sit under the
-item's first letter:
+header's place as the panel's top row: its subject, then its pull request
+and age at the right, with nothing drawn between them, since the panel's
+background already sets the drawer apart. The drawer is indented to start
+under the item's text, so its detail and the digits of its lines sit under
+the item's first letter:
 
 ```text
-   0: Decline the finding about the retry budget? ───────────── #337  5m   [-]
+   0: Decline the finding about the retry budget?               #337  5m   [-]
 
       The review asks for a retry budget per host. The loop caps retries at
       three in total, which covers the case the finding names.

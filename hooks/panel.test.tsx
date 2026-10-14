@@ -1484,8 +1484,8 @@ test('every item takes the `-` bullet, an open question the permission color, an
   expect(openNotice.map(part => [part.children.join(''), part.props?.color, part.props?.inverse])).toEqual([
     [FORCE_PUSHED, 'inactive', undefined],
   ])
-  // The rule after it stays in the default color.
-  expect((await ui.find({ type: 'Text', text: /^ ─+$/ }))?.props.color).toBeUndefined()
+  // No rule follows it.
+  expect(await ui.find({ type: 'Text', text: /─/ })).toBeUndefined()
   await ui.press({ key: 'close:2' })
   // A resolved or snoozed item's open line keeps `subtle`, which shows its state.
   await ui.press({ key: 'item:3' })
@@ -3473,38 +3473,28 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
   await ui.unmount()
 })
 
-test('an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button', async ($, on) => {
+test('an open item’s line draws its title with no rule after it', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const long = 'Should the panel '.padEnd(112, 'x')
   questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: null, subject: long })])
   await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
-  const rule = async () => (await ui.find({ type: 'Text', text: /^ ─+$/ }))?.text
+  const texts = async () => (await ui.findAll({ type: 'Text' })).map(found => found.text)
 
-  // The rule fills the panel's line: `0: `, the subject, a space and the rule, then ` #7` and ` 2m`, end at the
-  // rows' edge, five columns short of bodyColumns, where the rows' ages end.
+  // The open line is the title in its Button, then its pull request and its age; the panel's background, not a rule,
+  // sets the drawer apart. The title keeps `permission`.
   await ui.press({ key: 'item:1' })
-  const drawn = await rule()
-  expect(drawn).toBe(` ${'─'.repeat(85)}`)
-  expect('0: '.length + 'Decline the finding?'.length + (drawn ?? '').length + ' #7'.length + ' 2m'.length).toBe(
-    COLUMNS,
-  )
-  // It sits beside the line's Button, so a hover or the focus ring inverts the title alone, and it draws in the
-  // default color while an open question's title takes `permission`.
   expect((await ui.find({ type: 'Button', key: 'close:1' }))?.text).toBe('Decline the finding?')
-  expect((await ui.find({ type: 'Text', text: /^ ─+$/ }))?.props.color).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: 'Decline the finding?' }))?.props.color).toBe('permission')
+  expect((await texts()).slice(0, 3)).toEqual(['Decline the finding?', '#7', '2m'])
+  expect((await texts()).filter(text => text.includes('─'))).toEqual([])
+
+  // Nor does a title too long for the line, or any surface.
   await ui.press({ key: 'close:1' })
-  // No line in the list draws one.
-  expect(await rule()).toBeUndefined()
-
-  // A title that leaves too little room draws none.
   await ui.press({ key: 'item:2' })
-  expect(await rule()).toBeUndefined()
+  expect((await texts()).filter(text => text.includes('─'))).toEqual([])
   await ui.unmount()
-
-  // Another surface draws the title alone, as it draws no header.
   const desktop = await $.ui.mount({ ...PANEL, surface: 'desktop' })
   await desktop.press({ key: 'close:2' })
   await desktop.press({ key: 'item:1' })

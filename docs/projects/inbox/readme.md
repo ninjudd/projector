@@ -2091,3 +2091,35 @@ panel wherever Projector names it.
 | A submit left under `bandSending` keeps its claim past 60 seconds, is not submitted again, and settles when its prompt arrives | `a submit the release before the rename left under bandSending keeps its claim and settles when its prompt arrives` |
 | The template's text is pinned under version 13 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |
 | No "band" names the feature outside Claude Code's terms, the plans' history, and the old `bandSending` key the panel takes over | `git grep -n -i band`, by hand |
+
+## 22. Drop the rule after an open item's title
+
+Since § 18, an open item's line ended in a ` ───` rule from its subject to
+its pull request and age, standing in for the divider as the band's top
+bar, and § 20 sized it to the panel's rows. Inside the panel, the owner
+found it no longer needed: "we should not have ────── after the question in
+the drawer anymore".
+
+### 22.1 What changes
+
+- **An open item's line draws no rule.** A question's or a notice's open
+  line draws its subject in its Button, then its pull request and its age at
+  the right, with nothing between them. `MIN_RULE` and the code that sized
+  and drew the rule are gone.
+- **A pull request's line is unchanged.** Its drawer opens under its line,
+  which never drew a rule.
+
+### 22.2 Why this design
+
+- **The panel sets the drawer apart.** The rule made an open line read as
+  the band's top bar when the band drew on the terminal's own background.
+  The panel's background now marks where it begins, so the rule only added
+  a line of dashes. The owner previewed the line without it in a session
+  mod.
+
+### 22.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| An open question's line is its subject in `permission`, its pull request, and its age, with no `─`, on a terminal and on another surface, and a subject too long for the line draws none either | `an open item’s line draws its title with no rule after it` in `hooks/panel.test.tsx` |
+| An open notice's line draws no `─` either | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle `` |
