@@ -45,8 +45,8 @@ from .core import ProjectorError, UsageError, write_through
 CONFIG_NAME = ".projector.toml"
 
 # Every key Projector reads, with its type. `project config set` accepts only
-# these keys and values of these types, and `Config.setting` refuses a file's
-# value of another type.
+# these keys and those of `TABLES`, with values of their types, and
+# `Config.setting` refuses a file's value of another type.
 SETTINGS: dict[str, type] = {
     "projects.dir": str,
     "instructions.enabled": bool,
@@ -60,8 +60,19 @@ SETTINGS: dict[str, type] = {
     "review.summarize": bool,
     "fix.resolve_human_threads": bool,
     "watch.auto_start": bool,
+    "panel.theme": str,
     "panel.background": str,
 }
+
+# Tables whose keys Projector does not list, written as the table and a
+# placeholder for the key, with the type every value takes. `set` and `unset`
+# accept any lowercase name under the table. The panel owns its role names,
+# so a new role needs no release of the CLI.
+TABLES: dict[str, type] = {
+    "panel.colors.<role>": str,
+}
+
+_TABLE_KEY = re.compile(r"[a-z][a-z0-9_-]*")
 
 
 class ConfigError(ProjectorError):
@@ -73,14 +84,24 @@ def same_value(one: Any, other: Any) -> bool:
 
 
 def _unknown_key(key: str, reason: str = "") -> UsageError:
-    return UsageError(f"unknown key {key!r}{reason}; the keys are {', '.join(sorted(SETTINGS))}")
+    return UsageError(f"unknown key {key!r}{reason}; the keys are {', '.join(sorted([*SETTINGS, *TABLES]))}")
+
+
+def _known_type(key: str) -> Optional[type]:
+    if key in SETTINGS:
+        return SETTINGS[key]
+    table, _, name = key.rpartition(".")
+    for pattern, kind in TABLES.items():
+        if pattern.rpartition(".")[0] == table and _TABLE_KEY.fullmatch(name):
+            return kind
+    return None
 
 
 def setting_type(key: str) -> type:
-    try:
-        return SETTINGS[key]
-    except KeyError:
-        raise _unknown_key(key) from None
+    kind = _known_type(key)
+    if kind is None:
+        raise _unknown_key(key)
+    return kind
 
 
 def parse_value(key: str, text: str) -> Any:
@@ -305,13 +326,13 @@ def write_value(path: Path, key: str, value: Any) -> Change:
 def unset_value(path: Path, key: str) -> Change:
     """Remove `key` from the file at `path`.
 
-    A key outside `SETTINGS` is removed when the file sets it, so a setting
-    Projector no longer reads can be cleaned up, and refused when the file
-    does not, so a misspelled key still gets the list of keys.
+    A key Projector does not read is removed when the file sets it, so a
+    setting Projector no longer reads can be cleaned up, and refused when the
+    file does not, so a misspelled key still gets the list of keys.
     """
 
     change = write_value(path, key, None)
-    if change.action == "unchanged" and key not in SETTINGS:
+    if change.action == "unchanged" and _known_type(key) is None:
         raise _unknown_key(key, f", which {path} does not set")
     return change
 

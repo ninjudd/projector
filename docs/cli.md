@@ -636,7 +636,13 @@ reads, which are these:
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | `implement`, to start `start-watch-loop` on each pull request it opens, or add the pull request to the watch loop the conversation already runs; `false` leaves starting the loop to you |
-| `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
+| `panel.theme` | string | `ink` | Projector's panel in Claude Code, as the built-in theme it draws: `ink`, `umber`, `stone`, or `graphite`, each a background for a dark and for a light Claude Code theme. The panel draws any other value as `ink` and says so once |
+| `panel.background` | string | none | Projector's panel in Claude Code, as its background in a terminal, over the theme's: a theme's name draws that theme's background; `smoke` draws the Claude Code theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written. The panel draws the theme's background instead of any other value, or of one that would hide its text, and says so once |
+| `panel.colors.<role>` | string | none | Projector's panel in Claude Code, as the color of one role, such as `muted` or `question`: a literal color as `panel.background` takes one, one of Claude Code's public theme colors such as `subtle`, or `default` for the engine's own text color. The panel draws the role's default instead of any other value, or of a color that would vanish on the background, and says so once. [Choose the panel's color](plugins.md#choose-the-panels-color) lists the roles |
+
+In `panel.colors.<role>`, `<role>` stands for any lowercase name, such as
+`muted`. `set` stores a value under any of them, because the panel owns the
+list of roles, and the panel says once when it does not know a name.
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own
