@@ -1,3 +1,31 @@
+/** Which side of light a Claude Code theme sits on. */
+export type Base = 'dark' | 'light'
+
+/**
+ * What the panel knows of the session's Claude Code theme: the side of light
+ * it sits on, and the color of each theme key when the colors are not the
+ * terminal's. Both are null for a theme the panel cannot read.
+ */
+export type ClaudeCodeTheme = { base: Base | null; palette: Readonly<Record<string, string>> | null }
+
+/** The roles that color the panel's text, each named for what its color means. */
+export type TextRole =
+  | 'text'
+  | 'muted'
+  | 'question'
+  | 'notice'
+  | 'success'
+  | 'warning'
+  | 'error'
+  | 'added'
+  | 'removed'
+  | 'watching'
+  | 'reviewing'
+  | 'branch'
+
+/** One color per role, absent for a role that draws in the engine's text color. */
+export type Colors = { background: string } & { [role in TextRole]?: string }
+
 /** What a loop does with its pull requests: `watch-threads.sh` watches, `watch-prs.sh` reviews. */
 export type LoopKind = 'watching' | 'reviewing'
 
@@ -121,10 +149,12 @@ declare module 'claude-code' {
       panelSending: Record<string, Sending>
       /** What the release before the rename kept as `panelSending`, which the panel takes over. */
       bandSending: Record<string, Sending>
-      /** The panel's background for the session's Claude Code theme, which `panel.background = "auto"` takes. */
-      panelThemeBackground: string
-      /** `panel.background` as the panel last read it: `auto`, or the color it draws for the value. */
-      panelBackground: string
+      /** What the panel knows of the session's Claude Code theme. */
+      panelTheme: ClaudeCodeTheme
+      /** The `panel` settings as the panel last read them, null when no file sets any. */
+      panelSettings: unknown
+      /** The color of each role, resolved from the theme and the settings. */
+      panelColors: Colors
       /** Whether the panel took the keyboard since the last keystroke in the prompt, so its hint names its own keys. */
       isPanelFocused: boolean
     }
