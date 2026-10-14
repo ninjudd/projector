@@ -166,8 +166,8 @@ test('draws one line per open pull request of the session’s own loops', async 
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
-  // Open threads show as their count after a `⋮`, in yellow.
-  expect((await ui.findAll({ type: 'Text', text: '⋮1' })).map(found => found.props.color)).toContain('warning')
+  // Open threads show as their count before a `⋮`, in yellow.
+  expect((await ui.findAll({ type: 'Text', text: '1⋮' })).map(found => found.props.color)).toContain('warning')
   expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
@@ -218,25 +218,47 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
   // The threads' count comes after the other notes, beside the age.
   const notes = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(notes.indexOf(' · ⋮2')).toBeGreaterThan(notes.indexOf('conflict'))
+  expect(notes.indexOf(' · 2⋮')).toBeGreaterThan(notes.indexOf('conflict'))
 
   await ui.press({ key: 'pr:x/y#7' })
   // The drawer's facts name no author, whoever wrote the pull request.
-  const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files$/ })
-  expect(facts?.props.color).toBe('subtle')
+  const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files · checks passing$/ })
   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: ' · checks passing' })).toBeDefined()
+  // What the loop does takes its loop's color, the branch the palette's cyan, and the size reads as a diff stat:
+  // insertions green, deletions red. The checks take theirs, and the files and each `·` keep the default color.
+  expect([facts?.props.color, facts?.props.dimColor]).toEqual([undefined, undefined])
+  const pieces = (facts?.children ?? []) as (string | { props: { color?: string }; children: string[] })[]
+  expect(
+    pieces.map(piece => (typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.color])),
+  ).toEqual([
+    ['watching', 'ansi256(4)'],
+    ' · ',
+    ['fix-branch', 'ansi256(6)'],
+    ' · ',
+    ['+12', 'success'],
+    ' ',
+    ['−3', 'error'],
+    ' in 2 files',
+    ' · ',
+    ['checks passing', 'success'],
+  ])
   // The pull request's age ends its line, so the drawer does not repeat it.
   expect(await ui.find({ type: 'Text', text: /updated 5m ago/ })).toBeUndefined()
   // The drawer starts where the state does: past the three-column labels `r#1` and `y#7` and the gap after them.
   const opened = await ui.find({ key: 'drawer:x/y#7' })
   expect(opened).toBeDefined()
   expect(opened?.props.marginLeft).toBe(4)
-  // Under the facts, each link has a line of its own, so a terminal without hyperlinks shows the whole URL, and the actions' row comes last.
+  // Under the facts come the actions, a line each, then the links, each on a line of its own, so a terminal without hyperlinks shows the whole URL.
   const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
-  expect(lines.map(line => line.props.key ?? line.type)).toEqual(['Text', 'github:x/y#7', 'projector:x/y#7', 'Box'])
-  expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
-  expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[projector](${SUMMARY})`)
+  expect(lines.map(line => line.props.key ?? line.type)).toEqual([
+    'Text',
+    'discuss:x/y#7',
+    'dismiss:x/y#7',
+    'github:x/y#7',
+    'projector:x/y#7',
+  ])
+  expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
+  expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
 
   // discuss is a plain Button, so Enter fills the prompt on the main screen too.
@@ -335,8 +357,8 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'pr:x/y#7' })
-  // The drawer's actions share one row, as an item's do.
-  expect(await ui.findAll({ type: 'Text', text: '|' })).toHaveLength(1)
+  // The drawer's actions are lines of their own, as an item's are.
+  expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
   expect((await ui.find({ type: 'Button', key: 'dismiss:x/y#7' }))?.props.plain).toBe(true)
 
   await ui.press({ key: 'dismiss:x/y#7' })
@@ -417,6 +439,16 @@ test('a pull request’s drawer closes when its line leaves the band, so it does
   await ui.unmount()
 })
 
+/** What the loops do with a pull request, as its open drawer's facts line starts: each word with its color, and the `and` between. */
+async function loopsOf(ui: Pick<Mounted, 'find'>, key: string) {
+  const drawer = await ui.find({ key: `drawer:${key}` })
+  const facts = ((drawer?.children ?? []) as { children?: unknown[] }[])[0]
+  type Piece = string | { props: { color?: string }; children: string[] }
+  const pieces = (facts?.children ?? []) as Piece[]
+  const loops = pieces.slice(0, pieces.findIndex(piece => piece === ' · '))
+  return loops.map(piece => (typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.color]))
+}
+
 test('opening one drawer closes the one that was open', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -429,9 +461,12 @@ test('opening one drawer closes the one that was open', async ($, on) => {
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'pr:x/y#7' })
+  expect(await loopsOf(ui, 'x/y#7')).toEqual([['watching', 'ansi256(4)']])
   await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ key: 'github:o/r#1' })).toBeDefined()
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+  // Reviewing takes the theme's `claude` orange, as watching takes the palette's blue.
+  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewing', 'claude']])
   await ui.unmount()
 })
 
@@ -448,6 +483,8 @@ test('lists a pull request both loops track once, as watched and reviewed', asyn
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
+  // Each loop takes its own color, and the `and` between them the default color.
+  expect(await loopsOf(ui, 'o/r#1')).toEqual([['watching', 'ansi256(4)'], ' and ', ['reviewing', 'claude']])
   await ui.unmount()
 })
 
@@ -822,7 +859,10 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       const answer = { dismissed: true as const, withdrawn: true as const, answeredAt: time }
       return printed(put({ ...awake, answer, deliveredAt: time }))
     }
-    if (command === 'snooze') return printed(put({ ...item, snoozedAt: time, snoozedUntil: time + HOUR }))
+    if (command === 'snooze') {
+      const minutes = Number(flag(args, 'for') ?? 60)
+      return printed(put({ ...item, snoozedAt: time, snoozedUntil: time + minutes * 60_000 }))
+    }
     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
     if (command === 'revise') {
       const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
@@ -977,6 +1017,59 @@ test('asks through the tool, and the band lists the question below the pull requ
   await ui.unmount()
 })
 
+test('every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const dismissed = { dismissed: true as const, answeredAt: NOW - 1_000 }
+  questionWorld(on, clock, [
+    held(),
+    notice(),
+    held({ ref: '3', number: 3, subject: 'Rebase first?', answer, deliveredAt: NOW - 1_000 }),
+    notice({ ref: '4', number: 4, subject: 'Pushed a fix', answer: dismissed, deliveredAt: NOW - 1_000 }),
+    notice({ ref: '5', number: 5, subject: 'Merged #6', snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR }),
+  ])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  type Part = { props: { color?: string; strikethrough?: boolean; inverse?: boolean }; children: string[] }
+  /** Each part of an item's line, the bullet then the subject: its text, color, and strikethrough. */
+  const lineOf = async (key: string) => {
+    const parts = ((await ui.find({ type: 'Button', key }))?.children ?? []) as Part[]
+    return parts.map(part => [part.children.join(''), part.props.color, part.props.strikethrough === true])
+  }
+
+  expect(await lineOf('item:1')).toEqual([
+    ['- ', 'permission', false],
+    ['Decline the finding?', 'permission', false],
+  ])
+  expect(await lineOf('item:2')).toEqual([
+    ['- ', undefined, false],
+    [FORCE_PUSHED, undefined, false],
+  ])
+  expect(await lineOf('item:3')).toEqual([
+    ['- ', 'subtle', false],
+    ['Rebase first?', 'subtle', false],
+  ])
+  expect(await lineOf('item:4')).toEqual([
+    ['- ', 'subtle', false],
+    ['Pushed a fix', 'subtle', true],
+  ])
+  expect(await lineOf('item:5')).toEqual([
+    ['- ', 'subtle', false],
+    ['Merged #6', 'subtle', false],
+  ])
+  expect((await ui.findAll({ type: 'Text' })).filter(text => text.props.dimColor !== undefined)).toEqual([])
+
+  // An open question's line stays in its color, inverted, while its drawer is open.
+  await ui.press({ key: 'item:1' })
+  const opened = ((await ui.find({ type: 'Button', key: 'close:1' }))?.children ?? []) as Part[]
+  expect(opened.map(part => [part.props.color, part.props.inverse])).toEqual([
+    ['permission', true],
+    ['permission', true],
+  ])
+  await ui.unmount()
+})
+
 test('a pull request’s age and an item’s age end in one column', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -1003,7 +1096,7 @@ test('a blank line sets GitHub’s error apart from the items under it', async (
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   const failure = texts.indexOf('GitHub: read: connection reset by peer')
   expect(failure).toBeGreaterThan(-1)
-  expect(texts.slice(failure + 1, failure + 3)).toEqual([' ', '• '])
+  expect(texts.slice(failure + 1, failure + 3)).toEqual([' ', '- '])
   await ui.unmount()
 })
 
@@ -1061,6 +1154,17 @@ test('an idle session with no questions starts no project process', async ($, on
   await ui.unmount()
 })
 
+/** The Buttons of a question's options, in the order its drawer draws them. */
+async function optionsOf(ui: Pick<Mounted, 'findAll'>) {
+  return (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('answer:'))
+}
+
+/** The keys of the band's Buttons that a digit presses. */
+async function digitsOf(ui: Pick<Mounted, 'findAll'>) {
+  const buttons = await ui.findAll({ type: 'Button' })
+  return buttons.flatMap(button => (/^\d$/.test(String(button.props.hotkey ?? '')) ? [button.key] : []))
+}
+
 test('an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -1075,17 +1179,21 @@ test('an option puts the question and its answer in the prompt, and sending it a
   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The loop caps retries at three.')
-  expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeDefined()
   // An answer in your own words goes through discuss, so only the options are numbered.
   expect(await ui.find({ type: 'Input' })).toBeUndefined()
   expect(await ui.find({ key: 'answer:1.c' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'discuss:1' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeDefined()
-  // A digit typed first in an empty prompt presses a band Button whose hotkey it is.
-  for (const button of await ui.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
+  // Each option is a plain Button on its digit, which the engine draws before it, so the band draws no number.
+  const options = await optionsOf(ui)
+  expect(options.map(option => [option.key, option.props.hotkey, option.props.plain, option.text])).toEqual([
+    ['answer:1.a', '1', true, 'Decline it (recommended)'],
+    ['answer:1.b', '2', true, 'Add a budget'],
+  ])
+  expect(await ui.find({ type: 'Text', text: /^\d\.$/ })).toBeUndefined()
 
   // Choosing an option answers nothing yet: it fills the prompt, and the drawer stays open.
-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.b' })
   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nAdd a budget\n'])
   expect(session.store.store.get('1')?.answer).toBeUndefined()
   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
@@ -1108,17 +1216,17 @@ test('an option puts the question and its answer in the prompt, and sending it a
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
 
-  // The resolved question still opens, its choice marked, the rest muted, and nothing left to press.
+  // The resolved question still opens, its choice marked, the rest muted, and nothing left to press or number.
   await ui.press({ key: 'item:1' })
   expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: /^2\.$/ }))?.props.color).toBe('success')
-  expect((await ui.find({ type: 'Text', text: /^1\.$/ }))?.props.color).toBe('subtle')
+  expect((await ui.find({ type: 'Text', text: /^Add a budget/ }))?.props.color).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: /^Decline it/ }))?.props.color).toBe('subtle')
   expect((await ui.find({ type: 'Text', text: /^Decline the finding\?$/ }))?.props.color).toBe('subtle')
-  expect(await ui.find({ key: 'answer:1.a' })).toBeUndefined()
+  expect(await optionsOf(ui)).toEqual([])
+  expect(await digitsOf(ui)).toEqual([])
   expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeUndefined()
 
-  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'close:1' })
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
   await clock.advance(30_000 + TICK)
@@ -1136,7 +1244,7 @@ test('a question another shares the text of takes only the answer its own drawer
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await ui.press({ key: 'answer:2.a' })
   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nDecline it\n'])
   await $.prompt.submit({ text: '"Decline the finding?"\n\nDecline it\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
@@ -1154,11 +1262,11 @@ test('a proposal you cleared from the prompt does not take the answer you sent f
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await ui.press({ key: 'answer:2.a' })
   // You clear that from the prompt, then choose the other answer in the older question's drawer.
-  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'close:2' })
   await ui.press({ key: 'item:1' })
-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.b' })
   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
@@ -1218,14 +1326,16 @@ test('discuss keeps the drawer open with the question above a blank line, a repl
     await ui.press({ key: 'item:1' })
   }
   expect(session.project().filter(command => command.startsWith('inbox answer'))).toEqual([])
-  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'close:1' })
 
   // An answer typed from a terminal shows after the options, marked.
   await ui.press({ key: 'item:3' })
-  expect((await ui.find({ type: 'Text', text: /^3\.$/ }))?.props.color).toBe('success')
-  expect(await ui.find({ type: 'Text', text: /^keep the cap/ })).toBeDefined()
+  const typedAnswer = await ui.find({ type: 'Text', text: /^keep the cap ✓$/ })
+  expect(typedAnswer?.props.color).toBeUndefined()
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  expect(texts.indexOf(typedAnswer?.text ?? '')).toBeGreaterThan(texts.findIndex(text => text.startsWith('Add a budget')))
 
-  await ui.press({ key: 'item:3' })
+  await ui.press({ key: 'close:3' })
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'dismiss:2' })
   expect(session.project()).toContain('inbox dismiss 2 --session s1 --json')
@@ -1245,7 +1355,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:1' })
   // You choose an option, then add to it before you send.
-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.b' })
   const text = '"Decline the finding?"\n\nAdd a budget\n\nBut what does the cap cover?\n'
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
@@ -1283,7 +1393,6 @@ test('a prompt about one of two questions that share a subject leaves the other 
   const agents = [fixer('agent-a', 'Fix #7'), fixer('agent-b', 'Fix #8')]
   const session = questionWorld(on, clock, [first, second], { agents })
   await startSession($, clock)
-  const pull8 = { href: 'https://github.com/x/y/pull/8' }
 
   const ui = await $.ui.mount(BAND)
   // You discuss the second question: your reply goes to its subagent alone.
@@ -1301,8 +1410,8 @@ test('a prompt about one of two questions that share a subject leaves the other 
   // Then you pick No in its drawer and open the first question's drawer before you send. The
   // prompt answers the second question, and the first hears nothing and keeps its drawer open.
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.b', link: pull8 })
-  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.b' })
+  await ui.press({ key: 'close:2' })
   await ui.press({ key: 'item:1' })
   const answer = '"Merge it?"\n\nNo\n'
   await $.prompt.submit({ text: answer, wait: false, origin: { kind: 'composer' } })
@@ -1330,8 +1439,8 @@ test('a quote two questions share goes to the one whose drawer you acted in last
   const ui = await $.ui.mount(BAND)
   // You pick Yes in the second question's drawer, think better of it, and discuss the first instead.
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
-  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'answer:2.a' })
+  await ui.press({ key: 'close:2' })
   await ui.press({ key: 'item:1' })
   await ui.press({ key: 'discuss:1' })
   await $.prompt.submit({ text: '"Merge it?"\n\nYes\n', wait: false, origin: { kind: 'composer' } })
@@ -1526,7 +1635,7 @@ test('a number or an old reference typed in the prompt reaches the agent as plai
 
 const FORCE_PUSHED = 'Force-pushed #7 to drop a stray file'
 
-test('a subagent tells through the tool, and the band lists the notice with its own bullet', async ($, on) => {
+test('a subagent tells through the tool, and the band lists the notice in the default color', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
@@ -1543,7 +1652,7 @@ test('a subagent tells through the tool, and the band lists the notice with its 
   await clock.settle()
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated (just now|\d+s ago)$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '• ' })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
   await ui.unmount()
@@ -1581,7 +1690,7 @@ test('no line or drawer shows an item’s number', async ($, on) => {
     await ui.press({ key: `item:${ref}` })
     expect(await ui.find({ key: `detail:${ref}` })).toBeDefined()
     expect(await drawn()).not.toMatch(/42|43/)
-    await ui.press({ key: `item:${ref}` })
+    await ui.press({ key: `close:${ref}` })
   }
   await ui.unmount()
 })
@@ -1623,8 +1732,11 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   for (const name of ['discuss', 'dismiss', 'snooze']) {
     expect((await ui.find({ type: 'Button', key: `${name}:2` }))?.props.plain).toBe(true)
   }
-  const bars = await ui.findAll({ type: 'Text', text: '|' })
-  expect(bars.map(bar => bar.props.color)).toEqual(['subtle', 'subtle'])
+  expect(await actionLinesOf(ui)).toEqual([
+    'discuss:2 d discuss notice',
+    'dismiss:2 x dismiss notice',
+    'snooze:2 s snooze notice',
+  ])
 
   await ui.press({ key: 'discuss:2' })
   expect(session.filled).toEqual([`insert:"${FORCE_PUSHED}"\n\n`])
@@ -1651,7 +1763,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   expect(session.submitted).toEqual([])
   expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
 
-  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'close:2' })
   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
   await clock.advance(30_000 - 2 * TICK)
   await clock.settle()
@@ -1732,7 +1844,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:1' })
   // You choose an option from the question as it reads now, and have not sent it yet.
-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.b' })
 
   const options = ['Add a budget of two per host', 'Ask the reviewer']
   const called = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, options, detail: 'The cap is three.' })
@@ -1744,12 +1856,13 @@ test('the revise tool redraws the question with its new text at once, keeping it
   )
   // Before the band reads the store again, the open drawer shows the new text.
   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The cap is three.')
-  expect(await ui.find({ type: 'Text', text: /^Add a budget of two per host/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Ask the reviewer/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Add a budget$/ })).toBeUndefined()
-  expect(await ui.find({ key: 'answer:1.c' })).toBeDefined()
+  expect((await optionsOf(ui)).map(option => [option.props.hotkey, option.text])).toEqual([
+    ['1', 'Decline it (recommended)'],
+    ['2', 'Add a budget of two per host'],
+    ['3', 'Ask the reviewer'],
+  ])
 
-  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'close:1' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 1, question: 'Decline the retry finding?' })
   expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
@@ -1762,7 +1875,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
   expect(session.store.store.get('1')?.answer).toBeUndefined()
 
   await ui.press({ key: 'item:1' })
-  await ui.press({ key: 'answer:1.c', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.c' })
   expect(session.filled.at(-1)).toBe('insert:"Decline the retry finding?"\n\nAsk the reviewer\n')
   await $.prompt.submit({ text: '"Decline the retry finding?"\n\nAsk the reviewer\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
@@ -1781,7 +1894,7 @@ test('an answer chosen before a revise answers no question, and a pick from the 
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
   expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe('The cap is three.')
 
@@ -1803,7 +1916,7 @@ test('an answer chosen before a revise answers no question, and a pick from the 
 
   // The same option, picked again in the revised question's drawer, answers it.
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await ui.press({ key: 'answer:2.a' })
   await $.prompt.submit({ text: decline, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ letter: 'a' }))
@@ -1820,7 +1933,7 @@ test('an answer chosen before a revise rewords its question does not answer anot
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: { href: 'https://github.com/x/y/pull/8' } })
+  await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, question: 'Decline the retry finding?' })
   expect(await ui.find({ key: 'detail:2' })).toBeDefined()
 
@@ -1863,7 +1976,6 @@ test('an option typed under a quote discussed before a revise answers no questio
 })
 
 const DECLINE = '"Decline the finding?"\n\nDecline it\n'
-const PULL_8 = { href: 'https://github.com/x/y/pull/8' }
 
 test('a pick for a question withdrawn before you send answers no other question', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
@@ -1873,7 +1985,7 @@ test('a pick for a question withdrawn before you send answers no other question'
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: PULL_8 })
+  await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__withdraw', number: 2 })
   await $.prompt.submit({ text: DECLINE, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
@@ -1890,7 +2002,7 @@ test('a pick made before a revise, for a question dismissed before you send, ans
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
-  await ui.press({ key: 'answer:2.a', link: PULL_8 })
+  await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
   await ui.press({ key: 'dismiss:2' })
   await clock.settle()
@@ -1943,12 +2055,14 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:1' })
   await ui.press({ key: 'snooze:1' })
+  await ui.press({ key: 'snooze-60:1' })
   await clock.settle()
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'snooze:2' })
+  await ui.press({ key: 'snooze-60:2' })
   await clock.settle()
-  expect(session.project()).toContain('inbox snooze 1 --session s1 --json')
-  expect(session.project()).toContain('inbox snooze 2 --session s1 --json')
+  expect(session.project()).toContain('inbox snooze 1 --for 60 --session s1 --json')
+  expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
   // Each stays listed for 30 seconds, out of the divider's counts, and then leaves the band.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
@@ -1985,8 +2099,8 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:1' })
   session.store.failing.locks = 2
-  for (const name of ['dismiss', 'snooze']) {
-    await ui.press({ key: `${name}:1` })
+  for (const keys of [['dismiss:1'], ['snooze:1', 'snooze-60:1']]) {
+    for (const key of keys) await ui.press({ key })
     await clock.settle()
   }
   expect(session.toasts).toEqual([`projector: ${BUSY}`, `projector: ${BUSY}`])
@@ -2030,6 +2144,7 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'snooze:2' })
+  await ui.press({ key: 'snooze-60:2' })
   await clock.advance(TICK)
   await clock.settle()
   await ui.unmount()
@@ -2142,7 +2257,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
   expect(await ui.find({ key: 'answer:1.a' })).toBeDefined()
   expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
   const restored = await line()
-  expect([restored?.props.color, restored?.props.strikethrough]).toEqual([undefined, false])
+  expect([restored?.props.color, restored?.props.strikethrough]).toEqual(['permission', false])
   expect(session.store.store.get('1')).toEqual(held())
 
   // The dismissal had not gone out, so the restore sends nothing.
@@ -2166,7 +2281,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
   expect(Object.keys(session.store.store.get('1') ?? {})).not.toContain('restoredAt')
 
   // Picking an option answers it as if it had never been dismissed.
-  await ui.press({ key: 'answer:1.b', link: { href: SEVEN } })
+  await ui.press({ key: 'answer:1.b' })
   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
@@ -2183,8 +2298,9 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
 
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'snooze:2' })
+  await ui.press({ key: 'snooze-60:2' })
   await clock.settle()
-  expect(session.project()).toContain('inbox snooze 2 --session s1 --json')
+  expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
   // The drawer closes, and the line stays in the subtle color, not struck through, out of the divider's count.
   expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
   const snoozed = await line()
@@ -2208,6 +2324,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
 
   // Snoozed again, it leaves the band 30 seconds later, and nothing reached the agent.
   await ui.press({ key: 'snooze:2' })
+  await ui.press({ key: 'snooze-15:2' })
   await clock.advance(30_000 - TICK)
   await clock.settle()
   expect(await line()).toBeDefined()
@@ -2243,7 +2360,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
   expect(session.project()).toContain('inbox restore 1 --session s1 --json')
   // Before the band reads the store again, the question is open in the band, and its old drawer stays closed.
   const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
-  expect([line?.props.color, line?.props.strikethrough]).toEqual([undefined, false])
+  expect([line?.props.color, line?.props.strikethrough]).toEqual(['permission', false])
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
   await clock.advance(TICK)
@@ -2337,4 +2454,328 @@ test('the restore tool refuses what the CLI refuses, asks an old CLI to upgrade,
   )
   expect(session.store.store.get('1')).toEqual(answered)
   expect(session.store.store.get('2')).toEqual(notice())
+})
+
+test('an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  // The recommendation and five more options, the most the ask tool takes.
+  const choices = ['Decline it', 'Add a budget', 'Cap per host', 'Ask the reviewer', 'Wait a day', 'Split the change']
+  const session = questionWorld(on, clock, [held({ choices }), notice()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  const digits = () => digitsOf(ui)
+
+  // A closed drawer leaves the digits to the prompt.
+  expect(await digits()).toEqual([])
+  await ui.press({ key: 'item:2' })
+  expect(await digits()).toEqual([])
+  await ui.press({ key: 'close:2' })
+
+  await ui.press({ key: 'item:1' })
+  expect((await optionsOf(ui)).map(option => [option.key, option.props.hotkey])).toEqual([
+    ['answer:1.a', '1'],
+    ['answer:1.b', '2'],
+    ['answer:1.c', '3'],
+    ['answer:1.d', '4'],
+    ['answer:1.e', '5'],
+    ['answer:1.f', '6'],
+  ])
+  // Pressing the sixth, by its digit or Enter, fills the prompt as clicking its number did, and sending it answers.
+  await ui.press({ key: 'answer:1.f' })
+  expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nSplit the change\n'])
+  await $.prompt.submit({ text: '"Decline the finding?"\n\nSplit the change\n', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'f', text: 'Split the change' }))
+
+  // The answered question's drawer lists its options with no digits.
+  await ui.press({ key: 'item:1' })
+  expect(await ui.find({ type: 'Text', text: /^Split the change ✓$/ })).toBeDefined()
+  expect(await digits()).toEqual([])
+  await ui.unmount()
+})
+
+/** The open drawer's action lines, in order: each one's key, the letter that presses it, and its label. */
+async function actionLinesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
+  const actions = (await ui.findAll({ type: 'Button' })).filter(button =>
+    /^(discuss|dismiss|snooze|unsnooze|restore):/.test(button.key ?? ''),
+  )
+  return actions.map(action => `${action.key ?? ''} ${String(action.props.hotkey ?? '')} ${action.text}`)
+}
+
+/** An item's open drawer, row by row: a Text by its text, any other element by its key or type. */
+async function drawerRowsOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
+  const drawer = (await ui.findAll({ type: 'Box' })).find(box => box.props.marginLeft === 2)
+  type Row = { type: string; props: { key?: string }; children?: unknown[] }
+  return ((drawer?.children ?? []) as Row[]).map(row =>
+    row.type === 'Text'
+      ? `text:${(row.children ?? []).filter(part => typeof part === 'string').join('')}`
+      : (row.props.key ?? row.type),
+  )
+}
+
+test('a drawer’s actions follow its options a line each, on d, x and s, named for what they act on', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  questionWorld(on, clock, [held(), notice()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+
+  // No line of the band takes a letter; only an open drawer's actions do.
+  expect((await ui.findAll({ type: 'Button' })).filter(button => button.props.hotkey !== undefined)).toEqual([])
+
+  // A question's options and actions are one list: the options on their digits, then d, x and s.
+  await ui.press({ key: 'item:1' })
+  expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual([
+    'close:1',
+    'answer:1.a',
+    'answer:1.b',
+    'discuss:1',
+    'dismiss:1',
+    'snooze:1',
+  ])
+  expect(await actionLinesOf(ui)).toEqual([
+    'discuss:1 d discuss question',
+    'dismiss:1 x dismiss question',
+    'snooze:1 s snooze question',
+  ])
+  // A blank line sets the actions apart from the options, as one sets the detail apart, and no `|` joins them.
+  expect(await drawerRowsOf(ui)).toEqual([
+    'text: ',
+    'detail:1',
+    'text: ',
+    'answer:1.a',
+    'answer:1.b',
+    'text: ',
+    'discuss:1',
+    'dismiss:1',
+    'snooze:1',
+  ])
+  expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
+
+  // The blank line stays above the lengths snooze offers in the actions' place.
+  await ui.press({ key: 'snooze:1' })
+  expect((await drawerRowsOf(ui)).slice(-3)).toEqual(['answer:1.b', 'text: ', 'Box'])
+
+  // Snoozed, unsnooze takes snooze's place.
+  await ui.press({ key: 'snooze-60:1' })
+  await clock.settle()
+  await ui.press({ key: 'item:1' })
+  expect(await actionLinesOf(ui)).toEqual([
+    'discuss:1 d discuss question',
+    'dismiss:1 x dismiss question',
+    'unsnooze:1 s unsnooze question',
+  ])
+
+  // Dismissed, restore takes dismiss's place, and a resolved item has nothing to snooze.
+  await ui.press({ key: 'dismiss:1' })
+  await clock.settle()
+  await ui.press({ key: 'item:1' })
+  expect(await actionLinesOf(ui)).toEqual(['discuss:1 d discuss question', 'restore:1 x restore question'])
+  // A resolved question still lists its options, with the blank line under them.
+  expect((await drawerRowsOf(ui)).slice(2)).toEqual([
+    'text: ',
+    'text:Decline it',
+    'text:Add a budget',
+    'text: ',
+    'discuss:1',
+    'restore:1',
+  ])
+  await ui.press({ key: 'close:1' })
+
+  // A notice's actions name a notice.
+  await ui.press({ key: 'item:2' })
+  expect(await actionLinesOf(ui)).toEqual([
+    'discuss:2 d discuss notice',
+    'dismiss:2 x dismiss notice',
+    'snooze:2 s snooze notice',
+  ])
+  expect(await drawerRowsOf(ui)).toEqual(['text: ', 'detail:2', 'text: ', 'discuss:2', 'dismiss:2', 'snooze:2'])
+  await ui.press({ key: 'close:2' })
+
+  // A pull request's drawer has its actions above its links, the links with no letters.
+  await ui.press({ key: 'pr:x/y#7' })
+  expect(await actionLinesOf(ui)).toEqual(['discuss:x/y#7 d discuss PR', 'dismiss:x/y#7 x dismiss PR'])
+  await ui.unmount()
+})
+
+test('a keyed line’s label takes the color of the `: ` before it, so it inverts as one block', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  questionWorld(on, clock, [held()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+
+  // The engine draws a plain Button's key in its accent color and the `: ` in
+  // the Button's own color, which takes no color, `hover`, or `dimColor` from
+  // the band. A label of plain text, with no colored child, takes that same
+  // color, at rest and inverted.
+  const partsOf = async (key: string) => {
+    const line = await ui.find({ type: 'Button', key })
+    return {
+      key: line?.props.hotkey,
+      plain: line?.props.plain,
+      line: [line?.props.color, line?.props.hover, line?.props.dimColor],
+      label: [line?.props.label, line?.children],
+    }
+  }
+  await ui.press({ key: 'item:1' })
+  expect(await partsOf('answer:1.a')).toEqual({
+    key: '1',
+    plain: true,
+    line: [undefined, undefined, undefined],
+    label: ['Decline it (recommended)', []],
+  })
+  expect(await partsOf('answer:1.b')).toEqual({
+    key: '2',
+    plain: true,
+    line: [undefined, undefined, undefined],
+    label: ['Add a budget', []],
+  })
+  expect(await partsOf('dismiss:1')).toEqual({
+    key: 'x',
+    plain: true,
+    line: [undefined, undefined, undefined],
+    label: ['dismiss question', []],
+  })
+  await ui.press({ key: 'close:1' })
+
+  await ui.press({ key: 'pr:x/y#7' })
+  expect(await partsOf('discuss:x/y#7')).toEqual({
+    key: 'd',
+    plain: true,
+    line: [undefined, undefined, undefined],
+    label: ['discuss PR', []],
+  })
+  await ui.unmount()
+})
+
+/**
+ * Moves the band's focus ring as the person's Tab or ctrl+x tab does, and
+ * records each element the band then tried to move the ring onto. The kit
+ * serves no `$.ui.focus`, so it refuses every move the band tries, and the
+ * debug line the band writes for a refused move names the element.
+ */
+function keyboardOf(on: On) {
+  const tried: string[] = []
+  on('ui.focus', () => ({}))
+  on('ui.log', ($, e) => {
+    const element = /^projector: the focus stayed off (\S+): /.exec(e.text)?.[1]
+    if (element !== undefined) tried.push(element)
+    return { value: undefined }
+  })
+  const tab = ($: Engine, element: string) =>
+    $.ui.focus({
+      component: 'AbovePrompt',
+      requestId: 'above-prompt',
+      plugin: 'projector',
+      element,
+      origin: { kind: 'person' },
+    })
+  return { tried, tab }
+}
+
+test('Enter on a line moves the ring into the drawer it opens and back onto the line, and a click moves nothing', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const answered = held({ ref: '3', number: 3, answer, deliveredAt: NOW - 1_000 })
+  questionWorld(on, clock, [held(), notice(), answered])
+  const { tried, tab } = keyboardOf(on)
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+
+  // A click, with the ring on nothing or on another line, leaves the ring alone.
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'close:1' })
+  await tab($, 'pr:x/y#7')
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'close:1' })
+  expect(tried).toEqual([])
+
+  // Enter on a question's line moves the ring onto its first option, and Enter
+  // on the open line moves it back onto the line in the list.
+  await tab($, 'item:1')
+  await ui.press({ key: 'item:1' })
+  expect(tried).toEqual(['answer:1.a'])
+  await tab($, 'close:1')
+  await ui.press({ key: 'close:1' })
+  expect(tried).toEqual(['answer:1.a', 'item:1'])
+
+  // A notice's drawer and an answered question's have no options to press, so the ring goes onto discuss.
+  await tab($, 'item:2')
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'close:2' })
+  await tab($, 'item:3')
+  await ui.press({ key: 'item:3' })
+  await ui.press({ key: 'close:3' })
+  expect(tried).toEqual(['answer:1.a', 'item:1', 'discuss:2', 'discuss:3'])
+
+  // A pull request's drawer opens under its line, so closing it leaves the ring where it is.
+  await tab($, 'pr:x/y#7')
+  await ui.press({ key: 'pr:x/y#7' })
+  await ui.press({ key: 'pr:x/y#7' })
+  expect(tried).toEqual(['answer:1.a', 'item:1', 'discuss:2', 'discuss:3', 'discuss:x/y#7'])
+  await ui.unmount()
+})
+
+test('snooze asks how long, and only a length it offers snoozes the item', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held(), notice()])
+  const { tried, tab } = keyboardOf(on)
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  /** The open drawer's row of Buttons, each by its key and what it reads. */
+  const row = async () =>
+    (await ui.findAll({ type: 'Button' }))
+      .filter(button => /^(?!close:|item:).*:2$/.test(button.key ?? ''))
+      .map(button => `${button.key ?? ''} ${button.text}`)
+  const actions = ['discuss:2 discuss notice', 'dismiss:2 dismiss notice', 'snooze:2 snooze notice']
+  const snoozes = () => session.project().filter(command => command.startsWith('inbox snooze'))
+
+  // Snooze puts the lengths and cancel where the actions were, with no digits, and snoozes nothing yet.
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'snooze:2' })
+  expect(await row()).toEqual([
+    'snooze-15:2 15 min',
+    'snooze-60:2 1 hour',
+    'snooze-240:2 4 hours',
+    'snooze-1440:2 1 day',
+    'cancel:2 cancel',
+  ])
+  expect((await ui.findAll({ type: 'Text', text: '|' })).map(bar => bar.props.color)).toEqual(Array(4).fill('subtle'))
+  expect(await digitsOf(ui)).toEqual([])
+  expect(snoozes()).toEqual([])
+
+  // Cancel puts the actions back.
+  await ui.press({ key: 'cancel:2' })
+  expect(await row()).toEqual(actions)
+
+  // So does closing the drawer, so it opens again on its actions.
+  await ui.press({ key: 'snooze:2' })
+  await ui.press({ key: 'close:2' })
+  await ui.press({ key: 'item:2' })
+  expect(await row()).toEqual(actions)
+  expect(snoozes()).toEqual([])
+
+  // From the keyboard, snooze moves the ring onto the first length, and cancel moves it back onto snooze.
+  await tab($, 'snooze:2')
+  await ui.press({ key: 'snooze:2' })
+  await tab($, 'cancel:2')
+  await ui.press({ key: 'cancel:2' })
+  expect(tried).toEqual(['snooze-15:2', 'snooze:2'])
+
+  // Each length snoozes the item for its minutes.
+  for (const minutes of [15, 60, 240, 1440]) {
+    await ui.press({ key: 'snooze:2' })
+    await ui.press({ key: `snooze-${minutes}:2` })
+    await clock.settle()
+    expect(session.store.store.get('2')?.snoozedUntil).toBe(clock.now() + minutes * 60_000)
+    await ui.press({ key: 'item:2' })
+    await ui.press({ key: 'unsnooze:2' })
+    await clock.settle()
+  }
+  expect(snoozes()).toEqual([15, 60, 240, 1440].map(minutes => `inbox snooze 2 --for ${minutes} --session s1 --json`))
+  await ui.unmount()
 })

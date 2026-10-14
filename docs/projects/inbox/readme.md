@@ -1383,3 +1383,270 @@ and for "unsnooze when an item is snoozed".
 | The tools' descriptions and arguments | `the restore tool is for a dismissal the person calls a mistake, never a question asked again`, `` a call of the restore tool becomes `project inbox restore`, and only a whole number names an item ``, `the ask tool tells the agent that a pick arrives by number and a reply as the person’s prompt`, `word that a question was restored waits for a deliverer until a live claim holds it`, in `hooks/inbox.test.ts` |
 | Codex allows `restore` by name | The `project inbox restore` row of `DECISIONS` and `test_the_codex_rules_name_every_command_or_leave_it_out` in `tests/test_permissions.py` |
 | The Projector section's new sentence is pinned to begin marker 12 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |
+
+## 15. Use the band from the keyboard
+
+You can work the band from the keyboard as you answer Claude Code's own
+surveys. An open question's options are Buttons on the digits `1` to `6`,
+and a digit presses one from the band or typed first into an empty prompt.
+A drawer's options and actions form one list, a line each, and each
+action takes a letter by its place: `d` for **discuss**, `x` for
+**dismiss** or **restore**, and `s` for **snooze** or **unsnooze**.
+Enter on a line opens its drawer and moves the focus ring into it, and
+Enter on the open line closes the drawer with the ring on the line.
+`docs/plugins.md` gains a section on the band's keys. This section
+supersedes the bullets of § 2.5 that draw a drawer's actions on one row,
+`discuss | dismiss | snooze`; the bullet of § 10, "Each drawer link has a
+line of its own, and the actions come last", for a pull request's drawer,
+whose actions now come before its links; and the last row of § 4's table,
+under which an option's number takes no press on the main screen.
+
+### 15.1 Problem
+
+Claude Code moves the keyboard into the band with ctrl+x tab, walks a focus
+ring over the band's Buttons with Tab and the arrows, and presses the one
+under the ring with Enter. A question's options did not take part. Each was
+a `Markdown` link, `1.`, which only a click presses, so on the main screen,
+which Claude Code uses under tmux and takes no clicks, a question could be
+answered only by typing its quote and option by hand. Enter on a line
+opened its drawer but left the ring on the line, and the engine keeps the
+ring by position, so after an item's drawer took the band to itself the
+ring sat on whatever element held the line's old place. Every action took
+Tab presses and Enter. The owner asked for the band to work as a survey
+does: digits for the options and letters for the actions.
+
+### 15.2 What changes
+
+- **Options are Buttons on digits.** An open question's options are `plain`
+  Buttons with the hotkeys `1` to `6`, in the order of their letters, the
+  recommendation first with its `(recommended)` mark. The engine draws the
+  digit before the option in the accent color, as `1: Decline it`, so the
+  band draws no number of its own. Pressing an option, by a click, Enter,
+  or its digit, does what clicking its number did: it records the pick
+  through `propose` and fills the prompt with the quote and the option, so
+  `readPrompt` reads the sent prompt as before.
+- **The digits work from an empty prompt.** Claude Code presses a band
+  Button whose hotkey is a digit typed first into an empty prompt, as it
+  answers a survey, while the Button is wholly inside the band's visible
+  window, so the digits are set whenever an open question's drawer is
+  open. A digit only fills the prompt, so a stray one sends
+  nothing.
+- **A resolved question's options are text.** Its drawer lists the options
+  with no digits and nothing to press, the answer given at full strength
+  and marked `✓`, the rest in `subtle`, and an answer typed with
+  `project inbox answer --text` after them.
+- **Options and actions form one list.** The `discuss | dismiss | snooze`
+  row is gone. Each action is a line of its own under the options, after a
+  blank line: a `plain` Button whose letter the engine draws before its
+  label in the accent color. A resolved question's text options take the
+  same blank line under them, a notice's actions follow its detail after
+  one, and the lengths snooze offers keep it above them. A pull request's
+  drawer puts its actions directly under its facts line and its links
+  under its actions, with no blank line anywhere, as the owner sketched it.
+- **A keyed line draws in two colors.** On an option or an action line, the
+  key takes the engine's accent color, `suggestion`, and the `: ` and the
+  label take the default text color. The label is a plain string, so an
+  open question's `(recommended)` mark loses its `success` color on the
+  option line; a resolved question's text options keep it.
+- **Actions take letters by their place.** **discuss** takes `d`, the
+  second place takes `x`, whether it holds **dismiss** or **restore**, and
+  the third takes `s`, whether it holds **snooze** or **unsnooze**.
+- **Each label names what it acts on.** A question's drawer reads
+  `d: discuss question`, `x: dismiss question`, and `s: snooze question`,
+  and a notice's reads `notice` in place of `question`. A dismissed item's `x`
+  line reads `x: restore question` or `x: restore notice`, and it has no
+  `s` line, since the CLI refuses to snooze a resolved item. A snoozed
+  item's `s` line reads `s: unsnooze question` or `s: unsnooze notice`. A
+  pull request's drawer reads `d: discuss PR` and `x: dismiss PR` under
+  its facts line, with its links, which take no keys, below the actions.
+  The owner first had `d: discuss this` on every drawer, then asked for
+  `d` to name what it discusses, as `x` and `s` do, and for `PR` in place
+  of `pull request` to keep the pull request's lines short.
+- **The letters always show.** A letter presses its action only while the
+  band holds the keyboard; typed in the prompt, it is text.
+- **Enter takes the ring into the drawer.** A `ui.focus` hook records the
+  band element the ring last landed on. When a line is pressed with the
+  ring on it, the press came from Enter, and the band moves the ring with
+  `$.ui.focus`: onto a question's first option when a drawer opens, or
+  onto **discuss** when the drawer has no options to press. Enter on an
+  open item's line moves the ring back onto the item's line in the list. A
+  pull request's drawer opens and closes under its line, which keeps its
+  place, so closing it leaves the ring where it is. A click moves nothing.
+- **An open item's line has a key of its own.** While its drawer is open,
+  an item's line is keyed `close:<number>`, not `item:<number>`, so the
+  move back onto the line waits for the band to draw the list again.
+- **A refused move is logged.** When the engine refuses a move, or the call
+  fails, the band writes `projector: the focus stayed off <key>: <reason>`
+  to the debug log.
+- **A ctrl-click on an option no longer opens the pull request.** The link
+  that carried the option went with it. The pull request's own drawer
+  links it, and the owner accepted the loss.
+
+### 15.3 Why this design
+
+- **Survey keys.** The owner answers Claude Code's surveys with a digit
+  from an empty prompt, and the band's questions are the same kind of
+  choice, so they take the same keys. Filling the prompt rather than
+  answering keeps § 13's rule that only a sent prompt answers.
+- **`1` to `6`, not `1` to `5`.** The `ask` tool takes a recommendation and
+  up to five other options, six answers in all.
+- **Letters by place, not by name.** **restore** and **unsnooze** undo what
+  **dismiss** and **snooze** did, in the places they held, so each keeps
+  the letter of what it undoes. Only one drawer is open at a time, so no
+  two actions share a letter. `x` stands for **dismiss** because `d` is
+  **discuss**.
+- **What the engine says about the keyboard.** `AbovePrompt`'s render
+  props carry no focus state, unlike a `Pane`'s `isFocused`. `ui.focus`
+  fires before the ring moves: on ctrl+x tab, which puts the ring on the
+  band's first element; on a click on the band outside its Buttons; on Tab
+  and the arrows; and on `$.ui.focus`. Esc and a click into the prompt
+  move nothing the band hears, and the band is not drawn again. So the band
+  learns when it takes the keyboard but not when it loses it, and cannot
+  show the letters only while it holds it, as the owner first asked.
+- **Every action is a line, its letter drawn.** A `plain` Button with a
+  hotkey always draws the hotkey before its label, a Button without
+  `plain` draws `[ label ]` in bold, and no prop hides the hotkey, so the
+  engine offers no way to keep a letter undrawn on a plain label. The owner
+  chose to make the letters part of the drawer: options and actions as one
+  list a key each, like a survey's rows.
+- **The label takes the `: `'s color.** The engine draws a plain Button as
+  one `Text`: the hotkey in a nested `Text` fixed to `suggestion`, then
+  `: ` and the label. Its own `Text` takes no color from the plugin; only a
+  `hover` override colors it, and only while the pointer is over the
+  Button, never under the focus ring. Hover or focus inverts that `Text`,
+  so each part with its own color inverts into a block of its own. The
+  owner first had the actions' labels in `subtle`, then asked for the whole
+  line in one color, and found the `: ` in a third color the oddest part.
+  Neither the key nor the `: ` can take the label's color, so the label
+  takes the `: `'s, the default text color: the line draws and inverts as
+  the key's block and one block after it. `suggestion` is the same color
+  as `permission`, lavender on the default dark theme.
+- **The ring tells Enter from a click.** `ui.press` does not say what
+  pressed a Button. A click on a Button presses it without moving the ring
+  or taking the keyboard, and Enter presses the Button under the ring, so a
+  press on the line the ring is on is the keyboard's. The record can be
+  stale after Esc, but the engine refuses `$.ui.focus` for a band that
+  does not hold the keyboard, so a stale record moves nothing.
+- **`close:<number>` rather than a timer.** The engine keeps the ring by
+  position, and an open item's drawer has the band to itself, so the item's
+  line is the top row while the drawer is open and lower in the list once
+  it closes. `$.ui.focus` resolves a key against the band as drawn when
+  the key is already drawn, and waits for the next drawing only when it is
+  not. A key the open line does not share waits for the list, with no
+  timing to guess.
+- **Tests read the debug line.** Claude Code's test kit serves no
+  `$.ui.focus` and lets no test hook see a plugin's call, so a test raises
+  `ui.focus` to place the ring and reads which element the band then tried
+  from the debug line it writes when the kit refuses the move.
+
+### 15.4 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| An open question's options are plain Buttons on `1` to `6` with no number of the band's; the digits are set only while its drawer is open; pressing the sixth fills the prompt and sending it answers; a resolved question's options have no digits | `an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open`, `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer` in `hooks/band.test.tsx` |
+| A pick through a Button speaks to its question as a pick through the link did | The tests § 13.4 lists, which now press the Buttons |
+| A drawer's actions follow its options a line each, after a blank line and with no `|`, the blank line kept above snooze's lengths and under a resolved question's options; they take `d`, `x`, and `s` by place, labelled by kind, **restore** and **unsnooze** included, with no `s` line on a dismissed item; a pull request's drawer reads `discuss PR` and `dismiss PR` between its facts line and its links; no line of the band takes a letter | `a drawer’s actions follow its options a line each, on d, x and s, named for what they act on`, `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
+| A keyed line's label is a plain string with no color, `hover`, or `dimColor`, so it takes the `: `'s color | `` a keyed line’s label takes the color of the `: ` before it, so it inverts as one block `` |
+| Enter on a line moves the ring into the drawer it opens and back onto an item's line; a click moves nothing; a pull request's drawer closes in place | `Enter on a line moves the ring into the drawer it opens and back onto the line, and a click moves nothing` |
+| The ring on a live terminal, ctrl+x tab, the digits from an empty prompt, and the drawer's lines | Checked by hand by the owner in a preview session |
+
+## 16. Smaller changes to the band
+
+The owner asked for these changes to the band while previewing § 15,
+most to how it draws its lines and one to how **snooze** works. They are
+recorded apart from § 15 so they can ship apart. This section supersedes
+the bullet of § 2.5 that gives a notice the bullet `•`; its bullet under
+which **snooze** runs `project inbox snooze` at once, which snoozes for the
+CLI's default hour; and the part of § 10's bullet on ages that shows open
+review threads as a count after `⋮`.
+
+### 16.1 What changes
+
+- **The links read `open in github` and `open in projector`.** A pull
+  request's drawer drew them as `github` and `projector`, which read as
+  labels rather than as things to press. No other drawer draws these
+  links: an item names its pull request as text, and § 15 removed the link
+  that carried a question's options.
+- **A pull request's facts take a color per piece.** The line under a
+  pull request, such as `watching · fix-branch · +12 −3 in 2 files`, was
+  drawn whole in `subtle`, which made the drawer's main content its
+  faintest line. Now each loop takes a color of its own, from the
+  constant `LOOP_COLORS`: `watching` the terminal palette's blue,
+  `ansi256(4)`, and `reviewing` the theme's `claude` orange, rgb(215,119,87)
+  on the dark and light themes, rgb(255,153,51) on the daltonized ones, and
+  `ansi:redBright` on the ANSI ones. A pull request both loops track reads
+  `watching and reviewing`, each word in its own color and ` and ` in the
+  default color. The branch takes the palette's cyan, `ansi256(6)`, in the
+  constant `BRANCH_COLOR`. The size takes the colors the next bullet but
+  one gives it, and each ` · ` between them keeps the default color.
+- **Only the checks take the checks' color.** The facts line ended with
+  ` · checks pending` drawn whole in the checks' color, so the `·` turned
+  yellow while checks ran. The `·` now keeps the line's color, and only
+  `checks <state>` takes `success`, `error`, or `warning`.
+- **The size reads as a diff stat.** In the facts line's
+  `+12 −3 in 2 files`, the insertions take `success` and the deletions
+  `error`, green and red as a diff stat draws them, and ` in 2 files` keeps
+  the default color, after the owner tried it in `subtle`. The theme's
+  `diffAdded` and `diffRemoved` are backgrounds for whole diff lines, not
+  text colors, so the band uses `success` and `error`. The owner tried
+  the terminal's `gray`, the drawer links' color, and `subtle` for the
+  branch before choosing cyan. Claude Code resolves a `Text` color only as
+  a theme key, `rgb()`, hex, `ansi256()`, or an `ansi:` name, and draws a
+  plain name such as `gray` or `cyan` in the default color; and the band's
+  surface refuses a color with a `:`, so a plugin cannot use `ansi:cyan`,
+  the form Claude Code's ANSI themes use. `ansi256(6)` passes both: it
+  names the palette's cyan slot, so it follows the person's palette as
+  `ansi:cyan` would. `ansi256(14)`, bright cyan, is the change to make if
+  slot 6 reads too dark. Watching's blue takes the same form, slot 4.
+- **A pull request's open threads read `5⋮`.** The count of unresolved
+  review threads comes before the `⋮` rather than after it, still in
+  yellow, `warning`, and still the last note before the age.
+- **Questions and notices share one bullet, and an open question takes a
+  color.** Every item's line starts with `-`. An open question's line, its
+  bullet and its subject, is drawn in the theme color `permission`, and an
+  open notice's keeps the default text color. A resolved or snoozed item
+  is drawn in `subtle` as before, and a dismissed one is struck through.
+  The color lives in one constant, `QUESTION_COLOR`, in
+  `hooks/register.tsx`.
+- **Snooze asks how long.** Pressing **snooze** in an item's drawer
+  snoozes nothing. It replaces the action lines with
+  `15 min | 1 hour | 4 hours | 1 day | cancel`, plain Buttons on one row,
+  `|` between them. A length runs
+  `project inbox snooze <number> --for <minutes>` with 15, 60, 240, or
+  1440, and **cancel** puts the actions back. The question lives in the
+  open drawer only, in the `bandSnoozing` atom keyed by the drawer: closing
+  the drawer or opening another puts the actions back. The lengths take no
+  hotkeys. Enter on **snooze** moves the ring onto the first length, and
+  Enter on **cancel** moves it back onto **snooze**, as § 15 moves it for a
+  drawer. **unsnooze** still acts at once.
+
+### 16.2 Why this design
+
+- **A color tells the kinds apart better than a glyph.** `-` and `•` look
+  alike at a glance, and the difference between the kinds that matters is
+  that a question waits on the owner. A color draws the eye to it.
+- **`permission` is the question's color.** Claude Code draws its own
+  permission prompts in `permission`, and an agent's question usually asks
+  leave to do something, so the band reuses the color the owner already
+  reads that way. In Claude Code's built-in themes it is a lavender or
+  light blue on dark backgrounds, a stronger blue on light ones, and
+  `ansi:blue` or `ansi:blueBright` in the ANSI themes, distinct from the
+  text color and from `subtle` in every one. The owner tried `inactive`,
+  which made a question recede, and `text`, before choosing it.
+- **The notice keeps the default color.** A notice needs only a read, so
+  it stays as plain as a pull request's title.
+- **Snooze asks rather than assuming an hour.** The owner pressed
+  **snooze** expecting to be asked how long, and the item left the band on
+  the default hour. Asking first costs one more press, and nothing is
+  snoozed until a length is picked, so a press by mistake costs nothing.
+  The lengths stay within the CLI's cap of a day. They take no digits,
+  because the digits belong to a question's options.
+
+### 16.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| The drawer's links read `open in github` and `open in projector`; on the facts line watching takes `ansi256(4)` and reviewing `claude`, each word its own when both loops track it, the branch `ansi256(6)`, the size's `+N` `success` and its `−N` `error`, `checks <state>` the checks' color, and ` in N files`, ` and `, and each `·` stay plain; the open-thread count reads `2⋮`, in `warning`, after the other notes | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `opening one drawer closes the one that was open`, and `lists a pull request both loops track once, as watched and reviewed` in `hooks/band.test.tsx` |
+| Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in the default color` |
+| **snooze** shows the lengths and cancel, runs nothing, and takes no digits; each length runs `snooze --for` with its minutes; **cancel** and closing the drawer put the actions back; Enter carries the ring onto the first length and back onto **snooze** | `snooze asks how long, and only a length it offers snoozes the item`, and the snooze tests § 14.4 lists, which now pick a length |
+| A restored question's line returns to `permission` | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place`, `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` |
