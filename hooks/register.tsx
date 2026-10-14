@@ -953,7 +953,7 @@ export const register: Register = on => {
     const ref = posted.stdout.trim()
     void $.ui.notify(String(e.question), { title: 'Projector question' }).catch(() => undefined)
     return {
-      result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
+      result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. Projector’s panel never shows this number, so name the question to the person by what it asks.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the question; ask it in the conversation instead' }))
 
@@ -964,7 +964,7 @@ export const register: Register = on => {
     const ref = posted.stdout.trim()
     void $.ui.notify(String(e.notice), { title: 'Projector notice' }).catch(() => undefined)
     return {
-      result: `Posted ${ref}. It waits in Projector’s panel until the person dismisses it; nothing comes back to you.`,
+      result: `Posted ${ref}. It waits in Projector’s panel until the person dismisses it; nothing comes back to you. Projector’s panel never shows this number, so name the notice to the person by what it tells.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the notice; tell the person in the conversation instead' }))
 

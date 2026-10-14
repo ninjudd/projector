@@ -1917,12 +1917,13 @@ $ project inbox ask "Decline the finding about the retry budget?" \
 The command prints the question's number at once. Each session numbers its
 items 1, 2, 3, and on, in one count that questions and notices share, so `3`
 is the third item the session posted. `--pr` records the pull request the
-item is about, as `owner/repo#number`, and does not change its number. `ask`
-refuses, with exit code 65, a question longer than one line or 120
-characters, a question that holds a tab, a missing recommendation, a
-recommendation or option longer than one line, more than five other options,
-or an option that repeats the recommendation or another option. Put what you
-need to decide in `--detail`, or `--detail-file`.
+item is about, as `owner/repo#number`, and does not change its number.
+Projector's panel never shows the number, so in what you write to the person,
+name an item by what it asks or tells. `ask` refuses, with exit code 65, a
+question longer than one line or 120 characters, a question that holds a tab,
+a missing recommendation, a recommendation or option longer than one line,
+more than five other options, or an option that repeats the recommendation or
+another option. Put what you need to decide in `--detail`, or `--detail-file`.
 
 Every command names the posting session with `--session`, or reads
 `PROJECTOR_SESSION`. Answering from a terminal needs neither: `list` shows
