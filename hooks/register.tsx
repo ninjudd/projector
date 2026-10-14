@@ -85,6 +85,16 @@ const BRANCH_COLOR = 'ansi256(6)'
  */
 const LOOP_COLORS: Record<LoopKind, string> = { watching: 'ansi256(4)', reviewing: 'claude' }
 
+/** The key that closes an open item's drawer, from its line at the drawer's top. */
+const CLOSE_HOTKEY = '0'
+
+/**
+ * How far an open item's drawer is indented: the width of the `0: ` the
+ * engine draws before the item's line, so the drawer's lines start under the
+ * item's text.
+ */
+const DRAWER_INDENT = `${CLOSE_HOTKEY}: `.length
+
 /** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
 const SNOOZES = [
   { label: '15 min', minutes: 15 },
@@ -1221,20 +1231,18 @@ export const register: Register = on => {
                 opens its drawer: a click in fullscreen, Enter on the main
                 screen. */}
             <Box flexGrow={1} flexShrink={1}>
-              {/* An open drawer keeps its item inverted, as the pointer draws it,
-                  and its line closes the drawer on `0`, a digit the options
-                  leave free, drawn before it as `0: `. Like the options' digits,
-                  it works from an empty prompt too. */}
+              {/* An open item's line closes its drawer on `0`, a digit the
+                  options leave free, which the engine draws before it in the
+                  bullet's place; the drawer below is indented to its text.
+                  Like the options' digits, it works from an empty prompt too. */}
               <Button
                 key={line}
                 plain
-                hotkey={isOpened ? '0' : undefined}
+                hotkey={isOpened ? CLOSE_HOTKEY : undefined}
                 onPress={() => toggle(key, line, isOpened ? key : first)}
               >
-                <Text color={color} inverse={isOpened}>
-                  -{' '}
-                </Text>
-                <Text color={color} strikethrough={isDismissed} inverse={isOpened}>
+                {!isOpened && <Text color={color}>- </Text>}
+                <Text color={color} strikethrough={isDismissed}>
                   {item.subject}
                 </Text>
               </Button>
@@ -1252,7 +1260,7 @@ export const register: Register = on => {
             {ageColumn(key, item.postedAt)}
           </Box>
           {isOpened && (
-            <Box flexDirection="column" marginLeft={2}>
+            <Box key={`drawer:${key}`} flexDirection="column" marginLeft={DRAWER_INDENT}>
               {/* A blank line sets the item apart from its line, and the detail,
                   when there is one, sits between two. Another sets the actions,
                   or what the drawer asks in their place, apart from what comes

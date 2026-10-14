@@ -323,24 +323,26 @@ and in a terminal the divider counts the open questions and the open notices.
 
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press Enter on it from the keyboard instead. While
-its drawer is open, the item stays highlighted and has the band to itself,
-so the item is the top row, and `0` before it closes the drawer. In a
+its drawer is open, the item has the band to itself, so its line is the
+top row, in its usual colors, with `0` in its bullet's place to close the
+drawer. The drawer is indented to start under the item's text, so its
+detail and the digits of its lines sit under the item's first letter. In a
 terminal, the divider and the blank line under it step aside too, which
 gives the drawer two more rows before the band scrolls:
 
 ```text
-0: - Decline the finding about the retry budget?              #337  5m [-]
+0: Decline the finding about the retry budget?                #337  5m [-]
 
-  The review asks for a retry budget per host. The loop caps retries at
-  three in total, which covers the case the finding names.
+   The review asks for a retry budget per host. The loop caps retries at
+   three in total, which covers the case the finding names.
 
-  1: Decline it: the total cap already bounds retries to one host
-  (recommended)
-  2: Add a budget of two retries per host, and keep the total cap
+   1: Decline it: the total cap already bounds retries to one host
+   (recommended)
+   2: Add a budget of two retries per host, and keep the total cap
 
-  7: discuss question
-  8: dismiss question
-  9: snooze question
+   7: discuss question
+   8: dismiss question
+   9: snooze question
 ```
 
 The first option is always the agent's recommendation. Press an option by
@@ -422,8 +424,8 @@ to the agent.
 a confirmation, so a stray `8` only asks:
 
 ```text
-  8: yes, dismiss question
-  9: no, keep it
+   8: yes, dismiss question
+   9: no, keep it
 ```
 
 Press `8` again, or click the first line, to dismiss; a notice's reads
@@ -435,11 +437,11 @@ once.
 to the lengths it offers, and the action lines to a way back:
 
 ```text
-  1: 15 min
-  2: 1 hour
-  3: 4 hours
-  4: 1 day
-  9: cancel
+   1: 15 min
+   2: 1 hour
+   3: 4 hours
+   4: 1 day
+   9: cancel
 ```
 
 Pick a length, and the band runs

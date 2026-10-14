@@ -1035,11 +1035,11 @@ test('every item takes the `-` bullet, an open question the permission color, an
   ])
   await startSession($, clock)
   const ui = await $.ui.mount(BAND)
-  type Part = { props: { color?: string; strikethrough?: boolean; inverse?: boolean }; children: string[] }
+  type Part = { props?: { color?: string; strikethrough?: boolean; inverse?: boolean }; children: string[] }
   /** Each part of an item's line, the bullet then the subject: its text, color, and strikethrough. */
   const lineOf = async (key: string) => {
     const parts = ((await ui.find({ type: 'Button', key }))?.children ?? []) as Part[]
-    return parts.map(part => [part.children.join(''), part.props.color, part.props.strikethrough === true])
+    return parts.map(part => [part.children.join(''), part.props?.color, part.props?.strikethrough === true])
   }
 
   expect(await lineOf('item:1')).toEqual([
@@ -1064,12 +1064,18 @@ test('every item takes the `-` bullet, an open question the permission color, an
   ])
   expect((await ui.findAll({ type: 'Text' })).filter(text => text.props.dimColor !== undefined)).toEqual([])
 
-  // An open question's line stays in its color, inverted, while its drawer is open.
+  // An open item's line drops its bullet, for the `0` the engine draws in its place, and is not inverted: its subject
+  // keeps the item's color.
   await ui.press({ key: 'item:1' })
   const opened = ((await ui.find({ type: 'Button', key: 'close:1' }))?.children ?? []) as Part[]
-  expect(opened.map(part => [part.props.color, part.props.inverse])).toEqual([
-    ['permission', true],
-    ['permission', true],
+  expect(opened.map(part => [part.children.join(''), part.props?.color, part.props?.inverse])).toEqual([
+    ['Decline the finding?', 'permission', undefined],
+  ])
+  await ui.press({ key: 'close:1' })
+  await ui.press({ key: 'item:2' })
+  const openNotice = ((await ui.find({ type: 'Button', key: 'close:2' }))?.children ?? []) as Part[]
+  expect(openNotice.map(part => [part.children.join(''), part.props?.color, part.props?.inverse])).toEqual([
+    [FORCE_PUSHED, undefined, undefined],
   ])
   await ui.unmount()
 })
@@ -2551,9 +2557,20 @@ async function actionLinesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
   return actions.map(action => `${action.key ?? ''} ${String(action.props.hotkey ?? '')} ${action.text}`)
 }
 
+/**
+ * How far an item's open drawer is indented, beside the width of the key prefix
+ * the engine draws before the item's line, as `0: `: equal when the drawer's
+ * lines start under the item's text.
+ */
+async function drawerIndentOf(ui: Pick<Mounted, 'find'>, ref: string): Promise<[unknown, number]> {
+  const drawer = await ui.find({ key: `drawer:item:${ref}` })
+  const line = await ui.find({ type: 'Button', key: `close:${ref}` })
+  return [drawer?.props.marginLeft, `${String(line?.props.hotkey ?? '')}: `.length]
+}
+
 /** An item's open drawer, row by row: a Text by its text, any other element by its key or type. */
 async function drawerRowsOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
-  const drawer = (await ui.findAll({ type: 'Box' })).find(box => box.props.marginLeft === 2)
+  const drawer = (await ui.findAll({ type: 'Box' })).find(box => box.key?.startsWith('drawer:item:'))
   type Row = { type: string; props: { key?: string }; children?: unknown[] }
   return ((drawer?.children ?? []) as Row[]).map(row =>
     row.type === 'Text'
@@ -2587,6 +2604,9 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named 
     'dismiss:1 8 dismiss question',
     'snooze:1 9 snooze question',
   ])
+  // The drawer starts under the item's text, past the `0: ` the engine draws before it, so `1:` and the detail sit
+  // under the question's first letter.
+  expect(await drawerIndentOf(ui, '1')).toEqual([3, 3])
   // A blank line sets the actions apart from the options, as one sets the detail apart, and no `|` joins them.
   expect(await drawerRowsOf(ui)).toEqual([
     'text: ',
@@ -2630,7 +2650,7 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named 
   await clock.settle()
   await ui.press({ key: 'item:1' })
   expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss question', 'restore:1 8 restore question'])
-  // A resolved question still lists its options, with the blank line under them.
+  // A resolved question still lists its options, with the blank line under them, under the item's text.
   expect((await drawerRowsOf(ui)).slice(2)).toEqual([
     'text: ',
     'text:Decline it',
@@ -2639,6 +2659,7 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named 
     'discuss:1',
     'restore:1',
   ])
+  expect(await drawerIndentOf(ui, '1')).toEqual([3, 3])
   await ui.press({ key: 'close:1' })
 
   // A notice's actions name a notice.
@@ -2649,6 +2670,7 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named 
     'snooze:2 9 snooze notice',
   ])
   expect(await drawerRowsOf(ui)).toEqual(['text: ', 'detail:2', 'text: ', 'discuss:2', 'dismiss:2', 'snooze:2'])
+  expect(await drawerIndentOf(ui, '2')).toEqual([3, 3])
   await ui.press({ key: 'close:2' })
 
   // A pull request's drawer has its actions above its links, the links with no letters.
