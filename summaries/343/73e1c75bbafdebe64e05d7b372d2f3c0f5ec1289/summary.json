@@ -1,0 +1,78 @@
+{
+ "version": 1,
+ "name": "Panel theme system plan",
+ "project": "panel-themes",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 343,
+  "title": "Spec a theme system for the panel",
+  "head": "73e1c75bbafdebe64e05d7b372d2f3c0f5ec1289",
+  "headRef": "panel-themes-spec",
+  "base": "9c53036545ab778af3f7c717bc5220de78415d9b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the area Claude Code draws above the prompt. It lists the pull requests that the session's loops track and the inbox's questions and notices, and it colors each element by what the element means. Today every color is written into <code>hooks/register.tsx</code> where the element draws it, and only the background is a setting, <code>panel.background</code>, whose allowlist #341 merged.",
+   "This pull request adds one draft plan, <code>docs/projects/panel-themes/readme.md</code>, at priority <code>later</code>. It changes no code. The plan routes every color through thirteen named roles, such as <code>muted</code>, <code>question</code>, <code>added</code>, and <code>removed</code>. Each role defaults to the color it draws today, so the panel looks the same with no settings. A person overrides one role with <code>panel.colors.&lt;role&gt;</code>, picks a built-in theme with <code>panel.theme</code>, and keeps <code>panel.background</code> for the background. The panel reads the whole <code>panel</code> table in one <code>project config get panel</code> call, and it alone owns the role list and every check.",
+   "The later commits record the owner's decisions and answer the first review. The panel refuses a background that would hide the text Claude Code draws itself, which means <code>white</code> on a dark theme and <code>black</code> on a light one, so the plan partly reverses #341. <code>watching</code> and <code>branch</code> move from terminal palette slots to theme keys that the owner picks by preview. And the panel keeps a copy of Claude Code's theme values, so it can check a literal background against the defaults drawn on it, settling the background before the other roles."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Role</b>: a named meaning, such as <code>muted</code>, that every element of that meaning draws in.</li><li><b>Theme key</b>: a Claude Code color name, such as <code>subtle</code>, that resolves per theme. The public 23 are the ones the <code>ThemeKey</code> type lists.</li><li><b>Base</b>: whether the Claude Code theme is dark or light, which picks the default background.</li><li><b>Layer</b>: one source of a role's color: <code>auto</code>'s defaults, then a built-in theme, then the person's own setting.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, of <code>7d13a5f</code>, found that a literal background such as <code>rgb(80,80,80)</code> on <code>dark</code> hid the <code>subtle</code> header, hint, and ages with no toast. <code>ea28d6f</code> fixed it with a copy of Claude Code's theme values, and took all three suggestions.</li><li>The review of <code>ea28d6f</code> found three edited lines past the file's wrap width. <code>73e1c75</code> rewrapped them.</li><li>The review of <code>73e1c75</code> is clean, with no finding open. The plan is at <code>draft</code>, so its open questions don't block.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The panel themes plan",
+   "kicker": "Thirteen color roles, three settings, a contrast check, and a three-step rollout",
+   "intro": [
+    "The plan reads in order: the problem, the design in six parts, the reasons for it, the acceptance tests, the cost, the rollout, and the open questions. The design is what to check against the code, because each default claims to keep today's look.",
+    "Every claim about today's code held when the review checked it against <code>main</code>: the role table matches every color in <code>hooks/register.tsx</code>, the background table matches <code>THEME_BACKGROUNDS</code>, and the CLI reads and refuses the new keys as the plan says."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/panel-themes/readme.md",
+     "note": "The new plan. Read § 2 for the design and § 2.5 for the contrast rules, which settle the background before the other roles.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 61,
+       "text": "§ 2.1: the role table matches every <code>color</code> and <code>backgroundColor</code> prop in <code>hooks/register.tsx</code> on <code>main</code>, checked prop by prop. No element uses <code>dimColor</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 111,
+       "text": "§ 2.3: the literal colors and aliases match what #341 merged as <code>BACKGROUND_ALIASES</code>, <code>HEX_COLOR</code>, and <code>NUMBERED_COLORS</code>, and Claude Code's <code>ThemeKey</code> type lists exactly 23 keys."
+      },
+      {
+       "kind": "verify",
+       "line": 156,
+       "text": "§ 2.4: run in a scratch home, <code>project config get panel --json</code> prints <code>null</code> and exits 1 with no <code>panel</code> table, and prints the table merged across files otherwise. 0.7.20 behaves the same, and both refuse <code>project config set panel.colors.muted</code> with exit status 2."
+      },
+      {
+       "kind": "verify",
+       "line": 232,
+       "text": "§ 2.5: on <code>dark</code>, Claude Code 2.1.299 draws <code>subtle</code> as <code>rgb(80,80,80)</code>, read from its theme data, so that background now falls back to <code>rgb(20,20,20)</code>. Every other default that is a theme key stays at least 2.83:1 against it, so the row with a <code>muted</code> override draws both as set."
+      },
+      {
+       "kind": "context",
+       "line": 390,
+       "text": "§ 7: on the ANSI themes and an unreadable custom theme, the panel still checks a literal background only against Claude Code's own text and exact matches, so a role's default can vanish there. The plan defers this until a plugin can read the terminal's palette."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
