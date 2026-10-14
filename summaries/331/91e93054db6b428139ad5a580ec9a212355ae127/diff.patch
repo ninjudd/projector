@@ -1,0 +1,768 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index cc01db92..c44e9c44 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -186,11 +186,11 @@ what it did to each:
+       decision = "allow",
+   )
+   prefix_rule(
+-      pattern = ["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "revise", "show", "tell", "watch", "withdraw"]],
++      pattern = ["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "restore", "revise", "show", "tell", "watch", "withdraw"]],
+       decision = "allow",
+   )
+   prefix_rule(
+-      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "publish", "release", "rules", "settle", "setup", "status", "suggestions"]],
++      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "release", "rules", "settle", "setup", "status", "suggestions"]],
+       decision = "allow",
+   )
+   prefix_rule(
+@@ -1361,6 +1361,7 @@ project review interdiff 66
+ project review publish 66 --incremental --body body.md
+ project review release 66
+ project review finish 66
++project review prune --apply
+ project review setup 66 --model claude-opus-5-5 --replace 4011
+ project review gate 66
+ project review status 66
+@@ -1376,7 +1377,11 @@ and fetches the base. It creates a scratch worktree at the exact SHA GitHub
+ reports, verifies the worktree's `HEAD`, computes the merge base, and posts the
+ start comment the skill describes as the reviewer. It records the SHA, the
+ merge base, the worktree, whether the head is trusted, and the start comment's
+-id and `created_at` in a state file, and prints them. A head is trusted when it
++id and `created_at` in a state file, and prints them. Once the new worktree
++exists, `setup` removes the worktrees of the model's earlier heads of the pull
++request and prints a line for each, so a review keeps one checkout at a time.
++It keeps an earlier head's worktree while that head's lock is held, since a
++review may still be reading it. A head is trusted when it
+ is a branch in this repository, the pull request's author is you or has write
+ access, and no commit names another author; a fork's head, or an untrusted
+ one, is recorded so and reviewed by reading. `--rereview` records a re-review
+@@ -1414,7 +1419,8 @@ effort out rather than guess it.
+ 
+ `move` follows a head that moved mid-review: it creates a worktree for the new
+ head, rechecks trust, edits the start comment in place to name it, re-reads the
+-comment to confirm the edit, and updates the state file. `census` lists every
++comment to confirm the edit, and updates the state file. It then removes the
++worktree of the head it moved from, as `setup` does. `census` lists every
+ thread whose first comment carries the `projector-finding` marker, reading
+ every page, and prints how many are resolved and open and each open thread's
+ `path:line`; with `--json` each thread also carries its comments. It counts
+@@ -1464,11 +1470,11 @@ closes. It takes these steps:
+    head after the comment, or once a day passes since its last edit. Another
+    model's start comments, and the model's live ones from another session,
+    stay.
+-2. It removes every scratch worktree the review's state lists: each one the
+-   model's reviews of the pull request made on this machine since its last
+-   `finish`. It removes each with `git worktree remove` in the checkout, then
+-   runs `git worktree prune`. When the checkout is gone, it deletes a
+-   worktree under the state directory itself.
++2. It removes every scratch worktree the review's state lists: the current
++   head's, and any earlier head's that `setup` or `move` kept because its
++   lock was held or it would not come out. It removes each with
++   `git worktree remove` in the checkout, then runs `git worktree prune`. When
++   the checkout is gone, it deletes a worktree under the state directory itself.
+ 3. It clears the locks and deletes the state. The loop's record of published
+    reviews stays.
+ 
+@@ -1491,6 +1497,34 @@ finish, and exits 0, so running it twice is safe. With `--json` it prints the `r
+ `model`, the `comments` it deleted, the `worktrees` it removed, the locks it
+ `released`, and whether it deleted the `state`.
+ 
++`prune` sweeps the scratch worktrees that no review on this machine needs. A
++review needs the worktree of its current head while its pull request is open,
++and the worktree of any head whose lock is held and less than a day old.
++Without `--apply`, `prune` lists each worktree it would remove and each one it
++keeps, with the reason, and removes nothing. With `--apply`, it removes them:
++
++| Worktree | Why it can go |
++| --- | --- |
++| `worktrees/<owner>/<repo>/<pr>/<model-key>/<short-sha>` other than the review's current head | The worktree of an earlier head |
++| `worktrees/<owner>/<repo>/<pr>/<short-sha>` | Made by a release that kept no folder per model |
++| Under a model key with no review set up | No review of the pull request by that model is set up here |
++| The current head of a closed pull request | The pull request is closed |
++
++`prune` asks GitHub only whether each pull request with a review set up here
++is open. When GitHub cannot say, it keeps that review's worktree. Just before
++it removes each worktree, it reads that review's lock and state again, so a
++review that `setup` or `move` starts while `prune` runs keeps its worktree.
++It leaves the review's state, locks, and start comment alone. To end a closed
++pull request's review, run
++`project review finish <pr> --repo <owner>/<repo> --force`. `prune` removes each
++worktree with `git worktree remove` in the checkout that made it, and deletes
++the folder outright when that fails. It unlinks a symbolic link without
++following it, then runs `git worktree prune` in each checkout and removes the
++folders it emptied. `--repo` limits the sweep to one repository. With `--json`
++it prints the `repo`, whether it ran with `apply`, and the `removed`, `kept`,
++and `failed` entries, each with its `path` and `reason`. It exits 1 when a
++worktree could not be removed.
++
+ `publish` submits the review. `--body` names a file holding the review below
+ its signature line, with `{census}` where the census goes and, wherever used,
+ `{took}`, `{seconds}`, `{sha}`, and `{short_sha}`, which it fills in prose and
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index e2f87cdf..ff6e20b6 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -882,8 +882,9 @@ summary reads for context. It also deletes every start comment of this
+ model's that no longer means a review in progress, clears the locks, and
+ deletes the review's state, keeping the loop's record. It refuses while the
+ review is unpublished. A `start-review-loop` subagent may instead keep the
+-worktree for the pull request's next head and run `finish` when the pull
+-request closes.
++review set up for the pull request's next head and run `finish` when the pull
++request closes. The next head's `setup` removes the published head's worktree,
++so the review keeps one checkout at a time.
+ 
+ ## Summarize the pull request
+ 
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 8213ec05..9831a0f2 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -214,7 +214,8 @@ reads the new head against that history instead of rediscovering it.
+   instructions forbid description edits, a subagent publishes with
+   `--no-describe`, so the comment alone links the summary, as `review-pr`
+   describes.
+-- Between heads the subagent keeps its scratch worktree; on `CLOSED`, tell it
++- Between heads the subagent keeps its review set up, and each head's
++  `setup` removes the worktree of the head before it. On `CLOSED`, tell it
+   to run `project review finish <number> --repo <owner>/<repo> --force`
+   with the loop's `--loop` and `--model`. A closed pull request takes no
+   review, so `--force` discards one still in progress, and `--repo` keeps
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 66975ee2..12d3c526 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -500,6 +500,17 @@ def parser() -> argparse.ArgumentParser:
+         "finish", help="end a review on this machine: delete its start comments that no longer mean a review in "
+                        "progress, and remove its scratch worktrees, locks, and state"
+     )
++    review_prune = review_commands.add_parser(
++        "prune", help="find the scratch worktrees no review needs, such as earlier heads' and closed pull "
++                      "requests', and remove them with --apply"
++    )
++    review_prune.add_argument("--repo", help="owner/name: sweep only this repository's worktrees (default: all)")
++    review_prune.add_argument("--state-dir", type=Path,
++                              help="where review state and worktrees live "
++                                   "(default: $XDG_STATE_HOME/projector/reviews)")
++    review_prune.add_argument("--apply", action="store_true",
++                              help="remove what the sweep finds; without it, only list it")
++    add_output(review_prune)
+     review_publish = review_commands.add_parser(
+         "publish", help="check and submit the review, set draft state, and delete the start comment"
+     )
+@@ -1169,6 +1180,10 @@ def run_review(arguments: argparse.Namespace) -> int:
+         return review_status(root, arguments)
+     if arguments.review_command == "suggestions":
+         return review_suggestions(root, arguments)
++    if arguments.review_command == "prune":
++        result = review.prune(root, arguments.repo, arguments.apply)
++        print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.prune_lines(result)))
++        return 1 if result["failed"] else 0
+     loop = review.valid_loop(arguments.loop)
+     command = arguments.review_command
+     if command == "finish":
+@@ -1274,6 +1289,8 @@ def run_review(arguments: argparse.Namespace) -> int:
+         print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
+         if command == "setup" and arguments.replace is not None:
+             print(f"deleted start comment {arguments.replace}, which this review replaces")
++        for path in state["removed"]:
++            print(f"removed the earlier head's worktree {path}")
+     return 0
+ 
+ 
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 96ed319e..7ddae52d 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -112,8 +112,8 @@
+                            "watch", "withdraw"]],
+      "Posts, revises, reads, withdraws, restores, or delivers an inbox item, but never records the person's "
+      "answer to one."),
+-    (["project", "review", ["census", "finish", "hold", "interdiff", "move", "publish", "release", "rules",
+-                            "settle", "setup", "status", "suggestions"]],
++    (["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "release",
++                            "rules", "settle", "setup", "status", "suggestions"]],
+      "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),
+     (["project", "site", ["page", "status", "workflow"]],
+      "Builds a summary page, says where the site is hosted, or writes the site's workflow file."),
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 1ad98ca2..d59bf375 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -17,6 +17,11 @@
+     prs/<owner>/<repo>/<pr>/<model-key>/review.json        the review publish is submitting
+     worktrees/<owner>/<repo>/<pr>/<model-key>/<short-sha>  scratch worktrees, never inside the checkout
+     loops/<id>/published.json                              a loop's record of the review ids it published
++
++A review keeps one scratch worktree, its current head's: `setup` and `move` remove the worktrees of the
++model's earlier heads of the pull request, `finish` removes the last, and `prune` sweeps what none of
++them reached, such as the `worktrees/<owner>/<repo>/<pr>/<short-sha>` folders made before each model kept
++its own.
+ """
+ 
+ from __future__ import annotations
+@@ -777,6 +782,7 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
+         if comment["id"] in (recorded, replace):
+             delete_comment(repo, comment["id"], token)
+     ensure_loop(root, loop)
++    kept, removed = remove_superseded(paths, earlier.get("checkout"), earlier.get("worktrees", []), worktree)
+     state = {
+         "repo": repo,
+         "number": number,
+@@ -788,8 +794,9 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
+         "untrusted_because": why or None,
+         "checkout": str(checkout),
+         "worktree": str(worktree),
+-        # A loop keeps each head's worktree until the pull request closes, so `finish` removes them all.
+-        "worktrees": list(dict.fromkeys([*earlier.get("worktrees", []), str(worktree)])),
++        # The worktrees `finish` removes: this head's, and an earlier head's that a held lock kept or that
++        # would not come out.
++        "worktrees": kept + [str(worktree)],
+         "operator": operator,
+         "reviewer": reviewer,
+         "model": model,
+@@ -800,7 +807,7 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
+         "heads": 1,
+     }
+     write_state(paths, state)
+-    return state
++    return dict(state, removed=removed)
+ 
+ 
+ def check_replaceable(starts: list[dict], comment: int, model: str, reviewer: str, repo: str, number: int) -> None:
+@@ -865,12 +872,61 @@ def move(paths: Paths, loop: Optional[str]) -> dict:
+         lock.unlink(missing_ok=True)
+         raise
+     paths.lock(old).unlink(missing_ok=True)
++    kept, removed = remove_superseded(paths, state["checkout"], state["worktrees"], worktree)
+     state.update(sha=sha, base=merge_base, base_ref=pr["base"]["ref"], worktree=str(worktree),
+                  trusted=trusted, untrusted_because=why or None,
+                  cross_repository=((pr["head"].get("repo") or {}).get("full_name")) != state["repo"],
+-                 heads=state["heads"] + 1, worktrees=state["worktrees"] + [str(worktree)])
++                 heads=state["heads"] + 1, worktrees=kept + [str(worktree)])
+     write_state(paths, state)
+-    return state
++    return dict(state, removed=removed)
++
++
++def held_heads(paths: Paths) -> set[str]:
++    """The short SHAs of the heads whose lock this model holds and is not yet stale: a review that may still
++    be reading its worktree."""
++    return {lock.stem[:SHORT] for lock in paths.locks() if lock_age(lock) <= STALE_AFTER}
++
++
++def remove_superseded(paths: Paths, checkout: Optional[str], listed: list[str],
++                      current: Path) -> tuple[list[str], list[str]]:
++    """Remove the worktrees of the model's earlier heads of the pull request that `listed` names, once
++    `current` exists for the head under review, and return the worktrees kept and those removed.
++
++    A worktree whose head's lock is held stays, since a review may still be reading it, and so does one
++    that will not come out; `finish` removes both. A failure here never fails the setup or move that
++    called it, which has already posted or edited its start comment."""
++    held = held_heads(paths)
++    kept, removed = [], []
++    for path in map(Path, dict.fromkeys(listed)):
++        if path == current or not path.exists():
++            continue
++        if path.name in held:
++            kept.append(str(path))
++            continue
++        try:
++            remove_worktree(checkout, path, paths.worktrees)
++        except (ReviewError, OSError):
++            kept.append(str(path))
++            continue
++        removed.append(str(path))
++    if removed and checkout:
++        with suppress(ReviewError):
++            git("-C", checkout, "worktree", "prune")
++    return kept, removed
++
++
++def remove_worktree(checkout: Optional[str], path: Path, folder: Path) -> None:
++    """Remove one scratch worktree with `git worktree remove` in the checkout that made it. When that
++    checkout is gone or no longer lists it, a worktree inside `folder` is deleted outright; Git refuses to
++    remove any other path."""
++    try:
++        if checkout is None:
++            raise ReviewError(f"no checkout is recorded for {path}")
++        git("-C", checkout, "worktree", "remove", "--force", str(path))
++    except ReviewError:
++        if not path.is_relative_to(folder):
++            raise
++        shutil.rmtree(path)
+ 
+ 
+ def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], force: bool, cwd: Path) -> dict:
+@@ -957,12 +1013,7 @@ def remove_worktrees(paths: Paths, state: dict) -> list[str]:
+     for path in map(Path, dict.fromkeys(state["worktrees"])):
+         if not path.exists():
+             continue
+-        try:
+-            git("-C", checkout, "worktree", "remove", "--force", str(path))
+-        except ReviewError:
+-            if not path.is_relative_to(paths.worktrees):
+-                raise
+-            shutil.rmtree(path)
++        remove_worktree(checkout, path, paths.worktrees)
+         removed.append(str(path))
+     with suppress(ReviewError):
+         git("-C", checkout, "worktree", "prune")
+@@ -984,6 +1035,171 @@ def finish_lines(result: dict) -> list[str]:
+             + (["deleted its state; the loop's record of published reviews stays"] if result["state"] else []))
+ 
+ 
++def prune(root: Path, repo: Optional[str], apply: bool) -> dict:
++    """`review prune`: find every scratch worktree under the state directory that no review needs, and with
++    `apply` remove it. A review needs the worktree of its current head while its pull request is open, and
++    the worktree of any head whose lock is held and not yet stale. Everything else goes: an earlier head's
++    worktree, one made before each model kept its own folder, one no review set up here names, and a closed
++    pull request's. Asks GitHub only whether each pull request with a review set up here is still open, and
++    keeps that review's worktree when it cannot tell. Reads the locks and states once before those requests,
++    and again for each worktree just before removing it, so a review set up meanwhile keeps its own. `repo`
++    limits the sweep to one repository."""
++    base = root / "worktrees"
++    wanted = (lambda slug: slug.lower() == repo.lower()) if repo else (lambda slug: True)
++    keep: dict[Path, str] = {}
++    current: dict[Path, tuple[str, int]] = {}
++    reviewed: set[tuple[str, ...]] = set()
++    if (root / "prs").is_dir():
++        for lock in (root / "prs").glob("*/*/*/*/*.lock"):
++            owner, name, number, key = lock.parts[-5:-1]
++            if wanted(f"{owner}/{name}") and lock_age(lock) <= STALE_AFTER:
++                keep[(base / owner / name / number / key / lock.stem[:SHORT]).resolve()] = "its head's lock is held"
++        for found in (root / "prs").glob("*/*/*/*/state.json"):
++            owner, name, number, key = found.parts[-5:-1]
++            if not wanted(f"{owner}/{name}"):
++                continue
++            reviewed.add((owner, name, number, key))
++            try:
++                worktree = json.loads(found.read_text(encoding="utf-8")).get("worktree")
++            except (OSError, ValueError):
++                worktree = None
++            if worktree and number.isdigit():
++                current[Path(worktree).resolve()] = (f"{owner}/{name}", int(number))
++    open_states: dict[tuple[str, int], str] = {}
++    for path, (slug, number) in sorted(current.items()):
++        if path in keep or not path.exists():
++            continue
++        if (slug, number) not in open_states:
++            try:
++                open_states[(slug, number)] = read_pull_request(slug, number).get("state") or "unknown"
++            except ReviewError as exc:
++                open_states[(slug, number)] = f"unreadable: {exc}"
++        state = open_states[(slug, number)]
++        if state == "open":
++            keep[path] = "the current head of an open pull request's review"
++        elif state.startswith("unreadable"):
++            keep[path] = f"GitHub could not say whether {slug}#{number} is open ({state.split(': ', 1)[1]})"
++    result: dict = {"repo": repo, "apply": apply, "removed": [], "kept": [], "failed": []}
++    candidates: list[tuple[Path, str]] = []
++    for folder in sorted(base.glob("*/*/*")) if base.is_dir() else []:
++        owner, name, number = folder.parts[-3:]
++        if not wanted(f"{owner}/{name}") or not folder.is_dir() or folder.is_symlink():
++            continue
++        for child in sorted(folder.iterdir()):
++            if child.is_symlink() or not child.is_dir() or (child / ".git").exists():
++                candidates.append((child, "made before each model kept its own worktree folder"))
++                continue
++            for path in sorted(child.iterdir()):
++                if (owner, name, number, child.name) not in reviewed:
++                    why = "no review of the pull request by this model is set up here"
++                elif path.resolve() in current:
++                    why = (f"{owner}/{name}#{number} is closed; `project review finish {number} --repo "
++                           f"{owner}/{name} --force` ends its review")
++                else:
++                    why = "the worktree of an earlier head"
++                candidates.append((path, why))
++    repositories: set[Path] = set()
++    for path, why in candidates:
++        reason = keep.get(path.resolve()) or needed_now(root, base, path, current)
++        if reason:
++            result["kept"].append({"path": str(path), "reason": reason})
++            continue
++        entry = {"path": str(path), "reason": why}
++        if apply:
++            try:
++                repositories.update(remove_scratch(path, base))
++            except (ReviewError, OSError) as exc:
++                result["failed"].append(dict(entry, error=str(exc)))
++                continue
++            for parent in path.parents:
++                if parent == base or not parent.is_relative_to(base):
++                    break
++                with suppress(OSError):
++                    parent.rmdir()
++        result["removed"].append(entry)
++    for repository in sorted(repositories):
++        with suppress(ReviewError):
++            git("--git-dir", str(repository), "worktree", "prune")
++    return result
++
++
++def needed_now(root: Path, base: Path, path: Path, current: dict[Path, tuple[str, int]]) -> Optional[str]:
++    """Why a review set up since `prune` read the locks and states needs the worktree at `path` after all,
++    checked again just before `prune` removes it: its head's lock is held and not yet stale, or the review's
++    state now names it as the current head's when it named another before. None when nothing needs it."""
++    parts = path.relative_to(base).parts
++    if len(parts) != 5:
++        return None
++    folder = root / "prs" / Path(*parts[:4])
++    for lock in folder.glob("*.lock"):
++        try:
++            if lock.stem[:SHORT] == parts[4] and lock_age(lock) <= STALE_AFTER:
++                return "its head's lock is held"
++        except OSError:
++            continue
++    try:
++        named = json.loads((folder / "state.json").read_text(encoding="utf-8")).get("worktree")
++    except (OSError, ValueError):
++        return None
++    if named and Path(named).resolve() == path.resolve() and path.resolve() not in current:
++        return "the current head of a review set up while prune ran"
++    return None
++
++
++def scratch_repository(path: Path) -> Optional[Path]:
++    """The Git directory of the checkout that made the worktree at `path`, read from the worktree's `.git`
++    file, or None when it names none that still exists."""
++    try:
++        pointer = (path / ".git").read_text(encoding="utf-8").strip()
++    except OSError:
++        return None
++    if not pointer.startswith("gitdir:"):
++        return None
++    admin = Path(pointer.removeprefix("gitdir:").strip())
++    try:
++        common = (admin / (admin / "commondir").read_text(encoding="utf-8").strip()).resolve()
++    except OSError:
++        return None
++    return common if common.is_dir() else None
++
++
++def remove_scratch(path: Path, base: Path) -> list[Path]:
++    """Remove one entry of the worktree folder: a worktree with `git worktree remove` in the checkout that
++    made it, or outright when that fails; a link or a file is unlinked, never followed. Returns the Git
++    directories to prune."""
++    if not path.resolve().is_relative_to(base.resolve()) and not path.is_symlink():
++        raise ReviewError(f"{path} is outside {base}, so prune leaves it alone")
++    if path.is_symlink() or not path.is_dir():
++        path.unlink()
++        return []
++    repository = scratch_repository(path)
++    if repository is not None:
++        with suppress(ReviewError):
++            git("--git-dir", str(repository), "worktree", "remove", "--force", str(path))
++    if path.exists():
++        shutil.rmtree(path)
++    return [repository] if repository is not None else []
++
++
++def prune_lines(result: dict) -> list[str]:
++    """`review prune` without --json: what it removed or would remove, what it kept and why, and how to
++    remove the rest."""
++    verb = "removed" if result["apply"] else "would remove"
++    lines = ([f"{verb} {entry['path']}: {entry['reason']}" for entry in result["removed"]]
++             + [f"kept {entry['path']}: {entry['reason']}" for entry in result["kept"]]
++             + [f"could not remove {entry['path']}: {entry['error']}" for entry in result["failed"]])
++    count = len(result["removed"])
++    noun = f"{count} scratch worktree{'' if count == 1 else 's'}"
++    if not count and not result["failed"]:
++        lines.append("no scratch worktree is left over; there is nothing to prune")
++    elif result["apply"]:
++        lines.append(f"removed {noun}")
++    else:
++        named = f" --repo {result['repo']}" if result["repo"] else ""
++        lines.append(f"{noun} can go; run `project review prune --apply{named}` to remove them")
++    return lines
++
++
+ THREADS_QUERY = """query($o:String!,$r:String!,$n:Int!,$after:String){ repository(owner:$o,name:$r){
+   pullRequest(number:$n){ reviewThreads(first:100, after:$after){
+     pageInfo{ hasNextPage endCursor }
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index e04dd3b9..7243e845 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -24,6 +24,7 @@
+     ("project review hold 12 --drop", "allow", "allow"),
+     ("project review setup 12 --model claude", "allow", "allow"),
+     ("project review finish 12 --force", "allow", "allow"),
++    ("project review prune --apply", "allow", "allow"),
+     ("project review settle 12 --thread T --result fixed --body reply.md", "allow", "allow"),
+     ("project review suggestions 12 --json", "allow", "allow"),
+     ("project review gate 12", "allow", "none"),
+@@ -174,6 +175,12 @@ def test_the_codex_rules_name_every_command_or_leave_it_out(self) -> None:
+                     self.assertIn(command, CODEX_LEFT_OUT, "a new command is either allowed or deliberately left out")
+                     self.assertIsNone(CODEX_LEFT_OUT[command])
+ 
++    def test_the_documented_codex_rules_are_the_ones_init_writes(self) -> None:
++        documentation = (Path(__file__).resolve().parents[1] / "docs" / "cli.md").read_text()
++        documented = re.findall(r"^ *pattern = (\[.*\]),$", documentation, re.MULTILINE)
++
++        self.assertEqual([pattern for pattern, _ in permissions.CODEX_ALLOW], list(map(json.loads, documented)))
++
+     def test_each_command_line_is_one_the_parser_runs(self) -> None:
+         incomplete = {"project", "project config", "project --version", "projector list"}
+         for command, _, _ in DECISIONS:
+diff --git a/tests/test_review.py b/tests/test_review.py
+index fd7e9b11..8bf7220f 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -1421,12 +1421,11 @@ def deletions(self) -> list[tuple[list[str], str | None]]:
+         return [(args, token) for args, token in self.github.calls if args[:3] == ["api", "-X", "DELETE"]]
+ 
+     def test_removes_every_worktree_the_reviews_made_and_the_state_and_keeps_the_loop_record(self) -> None:
++        # A second setup while the first head's lock is still held, as a restarted session runs, keeps that
++        # head's worktree, so the state lists two.
+         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+-        self.assertEqual(0, self.publish("clean")[0])
+         self.github.pr["head"]["sha"] = self.push_head("second head")
+         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+-        self.github.pr["head"]["sha"] = self.push_head("third head")
+-        self.assertEqual(0, self.later("move")[0])
+         self.assertEqual(0, self.publish("clean")[0])
+         made = [Path(path) for path in self.read_state()["worktrees"]]
+         record = (self.state / "loops" / "l1" / "published.json").read_text()
+@@ -1434,7 +1433,7 @@ def test_removes_every_worktree_the_reviews_made_and_the_state_and_keeps_the_loo
+         code, out, err = self.finish("--repo", REPO, "--loop", "l1", cwd=Path(tempfile.mkdtemp()))
+ 
+         self.assertEqual(0, code, err)
+-        self.assertEqual(3, len(made), "a later setup keeps the worktrees the earlier heads made")
++        self.assertEqual(2, len(made), "the held lock's worktree and the current head's")
+         for path in made:
+             self.assertFalse(path.exists())
+             self.assertNotIn(path.resolve(), self.registered())
+@@ -1615,6 +1614,231 @@ def test_the_review_skills_clean_up_through_the_commands_alone(self) -> None:
+             self.assertNotIn("git worktree", text)
+ 
+ 
++class SupersededWorktreeTests(PublishCase):
++    """A review keeps one scratch worktree, its current head's, so a long-lived pull request does not keep a
++    full checkout of every head it ever had."""
++
++    def registered(self) -> set[Path]:
++        listing = git(self.checkout, "worktree", "list", "--porcelain").splitlines()
++        return {Path(line.removeprefix("worktree ")).resolve() for line in listing if line.startswith("worktree ")}
++
++    def test_setup_of_the_next_head_removes_the_published_heads_worktree(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        old = Path(self.read_state()["worktree"])
++        self.github.pr["head"]["sha"] = self.push_head("second head")
++
++        code, out, err = self.setup_review("--loop", "l1")
++
++        self.assertEqual(0, code, err)
++        state = self.read_state()
++        self.assertFalse(old.exists())
++        self.assertNotIn(old.resolve(), self.registered())
++        self.assertEqual([state["worktree"]], state["worktrees"])
++        self.assertTrue(Path(state["worktree"]).is_dir())
++        self.assertIn(f"removed the earlier head's worktree {old}\n", out)
++        self.assertNotIn("removed", state, "what setup removed is reported, not recorded")
++
++    def test_move_removes_the_worktree_of_the_head_it_moves_from(self) -> None:
++        self.assertEqual(0, self.setup_review()[0])
++        old = Path(self.read_state()["worktree"])
++        self.github.pr["head"]["sha"] = self.push_head("second head")
++
++        code, out, err = self.later("move", "--json")
++
++        self.assertEqual(0, code, err)
++        self.assertFalse(old.exists())
++        self.assertEqual([str(old)], json.loads(out)["removed"])
++        self.assertEqual([self.read_state()["worktree"]], self.read_state()["worktrees"])
++
++    def test_a_held_lock_keeps_its_heads_worktree_and_a_stale_one_does_not(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        first, first_sha = Path(self.read_state()["worktree"]), self.head
++        self.lock(first_sha).write_text(json.dumps({"taken_at": self.clock.isoformat()}))
++        self.github.pr["head"]["sha"] = self.push_head("second head")
++
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++
++        self.assertTrue(first.is_dir(), "a review may still be reading a locked head's worktree")
++        self.assertEqual([str(first), self.read_state()["worktree"]], self.read_state()["worktrees"])
++
++        self.lock(first_sha).write_text(json.dumps({"taken_at": (self.clock - timedelta(days=2)).isoformat()}))
++        self.github.pr["head"]["sha"] = self.push_head("third head")
++        self.assertEqual(0, self.later("move")[0])
++
++        self.assertFalse(first.exists(), "a lock older than a day is stale")
++
++    def test_another_models_worktree_stays(self) -> None:
++        self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
++        gpt = Path(self.read_state("gpt-5.5")["worktree"])
++        self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
++        self.github.pr["head"]["sha"] = self.push_head("second head")
++
++        self.assertEqual(0, self.later("move", "--model", "claude-opus-5-5")[0])
++
++        self.assertTrue(gpt.is_dir())
++
++    def test_a_worktree_that_will_not_come_out_stays_listed_and_setup_succeeds(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        old = Path(self.read_state()["worktree"])
++        self.github.pr["head"]["sha"] = self.push_head("second head")
++
++        with mock.patch.object(review, "remove_worktree", side_effect=OSError("busy")):
++            code, out, err = self.setup_review("--loop", "l1")
++
++        self.assertEqual(0, code, err)
++        self.assertTrue(old.is_dir())
++        self.assertEqual([str(old), self.read_state()["worktree"]], self.read_state()["worktrees"])
++        self.assertNotIn("removed the earlier head's worktree", out)
++
++
++class PruneTests(PublishCase):
++    """`prune` sweeps the scratch worktrees no review needs, listing them until --apply removes them."""
++
++    def prune(self, *extra: str) -> tuple[int, str, str]:
++        return self.project("prune", "--state-dir", str(self.state), *extra, cwd=Path(tempfile.mkdtemp()))
++
++    def registered(self) -> set[Path]:
++        listing = git(self.checkout, "worktree", "list", "--porcelain").splitlines()
++        return {Path(line.removeprefix("worktree ")).resolve() for line in listing if line.startswith("worktree ")}
++
++    def worktree_at(self, path: Path, sha: str | None = None) -> Path:
++        path.parent.mkdir(parents=True, exist_ok=True)
++        git(self.checkout, "worktree", "add", "--quiet", "--detach", str(path), sha or self.base)
++        return path
++
++    def pull_folder(self, repo: str = REPO, number: int = 1) -> Path:
++        return self.state / "worktrees" / repo / str(number)
++
++    def test_lists_leftovers_without_apply_and_removes_them_with_it(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        current = Path(self.read_state()["worktree"])
++        key = review.model_key(self.model)
++        earlier = self.worktree_at(self.pull_folder() / key / ("a" * 12))
++        old_layout = self.worktree_at(self.pull_folder() / ("b" * 12))
++        unreviewed = self.worktree_at(self.pull_folder() / review.model_key("gpt-5.5") / ("c" * 12))
++        locked = self.worktree_at(self.pull_folder() / key / ("d" * 12))
++        (self.folder() / f"{'d' * 40}.lock").write_text(json.dumps({"taken_at": self.clock.isoformat()}))
++
++        code, out, err = self.prune()
++
++        self.assertEqual(0, code, err)
++        for path in (current, earlier, old_layout, unreviewed, locked):
++            self.assertTrue(path.is_dir(), "a dry run removes nothing")
++        self.assertIn(f"would remove {earlier}: the worktree of an earlier head\n", out)
++        self.assertIn(f"would remove {old_layout}: made before each model kept its own worktree folder\n", out)
++        self.assertIn(f"would remove {unreviewed}: no review of the pull request by this model is set up here\n",
++                      out)
++        self.assertIn(f"kept {current}: the current head of an open pull request's review\n", out)
++        self.assertIn(f"kept {locked}: its head's lock is held\n", out)
++        self.assertIn("3 scratch worktrees can go; run `project review prune --apply` to remove them", out)
++
++        code, out, err = self.prune("--apply", "--json")
++
++        self.assertEqual(0, code, err)
++        result = json.loads(out)
++        self.assertEqual({str(earlier), str(old_layout), str(unreviewed)}, {e["path"] for e in result["removed"]})
++        self.assertEqual({str(current), str(locked)}, {e["path"] for e in result["kept"]})
++        for path in (earlier, old_layout, unreviewed):
++            self.assertFalse(path.exists())
++            self.assertNotIn(path.resolve(), self.registered())
++        self.assertFalse(unreviewed.parent.exists(), "an emptied model folder goes too")
++        self.assertTrue(current.is_dir())
++        self.assertTrue(locked.is_dir())
++
++        code, out, err = self.prune()
++
++        self.assertEqual(0, code, err)
++        self.assertIn("there is nothing to prune", out)
++
++    def test_a_closed_pull_requests_current_worktree_goes_and_an_unreadable_ones_stays(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        current = Path(self.read_state()["worktree"])
++        self.github.missing = True
++
++        code, out, err = self.prune("--apply")
++
++        self.assertEqual(0, code, err)
++        self.assertTrue(current.is_dir())
++        self.assertIn(f"kept {current}: GitHub could not say whether {REPO}#1 is open", out)
++
++        self.github.missing = False
++        self.github.pr["state"] = "closed"
++        code, out, err = self.prune("--apply")
++
++        self.assertEqual(0, code, err)
++        self.assertFalse(current.exists())
++        self.assertIn(f"removed {current}: {REPO}#1 is closed; `project review finish 1 --repo {REPO} --force` "
++                      "ends its review\n", out)
++        self.assertTrue((self.folder() / "state.json").is_file(), "prune leaves the review's state to finish")
++
++    def test_a_review_set_up_while_prune_asks_github_keeps_its_worktree(self) -> None:
++        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++        self.assertEqual(0, self.publish("clean")[0])
++        self.github.pr["head"]["sha"] = self.push_head("second head")
++        lookup, pending = review.read_pull_request, [True]
++
++        def set_up_meanwhile(slug: str, number: int) -> dict:
++            # Another loop sets this model's review up on the new head and publishes it, which releases its
++            # lock, and a second model sets up its first review and still holds its lock.
++            if pending:
++                pending.clear()
++                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
++                self.assertEqual(0, self.publish("clean")[0])
++                self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
++            return lookup(slug, number)
++
++        with mock.patch.object(review, "read_pull_request", side_effect=set_up_meanwhile):
++            code, out, err = self.prune("--apply")
++
++        self.assertEqual(0, code, err)
++        published = Path(self.read_state("claude-opus-5-5")["worktree"])
++        locked = Path(self.read_state("gpt-5.5")["worktree"])
++        self.assertTrue(published.is_dir(), out)
++        self.assertTrue(locked.is_dir(), out)
++        self.assertIn(f"kept {published}: the current head of a review set up while prune ran\n", out)
++        self.assertIn(f"kept {locked}: its head's lock is held\n", out)
++
++    def test_repo_limits_the_sweep_and_a_link_is_unlinked_without_following_it(self) -> None:
++        elsewhere = self.state / "worktrees" / "other" / "app" / "5" / "old-model" / ("e" * 12)
++        elsewhere.mkdir(parents=True)
++        target = Path(tempfile.mkdtemp())
++        (target / "keep.txt").write_text("keep\n")
++        link = self.pull_folder() / "linked"
++        link.parent.mkdir(parents=True, exist_ok=True)
++        link.symlink_to(target, target_is_directory=True)
++
++        code, out, err = self.prune("--repo", REPO)
++
++        self.assertEqual(0, code, err)
++        self.assertIn(f"run `project review prune --apply --repo {REPO}`", out)
++        self.assertNotIn("other/app", out)
++
++        code, out, err = self.prune("--repo", REPO, "--apply")
++
++        self.assertEqual(0, code, err)
++        self.assertFalse(link.is_symlink())
++        self.assertEqual("keep\n", (target / "keep.txt").read_text())
++        self.assertTrue(elsewhere.is_dir())
++
++        code, out, err = self.prune("--apply")
++
++        self.assertEqual(0, code, err)
++        self.assertFalse(elsewhere.exists(), "a folder that is no worktree goes too")
++        self.assertFalse((self.state / "worktrees" / "other").exists())
++
++    def test_with_no_state_directory_there_is_nothing_to_prune(self) -> None:
++        code, out, err = self.prune("--apply")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual("no scratch worktree is left over; there is nothing to prune\n", out)
++        self.assertEqual([], self.github.calls)
++
++
+ class SettleTests(PublishCase):
+     """`settle` writes the verify marker from the review's state, so no reply on a finding is typed by hand."""
+ 
