@@ -1753,7 +1753,10 @@ that the snooze lengths take no hotkeys and sit on one `|`-separated row.
   actions, starts under the item's first letter.
 - **One atom holds what a drawer asks.** `bandAsked` records the drawer
   and whether it asks how long to snooze or whether to dismiss, in place
-  of § 16's `bandSnoozing`.
+  of § 16's `bandSnoozing`. The band forgets the question when the drawer
+  closes by any path, when it is answered, and when the item is resolved
+  or snoozed anywhere, in the band, by a tool, or from a terminal, so a
+  restored or unsnoozed item's drawer always opens on its actions.
 
 ### 18.2 Why this design
 
@@ -1781,4 +1784,5 @@ that the snooze lengths take no hotkeys and sit on one `|`-separated row.
 | While snooze asks, a question's options are hidden and the lengths take `1` to `4` and cancel `9`; a notice shows the same lines; each digit's minutes; `9` and closing restore the drawer | `snooze asks how long on 1 to 4 in the options’ place, and only a length it offers snoozes the item` |
 | Each dismiss the other tests make now confirms it | The pull request and item dismiss tests § 14.4 and § 15.4 list |
 | An open item's line has no bullet and no inverse, keeping the item's color; the drawer of a question, a notice, and a resolved question is indented by the width of the `0: ` prefix, so its lines start under the item's text | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a drawer’s actions follow its options a line each, on 7, 8 and 9, named for what they act on` |
+| A question asked before the item was dismissed or snoozed elsewhere is forgotten, so restoring or unsnoozing the item opens its drawer on its actions | `a question a drawer asked is forgotten once its item is resolved or snoozed, so a restored item opens on its actions` |
 | The digits from an empty prompt, and the confirmation's look | Checked by hand by the owner in a preview session |

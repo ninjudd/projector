@@ -2969,3 +2969,41 @@ test('dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once',
   expect(session.project().filter(line => line.startsWith('loop drop'))).toEqual([])
   await ui.unmount()
 })
+
+test('a question a drawer asked is forgotten once its item is resolved or snoozed, so a restored item opens on its actions', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  /** The open drawer's keyed lines under its options. */
+  const lines = async () =>
+    (await ui.findAll({ type: 'Button' }))
+      .map(button => button.key ?? '')
+      .filter(key => key.endsWith(':1') && !key.startsWith('close:') && !key.startsWith('answer:'))
+  const actions = ['discuss:1', 'dismiss:1', 'snooze:1']
+
+  // Dismiss asks, and a terminal dismisses the question meanwhile; restoring it opens its drawer on its actions.
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'dismiss:1' })
+  session.store.run(['project', 'inbox', 'dismiss', '1', '--session', SESSION])
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await lines()).toEqual(['discuss:1', 'restore:1'])
+  await ui.press({ key: 'restore:1' })
+  await clock.settle()
+  expect(await lines()).toEqual(actions)
+  expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([])
+
+  // Snooze asks how long, and a terminal snoozes it meanwhile; unsnoozing it brings back its options and actions.
+  await ui.press({ key: 'snooze:1' })
+  session.store.run(['project', 'inbox', 'snooze', '1', '--session', SESSION])
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await lines()).toEqual(['discuss:1', 'dismiss:1', 'unsnooze:1'])
+  await ui.press({ key: 'unsnooze:1' })
+  await clock.settle()
+  expect(await lines()).toEqual(actions)
+  expect((await optionsOf(ui)).map(option => option.key)).toEqual(['answer:1.a', 'answer:1.b'])
+  await ui.unmount()
+})

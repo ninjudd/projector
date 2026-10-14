@@ -327,8 +327,23 @@ function refresh($: Engine, isForced = false): Promise<void> {
 }
 
 /** Puts an item the CLI just changed in the band's list, in place of what it showed. */
-const replace = ($: Engine, item: Item) =>
-  update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
+async function replace($: Engine, item: Item): Promise<void> {
+  await update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
+  await forgetAsked($, [item])
+}
+
+/**
+ * Forgets what an item's drawer was asking once the item is resolved or
+ * snoozed, wherever that happened, so the drawer opens on its actions when
+ * the item comes back rather than on the question it asked before.
+ */
+async function forgetAsked($: Engine, changed: readonly Item[]): Promise<void> {
+  const was = await read($, asked)
+  const item = changed.find(one => `item:${one.ref}` === was?.drawer)
+  if (was === null || item === undefined) return
+  if (item.answer === undefined && !isSnoozedAt(item, await $.clock.now())) return
+  await update($, asked, now => (now?.drawer === was.drawer && now.about === was.about ? null : now))
+}
 
 /** Closes a drawer when it is the one open, and with it anything the drawer was asking. */
 async function closeDrawer($: Engine, key: string): Promise<void> {
@@ -376,6 +391,7 @@ async function setItems($: Engine, list: Item[]): Promise<void> {
     isNew = list.some(one => isAwake(one) && !awake.has(one.ref))
     return list
   })
+  await forgetAsked($, list)
   if (isNew && !(await read($, isShown))) show($)
 }
 
@@ -1131,7 +1147,10 @@ export const register: Register = on => {
         name,
         label: `${name} ${item.kind}`,
         hotkey,
-        onPress: () => void act($, item, 'restore'),
+        onPress: () => {
+          ask(key, null)
+          void act($, item, 'restore')
+        },
       })
       const actions: Line[] = [
         {
@@ -1148,7 +1167,7 @@ export const register: Register = on => {
               {
                 name: 'dismiss',
                 label: `dismiss ${item.kind}`,
-                hotkey: '8' as const,
+                hotkey: '8',
                 onPress: () => {
                   ask(key, 'dismiss')
                   carry(`dismiss:${ref}`, `confirm:${ref}`)
@@ -1159,7 +1178,7 @@ export const register: Register = on => {
                 : {
                     name: 'snooze',
                     label: `snooze ${item.kind}`,
-                    hotkey: '9' as const,
+                    hotkey: '9',
                     onPress: () => {
                       ask(key, 'snooze')
                       carry(`snooze:${ref}`, `snooze-${SNOOZES[0].minutes}:${ref}`)
