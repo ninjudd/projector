@@ -1,0 +1,142 @@
+{
+ "version": 1,
+ "name": "Band as one panel",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 336,
+  "title": "Draw the band as one panel on a background that follows the theme",
+  "head": "7d067a8bb13b376078bdc8af4979b9a96d20238d",
+  "headRef": "band-as-panel",
+  "base": "81bb7fb28a21619f5cd1e7dd73c70e48fdbf1282",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's band is the strip a Claude Code plugin draws above the prompt. It lists the session's tracked pull requests and the inbox's questions and notices, one line each. In a terminal, it used to draw those rows straight onto the transcript's background, under a <code>─</code> divider that held the counts and the time since the last reload. When the band scrolled, you could not easily tell which lines were the band's.",
+   "This change draws the band, in a terminal only, as one panel with a background of its own. The panel is inset one column from the terminal's edge and ends at <code>bodyColumns</code>, the column where Claude Code draws the band's <code>[-]</code> collapse mark. A header replaces the divider: <code>/projector</code> at its left, and the counts and the reload's age at its right, all in the theme's <code>subtle</code> color. The pull requests and items sit two columns in from each side of the panel, and the header one column in. A key hint takes the panel's last row: <code>ctrl+x tab to focus</code> while the prompt has the keyboard, and <code>esc to return · enter to open</code> once the band has it. The header's age, each row's age, and the hint end in one column.",
+   "The background follows the Claude Code theme, a step darker than the terminal so the panel reads as sunken. A new <code>panel.background</code> setting in <code>.projector.toml</code> overrides it. Claude Desktop, VS Code, and the mobile app draw as before, with no panel and no header."
+  ],
+  "cards": [
+   {
+    "id": "colors",
+    "title": "How the panel picks its color",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Claude Code theme or setting</th><th>Panel background</th></tr></thead><tbody><tr><td><code>dark</code>, <code>dark-daltonized</code></td><td class=\"r\"><code>rgb(20,20,20)</code></td></tr><tr><td><code>light</code>, <code>light-daltonized</code></td><td class=\"r\"><code>rgb(240,240,240)</code></td></tr><tr><td><code>custom:&lt;slug&gt;</code></td><td class=\"r\">The color of the <code>base</code> in <code>themes/&lt;slug&gt;.json</code> under <code>$CLAUDE_CONFIG_DIR</code> or <code>~/.claude</code>; <code>dark</code> when no <code>base</code></td></tr><tr><td>Any other theme, such as <code>dark-ansi</code>, or an unreadable custom theme file</td><td class=\"r\"><code>inverseText</code>, a theme key</td></tr><tr><td><code>panel.background</code> set to anything but <code>auto</code></td><td class=\"r\">The value as written, when it passes <code>PAINTABLE</code>; otherwise the theme's color and one toast</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The review at <code>42f2c73</code> found two paragraphs in <code>docs/plugins.md</code> that broke the file's wrap width. <code>e5c0344</code> rewrapped them.</li><li>The review at <code>e5c0344</code> found the head clean and suggested clearing the focused hint when a prompt is sent. <code>9dfb685</code> took the suggestion.</li><li>The review at <code>9dfb685</code> found a broken wrap in the plan's hint bullet. <code>7d067a8</code> rewrapped it, and both finding threads are resolved.</li><li>The review at <code>7d067a8</code> found the head clean. The full gate passed: 142 plugin tests, 1,094 Python tests, the type check, both plugin validations, <code>project check</code>, and <code>git diff --check</code>.</li><li>One question stays open: whether a misspelled theme key in <code>panel.background</code> draws the panel with no background in a real terminal.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "setting",
+   "title": "A setting for the panel's color",
+   "kicker": "The CLI learns the panel.background key, so config set and unset change it.",
+   "intro": [
+    "<code>project config</code> reads and writes Projector's settings in <code>.projector.toml</code> files, layered from the repository out to <code>~/.projector.toml</code>. It only sets keys listed in <code>SETTINGS</code>. This group adds <code>panel.background</code> as a string, so you can set it with <code>project config set panel.background 'rgb(30,30,40)' --user</code>, and documents it in the settings table."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds <code>panel.background</code> to <code>SETTINGS</code> as a string.",
+     "checks": []
+    },
+    {
+     "path": "tests/test_config.py",
+     "note": "Sets, reads, and unsets the key the way the band reads it, with <code>--default auto --json</code>.",
+     "checks": []
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Adds the key to the settings table.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "band",
+   "title": "The band draws as one panel",
+   "kicker": "register.tsx picks the panel's color and wraps every layout of the band in it.",
+   "intro": [
+    "The band is drawn by a <code>ui.render</code> handler for Claude Code's <code>AbovePrompt</code> component in <code>hooks/register.tsx</code>. It has three layouts: the list of pull requests and items, an open item's drawer, which has the band to itself, and the empty band with its tagline. This group wraps all three in one <code>panel()</code> helper. In a terminal, it nests an inset <code>Box</code>, a padded <code>Box</code> with a <code>backgroundColor</code>, the header (left out for a drawer), a rows <code>Box</code> padded one more column at each side, and the key hint.",
+    "The color is kept in two state atoms so the render never waits on a read. <code>bandThemeBackground</code> holds the theme's color, written at session start from <code>$.config.list()</code> and again on each <code>config.set</code> of <code>theme</code>. <code>bandBackground</code> holds the setting, read with <code>project config get</code> once just after start and on every reload. The render uses the setting unless it is <code>auto</code>.",
+    "Claude Code refuses a plugin's whole render tree over a color it will not accept, which would make the band disappear. So <code>readBackground</code> checks the setting against <code>PAINTABLE</code>, a pattern of at most 40 letters, digits, and <code>#(),.%_ -</code>, and falls back to <code>auto</code> with one toast for a value that fails it.",
+    "The hint changes when the keyboard moves. A <code>ui.focus</code> hook on the band marks it focused in the <code>isBandFocused</code> atom and redraws the band. Claude Code raises no event when Esc returns the keyboard to the prompt. So <code>unfocus</code> clears the mark at the next keystroke in the prompt, from the <code>prompt.edit</code> hook. It also clears it when you send a prompt from the terminal, from the <code>prompt.submit</code> hook. Neither hook waits on the redraw."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "In a throwaway test under Claude Code 2.1.299's test engine, a <code>Box</code> background was refused for exactly the values <code>PAINTABLE</code> rejects that were tried (<code>ansi:black</code>, the empty string, 41 characters), and accepted for about 20 odd values it passes, such as <code>rgb(1, 2, 3)</code>, <code>%</code>, and a 40-character name."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds the panel constants, the theme lookup, the setting read, the theme and focus hooks, and the <code>panel()</code> helper with its header, rows box, and key hint.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The pattern mirrors what the engine refuses, not what it can paint. A name the engine accepts but does not know, such as a misspelled theme key, passes here; the review asked whether a real terminal then draws no background.",
+       "line": 153
+      },
+      {
+       "kind": "context",
+       "text": "A custom theme's slug comes from Claude Code's own theme setting, and the file read stays under the Claude config directory; an unreadable file gives <code>inverseText</code>.",
+       "line": 317
+      },
+      {
+       "kind": "context",
+       "text": "This adds one <code>project config get</code> process to every reload: every 30 seconds while the band is shown, and at the end of each turn.",
+       "line": 394
+      },
+      {
+       "kind": "verify",
+       "text": "Traced: the panel is <code>bodyColumns - 1</code> wide, padded one column at each side, and the rows box pads one more, so rows are <code>columns = bodyColumns - 5</code> wide. The header and hint are <code>edgeColumns = columns + 1</code> wide and start a column further left, so all three end in one column; a new test pins it.",
+       "line": 1186
+      },
+      {
+       "kind": "verify",
+       "text": "Traced and tested: <code>unfocus</code> runs only for a prompt sent from the terminal, detached so the send never waits on it. It redraws the band only when the mark was set, and the hint test's second send adds no redraw.",
+       "line": 1026
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Declares the three new state atoms: <code>bandThemeBackground</code>, <code>bandBackground</code>, and <code>isBandFocused</code>.",
+     "checks": []
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "Pins the panel's shape, the header, the color for each theme and custom theme, a theme change, the setting as written, and the fallback toasts; updates every divider assertion to the header. Adds tests for the key hint's two states and redraws, and for the header, row, and hint ages ending in one column.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "plugins.md describes the panel and the setting; the inbox plan records the decision.",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the band for users. It now explains the panel, the color per theme, the header, the key hint, and a new section on choosing the panel's color, with its examples redrawn. The inbox plan, already <code>completed</code>, gains § 20, which records what changed, why the owner chose a sunken, theme-picked background over <code>inverseText</code> and fixed greys, and which test pins each behavior."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Describes the panel, its colors, the header, the key hint, and the <code>panel.background</code> setting.",
+     "checks": []
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Adds § 20, the panel's design, its reasons, and its evidence table.",
+     "checks": []
+    }
+   ]
+  }
+ ]
+}
