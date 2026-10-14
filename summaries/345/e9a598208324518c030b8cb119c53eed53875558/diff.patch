@@ -1,0 +1,417 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 70d471ca..e40c07bd 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -194,12 +194,14 @@ session starts a loop's watcher for the first time.
+ ```text
+   /projector                                              2 pull requests  12s   [-]
+    #267 draft List a loop's open pull requests above the Claude Code prompt 2h
+-   #258 draft grace Name the reviewed head in a review's sig… conflict · 5* 5m
++   #258 draft grace Name the reviewed head in a review's sig… conflict · 2* 5m
+         reviewing · review-signature · +84 −12 in 5 files · checks passing
+         7: discuss PR
+         8: dismiss PR
+         open in github
+         open in projector
++        src/review.py:412 · ada · P2 · The signature names the base, not the head
++        docs/cli.md:88 · ada · P3 · Say which head the line names · outdated
+                                                            ctrl+x tab to focus
+ ```
+ 
+@@ -207,7 +209,7 @@ Each line is the pull request's number, `draft` or `ready`, its author when
+ someone else wrote it, and the title. Notes follow when the pull request
+ has them: `conflict` or `changes requested` in red, `approved` in green,
+ and last the number of unresolved review threads before a `*` in yellow,
+-such as `5*`. The ` · ` between two notes keeps the default text color. The
++such as `2*`. The ` · ` between two notes keeps the default text color. The
+ line ends with how long ago the pull request last changed, in the column
+ where the inbox's items end with their ages. Only the title shortens on a
+ narrow terminal.
+@@ -281,7 +283,7 @@ checks' state takes a color of its own, and the rest, ` in 5 files` and
+ each `·` included, keeps the default text color. Below that come two
+ actions, a line each, on the digits `7` and `8`, as
+ [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+-describes, and then two links:
++describes, and then the links:
+ 
+ - **discuss PR** puts the pull request's number in the prompt at the
+   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
+@@ -294,6 +296,13 @@ describes, and then two links:
+ - **open in github** opens the pull request on GitHub.
+ - **open in projector** opens its Projector summary, when the pull
+   request's description links one.
++- **Each unresolved review thread**, oldest first, opens the thread's first
++  comment on GitHub. Its line names the file and line the thread is on, who
++  opened it, and the first line of its first comment, cut to 60 characters,
++  and ends in `outdated` when a later push changed the lines it is on. These
++  are the threads the yellow `*` counts. GitHub folds an outdated thread
++  away, and hides an older one on a long timeline behind **Load more**, so
++  the link reaches a thread the pull request's page does not show.
+ 
+ Each link has a line of its own, because a terminal that does not draw
+ hyperlinks shows a link's URL after its text, and a line shared with
+@@ -312,8 +321,8 @@ with its drawer closed.
+ On the main screen, which Claude Code uses under tmux and when
+ `CLAUDE_CODE_NO_FLICKER=0` is set, use the panel from the keyboard, as
+ [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+-describes. The **open in github** and **open in projector** links take no
+-press there; the terminal opens them the way it opens any other link.
++describes. The **open in github**, **open in projector**, and thread links take
++no press there; the terminal opens them the way it opens any other link.
+ 
+ The panel lists only this session's loops. It finds a loop by the
+ `--tracked` file its watcher reads, and learns that file when the session
+diff --git a/hooks/github.ts b/hooks/github.ts
+index d44530d1..9ac0134d 100644
+--- a/hooks/github.ts
++++ b/hooks/github.ts
+@@ -1,4 +1,4 @@
+-import type { Checks, PullRequest } from './types'
++import type { Checks, PullRequest, Thread } from './types'
+ import { keyOf, type TrackedPr } from './parse'
+ 
+ /** Where one pull request's node sits in the response. */
+@@ -15,7 +15,8 @@ export type Fetched = {
+ 
+ const FIELDS = `number title url state isDraft reviewDecision mergeable body
+   author { login } headRefName additions deletions changedFiles updatedAt
+-  reviewThreads(first: 100) { nodes { isResolved } }
++  reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine
++    comments(first: 1) { nodes { url bodyText author { login } } } } }
+   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`
+ 
+ // The line `project summary publish` leaves at the bottom of a description.
+@@ -72,6 +73,24 @@ const nodesOf = (value: unknown): unknown[] =>
+ 
+ const numberOf = (value: unknown) => (typeof value === 'number' ? value : 0)
+ 
++const stringOf = (value: unknown) => (typeof value === 'string' ? value : null)
++
++/** An unresolved thread as the drawer lists it, or null for a resolved one. */
++function threadOf(node: unknown): Thread | null {
++  if (!isRecord(node) || node.isResolved !== false) return null
++  const [first] = nodesOf(node.comments)
++  const comment = isRecord(first) ? first : {}
++  const line = typeof node.line === 'number' ? node.line : node.originalLine
++  return {
++    path: stringOf(node.path) ?? '',
++    line: typeof line === 'number' ? line : null,
++    isOutdated: node.isOutdated === true,
++    author: isRecord(comment.author) ? stringOf(comment.author.login) : null,
++    excerpt: firstLine(stringOf(comment.bodyText) ?? ''),
++    url: stringOf(comment.url),
++  }
++}
++
+ function checksOf(node: Record<string, unknown>): Checks | null {
+   const [last] = nodesOf(node.commits)
+   const commit = isRecord(last) ? last.commit : undefined
+@@ -80,7 +99,6 @@ function checksOf(node: Record<string, unknown>): Checks | null {
+ }
+ 
+ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullRequest {
+-  const threads = nodesOf(node.reviewThreads)
+   const state = node.state === 'MERGED' || node.state === 'CLOSED' ? node.state : 'OPEN'
+   const decision = node.reviewDecision
+   const updatedAt = typeof node.updatedAt === 'string' ? Date.parse(node.updatedAt) : Number.NaN
+@@ -97,7 +115,9 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
+         ? decision
+         : null,
+     isConflicting: node.mergeable === 'CONFLICTING',
+-    openThreads: threads.filter(thread => isRecord(thread) && thread.isResolved === false).length,
++    threads: nodesOf(node.reviewThreads)
++      .map(threadOf)
++      .filter(thread => thread !== null),
+     author: isRecord(node.author) && typeof node.author.login === 'string' ? node.author.login : null,
+     branch: typeof node.headRefName === 'string' ? node.headRefName : '',
+     additions: numberOf(node.additions),
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index e5dbbe53..6a2fe23a 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -87,7 +87,36 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+       url: SEVEN,
+       isDraft: true,
+       mergeable: 'CONFLICTING',
+-      reviewThreads: { nodes: [{ isResolved: false }, { isResolved: false }] },
++      reviewThreads: {
++        nodes: [
++          {
++            isResolved: false,
++            isOutdated: false,
++            path: 'src/fetch.ts',
++            line: 40,
++            comments: {
++              nodes: [
++                {
++                  url: `${SEVEN}#discussion_r1`,
++                  bodyText: 'P2 · The retry loop never sleeps between attempts, so a flaky server gets hammered\nMore.',
++                  author: { login: 'grace' },
++                },
++              ],
++            },
++          },
++          { isResolved: true, path: 'src/old.ts', line: 1 },
++          {
++            isResolved: false,
++            isOutdated: true,
++            path: 'src/[draft]_notes.md',
++            line: null,
++            originalLine: 3,
++            comments: {
++              nodes: [{ url: `${SEVEN}#discussion_r2`, bodyText: 'Why *this*?', author: { login: 'bob' } }],
++            },
++          },
++        ],
++      },
+       author: { login: 'ada' },
+       headRefName: 'fix-branch',
+       additions: 12,
+@@ -663,16 +692,32 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   expect(opened).toBeDefined()
+   expect(opened?.props.marginLeft).toBe(4)
+   // Under the facts come the actions, a line each, then the links, each on a line of its own, so a terminal without hyperlinks shows the whole URL.
+-  const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
+-  expect(lines.map(line => line.props.key ?? line.type)).toEqual([
++  // The thread lines come as one list among the children, so the children are flattened first. A thread's line
++  // is a Text, which carries no key of its own.
++  type Line = { type: string; props?: { key?: string }; children?: unknown[] }
++  const lines = ((opened?.children ?? []) as unknown[]).flat() as Line[]
++  expect(lines.map(line => line.props?.key ?? line.type)).toEqual([
+     'Text',
+     'discuss:x/y#7',
+     'dismiss:x/y#7',
+     'github:x/y#7',
+     'projector:x/y#7',
++    'Text',
++    'Text',
+   ])
+   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
+   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
++  // Each unresolved thread links to its first comment: where it is, who opened it, how it starts, cut to fit,
++  // and whether a push left it outdated. Its text is a Link's children, so brackets and stars stay as written.
++  const links = lines.slice(-2).map(line => (line.children as { type: string; props: { href: string }; children: string[] }[])[0])
++  expect(links.map(link => [link?.type, link?.props.href, link?.children.join('')])).toEqual([
++    [
++      'Link',
++      `${SEVEN}#discussion_r1`,
++      'src/fetch.ts:40 · grace · P2 · The retry loop never sleeps between attempts, so a fla…',
++    ],
++    ['Link', `${SEVEN}#discussion_r2`, 'src/[draft]_notes.md:3 · bob · Why *this*? · outdated'],
++  ])
+   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
+ 
+   // discuss is a plain Button, so Enter fills the prompt on the main screen too.
+@@ -1030,6 +1075,30 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
+   await ui.unmount()
+ })
+ 
++test('draws over a snapshot whose pull requests an earlier version counted threads in', async ($, on) => {
++  const clock = mock.clock(on)
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#1\n' })
++  const earlier = {
++    rows: [{ pr: { repo: 'o/r', number: 1, title: 'Counted', openThreads: 2 }, kinds: ['reviewing'] }],
++    viewer: VIEWER,
++    fetchedAt: null,
++    error: null,
++  }
++  on('state.get', { plugin: 'projector', key: 'panelSnapshot' }, () => ({
++    value: { value: earlier as never, version: 1 },
++  }))
++
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(PANEL)
++  expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: 'Counted' })).toBeUndefined()
++  await ui.unmount()
++})
++
+ test('shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request', async ($, on) => {
+   const clock = mock.clock(on)
+   mock.env(on, { HOME })
+diff --git a/hooks/parse.test.ts b/hooks/parse.test.ts
+index 87c45f4e..1fbbd4ee 100644
+--- a/hooks/parse.test.ts
++++ b/hooks/parse.test.ts
+@@ -98,7 +98,29 @@ describe('GitHub', () => {
+             isDraft: true,
+             reviewDecision: 'CHANGES_REQUESTED',
+             mergeable: 'CONFLICTING',
+-            reviewThreads: { nodes: [{ isResolved: false }, { isResolved: true }, { isResolved: false }] },
++            reviewThreads: {
++              nodes: [
++                {
++                  isResolved: false,
++                  isOutdated: false,
++                  path: 'src/app.ts',
++                  line: 12,
++                  originalLine: 10,
++                  comments: {
++                    nodes: [
++                      {
++                        url: 'https://github.com/o/r/pull/1#discussion_r1',
++                        bodyText: 'P2 · Retry the fetch\nIt gives up after one try.',
++                        author: { login: 'grace' },
++                      },
++                    ],
++                  },
++                },
++                { isResolved: true, path: 'src/done.ts', line: 3 },
++                { isResolved: false, isOutdated: true, path: 'README.md', line: null, originalLine: 7 },
++                { isResolved: false, path: 'docs/guide.md', line: null, originalLine: null },
++              ],
++            },
+             author: { login: 'ada' },
+             headRefName: 'first-change',
+             additions: 120,
+@@ -131,7 +153,20 @@ describe('GitHub', () => {
+       isDraft: true,
+       reviewDecision: 'CHANGES_REQUESTED',
+       isConflicting: true,
+-      openThreads: 2,
++      // Only unresolved threads, oldest first. An outdated one keeps the line it was on, and a comment on
++      // the whole file has none.
++      threads: [
++        {
++          path: 'src/app.ts',
++          line: 12,
++          isOutdated: false,
++          author: 'grace',
++          excerpt: 'P2 · Retry the fetch',
++          url: 'https://github.com/o/r/pull/1#discussion_r1',
++        },
++        { path: 'README.md', line: 7, isOutdated: true, author: null, excerpt: '', url: null },
++        { path: 'docs/guide.md', line: null, isOutdated: false, author: null, excerpt: '', url: null },
++      ],
+       author: 'ada',
+       branch: 'first-change',
+       additions: 120,
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index d84c5438..dbe2330b 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1,7 +1,19 @@
+ import { atom, read, update } from 'claude-code'
+ import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-code'
+ 
+-import type { Checks, Item, LoopKind, Notice, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
++import type {
++  Checks,
++  Item,
++  LoopKind,
++  Notice,
++  PullRequest,
++  Question,
++  Row,
++  SeenLoop,
++  Sending,
++  Snapshot,
++  Thread,
++} from './types'
+ import { buildQuery, parseResponse, type Fetched } from './github'
+ import { findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
+ import {
+@@ -207,7 +219,9 @@ const oldSending = atom({ plugin: 'projector', key: 'bandSending' } as const, {}
+ // so a value an earlier version wrote can have another shape.
+ const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
+ const current = (value: Snapshot): Snapshot =>
+-  Array.isArray(value.rows) ? { ...value, viewer: value.viewer ?? null } : EMPTY
++  Array.isArray(value.rows) && value.rows.every(row => Array.isArray(row.pr.threads))
++    ? { ...value, viewer: value.viewer ?? null }
++    : EMPTY
+ 
+ const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+ 
+@@ -876,10 +890,26 @@ function notesOf(pr: PullRequest): Note[] {
+   if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
+   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
+   // The open threads' count comes last, beside the age.
+-  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, color: 'warning' })
++  if (pr.threads.length > 0) notes.push({ text: `${pr.threads.length}*`, color: 'warning' })
+   return notes
+ }
+ 
++/** How much of a thread's first line its drawer line shows. */
++const EXCERPT_LENGTH = 60
++
++/**
++ * A thread's line in its pull request's drawer: where it is, who opened it,
++ * how it starts, and whether a later push left it outdated.
++ */
++function threadLabel(thread: Thread): string {
++  const place = thread.line === null ? thread.path : `${thread.path}:${thread.line}`
++  const excerpt =
++    thread.excerpt.length > EXCERPT_LENGTH ? `${thread.excerpt.slice(0, EXCERPT_LENGTH - 1).trimEnd()}…` : thread.excerpt
++  return [place, thread.author, excerpt, thread.isOutdated ? 'outdated' : null]
++    .filter(piece => piece !== null && piece !== '')
++    .join(' · ')
++}
++
+ /** Whether the account the panel's `gh` is signed in as wrote a pull request. */
+ const isOwn = (pr: PullRequest, viewer: string | null) => viewer !== null && pr.author === viewer
+ 
+@@ -1170,7 +1200,7 @@ export const register: Register = on => {
+   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+     if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
+ 
+-    const { Box, Button, Markdown, Text } = $.ui.resolve(e)
++    const { Box, Button, Link, Markdown, Text } = $.ui.resolve(e)
+     const shown = current(await read($, snapshot))
+     const time = await read($, now)
+     const opened = await read($, drawer)
+@@ -1663,6 +1693,15 @@ export const register: Register = on => {
+               {pr.summaryUrl !== null && (
+                 <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
+               )}
++              {/* Each unresolved thread links to its first comment, since GitHub
++                  folds an outdated thread and an old one on a long timeline away.
++                  The text goes in as a Link's children, so nothing in it is read
++                  as markdown. */}
++              {pr.threads.map((thread, at) => (
++                <Text key={`thread:${key}:${at}`}>
++                  <Link href={thread.url ?? pr.url}>{threadLabel(thread)}</Link>
++                </Text>
++              ))}
+             </Box>
+           )}
+         </Box>
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 8df723e6..d2c5f562 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -6,6 +6,21 @@ export type SeenLoop = { kind: LoopKind; tracked: string }
+ 
+ export type Checks = 'passing' | 'failing' | 'pending'
+ 
++/** A review thread no one has resolved, as a pull request's drawer lists it. */
++export type Thread = {
++  path: string
++  /** The line the thread is on, or was on once its line changed; null for a comment on the whole file. */
++  line: number | null
++  /** Whether a later push changed the lines the thread is on, which GitHub then folds away. */
++  isOutdated: boolean
++  /** Who opened the thread; null when GitHub did not say. */
++  author: string | null
++  /** The first line of the thread's first comment, as plain text. */
++  excerpt: string
++  /** The thread's first comment on GitHub; null when GitHub did not say. */
++  url: string | null
++}
++
+ export type PullRequest = {
+   repo: string
+   number: number
+@@ -15,7 +30,8 @@ export type PullRequest = {
+   isDraft: boolean
+   reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null
+   isConflicting: boolean
+-  openThreads: number
++  /** The unresolved review threads, oldest first. */
++  threads: Thread[]
+   author: string | null
+   branch: string
+   additions: number

@@ -1,0 +1,124 @@
+{
+ "version": 1,
+ "name": "Drawer thread links",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 345,
+  "title": "List a pull request's unresolved review threads in its panel drawer",
+  "head": "e9a598208324518c030b8cb119c53eed53875558",
+  "headRef": "drawer-open-threads",
+  "base": "1b126163f94eee2ba6d4423d7a1dae8ebdc4d2a8",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel sits above the Claude Code prompt and lists the pull requests that the session's review and fix loops track. Each row ends with notes, and the last note counts the pull request's unresolved review threads, such as <code>2*</code>. Pressing a pull request's number opens its <em>drawer</em>, a few lines of facts, actions, and links under the row.",
+   "Before this change, the count was the only trace of those threads, and GitHub can make them hard to find. It folds an outdated thread away, and on a long timeline it hides older threads behind <b>Load more</b>. A user saw <code>1*</code> on three pull requests and could not find the thread on GitHub.",
+   "This change lists each unresolved thread at the end of the drawer, oldest first, as a link to the thread's first comment. Each line names the file and line, who opened the thread, the first line of its first comment cut to 60 characters, and <code>outdated</code> when a later push changed the lines the thread is on. To get that, the panel's background poll now asks GitHub for each thread's location and its first comment.",
+   "The review of this head found one problem: the extra data makes each poll cost about one GitHub GraphQL point per tracked pull request instead of one point in all, which can exhaust the account's hourly quota. The first group's notes give the measurement."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Panel</b>: the list of tracked pull requests and inbox items above the prompt.</li><li><b>Drawer</b>: the lines a row opens when you press its number.</li><li><b>Poll</b>: the panel's one <code>gh api graphql</code> call for every tracked pull request, at least every 30 seconds while the panel is shown.</li><li><b>Point</b>: GitHub's unit of GraphQL cost. An account gets 5,000 points an hour, shared by everything that uses its token.</li><li><b>Outdated thread</b>: a thread whose lines a later push changed. GitHub reports no current <code>line</code> for it, only <code>originalLine</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One open P1 finding: the poll's GraphQL cost grows with the number of tracked pull requests (<code>hooks/github.ts:19</code>).</li><li>The validation gate passes at this head.</li><li>Left out on purpose: marking a thread answered when its last comment is the operator's, because the review loop posts as the same account.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "poll",
+   "title": "The poll reads each unresolved thread",
+   "kicker": "What the panel asks GitHub for, and the shape it keeps.",
+   "intro": [
+    "A pull request in the panel's snapshot used to carry <code>openThreads</code>, a number. It now carries <code>threads</code>, a list of <code>Thread</code> records, and the count is the list's length. A <code>Thread</code> holds the file path, the line (or the line it was on, once outdated), whether it is outdated, who opened it, the first line of its first comment, and that comment's URL.",
+    "GitHub's GraphQL API cannot filter review threads by whether they are resolved, so the poll reads the first comment of every thread, resolved ones included, and <code>threadOf</code> keeps only the unresolved ones. The comment's <code>bodyText</code> is GitHub's plain-text rendering, which drops Projector's HTML comment markers and bold markup, so a Projector finding's first line reads <code>P2 · …</code>."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The poll already sends one query for every tracked pull request, including closed ones, and filters to open ones after the answer. So the query's cost scales with the tracked file's length, not with the number of rows the panel shows."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds the <code>Thread</code> type and replaces <code>openThreads</code> with <code>threads</code> on <code>PullRequest</code>."
+    },
+    {
+     "path": "hooks/github.ts",
+     "note": "Asks for each thread's location fields and its first comment, and turns each unresolved thread into a <code>Thread</code>.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 19,
+       "text": "Open P1 finding. <code>comments(first: 1)</code> nested under <code>reviewThreads(first: 100)</code> makes GitHub charge about one more point per pull request in the poll. Measured with <code>rateLimit { cost }</code>: 10 pull requests cost 1 point at the base and 10 here; a dry run of 51 costs 1 at the base and 52 here. At two or more polls a minute, a loop tracking 51 pull requests spends about 6,240 points an hour, over GitHub's 5,000-point hourly limit, and the loops sharing the account fail once it runs out. The thread's own fields alone still cost 1 point, so the fix is to fetch first comments only for the open drawer's pull request."
+      },
+      {
+       "kind": "verify",
+       "line": 79,
+       "text": "A live query on this repository confirmed that GitHub returns threads oldest first, that an outdated thread has <code>line: null</code> with an <code>originalLine</code>, and that <code>bodyText</code> starts a Projector finding with its priority."
+      }
+     ]
+    },
+    {
+     "path": "hooks/parse.test.ts",
+     "note": "Covers a resolved thread, an outdated thread with only an <code>originalLine</code>, and a comment on a whole file with no line."
+    }
+   ]
+  },
+  {
+   "id": "drawer",
+   "title": "The drawer lists the threads as links",
+   "kicker": "How each thread is drawn, and how an older snapshot is read.",
+   "intro": [
+    "<code>threadLabel</code> builds each line: the place, the author, the excerpt cut to 60 characters with an ellipsis, and <code>outdated</code> when it applies, joined by <code> · </code>. Each line is a <code>Link</code> element whose children are that text, so nothing in a path or a comment is read as Markdown. Each thread gets a line of its own, because a terminal without hyperlinks draws a link's URL after its text.",
+    "The panel keeps its last snapshot in session state, so after an upgrade it can read one an earlier version wrote, whose pull requests have <code>openThreads</code> and no <code>threads</code>. <code>current</code> now treats such a snapshot as empty, and the panel says it is looking for pull requests until the next poll."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Draws the thread links at the end of the drawer, counts <code>threads</code> for the <code>N*</code> note, and rejects a snapshot without <code>threads</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 221,
+       "text": "Every <code>Row</code> since the panel's first version has had a <code>pr</code>, checked in the history of <code>hooks/types.d.ts</code>, so <code>row.pr.threads</code> cannot throw on an older snapshot."
+      },
+      {
+       "kind": "context",
+       "line": 1700,
+       "text": "The drawer has no height cap, so a pull request with many open threads adds one line per thread above the prompt. The review asked the author whether that fits a short terminal."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Gives pull request 7 two unresolved threads and one resolved one, checks each link's URL and text, and covers the upgrade from a snapshot that counted threads."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The panel's guide describes the new links.",
+   "intro": [
+    "The guide's example panel gains two thread lines, and the drawer's list of links gains an entry for the threads, which says they are the ones the yellow <code>*</code> counts."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Describes the thread links in the drawer and updates the example."
+    }
+   ]
+  }
+ ]
+}
