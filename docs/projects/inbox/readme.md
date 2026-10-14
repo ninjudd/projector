@@ -1915,7 +1915,7 @@ draws as one panel on a background of its own, and a header takes the
 divider's place:
 
 ```text
-  projector                  1 pull request · 2 questions · 1 notice  12s  [-]
+  /projector                 1 pull request · 2 questions · 1 notice  12s  [-]
   #337 draft Retry failed webhook deliveries with backoff              1h
 ```
 
@@ -1929,11 +1929,11 @@ divider's place:
   `bodyColumns - 3` wide, and every width the band works out, the header's
   and an open item's rule's, uses that.
 - **A header, not a divider.** The divider's rule and its leading `─ ` go.
-  The panel's first line is its header, all in `subtle`: the word
-  `projector`, `HEADER_NAME`, at its left, and the counts and the reload's
-  age at its right, two spaces apart, so the age ends in the rows' age
-  column. With nothing to count, it is `projector` and the age. The blank
-  line under the divider goes too, so the rows start on the next line.
+  The panel's first line is its header, all in `subtle`: `/projector`,
+  `HEADER_NAME`, at its left, and the counts and the reload's age at its
+  right, two spaces apart, so the age ends in the rows' age column. With
+  nothing to count, it is `/projector` and the age. The blank line under the
+  divider goes too, so the rows start on the next line.
 - **Every layout draws in the panel.** The list, an open item's drawer, and
   the empty band with its tagline all do. An open item's drawer still has
   the band to itself: the header steps aside, as the divider did, and the
@@ -1983,10 +1983,11 @@ divider's place:
   tree over a color it cannot draw, so the band checks the value first and
   draws on the theme's color rather than not at all.
 - **A header instead of a rule.** The background sets the band apart from
-  the transcript, so a rule and a blank line no longer have to. The word
-  `projector` at the left names whose panel it is, the counts sit beside the
-  age at the right, and the two spaces before the age match the gap before a
-  row's age, as in `approved  1d`.
+  the transcript, so a rule and a blank line no longer have to. The owner
+  chose `/projector` for the left, with the slash, because it is the command
+  that shows and hides the band. The counts sit beside the age at the right,
+  and the two spaces before the age match the gap before a row's age, as in
+  `approved  1d`.
 - **The header steps aside for a drawer.** An open item's line already ends
   in a rule to the panel's edge, so it serves as the panel's top bar, as it
   served as the band's.
@@ -1996,9 +1997,9 @@ divider's place:
 | Behavior | Test |
 | --- | --- |
 | In a terminal, the band is one `Box` with one column of inset and no background, holding one panel `bodyColumns - 1` wide, padded one column at each side and one row at its bottom, which alone paints a background | `in a terminal the band draws as one panel, inset a column and padded, on a background of its own` in `hooks/band.test.tsx` |
-| The header reads `projector` at the left and `2 pull requests  0s` at the right of a `bodyColumns - 3` line, in `subtle`, with no `─`, and the first row follows it with no blank line | `draws one line per open pull request of the session’s own loops` |
+| The header reads `/projector` at the left and `2 pull requests  0s` at the right of a `bodyColumns - 3` line, in `subtle`, with no `─`, and the first row follows it with no blank line | `draws one line per open pull request of the session’s own loops` |
 | The header puts the pull request count before the item counts, `bodyColumns - 3` wide | `asks through the tool, and the band lists the question below the pull requests`, and the inbox tests that find the header by its counts |
-| With nothing to count, the header is `projector` and the age, and the tagline draws in the panel under it | `shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request` |
+| With nothing to count, the header is `/projector` and the age, and the tagline draws in the panel under it | `shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request` |
 | An open question's or notice's drawer draws in the panel, with no header, its line the top row | `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
 | An open item's rule ends at the panel's edge, 87 columns at a `bodyColumns` of 120 | `an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button` |
 | Claude Desktop, VS Code, and the mobile app draw no panel, no background, and no header | `draws no panel and no header on a surface that does not lay text out in columns` |

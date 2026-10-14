@@ -113,8 +113,8 @@ const MIN_RULE = 3
 const PANEL_INSET = 1
 const PANEL_PADDING = 1
 
-/** The word the panel's header starts with, at its left. */
-const HEADER_NAME = 'projector'
+/** What the panel's header starts with, at its left: the command that shows and hides the band. */
+const HEADER_NAME = '/projector'
 
 /**
  * The panel's background by Claude Code theme: a step darker than the

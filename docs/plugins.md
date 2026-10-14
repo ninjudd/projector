@@ -192,7 +192,7 @@ line each. Run `/projector` to show or hide the band. It also appears when the
 session starts a loop's watcher for the first time.
 
 ```text
-  projector                                                2 pull requests  12s  [-]
+  /projector                                               2 pull requests  12s  [-]
   #267 draft List a loop's open pull requests above the Claude Code prompt   2h
   #258 draft grace Name the reviewed head in a review's signa… conflict · 5* 5m
        reviewing · review-signature · +84 −12 in 5 files · checks passing
@@ -240,13 +240,14 @@ another shade, set `panel.background`, as
 [Choose the panel's color](#choose-the-panels-color) describes.
 
 The panel's first line is its header, drawn in the `subtle` color. It
-starts with `projector` at its left. At its right, it counts the pull
+starts with `/projector`, the command that shows and hides the band, at its
+left. At its right, it counts the pull
 requests the band lists, a line each, such as `2 pull requests`, and two
 spaces on, it says how long ago the band reloaded, drawn as the rows draw
 their ages: in the short form, such as `12s`, and ending in their column. A
 reload just now reads `0s`, as an item posted just now does. A count of zero
-is left out, so a band with nothing to count shows `projector` and the time
-alone. The rows start on the line under the header.
+is left out, so a band with nothing to count shows `/projector` and the
+time alone. The rows start on the line under the header.
 Claude Desktop, VS Code, and the mobile app do not set the band's text in a
 terminal's columns, so they draw no panel and no header, and there the band
 starts with its first row.
@@ -360,7 +361,7 @@ a terminal the header counts the open questions and the open notices after
 the pull requests, before its time.
 
 ```text
-  projector                  1 pull request · 2 questions · 1 notice  12s  [-]
+  /projector                 1 pull request · 2 questions · 1 notice  12s  [-]
   #337 draft Retry failed webhook deliveries with backoff              1h
 
   - Run project init to add the publish rule?                          2m
