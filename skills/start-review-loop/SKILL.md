@@ -34,7 +34,7 @@ never moves its draft state. Adoption only adds lines, so it stays tracked
 after the request is answered, and every later push gets a review until it
 closes. A line `!owner/repo#number` keeps one pull request out when the user
 asks. `project loop drop owner/repo#number --tracked <file>` appends one, as
-Projector's band does when the user dismisses a pull request, and `project
+Projector's panel does when the user dismisses a pull request, and `project
 loop restore` with the same arguments removes it. `project loop add` with the
 same arguments lists a pull request the user assigns, and `project loop
 remove` removes the pull request's own line once it closes. The four commands

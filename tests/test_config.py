@@ -535,7 +535,7 @@ class ConfigSetTests(unittest.TestCase):
             self.assertIn("the file is unchanged", stderr)
             self.assertEqual(text, self.repo_file.read_text())
 
-    def test_the_panel_background_is_set_and_unset_as_the_band_reads_it(self) -> None:
+    def test_the_panel_background_is_set_and_unset_as_the_panel_reads_it(self) -> None:
         def background() -> dict[str, object]:
             code, stdout, stderr = self.invoke("config", "get", "panel.background", "--default", "auto", "--json")
             self.assertEqual(0, code, stderr)

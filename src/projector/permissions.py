@@ -26,8 +26,8 @@ the checkout's own `site.prepare` once `--allow-prepare` allows it. Ask rules
 also cover what only the person may record: `project inbox answer`,
 `dismiss`, and `snooze` record the person's answer to an item an agent
 posted, or their choice to dismiss or put it off, so an agent running one
-could answer its own question. Projector's band runs those commands itself,
-not through an agent's shell, so the person answering from the band is never
+could answer its own question. Projector's panel runs those commands itself,
+not through an agent's shell, so the person answering from the panel is never
 asked. `project inbox restore` needs no ask rule: it reopens an item the
 person dismissed or snoozed, which takes no choice from them, and an agent
 runs it when the person says a dismissal was a mistake. The rules go in the

@@ -74,11 +74,11 @@ guide. Claude invokes a skill as `/projector:<skill>` and Codex as
 `$<skill>`. See [Install Projector](docs/plugins.md) for how the skills
 work together.
 
-In Claude Code, the plugin also shows Projector's band above the prompt.
+In Claude Code, the plugin also shows Projector's panel above the prompt.
 It lists your loops' pull requests and your inbox: the questions and
 notices that agents post with the `ask` and `tell` tools or with
 `project inbox`. See
-[Read your inbox in Projector's band](docs/plugins.md#read-your-inbox-in-projectors-band)
+[Read your inbox in Projector's panel](docs/plugins.md#read-your-inbox-in-projectors-panel)
 and [Use the inbox](docs/cli.md#use-the-inbox).
 
 ## Publish a site

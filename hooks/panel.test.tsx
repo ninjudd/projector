@@ -9,7 +9,7 @@ const WATCH = `${HOME}/loops/watch/tracked`
 const REVIEW_COMMAND = 'scripts/watch-prs.sh --tracked ~/loops/review/tracked --state ~/loops/review/state'
 const WATCH_COMMAND = 'bash /plugin/skills/start-watch-loop/scripts/watch-threads.sh --tracked ~/loops/watch/tracked --state s'
 
-const BAND = {
+const PANEL = {
   plugin: 'projector',
   surface: 'terminal',
   component: 'AbovePrompt',
@@ -24,11 +24,11 @@ const BAND = {
 } as const
 
 /**
- * How wide the band's rows are in a terminal: `bodyColumns` less the panel's
+ * How wide the panel's rows are in a terminal: `bodyColumns` less the panel's
  * one-column inset, its padding of one column at each side, and the rows' own
  * padding of one more.
  */
-const COLUMNS = BAND.props.bodyColumns - 5
+const COLUMNS = PANEL.props.bodyColumns - 5
 
 /** How wide the panel's header and key hint are: they start a column before the rows and end where the rows do. */
 const EDGE = COLUMNS + 1
@@ -41,7 +41,7 @@ const COMMAND = {
 } as const
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0)
-/** The account the band's `gh` is signed in as. */
+/** The account the panel's `gh` is signed in as. */
 const VIEWER = 'ada'
 const SEVEN = 'https://github.com/x/y/pull/7'
 const SUMMARY = 'https://example.com/site/reviews/7'
@@ -117,8 +117,8 @@ const ran = (stdout: string) => ({
   isStderrTruncated: false,
 })
 
-/** What the engine draws in the band when the plugin hands it on. */
-const ENGINE_BAND = 'the engine’s own band'
+/** What the engine draws above the prompt when the plugin hands it on. */
+const ENGINE_SITE = 'the engine’s own AbovePrompt'
 
 type Ran = ReturnType<typeof ran>
 
@@ -187,7 +187,7 @@ function world(
   }))
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
     const { Text } = $.ui.resolve(e)
-    return <Text>{ENGINE_BAND}</Text>
+    return <Text>{ENGINE_SITE}</Text>
   })
   return { commands, filled }
 }
@@ -207,21 +207,21 @@ test('draws one line per open pull request of the session’s own loops', async 
   await clock.advance(1)
   await clock.settle()
 
-  // The watch loop runs in another session, so the band does not list it.
+  // The watch loop runs in another session, so the panel does not list it.
   const gh = commands.filter(argv => argv[0] === 'gh')
   expect(gh.length).toBe(1)
   expect(gh[0]?.join(' ')).not.toContain('repository(owner: "x", name: "y")')
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
   // Open threads show as their count before a `*`, in yellow.
   expect((await ui.findAll({ type: 'Text', text: '1*' })).map(found => found.props.color)).toContain('warning')
   expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-  // The panel's header starts with `/projector`, the command that shows and hides the band, at its left. At its
-  // right, it counts the two open pull requests the band lists, not the merged one, and then says how long ago the
-  // band reloaded as the rows say their ages: in the short form, `0s` for a reload just now as for an item posted
+  // The panel's header starts with `/projector`, the command that shows and hides the panel, at its left. At its
+  // right, it counts the two open pull requests the panel lists, not the merged one, and then says how long ago the
+  // panel reloaded as the rows say their ages: in the short form, `0s` for a reload just now as for an item posted
   // just now. The two sit two spaces apart, so the time ends in the rows' age column, at the edge of the panel's
   // lines. All of it is `subtle`, and no rule runs through it.
   const header = await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  0s$/ })
@@ -237,7 +237,7 @@ test('draws one line per open pull request of the session’s own loops', async 
   await ui.unmount()
 })
 
-test('draws no panel and no header on a surface that does not lay text out in columns', async ($, on) => {
+test('draws no background and no header on a surface that does not lay text out in columns', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\n' })
@@ -247,10 +247,10 @@ test('draws no panel and no header on a surface that does not lay text out in co
   await clock.settle()
 
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
-    const ui = await $.ui.mount({ ...BAND, surface })
+    const ui = await $.ui.mount({ ...PANEL, surface })
     expect(await ui.find({ key: 'panel' })).toBeUndefined()
     expect((await ui.findAll({ type: 'Box' })).filter(box => box.props.backgroundColor !== undefined)).toEqual([])
-    // The band starts with its first row.
+    // The panel starts with its first row.
     const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
     expect(texts.filter(text => text.includes('─') || text.startsWith('/projector') || /\d+s$/.test(text))).toEqual([])
     expect(texts[0]).toBe('ready')
@@ -260,22 +260,25 @@ test('draws no panel and no header on a surface that does not lay text out in co
   }
 })
 
-/** A terminal's band: one column of inset in the terminal's own background, then the panel, which holds every line. */
+/**
+ * The panel in a terminal: one column of inset in the terminal's own
+ * background, then a Box on the panel's own, which holds every line.
+ */
 const inPanel = (backgroundColor: string) => ({
   type: 'Box',
-  props: { width: BAND.props.bodyColumns, paddingLeft: 1 },
+  props: { width: PANEL.props.bodyColumns, paddingLeft: 1 },
   children: [
     {
       type: 'Box',
-      props: { width: BAND.props.bodyColumns - 1, paddingLeft: 1, paddingRight: 1, backgroundColor },
+      props: { width: PANEL.props.bodyColumns - 1, paddingLeft: 1, paddingRight: 1, backgroundColor },
     },
   ],
 })
 
-/** The panel's background as drawn, or undefined when the band draws no panel. */
+/** The panel's background as drawn, or undefined when the panel draws none. */
 const backgroundOf = async (ui: Pick<Mounted, 'find'>) => (await ui.find({ key: 'panel' }))?.props.backgroundColor
 
-test('in a terminal the band draws as one panel, inset a column and padded, on a background of its own', async ($, on) => {
+test('in a terminal the panel is inset a column and padded, on a background of its own', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\n' })
@@ -284,9 +287,9 @@ test('in a terminal the band draws as one panel, inset a column and padded, on a
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   // The panel pads one column at each side, and no row: its header is its first line and its key hint its last.
-  // It ends at bodyColumns, where the engine draws the band's `[-]`. A band that has read no theme takes
+  // It ends at bodyColumns, where the engine draws the panel's `[-]`. A panel that has read no theme takes
   // `inverseText`.
   expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
   const panel = await ui.find({ key: 'panel' })
@@ -296,7 +299,7 @@ test('in a terminal the band draws as one panel, inset a column and padded, on a
   await ui.unmount()
 })
 
-test('the panel’s last line says how to focus the band, and once the band has the keyboard, which keys work', async ($, on) => {
+test('the panel’s last line says how to focus the panel, and once the panel has the keyboard, which keys work', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\n' })
@@ -308,7 +311,7 @@ test('the panel’s last line says how to focus the band, and once the band has 
     invalidated.push(e.event)
     return next(e)
   })
-  // The person moves the ring onto a line of the band, as ctrl+x tab or Tab does, or types in the prompt.
+  // The person moves the ring onto a line of the panel, as ctrl+x tab or Tab does, or types in the prompt.
   const focus = (element: string) =>
     $.ui.focus({ component: 'AbovePrompt', requestId: 'above-prompt', plugin: 'projector', element, origin: { kind: 'person' } })
   // The kit raises `prompt.edit` as the prompt's editor does, though its typed `$` lists no call for it.
@@ -321,19 +324,19 @@ test('the panel’s last line says how to focus the band, and once the band has 
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   const hint = async () => {
     const last = (await ui.findAll({ type: 'Text' })).at(-1)
     return [last?.text.trimStart(), last?.props.color]
   }
-  // With the keyboard in the prompt, the hint names the chord that moves it into the band, at the right of its line,
+  // With the keyboard in the prompt, the hint names the chord that moves it into the panel, at the right of its line,
   // which ends where the rows do. Typing redraws nothing.
   expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
   expect((await ui.findAll({ type: 'Text' })).at(-1)?.text).toBe('ctrl+x tab to focus'.padStart(EDGE))
   await type('a')
   expect(invalidated).toEqual([])
 
-  // Once the ring lands in the band, the hint names the keys that work there, and moving the ring on redraws
+  // Once the ring lands in the panel, the hint names the keys that work there, and moving the ring on redraws
   // nothing more.
   await focus('pr:o/r#1')
   expect(await hint()).toEqual(['esc to return · enter to open', 'subtle'])
@@ -341,7 +344,7 @@ test('the panel’s last line says how to focus the band, and once the band has 
   expect(invalidated).toEqual(['ui.render'])
 
   // Claude Code says nothing when Esc hands the keyboard back, so the next keystroke in the prompt puts the first
-  // hint back, and only that one redraws the band.
+  // hint back, and only that one redraws the panel.
   await type('b')
   expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
   await type('c')
@@ -373,7 +376,7 @@ test('the header’s age, a pull request’s age, and the key hint end in one co
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   // The header and the hint sit in the panel's padding of one column, and the rows in a Box one column further in at
   // each side, whose last column is each row's age.
   type Drawn = { type: string; props: Record<string, unknown>; children: (Drawn | string)[] }
@@ -451,7 +454,7 @@ for (const [theme, color, files] of [
     const { clock } = panelWorld(on, { theme, files })
     await startSession($, clock)
 
-    const ui = await $.ui.mount(BAND)
+    const ui = await $.ui.mount(PANEL)
     expect(await ui.drawn()).toMatchObject(inPanel(color))
     await ui.unmount()
   })
@@ -468,7 +471,7 @@ test('a custom theme’s file is read from the Claude config directory CLAUDE_CO
   })
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await backgroundOf(ui)).toBe(LIGHT)
   await ui.unmount()
 })
@@ -476,7 +479,7 @@ test('a custom theme’s file is read from the Claude config directory CLAUDE_CO
 test('a theme picked in /theme recolors the panel at once, and one the change refuses leaves it', async ($, on) => {
   const { clock } = panelWorld(on, { theme: 'dark' })
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await backgroundOf(ui)).toBe(DARK)
 
   // As the person picks a theme in `/theme`.
@@ -501,9 +504,9 @@ test('panel.background colors the panel, and auto or no value leaves the color t
     await clock.settle()
   }
 
-  // The band reads the setting through the CLI, which merges the `.projector.toml` files.
+  // The panel reads the setting through the CLI, which merges the `.projector.toml` files.
   expect(commands).toContainEqual(['project', 'config', 'get', 'panel.background', '--default', 'auto', '--json'])
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await backgroundOf(ui)).toBe('#202830')
 
   // Each reload reads it again, so an edit to the file shows without a restart.
@@ -522,7 +525,7 @@ test('panel.background colors the panel, and auto or no value leaves the color t
   await ui.unmount()
 })
 
-test('a panel.background no surface can draw leaves the color to the theme, and the band says so once', async ($, on) => {
+test('a panel.background no surface can draw leaves the color to the theme, and the panel says so once', async ($, on) => {
   const settings: Record<string, unknown> = { 'panel.background': 'ansi:black' }
   const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
   await startSession($, clock)
@@ -534,7 +537,7 @@ test('a panel.background no surface can draw leaves the color to the theme, and 
   }
 
   // The panel draws on the theme's color rather than not at all.
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.drawn()).toMatchObject(inPanel(DARK))
   await reload()
   expect(await backgroundOf(ui)).toBe(DARK)
@@ -564,7 +567,7 @@ test('a pull request’s notes take their own colors, and each ` · ` between th
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(partsOf(await ui.find({ type: 'Text', text: 'conflict · changes requested · 1*' }))).toEqual([
     ['conflict', 'error'],
     ' · ',
@@ -591,7 +594,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   // The number is a plain button, so no terminal draws a URL beside it.
   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
@@ -664,7 +667,7 @@ test('ends each pull request’s line with its age, in one column as wide as the
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   // Ages of different widths sit right-aligned in one column, so the titles and notes before them line up.
   const ages = await Promise.all(['o/r#1', 'o/r#2', 'x/y#7'].map(key => ui.find({ key: `age:${key}` })))
   expect(ages.map(age => [age?.props.width, age?.props.justifyContent])).toEqual([
@@ -684,7 +687,7 @@ test('lists your pull requests first, then everyone else’s by author, naming t
   mock.env(on, { HOME })
   const { commands } = world(on, { [REVIEW]: 'o/r#4\no/r#9\no/r#5\no/r#6\n', [WATCH]: 'x/y#7\n' })
 
-  // One command starts both watchers, so the band loads once.
+  // One command starts both watchers, so the panel loads once.
   await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
   await clock.advance(1)
   await clock.settle()
@@ -694,11 +697,11 @@ test('lists your pull requests first, then everyone else’s by author, naming t
   expect(gh).toHaveLength(1)
   expect(gh[0]?.join(' ')).toContain('viewer { login }')
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   // Yours keep their order, then bob's, then grace's two in theirs, with nothing between the groups.
   const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
   expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
-  // The header counts everyone's pull requests the band lists, the session's own and others'.
+  // The header counts everyone's pull requests the panel lists, the session's own and others'.
   expect(await ui.find({ type: 'Text', text: /^\/projector +5 pull requests  \d+s$/ })).toBeDefined()
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts.filter(text => text === ' ')).toEqual([])
@@ -716,7 +719,7 @@ test('lists your pull requests first, then everyone else’s by author, naming t
   await ui.unmount()
 })
 
-/** Records each toast the band shows. */
+/** Records each toast the panel shows. */
 function toastsOf(on: On): string[] {
   const toasts: string[] = []
   on('ui.toast', ($, e) => {
@@ -740,7 +743,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  \d+s$/ })).toBeDefined()
   await ui.press({ key: 'pr:x/y#7' })
   // The drawer's actions are lines of their own, as an item's are.
@@ -775,7 +778,7 @@ test('a dismiss the CLI refuses says why and keeps the line', async ($, on) => {
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'pr:x/y#7' })
   await ui.press({ key: 'dismiss:x/y#7' })
   await ui.press({ key: 'confirm:x/y#7' })
@@ -787,7 +790,7 @@ test('a dismiss the CLI refuses says why and keeps the line', async ($, on) => {
   await ui.unmount()
 })
 
-test('a pull request’s drawer closes when its line leaves the band, so it does not open again when the line returns', async ($, on) => {
+test('a pull request’s drawer closes when its line leaves the panel, so it does not open again when the line returns', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const files: Record<string, string> = { [WATCH]: 'x/y#7\n' }
@@ -798,7 +801,7 @@ test('a pull request’s drawer closes when its line leaves the band, so it does
   await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
   await clock.advance(1)
   await clock.settle()
-  // Hiding and showing the band reloads it, as a watcher's report does.
+  // Hiding and showing the panel reloads it, as a watcher's report does.
   const reload = async () => {
     await $.command.run(COMMAND)
     await $.command.run(COMMAND)
@@ -806,8 +809,8 @@ test('a pull request’s drawer closes when its line leaves the band, so it does
     await clock.settle()
   }
 
-  const ui = await $.ui.mount(BAND)
-  // Dropped from a terminal while its drawer is open, the pull request leaves the band.
+  const ui = await $.ui.mount(PANEL)
+  // Dropped from a terminal while its drawer is open, the pull request leaves the panel.
   await ui.press({ key: 'pr:x/y#7' })
   files[WATCH] = 'x/y#7\n!x/y#7\n'
   await reload()
@@ -851,7 +854,7 @@ test('opening one drawer closes the one that was open', async ($, on) => {
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'pr:x/y#7' })
   expect(await loopsOf(ui, 'x/y#7')).toEqual([['watching', 'ansi256(4)']])
   await ui.press({ key: 'pr:o/r#1' })
@@ -872,7 +875,7 @@ test('lists a pull request both loops track once, as watched and reviewed, and c
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   // The header counts its one line once, in the singular.
   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
   await ui.press({ key: 'pr:o/r#1' })
@@ -882,7 +885,7 @@ test('lists a pull request both loops track once, as watched and reviewed, and c
   await ui.unmount()
 })
 
-test('`/projector` only shows or hides the band, whatever follows it', async ($, on) => {
+test('`/projector` only shows or hides the panel, whatever follows it', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const { commands } = world(on, { [WATCH]: 'x/y#7\n' })
@@ -891,10 +894,10 @@ test('`/projector` only shows or hides the band, whatever follows it', async ($,
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: ` ${TAGLINE}` })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-  // The band runs nothing but its reload's read of the panel's setting.
+  // The panel runs nothing but its reload's read of its setting.
   expect(commands.filter(argv => argv.slice(0, 3).join(' ') !== 'project config get')).toEqual([])
   await ui.unmount()
 })
@@ -916,7 +919,7 @@ test('leaves out a tracked file an earlier version was given by hand, until the 
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
 
@@ -939,13 +942,13 @@ test('stays hidden until the session starts a watcher or asks for it', async ($,
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  const ui = await $.ui.mount(PANEL)
+  expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('keeps a band you hid hidden when a known watcher starts again', async ($, on) => {
+test('keeps a panel you hid hidden when a known watcher starts again', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\n' })
@@ -957,8 +960,8 @@ test('keeps a band you hid hidden when a known watcher starts again', async ($, 
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  const ui = await $.ui.mount(PANEL)
+  expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
   await ui.unmount()
 })
@@ -978,7 +981,7 @@ test('says once when it cannot tell which tracked file a watcher reads', async (
   await $.tool.call({ tool: 'Bash', command })
   await clock.settle()
 
-  expect(toasts).toEqual(['projector: cannot tell which file $LOOP/tracked names, so the band does not list that loop'])
+  expect(toasts).toEqual(['projector: cannot tell which file $LOOP/tracked names, so the panel does not list that loop'])
 })
 
 test('draws over a snapshot an earlier version left in the session', async ($, on) => {
@@ -986,7 +989,7 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\n' })
   const earlier = { watching: [], reviewing: [], fetchedAt: null, error: null }
-  on('state.get', { plugin: 'projector', key: 'bandSnapshot' }, () => ({
+  on('state.get', { plugin: 'projector', key: 'panelSnapshot' }, () => ({
     value: { value: earlier as never, version: 1 },
   }))
 
@@ -994,7 +997,7 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeDefined()
   await ui.unmount()
 })
@@ -1008,7 +1011,7 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   // `dimColor` does not dim in every terminal, so the tagline takes the theme's subtle color.
   expect((await ui.find({ type: 'Text', text: ` ${TAGLINE}` }))?.props.color).toBe('subtle')
   expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
@@ -1025,7 +1028,7 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
   expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
   await ui.unmount()
 
-  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const desktop = await $.ui.mount({ ...PANEL, surface: 'desktop' })
   const texts = (await desktop.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts).toEqual([` ${TAGLINE}`])
   expect(await desktop.find({ key: 'panel' })).toBeUndefined()
@@ -1035,12 +1038,12 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
 /** What `gh` answers when it cannot reach GitHub. */
 const DOWN = { ...ran(''), exitCode: 1, stderr: 'read: connection reset by peer\n' }
 
-test('says why GitHub failed only when the band has no pull request from it to draw', async ($, on) => {
+test('says why GitHub failed only when the panel has no pull request from it to draw', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   let isDown = true
   world(on, { [REVIEW]: 'o/r#1\n' }, undefined, { github: query => (isDown ? DOWN : ran(answer(query))) })
-  // Hiding the band and showing it again loads it again.
+  // Hiding the panel and showing it again loads it again.
   const reload = async () => {
     await $.command.run(COMMAND)
     await $.command.run(COMMAND)
@@ -1052,7 +1055,7 @@ test('says why GitHub failed only when the band has no pull request from it to d
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeUndefined()
 
@@ -1068,13 +1071,13 @@ test('says why GitHub failed only when the band has no pull request from it to d
   await ui.unmount()
 })
 
-test('says why GitHub failed for a loop added after the band loaded with nothing to track', async ($, on) => {
+test('says why GitHub failed for a loop added after the panel loaded with nothing to track', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const files: Record<string, string> = {}
   world(on, files, undefined, { github: () => DOWN })
 
-  // A band shown before any loop tracks a pull request asks GitHub nothing.
+  // A panel shown before any loop tracks a pull request asks GitHub nothing.
   await $.command.run(COMMAND)
   await clock.advance(1)
   await clock.settle()
@@ -1084,7 +1087,7 @@ test('says why GitHub failed for a loop added after the band loaded with nothing
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: TAGLINE })).toBeUndefined()
   await ui.unmount()
@@ -1371,7 +1374,7 @@ function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options
 
 async function startSession($: Engine, clock: Clock, isShown = true) {
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
-  // A shown band belongs to a session that started its review loop's watcher.
+  // A shown panel belongs to a session that started its review loop's watcher.
   if (isShown) await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
@@ -1380,7 +1383,7 @@ async function startSession($: Engine, clock: Clock, isShown = true) {
 const running = (status: AgentInfo['status']): AgentInfo =>
   ({ id: 'agent-1', description: 'Fix #7', type: 'general-purpose', status }) as AgentInfo
 
-test('asks through the tool, and the band lists the question below the pull requests', async ($, on) => {
+test('asks through the tool, and the panel lists the question below the pull requests', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
@@ -1411,14 +1414,14 @@ test('asks through the tool, and the band lists the question below the pull requ
 
   await clock.advance(1)
   await clock.settle()
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   // The header counts the pull request and then the question before the reload's age, ending at the panel's edge.
   const header = await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })
   expect(header?.text.length).toBe(EDGE)
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts).toContain('Conflicting change')
   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
-  // The line names the question's pull request as the band labels it.
+  // The line names the question's pull request as the panel labels it.
   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
   await ui.unmount()
@@ -1437,7 +1440,7 @@ test('every item takes the `-` bullet, an open question the permission color, an
     notice({ ref: '5', number: 5, subject: 'Merged #6', snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR }),
   ])
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   type Part = { props?: { color?: string; strikethrough?: boolean; inverse?: boolean }; children: string[] }
   /** Each part of an item's line, the bullet then the subject: its text, color, and strikethrough. */
   const lineOf = async (key: string) => {
@@ -1501,7 +1504,7 @@ test('a pull request’s age and an item’s age end in one column', async ($, o
   questionWorld(on, clock, [held({ postedAt: NOW - 12 * 60_000 })])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   // The pull request changed 5m ago and the question was posted 12m ago, so both ages take the wider one's width.
   const ages = await Promise.all(['x/y#7', 'item:1'].map(key => ui.find({ key: `age:${key}` })))
   expect(ages.map(age => [age?.text, age?.props.width, age?.props.justifyContent])).toEqual([
@@ -1517,7 +1520,7 @@ test('a blank line sets GitHub’s error apart from the items under it', async (
   questionWorld(on, clock, [notice()], { github: () => DOWN })
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   const failure = texts.indexOf('GitHub: read: connection reset by peer')
   expect(failure).toBeGreaterThan(-1)
@@ -1551,7 +1554,7 @@ test('refuses what the CLI refuses, asks an old CLI to upgrade, and says when it
   )
 })
 
-test('a question asked from the shell shows the hidden band within a tick', async ($, on) => {
+test('a question asked from the shell shows the hidden panel within a tick', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   questionWorld(on, clock, [held({ pr: null, subject: 'Run project init?' })])
@@ -1559,7 +1562,7 @@ test('a question asked from the shell shows the hidden band within a tick', asyn
   await clock.advance(TICK)
   await clock.settle()
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: 'Run project init?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /1 question/ })).toBeDefined()
   await ui.unmount()
@@ -1573,9 +1576,9 @@ test('an idle session with no questions runs no inbox command', async ($, on) =>
   await clock.advance(3 * TICK)
   await clock.settle()
 
-  // Listing the store's directory starts no process; only a reload of the shown band reads the panel's setting.
+  // Listing the store's directory starts no process; only a reload of the shown panel reads its setting.
   expect(session.project().filter(command => !command.startsWith('config get'))).toEqual([])
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
   await ui.unmount()
 })
@@ -1585,7 +1588,7 @@ async function optionsOf(ui: Pick<Mounted, 'findAll'>) {
   return (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('answer:'))
 }
 
-/** The keys of the band's Buttons that a digit presses. */
+/** The keys of the panel's Buttons that a digit presses. */
 async function digitsOf(ui: Pick<Mounted, 'findAll'>) {
   const buttons = await ui.findAll({ type: 'Button' })
   return buttons.flatMap(button => (/^\d$/.test(String(button.props.hotkey ?? '')) ? [button.key] : []))
@@ -1598,7 +1601,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
   const session = questionWorld(on, clock, [held({ agentId: 'agent-1' }), later], { agents: [running('running')] })
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:1' })
   // The open question has the panel to itself, its header included, so it is the top row, and the key hint stays
   // the last.
@@ -1614,7 +1617,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
   expect(await ui.find({ key: 'answer:1.c' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'discuss:1' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeDefined()
-  // Each option is a plain Button on its digit, which the engine draws before it, so the band draws no number.
+  // Each option is a plain Button on its digit, which the engine draws before it, so the panel draws no number.
   const options = await optionsOf(ui)
   expect(options.map(option => [option.key, option.props.hotkey, option.props.plain, option.text])).toEqual([
     ['answer:1.a', '1', true, 'Decline it (recommended)'],
@@ -1639,10 +1642,10 @@ test('an option puts the question and its answer in the prompt, and sending it a
   ])
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
   expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
-  // The prompt delivered it, so the band sends nothing more.
+  // The prompt delivered it, so the panel sends nothing more.
   expect(session.sent).toEqual([])
 
-  // Sending the answer closed the drawer, so the band shows its list again.
+  // Sending the answer closed the drawer, so the panel shows its list again.
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
 
@@ -1673,7 +1676,7 @@ test('a question another shares the text of takes only the answer its own drawer
   const session = questionWorld(on, clock, [held(), newer])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'answer:2.a' })
   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nDecline it\n'])
@@ -1691,7 +1694,7 @@ test('a proposal you cleared from the prompt does not take the answer you sent f
   const session = questionWorld(on, clock, [held({ postedAt: NOW - 30_000 }), newer])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'answer:2.a' })
   // You clear that from the prompt, then choose the other answer in the older question's drawer.
@@ -1738,7 +1741,7 @@ test('discuss keeps the drawer open with the question above a blank line, a repl
   const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, subject: 'Rebase first?' }), squashed])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:1' })
   await ui.press({ key: 'discuss:1' })
   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\n'])
@@ -1784,7 +1787,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   const session = questionWorld(on, clock, [asked], { agents: [running('running')] })
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:1' })
   // You choose an option, then add to it before you send.
   await ui.press({ key: 'answer:1.b' })
@@ -1805,7 +1808,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
 
-  // The question waits for its agent to settle it, and the band sends nothing.
+  // The question waits for its agent to settle it, and the panel sends nothing.
   await clock.advance(TICK)
   await clock.settle()
   expect(session.sent).toEqual([])
@@ -1826,7 +1829,7 @@ test('a prompt about one of two questions that share a subject leaves the other 
   const session = questionWorld(on, clock, [first, second], { agents })
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   // You discuss the second question: your reply goes to its subagent alone.
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'discuss:2' })
@@ -1868,7 +1871,7 @@ test('a quote two questions share goes to the one whose drawer you acted in last
   const session = questionWorld(on, clock, [held(merge), second])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   // You pick Yes in the second question's drawer, think better of it, and discuss the first instead.
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'answer:2.a' })
@@ -1928,7 +1931,7 @@ test('a dropped submit reopens the question and says why', async ($, on) => {
     'projector: the answer to "Decline the finding?" did not reach its agent (a hook refused it); answer it again',
   ])
   expect(session.store.store.get('1')?.answer).toBeUndefined()
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
   await ui.unmount()
 })
@@ -2028,8 +2031,8 @@ test('a submit an earlier copy of the module left keeps its claim and settles wh
   const session = questionWorld(on, clock, [held({ answer, claim: { token: 'old', renewedAt: NOW } })])
   let pending: Record<string, unknown> = { '1': { ref: '1', session: SESSION, token: 'old', route: 'submit', text } }
   let version = 1
-  on('state.get', { plugin: 'projector', key: 'bandSending' }, () => ({ value: { value: pending as never, version } }))
-  on('state.set', { plugin: 'projector', key: 'bandSending' }, ($, e) => {
+  on('state.get', { plugin: 'projector', key: 'panelSending' }, () => ({ value: { value: pending as never, version } }))
+  on('state.set', { plugin: 'projector', key: 'panelSending' }, ($, e) => {
     pending = e.value as Record<string, unknown>
     version += 1
     return { value: { isSet: true as const, version } }
@@ -2045,6 +2048,47 @@ test('a submit an earlier copy of the module left keeps its claim and settles wh
   expect(session.project()).toContain('inbox delivered 1 --claim old --session s1 --json')
   expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
   expect(pending).toEqual({})
+})
+
+test('a submit the release before the rename left under bandSending keeps its claim and settles when its prompt arrives', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const text = 'ANSWER 1.a Decline the finding? → Decline it'
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [held({ answer, claim: { token: 'old', renewedAt: NOW } })])
+  // The release before the rename kept the panel's deliveries under `bandSending`.
+  const stored = {
+    bandSending: {
+      value: { '1': { ref: '1', session: SESSION, token: 'old', route: 'submit', text } } as object,
+      version: 1,
+    },
+    panelSending: { value: {} as object, version: 1 },
+  }
+  const put = (key: keyof typeof stored, value: unknown) => {
+    stored[key] = { value: value as object, version: stored[key].version + 1 }
+    return { value: { isSet: true as const, version: stored[key].version } }
+  }
+  on('state.get', { plugin: 'projector', key: 'bandSending' }, () => ({
+    value: { value: stored.bandSending.value as never, version: stored.bandSending.version },
+  }))
+  on('state.set', { plugin: 'projector', key: 'bandSending' }, ($, e) => put('bandSending', e.value))
+  on('state.get', { plugin: 'projector', key: 'panelSending' }, () => ({
+    value: { value: stored.panelSending.value as never, version: stored.panelSending.version },
+  }))
+  on('state.set', { plugin: 'projector', key: 'panelSending' }, ($, e) => put('panelSending', e.value))
+  await startSession($, clock, false)
+  await clock.advance(90_000)
+  await clock.settle()
+
+  // The panel takes the entry over, so it keeps renewing the claim past its 60 seconds and submits nothing again.
+  expect(session.submitted).toEqual([])
+  expect(stored.bandSending.value).toEqual({})
+  const claims = session.project().filter(command => command.startsWith('inbox claim'))
+  expect(claims.length).toBeGreaterThanOrEqual(2)
+  for (const claim of claims) expect(claim).toBe('inbox claim 1 --renew old --session s1')
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'plugin', name: 'projector' } })
+  expect(session.project()).toContain('inbox delivered 1 --claim old --session s1 --json')
+  expect(stored.panelSending.value).toEqual({})
 })
 
 test('a number or an old reference typed in the prompt reaches the agent as plain text', async ($, on) => {
@@ -2067,7 +2111,7 @@ test('a number or an old reference typed in the prompt reaches the agent as plai
 
 const FORCE_PUSHED = 'Force-pushed #7 to drop a stray file'
 
-test('a subagent tells through the tool, and the band lists the notice in gray', async ($, on) => {
+test('a subagent tells through the tool, and the panel lists the notice in gray', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
@@ -2075,14 +2119,14 @@ test('a subagent tells through the tool, and the band lists the notice in gray',
 
   const called = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, pr: 'x/y#7', agentId: 'agent-1' })
   expect(String(called.text ?? called.result)).toBe(
-    'Posted 1. It waits in Projector’s band until the person dismisses it; nothing comes back to you.',
+    'Posted 1. It waits in Projector’s panel until the person dismisses it; nothing comes back to you.',
   )
   expect(session.project()).toContain(`inbox tell --session=s1 --pr=x/y#7 --agent=agent-1 -- ${FORCE_PUSHED}`)
   expect(session.notified).toEqual([FORCE_PUSHED])
 
   await clock.advance(1)
   await clock.settle()
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
   expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBe('inactive')
   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
@@ -2114,7 +2158,7 @@ test('no line or drawer shows an item’s number', async ($, on) => {
   questionWorld(on, clock, [held({ ref: '42', number: 42 }), notice({ ref: '43', number: 43 })])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   const drawn = async () => (await ui.findAll({ type: 'Text' })).map(found => found.text).join('\n')
   expect(await drawn()).toContain('Decline the finding?')
   expect(await drawn()).not.toMatch(/42|43/)
@@ -2153,7 +2197,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   const session = questionWorld(on, clock, [held(), notice()])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question · 1 notice  \d+s$/ })).toBeDefined()
   await ui.press({ key: 'item:2' })
   // An open notice has the panel to itself, its header included, as an open question does.
@@ -2209,22 +2253,22 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   await ui.unmount()
 })
 
-test('the withdraw tool takes an item out of the band at once, and nothing goes back to the agent', async ($, on) => {
+test('the withdraw tool takes an item out of the panel at once, and nothing goes back to the agent', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held(), notice()])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:1' })
   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
 
   const called = await $.tool.call({ tool: 'mcp__projector__withdraw', number: 1 })
   expect(String(called.text ?? called.result)).toBe(
-    'Withdrew 1. It has left Projector’s band, and nothing comes back to you.',
+    'Withdrew 1. It has left Projector’s panel, and nothing comes back to you.',
   )
   expect(session.project()).toContain('inbox withdraw 1 --session s1 --json')
-  // Before the band reads the store again, the item has gone and its drawer with it.
+  // Before the panel reads the store again, the item has gone and its drawer with it.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
@@ -2276,7 +2320,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
   const session = questionWorld(on, clock, [held()])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:1' })
   // You choose an option from the question as it reads now, and have not sent it yet.
   await ui.press({ key: 'answer:1.b' })
@@ -2284,12 +2328,12 @@ test('the revise tool redraws the question with its new text at once, keeping it
   const options = ['Add a budget of two per host', 'Ask the reviewer']
   const called = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, options, detail: 'The cap is three.' })
   expect(String(called.text ?? called.result)).toBe(
-    'Revised 1. Projector’s band shows the new text, and its answer still arrives as a message that starts ANSWER 1 or DISMISSED 1.',
+    'Revised 1. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER 1 or DISMISSED 1.',
   )
   expect(session.project()).toContain(
     'inbox revise 1 --session s1 --option=Add a budget of two per host --option=Ask the reviewer --detail=The cap is three. --json',
   )
-  // Before the band reads the store again, the open drawer shows the new text.
+  // Before the panel reads the store again, the open drawer shows the new text.
   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The cap is three.')
   expect((await optionsOf(ui)).map(option => [option.props.hotkey, option.text])).toEqual([
     ['1', 'Decline it (recommended)'],
@@ -2327,7 +2371,7 @@ test('an answer chosen before a revise answers no question, and a pick from the 
   await startSession($, clock)
   const decline = '"Decline the finding?"\n\nDecline it\n'
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
@@ -2366,7 +2410,7 @@ test('an answer chosen before a revise rewords its question does not answer anot
   const session = questionWorld(on, clock, [held(), newer])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, question: 'Decline the retry finding?' })
@@ -2389,7 +2433,7 @@ test('an option typed under a quote discussed before a revise answers no questio
   const session = questionWorld(on, clock, [held(), newer], { agents: [running('running')] })
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'discuss:2' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
@@ -2418,7 +2462,7 @@ test('a pick for a question withdrawn before you send answers no other question'
   const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__withdraw', number: 2 })
@@ -2435,7 +2479,7 @@ test('a pick made before a revise, for a question dismissed before you send, ans
   const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
@@ -2482,13 +2526,13 @@ test('the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, 
   expect(session.store.store.get('1')).toEqual(answered)
 })
 
-test('snooze hides either kind for an hour, then brings a hidden band back', async ($, on) => {
+test('snooze hides either kind for an hour, then brings a hidden panel back', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held(), notice()])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:1' })
   await ui.press({ key: 'snooze:1' })
   await ui.press({ key: 'snooze-60:1' })
@@ -2499,7 +2543,7 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   await clock.settle()
   expect(session.project()).toContain('inbox snooze 1 --for 60 --session s1 --json')
   expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
-  // Each stays listed for 30 seconds, out of the header's counts, and then leaves the band.
+  // Each stays listed for 30 seconds, out of the header's counts, and then leaves the panel.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
   await clock.advance(30_000 + TICK)
@@ -2512,14 +2556,14 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   await $.command.run(COMMAND)
   await clock.advance(HOUR - 2 * TICK - 30_000)
   await clock.settle()
-  const hidden = await $.ui.mount(BAND)
-  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  const hidden = await $.ui.mount(PANEL)
+  expect(await hidden.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
   await hidden.unmount()
 
   await clock.advance(2 * TICK)
   await clock.settle()
-  const woken = await $.ui.mount(BAND)
-  expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
+  const woken = await $.ui.mount(PANEL)
+  expect(await woken.find({ type: 'Text', text: ENGINE_SITE })).toBeUndefined()
   expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
   expect(await woken.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question · 1 notice  \d+s$/ })).toBeDefined()
@@ -2532,7 +2576,7 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
   const session = questionWorld(on, clock, [held()])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:1' })
   session.store.failing.locks = 2
   for (const keys of [['dismiss:1', 'confirm:1'], ['snooze:1', 'snooze-60:1']]) {
@@ -2545,7 +2589,7 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
   await ui.unmount()
 })
 
-test('a snooze ended while a tick reads the store brings a hidden band back', async ($, on) => {
+test('a snooze ended while a tick reads the store brings a hidden panel back', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held({ snoozedUntil: NOW + HOUR })])
@@ -2559,14 +2603,14 @@ test('a snooze ended while a tick reads the store brings a hidden band back', as
   session.store.write(held({ snoozedUntil: NOW + HOUR }))
   await clock.advance(TICK)
   await clock.settle()
-  const hidden = await $.ui.mount(BAND)
-  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  const hidden = await $.ui.mount(PANEL)
+  expect(await hidden.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
   await hidden.unmount()
 
   await clock.advance(2 * TICK)
   await clock.settle()
-  const woken = await $.ui.mount(BAND)
-  expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
+  const woken = await $.ui.mount(PANEL)
+  expect(await woken.find({ type: 'Text', text: ENGINE_SITE })).toBeUndefined()
   expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   await woken.unmount()
 })
@@ -2577,7 +2621,7 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
   const session = questionWorld(on, clock, [notice()])
   await startSession($, clock)
 
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'snooze:2' })
   await ui.press({ key: 'snooze-60:2' })
@@ -2589,8 +2633,8 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
 
   await clock.advance(HOUR + 2 * TICK)
   await clock.settle()
-  const hidden = await $.ui.mount(BAND)
-  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  const hidden = await $.ui.mount(PANEL)
+  expect(await hidden.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
   await hidden.unmount()
 })
 
@@ -2599,7 +2643,7 @@ test('a sent prompt that quotes a notice answers nothing, and closes its drawer'
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [notice()])
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:2' })
   expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeDefined()
 
@@ -2607,31 +2651,31 @@ test('a sent prompt that quotes a notice answers nothing, and closes its drawer'
   await clock.settle()
   expect(session.project().filter(command => /^inbox (answer|dismiss|claim)/.test(command))).toEqual([])
   expect(session.store.store.get('2')?.answer).toBeUndefined()
-  // The notice stays in the band, but the reply is done with its drawer.
+  // The notice stays in the panel, but the reply is done with its drawer.
   expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
   await ui.unmount()
 })
 
-test('a snoozed item read at the start leaves a hidden band hidden until its time', async ($, on) => {
+test('a snoozed item read at the start leaves a hidden panel hidden until its time', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   questionWorld(on, clock, [notice({ snoozedUntil: NOW + 3 * TICK })])
   await startSession($, clock, false)
   await clock.advance(TICK)
   await clock.settle()
-  const hidden = await $.ui.mount(BAND)
-  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
+  const hidden = await $.ui.mount(PANEL)
+  expect(await hidden.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
   await hidden.unmount()
 
   await clock.advance(3 * TICK)
   await clock.settle()
-  const woken = await $.ui.mount(BAND)
+  const woken = await $.ui.mount(PANEL)
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
   await woken.unmount()
 })
 
-test('an item whose snooze ends while the band is hidden is drawn the moment the band returns', async ($, on) => {
+test('an item whose snooze ends while the panel is hidden is drawn the moment the panel returns', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   let isSlow = false
@@ -2642,10 +2686,10 @@ test('an item whose snooze ends while the band is hidden is drawn the moment the
   await $.command.run(COMMAND)
   isSlow = true
 
-  // The tick that sees the snooze end brings the band back, and GitHub has not answered yet.
+  // The tick that sees the snooze end brings the panel back, and GitHub has not answered yet.
   await clock.advance(3 * TICK)
   await clock.settle()
-  const woken = await $.ui.mount(BAND)
+  const woken = await $.ui.mount(PANEL)
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
   expect(await woken.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
 
@@ -2666,7 +2710,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held()])
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   const line = () => ui.find({ type: 'Text', text: 'Decline the finding?' })
 
   await ui.press({ key: 'item:1' })
@@ -2731,7 +2775,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held(), notice()])
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   const line = () => ui.find({ type: 'Text', text: FORCE_PUSHED })
 
   await ui.press({ key: 'item:2' })
@@ -2760,7 +2804,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
   expect((await line())?.props.color).toBe('inactive')
   expect(session.store.store.get('2')).toEqual(notice())
 
-  // Snoozed again, it leaves the band 30 seconds later, and nothing reached the agent.
+  // Snoozed again, it leaves the panel 30 seconds later, and nothing reached the agent.
   await ui.press({ key: 'snooze:2' })
   await ui.press({ key: 'snooze-15:2' })
   await clock.advance(30_000 - TICK)
@@ -2782,9 +2826,9 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
   const read = notice({ answer: dismissed, deliveredAt: NOW - 1_000 })
   const session = questionWorld(on, clock, [heard, read])
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
 
-  // You open the dismissed question's drawer, and the question leaves the band 30 seconds after its dismissal.
+  // You open the dismissed question's drawer, and the question leaves the panel 30 seconds after its dismissal.
   await ui.press({ key: 'item:1' })
   expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'restore:1'])
   await clock.advance(30_000)
@@ -2793,10 +2837,10 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
 
   const called = await $.tool.call({ tool: 'mcp__projector__restore', number: 1 })
   expect(String(called.text ?? called.result)).toBe(
-    'Restored 1. It is open in Projector’s band again, and its answer arrives as a message that starts ANSWER 1 or DISMISSED 1. An agent that already heard DISMISSED 1 hears RESTORED 1 first.',
+    'Restored 1. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER 1 or DISMISSED 1. An agent that already heard DISMISSED 1 hears RESTORED 1 first.',
   )
   expect(session.project()).toContain('inbox restore 1 --session s1 --json')
-  // Before the band reads the store again, the question is open in the band, and its old drawer stays closed.
+  // Before the panel reads the store again, the question is open in the panel, and its old drawer stays closed.
   const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
   expect([line?.props.color, line?.props.strikethrough]).toEqual(['permission', false])
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
@@ -2808,7 +2852,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
   // A notice comes back too, and nothing goes to the agent.
   const told = await $.tool.call({ tool: 'mcp__projector__restore', number: 2 })
   expect(String(told.text ?? told.result)).toBe(
-    'Restored 2. It is back in Projector’s band until the person dismisses it; nothing comes back to you.',
+    'Restored 2. It is back in Projector’s panel until the person dismisses it; nothing comes back to you.',
   )
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
   await clock.advance(TICK)
@@ -2817,7 +2861,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
   await ui.unmount()
 })
 
-test('a restore brings a hidden band back, from the tool or from a terminal, as a new item does', async ($, on) => {
+test('a restore brings a hidden panel back, from the tool or from a terminal, as a new item does', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const dismissed = { dismissed: true as const, answeredAt: NOW - 60_000 }
@@ -2828,8 +2872,8 @@ test('a restore brings a hidden band back, from the tool or from a terminal, as 
   ])
   await startSession($, clock)
   const isHidden = async () => {
-    const ui = await $.ui.mount(BAND)
-    const hidden = (await ui.find({ type: 'Text', text: ENGINE_BAND })) !== undefined
+    const ui = await $.ui.mount(PANEL)
+    const hidden = (await ui.find({ type: 'Text', text: ENGINE_SITE })) !== undefined
     await ui.unmount()
     return hidden
   }
@@ -2854,7 +2898,7 @@ test('a restore brings a hidden band back, from the tool or from a terminal, as 
     await clock.settle()
     expect(await isHidden()).toBe(false)
   }
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/ })).toBeDefined()
   await ui.unmount()
 })
@@ -2901,7 +2945,7 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while 
   const choices = ['Decline it', 'Add a budget', 'Cap per host', 'Ask the reviewer', 'Wait a day', 'Split the change']
   const session = questionWorld(on, clock, [held({ choices }), notice()])
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   const digits = () => digitsOf(ui)
 
   // A closed drawer leaves the digits to the prompt, and a notice's drawer takes only `0`, on its line, and its actions'.
@@ -2947,7 +2991,7 @@ test('an open item’s line closes its drawer on 0, and no other line takes 0', 
     notice({ ref: '5', number: 5, subject: 'Merged #6', ...snoozed }),
   ])
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   const zeros = async () =>
     (await ui.findAll({ type: 'Button' })).flatMap(button => (button.props.hotkey === '0' ? [button.key] : []))
 
@@ -3005,7 +3049,7 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named 
   mock.env(on, { HOME })
   questionWorld(on, clock, [held(), notice()])
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
 
   // No line of the list takes a key; only an open drawer's lines do.
   expect((await ui.findAll({ type: 'Button' })).filter(button => button.props.hotkey !== undefined)).toEqual([])
@@ -3105,11 +3149,11 @@ test('a keyed line’s label takes the color of the `: ` before it, so it invert
   mock.env(on, { HOME })
   questionWorld(on, clock, [held()])
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
 
   // The engine draws a plain Button's key in its accent color and the `: ` in
   // the Button's own color, which takes no color, `hover`, or `dimColor` from
-  // the band. A label of plain text, with no colored child, takes that same
+  // the panel. A label of plain text, with no colored child, takes that same
   // color, at rest and inverted.
   const partsOf = async (key: string) => {
     const line = await ui.find({ type: 'Button', key })
@@ -3152,10 +3196,10 @@ test('a keyed line’s label takes the color of the `: ` before it, so it invert
 })
 
 /**
- * Moves the band's focus ring as the person's Tab or ctrl+x tab does, and
- * records each element the band then tried to move the ring onto. The kit
- * serves no `$.ui.focus`, so it refuses every move the band tries, and the
- * debug line the band writes for a refused move names the element.
+ * Moves the panel's focus ring as the person's Tab or ctrl+x tab does, and
+ * records each element the panel then tried to move the ring onto. The kit
+ * serves no `$.ui.focus`, so it refuses every move the panel tries, and the
+ * debug line the panel writes for a refused move names the element.
  */
 function keyboardOf(on: On) {
   const tried: string[] = []
@@ -3184,7 +3228,7 @@ test('Enter on a line moves the ring into the drawer it opens and back onto the 
   questionWorld(on, clock, [held(), notice(), answered])
   const { tried, tab } = keyboardOf(on)
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
 
   // A click, with the ring on nothing or on another line, leaves the ring alone.
   await ui.press({ key: 'item:1' })
@@ -3226,7 +3270,7 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length 
   const session = questionWorld(on, clock, [held(), notice()])
   const { tried, tab } = keyboardOf(on)
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   /** The open drawer's keyed lines under its own line, each by its key, its digit, and what it reads. */
   const lines = async (ref: string) =>
     (await ui.findAll({ type: 'Button' }))
@@ -3316,7 +3360,7 @@ test('dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once',
   ])
   const { tried, tab } = keyboardOf(on)
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   /** The open drawer's keyed lines under its options, each by its key, its digit, and what it reads. */
   const lines = async (id: string) =>
     (await ui.findAll({ type: 'Button' }))
@@ -3396,7 +3440,7 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held()])
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   /** The open drawer's keyed lines under its options. */
   const lines = async () =>
     (await ui.findAll({ type: 'Button' }))
@@ -3432,10 +3476,10 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
 test('an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const long = 'Should the band '.padEnd(112, 'x')
+  const long = 'Should the panel '.padEnd(112, 'x')
   questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: null, subject: long })])
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   const rule = async () => (await ui.find({ type: 'Text', text: /^ ─+$/ }))?.text
 
   // The rule fills the panel's line: `0: `, the subject, a space and the rule, then ` #7` and ` 2m`, end at the
@@ -3461,7 +3505,7 @@ test('an open item’s line ends in a rule to the panel’s edge on a terminal, 
   await ui.unmount()
 
   // Another surface draws the title alone, as it draws no header.
-  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const desktop = await $.ui.mount({ ...PANEL, surface: 'desktop' })
   await desktop.press({ key: 'close:2' })
   await desktop.press({ key: 'item:1' })
   expect(await desktop.find({ type: 'Text', text: /─/ })).toBeUndefined()
@@ -3473,7 +3517,7 @@ test('a dismiss confirmation on a snoozed item survives an unrelated change to t
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held({ snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR })])
   await startSession($, clock)
-  const ui = await $.ui.mount(BAND)
+  const ui = await $.ui.mount(PANEL)
   const lines = async () =>
     (await ui.findAll({ type: 'Button' }))
       .map(button => button.key ?? '')
@@ -3484,7 +3528,7 @@ test('a dismiss confirmation on a snoozed item survives an unrelated change to t
   await ui.press({ key: 'dismiss:1' })
   expect(await lines()).toEqual(['confirm:1', 'keep:1'])
 
-  // Another item arriving makes the band read the store, and the question stands.
+  // Another item arriving makes the panel read the store, and the question stands.
   session.store.write(notice())
   await clock.advance(TICK)
   await clock.settle()

@@ -186,7 +186,7 @@ def sessions() -> list[str]:
 # Asking
 
 def is_one_line(text: str) -> bool:
-    """Whether text keeps to one line, as `watch` prints an answer and the band reads one."""
+    """Whether text keeps to one line, as `watch` prints an answer and the panel reads one."""
     return "\n" not in text and "\r" not in text
 
 
@@ -345,7 +345,7 @@ def resolution(item: dict) -> str:
 
 
 def message(question: dict) -> str:
-    """The line that tells the agent what became of its question, as `watch` prints it and the band
+    """The line that tells the agent what became of its question, as `watch` prints it and the panel
     sends it: its answer, its dismissal, or that a dismissal it may have heard of was undone."""
     if question.get("restoredAt"):
         return f"RESTORED {question['ref']} {question['subject']}"
@@ -525,7 +525,7 @@ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict
 
 def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dict:
     """Mark a claimed answer delivered, or reopen the question when its delivery failed. A claimed
-    `RESTORED` line is done either way: the band does not retry it, and the question's answer or
+    `RESTORED` line is done either way: the panel does not retry it, and the question's answer or
     next dismissal still reaches the agent."""
     def finish(question: dict) -> None:
         if question.get("deliveredAt"):

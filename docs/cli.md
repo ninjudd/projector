@@ -97,8 +97,8 @@ what it did to each:
   abbreviated option such as `--prep`, so no shorter spelling slips past the
   rule. `project inbox answer`, `dismiss`, and `snooze` record your answer to
   an item an agent posted, or your choice to dismiss or put it off, so an
-  agent running one could answer its own question. Projector's band runs
-  them itself, not through an agent's shell, so answering from the band never
+  agent running one could answer its own question. Projector's panel runs
+  them itself, not through an agent's shell, so answering from the panel never
   asks. Claude Code checks ask rules before allow rules, so an ask rule
   prompts for a command that `Bash(project *)` also allows, and a trailing
   ` *` matches the command with no arguments too. `Bash(project -*)` covers an
@@ -625,7 +625,7 @@ reads, which are these:
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | `implement`, to start `start-watch-loop` on each pull request it opens, or add the pull request to the watch loop the conversation already runs; `false` leaves starting the loop to you |
-| `panel.background` | string | `auto` | Projector's band in Claude Code, as the background of the panel it draws in a terminal: `auto` picks one from the Claude Code theme, and any other value, such as `rgb(30,30,40)`, `#1e1e28`, `ansi256(236)`, or a theme color's name such as `inverseText`, is drawn as written |
+| `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme, and any other value, such as `rgb(30,30,40)`, `#1e1e28`, `ansi256(236)`, or a theme color's name such as `inverseText`, is drawn as written |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own
@@ -1965,11 +1965,11 @@ it as `dismissed`. Only `answer` takes a letter: every other command refuses
 `3.a` with exit code 65, so `dismiss` never drops the answer you meant to
 give.
 
-In Projector's band, only an option answers a question. The band records an
+In Projector's panel, only an option answers a question. The panel records an
 answer when a prompt you send quotes the question and follows the quote with
 one of its options' text and nothing else, as pressing the option in its
 drawer fills it in. Anything else you send under a quoted question, such as your own
-words, an option with more after it, or a question back, is a reply. The band
+words, an option with more after it, or a question back, is a reply. The panel
 records nothing, the question stays open, and the reply reaches the agent as
 your prompt. The agent then withdraws the question if the reply settles it,
 revises it if the reply shows it was unclear, or leaves it open while it still
@@ -1978,7 +1978,7 @@ needs you.
 `answer`, `dismiss`, and `snooze` record your choice, so the permission rules
 `project init` adds ask you before an agent runs one, in Claude Code, and
 leave them to Codex's usual approval. Otherwise an agent could answer its own
-question. Projector's band runs them itself, so answering there never asks.
+question. Projector's panel runs them itself, so answering there never asks.
 `restore` takes no choice from you, so an agent runs it without asking, in
 either host, when you say a dismissal was a mistake.
 
@@ -2001,7 +2001,7 @@ RESTORED 2 Run project init to add the publish rule?
 `RESTORED` tells the agent that you brought back a question it already heard
 `DISMISSED` for, so the question is open again, as `restore` below describes.
 `watch --once` makes one pass and exits. A view that delivers answers itself,
-such as Projector's band in Claude Code, uses the steps `watch` takes:
+such as Projector's panel in Claude Code, uses the steps `watch` takes:
 
 | Command | What it does |
 | --- | --- |
@@ -2043,7 +2043,7 @@ delivered, and `list` shows it, as `dismissed`, only with `--all`.
 
 To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
 an hour, or for the whole minutes that `--for` gives, up to a day (1440
-minutes), and `--for 0` wakes it now. Projector's band keeps a snoozed item
+minutes), and `--for 0` wakes it now. Projector's panel keeps a snoozed item
 listed, muted, for 30 seconds, and then leaves it out until its time passes.
 `list` shows it as `snoozed until <HH:MM>`, in local time, or as
 `snoozed until tomorrow <HH:MM>` when it returns tomorrow:
@@ -2072,7 +2072,7 @@ restored 3
 
 `restore` reopens the item in place. It keeps its number, its text and
 options, the pull request it is about, when it was posted, and the subagent
-that posted it, and Projector's band lists it as open again. For a snoozed
+that posted it, and Projector's panel lists it as open again. For a snoozed
 item, `restore` ends the snooze and changes nothing else. For a dismissed
 item, it clears the dismissal, so a later `answer` records an answer as if the
 item had never been dismissed. A dismissal clears any snooze, and `restore`
@@ -2090,7 +2090,7 @@ restore, an answered question, an item its agent withdrew, which is the
 agent's to post again, and an answer letter such as `3.a`. A number no
 session holds exits 66, a busy store exits 75, and `restore` changes nothing
 when it refuses. In Claude Code, the agent restores an item with Projector's
-`restore` tool when you tell it a dismissal was a mistake, and the band
+`restore` tool when you tell it a dismissal was a mistake, and the panel
 offers **restore** and **unsnooze** in the item's drawer.
 
 An agent takes back an open item that no longer needs you with `withdraw`,
@@ -2103,7 +2103,7 @@ withdrew 3
 
 `withdraw` takes either kind. In one write, it records the item as dismissed
 and withdrawn and marks it delivered, so nothing goes back to the agent, not
-even a `DISMISSED` line for a question. Projector's band drops the item at
+even a `DISMISSED` line for a question. Projector's panel drops the item at
 once, and `list --all` shows it as `withdrawn`. `withdraw` refuses what
 `dismiss` refuses: an answer letter, such as `3.a`, and an item already
 answered, dismissed, or withdrawn, with exit code 65, and a number no session
@@ -2135,14 +2135,14 @@ characters or a sixth option, a revision with nothing to change, an answer
 letter such as `3.a`, and a question already answered, dismissed, or
 withdrawn, and it changes nothing when it refuses. A number no session holds
 exits 66. In Claude Code, the agent revises a question with Projector's
-`revise` tool, and the band redraws it at once.
+`revise` tool, and the panel redraws it at once.
 
 ## Change a loop's tracked file
 
 A watch or review loop reads its tracked file, one `owner/repo#number` a
 line, and acts only on the pull requests the file lists. A line
 `!owner/repo#number` keeps that pull request out of the loop wherever it sits
-in the file, and both watchers and Projector's band match it without regard
+in the file, and both watchers and Projector's panel match it without regard
 to case. Change the file with `project loop`, whose four commands each
 change one kind of line:
 

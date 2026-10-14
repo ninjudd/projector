@@ -295,13 +295,13 @@ test('the note beside an answer or a reply names the subagent that asked', () =>
   )
 })
 
-test('a delivered question leaves the band after 30 seconds', () => {
+test('a delivered question leaves the panel after 30 seconds', () => {
   expect(isShownAt(question(), NOW)).toBe(true)
   expect(isShownAt(question({ deliveredAt: NOW - 29_000 }), NOW)).toBe(true)
   expect(isShownAt(question({ deliveredAt: NOW - 30_000 }), NOW)).toBe(false)
 })
 
-test('a withdrawn item leaves the band at once', () => {
+test('a withdrawn item leaves the panel at once', () => {
   const dismissed = { dismissed: true as const, answeredAt: NOW }
   const withdrawn = { ...dismissed, withdrawn: true as const }
   expect(isShownAt(notice({ answer: dismissed, deliveredAt: NOW }), NOW)).toBe(true)
@@ -406,7 +406,7 @@ test('the store is where the CLI keeps it', () => {
   expect(storeOf(env({}), 's1')).toBeUndefined()
 })
 
-test('the band’s own renewal leaves the store’s signature alone', () => {
+test('the panel’s own renewal leaves the store’s signature alone', () => {
   const before = [file('1.json', 1), file('count.json', 1), file('.lock', 1)]
   const renewed = [file('1.json', 2), file('count.json', 1)]
   const asked = [...renewed, file('2.json', 3)]
@@ -455,7 +455,7 @@ test('a call of the tool becomes `project inbox ask`, text kept as text', () => 
   })
 })
 
-test('a snoozed item leaves the band until its time, and wakes once between two ticks', () => {
+test('a snoozed item leaves the panel until its time, and wakes once between two ticks', () => {
   const snoozed = notice({ snoozedUntil: NOW + 3_600_000 })
   expect(isShownAt(snoozed, NOW)).toBe(false)
   expect(isShownAt(snoozed, NOW + 3_600_000)).toBe(true)
@@ -466,7 +466,7 @@ test('a snoozed item leaves the band until its time, and wakes once between two 
   expect(wokeBetween([dismissed], NOW, NOW + 3_600_000)).toEqual([])
 })
 
-test('a snoozed item stays in the band for 30 seconds after it is snoozed, then leaves until its time', () => {
+test('a snoozed item stays in the panel for 30 seconds after it is snoozed, then leaves until its time', () => {
   const snoozed = notice({ snoozedAt: NOW, snoozedUntil: NOW + 3_600_000 })
   expect(isSnoozedAt(snoozed, NOW + 29_000)).toBe(true)
   expect(isShownAt(snoozed, NOW + 29_000)).toBe(true)

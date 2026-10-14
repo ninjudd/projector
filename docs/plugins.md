@@ -184,11 +184,11 @@ run `npm ci` in `site/`, before the first check, as
 worktree that has no declarations or no `tsc` of its own uses the main
 checkout's.
 
-### See your loops' pull requests in Projector's band
+### See your loops' pull requests in Projector's panel
 
 In Claude Code, the plugin also ships a hooks module in `hooks/` that lists
-the open pull requests your loops track in the band above the prompt, one
-line each. Run `/projector` to show or hide the band. It also appears when the
+the open pull requests your loops track in the panel above the prompt, one
+line each. Run `/projector` to show or hide the panel. It also appears when the
 session starts a loop's watcher for the first time.
 
 ```text
@@ -214,27 +214,27 @@ narrow terminal.
 
 Your own pull requests come first, then everyone else's, each author's
 together and the authors in order of login, with no line between the groups.
-The band tells which are yours by the account `gh` is signed in as, which it
+The panel tells which are yours by the account `gh` is signed in as, which it
 asks for in the same query as the pull requests. A pull request that both a
 `start-watch-loop` watcher, `watch-threads.sh`, and a `start-review-loop`
 watcher, `watch-prs.sh`, track is listed once.
 
-In a terminal, the band draws as one panel on a background of its own, so a
-line that moves as the band scrolls is plainly the band's. The panel is
-inset one column from the terminal's edge and ends where Claude Code's
-`[-]`, which collapses the band, begins. Its header and its key hint sit one
-column in from the panel's left edge, and the pull requests and items
-between them two columns in from each side, so every line ends two columns
-short of the panel's right edge, where the ages line up. The panel's
-background follows your Claude Code theme, a step darker than the terminal
-so that the panel reads as a sunken surface:
+In a terminal, the panel draws on a background of its own, so a line that
+moves as the panel scrolls is plainly the panel's. It is inset one column
+from the terminal's edge and ends where Claude Code's `[-]`, which collapses
+the panel, begins. Its header and its key hint sit one column in from the
+panel's left edge, and the pull requests and items between them two columns
+in from each side, so every line ends two columns short of the panel's right
+edge, where the ages line up. The panel's background follows your Claude
+Code theme, a step darker than the terminal so that the panel reads as a
+sunken surface:
 
 - **`dark` and `dark-daltonized`** draw on `rgb(20,20,20)`.
 - **`light` and `light-daltonized`** draw on `rgb(240,240,240)`.
 - **A custom theme** takes the color of the theme it builds on, the `base`
   in its file under `~/.claude/themes/`, or under `$CLAUDE_CONFIG_DIR/themes/`
   when that variable is set. A file with no `base` builds on `dark`, and a
-  file the band cannot read gives `inverseText`.
+  file the panel cannot read gives `inverseText`.
 - **Any other theme**, such as `dark-ansi` or `light-ansi`, draws on its own
   `inverseText` color.
 
@@ -243,29 +243,30 @@ another shade, set `panel.background`, as
 [Choose the panel's color](#choose-the-panels-color) describes.
 
 The panel's first line is its header, drawn in the `subtle` color. It starts
-with `/projector`, the command that shows and hides the band, at its left.
-At its right, it counts the pull requests the band lists, a line each, such
-as `2 pull requests`, and two spaces on, it says how long ago the band
+with `/projector`, the command that shows and hides the panel, at its left.
+At its right, it counts the pull requests the panel lists, a line each, such
+as `2 pull requests`, and two spaces on, it says how long ago the panel
 reloaded, drawn as the rows draw their ages: in the short form, such as
 `12s`, and ending in their column. A reload just now reads `0s`, as an item
-posted just now does. A count of zero is left out, so a band with nothing to
-count shows `/projector` and the time alone. The rows start on the line
+posted just now does. A count of zero is left out, so a panel with nothing
+to count shows `/projector` and the time alone. The rows start on the line
 under the header.
 
 The panel's last line is a key hint, also in `subtle`, at its right, so it
 ends in the ages' column. While the prompt has the keyboard, it reads
-`ctrl+x tab to focus`. Once the band has the keyboard, it reads
+`ctrl+x tab to focus`. Once the panel has the keyboard, it reads
 `esc to return · enter to open`. Claude Code says nothing when Esc gives the
 keyboard back, so that hint stays until you next type in the prompt or send
 a prompt from it. The hint leaves the arrow keys out, because which of them
-moves between lines depends on whether the band scrolls, as
-[Use the band from the keyboard](#use-the-band-from-the-keyboard) describes.
+moves between lines depends on whether the panel scrolls, as
+[Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+describes.
 
-Claude Desktop, VS Code, and the mobile app do not set the band's text in a
-terminal's columns, so they draw no panel, no header, and no hint, and there
-the band starts with its first row.
+Claude Desktop, VS Code, and the mobile app do not set the panel's text in a
+terminal's columns, so they draw no background, no header, and no hint, and
+there the panel starts with its first row.
 
-When a poll cannot reach GitHub, the band keeps showing the pull requests
+When a poll cannot reach GitHub, the panel keeps showing the pull requests
 GitHub gave last, and the header's time shows how old they are. It shows
 GitHub's error only when it has none of them to show.
 
@@ -279,16 +280,16 @@ such as `+84`, in green and the deletions, such as `−12`, in red. The
 checks' state takes a color of its own, and the rest, ` in 5 files` and
 each `·` included, keeps the default text color. Below that come two
 actions, a line each, on the digits `7` and `8`, as
-[Use the band from the keyboard](#use-the-band-from-the-keyboard)
+[Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
 describes, and then two links:
 
 - **discuss PR** puts the pull request's number in the prompt at the
-  cursor, as `#258`, or as `owner/repo#258` when the band lists more than
+  cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
   one repository.
 - **dismiss PR** asks to be sure first, as
-  [dismissing an item](#read-your-inbox-in-projectors-band) does, then
+  [dismissing an item](#read-your-inbox-in-projectors-panel) does, then
   keeps the pull request out of every loop of this session that tracks
-  it, and the band drops its line and says which loops stopped, such as
+  it, and the panel drops its line and says which loops stopped, such as
   `stopped watching and reviewing acme/app#258`.
 - **open in github** opens the pull request on GitHub.
 - **open in projector** opens its Projector summary, when the pull
@@ -301,31 +302,31 @@ another link would cut the URL off.
 **dismiss** runs `project loop drop` once for each tracked file that lists
 the pull request, which appends a `!owner/repo#number` line that both
 watchers honor, so the loops stop acting on it. When the command fails, the
-band shows its error and keeps the line. To bring a dismissed pull request
+panel shows its error and keeps the line. To bring a dismissed pull request
 back, run `project loop restore` with the same reference and tracked file,
 as [Change a loop's tracked file](cli.md#change-a-loops-tracked-file)
-describes. A drawer closes whenever its pull request leaves the band,
+describes. A drawer closes whenever its pull request leaves the panel,
 dismissed here, dropped from a terminal, or merged, so the line comes back
 with its drawer closed.
 
 On the main screen, which Claude Code uses under tmux and when
-`CLAUDE_CODE_NO_FLICKER=0` is set, use the band from the keyboard, as
-[Use the band from the keyboard](#use-the-band-from-the-keyboard)
+`CLAUDE_CODE_NO_FLICKER=0` is set, use the panel from the keyboard, as
+[Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
 describes. The **open in github** and **open in projector** links take no
 press there; the terminal opens them the way it opens any other link.
 
-The band lists only this session's loops. It finds a loop by the
+The panel lists only this session's loops. It finds a loop by the
 `--tracked` file its watcher reads, and learns that file when the session
 runs the watcher. A loop another session runs stays out of this session's
-band. When the band cannot tell which file a watcher's `--tracked` argument
+panel. When the panel cannot tell which file a watcher's `--tracked` argument
 names, such as a path built from a variable the session does not set, it
 says so once and leaves that loop out.
 
-The band reloads when one of the session's watchers reports a change and
+The panel reloads when one of the session's watchers reports a change and
 when a turn ends, and every 30 seconds otherwise, only while it is shown.
 Each reload asks GitHub for every pull request in one `gh api graphql` call
 and reads `panel.background` with `project config get`. The skills never
-depend on the band, and Codex has no equivalent.
+depend on the panel, and Codex has no equivalent.
 
 #### Choose the panel's color
 
@@ -337,16 +338,16 @@ repository:
 project config set panel.background 'rgb(30,30,40)' --user
 ```
 
-The band draws any color Claude Code takes as written: `rgb(r,g,b)`,
+The panel draws any color Claude Code takes as written: `rgb(r,g,b)`,
 `#rrggbb`, `ansi256(n)`, or the name of a theme color, such as
 `inverseText`. The default, `auto`, leaves the color to the theme, and
-`project config unset panel.background --user` returns to it. The band reads
-the setting when the session starts and each time it reloads, so a change
-shows within 30 seconds, without a restart. A value that Claude Code cannot
-draw, such as `ansi:black` or an empty string, leaves the color to the
-theme, and the band says so once.
+`project config unset panel.background --user` returns to it. The panel
+reads the setting when the session starts and each time it reloads, so a
+change shows within 30 seconds, without a restart. A value that Claude Code
+cannot draw, such as `ansi:black` or an empty string, leaves the color to
+the theme, and the panel says so once.
 
-### Read your inbox in Projector's band
+### Read your inbox in Projector's panel
 
 An agent in Claude Code asks you a question with Projector's `ask` tool,
 which the model sees as `mcp__projector__ask`, and tells you something that
@@ -369,7 +370,7 @@ because an agent's question usually asks leave to do something. An open
 notice's line is drawn in the theme's mid gray, `inactive`, apart from the
 `subtle` of a resolved or snoozed item, so you can tell which items want an
 answer and which want a read. Each line ends with the pull request the item
-is about, as the band labels it, and how long ago it was posted. The band
+is about, as the panel labels it, and how long ago it was posted. The panel
 appears when an item arrives or is restored, even after you hid it, and in
 a terminal the header counts the open questions and the open notices after
 the pull requests, before its time.
@@ -386,13 +387,13 @@ the pull requests, before its time.
 
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press Enter on it from the keyboard instead. While
-its drawer is open, the item has the band to itself, so its line is the
+its drawer is open, the item has the panel to itself, so its line is the
 top row, in its usual colors, with `0` in its bullet's place to close the
 drawer. In a terminal, the header steps aside too, which gives the drawer
-another row before the band scrolls, and the item's line takes the
+another row before the panel scrolls, and the item's line takes the
 header's place as the panel's top bar: a rule in the default text color
 runs from its subject to its pull request and age, so the row ends at the
-panel's edge, where the band's `[-]` begins. A subject too long to leave a
+panel's edge, where the panel's `[-]` begins. A subject too long to leave a
 few columns for the rule draws none. The drawer is indented to start under
 the item's text, so its detail and the digits of its lines sit under the
 item's first letter:
@@ -414,7 +415,7 @@ item's first letter:
 ```
 
 The first option is always the agent's recommendation. Press an option by
-clicking it, by Enter, or by its digit, and the band puts the question and
+clicking it, by Enter, or by its digit, and the panel puts the question and
 that answer in your prompt, for you to send as it stands or change first:
 
 ```text
@@ -424,20 +425,20 @@ Add a budget of two retries per host, and keep the total cap
 ```
 
 The drawer stays open until you send. Sending the prompt as the option
-filled it in answers the question and closes its drawer, so the band shows
-its list again. The band finds each quoted question whose quote ends its
+filled it in answers the question and closes its drawer, so the panel shows
+its list again. The panel finds each quoted question whose quote ends its
 line, and reads the text after the quote, up to the next quoted item or the
 end of the prompt. When that text is one of the question's options, whatever
 blank lines and spaces surround it, that option answers the question.
 
 Anything else you send under a quoted question is a reply, not an answer:
 your own words, an option with more text after it, or a question back. The
-band records nothing and closes the question's drawer, and the question
+panel records nothing and closes the question's drawer, and the question
 stays in the list. Your prompt carries the reply to the agent, which answers
 what you asked and then settles the question. It withdraws the question if
 your reply settles it, revises it if your reply shows it was unclear or the
 choice has changed, or leaves it open while it still needs you. A revised
-question keeps its place in the list, and the band shows its new text as
+question keeps its place in the list, and the panel shows its new text as
 soon as the agent revises it. An option that a drawer put in your prompt
 before the revision answers no question, and neither does an option you
 type under a quote that **discuss** put there before it: either one replies
@@ -484,7 +485,7 @@ A notice's drawer shows its detail, then the same three actions:
 **discuss notice**, **dismiss notice**, and **snooze notice**. **discuss
 notice** puts the quoted notice in the prompt. A prompt you send that quotes
 a notice answers nothing, but it closes the notice's drawer; the notice
-stays in the band until you dismiss it. **dismiss notice** clears the
+stays in the panel until you dismiss it. **dismiss notice** clears the
 notice once you have read it and closes its drawer, and nothing goes back
 to the agent.
 
@@ -512,7 +513,7 @@ to the lengths it offers, and the action lines to a way back:
    9: cancel
 ```
 
-Pick a length, and the band runs
+Pick a length, and the panel runs
 `project inbox snooze <number> --for <minutes>` with 15, 60, 240, or 1440
 minutes, a day being the longest the CLI takes, and closes the drawer. A
 notice, which has no options, shows the same lines. **cancel** puts the
@@ -521,9 +522,9 @@ another, so a drawer always opens on its actions.
 
 A snoozed item leaves the header's counts at once, and stays in the list
 for 30 seconds in the `subtle` color, not struck through, so it reads as put
-off rather than dismissed. Then it leaves the band. When its time is up, it
-returns to the list, and the band appears if you hid it. To wake an item
-now, or to pick a length the band does not offer, find the item's number
+off rather than dismissed. Then it leaves the panel. When its time is up, it
+returns to the list, and the panel appears if you hid it. To wake an item
+now, or to pick a length the panel does not offer, find the item's number
 with `project inbox list` in a terminal, then run
 `project inbox snooze <number> --for <minutes>`. An item you answer or
 dismiss from a terminal while it is snoozed does not return.
@@ -531,7 +532,7 @@ dismiss from a terminal while it is snoozed does not return.
 A resolved item stays in the list, muted, for 30 seconds after it is
 delivered, and a dismissed one is struck through. A dismissed notice is
 delivered at once, since nothing goes back to the agent. An item the agent
-withdrew leaves the band at once, its drawer with it, and sends nothing back,
+withdrew leaves the panel at once, its drawer with it, and sends nothing back,
 not even `DISMISSED` for a question. A question's drawer still opens and
 lists its options, without their digits and with nothing to press, and
 marks the answer given with `✓`, listing an answer typed in a terminal with
@@ -546,41 +547,41 @@ runs `project inbox restore`, and the item is open again at once, in its
 place in the list, with its drawer still open and **dismiss** and
 **snooze** back in their places. A dismissed question whose `DISMISSED`
 has not gone out sends its agent nothing; one whose agent already heard
-`DISMISSED` sends `RESTORED`. Once the item has left the band, ask the
-agent to restore it, and the band appears with the item open, even if you
-hid it. A drawer closes when its line leaves the band, so a pull request
+`DISMISSED` sends `RESTORED`. Once the item has left the panel, ask the
+agent to restore it, and the panel appears with the item open, even if you
+hid it. A drawer closes when its line leaves the panel, so a pull request
 or an item that comes back returns with its drawer closed.
 
 An answer you give from a terminal with `project inbox answer` reaches the
-agent through the band of the session that asked. A subagent that is still
+agent through the panel of the session that asked. A subagent that is still
 running receives it directly, as a message that starts `ANSWER`,
 `DISMISSED` for a dismissal, or `RESTORED` when you restore a question
 whose agent heard `DISMISSED`. Otherwise the main loop receives it as a prompt
 of its own once its turn ends, with the name of the subagent that asked, and
 `sending` follows the question until it has gone.
 
-Shown or hidden, the band lists the session's inbox directory every 5
+Shown or hidden, the panel lists the session's inbox directory every 5
 seconds and runs `project inbox` only when the directory changed since
 its last successful read or an answer is on its way, so a session with an
 empty inbox starts no process. A read that fails runs again 5 seconds later.
 
-### Use the band from the keyboard
+### Use the panel from the keyboard
 
-Claude Code moves the keyboard between the prompt and the band, and draws
-a focus ring, an inverted highlight, on the band's line or action that has
+Claude Code moves the keyboard between the prompt and the panel, and draws
+a focus ring, an inverted highlight, on the panel's line or action that has
 it:
 
-- **ctrl+x tab** moves the keyboard into the band, onto its first line.
+- **ctrl+x tab** moves the keyboard into the panel, onto its first line.
   Press it again to move to the next.
 - **Tab** and **→** move the ring to the next line or action, and
-  **shift+Tab** and **←** to the one before. **↑** and **↓** scroll a band
+  **shift+Tab** and **←** to the one before. **↑** and **↓** scroll a panel
   taller than the room it has.
 - **Enter** presses what the ring is on, as a click does.
 - **Esc** gives the keyboard back to the prompt.
-- **ctrl+x ctrl+a** collapses the band to one line, and shows it again.
+- **ctrl+x ctrl+a** collapses the panel to one line, and shows it again.
 
 In a terminal, the panel's last line names the chord that takes the
-keyboard in, and once the band has it, Esc and Enter.
+keyboard in, and once the panel has it, Esc and Enter.
 
 Enter on a line opens its drawer and moves the ring onto the drawer's first
 control: a question's first option, otherwise **discuss**. Tab then walks
@@ -592,17 +593,17 @@ ring onto the first length, and Enter on **cancel** moves it back onto the
 Enter on `no, keep it` back onto **dismiss**.
 
 An open question's options read `1:` to `6:`, the digit in the accent
-color. Press a digit while the band has the keyboard, or type it first into
-an empty prompt while the option is wholly in view in the band, as you
-answer Claude Code's own surveys, and the band puts that option in your
+color. Press a digit while the panel has the keyboard, or type it first into
+an empty prompt while the option is wholly in view in the panel, as you
+answer Claude Code's own surveys, and the panel puts that option in your
 prompt as a click does. A digit only fills the prompt,
 so nothing reaches the agent until you send. A resolved question's options
 have no digits.
 
 An open item's own line, at the top of its drawer, reads `0:` before it,
 for every item, open or resolved, question or notice. Press `0` the same
-two ways, while the band has the keyboard or first into an empty prompt
-while the line is wholly in view in the band, and the drawer closes, as a
+two ways, while the panel has the keyboard or first into an empty prompt
+while the line is wholly in view in the panel, and the drawer closes, as a
 click or Enter on that line closes it. A pull
 request's drawer has no `0`, since its number closes it.
 
@@ -620,9 +621,9 @@ acts on: `question`, `notice`, or `PR`.
   request's drawer does not offer. While snooze asks how long, the lengths
   take `1` to `4` in the options' place and `9` cancels.
 
-An action's digit works the two ways an option's does: while the band has
+An action's digit works the two ways an option's does: while the panel has
 the keyboard, or first into an empty prompt while its line is wholly in
-view in the band.
+view in the panel.
 
 ## Install for Codex
 

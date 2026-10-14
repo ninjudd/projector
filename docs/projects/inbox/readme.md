@@ -2038,3 +2038,56 @@ divider's place:
 | `panel.background` is read through `project config get` and drawn as written, a change shows on the next reload, and `auto` or an unset key gives the theme's color | `panel.background colors the panel, and auto or no value leaves the color to the theme` |
 | A value no surface can draw gives the theme's color and one toast for each such value | `a panel.background no surface can draw leaves the color to the theme, and the band says so once` |
 | `panel.background` is a string key that `project config set` and `unset` change, and the settings table lists it | `test_the_panel_background_is_set_and_unset_as_the_band_reads_it` and `test_the_documented_keys_are_the_known_keys` in `tests/test_config.py` |
+
+## 21. Call the band the panel
+
+Since § 20, Projector's band above the prompt draws as one panel on a
+background of its own, and "band" was an odd name for it. It is now the
+panel wherever Projector names it.
+
+### 21.1 What changes
+
+- **What you read says "panel".** `docs/plugins.md`, `docs/cli.md`, the
+  README, and the `start-watch-loop` and `start-review-loop` skills say it,
+  and so do the `/projector` command's description and the descriptions and
+  results of the `ask`, `tell`, `withdraw`, `revise`, and `restore` tools.
+  The headings of `docs/plugins.md` change with it, and so do their anchors,
+  such as `#read-your-inbox-in-projectors-panel`.
+- **The agent instructions say it too.** The template's line about what the
+  panel lists changed, so its begin marker moves to 13, its hash is pinned,
+  and `project init` refreshed this repository's block.
+- **So does the code.** The hooks module's identifiers, comments, and tests
+  say "panel", and `hooks/band.test.tsx` is now `hooks/panel.test.tsx`. Its
+  state keys are `panelSnapshot`, `panelNow`, `isPanelShown`, `panelDrawer`,
+  `panelAsked`, `panelInbox`, `panelSending`, `panelThemeBackground`,
+  `panelBackground`, and `isPanelFocused`. The state is the session's, so a
+  session that updates the plugin starts the new keys fresh, with the panel
+  hidden until a watcher, an item, or `/projector` shows it. Only
+  `bandSending` is still read: an answer the release before the rename
+  submitted behind a running turn is recorded there, and starting fresh
+  would let its claim lapse and deliver the answer a second time. So the
+  panel moves those entries into `panelSending` once per load of the module
+  and clears the old key. Comments in `src/projector` say "panel" as well.
+- **Some names stay.** Claude Code's own terms keep theirs: the
+  `AbovePrompt` site and its props, such as `bodyColumns`. The earlier
+  sections of this plan and of the `questions` plan keep "band" as their
+  history, and their evidence tables cite tests by the names and the file
+  they had when those sections were written.
+
+### 21.2 Why this design
+
+- **It draws as a panel.** Since § 20 it reads as one surface, a panel, and
+  the owner found "band" an odd name for it.
+- **One name everywhere.** The docs, the tools an agent reads, the command,
+  and the code all use the same word, so no reader wonders whether the band
+  and the panel are two things.
+
+### 21.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| The tools' results name Projector's panel | `a subagent tells through the tool, and the panel lists the notice in gray`, `the withdraw tool takes an item out of the panel at once, and nothing goes back to the agent`, `the revise tool redraws the question with its new text at once, keeping its number`, and `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` in `hooks/panel.test.tsx` |
+| The state lives under the new keys | `draws over a snapshot an earlier version left in the session` and the delivery tests that seed `panelSending` |
+| A submit left under `bandSending` keeps its claim past 60 seconds, is not submitted again, and settles when its prompt arrives | `a submit the release before the rename left under bandSending keeps its claim and settles when its prompt arrives` |
+| The template's text is pinned under version 13 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |
+| No "band" names the feature outside Claude Code's terms, the plans' history, and the old `bandSending` key the panel takes over | `git grep -n -i band`, by hand |

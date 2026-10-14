@@ -106,11 +106,11 @@ const DRAWER_INDENT = `${CLOSE_HOTKEY}: `.length
 const MIN_RULE = 3
 
 /**
- * In a terminal the band draws as one panel: inset `PANEL_INSET` columns in
- * the terminal's own background, then padded `PANEL_PADDING` columns at each
- * side in the panel's, where its header and key hint start. The lines between
- * them, the pull requests, the items and their drawers, sit `LINE_PADDING`
- * columns further in at each side.
+ * In a terminal the panel is inset `PANEL_INSET` columns in the terminal's
+ * own background, then padded `PANEL_PADDING` columns at each side in its
+ * own, where its header and key hint start. The lines between them, the pull
+ * requests, the items and their drawers, sit `LINE_PADDING` columns further
+ * in at each side.
  */
 const PANEL_INSET = 1
 const PANEL_PADDING = 1
@@ -118,14 +118,14 @@ const LINE_PADDING = 1
 
 /**
  * The panel's last line names its keys, at its right, so it ends where the
- * ages do: the chord that takes the keyboard into the band, and once the
- * band has it, the keys that work there. The arrows stay out, because which
- * of them moves between lines depends on whether the band scrolls.
+ * ages do: the chord that takes the keyboard into the panel, and once the
+ * panel has it, the keys that work there. The arrows stay out, because which
+ * of them moves between lines depends on whether the panel scrolls.
  */
 const FOCUS_HINT = 'ctrl+x tab to focus'
 const FOCUSED_HINT = 'esc to return · enter to open'
 
-/** What the panel's header starts with, at its left: the command that shows and hides the band. */
+/** What the panel's header starts with, at its left: the command that shows and hides the panel. */
 const HEADER_NAME = '/projector'
 
 /**
@@ -147,7 +147,7 @@ const AUTO = 'auto'
 
 /**
  * What a surface takes as a color, a theme key or a raw one alike: these
- * characters, at most 40 of them. It refuses the band's whole tree over any
+ * characters, at most 40 of them. It refuses the panel's whole tree over any
  * other, such as `ansi:black` or an empty string.
  */
 const PAINTABLE = /^[\w#(),.% -]{1,40}$/
@@ -161,16 +161,23 @@ const SNOOZES = [
 ] as const
 
 const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
-const snapshot = atom({ plugin: 'projector', key: 'bandSnapshot' } as const, EMPTY)
-const now = atom({ plugin: 'projector', key: 'bandNow' } as const, 0)
-const isShown = atom({ plugin: 'projector', key: 'isBandShown' } as const, false)
-const drawer = atom({ plugin: 'projector', key: 'bandDrawer' } as const, null)
-const asked = atom({ plugin: 'projector', key: 'bandAsked' } as const, null)
-const items = atom({ plugin: 'projector', key: 'bandInbox' } as const, [])
-const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
-const themeBackground = atom({ plugin: 'projector', key: 'bandThemeBackground' } as const, OTHER_BACKGROUND)
-const background = atom({ plugin: 'projector', key: 'bandBackground' } as const, AUTO)
-const isFocused = atom({ plugin: 'projector', key: 'isBandFocused' } as const, false)
+const snapshot = atom({ plugin: 'projector', key: 'panelSnapshot' } as const, EMPTY)
+const now = atom({ plugin: 'projector', key: 'panelNow' } as const, 0)
+const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, false)
+const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
+const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
+const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
+const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
+const themeBackground = atom({ plugin: 'projector', key: 'panelThemeBackground' } as const, OTHER_BACKGROUND)
+const background = atom({ plugin: 'projector', key: 'panelBackground' } as const, AUTO)
+const isFocused = atom({ plugin: 'projector', key: 'isPanelFocused' } as const, false)
+/**
+ * The deliveries the release before the panel's rename recorded, under the
+ * key it gave them. A submit it made can still wait behind a running turn
+ * when the session updates, so the panel takes them over rather than letting
+ * their claims lapse and delivering those answers a second time.
+ */
+const oldSending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
 
 // The session keeps its state across a reload or an update of the plugin,
 // so a value an earlier version wrote can have another shape.
@@ -186,12 +193,12 @@ let isQueued = false
 let attemptedAt = 0
 const unreadable = new Set<string>()
 
-/** The store's directory as the band last read it, so it reads again only after a change. */
+/** The store's directory as the panel last read it, so it reads again only after a change. */
 let listed: string | undefined
 let isChecking = false
 /** The answers this copy of the module is claiming or delivering, by reference. */
 const delivering = new Set<string>()
-/** The items and pull requests the band is dismissing or snoozing, so a second press does nothing. */
+/** The items and pull requests the panel is dismissing or snoozing, so a second press does nothing. */
 const acting = new Set<string>()
 /** When the last tick ran, so an item whose snooze ends between two ticks wakes once. */
 let tickedAt: number | undefined
@@ -204,11 +211,11 @@ let tickedAt: number | undefined
  */
 let proposed: Proposal[] = []
 /**
- * Where the band's focus ring last landed, as `ui.focus` reported it: the
- * band's site, and the key of the band's element under the ring, absent when
- * the ring is on none of them. The engine says nothing when the band hands
+ * Where the panel's focus ring last landed, as `ui.focus` reported it: the
+ * panel's site, and the key of the panel's element under the ring, absent when
+ * the ring is on none of them. The engine says nothing when the panel hands
  * the keyboard back, so the ring can be stale, and the engine refuses a move
- * once the band no longer holds the keyboard.
+ * once the panel no longer holds the keyboard.
  */
 let ring: { requestId: string; key: string | undefined } | undefined
 
@@ -225,7 +232,7 @@ function propose(question: Question, answer: string): void {
   proposed = [...proposed.filter(isKept), { ref: question.ref, quote, answer }]
 }
 
-/** The few variables the band's paths are written with, read once per load. */
+/** The few variables the panel's paths are written with, read once per load. */
 function envOf($: Engine): Promise<Env> {
   envLoad ??= (async () => {
     const values: Record<string, string | undefined> = {
@@ -273,7 +280,7 @@ async function remember($: Engine, loop: SeenLoop): Promise<boolean> {
 
 /**
  * Records the tracked file of each watcher a command starts, and shows the
- * band when one is new. A loop restarts its watcher with the same command,
+ * panel when one is new. A loop restarts its watcher with the same command,
  * as a Monitor does each time it expires, so a known one shows nothing and
  * a path it cannot read is said once.
  */
@@ -285,7 +292,7 @@ async function adopt($: Engine, command: string): Promise<void> {
     if (watcher.tracked === undefined) {
       if (!unreadable.has(watcher.written)) {
         unreadable.add(watcher.written)
-        $.ui.toast(`projector: cannot tell which file ${watcher.written} names, so the band does not list that loop`)
+        $.ui.toast(`projector: cannot tell which file ${watcher.written} names, so the panel does not list that loop`)
       }
       continue
     }
@@ -336,13 +343,13 @@ async function paint($: Engine, theme: unknown): Promise<void> {
   await update($, themeBackground, () => color)
 }
 
-/** The `panel.background` values the band said it cannot draw, so it says so once for each. */
+/** The `panel.background` values the panel said it cannot draw, so it says so once for each. */
 const unpaintable = new Set<string>()
 
 /**
  * Reads `panel.background` through the CLI, which merges the `.projector.toml`
  * files. A value no surface can draw leaves the color to the theme, and the
- * band says so once. A read that fails keeps the value the band last read,
+ * panel says so once. A read that fails keeps the value the panel last read,
  * and the next reload reads it again.
  */
 async function readBackground($: Engine): Promise<void> {
@@ -415,7 +422,7 @@ async function load($: Engine): Promise<void> {
 }
 
 /**
- * Reloads the loops and their pull requests, only while the band is shown
+ * Reloads the loops and their pull requests, only while the panel is shown
  * unless forced. A request that arrives mid-load runs once more after it,
  * so a change it was told about is never missed.
  */
@@ -444,7 +451,7 @@ function refresh($: Engine, isForced = false): Promise<void> {
   return inFlight
 }
 
-/** Puts an item the CLI just changed in the band's list, in place of what it showed. */
+/** Puts an item the CLI just changed in the panel's list, in place of what it showed. */
 async function replace($: Engine, item: Item): Promise<void> {
   await update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
   await forgetAsked($, [item])
@@ -474,7 +481,7 @@ async function closeDrawer($: Engine, key: string): Promise<void> {
 }
 
 /**
- * Closes the open drawer once its line has left the band, so it does not
+ * Closes the open drawer once its line has left the panel, so it does not
  * open again by itself when the line comes back: a pull request a loop
  * tracks again, or an item restored or woken from its snooze.
  */
@@ -488,7 +495,7 @@ async function closeLeftDrawer($: Engine, time: number): Promise<void> {
 }
 
 /**
- * An item as the CLI prints it, without the session the band adds. Each kind
+ * An item as the CLI prints it, without the session the panel adds. Each kind
  * is its own `Omit`, because one over the union would merge their `kind`s.
  */
 type Printed = Omit<Question, 'session'> | Omit<Notice, 'session'>
@@ -500,8 +507,8 @@ const itemOf = (stdout: string, session: string): Item => ({
 })
 
 /**
- * Takes the band's list from the store, and shows the band for an item that
- * is open and not snoozed when the band last held it otherwise: a new item,
+ * Takes the panel's list from the store, and shows the panel for an item that
+ * is open and not snoozed when the panel last held it otherwise: a new item,
  * or one restored or unsnoozed since.
  */
 async function setItems($: Engine, list: Item[]): Promise<void> {
@@ -520,7 +527,7 @@ async function setItems($: Engine, list: Item[]): Promise<void> {
 /**
  * Reads the session's inbox when the store's directory changed since the
  * last read that succeeded. Listing a directory starts no process, so an idle
- * session, band shown or hidden, starts none. The signature is recorded only
+ * session, panel shown or hidden, starts none. The signature is recorded only
  * once the read succeeds, so a read that fails runs again on the next tick.
  */
 async function readStore($: Engine, session: string): Promise<void> {
@@ -541,7 +548,7 @@ async function readStore($: Engine, session: string): Promise<void> {
   listed = signature
 }
 
-/** Remembers an answer the band is delivering, in the session's state so a reloaded module finds it. */
+/** Remembers an answer the panel is delivering, in the session's state so a reloaded module finds it. */
 const track = ($: Engine, entry: Sending) => update($, sending, all => ({ ...all, [entry.ref]: entry }))
 
 /**
@@ -585,7 +592,7 @@ async function deliver($: Engine, question: Question): Promise<void> {
   delivering.add(ref)
   try {
     const ran = await project($, ['inbox', 'claim', ref, '--session', session, '--json'])
-    // Another deliverer holds it, or it was delivered since the band read the store.
+    // Another deliverer holds it, or it was delivered since the panel read the store.
     if (ran.exitCode !== 0) return
     const claimed = JSON.parse(ran.stdout) as { token: string; text: string }
     await replace($, itemOf(ran.stdout, session))
@@ -609,14 +616,31 @@ async function deliver($: Engine, question: Question): Promise<void> {
   }
 }
 
+/** The panel's takeover of `oldSending`, which runs once per load of the module. */
+let adoption: Promise<void> | undefined
+
+/** Moves the deliveries under `oldSending` into `sending`, once per load, and again after a failure. */
+function adoptOldSending($: Engine): Promise<void> {
+  adoption ??= (async () => {
+    const old = await read($, oldSending)
+    if (Object.keys(old).length === 0) return
+    await update($, sending, all => ({ ...old, ...all }))
+    await update($, oldSending, () => ({}))
+  })().catch(() => {
+    adoption = undefined
+  })
+  return adoption
+}
+
 /**
  * Keeps each delivery's claim live while it waits, as a submit behind a long
  * turn does. A submit that an earlier copy of the module made still waits in
  * the session's queue, so its claim is kept until the prompt hook sees it
  * arrive. A send settles at once, so one an earlier copy left is let go, and
- * its claim lapses for the band to deliver again.
+ * its claim lapses for the panel to deliver again.
  */
 async function renewClaims($: Engine): Promise<void> {
+  await adoptOldSending($)
   for (const entry of Object.values(await read($, sending))) {
     if (entry.route === 'send' && !delivering.has(entry.ref)) {
       await update($, sending, all => Object.fromEntries(Object.entries(all).filter(([key]) => key !== entry.ref)))
@@ -629,7 +653,7 @@ async function renewClaims($: Engine): Promise<void> {
 }
 
 /**
- * Reads the store when it changed, renews the band's claims, and delivers
+ * Reads the store when it changed, renews the panel's claims, and delivers
  * each answer nobody is delivering. A store read that fails, as one still
  * running at the CLI's timeout does, skips nothing after it, so a waiting
  * answer's claim never lapses because of it.
@@ -658,7 +682,7 @@ async function checkInbox($: Engine): Promise<void> {
 const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
 
 /**
- * Dismisses, snoozes for `minutes`, or restores an item from the band; a
+ * Dismisses, snoozes for `minutes`, or restores an item from the panel; a
  * second press finds it changed and does nothing. Dismissing or snoozing
  * closes the item's drawer, and the item stays listed, muted, for 30 seconds,
  * so its line opens the drawer again to restore it. Restoring keeps the
@@ -680,7 +704,7 @@ async function act(
       await replace($, itemOf(ran.stdout, session))
       if (command !== 'restore') await closeDrawer($, `item:${ref}`)
     } else if (ran.exitCode === 65) {
-      // Resolved elsewhere since the band read the store: read it again.
+      // Resolved elsewhere since the panel read the store: read it again.
       listed = undefined
     } else {
       void $.ui.toast(`projector: ${errorOf(ran)}`)
@@ -695,7 +719,7 @@ async function act(
 
 /**
  * Dismisses a pull request from the session's loops: `project loop drop`
- * keeps it out of each tracked file that lists it, and the band reloads
+ * keeps it out of each tracked file that lists it, and the panel reloads
  * without it. A failure says why, and the line stays.
  */
 async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
@@ -727,7 +751,7 @@ async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
 
 /**
  * Records an answer a sent prompt gave and marks it delivered, because the
- * prompt itself carries it to the main loop. The band's own deliverer leaves
+ * prompt itself carries it to the main loop. The panel's own deliverer leaves
  * the question alone meanwhile, so the agent hears the answer once.
  */
 async function answerFromPrompt($: Engine, question: Question, letter: string): Promise<void> {
@@ -742,16 +766,16 @@ async function answerFromPrompt($: Engine, question: Question, letter: string): 
     const ran = await project($, ['inbox', 'delivered', ref, '--claim', token, '--session', session, '--json'])
     if (ran.exitCode === 0) await replace($, itemOf(ran.stdout, session))
   } catch {
-    // An answer recorded but not marked delivered is the band's to deliver on a later tick.
+    // An answer recorded but not marked delivered is the panel's to deliver on a later tick.
   } finally {
     delivering.delete(ref)
   }
 }
 
 /**
- * Reads the inbox whether or not the band is shown, closes the drawer of an
- * item that left the band, and brings a hidden band back for an item whose
- * snooze ended since the last tick. A shown band moves
+ * Reads the inbox whether or not the panel is shown, closes the drawer of an
+ * item that left the panel, and brings a hidden panel back for an item whose
+ * snooze ended since the last tick. A shown panel moves
  * its clock on, which returns that item to the list, and polls GitHub once
  * the last load is old enough.
  */
@@ -772,8 +796,8 @@ async function tick($: Engine): Promise<void> {
 }
 
 /**
- * Shows the band and loads it, from a timer so no hook waits on GitHub. The
- * band's clock moves on before it shows, so an item whose snooze ended while
+ * Shows the panel and loads it, from a timer so no hook waits on GitHub. The
+ * panel's clock moves on before it shows, so an item whose snooze ended while
  * it was hidden is drawn at once rather than after GitHub answers.
  */
 function show($: Engine): void {
@@ -787,8 +811,8 @@ function show($: Engine): void {
 }
 
 /**
- * Puts the band's key hint back on the chord into the band once the prompt
- * has the keyboard again. Only a change of hint redraws the band.
+ * Puts the panel's key hint back on the chord into the panel once the prompt
+ * has the keyboard again. Only a change of hint redraws the panel.
  */
 async function unfocus($: Engine): Promise<void> {
   if (!(await read($, isFocused))) return
@@ -797,8 +821,8 @@ async function unfocus($: Engine): Promise<void> {
 }
 
 /**
- * Moves the band's focus ring onto one of its elements, which the engine
- * waits for when the band has yet to draw it, and writes why the ring stayed
+ * Moves the panel's focus ring onto one of its elements, which the engine
+ * waits for when the panel has yet to draw it, and writes why the ring stayed
  * to the debug log when the engine refuses the move.
  */
 async function focusOn($: Engine, requestId: string, key: string): Promise<void> {
@@ -810,7 +834,7 @@ async function focusOn($: Engine, requestId: string, key: string): Promise<void>
 const soon = ($: Engine) => $.clock.after(1, () => void refresh($))
 
 /**
- * Names a pull request for the prompt: `#12` when the band shows one
+ * Names a pull request for the prompt: `#12` when the panel shows one
  * repository, `owner/repo#12` otherwise, so the reference is never ambiguous.
  */
 function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
@@ -831,11 +855,11 @@ function notesOf(pr: PullRequest): Note[] {
   return notes
 }
 
-/** Whether the account the band's `gh` is signed in as wrote a pull request. */
+/** Whether the account the panel's `gh` is signed in as wrote a pull request. */
 const isOwn = (pr: PullRequest, viewer: string | null) => viewer !== null && pr.author === viewer
 
 /**
- * The band's pull requests in the order it lists them: yours first, then
+ * The panel's pull requests in the order it lists them: yours first, then
  * everyone else's, each author's together and the authors by login. Within
  * each, they keep the order they came in.
  */
@@ -854,7 +878,7 @@ const secondsSince = (time: number, then: number) => Math.max(0, Math.round((tim
 const countOf = (count: number, noun: string) =>
   count === 0 ? undefined : `${count} ${noun}${count === 1 ? '' : 's'}`
 
-/** Labels a pull request `#12` when the band shows one repository, else by its repository's name. */
+/** Labels a pull request `#12` when the panel shows one repository, else by its repository's name. */
 function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
   const repos = [...new Set(prs.map(pr => pr.repo))]
   if (repos.length <= 1) return pr => `#${pr.number}`
@@ -892,9 +916,9 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'projector',
-      description: 'Show or hide Projector’s band of your loops’ pull requests and your inbox',
+      description: 'Show or hide Projector’s panel of your loops’ pull requests and your inbox',
     })
-    // A session whose engine cannot serve the tools keeps the band.
+    // A session whose engine cannot serve the tools keeps the panel.
     for (const tool of [
       { name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA },
       { name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA },
@@ -943,12 +967,12 @@ export const register: Register = on => {
     const ref = posted.stdout.trim()
     void $.ui.notify(String(e.notice), { title: 'Projector notice' }).catch(() => undefined)
     return {
-      result: `Posted ${ref}. It waits in Projector’s band until the person dismisses it; nothing comes back to you.`,
+      result: `Posted ${ref}. It waits in Projector’s panel until the person dismisses it; nothing comes back to you.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the notice; tell the person in the conversation instead' }))
 
-  // The band takes the withdrawn item from the CLI at once, so it leaves the
-  // band before the next read of the store.
+  // The panel takes the withdrawn item from the CLI at once, so it leaves the
+  // panel before the next read of the store.
   on('tool.call', { tool: WITHDRAW_TOOL }, async ($, e) => {
     const session = await $.session.id()
     const instead = 'tell the person in the conversation that it no longer needs them'
@@ -957,12 +981,12 @@ export const register: Register = on => {
     const item = itemOf(ran.stdout, session)
     await replace($, item)
     await closeDrawer($, `item:${item.ref}`)
-    return { result: `Withdrew ${item.ref}. It has left Projector’s band, and nothing comes back to you.` }
+    return { result: `Withdrew ${item.ref}. It has left Projector’s panel, and nothing comes back to you.` }
   }).catch(() => ({
     deny: 'Projector could not withdraw the item; tell the person in the conversation that it no longer needs them',
   }))
 
-  // The band takes the revised question from the CLI at once, so it redraws
+  // The panel takes the revised question from the CLI at once, so it redraws
   // before the next read of the store. An answer a drawer put in the prompt
   // was chosen from the old text, so it turns stale: sent, it answers no
   // question, this one or another that shares the old text.
@@ -974,14 +998,14 @@ export const register: Register = on => {
     await replace($, item)
     proposed = proposed.map(proposal => (proposal.ref === item.ref ? { ...proposal, isStale: true } : proposal))
     return {
-      result: `Revised ${item.ref}. Projector’s band shows the new text, and its answer still arrives as a message that starts ANSWER ${item.ref} or DISMISSED ${item.ref}.`,
+      result: `Revised ${item.ref}. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER ${item.ref} or DISMISSED ${item.ref}.`,
     }
   }).catch(() => ({
     deny: 'Projector could not revise the question; ask the revised question in the conversation instead',
   }))
 
-  // The band takes the restored item from the CLI at once, so it is open in
-  // the band before the next read of the store, and comes back as a new item
+  // The panel takes the restored item from the CLI at once, so it is open in
+  // the panel before the next read of the store, and comes back as a new item
   // does when the person hid it.
   on('tool.call', { tool: RESTORE_TOOL }, async ($, e) => {
     const session = await $.session.id()
@@ -995,8 +1019,8 @@ export const register: Register = on => {
     return {
       result:
         item.kind === 'notice'
-          ? `Restored ${ref}. It is back in Projector’s band until the person dismisses it; nothing comes back to you.`
-          : `Restored ${ref}. It is open in Projector’s band again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
+          ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it; nothing comes back to you.`
+          : `Restored ${ref}. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
     }
   }).catch(() => ({
     deny: 'Projector could not restore the item; tell the person in the conversation that it could not be restored',
@@ -1025,21 +1049,22 @@ export const register: Register = on => {
     // when no keystroke edited it since Esc, as with one a drawer filled.
     if (e.origin.kind === 'composer') void unfocus($).catch(() => undefined)
 
-    // An answer the band submitted for the main loop has arrived. Seeing it
-    // here, rather than only where the band submitted it, settles it after a
+    // An answer the panel submitted for the main loop has arrived. Seeing it
+    // here, rather than only where the panel submitted it, settles it after a
     // reload of the module too.
     if (e.origin.kind === 'plugin' && e.origin.name === 'projector') {
       const entered = await next(e)
       if (entered.drop === undefined) {
+        await adoptOldSending($)
         const entry = Object.values(await read($, sending)).find(one => one.route === 'submit' && one.text === e.text)
         if (entry !== undefined) await settle($, entry.ref, 'delivered')
       }
       return entered
     }
 
-    // An option the band put in the prompt answers its question: the prompt
+    // An option the panel put in the prompt answers its question: the prompt
     // carries the answer to the main loop, and once the prompt has entered,
-    // the band records it. Any other text under a quoted question replies to
+    // the panel records it. Any other text under a quoted question replies to
     // it, and the prompt carries the reply while the question stays open.
     // Either way the prompt is done with the question's drawer. A subagent's
     // question gets a note naming it, so the main loop can pass the answer or
@@ -1074,9 +1099,9 @@ export const register: Register = on => {
     return entered
   }).catch(($, e, next) => next(e))
 
-  // Enter presses the band's element under the ring, so where the ring is
+  // Enter presses the panel's element under the ring, so where the ring is
   // tells a press from the keyboard from a click. A ring that lands also
-  // means the band holds the keyboard, so its hint names the keys that work
+  // means the panel holds the keyboard, so its hint names the keys that work
   // there.
   on('ui.focus', { component: 'AbovePrompt' }, async ($, e, next) => {
     const moved = await next(e)
@@ -1091,9 +1116,9 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   // Claude Code reports no event when Esc gives the keyboard back to the
-  // prompt, so the band's focused hint stays until the next keystroke in the
+  // prompt, so the panel's focused hint stays until the next keystroke in the
   // prompt, or until a prompt is sent from it. Only that first keystroke
-  // redraws the band; it waits on nothing.
+  // redraws the panel; it waits on nothing.
   on('prompt.edit', ($, e, next) => {
     void unfocus($).catch(() => undefined)
     return next(e)
@@ -1105,17 +1130,17 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // `/projector` shows or hides the band.
+  // `/projector` shows or hides the panel.
   on('command.run', { command: 'projector' }, async $ => {
     if (await read($, isShown)) {
       await update($, isShown, () => false)
-      return { text: 'Hid Projector’s band.' }
+      return { text: 'Hid Projector’s panel.' }
     }
     show($)
-    return { text: 'Showing Projector’s band above the prompt.' }
+    return { text: 'Showing Projector’s panel above the prompt.' }
   })
 
-  // The band above the prompt spans the terminal and is as tall as its rows,
+  // The panel above the prompt spans the terminal and is as tall as its rows,
   // so each pull request and each item takes one line, and a drawer more.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
@@ -1149,7 +1174,7 @@ export const register: Register = on => {
     const tally = counts.filter(part => part !== undefined).join(' · ')
     const reloaded = shown.fetchedAt === null ? '' : span(secondsSince(time, shown.fetchedAt))
     // A failed poll keeps drawing the pull requests GitHub last gave, and the
-    // header's time says how old they are, so the band says why it failed
+    // header's time says how old they are, so the panel says why it failed
     // only when it has none of them to draw.
     const failure = shown.error === null || shown.rows.length > 0 ? undefined : `GitHub: ${shown.error}`
     // Enter with the ring on the Button it presses takes the ring along,
@@ -1173,12 +1198,11 @@ export const register: Register = on => {
       carry(line, onto)
     }
 
-    // In a terminal the band is one panel on a background of its own, so a
-    // line that moves as the band scrolls is plainly the band's. The panel
-    // ends at `bodyColumns`, where the engine draws the band's `[-]` on the
-    // first row, so the rows between its header and its hint are `columns`
-    // wide.
-    const isPanel = e.surface === 'terminal'
+    // In a terminal the panel draws on a background of its own, so a line
+    // that moves as the panel scrolls is plainly the panel's. It ends at
+    // `bodyColumns`, where the engine draws the panel's `[-]` on the first
+    // row, so the rows between its header and its hint are `columns` wide.
+    const isTerminal = e.surface === 'terminal'
     const columns = e.props.bodyColumns - PANEL_INSET - 2 * (PANEL_PADDING + LINE_PADDING)
     // The header and the key hint start a column before the lines between
     // them but end where those lines do, so their right ends line up with
@@ -1188,17 +1212,17 @@ export const register: Register = on => {
     const color = setting === AUTO ? await read($, themeBackground) : setting
     const hint = (await read($, isFocused)) ? FOCUSED_HINT : FOCUS_HINT
     // The panel's first line is its header, all in `subtle`: `HEADER_NAME` at
-    // its left, and the counts and how long ago the band reloaded at its
+    // its left, and the counts and how long ago the panel reloaded at its
     // right, so the time ends in the rows' age column. Two spaces set the
     // counts apart from the time, about the gap a row leaves before its age.
     // The rows start on the next line, the background setting the header
-    // apart from them. An open item's drawer has the band to itself, so it
+    // apart from them. An open item's drawer has the panel to itself, so it
     // draws no header. Only a terminal lays text out in those columns, so no
     // other surface draws a panel.
     const status = [tally, reloaded].filter(part => part !== '').join('  ')
     const gap = ' '.repeat(Math.max(1, edgeColumns - HEADER_NAME.length - status.length))
     const panel = (lines: RenderChildren, isHeaded = true) =>
-      isPanel ? (
+      isTerminal ? (
         <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>
           <Box
             key="panel"
@@ -1241,8 +1265,8 @@ export const register: Register = on => {
       ])
     }
 
-    // An item names its pull request as the band labels it, or in full when
-    // the band does not list it.
+    // An item names its pull request as the panel labels it, or in full when
+    // the panel does not list it.
     const pullOf = (item: Item) => {
       const row = shown.rows.find(one => keyOf(one.pr) === item.pr?.toLowerCase())
       return row === undefined ? (item.pr ?? '') : label(row.pr)
@@ -1259,7 +1283,7 @@ export const register: Register = on => {
     // `project inbox answer --text` after them.
 
     // A pull request's line and an item's line each end with an age, in one
-    // column as wide as the widest age in the band, so what comes before the
+    // column as wide as the widest age in the panel, so what comes before the
     // ages ends in one column too.
     const ageOf = (then: number | null) => (then === null ? '' : span(secondsSince(time, then)))
     const ageWidth = Math.max(
@@ -1297,7 +1321,7 @@ export const register: Register = on => {
       ))
     // An open question's options are plain Buttons on the digits 1 to 6,
     // which the engine draws before them, as `1: Decline it`. A digit presses
-    // its option from the band, or typed first into an empty prompt, as a
+    // its option from the panel, or typed first into an empty prompt, as a
     // survey's does; either only fills the prompt, so a stray one sends
     // nothing. A resolved question's options are text, its answer marked.
     const drawAnswers = (question: Question) => {
@@ -1440,10 +1464,10 @@ export const register: Register = on => {
         },
       ]
       const isChoosingLength = isOpen && !isSnoozed && isAsked(key, 'snooze')
-      // An open item's line has the band to itself, so closing its drawer
+      // An open item's line has the panel to itself, so closing its drawer
       // puts the line back lower in the list. The engine keeps the ring by
       // position, and the open line's key is one the list never draws, so a
-      // move onto the line in the list waits for the band to draw the list.
+      // move onto the line in the list waits for the panel to draw the list.
       const line = isOpened ? `close:${ref}` : key
       const first = item.kind === 'question' && isOpen ? `answer:${ref}.${letterAt(0)}` : `discuss:${ref}`
       const isSending = !isOpen && item.deliveredAt === undefined
@@ -1455,7 +1479,7 @@ export const register: Register = on => {
       const notesWidth =
         (isSending ? 'sending'.length + 1 : 0) + (pull === '' ? 0 : [...pull].length + 1) + ageWidth + 1
       const ruleWidth = columns - DRAWER_INDENT - [...item.subject].length - 1 - notesWidth
-      const rule = isOpened && isPanel && ruleWidth >= MIN_RULE ? ` ${'─'.repeat(ruleWidth)}` : ''
+      const rule = isOpened && isTerminal && ruleWidth >= MIN_RULE ? ` ${'─'.repeat(ruleWidth)}` : ''
 
       return (
         <Box key={`line:${ref}`} flexDirection="column">
@@ -1632,10 +1656,10 @@ export const register: Register = on => {
       )
     }
 
-    // An open item's drawer has the band to itself, until it is closed or the
-    // item leaves the band. The header steps aside too, so the item is the
+    // An open item's drawer has the panel to itself, until it is closed or the
+    // item leaves the panel. The header steps aside too, so the item is the
     // top row and, in a terminal, the drawer has another row before the
-    // engine, which caps the band below half the terminal, starts to scroll.
+    // engine, which caps the panel below half the terminal, starts to scroll.
     const focused = shownItems.find(item => opened === `item:${item.ref}`)
     if (focused !== undefined) return panel(drawItem(focused), false)
 

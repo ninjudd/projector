@@ -2,7 +2,7 @@
 
 A tracked file holds one `owner/repo#number` per line, and a line
 `!owner/repo#number` keeps that pull request out of the loop wherever it
-sits in the file. Both watchers and the band honor such a line, matching
+sits in the file. Both watchers and the panel honor such a line, matching
 the reference without regard to case, as GitHub does.
 """
 
