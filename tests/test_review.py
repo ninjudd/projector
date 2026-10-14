@@ -1830,14 +1830,10 @@ class PruneTests(PublishCase):
         self.assertIn(f"kept {published}: the current head of a review set up while prune ran\n", out)
         self.assertIn(f"kept {locked}: its head's lock is held\n", out)
 
-    def test_repo_limits_the_sweep_and_a_link_is_unlinked_without_following_it(self) -> None:
+    def test_repo_limits_the_sweep(self) -> None:
         elsewhere = self.state / "worktrees" / "other" / "app" / "5" / "old-model" / ("e" * 12)
         elsewhere.mkdir(parents=True)
-        target = Path(tempfile.mkdtemp())
-        (target / "keep.txt").write_text("keep\n")
-        link = self.pull_folder() / "linked"
-        link.parent.mkdir(parents=True, exist_ok=True)
-        link.symlink_to(target, target_is_directory=True)
+        old_layout = self.worktree_at(self.pull_folder() / ("b" * 12))
 
         code, out, err = self.prune("--repo", REPO)
 
@@ -1848,8 +1844,7 @@ class PruneTests(PublishCase):
         code, out, err = self.prune("--repo", REPO, "--apply")
 
         self.assertEqual(0, code, err)
-        self.assertFalse(link.is_symlink())
-        self.assertEqual("keep\n", (target / "keep.txt").read_text())
+        self.assertFalse(old_layout.exists())
         self.assertTrue(elsewhere.is_dir())
 
         code, out, err = self.prune("--apply")
@@ -1857,6 +1852,35 @@ class PruneTests(PublishCase):
         self.assertEqual(0, code, err)
         self.assertFalse(elsewhere.exists(), "a folder that is no worktree goes too")
         self.assertFalse((self.state / "worktrees" / "other").exists())
+
+    def test_a_file_or_a_link_where_worktrees_live_is_kept_and_named_as_no_worktree(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        key = review.model_key(self.model)
+        summary = self.pull_folder() / "summary-1.json"
+        summary.write_text('{"version": 1}\n')
+        note = self.pull_folder() / key / "notes.md"
+        note.write_text("notes\n")
+        target = Path(tempfile.mkdtemp())
+        (target / "keep.txt").write_text("keep\n")
+        link = self.pull_folder() / "linked"
+        link.symlink_to(target, target_is_directory=True)
+        broken = self.pull_folder() / ("f" * 12)
+        (broken / "src").mkdir(parents=True)
+
+        code, out, err = self.prune("--apply")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual('{"version": 1}\n', summary.read_text())
+        self.assertEqual("notes\n", note.read_text())
+        self.assertTrue(link.is_symlink())
+        self.assertEqual("keep\n", (target / "keep.txt").read_text())
+        self.assertIn(f"kept {summary}: a file, not a worktree; prune removes only worktree folders\n", out)
+        self.assertIn(f"kept {note}: a file, not a worktree; prune removes only worktree folders\n", out)
+        self.assertIn(f"kept {link}: a link, not a worktree; prune removes only worktree folders\n", out)
+        self.assertIn(f"removed {broken}: made before each model kept its own worktree folder\n", out)
+        self.assertFalse(broken.exists(), "a short-SHA folder that lost its .git file is an old worktree")
+        self.assertIn("removed 1 scratch worktree\n", out)
 
     def test_with_no_state_directory_there_is_nothing_to_prune(self) -> None:
         code, out, err = self.prune("--apply")

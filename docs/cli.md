@@ -1522,9 +1522,11 @@ It leaves the review's state, locks, and start comment alone. To end a closed
 pull request's review, run
 `project review finish <pr> --repo <owner>/<repo> --force`. `prune` removes each
 worktree with `git worktree remove` in the checkout that made it, and deletes
-the folder outright when that fails. It unlinks a symbolic link without
-following it, then runs `git worktree prune` in each checkout and removes the
-folders it emptied. `--repo` limits the sweep to one repository. With `--json`
+the folder outright when that fails. It removes only folders: a file or a
+symbolic link where it looks for worktrees, such as a summary a reviewer saved
+in a pull request's folder, is listed as kept. It then runs
+`git worktree prune` in each checkout and removes the folders it emptied.
+`--repo` limits the sweep to one repository. With `--json`
 it prints the `repo`, whether it ran with `apply`, and the `removed`, `kept`,
 and `failed` entries, each with its `path` and `reason`. It exits 1 when a
 worktree could not be removed.
