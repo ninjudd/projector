@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { claudeCodeTheme, contrast, resolve, UNKNOWN_THEME } from './theme'
+import { claudeCodeTheme, contrast, customTheme, resolve, UNKNOWN_THEME } from './theme'
 
 const DARK = claudeCodeTheme('dark')
 const LIGHT = claudeCodeTheme('light')
@@ -91,6 +91,20 @@ describe('claudeCodeTheme', () => {
     })
     expect(theme.palette).not.toHaveProperty('madeUp')
     expect(claudeCodeTheme('dark-ansi', { subtle: 'rgb(1,2,3)' }).palette).toBeNull()
+  })
+})
+
+describe('customTheme', () => {
+  test('builds on the base its file names', () => {
+    expect(customTheme('light', {})).toEqual(LIGHT)
+    expect(customTheme('light-ansi', {})).toEqual({ base: 'light', palette: null })
+    expect(customTheme('dark', { subtle: 'rgb(1,2,3)' }).palette?.subtle).toBe('rgb(1,2,3)')
+  })
+
+  test('builds on dark when its file names no base Claude Code has, as Claude Code does', () => {
+    for (const base of [undefined, 'lihgt', 'auto', 'custom:other', 3, null]) {
+      expect(customTheme(base, undefined)).toEqual(DARK)
+    }
   })
 })
 

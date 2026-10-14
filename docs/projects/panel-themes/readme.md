@@ -106,7 +106,7 @@ default theme, `ink`, draws these:
 | `dark`, `dark-daltonized` | dark | `#100f0c` |
 | `light`, `light-daltonized` | light | `#f6f4ee` |
 | `dark-ansi`, `light-ansi` | dark or light | `inverseText` |
-| `custom:<slug>` | its file's `base`, `dark` when it names none | its base's |
+| `custom:<slug>` | its file's `base`, `dark` when it names none of Claude Code's themes, as Claude Code reads it | its base's |
 | a custom theme whose file the panel cannot read, or any other | unknown | `inverseText` |
 
 Every built-in theme falls back to `inverseText` where `ink` does, because
@@ -281,10 +281,10 @@ once, as § 2.4 says.
 
 | File | Change |
 | --- | --- |
-| `hooks/theme.ts` (new) | `ROLE_DEFAULTS`, `PANEL_THEMES`, `BACKGROUND_ALIASES`, the literal color patterns from #341, Claude Code's colors for each public key and `composerSidebarBackground` on `dark`, `light`, and their daltonized themes, typed so the compiler requires every key of Claude Code's `ThemeKey` and no other, `PUBLIC_THEME_KEYS`, the contrast ratio, `claudeCodeTheme(name, overrides)`, which gives a Claude Code theme's base and colors, and `resolve(theme, settings)`, which returns `{ colors, problems }` |
+| `hooks/theme.ts` (new) | `ROLE_DEFAULTS`, `PANEL_THEMES`, `BACKGROUND_ALIASES`, the literal color patterns from #341, Claude Code's colors for each public key and `composerSidebarBackground` on `dark`, `light`, and their daltonized themes, typed so the compiler requires every key of Claude Code's `ThemeKey` and no other, `PUBLIC_THEME_KEYS`, the contrast ratio, `claudeCodeTheme(name, overrides)`, which gives a Claude Code theme's base and colors, `customTheme(base, overrides)`, which reads a custom theme's file as Claude Code does, and `resolve(theme, settings)`, which returns `{ colors, problems }` |
 | `hooks/register.tsx` | Draws every color through `colors.<role>`. Removes `QUESTION_COLOR`, `NOTICE_COLOR`, `BRANCH_COLOR`, `LOOP_COLORS`, `CHECK_COLORS`, the colors in `Note`, `THEME_BACKGROUNDS`, `OTHER_BACKGROUND`, and the background check, which move into `hooks/theme.ts`. `readBackground` becomes `readSettings`, which reads the `panel` table, `paint` stores the base and the theme's colors, and `recolor` resolves both and toasts. The Bash hook re-reads after a `project config set` or `unset` of a `panel.` key |
 | `hooks/types.d.ts` | The state keys `panelTheme`, `panelSettings`, and `panelColors` replace `panelThemeBackground` and `panelBackground`. The types they hold, `ClaudeCodeTheme`, `TextRole`, and `Colors`, live here too, because the plugin's types contract must import nothing |
-| `hooks/theme.test.ts` (new) | `resolve`, `claudeCodeTheme`, and the contrast ratio, table by table |
+| `hooks/theme.test.ts` (new) | `resolve`, `claudeCodeTheme`, `customTheme`, and the contrast ratio, table by table |
 | `hooks/panel.test.tsx` | The defaults on each Claude Code theme, the built-in themes, overrides, refusals, toasts, and the re-read after a set |
 | `src/projector/config.py` | `SETTINGS` gains `panel.theme` as a string, and `TABLES` holds `panel.colors.<role>`, whose keys `set` and `unset` accept under any lowercase name, each value a string |
 | `tests/test_config.py` | `set` and `unset` of `panel.theme` and `panel.colors.<name>`, read back as the panel reads them, and the documented keys test reads the `panel.colors.<role>` row |
@@ -364,7 +364,7 @@ once, as § 2.4 says.
 
 | Do | Expect | Test |
 | --- | --- | --- |
-| Draw the panel with no settings on `dark`, `light`, both daltonized themes, both ANSI themes, custom themes on each base, one with no `base`, and one with no file | The background is `ink`'s for the theme's base, `inverseText` where the panel cannot know the colors, and every element draws its role's default | `with no settings the panel draws <color>, and each role its default, on the <theme> theme` in `hooks/panel.test.tsx`, one test per theme, and `with no settings, the <theme> theme draws ink’s background and every role its default` in `hooks/theme.test.ts` |
+| Draw the panel with no settings on `dark`, `light`, both daltonized themes, both ANSI themes, custom themes on each base, one with no `base`, one whose `base` is misspelled, and one with no file | The background is `ink`'s for the theme's base, `inverseText` where the panel cannot know the colors, and every element draws its role's default | `with no settings the panel draws <color>, and each role its default, on the <theme> theme` in `hooks/panel.test.tsx`, one test per theme, and `with no settings, the <theme> theme draws ink’s background and every role its default` in `hooks/theme.test.ts` |
 | Open a pull request's drawer with no settings on `dark`, then on `light` | `watching` and the branch draw `remember` and `planMode`, not `ansi256(4)` or `ansi256(6)` | `watching and the branch draw theme keys, so they follow the theme` |
 | Set `panel.theme` to `umber`, `stone`, `graphite`, and `ink` | Each draws its background for the theme's base, and every other role keeps its default | `panel.theme picks a built-in theme, and panel.background overrides its background`, and `panel.theme <name> draws its background by the theme’s base` in `hooks/theme.test.ts` |
 | Set `panel.background` to each theme's name, `smoke`, `black`, `white`, and literal colors | Each draws its color, over the theme's background | `panel.background colors the panel, and a theme’s name draws that theme’s background` |
@@ -460,9 +460,10 @@ What Claude Code does with a plugin's color, which the design depends on:
 - An `ansi:` name makes Claude Code refuse the plugin's whole tree.
 - A mod cannot list the theme's keys at run time. Claude Code's `ThemeKey`
   type lists the 23 public ones.
-- A custom theme's file holds a `base` and `overrides`, and Claude Code lays
-  each override that names a key of the base and a color it reads, `rgb()`,
-  hex, `ansi256()`, or an `ansi:` name, over the base's colors.
+- A custom theme's file holds a `base` and `overrides`. Claude Code builds
+  on `dark` when the `base` names none of its six themes, and lays each
+  override that names a key of the base and a color it reads, `rgb()`, hex,
+  `ansi256()`, or an `ansi:` name, over the base's colors.
 
 A live preview of the panel's colors in a Claude Code session showed how
 each kind of name draws: theme keys, `rgb()`, hex, and `ansi256()` drew as

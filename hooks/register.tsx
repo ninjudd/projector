@@ -17,7 +17,7 @@ import type {
 } from './types'
 import { buildQuery, parseResponse, type Fetched } from './github'
 import { findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
-import { claudeCodeTheme, resolve, UNKNOWN_THEME } from './theme'
+import { claudeCodeTheme, customTheme, resolve, UNKNOWN_THEME } from './theme'
 import {
   ASK_DESCRIPTION,
   ASK_SCHEMA,
@@ -276,9 +276,9 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> 
 
 /**
  * What the panel knows of a Claude Code theme: by the theme's name, or for a
- * custom theme, `custom:<slug>`, from its file, which builds on `dark` unless
- * its `base` says otherwise and may override the base's colors. A custom
- * theme whose file cannot be read is one the panel knows nothing of.
+ * custom theme, `custom:<slug>`, from its file, which names the theme it
+ * builds on and may override the base's colors. A custom theme whose file
+ * cannot be read is one the panel knows nothing of.
  */
 async function claudeThemeOf($: Engine, name: unknown): Promise<ClaudeCodeTheme> {
   if (typeof name !== 'string' || !name.startsWith('custom:')) return claudeCodeTheme(name)
@@ -289,7 +289,7 @@ async function claudeThemeOf($: Engine, name: unknown): Promise<ClaudeCodeTheme>
   try {
     const path = `${config}/themes/${name.slice('custom:'.length)}.json`
     const file = JSON.parse(await $.fs.read(path)) as { base?: unknown; overrides?: unknown }
-    return claudeCodeTheme(file.base ?? 'dark', file.overrides)
+    return customTheme(file.base, file.overrides)
   } catch {
     return UNKNOWN_THEME
   }

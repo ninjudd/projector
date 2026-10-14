@@ -248,6 +248,14 @@ export function claudeCodeTheme(name: unknown, overrides?: unknown): ClaudeCodeT
   return { base, palette: { ...palette, ...Object.fromEntries(own) } }
 }
 
+/**
+ * What a custom theme's file gives the panel. Claude Code builds a custom
+ * theme on `dark` when its `base` names none of its own themes, a misspelled
+ * one included.
+ */
+export const customTheme = (base: unknown, overrides: unknown): ClaudeCodeTheme =>
+  claudeCodeTheme(typeof base === 'string' && CLAUDE_CODE_THEMES.has(base) ? base : 'dark', overrides)
+
 /** The xterm table's color for `ansi256(n)` past the palette's first 16, which a terminal's own palette sets. */
 function xterm(n: number): Rgb | undefined {
   if (n < 16) return undefined

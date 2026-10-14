@@ -233,8 +233,9 @@ black on a dark Claude Code theme and a warm off-white on a light one.
 - **`light` and `light-daltonized`** draw on `#f6f4ee`.
 - **A custom theme** takes the color of the theme it builds on, the `base`
   in its file under `~/.claude/themes/`, or under `$CLAUDE_CONFIG_DIR/themes/`
-  when that variable is set. A file with no `base` builds on `dark`, and a
-  file the panel cannot read gives `inverseText`.
+  when that variable is set. A file whose `base` is missing or names none of
+  Claude Code's themes builds on `dark`, as Claude Code draws it, and a file
+  the panel cannot read gives `inverseText`.
 - **Any other theme**, such as `dark-ansi` or `light-ansi`, draws on its own
   `inverseText` color, because its colors come from the terminal's palette,
   which the panel cannot see.

@@ -502,6 +502,7 @@ for (const [theme, color, files] of [
   ['custom:dusk', INK_DARK, { [`${THEMES}/dusk.json`]: '{"name": "Dusk", "base": "dark", "overrides": {}}' }],
   ['custom:dawn', INK_LIGHT, { [`${THEMES}/dawn.json`]: '{"name": "Dawn", "base": "light-daltonized"}' }],
   ['custom:plain', INK_DARK, { [`${THEMES}/plain.json`]: '{"name": "Plain"}' }],
+  ['custom:typo', INK_DARK, { [`${THEMES}/typo.json`]: '{"base": "lihgt"}' }],
   ['custom:retro', 'inverseText', { [`${THEMES}/retro.json`]: '{"base": "dark-ansi"}' }],
   ['custom:gone', 'inverseText', {}],
   ['auto', 'inverseText', {}],
