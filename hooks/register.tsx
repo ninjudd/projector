@@ -65,9 +65,16 @@ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
 /**
  * The theme color of an open question's line: the one Claude Code gives its
  * own permission prompts, since an agent's question usually asks leave to do
- * something. A notice keeps the default color.
+ * something.
  */
 const QUESTION_COLOR = 'permission'
+
+/**
+ * The color of an open notice's line: the theme's mid gray, which stays
+ * apart from the `subtle` of a resolved or snoozed item. A plain `gray` would
+ * draw in the default color.
+ */
+const NOTICE_COLOR = 'inactive'
 
 /**
  * The color of a pull request's branch on its drawer's facts line: the
@@ -85,6 +92,19 @@ const BRANCH_COLOR = 'ansi256(6)'
  */
 const LOOP_COLORS: Record<LoopKind, string> = { watching: 'ansi256(4)', reviewing: 'claude' }
 
+/** The key that closes an open item's drawer, from its line at the drawer's top. */
+const CLOSE_HOTKEY = '0'
+
+/**
+ * How far an open item's drawer is indented: the width of the `0: ` the
+ * engine draws before the item's line, so the drawer's lines start under the
+ * item's text.
+ */
+const DRAWER_INDENT = `${CLOSE_HOTKEY}: `.length
+
+/** The shortest rule an open item's line draws; a title that leaves less draws none. */
+const MIN_RULE = 3
+
 /** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
 const SNOOZES = [
   { label: '15 min', minutes: 15 },
@@ -98,7 +118,7 @@ const snapshot = atom({ plugin: 'projector', key: 'bandSnapshot' } as const, EMP
 const now = atom({ plugin: 'projector', key: 'bandNow' } as const, 0)
 const isShown = atom({ plugin: 'projector', key: 'isBandShown' } as const, false)
 const drawer = atom({ plugin: 'projector', key: 'bandDrawer' } as const, null)
-const snoozing = atom({ plugin: 'projector', key: 'bandSnoozing' } as const, null)
+const asked = atom({ plugin: 'projector', key: 'bandAsked' } as const, null)
 const items = atom({ plugin: 'projector', key: 'bandInbox' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
 
@@ -317,13 +337,32 @@ function refresh($: Engine, isForced = false): Promise<void> {
 }
 
 /** Puts an item the CLI just changed in the band's list, in place of what it showed. */
-const replace = ($: Engine, item: Item) =>
-  update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
+async function replace($: Engine, item: Item): Promise<void> {
+  await update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
+  await forgetAsked($, [item])
+}
 
-/** Closes a drawer when it is the one open, and with it any question of how long to snooze. */
+/**
+ * Forgets what an item's drawer was asking once the question no longer fits
+ * the item, wherever that happened: either question once the item is
+ * resolved, and how long to snooze once it is snoozed. The drawer then opens
+ * on its actions when the item comes back. A snoozed item can still be
+ * dismissed, so its dismiss confirmation stands.
+ */
+async function forgetAsked($: Engine, changed: readonly Item[]): Promise<void> {
+  const was = await read($, asked)
+  const item = changed.find(one => `item:${one.ref}` === was?.drawer)
+  if (was === null || item === undefined) return
+  const isMoot =
+    item.answer !== undefined || (was.about === 'snooze' && isSnoozedAt(item, await $.clock.now()))
+  if (!isMoot) return
+  await update($, asked, now => (now?.drawer === was.drawer && now.about === was.about ? null : now))
+}
+
+/** Closes a drawer when it is the one open, and with it anything the drawer was asking. */
 async function closeDrawer($: Engine, key: string): Promise<void> {
   await update($, drawer, was => (was === key ? null : was))
-  await update($, snoozing, was => (was === key ? null : was))
+  await update($, asked, was => (was?.drawer === key ? null : was))
 }
 
 /**
@@ -366,6 +405,7 @@ async function setItems($: Engine, list: Item[]): Promise<void> {
     isNew = list.some(one => isAwake(one) && !awake.has(one.ref))
     return list
   })
+  await forgetAsked($, list)
   if (isNew && !(await read($, isShown))) show($)
 }
 
@@ -690,8 +730,6 @@ function byAuthor(rows: readonly Row[], viewer: string | null): Row[] {
   ]
 }
 
-const ago = (seconds: number) => (seconds < 5 ? 'just now' : `${span(seconds)} ago`)
-
 const secondsSince = (time: number, then: number) => Math.max(0, Math.round((time - then) / 1000))
 
 /** Labels a pull request `#12` when the band shows one repository, else by its repository's name. */
@@ -931,7 +969,7 @@ export const register: Register = on => {
     const shown = current(await read($, snapshot))
     const time = await read($, now)
     const opened = await read($, drawer)
-    const asking = await read($, snoozing)
+    const asking = await read($, asked)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
     const counts = (['question', 'notice'] as const).map(kind => {
       const count = shownItems.filter(
@@ -949,13 +987,11 @@ export const register: Register = on => {
       0,
       ...shown.rows.filter(row => !isOwn(row.pr, shown.viewer)).map(row => (row.pr.author ?? '').length),
     )
-    const heading = [
-      ...counts,
-      shown.fetchedAt === null ? undefined : `updated ${ago(secondsSince(time, shown.fetchedAt))}`,
-    ]
-      .filter(part => part !== undefined)
-      .join(' · ')
-    const updated = heading === '' ? '' : ` ${heading}`
+    // The divider starts with the counts and ends with how long ago the band
+    // reloaded, in the short form and the color of the rows' ages, so the
+    // time ends in their column.
+    const tally = counts.filter(part => part !== undefined).join(' · ')
+    const reloaded = shown.fetchedAt === null ? '' : span(secondsSince(time, shown.fetchedAt))
     // A failed poll keeps drawing the pull requests GitHub last gave, and the
     // divider's time says how old they are, so the band says why it failed
     // only when it has none of them to draw.
@@ -966,25 +1002,36 @@ export const register: Register = on => {
     const carry = (pressed: string, onto: string | undefined) => {
       if (ring?.key === pressed && onto !== undefined) void focusOn($, ring.requestId, onto)
     }
+    // A drawer asks before it snoozes or dismisses, in its actions' place,
+    // until the question is answered or another drawer opens.
+    const ask = (key: string, about: 'snooze' | 'dismiss' | null) => {
+      update($, asked, () => (about === null ? null : { drawer: key, about })).catch(() => undefined)
+    }
+    const isAsked = (key: string, about: 'snooze' | 'dismiss') => asking?.drawer === key && asking.about === about
     // A line's press opens or closes its drawer, and the ring goes onto the
     // drawer's first control or back onto the line. A drawer always opens on
-    // its actions, never on a question of how long to snooze.
+    // its actions, never on a question it asked before.
     const toggle = (key: string, line: string, onto?: string) => {
       update($, drawer, was => (was === key ? null : key)).catch(() => undefined)
-      update($, snoozing, () => null).catch(() => undefined)
+      ask(key, null)
       carry(line, onto)
     }
 
     // The engine draws the band's `[-]` just past `bodyColumns` on the first
     // row, so a divider that fills the body ends at the mark, and a blank line
-    // sets it apart from the rows under it. Only a terminal lays text out in
+    // sets it apart from the rows under it. The counts follow one `─` at its
+    // start, and its rule runs from them to the time, as an open item's rule
+    // runs from its subject to its age. Only a terminal lays text out in
     // those columns; any other surface would wrap the rule, so it draws none.
+    const lead = tally === '' ? '' : `─ ${tally} `
+    const tail = reloaded === '' ? '' : ` ${reloaded}`
+    const rule = `${lead}${'─'.repeat(Math.max(0, e.props.bodyColumns - lead.length - tail.length))}`
     const divider =
       e.surface === 'terminal'
         ? [
             <Text key="divider">
-              {'─'.repeat(Math.max(0, e.props.bodyColumns - updated.length))}
-              {updated}
+              {reloaded === '' ? rule : `${rule} `}
+              {reloaded !== '' && <Text color="subtle">{reloaded}</Text>}
             </Text>,
             <Text key="under-divider"> </Text>,
           ]
@@ -1047,29 +1094,18 @@ export const register: Register = on => {
     // as one block after the key.
     //
     // A drawer's actions follow its options, a line each: a plain Button on
-    // its letter, as `d: discuss question`. A letter presses its action while
-    // the band holds the keyboard: `d` discusses, `x` sets the line aside or
-    // brings it back, and `s` puts it off or ends the snooze.
-    type Action = { name: string; label: string; hotkey: 'd' | 'x' | 's'; onPress: () => void }
-    const drawActions = (id: string, actions: readonly Action[]) =>
-      actions.map(({ name, label, hotkey, onPress }) => (
+    // its digit, as `7: discuss question`. The digits count down from 9, so
+    // the options keep 1 to 6 and the item's line 0: `7` discusses, `8` sets
+    // the line aside or brings it back, and `9` puts it off or ends the
+    // snooze. A digit presses its line as an option's digit presses it. What
+    // a drawer asks in its actions' place draws the same way.
+    type Line = { name: string; label: string; hotkey: string; onPress: () => void }
+    const drawLines = (id: string, lines: readonly Line[]) =>
+      lines.map(({ name, label, hotkey, onPress }) => (
         <Button key={`${name}:${id}`} plain hotkey={hotkey} onPress={onPress}>
           {label}
         </Button>
       ))
-    // The lengths snooze offers share one row, `|` between them, with no
-    // keys, since the digits belong to a question's options.
-    type Length = { name: string; label: string; onPress: () => void }
-    const drawLengths = (id: string, lengths: readonly Length[]) => (
-      <Box flexDirection="row" columnGap={1}>
-        {lengths.flatMap(({ name, label, onPress }, at) => [
-          ...(at === 0 ? [] : [<Text key={`between:${id}.${at}`} color="subtle">|</Text>]),
-          <Button key={`${name}:${id}`} plain onPress={onPress}>
-            <Text>{label}</Text>
-          </Button>,
-        ])}
-      </Box>
-    )
     // An open question's options are plain Buttons on the digits 1 to 6,
     // which the engine draws before them, as `1: Decline it`. A digit presses
     // its option from the band, or typed first into an empty prompt, as a
@@ -1117,22 +1153,26 @@ export const register: Register = on => {
       // A snoozed item stays listed for 30 seconds, muted but not struck
       // through, so it reads as put off rather than dismissed.
       const isSnoozed = isSnoozedAt(item, time)
-      const color = !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' ? QUESTION_COLOR : undefined
+      const isOpened = opened === key
+      const color = !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' ? QUESTION_COLOR : NOTICE_COLOR
       const pull = pullOf(item)
       // Each action names the kind of item it acts on. A dismissed or snoozed
       // item's drawer offers to bring it back where it offered to dismiss or
-      // snooze it, on the same letter; a resolved item cannot be snoozed.
-      const restore = (name: string, hotkey: Action['hotkey']): Action => ({
+      // snooze it, on the same digit; a resolved item cannot be snoozed.
+      const restore = (name: string, hotkey: string): Line => ({
         name,
         label: `${name} ${item.kind}`,
         hotkey,
-        onPress: () => void act($, item, 'restore'),
+        onPress: () => {
+          ask(key, null)
+          void act($, item, 'restore')
+        },
       })
-      const actions: Action[] = [
+      const actions: Line[] = [
         {
           name: 'discuss',
           label: `discuss ${item.kind}`,
-          hotkey: 'd',
+          hotkey: '7',
           onPress: () => {
             if (item.kind === 'question') propose(item, '')
             fill(`${quoteOf(item)}\n\n`)
@@ -1143,53 +1183,90 @@ export const register: Register = on => {
               {
                 name: 'dismiss',
                 label: `dismiss ${item.kind}`,
-                hotkey: 'x' as const,
-                onPress: () => void act($, item, 'dismiss'),
+                hotkey: '8',
+                onPress: () => {
+                  ask(key, 'dismiss')
+                  carry(`dismiss:${ref}`, `confirm:${ref}`)
+                },
               },
               isSnoozed
-                ? restore('unsnooze', 's')
+                ? restore('unsnooze', '9')
                 : {
                     name: 'snooze',
                     label: `snooze ${item.kind}`,
-                    hotkey: 's' as const,
+                    hotkey: '9',
                     onPress: () => {
-                      update($, snoozing, () => key).catch(() => undefined)
+                      ask(key, 'snooze')
                       carry(`snooze:${ref}`, `snooze-${SNOOZES[0].minutes}:${ref}`)
                     },
                   },
             ]
           : isDismissed
-            ? [restore('restore', 'x')]
+            ? [restore('restore', '8')]
             : []),
       ]
-      // Snooze asks how long before it snoozes anything: the action lines
-      // give way to the lengths and cancel, which puts the actions back.
-      const isAsking = asking === key && isOpen && !isSnoozed
-      const lengths: Length[] = [
-        ...SNOOZES.map(({ label, minutes }) => ({
+      // Snooze asks how long before it snoozes anything. While it asks, the
+      // lengths take the options' place and digits, and `9` cancels in the
+      // actions' place, putting both back.
+      const lengths: Line[] = [
+        ...SNOOZES.map(({ label, minutes }, index) => ({
           name: `snooze-${minutes}`,
           label,
+          hotkey: String(index + 1),
           onPress: () => {
-            update($, snoozing, () => null).catch(() => undefined)
+            ask(key, null)
             void act($, item, 'snooze', minutes)
           },
         })),
         {
           name: 'cancel',
           label: 'cancel',
+          hotkey: '9',
           onPress: () => {
-            update($, snoozing, () => null).catch(() => undefined)
+            ask(key, null)
             carry(`cancel:${ref}`, `snooze:${ref}`)
           },
         },
       ]
+      // Dismiss asks to be sure: its own digit again dismisses, so a stray `8`
+      // only asks, and `9` keeps the item and puts the actions back.
+      const confirmation: Line[] = [
+        {
+          name: 'confirm',
+          label: `yes, dismiss ${item.kind}`,
+          hotkey: '8',
+          onPress: () => {
+            ask(key, null)
+            void act($, item, 'dismiss')
+          },
+        },
+        {
+          name: 'keep',
+          label: 'no, keep it',
+          hotkey: '9',
+          onPress: () => {
+            ask(key, null)
+            carry(`keep:${ref}`, `dismiss:${ref}`)
+          },
+        },
+      ]
+      const isChoosingLength = isOpen && !isSnoozed && isAsked(key, 'snooze')
       // An open item's line has the band to itself, so closing its drawer
       // puts the line back lower in the list. The engine keeps the ring by
       // position, and the open line's key is one the list never draws, so a
       // move onto the line in the list waits for the band to draw the list.
-      const isOpened = opened === key
       const line = isOpened ? `close:${ref}` : key
       const first = item.kind === 'question' && isOpen ? `answer:${ref}.${letterAt(0)}` : `discuss:${ref}`
+      const isSending = !isOpen && item.deliveredAt === undefined
+      // An open item's line is the band's top bar while the divider steps
+      // aside, so in a terminal a rule fills it to `bodyColumns`, as the
+      // divider's does: a space and `─` from after the `0: ` and the subject
+      // to the columns its notes and age take, each with the gap before it.
+      // A title too long for one row with room for a short rule draws none.
+      const notesWidth =
+        (isSending ? 'sending'.length + 1 : 0) + (pull === '' ? 0 : [...pull].length + 1) + ageWidth + 1
+      const ruleWidth = e.props.bodyColumns - DRAWER_INDENT - [...item.subject].length - 1 - notesWidth
+      const rule = isOpened && e.surface === 'terminal' && ruleWidth >= MIN_RULE ? ` ${'─'.repeat(ruleWidth)}` : ''
 
       return (
         <Box key={`line:${ref}`} flexDirection="column">
@@ -1198,25 +1275,26 @@ export const register: Register = on => {
                 opens its drawer: a click in fullscreen, Enter on the main
                 screen. */}
             <Box flexGrow={1} flexShrink={1}>
-              {/* An open drawer keeps its item inverted, as the pointer draws it,
-                  and its line closes the drawer on `0`, a digit the options
-                  leave free, drawn before it as `0: `. Like the options' digits,
-                  it works from an empty prompt too. */}
+              {/* An open item's line closes its drawer on `0`, a digit the
+                  options leave free, which the engine draws before it in the
+                  bullet's place; the drawer below is indented to its text.
+                  Like the options' digits, it works from an empty prompt too. */}
               <Button
                 key={line}
                 plain
-                hotkey={isOpened ? '0' : undefined}
+                hotkey={isOpened ? CLOSE_HOTKEY : undefined}
                 onPress={() => toggle(key, line, isOpened ? key : first)}
               >
-                <Text color={color} inverse={isOpened}>
-                  -{' '}
-                </Text>
-                <Text color={color} strikethrough={isDismissed} inverse={isOpened}>
+                {!isOpened && <Text color={color}>- </Text>}
+                <Text color={color} strikethrough={isDismissed}>
                   {item.subject}
                 </Text>
               </Button>
+              {/* Beside the Button, not in it, so a hover or the focus ring
+                  inverts the title alone. */}
+              {rule !== '' && <Text key={`rule:${ref}`}>{rule}</Text>}
             </Box>
-            {!isOpen && item.deliveredAt === undefined && (
+            {isSending && (
               <Box flexShrink={0}>
                 <Text color="subtle">sending</Text>
               </Box>
@@ -1229,15 +1307,19 @@ export const register: Register = on => {
             {ageColumn(key, item.postedAt)}
           </Box>
           {isOpened && (
-            <Box flexDirection="column" marginLeft={2}>
+            <Box key={`drawer:${key}`} flexDirection="column" marginLeft={DRAWER_INDENT}>
               {/* A blank line sets the item apart from its line, and the detail,
                   when there is one, sits between two. Another sets the actions,
-                  or the lengths snooze offers, apart from what comes above. */}
+                  or what the drawer asks in their place, apart from what comes
+                  above. */}
               {item.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
-              {item.kind === 'question' && drawAnswers(item)}
+              {item.kind === 'question' && !isChoosingLength && drawAnswers(item)}
               <Text key={`before-buttons:${ref}`}> </Text>
-              {isAsking ? drawLengths(ref, lengths) : drawActions(ref, actions)}
+              {drawLines(
+                ref,
+                isChoosingLength ? lengths : isOpen && isAsked(key, 'dismiss') ? confirmation : actions,
+              )}
             </Box>
           )}
         </Box>
@@ -1315,10 +1397,42 @@ export const register: Register = on => {
                   links. Each link has a line of its own: a terminal without
                   hyperlinks draws a link's URL after its text, and a shared
                   line would cut the URL off. */}
-              {drawActions(key, [
-                { name: 'discuss', label: 'discuss PR', hotkey: 'd', onPress: () => fill(`${reference(pr)} `) },
-                { name: 'dismiss', label: 'dismiss PR', hotkey: 'x', onPress: () => void dismissPr($, pr) },
-              ])}
+              {drawLines(
+                key,
+                isAsked(key, 'dismiss')
+                  ? [
+                      {
+                        name: 'confirm',
+                        label: 'yes, dismiss PR',
+                        hotkey: '8',
+                        onPress: () => {
+                          ask(key, null)
+                          void dismissPr($, pr)
+                        },
+                      },
+                      {
+                        name: 'keep',
+                        label: 'no, keep it',
+                        hotkey: '9',
+                        onPress: () => {
+                          ask(key, null)
+                          carry(`keep:${key}`, `dismiss:${key}`)
+                        },
+                      },
+                    ]
+                  : [
+                      { name: 'discuss', label: 'discuss PR', hotkey: '7', onPress: () => fill(`${reference(pr)} `) },
+                      {
+                        name: 'dismiss',
+                        label: 'dismiss PR',
+                        hotkey: '8',
+                        onPress: () => {
+                          ask(key, 'dismiss')
+                          carry(`dismiss:${key}`, `confirm:${key}`)
+                        },
+                      },
+                    ],
+              )}
               <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
               {pr.summaryUrl !== null && (
                 <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />

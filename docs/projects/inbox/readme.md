@@ -1647,7 +1647,7 @@ review threads as a count after `⋮`.
 | Behavior | Test |
 | --- | --- |
 | The drawer's links read `open in github` and `open in projector`; on the facts line watching takes `ansi256(4)` and reviewing `claude`, each word its own when both loops track it, the branch `ansi256(6)`, the size's `+N` `success` and its `−N` `error`, `checks <state>` the checks' color, and ` in N files`, ` and `, and each `·` stay plain; the open-thread count reads `2⋮`, in `warning`, after the other notes | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `opening one drawer closes the one that was open`, and `lists a pull request both loops track once, as watched and reviewed` in `hooks/band.test.tsx` |
-| Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in the default color` |
+| Every item's line starts with `-`; an open question's takes `permission`, inverted while its drawer is open; an open notice's takes no color, `inactive` since § 18; resolved, dismissed, and snoozed items take `subtle`, the dismissed one struck through; nothing uses `dimColor` | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in gray` |
 | **snooze** shows the lengths and cancel, runs nothing, and takes no digits; each length runs `snooze --for` with its minutes; **cancel** and closing the drawer put the actions back; Enter carries the ring onto the first length and back onto **snooze** | `snooze asks how long, and only a length it offers snoozes the item`, and the snooze tests § 14.4 lists, which now pick a length |
 | A restored question's line returns to `permission` | `dismiss closes an item’s drawer and strikes it through, and its drawer offers restore in dismiss’s place`, `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` |
 
@@ -1698,3 +1698,137 @@ anywhere in it, not only with the ring on its line.
 | No line of the list and no pull request's drawer takes `0`; each open item's line takes it, open, answered, dismissed, or snoozed, and pressing it closes the drawer | `an open item’s line closes its drawer on 0, and no other line takes 0` in `hooks/band.test.tsx` |
 | The only digit in a resolved question's, a notice's, or a snoozing drawer is the line's `0` | `an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open`, `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `snooze asks how long, and only a length it offers snoozes the item` |
 | `0` from an empty prompt and the line's look with the prefix | Checked by hand by the owner in a preview session |
+
+## 18. Count a drawer's actions down from 9, and confirm a dismiss
+
+A drawer's action lines take the digits `7`, `8`, and `9` in place of the
+letters `d`, `x`, and `s`. Dismiss asks to be sure before it dismisses
+anything, and snooze's lengths take digits too, on lines of their own in
+the options' place. This section supersedes § 15's letters, the bullet of
+§ 15.2 under which actions take letters by their place, § 16's note that
+the snooze lengths take no hotkeys and sit on one `|`-separated row,
+§ 16's default color for an open notice, and § 10's note that the
+divider's "updated" time stays.
+
+### 18.1 What changes
+
+- **Actions count down from 9.** **discuss** takes `7`, the second place
+  `8`, whether it holds **dismiss** or **restore**, and the third `9`,
+  whether it holds **snooze** or **unsnooze**. They draw as
+  `7: discuss question`, `8: dismiss question`, and `9: snooze question`,
+  with `notice` for a notice. A pull request's drawer reads
+  `7: discuss PR` and `8: dismiss PR`. An action's digit works as an
+  option's does: while the band holds the keyboard, and typed first into
+  an empty prompt while its line is wholly in the band's view, under the
+  engine's 600 ms and 400 ms rules.
+- **Dismiss asks to confirm.** Pressing **dismiss**, by its digit or a
+  click, runs nothing. The action lines give way to
+  `8: yes, dismiss question` and `9: no, keep it`, or `notice`, or `PR` on
+  a pull request's drawer. `8` again, or a click on the first line,
+  dismisses as before. `9`, closing the drawer, or opening another puts the
+  action lines back. So a deliberate dismiss from the keyboard is `8` `8`,
+  and a lone stray `8` only asks. **restore** and **unsnooze** act at once.
+- **Snooze's lengths take digits.** While snooze asks how long, a
+  question's options are hidden, which frees `1` to `6`, and the lengths
+  draw as keyed lines in their place: `1: 15 min`, `2: 1 hour`,
+  `3: 4 hours`, and `4: 1 day`, then `9: cancel` in the actions' place,
+  matching `9: no, keep it`. A notice shows the same lines. Picking a
+  length snoozes as before; `9`, closing the drawer, or opening another
+  brings the options and the action lines back.
+- **The ring moves with each question.** Enter on **dismiss** moves the
+  focus ring onto the confirmation and Enter on `no, keep it` back onto
+  **dismiss**, as Enter on **snooze** moves it onto `1: 15 min` and Enter
+  on `9: cancel` back onto **snooze**.
+- **The open item's line is plain.** An open item's own line, at the top
+  of its drawer, drops its `- ` bullet, so the engine's `0: ` takes the
+  bullet's place, and it is no longer inverted: its subject keeps the
+  item's color, `permission` for an open question, `inactive` for a
+  notice, and `subtle` for a resolved or snoozed item. The owner tried the
+  default color for an open question there before keeping `permission`.
+  The focus ring still inverts the line when the ring is on it, as it does
+  any Button. A pull request's number was never inverted while its drawer
+  is open, so it is unchanged. Items in the list keep their bullets.
+- **The open line is the band's top bar.** With the divider stepped aside,
+  in a terminal the open item's line ends in a rule like the divider's, in
+  the default text color whatever the subject's color: a space and `─` to
+  the gap before the item's pull request and age, so the row ends at
+  `bodyColumns`, where the engine draws `[-]`. The width counts the `0: `
+  the engine draws. The rule is a `Text` beside the line's Button, so a
+  hover or the focus ring inverts the subject alone. A subject that leaves
+  fewer than three cells for the rule, which a subject that wraps always
+  does, draws none rather than filling a wrapped row. Another surface
+  draws the subject alone, as it draws no divider.
+- **The drawer lines up under the open line's text.** The `0: ` the
+  engine draws before the open line moved its text right of where the
+  drawer started, so a question's `1:` sat left of the question. The
+  drawer is now indented by the width of that prefix, computed from the
+  close key, so every line in it, the detail, the options, and the
+  actions, starts under the item's first letter.
+- **One atom holds what a drawer asks.** `bandAsked` records the drawer
+  and whether it asks how long to snooze or whether to dismiss, in place
+  of § 16's `bandSnoozing`. The band forgets the question when the drawer
+  closes by any path and when it is answered. It also forgets it when the
+  question no longer fits the item, wherever that happened, in the band,
+  by a tool, or from a terminal: either question once the item is
+  resolved, and the snooze lengths once it is snoozed. A restored or
+  unsnoozed item's drawer then opens on its actions. A snoozed item can
+  still be dismissed, so its dismiss confirmation stands.
+- **An open notice is gray.** An open notice's line is drawn in the
+  theme's mid gray, `inactive`, rgb(153,153,153) on a dark theme: its
+  bullet and subject in the list, and its subject as the open line at the
+  top of its drawer. It stays apart from the `subtle` of a resolved or
+  snoozed item, which is unchanged, as are an open question's `permission` and the
+  default color of the rule after an open item's subject. A plain `gray`
+  would draw in the default color, so the band names the theme key. The
+  color lives in one constant, `NOTICE_COLOR`, beside `QUESTION_COLOR` in
+  `hooks/register.tsx`, so trying another gray, such as the terminal's own
+  `ansi256(8)`, changes one line.
+- **The divider's time reads as an age.** The divider ends with how long
+  ago the band reloaded as the rows end with their ages: in `span`'s short
+  form, such as `12s`, in `subtle`, and ending at `bodyColumns`, where the
+  rows' ages end, just before the engine's `[-]`. It drops "updated" and
+  "ago", and a reload just now reads `0s`, as an item posted just now does,
+  in place of "just now". The counts of open questions and open notices
+  follow one `─` and a space at the divider's start, and its rule runs from
+  them to the time, as an open item's rule runs from its subject to its
+  age: `─ 2 questions · 1 notice ───── 12s`. The rule's length leaves room
+  for the `─ ` and the counts, so the row still ends at `bodyColumns`. With
+  no open item, the divider is the rule and the time. The time ends where
+  the ages end without joining the width of their column.
+
+### 18.2 Why this design
+
+- **Digits rather than letters.** A digit works from an empty prompt as
+  well as from the band, where a letter works only from the band, so the
+  actions now work the same two ways as the options. Counting down from
+  `9` leaves `1` to `6` to the options and `0` to the item's line, so no
+  two keys in a drawer clash.
+- **A confirmation for the one action that loses something.** Dismissing
+  resolves an item and tells its agent. With digits that work from an
+  empty prompt, one stray `8` could do that, so dismiss asks first, on the
+  same digit, which keeps the deliberate case to two presses of one key.
+  Restore and unsnooze bring an item back and lose nothing, so they act at
+  once.
+- **The lengths take the options' digits.** While snooze asks, the options
+  have nothing to do, so hiding them frees `1` to `6` for the lengths, and
+  `9` cancels both questions a drawer asks.
+- **The divider's time stays out of the age column's width.** The reload's
+  age changes with every poll, from `0s` to `59s` to `1m`. Counting it in
+  the column's width would move every row's notes a column whenever its
+  length changed, so it only ends where the column ends.
+
+### 18.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| A drawer's actions take `7`, `8`, and `9` by place, labelled by kind, **restore** and **unsnooze** included; a pull request's take `7` and `8` | `a drawer’s actions follow its options a line each, on 7, 8 and 9, named for what they act on` in `hooks/band.test.tsx` |
+| No line of an open drawer takes a letter; dismiss shows the confirmation and runs nothing; `8` `8` dismisses; `9` and closing the drawer put the actions back; the ring moves onto the confirmation and back; a notice's and a pull request's confirmations; restore and unsnooze act at once | `dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once` |
+| While snooze asks, a question's options are hidden and the lengths take `1` to `4` and cancel `9`; a notice shows the same lines; each digit's minutes; `9` and closing restore the drawer | `snooze asks how long on 1 to 4 in the options’ place, and only a length it offers snoozes the item` |
+| Each dismiss the other tests make now confirms it | The pull request and item dismiss tests § 14.4 and § 15.4 list |
+| An open item's line has no bullet and no inverse, in `permission` for an open question, `inactive` for a notice, and `subtle` for a resolved or snoozed item; the drawer of a question, a notice, and a resolved question is indented by the width of the `0: ` prefix, so its lines start under the item's text | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle ``, `a drawer’s actions follow its options a line each, on 7, 8 and 9, named for what they act on` |
+| A question asked before the item was dismissed or snoozed elsewhere is forgotten, so restoring or unsnoozing the item opens its drawer on its actions | `a question a drawer asked is forgotten once its item is resolved or snoozed, so a restored item opens on its actions` |
+| In a terminal, an open item's line ends in a default-colored rule beside its Button, out to `bodyColumns`; a long subject draws none, and another surface none | `an open item’s line ends in a rule to the band’s edge on a terminal, beside its Button` |
+| A dismiss confirmation on a snoozed item stands across an unrelated read of the store | `a dismiss confirmation on a snoozed item survives an unrelated change to the store` |
+| An open notice's line, in the list and at the top of its drawer, takes `inactive`, and the rule after it the default color; an unsnoozed notice's line returns to `inactive` | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle ``, `a subagent tells through the tool, and the band lists the notice in gray`, `snooze closes an item’s drawer and mutes it for 30 seconds, and its drawer offers unsnooze in snooze’s place` |
+| The divider ends with the reload's age, `0s` just after a reload, in `subtle`, ending at `bodyColumns`, with no "updated", "ago", or "just now"; the counts follow a `─ ` at its start, and its rule runs from them to the time, the row still ending at `bodyColumns` | `draws one line per open pull request of the session’s own loops`, `asks through the tool, and the band lists the question below the pull requests`, and the tests that find the divider by its counts |
+| The digits from an empty prompt, and the confirmation's look | Checked by hand by the owner in a preview session |

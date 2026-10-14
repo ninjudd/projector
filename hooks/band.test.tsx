@@ -170,14 +170,26 @@ test('draws one line per open pull request of the session’s own loops', async 
   expect((await ui.findAll({ type: 'Text', text: '1⋮' })).map(found => found.props.color)).toContain('warning')
   expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-  const divider = await ui.find({ type: 'Text', text: /^─+ updated (just now|\d+s ago)$/ })
+  // The divider ends with how long ago the band reloaded as the rows end with their ages: in the short form,
+  // `0s` for a reload just now as for an item posted just now, in `subtle`, and ending at bodyColumns.
+  const divider = await ui.find({ type: 'Text', text: /^─+ 0s$/ })
   expect(divider?.text.length).toBe(BAND.props.bodyColumns)
-  // The divider is drawn at full strength, not muted like the rows' details.
+  expect(await ui.find({ type: 'Text', text: /updated|ago|just now/ })).toBeUndefined()
+  const parts = (divider?.children ?? []) as (string | { props: { color?: string }; children: string[] })[]
+  expect(parts.map(part => (typeof part === 'string' ? part : [part.children.join(''), part.props.color]))).toEqual([
+    expect.stringMatching(/^─+ $/),
+    ['0s', 'subtle'],
+  ])
+  // The rule is drawn at full strength, not muted like the rows' details.
   expect(divider?.props.color).toBeUndefined()
   expect(divider?.props.dimColor).toBeUndefined()
   // A blank line sets the divider apart from the rows under it.
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts[texts.indexOf(divider?.text ?? '') + 1]).toBe(' ')
+  expect(texts.slice(texts.indexOf(divider?.text ?? ''), texts.indexOf(divider?.text ?? '') + 3)).toEqual([
+    divider?.text,
+    '0s',
+    ' ',
+  ])
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
@@ -362,6 +374,8 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
   expect((await ui.find({ type: 'Button', key: 'dismiss:x/y#7' }))?.props.plain).toBe(true)
 
   await ui.press({ key: 'dismiss:x/y#7' })
+
+  await ui.press({ key: 'confirm:x/y#7' })
   await clock.settle()
 
   expect(commands.filter(argv => argv[0] === 'project')).toEqual([
@@ -388,6 +402,7 @@ test('a dismiss the CLI refuses says why and keeps the line', async ($, on) => {
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'pr:x/y#7' })
   await ui.press({ key: 'dismiss:x/y#7' })
+  await ui.press({ key: 'confirm:x/y#7' })
   await clock.settle()
 
   expect(toasts).toEqual([`projector: no tracked file at ${WATCH}`])
@@ -430,6 +445,7 @@ test('a pull request’s drawer closes when its line leaves the band, so it does
   // So does dismissing it from its drawer.
   await ui.press({ key: 'pr:x/y#7' })
   await ui.press({ key: 'dismiss:x/y#7' })
+  await ui.press({ key: 'confirm:x/y#7' })
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   files[WATCH] = 'x/y#7\n'
@@ -617,7 +633,7 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
   // `dimColor` does not dim in every terminal, so the tagline takes the theme's subtle color.
   expect((await ui.find({ type: 'Text', text: ` ${TAGLINE}` }))?.props.color).toBe('subtle')
   expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─+ \d+s$/ })).toBeDefined()
   await ui.unmount()
 
   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
@@ -1007,7 +1023,10 @@ test('asks through the tool, and the band lists the question below the pull requ
   await clock.advance(1)
   await clock.settle()
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated (just now|\d+s ago)$/ })).toBeDefined()
+  // The divider starts with one `─` and the count, and its rule runs from the count to the reload's age, so the
+  // row still ends at bodyColumns.
+  const divider = await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })
+  expect(divider?.text.length).toBe(BAND.props.bodyColumns)
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts).toContain('Conflicting change')
   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
@@ -1017,7 +1036,7 @@ test('asks through the tool, and the band lists the question below the pull requ
   await ui.unmount()
 })
 
-test('every item takes the `-` bullet, an open question the permission color, and a resolved or snoozed one subtle', async ($, on) => {
+test('every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
@@ -1031,20 +1050,21 @@ test('every item takes the `-` bullet, an open question the permission color, an
   ])
   await startSession($, clock)
   const ui = await $.ui.mount(BAND)
-  type Part = { props: { color?: string; strikethrough?: boolean; inverse?: boolean }; children: string[] }
+  type Part = { props?: { color?: string; strikethrough?: boolean; inverse?: boolean }; children: string[] }
   /** Each part of an item's line, the bullet then the subject: its text, color, and strikethrough. */
   const lineOf = async (key: string) => {
     const parts = ((await ui.find({ type: 'Button', key }))?.children ?? []) as Part[]
-    return parts.map(part => [part.children.join(''), part.props.color, part.props.strikethrough === true])
+    return parts.map(part => [part.children.join(''), part.props?.color, part.props?.strikethrough === true])
   }
 
   expect(await lineOf('item:1')).toEqual([
     ['- ', 'permission', false],
     ['Decline the finding?', 'permission', false],
   ])
+  // An open notice's line takes the theme's mid gray, `inactive`, apart from the `subtle` of a resolved item.
   expect(await lineOf('item:2')).toEqual([
-    ['- ', undefined, false],
-    [FORCE_PUSHED, undefined, false],
+    ['- ', 'inactive', false],
+    [FORCE_PUSHED, 'inactive', false],
   ])
   expect(await lineOf('item:3')).toEqual([
     ['- ', 'subtle', false],
@@ -1060,13 +1080,30 @@ test('every item takes the `-` bullet, an open question the permission color, an
   ])
   expect((await ui.findAll({ type: 'Text' })).filter(text => text.props.dimColor !== undefined)).toEqual([])
 
-  // An open question's line stays in its color, inverted, while its drawer is open.
+  // An open item's line drops its bullet, for the `0` the engine draws in its place, and is not inverted: its subject
+  // keeps the item's color, `permission` for an open question.
   await ui.press({ key: 'item:1' })
   const opened = ((await ui.find({ type: 'Button', key: 'close:1' }))?.children ?? []) as Part[]
-  expect(opened.map(part => [part.props.color, part.props.inverse])).toEqual([
-    ['permission', true],
-    ['permission', true],
+  expect(opened.map(part => [part.children.join(''), part.props?.color, part.props?.inverse])).toEqual([
+    ['Decline the finding?', 'permission', undefined],
   ])
+  await ui.press({ key: 'close:1' })
+  await ui.press({ key: 'item:2' })
+  const openNotice = ((await ui.find({ type: 'Button', key: 'close:2' }))?.children ?? []) as Part[]
+  expect(openNotice.map(part => [part.children.join(''), part.props?.color, part.props?.inverse])).toEqual([
+    [FORCE_PUSHED, 'inactive', undefined],
+  ])
+  // The rule after it stays in the default color.
+  expect((await ui.find({ type: 'Text', text: /^ ─+$/ }))?.props.color).toBeUndefined()
+  await ui.press({ key: 'close:2' })
+  // A resolved or snoozed item's open line keeps `subtle`, which shows its state.
+  await ui.press({ key: 'item:3' })
+  const resolved = ((await ui.find({ type: 'Button', key: 'close:3' }))?.children ?? []) as Part[]
+  expect(resolved.map(part => [part.children.join(''), part.props?.color])).toEqual([['Rebase first?', 'subtle']])
+  await ui.press({ key: 'close:3' })
+  await ui.press({ key: 'item:5' })
+  const snoozed = ((await ui.find({ type: 'Button', key: 'close:5' }))?.children ?? []) as Part[]
+  expect(snoozed.map(part => [part.children.join(''), part.props?.color])).toEqual([['Merged #6', 'subtle']])
   await ui.unmount()
 })
 
@@ -1150,7 +1187,7 @@ test('an idle session with no questions starts no project process', async ($, on
 
   expect(session.project()).toEqual([])
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─+ \d+s$/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -1176,7 +1213,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
   await ui.press({ key: 'item:1' })
   // The open question has the band to itself, the divider included, so it is the top row.
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /─+ \d+s$/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The loop caps retries at three.')
   // An answer in your own words goes through discuss, so only the options are numbered.
@@ -1223,13 +1260,13 @@ test('an option puts the question and its answer in the prompt, and sending it a
   expect((await ui.find({ type: 'Text', text: /^Decline it/ }))?.props.color).toBe('subtle')
   expect((await ui.find({ type: 'Text', text: /^Decline the finding\?$/ }))?.props.color).toBe('subtle')
   expect(await optionsOf(ui)).toEqual([])
-  // Only the line itself takes a digit, `0`, which closes the drawer.
-  expect(await digitsOf(ui)).toEqual(['close:1'])
+  // Only the line itself, on `0`, and discuss, on `7`, take a digit.
+  expect(await digitsOf(ui)).toEqual(['close:1', 'discuss:1'])
   expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeUndefined()
 
   await ui.press({ key: 'close:1' })
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
   await clock.advance(30_000 + TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
@@ -1339,6 +1376,7 @@ test('discuss keeps the drawer open with the question above a blank line, a repl
   await ui.press({ key: 'close:3' })
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'dismiss:2' })
+  await ui.press({ key: 'confirm:2' })
   expect(session.project()).toContain('inbox dismiss 2 --session s1 --json')
   await clock.advance(1)
   await clock.settle()
@@ -1372,7 +1410,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   expect(session.store.store.get('1')).toEqual(asked)
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
 
   // The question waits for its agent to settle it, and the band sends nothing.
   await clock.advance(TICK)
@@ -1636,7 +1674,7 @@ test('a number or an old reference typed in the prompt reaches the agent as plai
 
 const FORCE_PUSHED = 'Force-pushed #7 to drop a stray file'
 
-test('a subagent tells through the tool, and the band lists the notice in the default color', async ($, on) => {
+test('a subagent tells through the tool, and the band lists the notice in gray', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
@@ -1652,8 +1690,8 @@ test('a subagent tells through the tool, and the band lists the notice in the de
   await clock.advance(1)
   await clock.settle()
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated (just now|\d+s ago)$/ })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 notice ─+ \d+s$/ })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBe('inactive')
   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
   await ui.unmount()
@@ -1723,10 +1761,10 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   await startSession($, clock)
 
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question · 1 notice ─+ \d+s$/ })).toBeDefined()
   await ui.press({ key: 'item:2' })
   // An open notice has the band to itself, the divider included, as an open question does.
-  expect(await ui.find({ type: 'Text', text: /^─+/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /─+ \d+s$/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe('The file held a debug token.')
   expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeUndefined()
@@ -1734,15 +1772,17 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
     expect((await ui.find({ type: 'Button', key: `${name}:2` }))?.props.plain).toBe(true)
   }
   expect(await actionLinesOf(ui)).toEqual([
-    'discuss:2 d discuss notice',
-    'dismiss:2 x dismiss notice',
-    'snooze:2 s snooze notice',
+    'discuss:2 7 discuss notice',
+    'dismiss:2 8 dismiss notice',
+    'snooze:2 9 snooze notice',
   ])
 
   await ui.press({ key: 'discuss:2' })
   expect(session.filled).toEqual([`insert:"${FORCE_PUSHED}"\n\n`])
 
   await ui.press({ key: 'dismiss:2' })
+
+  await ui.press({ key: 'confirm:2' })
   await clock.settle()
   expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([
     'inbox dismiss 2 --session s1 --json',
@@ -1765,7 +1805,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
 
   await ui.press({ key: 'close:2' })
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
   await clock.advance(30_000 - 2 * TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
@@ -1793,7 +1833,7 @@ test('the withdraw tool takes an item out of the band at once, and nothing goes 
   // Before the band reads the store again, the item has gone and its drawer with it.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 notice · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 notice ─+ \d+s$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
 
   await clock.advance(TICK)
@@ -1868,7 +1908,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
   expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
 
   // The answer you chose from the old text answers nothing.
   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
@@ -2006,6 +2046,7 @@ test('a pick made before a revise, for a question dismissed before you send, ans
   await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
   await ui.press({ key: 'dismiss:2' })
+  await ui.press({ key: 'confirm:2' })
   await clock.settle()
   expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ dismissed: true }))
   await $.prompt.submit({ text: DECLINE, wait: false, origin: { kind: 'composer' } })
@@ -2066,7 +2107,7 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
   // Each stays listed for 30 seconds, out of the divider's counts, and then leaves the band.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^─+ updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─+ \d+s$/ })).toBeDefined()
   await clock.advance(30_000 + TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
@@ -2087,7 +2128,7 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
   expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
-  expect(await woken.find({ type: 'Text', text: /^─+ 1 question · 1 notice · updated/ })).toBeDefined()
+  expect(await woken.find({ type: 'Text', text: /^─ 1 question · 1 notice ─+ \d+s$/ })).toBeDefined()
   await woken.unmount()
 })
 
@@ -2100,7 +2141,7 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:1' })
   session.store.failing.locks = 2
-  for (const keys of [['dismiss:1'], ['snooze:1', 'snooze-60:1']]) {
+  for (const keys of [['dismiss:1', 'confirm:1'], ['snooze:1', 'snooze-60:1']]) {
     for (const key of keys) await ui.press({ key })
     await clock.settle()
   }
@@ -2212,7 +2253,7 @@ test('an item whose snooze ends while the band is hidden is drawn the moment the
   await clock.settle()
   const woken = await $.ui.mount(BAND)
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
-  expect(await woken.find({ type: 'Text', text: /^─+ 1 notice · updated/ })).toBeDefined()
+  expect(await woken.find({ type: 'Text', text: /^─ 1 notice ─+ \d+s$/ })).toBeDefined()
 
   await clock.advance(10 * TICK)
   await clock.settle()
@@ -2237,6 +2278,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
   await ui.press({ key: 'item:1' })
   expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
   await ui.press({ key: 'dismiss:1' })
+  await ui.press({ key: 'confirm:1' })
   await clock.settle()
   // The drawer closes, and the line stays, muted in the subtle color and struck through.
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
@@ -2268,6 +2310,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
 
   // Once the agent has heard DISMISSED, a restore sends RESTORED after it.
   await ui.press({ key: 'dismiss:1' })
+  await ui.press({ key: 'confirm:1' })
   await clock.advance(1)
   await clock.settle()
   expect(session.submitted.map(one => one.text)).toEqual(['DISMISSED 1 Decline the finding?'])
@@ -2310,7 +2353,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
     undefined,
     false,
   ])
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
 
   // Its line opens the drawer again, where unsnooze takes snooze's place.
   await ui.press({ key: 'item:2' })
@@ -2320,7 +2363,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
   expect(session.project()).toContain('inbox restore 2 --session s1 --json')
   expect(await ui.find({ key: 'detail:2' })).toBeDefined()
   expect(await actionsOf(ui, '2')).toEqual(['discuss:2', 'dismiss:2', 'snooze:2'])
-  expect((await line())?.props.color).toBeUndefined()
+  expect((await line())?.props.color).toBe('inactive')
   expect(session.store.store.get('2')).toEqual(notice())
 
   // Snoozed again, it leaves the band 30 seconds later, and nothing reached the agent.
@@ -2363,7 +2406,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
   const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
   expect([line?.props.color, line?.props.strikethrough]).toEqual(['permission', false])
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^─+ 1 question · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 1 question ─+ \d+s$/ })).toBeDefined()
   await clock.advance(TICK)
   await clock.settle()
   expect(session.submitted.map(one => one.text)).toEqual(['RESTORED 1 Decline the finding?'])
@@ -2418,7 +2461,7 @@ test('a restore brings a hidden band back, from the tool or from a terminal, as 
     expect(await isHidden()).toBe(false)
   }
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─+ 2 questions · 1 notice · updated/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^─ 2 questions · 1 notice ─+ \d+s$/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -2467,10 +2510,10 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while 
   const ui = await $.ui.mount(BAND)
   const digits = () => digitsOf(ui)
 
-  // A closed drawer leaves the digits to the prompt, and a notice's drawer takes only `0`, on its line.
+  // A closed drawer leaves the digits to the prompt, and a notice's drawer takes only `0`, on its line, and its actions'.
   expect(await digits()).toEqual([])
   await ui.press({ key: 'item:2' })
-  expect(await digits()).toEqual(['close:2'])
+  expect(await digits()).toEqual(['close:2', 'discuss:2', 'dismiss:2', 'snooze:2'])
   await ui.press({ key: 'close:2' })
 
   await ui.press({ key: 'item:1' })
@@ -2489,10 +2532,10 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while 
   await clock.settle()
   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'f', text: 'Split the change' }))
 
-  // The answered question's drawer lists its options with no digits; only its line takes `0`.
+  // The answered question's drawer lists its options with no digits; only its line and discuss take one.
   await ui.press({ key: 'item:1' })
   expect(await ui.find({ type: 'Text', text: /^Split the change ✓$/ })).toBeDefined()
-  expect(await digits()).toEqual(['close:1'])
+  expect(await digits()).toEqual(['close:1', 'discuss:1'])
   await ui.unmount()
 })
 
@@ -2541,9 +2584,20 @@ async function actionLinesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
   return actions.map(action => `${action.key ?? ''} ${String(action.props.hotkey ?? '')} ${action.text}`)
 }
 
+/**
+ * How far an item's open drawer is indented, beside the width of the key prefix
+ * the engine draws before the item's line, as `0: `: equal when the drawer's
+ * lines start under the item's text.
+ */
+async function drawerIndentOf(ui: Pick<Mounted, 'find'>, ref: string): Promise<[unknown, number]> {
+  const drawer = await ui.find({ key: `drawer:item:${ref}` })
+  const line = await ui.find({ type: 'Button', key: `close:${ref}` })
+  return [drawer?.props.marginLeft, `${String(line?.props.hotkey ?? '')}: `.length]
+}
+
 /** An item's open drawer, row by row: a Text by its text, any other element by its key or type. */
 async function drawerRowsOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
-  const drawer = (await ui.findAll({ type: 'Box' })).find(box => box.props.marginLeft === 2)
+  const drawer = (await ui.findAll({ type: 'Box' })).find(box => box.key?.startsWith('drawer:item:'))
   type Row = { type: string; props: { key?: string }; children?: unknown[] }
   return ((drawer?.children ?? []) as Row[]).map(row =>
     row.type === 'Text'
@@ -2552,17 +2606,17 @@ async function drawerRowsOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
   )
 }
 
-test('a drawer’s actions follow its options a line each, on d, x and s, named for what they act on', async ($, on) => {
+test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named for what they act on', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   questionWorld(on, clock, [held(), notice()])
   await startSession($, clock)
   const ui = await $.ui.mount(BAND)
 
-  // No line of the band takes a letter; only an open drawer's actions do.
+  // No line of the list takes a key; only an open drawer's lines do.
   expect((await ui.findAll({ type: 'Button' })).filter(button => button.props.hotkey !== undefined)).toEqual([])
 
-  // A question's options and actions are one list: the options on their digits, then d, x and s.
+  // A question's options and actions are one list: the options on 1 to 6, then the actions on 7, 8 and 9.
   await ui.press({ key: 'item:1' })
   expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual([
     'close:1',
@@ -2573,10 +2627,13 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
     'snooze:1',
   ])
   expect(await actionLinesOf(ui)).toEqual([
-    'discuss:1 d discuss question',
-    'dismiss:1 x dismiss question',
-    'snooze:1 s snooze question',
+    'discuss:1 7 discuss question',
+    'dismiss:1 8 dismiss question',
+    'snooze:1 9 snooze question',
   ])
+  // The drawer starts under the item's text, past the `0: ` the engine draws before it, so `1:` and the detail sit
+  // under the question's first letter.
+  expect(await drawerIndentOf(ui, '1')).toEqual([3, 3])
   // A blank line sets the actions apart from the options, as one sets the detail apart, and no `|` joins them.
   expect(await drawerRowsOf(ui)).toEqual([
     'text: ',
@@ -2591,26 +2648,36 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
   ])
   expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
 
-  // The blank line stays above the lengths snooze offers in the actions' place.
+  // The lengths snooze offers take the options' place, under the detail, with the blank line above them.
   await ui.press({ key: 'snooze:1' })
-  expect((await drawerRowsOf(ui)).slice(-3)).toEqual(['answer:1.b', 'text: ', 'Box'])
+  expect(await drawerRowsOf(ui)).toEqual([
+    'text: ',
+    'detail:1',
+    'text: ',
+    'snooze-15:1',
+    'snooze-60:1',
+    'snooze-240:1',
+    'snooze-1440:1',
+    'cancel:1',
+  ])
 
   // Snoozed, unsnooze takes snooze's place.
   await ui.press({ key: 'snooze-60:1' })
   await clock.settle()
   await ui.press({ key: 'item:1' })
   expect(await actionLinesOf(ui)).toEqual([
-    'discuss:1 d discuss question',
-    'dismiss:1 x dismiss question',
-    'unsnooze:1 s unsnooze question',
+    'discuss:1 7 discuss question',
+    'dismiss:1 8 dismiss question',
+    'unsnooze:1 9 unsnooze question',
   ])
 
   // Dismissed, restore takes dismiss's place, and a resolved item has nothing to snooze.
   await ui.press({ key: 'dismiss:1' })
+  await ui.press({ key: 'confirm:1' })
   await clock.settle()
   await ui.press({ key: 'item:1' })
-  expect(await actionLinesOf(ui)).toEqual(['discuss:1 d discuss question', 'restore:1 x restore question'])
-  // A resolved question still lists its options, with the blank line under them.
+  expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss question', 'restore:1 8 restore question'])
+  // A resolved question still lists its options, with the blank line under them, under the item's text.
   expect((await drawerRowsOf(ui)).slice(2)).toEqual([
     'text: ',
     'text:Decline it',
@@ -2619,21 +2686,23 @@ test('a drawer’s actions follow its options a line each, on d, x and s, named 
     'discuss:1',
     'restore:1',
   ])
+  expect(await drawerIndentOf(ui, '1')).toEqual([3, 3])
   await ui.press({ key: 'close:1' })
 
   // A notice's actions name a notice.
   await ui.press({ key: 'item:2' })
   expect(await actionLinesOf(ui)).toEqual([
-    'discuss:2 d discuss notice',
-    'dismiss:2 x dismiss notice',
-    'snooze:2 s snooze notice',
+    'discuss:2 7 discuss notice',
+    'dismiss:2 8 dismiss notice',
+    'snooze:2 9 snooze notice',
   ])
   expect(await drawerRowsOf(ui)).toEqual(['text: ', 'detail:2', 'text: ', 'discuss:2', 'dismiss:2', 'snooze:2'])
+  expect(await drawerIndentOf(ui, '2')).toEqual([3, 3])
   await ui.press({ key: 'close:2' })
 
   // A pull request's drawer has its actions above its links, the links with no letters.
   await ui.press({ key: 'pr:x/y#7' })
-  expect(await actionLinesOf(ui)).toEqual(['discuss:x/y#7 d discuss PR', 'dismiss:x/y#7 x dismiss PR'])
+  expect(await actionLinesOf(ui)).toEqual(['discuss:x/y#7 7 discuss PR', 'dismiss:x/y#7 8 dismiss PR'])
   await ui.unmount()
 })
 
@@ -2671,7 +2740,7 @@ test('a keyed line’s label takes the color of the `: ` before it, so it invert
     label: ['Add a budget', []],
   })
   expect(await partsOf('dismiss:1')).toEqual({
-    key: 'x',
+    key: '8',
     plain: true,
     line: [undefined, undefined, undefined],
     label: ['dismiss question', []],
@@ -2680,7 +2749,7 @@ test('a keyed line’s label takes the color of the `: ` before it, so it invert
 
   await ui.press({ key: 'pr:x/y#7' })
   expect(await partsOf('discuss:x/y#7')).toEqual({
-    key: 'd',
+    key: '7',
     plain: true,
     line: [undefined, undefined, undefined],
     label: ['discuss PR', []],
@@ -2757,44 +2826,67 @@ test('Enter on a line moves the ring into the drawer it opens and back onto the 
   await ui.unmount()
 })
 
-test('snooze asks how long, and only a length it offers snoozes the item', async ($, on) => {
+test('snooze asks how long on 1 to 4 in the options’ place, and only a length it offers snoozes the item', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held(), notice()])
   const { tried, tab } = keyboardOf(on)
   await startSession($, clock)
   const ui = await $.ui.mount(BAND)
-  /** The open drawer's row of Buttons, each by its key and what it reads. */
-  const row = async () =>
+  /** The open drawer's keyed lines under its own line, each by its key, its digit, and what it reads. */
+  const lines = async (ref: string) =>
     (await ui.findAll({ type: 'Button' }))
-      .filter(button => /^(?!close:|item:).*:2$/.test(button.key ?? ''))
-      .map(button => `${button.key ?? ''} ${button.text}`)
-  const actions = ['discuss:2 discuss notice', 'dismiss:2 dismiss notice', 'snooze:2 snooze notice']
+      .filter(button => button.key?.endsWith(`:${ref}`) && button.key !== `close:${ref}`)
+      .filter(button => !button.key?.startsWith('answer:') || button.key.startsWith(`answer:${ref}.`))
+      .map(button => `${button.key ?? ''} ${String(button.props.hotkey ?? '')} ${button.text}`)
+  const lengths = (ref: string) => [
+    `snooze-15:${ref} 1 15 min`,
+    `snooze-60:${ref} 2 1 hour`,
+    `snooze-240:${ref} 3 4 hours`,
+    `snooze-1440:${ref} 4 1 day`,
+    `cancel:${ref} 9 cancel`,
+  ]
   const snoozes = () => session.project().filter(command => command.startsWith('inbox snooze'))
 
-  // Snooze puts the lengths and cancel where the actions were, with no digits, and snoozes nothing yet.
+  // A question's options give way to the lengths, on 1 to 4, and its actions to cancel, on 9, so no digit is shared.
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'snooze:1' })
+  expect(await optionsOf(ui)).toEqual([])
+  expect(await lines('1')).toEqual(lengths('1'))
+  expect(await digitsOf(ui)).toEqual([
+    'close:1',
+    'snooze-15:1',
+    'snooze-60:1',
+    'snooze-240:1',
+    'snooze-1440:1',
+    'cancel:1',
+  ])
+  expect(snoozes()).toEqual([])
+  // 9 cancels: the options and actions come back.
+  await ui.press({ key: 'cancel:1' })
+  expect((await optionsOf(ui)).map(option => option.key)).toEqual(['answer:1.a', 'answer:1.b'])
+  expect(await actionLinesOf(ui)).toEqual([
+    'discuss:1 7 discuss question',
+    'dismiss:1 8 dismiss question',
+    'snooze:1 9 snooze question',
+  ])
+  await ui.press({ key: 'close:1' })
+
+  // A notice shows the same lines, and snoozes nothing yet.
+  const actions = ['discuss:2 7 discuss notice', 'dismiss:2 8 dismiss notice', 'snooze:2 9 snooze notice']
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'snooze:2' })
-  expect(await row()).toEqual([
-    'snooze-15:2 15 min',
-    'snooze-60:2 1 hour',
-    'snooze-240:2 4 hours',
-    'snooze-1440:2 1 day',
-    'cancel:2 cancel',
-  ])
-  expect((await ui.findAll({ type: 'Text', text: '|' })).map(bar => bar.props.color)).toEqual(Array(4).fill('subtle'))
-  expect(await digitsOf(ui)).toEqual(['close:2'])
+  expect(await lines('2')).toEqual(lengths('2'))
+  expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
   expect(snoozes()).toEqual([])
-
-  // Cancel puts the actions back.
   await ui.press({ key: 'cancel:2' })
-  expect(await row()).toEqual(actions)
+  expect(await lines('2')).toEqual(actions)
 
-  // So does closing the drawer, so it opens again on its actions.
+  // Closing the drawer puts the actions back too, so it opens again on its actions.
   await ui.press({ key: 'snooze:2' })
   await ui.press({ key: 'close:2' })
   await ui.press({ key: 'item:2' })
-  expect(await row()).toEqual(actions)
+  expect(await lines('2')).toEqual(actions)
   expect(snoozes()).toEqual([])
 
   // From the keyboard, snooze moves the ring onto the first length, and cancel moves it back onto snooze.
@@ -2815,5 +2907,192 @@ test('snooze asks how long, and only a length it offers snoozes the item', async
     await clock.settle()
   }
   expect(snoozes()).toEqual([15, 60, 240, 1440].map(minutes => `inbox snooze 2 --for ${minutes} --session s1 --json`))
+  await ui.unmount()
+})
+
+test('dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const dismissed = { dismissed: true as const, answeredAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [
+    held(),
+    notice(),
+    held({ ref: '3', number: 3, subject: 'Rebase first?', answer: dismissed, deliveredAt: NOW - 1_000 }),
+    notice({ ref: '4', number: 4, subject: 'Merged #6', snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR }),
+  ])
+  const { tried, tab } = keyboardOf(on)
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  /** The open drawer's keyed lines under its options, each by its key, its digit, and what it reads. */
+  const lines = async (id: string) =>
+    (await ui.findAll({ type: 'Button' }))
+      .filter(button => /^(discuss|dismiss|snooze|unsnooze|restore|confirm|keep):/.test(button.key ?? ''))
+      .filter(button => button.key?.endsWith(`:${id}`))
+      .map(button => `${button.key ?? ''} ${String(button.props.hotkey ?? '')} ${button.text}`)
+  const ran = (command: string) => session.project().filter(line => line.startsWith(`inbox ${command}`))
+
+  // No line of an open drawer takes a letter any more.
+  await ui.press({ key: 'item:1' })
+  const keys = (await ui.findAll({ type: 'Button' })).map(button => String(button.props.hotkey ?? ''))
+  expect(keys.filter(key => key !== '' && !/^\d$/.test(key))).toEqual([])
+
+  // Dismiss runs nothing: it asks, on 8 to dismiss and 9 to keep the item.
+  await ui.press({ key: 'dismiss:1' })
+  expect(await lines('1')).toEqual(['confirm:1 8 yes, dismiss question', 'keep:1 9 no, keep it'])
+  expect(ran('dismiss')).toEqual([])
+  // 9 keeps it and puts the actions back.
+  await ui.press({ key: 'keep:1' })
+  expect(await lines('1')).toEqual([
+    'discuss:1 7 discuss question',
+    'dismiss:1 8 dismiss question',
+    'snooze:1 9 snooze question',
+  ])
+  // Closing the drawer puts them back too.
+  await ui.press({ key: 'dismiss:1' })
+  await ui.press({ key: 'close:1' })
+  await ui.press({ key: 'item:1' })
+  expect((await lines('1'))[1]).toBe('dismiss:1 8 dismiss question')
+  expect(ran('dismiss')).toEqual([])
+
+  // From the keyboard, the ring goes onto the confirmation, and from 9 back onto dismiss.
+  await tab($, 'dismiss:1')
+  await ui.press({ key: 'dismiss:1' })
+  await tab($, 'keep:1')
+  await ui.press({ key: 'keep:1' })
+  expect(tried).toEqual(['confirm:1', 'dismiss:1'])
+
+  // 8 then 8 dismisses.
+  await ui.press({ key: 'dismiss:1' })
+  await ui.press({ key: 'confirm:1' })
+  await clock.settle()
+  expect(ran('dismiss')).toEqual(['inbox dismiss 1 --session s1 --json'])
+  expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+
+  // A notice's confirmation names a notice.
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'dismiss:2' })
+  expect(await lines('2')).toEqual(['confirm:2 8 yes, dismiss notice', 'keep:2 9 no, keep it'])
+  await ui.press({ key: 'close:2' })
+
+  // Restore and unsnooze need no confirmation.
+  await ui.press({ key: 'item:3' })
+  await ui.press({ key: 'restore:3' })
+  await clock.settle()
+  expect(ran('restore')).toEqual(['inbox restore 3 --session s1 --json'])
+  await ui.press({ key: 'close:3' })
+  await ui.press({ key: 'item:4' })
+  await ui.press({ key: 'unsnooze:4' })
+  await clock.settle()
+  expect(ran('restore')).toEqual(['inbox restore 3 --session s1 --json', 'inbox restore 4 --session s1 --json'])
+  await ui.press({ key: 'close:4' })
+
+  // A pull request's dismiss asks the same, and 9 keeps it in its loops.
+  await ui.press({ key: 'pr:x/y#7' })
+  expect(await lines('x/y#7')).toEqual(['discuss:x/y#7 7 discuss PR', 'dismiss:x/y#7 8 dismiss PR'])
+  await ui.press({ key: 'dismiss:x/y#7' })
+  expect(await lines('x/y#7')).toEqual(['confirm:x/y#7 8 yes, dismiss PR', 'keep:x/y#7 9 no, keep it'])
+  await ui.press({ key: 'keep:x/y#7' })
+  expect(await lines('x/y#7')).toEqual(['discuss:x/y#7 7 discuss PR', 'dismiss:x/y#7 8 dismiss PR'])
+  expect(session.project().filter(line => line.startsWith('loop drop'))).toEqual([])
+  await ui.unmount()
+})
+
+test('a question a drawer asked is forgotten once its item is resolved or snoozed, so a restored item opens on its actions', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  /** The open drawer's keyed lines under its options. */
+  const lines = async () =>
+    (await ui.findAll({ type: 'Button' }))
+      .map(button => button.key ?? '')
+      .filter(key => key.endsWith(':1') && !key.startsWith('close:') && !key.startsWith('answer:'))
+  const actions = ['discuss:1', 'dismiss:1', 'snooze:1']
+
+  // Dismiss asks, and a terminal dismisses the question meanwhile; restoring it opens its drawer on its actions.
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'dismiss:1' })
+  session.store.run(['project', 'inbox', 'dismiss', '1', '--session', SESSION])
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await lines()).toEqual(['discuss:1', 'restore:1'])
+  await ui.press({ key: 'restore:1' })
+  await clock.settle()
+  expect(await lines()).toEqual(actions)
+  expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([])
+
+  // Snooze asks how long, and a terminal snoozes it meanwhile; unsnoozing it brings back its options and actions.
+  await ui.press({ key: 'snooze:1' })
+  session.store.run(['project', 'inbox', 'snooze', '1', '--session', SESSION])
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await lines()).toEqual(['discuss:1', 'dismiss:1', 'unsnooze:1'])
+  await ui.press({ key: 'unsnooze:1' })
+  await clock.settle()
+  expect(await lines()).toEqual(actions)
+  expect((await optionsOf(ui)).map(option => option.key)).toEqual(['answer:1.a', 'answer:1.b'])
+  await ui.unmount()
+})
+
+test('an open item’s line ends in a rule to the band’s edge on a terminal, beside its Button', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const long = 'Should the band '.padEnd(112, 'x')
+  questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: null, subject: long })])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  const rule = async () => (await ui.find({ type: 'Text', text: /^ ─+$/ }))?.text
+
+  // The rule fills the row: `0: `, the subject, a space and the rule, then ` #7` and ` 2m`, end at bodyColumns.
+  await ui.press({ key: 'item:1' })
+  const drawn = await rule()
+  expect(drawn).toBe(` ${'─'.repeat(90)}`)
+  expect('0: '.length + 'Decline the finding?'.length + (drawn ?? '').length + ' #7'.length + ' 2m'.length).toBe(
+    BAND.props.bodyColumns,
+  )
+  // It sits beside the line's Button, so a hover or the focus ring inverts the title alone, and it draws in the
+  // default color while an open question's title takes `permission`.
+  expect((await ui.find({ type: 'Button', key: 'close:1' }))?.text).toBe('Decline the finding?')
+  expect((await ui.find({ type: 'Text', text: /^ ─+$/ }))?.props.color).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: 'Decline the finding?' }))?.props.color).toBe('permission')
+  await ui.press({ key: 'close:1' })
+  // No line in the list draws one.
+  expect(await rule()).toBeUndefined()
+
+  // A title that leaves too little room draws none.
+  await ui.press({ key: 'item:2' })
+  expect(await rule()).toBeUndefined()
+  await ui.unmount()
+
+  // Another surface draws the title alone, as it draws no divider.
+  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  await desktop.press({ key: 'close:2' })
+  await desktop.press({ key: 'item:1' })
+  expect(await desktop.find({ type: 'Text', text: /─/ })).toBeUndefined()
+  await desktop.unmount()
+})
+
+test('a dismiss confirmation on a snoozed item survives an unrelated change to the store', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held({ snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR })])
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  const lines = async () =>
+    (await ui.findAll({ type: 'Button' }))
+      .map(button => button.key ?? '')
+      .filter(key => /^(discuss|dismiss|unsnooze|confirm|keep):1$/.test(key))
+
+  // The item is snoozed already when dismiss asks to be sure.
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'dismiss:1' })
+  expect(await lines()).toEqual(['confirm:1', 'keep:1'])
+
+  // Another item arriving makes the band read the store, and the question stands.
+  session.store.write(notice())
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await lines()).toEqual(['confirm:1', 'keep:1'])
   await ui.unmount()
 })
