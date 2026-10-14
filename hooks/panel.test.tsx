@@ -519,7 +519,6 @@ test('panel.background colors the panel, and auto or no value leaves the color t
   }
   // Each alias draws its color: `black` and `white` as literal colors, so they stay put whatever the theme.
   for (const [alias, color] of [
-    ['subtle', 'subtle'],
     ['sidebar', 'composerSidebarBackground'],
     ['black', 'rgb(0,0,0)'],
     ['white', 'rgb(255,255,255)'],
@@ -554,8 +553,8 @@ test('a panel.background the panel does not take leaves the color to the theme, 
   expect(await ui.drawn()).toMatchObject(inPanel(DARK))
   await reload()
   expect(await backgroundOf(ui)).toBe(DARK)
-  // Past the ends of a literal color's range, a theme key's name, which the panel no longer takes, a misspelled
-  // alias, a color's plain name, and a value that is no string.
+  // Past the ends of a literal color's range, a theme key's name, which the panel no longer takes, `subtle`, the
+  // color of the panel's own muted text, a misspelled alias, a color's plain name, and a value that is no string.
   const refused = [
     'rgb(256,0,0)',
     'rgb(1,2)',
@@ -565,6 +564,7 @@ test('a panel.background the panel does not take leaves the color to the theme, 
     'inverseText',
     'composerSidebarBackground',
     'text',
+    'subtle',
     'sidebr',
     'gray',
     '',
@@ -581,7 +581,7 @@ test('a panel.background the panel does not take leaves the color to the theme, 
   expect(toasts).toEqual(
     ['ansi:black', ...refused].map(
       value =>
-        `projector: panel.background is ${JSON.stringify(value)}, which is not rgb(r,g,b), #rrggbb, ansi256(n), subtle, sidebar, black or white, so the panel takes its color from the theme`,
+        `projector: panel.background is ${JSON.stringify(value)}, which is not rgb(r,g,b), #rrggbb, ansi256(n), sidebar, black or white, so the panel takes its color from the theme`,
     ),
   )
   await ui.unmount()

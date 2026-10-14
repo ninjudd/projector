@@ -625,7 +625,7 @@ reads, which are these:
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | `implement`, to start `start-watch-loop` on each pull request it opens, or add the pull request to the watch loop the conversation already runs; `false` leaves starting the loop to you |
-| `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `subtle` draws the theme's `subtle`, `sidebar` its `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
+| `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own

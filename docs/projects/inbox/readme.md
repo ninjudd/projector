@@ -2138,17 +2138,17 @@ theme.
 ### 23.1 What changes
 
 - **An exact list.** `panel.background` takes `auto`, a literal color, or
-  one of four aliases, and nothing else:
+  one of three aliases, and nothing else:
   - **Literal colors** draw as written: `rgb(r,g,b)` and `ansi256(n)` with
     each number from 0 to 255, written as Claude Code reads them, with a
     space allowed after `(`, each comma, and before `)`; and `#rgb` or
     `#rrggbb`.
-  - **`subtle`** draws the theme key `subtle`, and **`sidebar`** the theme
-    key `composerSidebarBackground`, the grey of Claude Code's side panel.
+  - **`sidebar`** draws the theme key `composerSidebarBackground`, the grey
+    of Claude Code's side panel.
   - **`black`** draws `rgb(0,0,0)`, and **`white`** draws
     `rgb(255,255,255)`.
 - **No theme key names.** `inverseText`, `composerSidebarBackground`,
-  `text`, and every other key are refused. Any value outside the list falls
+  `text`, `subtle`, and every other key are refused. Any value outside the list falls
   back to `auto`, and the panel says so once, naming what it takes.
 - **The panel owns the list.** `BACKGROUND_ALIASES` and the literal color
   patterns live in `hooks/register.tsx`. `SETTINGS` keeps `panel.background`
@@ -2159,8 +2159,11 @@ theme.
 
 - **Only shades that look right.** The owner first asked for Claude Code's
   23 public theme keys and `composerSidebarBackground`, then narrowed it:
-  most theme colors are text colors that make a poor background. Four
+  most theme colors are text colors that make a poor background. Three
   aliases cover the shades worth having, with names a person would type.
+- **No `subtle`.** It was an alias until the owner dropped it: the panel
+  draws its header, hint, ages, labels, and counts in `subtle`, so on a
+  `subtle` background they would vanish.
 - **`black` and `white` stay put.** `inverseText` flips between black and
   white with the theme, and `ansi256(0)` is the terminal palette's black,
   which is often the terminal's own background, so the panel would vanish.
@@ -2176,5 +2179,5 @@ theme.
 
 | Behavior | Test |
 | --- | --- |
-| `#abc`, `#FFFFFF`, `rgb(0,0,0)`, `rgb(255, 255, 255)`, `rgb( 30,30,40 )`, `ansi256(0)`, and `ansi256(255)` draw as written, and `subtle`, `sidebar`, `black`, and `white` draw `subtle`, `composerSidebarBackground`, `rgb(0,0,0)`, and `rgb(255,255,255)` | `panel.background colors the panel, and auto or no value leaves the color to the theme` in `hooks/panel.test.tsx` |
-| `rgb(256,0,0)`, `rgb(1,2)`, `ansi256(256)`, `#12345`, `#abcd`, `inverseText`, `composerSidebarBackground`, `text`, `sidebr`, `gray`, an empty string, and a number each draw the theme's color, with one toast per value naming what the panel takes | `a panel.background the panel does not take leaves the color to the theme, and the panel says so once` |
+| `#abc`, `#FFFFFF`, `rgb(0,0,0)`, `rgb(255, 255, 255)`, `rgb( 30,30,40 )`, `ansi256(0)`, and `ansi256(255)` draw as written, and `sidebar`, `black`, and `white` draw `composerSidebarBackground`, `rgb(0,0,0)`, and `rgb(255,255,255)` | `panel.background colors the panel, and auto or no value leaves the color to the theme` in `hooks/panel.test.tsx` |
+| `rgb(256,0,0)`, `rgb(1,2)`, `ansi256(256)`, `#12345`, `#abcd`, `inverseText`, `composerSidebarBackground`, `text`, `subtle`, `sidebr`, `gray`, an empty string, and a number each draw the theme's color, with one toast per value naming what the panel takes | `a panel.background the panel does not take leaves the color to the theme, and the panel says so once` |

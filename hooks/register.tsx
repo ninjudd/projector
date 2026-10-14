@@ -145,13 +145,13 @@ const AUTO = 'auto'
 /**
  * The names `panel.background` takes besides `auto` and a literal color, and
  * what each draws. Claude Code draws another theme key's name, or a typo of
- * one, as no color at all, so no other name is taken. `black` and `white` are
- * literal colors: `inverseText` flips between the two with the theme, and
- * `ansi256(0)` is the terminal palette's black, often the terminal's own
- * background, which would make the panel vanish.
+ * one, as no color at all, so no other name is taken; nor is `subtle`, the
+ * color of the panel's own muted text, which would vanish on it. `black` and
+ * `white` are literal colors: `inverseText` flips between the two with the
+ * theme, and `ansi256(0)` is the terminal palette's black, often the
+ * terminal's own background, which would make the panel vanish.
  */
 const BACKGROUND_ALIASES = new Map([
-  ['subtle', 'subtle'],
   ['sidebar', 'composerSidebarBackground'],
   ['black', 'rgb(0,0,0)'],
   ['white', 'rgb(255,255,255)'],
@@ -385,7 +385,7 @@ async function readBackground($: Engine): Promise<void> {
     if (color === undefined && !unpaintable.has(written)) {
       unpaintable.add(written)
       void $.ui.toast(
-        `projector: ${BACKGROUND_KEY} is ${written}, which is not rgb(r,g,b), #rrggbb, ansi256(n), subtle, sidebar, black or white, so the panel takes its color from the theme`,
+        `projector: ${BACKGROUND_KEY} is ${written}, which is not rgb(r,g,b), #rrggbb, ansi256(n), sidebar, black or white, so the panel takes its color from the theme`,
       )
     }
     await update($, background, () => color ?? AUTO)
