@@ -7,7 +7,8 @@ priority: later
 
 Every color Projector's panel draws comes from a named role, each role's
 default follows your Claude Code theme, and you can override any role, or
-pick a built-in theme, without one role vanishing on another.
+pick a built-in theme, without one role vanishing on another on any theme
+whose colors the panel knows.
 
 ## 1. Problem
 
@@ -24,8 +25,9 @@ background is a setting, `panel.background`, and that causes three
 problems:
 
 - **A setting can hide what draws on it.** The background's check knows
-  nothing of the colors drawn on the background. Draft #341 leaves out a
-  `subtle` alias for `panel.background`, because the panel's header, key
+  nothing of the colors drawn on the background. The list of values that
+  #341 merged leaves out a `subtle` alias for `panel.background`
+  (`docs/projects/inbox/readme.md` § 23), because the panel's header, key
   hint, ages, and counts are `subtle` and would vanish on it. The same
   conflict remains for values the check accepts: `white` on a dark Claude
   Code theme puts the pull request titles, drawn in the theme's light text
@@ -51,9 +53,9 @@ what it draws today, so the panel looks right with no configuration. A
 person changes the look with `panel.theme`, which picks a built-in theme,
 and `panel.colors.<role>`, which overrides one role. `panel.background`
 stays the background's setting. The panel reads all of it in one
-`project config get panel` call, refuses any value it cannot draw or that
-would vanish on what it draws against, falls back to the role's default,
-and says so once in a toast. The role list and its checks live only in the
+`project config get panel` call. It refuses any value it cannot draw, or
+that would vanish on what it draws against when it knows both colors,
+falls back to the role's default, and says so once in a toast. The role list and its checks live only in the
 panel, and the CLI learns only that these keys hold strings.
 
 ### 2.1 The roles
@@ -143,6 +145,10 @@ Each layer overrides the one before it:
 3. `panel.background` for the background, and `panel.colors.<role>` for
    each other role.
 
+`panel.colors` takes every role but `background`, which only
+`panel.background` sets. The panel treats `panel.colors.background` as a
+role it does not know, and its toast names `panel.background` instead.
+
 `auto` is the only built-in theme until the owner chooses the first other
 one, as § 7 says. The key and the layer exist from the start so that a
 built-in theme needs no new setting.
@@ -150,8 +156,9 @@ built-in theme needs no new setting.
 ### 2.4 The flow
 
 1. When the session starts, the panel reads the Claude Code theme from
-   `$.config.list()`, works out its base, reading a custom theme's file as
-   it does today, and stores the base in `panelBase`.
+   `$.config.list()` and works out its base, reading a custom theme's file
+   as it does today. It stores the base, and a custom theme's own colors
+   from that file, in `panelTheme`.
 2. One timer tick later, and on each reload, the panel runs
    `project config get panel --json` once. The CLI merges every
    `.projector.toml` that applies, table by table. A missing `panel` table,
@@ -163,11 +170,11 @@ built-in theme needs no new setting.
 4. It stores the colors in `panelColors`. It toasts every problem it has not
    toasted in this session, all new problems from one read in one toast,
    such as
-   `projector: panel.colors.mutd is not a role (the roles are background, text, muted, …); panel.colors.muted rgb(25,25,25) would vanish on the panel's rgb(20,20,20), so it draws subtle`.
+   `projector: panel.colors.mutd is not a role (the roles are text, muted, question, …); panel.colors.muted rgb(25,25,25) would vanish on the panel's rgb(20,20,20), so it draws subtle`.
 5. The render reads `panelColors` and passes `colors.<role>` to the panel's
    `Box` and to every `Text`. It waits on no read.
 6. A theme picked in `/theme` recolors at once: the `config.set` hook stores
-   the new base and resolves again. A `project config set` or `unset` of a
+   the new theme's base and colors and resolves again. A `project config set` or `unset` of a
    `panel.` key that the session runs through its Bash tool re-reads the
    settings as soon as the command finishes, through the `tool.call` hook
    that already reads the session's commands, and so does `/projector`.
@@ -177,29 +184,60 @@ built-in theme needs no new setting.
 
 The panel compares two colors by their contrast ratio, as the Web Content
 Accessibility Guidelines (WCAG) 2 define it, from 1:1 for the same color to
-21:1 for black on white. It computes the ratio only when it knows both
-colors: a literal `rgb()` or hex value, `black`, `white`, or `ansi256(n)`
-for `n` from 16 to 255, which terminals take from the standard xterm table.
-It cannot know a theme key's value, `sidebar`'s, or that of the terminal
-palette's slots 0 to 15, so it compares those only for an exact match.
+21:1 for black on white. A color under 1.5:1 against the color it draws on
+would vanish. The panel computes the ratio only when it knows both colors,
+and it knows two kinds:
 
-- **A color that would vanish is refused.** A role whose color matches the
-  background's exactly, or whose contrast ratio with it is under 1.5:1,
-  takes the layer below. For example, `rgb(40,40,40)` on the default
-  `rgb(20,20,20)` is 1.25:1 and is refused, while `rgb(70,70,70)` is 1.95:1
-  and draws. When an override of the background meets an override of a
-  role, the role gives way, so one element changes rather than the whole
-  panel.
+- **A literal color.** An `rgb()` or hex value, `black`, `white`, or
+  `ansi256(n)` for `n` from 16 to 255, which terminals take from the
+  standard xterm table.
+- **A theme key on a theme whose values the panel holds.** `hooks/theme.ts`
+  keeps the value of each public theme key, and of
+  `composerSidebarBackground`, which `sidebar` draws, on `dark`, `light`,
+  and their daltonized themes. They are copied from Claude Code, as
+  `THEME_BACKGROUNDS` already holds a value for each theme. On `dark`, for
+  example, Claude Code 2.1.299 draws `subtle` as `rgb(80,80,80)`. A custom
+  theme takes its base's values, with the colors its own file sets over
+  them.
+
+The panel cannot know a color on an ANSI theme, whose keys draw from the
+terminal's palette, or on a custom theme whose file it cannot read, or in
+the palette's slots 0 to 15. It compares those only for an exact match, so
+on such a theme a literal background can still hide a role that keeps its
+default, as § 7 records.
+
+The panel settles the background first, then every other role:
+
+1. Each role takes its override when the override would not vanish on the
+   background `panel.background` sets, and its default otherwise.
+2. When a role's color from step 1 would still vanish on that background,
+   or Claude Code's own text would, the background falls back to the layer
+   below, which is `auto`'s background until a built-in theme sets one.
+   Step 1 then runs again against the background that stands.
+
+So when an override of the background meets an override of a role, the
+role gives way, and one element changes rather than the whole panel. The
+background gives way only to a default the person did not change, or to
+Claude Code's own text. Each refusal adds a problem, which the panel
+toasts once, as § 2.4 says.
+
+- **A role that would vanish is refused.** For example, a `muted` override
+  of `rgb(40,40,40)` on the default `rgb(20,20,20)` is 1.25:1, so `muted`
+  draws `subtle`. `rgb(70,70,70)` is 1.95:1 and draws.
+- **A background that would hide a role's default is refused.** On `dark`,
+  `panel.background = "rgb(80,80,80)"` matches `subtle`, so with no `muted`
+  override the header, the key hint, and the ages would vanish. The panel
+  draws `rgb(20,20,20)` instead. With `panel.colors.muted` set to
+  `rgb(200,200,200)` as well, `muted` no longer vanishes, so both draw as
+  set unless another role's default would vanish on `rgb(80,80,80)`.
 - **A background that would hide Claude Code's own text is refused.**
   Claude Code draws some of the panel's text itself, and no role can
   recolor it: a `Button`'s label, the accent of its key, and a Markdown
   link. A `Button`'s label draws in the theme's text color, near white on
-  a dark base and near black on a light one. So the panel compares a
-  background it knows with white on a dark base and with black on a light
-  one. A background under 1.5:1 falls back to the layer below, which is
-  `auto`'s background until a built-in theme sets one, and the panel says
-  so once in a toast. That refuses `white` on a dark theme and `black` on
-  a light one. On a base the panel cannot tell, it makes no such check.
+  a dark base and near black on a light one. So when it settles the
+  background, the panel compares a background it knows with white on a
+  dark base and with black on a light one. That refuses `white` on a dark theme and `black` on a
+  light one. On a base the panel cannot tell, it makes no such check.
 - **This partly reverses #341.** #341 accepts `black` and `white` on every
   theme. From step 2 of § 6, the panel draws `white` only on a light theme
   and `black` only on a dark one, and a person who set the other gets
@@ -213,9 +251,9 @@ palette's slots 0 to 15, so it compares those only for an exact match.
 
 | File | Change |
 | --- | --- |
-| `hooks/theme.ts` (new) | `ROLES` with their defaults, `BASE_BACKGROUNDS`, `BUILT_IN_THEMES`, the literal color patterns and `BACKGROUND_ALIASES` from #341, `PUBLIC_THEME_KEYS` checked against Claude Code's `ThemeKey` type at compile time, the contrast ratio, and `resolve(base, settings)`, which returns `{ colors, problems }` |
-| `hooks/register.tsx` | Draws every color through `colors.<role>`. Removes `QUESTION_COLOR`, `NOTICE_COLOR`, `BRANCH_COLOR`, `LOOP_COLORS`, `CHECK_COLORS`, the colors in `Note`, `THEME_BACKGROUNDS`, `OTHER_BACKGROUND`, and the background check, which move into `hooks/theme.ts`. `readBackground` becomes `readSettings`, which reads the `panel` table, and `paint` stores the base. The Bash hook re-reads after a `project config set` or `unset` of a `panel.` key |
-| `hooks/types.d.ts` | The state keys `panelBase`, `panelSettings`, and `panelColors` replace `panelThemeBackground` and `panelBackground` |
+| `hooks/theme.ts` (new) | `ROLES` with their defaults, `BASE_BACKGROUNDS`, `BUILT_IN_THEMES`, the literal color patterns and `BACKGROUND_ALIASES` from #341, `PUBLIC_THEME_KEYS` checked against Claude Code's `ThemeKey` type at compile time, `THEME_VALUES`, which holds each public key's and `composerSidebarBackground`'s value on `dark`, `light`, and their daltonized themes, the contrast ratio, and `resolve(theme, settings)`, which returns `{ colors, problems }` |
+| `hooks/register.tsx` | Draws every color through `colors.<role>`. Removes `QUESTION_COLOR`, `NOTICE_COLOR`, `BRANCH_COLOR`, `LOOP_COLORS`, `CHECK_COLORS`, the colors in `Note`, `THEME_BACKGROUNDS`, `OTHER_BACKGROUND`, and the background check, which move into `hooks/theme.ts`. `readBackground` becomes `readSettings`, which reads the `panel` table, and `paint` stores the base and a custom theme's own colors. The Bash hook re-reads after a `project config set` or `unset` of a `panel.` key |
+| `hooks/types.d.ts` | The state keys `panelTheme`, `panelSettings`, and `panelColors` replace `panelThemeBackground` and `panelBackground` |
 | `hooks/theme.test.ts` (new) | `resolve` and the contrast ratio, table by table |
 | `hooks/panel.test.tsx` | The defaults on each Claude Code theme, overrides, refusals, toasts, and the re-read after a set |
 | `src/projector/config.py` | `SETTINGS` gains `panel.theme` as a string, and a table entry, `panel.colors`, whose keys `set` and `unset` accept under any lowercase role name, each value a string |
@@ -254,10 +292,18 @@ palette's slots 0 to 15, so it compares those only for an exact match.
   hold strings, so it never needs a release to add a role, and
   `project config get` reads the `panel` table under any CLI version.
 - **Refuse what vanishes, and nothing else.** Adjusting a color the person
-  chose would change something they did not ask for, and the panel cannot
-  compute a theme key's value to adjust it anyway. A warning tier would
-  flag the panel's own deliberate low-contrast muted text. Refusing only
-  what vanishes keeps every role visible and leaves taste to the person.
+  chose would change something they did not ask for, and on an ANSI theme
+  the panel cannot compute a theme key's value to adjust it anyway. A
+  warning tier would flag the panel's own deliberate low-contrast muted
+  text. Refusing only what vanishes keeps every role the panel can measure
+  visible, and leaves taste to the person.
+- **A copy of Claude Code's theme values.** A plugin cannot read a theme
+  key's value at run time, so the check needs a copy to measure a default
+  against a literal background, as `THEME_BACKGROUNDS` already copies a
+  shade per theme. A value Claude Code changes later leaves the copy stale
+  until someone updates it. The check refuses only colors within 1.5:1 of
+  each other, so a small change rarely turns its verdict. The copy is
+  Claude Code's data, not a list Projector keeps in two places.
 - **The engine's text sets a limit on the background.** No role can move
   Claude Code's own text off a background that hides it, so a warning
   alone would leave labels and links unreadable until the person noticed.
@@ -285,6 +331,10 @@ palette's slots 0 to 15, so it compares those only for an exact match.
 | Set `panel.colors.muted` to `rgb(40,40,40)` on the default dark background | `muted` draws `subtle`, and one toast says it would vanish | `a role that would vanish on the background takes its default` |
 | Set `panel.colors.muted` to `rgb(70,70,70)` on the same background | It draws `rgb(70,70,70)` with no toast | the same test |
 | Set `panel.background` to `rgb(20,20,20)` and `panel.colors.muted` to `rgb(20,20,20)` | The background stays, and `muted` takes its default | the same test |
+| Set `panel.background` to `rgb(80,80,80)` on `dark`, where `subtle` is `rgb(80,80,80)` | The panel draws `rgb(20,20,20)`, and one toast says the background would hide `muted` | `a background that would hide a role's default falls back to auto and says so once` |
+| Set `panel.background` to `rgb(80,80,80)` and `panel.colors.muted` to `rgb(200,200,200)` on `dark` | Both draw as set, with no toast | the same test |
+| Set `panel.background` to `rgb(80,80,80)` on a custom theme built on `light` whose file sets `subtle` to `rgb(80,80,80)` | The panel draws `rgb(240,240,240)`, and one toast says the background would hide `muted` | the same test |
+| Set `panel.colors.background` | Defaults draw, and one toast names `panel.background` | `an unknown role or theme leaves the defaults and says so once` |
 | Set `panel.background` to `white` on `dark`, then to `black` on `light` | The panel draws `rgb(20,20,20)`, then `rgb(240,240,240)`, with one toast for each value | `a background that would hide Claude Code's own text falls back to auto and says so once` |
 | Set `panel.background` to `white` on `light`, then to `black` on `dark` | The panel draws `rgb(255,255,255)`, then `rgb(0,0,0)`, with no toast | the same test |
 | Run `project config set panel.colors.muted 'rgb(1,2,3)'` through the Bash tool | The panel redraws with the new color before the next reload | `a set of a panel key through Bash re-reads the settings at once` |
@@ -301,8 +351,9 @@ before the change.
 The panel spawns the same number of processes as today: one
 `project config get panel` per reload in place of the
 `project config get panel.background` it runs now. Resolving thirteen roles
-and at most thirteen contrast ratios runs once per read, at most every 30
-seconds, and the render reads one state key, so cost does not matter here.
+and a few dozen contrast ratios runs once per read, on each reload rather
+than on each render, and the render reads one state key, so cost does not
+matter here.
 
 ## 6. Rollout
 
@@ -332,6 +383,11 @@ seconds, and the render reads one state key, so cost does not matter here.
   merges a repository's `.projector.toml` over `~/.projector.toml`, so a
   repository can already set `panel.background`. Keep that until a
   repository's colors surprise someone.
+- **Measuring the colors of an ANSI theme.** Deferred until a plugin can
+  read the terminal's palette. On `dark-ansi`, `light-ansi`, and a custom
+  theme whose file the panel cannot read, the panel checks a literal
+  background only against Claude Code's own text and exact matches, so it
+  can still hide a role that keeps its default there.
 - **The engine's own colors.** Deferred until Claude Code lets a plugin set
   a `Button`'s label color, its key's accent, or a link's color.
 - **A swatch that shows every role at once.** Deferred. The plugin draws no
