@@ -396,9 +396,10 @@ def pull_request(repo: str, number: int) -> dict:
 def fetch(checkout: Path, ref: str) -> str:
     """Fetch `ref` from origin and return the commit it names, read from a ref this call alone writes and
     then deletes. `FETCH_HEAD` is shared by every fetch in the checkout, so another review's fetch, or a
-    summary publish's, can rewrite it between this fetch and the read."""
+    summary publish's, can rewrite it between this fetch and the read. The fetch leaves `FETCH_HEAD` to
+    the operator's own fetches."""
     local = f"refs/projector/review-fetch/{os.getpid()}-{secrets.token_hex(4)}"
-    git("-C", str(checkout), "fetch", "--quiet", "--no-tags", "origin", f"+{ref}:{local}")
+    git("-C", str(checkout), "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "origin", f"+{ref}:{local}")
     try:
         return git("-C", str(checkout), "rev-parse", "--verify", f"{local}^{{commit}}")
     finally:
