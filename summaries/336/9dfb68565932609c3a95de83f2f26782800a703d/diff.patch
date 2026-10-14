@@ -1,0 +1,1634 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index b902ed88..9b55eddc 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -625,6 +625,7 @@ reads, which are these:
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ | `watch.auto_start` | boolean | `true` | `implement`, to start `start-watch-loop` on each pull request it opens, or add the pull request to the watch loop the conversation already runs; `false` leaves starting the loop to you |
++| `panel.background` | string | `auto` | Projector's band in Claude Code, as the background of the panel it draws in a terminal: `auto` picks one from the Claude Code theme, and any other value, such as `rgb(30,30,40)`, `#1e1e28`, `ansi256(236)`, or a theme color's name such as `inverseText`, is drawn as written |
+ 
+ `review.allow_approve` is off unless it is exactly `true`; an unset key means
+ `false` rather than a question to ask. It never applies to a review of your own
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 53884612..eb5fd5a2 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -192,15 +192,15 @@ line each. Run `/projector` to show or hide the band. It also appears when the
+ session starts a loop's watcher for the first time.
+ 
+ ```text
+-─ 2 pull requests ────────────────────────────────────────────────────────── 12s [-]
+-
+-#267 draft List a loop's open pull requests above the Claude Code prompt      2h
+-#258 draft grace Name the reviewed head in a review's signature conflict · 5* 5m
+-     reviewing · review-signature · +84 −12 in 5 files · checks passing
+-     7: discuss PR
+-     8: dismiss PR
+-     open in github
+-     open in projector
++  /projector                                              2 pull requests  12s   [-]
++   #267 draft List a loop's open pull requests above the Claude Code prompt 2h
++   #258 draft grace Name the reviewed head in a review's sig… conflict · 5* 5m
++        reviewing · review-signature · +84 −12 in 5 files · checks passing
++        7: discuss PR
++        8: dismiss PR
++        open in github
++        open in projector
++                                                           ctrl+x tab to focus
+ ```
+ 
+ Each line is the pull request's number, `draft` or `ready`, its author when
+@@ -219,21 +219,54 @@ asks for in the same query as the pull requests. A pull request that both a
+ `start-watch-loop` watcher, `watch-threads.sh`, and a `start-review-loop`
+ watcher, `watch-prs.sh`, track is listed once.
+ 
+-The divider starts with one `─` and how many pull requests the band lists,
+-a line each, such as `2 pull requests`. It ends with how long ago the band
++In a terminal, the band draws as one panel on a background of its own, so a
++line that moves as the band scrolls is plainly the band's. The panel is
++inset one column from the terminal's edge and ends where Claude Code's
++`[-]`, which collapses the band, begins. Its header and its key hint sit one
++column in from the panel's left edge, and the pull requests and items
++between them two columns in from each side, so every line ends two columns
++short of the panel's right edge, where the ages line up. The panel's
++background follows your Claude Code theme, a step darker than the terminal
++so that the panel reads as a sunken surface:
++
++- **`dark` and `dark-daltonized`** draw on `rgb(20,20,20)`.
++- **`light` and `light-daltonized`** draw on `rgb(240,240,240)`.
++- **A custom theme** takes the color of the theme it builds on, the `base`
++  in its file under `~/.claude/themes/`, or under `$CLAUDE_CONFIG_DIR/themes/`
++  when that variable is set. A file with no `base` builds on `dark`, and a
++  file the band cannot read gives `inverseText`.
++- **Any other theme**, such as `dark-ansi` or `light-ansi`, draws on its own
++  `inverseText` color.
++
++A theme you pick with `/theme` recolors the panel at once. To choose
++another shade, set `panel.background`, as
++[Choose the panel's color](#choose-the-panels-color) describes.
++
++The panel's first line is its header, drawn in the `subtle` color. It starts
++with `/projector`, the command that shows and hides the band, at its left.
++At its right, it counts the pull requests the band lists, a line each, such
++as `2 pull requests`, and two spaces on, it says how long ago the band
+ reloaded, drawn as the rows draw their ages: in the short form, such as
+ `12s`, and ending in their column. A reload just now reads `0s`, as an item
+-posted just now does. The count and the time are drawn in the `subtle`
+-color, and the rule between them in the default text color. A count of
+-zero is left out, so a band with nothing to count draws the rule and the
+-time alone. Claude Code's `[-]` at the divider's end collapses the band. A
+-blank line sets the divider apart from the rows under it. Only a terminal
+-draws the divider and that blank line. Claude Desktop, VS Code, and the
+-mobile app do not set the band's text in a terminal's columns, so a rule
+-sized to them would wrap, and there the band starts with its first row.
++posted just now does. A count of zero is left out, so a band with nothing to
++count shows `/projector` and the time alone. The rows start on the line
++under the header.
++
++The panel's last line is a key hint, also in `subtle`, at its right, so it
++ends in the ages' column. While the prompt has the keyboard, it reads
++`ctrl+x tab to focus`. Once the band has the keyboard, it reads
++`esc to return · enter to open`. Claude Code says nothing when Esc gives the
++keyboard back, so that hint stays until you next type in the prompt or send
++a prompt from it. The hint leaves the arrow keys out, because which of them
++moves between lines depends on whether the band scrolls, as
++[Use the band from the keyboard](#use-the-band-from-the-keyboard) describes.
++
++Claude Desktop, VS Code, and the mobile app do not set the band's text in a
++terminal's columns, so they draw no panel, no header, and no hint, and there
++the band starts with its first row.
+ 
+ When a poll cannot reach GitHub, the band keeps showing the pull requests
+-GitHub gave last, and the divider's time shows how old they are. It shows
++GitHub gave last, and the header's time shows how old they are. It shows
+ GitHub's error only when it has none of them to show.
+ 
+ Click a pull request's number to open a drawer under it, and click it again
+@@ -289,9 +322,29 @@ names, such as a path built from a variable the session does not set, it
+ says so once and leaves that loop out.
+ 
+ The band reloads when one of the session's watchers reports a change and
+-when a turn ends, and every 30 seconds otherwise. Each reload asks GitHub
+-for every pull request in one `gh api graphql` call, and only while the band
+-is shown. The skills never depend on the band, and Codex has no equivalent.
++when a turn ends, and every 30 seconds otherwise, only while it is shown.
++Each reload asks GitHub for every pull request in one `gh api graphql` call
++and reads `panel.background` with `project config get`. The skills never
++depend on the band, and Codex has no equivalent.
++
++#### Choose the panel's color
++
++The panel takes its background from your Claude Code theme unless you set
++`panel.background`. Set it in `~/.projector.toml` to use one shade in every
++repository:
++
++```sh
++project config set panel.background 'rgb(30,30,40)' --user
++```
++
++The band draws any color Claude Code takes as written: `rgb(r,g,b)`,
++`#rrggbb`, `ansi256(n)`, or the name of a theme color, such as
++`inverseText`. The default, `auto`, leaves the color to the theme, and
++`project config unset panel.background --user` returns to it. The band reads
++the setting when the session starts and each time it reloads, so a change
++shows within 30 seconds, without a restart. A value that Claude Code cannot
++draw, such as `ansi:black` or an empty string, leaves the color to the
++theme, and the band says so once.
+ 
+ ### Read your inbox in Projector's band
+ 
+@@ -318,46 +371,46 @@ notice's line is drawn in the theme's mid gray, `inactive`, apart from the
+ answer and which want a read. Each line ends with the pull request the item
+ is about, as the band labels it, and how long ago it was posted. The band
+ appears when an item arrives or is restored, even after you hid it, and in
+-a terminal the divider counts the open questions and the open notices after
+-the pull requests, in the same `subtle` color, its rule running from the
+-counts to its time.
++a terminal the header counts the open questions and the open notices after
++the pull requests, before its time.
+ 
+ ```text
+-─ 1 pull request · 2 questions · 1 notice ──────────────────────────── 12s [-]
++  /projector                1 pull request · 2 questions · 1 notice  12s   [-]
++   #337 draft Retry failed webhook deliveries with backoff            1h
+ 
+-#337 draft Retry failed webhook deliveries with backoff                 1h
+-
+-- Run project init to add the publish rule?                             2m
+-- Decline the finding about the retry budget?                     #337  5m
+-- Force-pushed #337 to drop a stray debug file                    #337  1m
++   - Run project init to add the publish rule?                        2m
++   - Decline the finding about the retry budget?                #337  5m
++   - Force-pushed #337 to drop a stray debug file               #337  1m
++                                                     ctrl+x tab to focus
+ ```
+ 
+ Click anywhere on an item to open its drawer, and click it again to close
+ it. On the main screen, press Enter on it from the keyboard instead. While
+ its drawer is open, the item has the band to itself, so its line is the
+ top row, in its usual colors, with `0` in its bullet's place to close the
+-drawer. In a terminal, the divider and the blank line under it step aside
+-too, which gives the drawer two more rows before the band scrolls, and the
+-item's line takes the divider's place as the band's top bar: a rule in the
+-default text color runs from its subject to its pull request and age, so
+-the row ends where the band's `[-]` begins. A subject too long to leave a
++drawer. In a terminal, the header steps aside too, which gives the drawer
++another row before the band scrolls, and the item's line takes the
++header's place as the panel's top bar: a rule in the default text color
++runs from its subject to its pull request and age, so the row ends at the
++panel's edge, where the band's `[-]` begins. A subject too long to leave a
+ few columns for the rule draws none. The drawer is indented to start under
+ the item's text, so its detail and the digits of its lines sit under the
+ item's first letter:
+ 
+ ```text
+-0: Decline the finding about the retry budget? ────────────── #337  5m [-]
++   0: Decline the finding about the retry budget? ───────────── #337  5m   [-]
+ 
+-   The review asks for a retry budget per host. The loop caps retries at
+-   three in total, which covers the case the finding names.
++      The review asks for a retry budget per host. The loop caps retries at
++      three in total, which covers the case the finding names.
+ 
+-   1: Decline it: the total cap already bounds retries to one host
+-   (recommended)
+-   2: Add a budget of two retries per host, and keep the total cap
++      1: Decline it: the total cap already bounds retries to one host
++      (recommended)
++      2: Add a budget of two retries per host, and keep the total cap
+ 
+-   7: discuss question
+-   8: dismiss question
+-   9: snooze question
++      7: discuss question
++      8: dismiss question
++      9: snooze question
++                                                     ctrl+x tab to focus
+ ```
+ 
+ The first option is always the agent's recommendation. Press an option by
+@@ -466,7 +519,7 @@ notice, which has no options, shows the same lines. **cancel** puts the
+ options and the actions back, and so does closing the drawer or opening
+ another, so a drawer always opens on its actions.
+ 
+-A snoozed item leaves the divider's counts at once, and stays in the list
++A snoozed item leaves the header's counts at once, and stays in the list
+ for 30 seconds in the `subtle` color, not struck through, so it reads as put
+ off rather than dismissed. Then it leaves the band. When its time is up, it
+ returns to the list, and the band appears if you hid it. To wake an item
+@@ -526,6 +579,9 @@ it:
+ - **Esc** gives the keyboard back to the prompt.
+ - **ctrl+x ctrl+a** collapses the band to one line, and shows it again.
+ 
++In a terminal, the panel's last line names the chord that takes the
++keyboard in, and once the band has it, Esc and Enter.
++
+ Enter on a line opens its drawer and moves the ring onto the drawer's first
+ control: a question's first option, otherwise **discuss**. Tab then walks
+ the options and the actions. Enter on the open line closes the drawer and
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index af0696a2..b0c4a8b5 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -1906,3 +1906,135 @@ keeps the default color:
+ | With nothing to count, the divider is the rule and a `subtle` time, `bodyColumns` wide | `shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request` |
+ | `conflict` and `changes requested` take `error`, `approved` takes `success`, and the thread count reads `N*` in `warning`; every ` · ` between notes takes the default color, and no line draws `⋮` | `` a pull request’s notes take their own colors, and each ` · ` between them the default color `` |
+ | The thread count comes last, after `conflict`, as `conflict · 2*` | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `draws one line per open pull request of the session’s own loops` |
++
++## 20. Draw the band as one panel
++
++In a terminal, the band drew its rows under a divider: § 19's rule with the
++counts and the reload's age set in it, and a blank line under it. It now
++draws as one panel on a background of its own, and a header takes the
++divider's place:
++
++```text
++  /projector                1 pull request · 2 questions · 1 notice  12s   [-]
++   #337 draft Retry failed webhook deliveries with backoff            1h
++```
++
++### 20.1 What changes
++
++- **One panel.** In a terminal, every line of the band sits in one `Box`
++  with a background. One column of the terminal's own background comes
++  first, `PANEL_INSET`, and then the panel, padded one column at each side,
++  `PANEL_PADDING`, which ends at `bodyColumns`, where Claude Code draws the
++  band's `[-]`. Its header and key hint sit in that padding, and the lines
++  between them, the pull requests, the items, and an open item's drawer, in
++  a `Box` padded one more column at each side, `LINE_PADDING`. So the rows
++  are `bodyColumns - 5` wide, and every width the band works out for them,
++  an open item's rule's included, uses that. The header and the hint are
++  one column wider, starting a column further left and ending where the
++  rows do, so the header's age, the rows' ages, and the hint end in one
++  column.
++- **A header, not a divider.** The divider's rule and its leading `─ ` go.
++  The panel's first line is its header, all in `subtle`: `/projector`,
++  `HEADER_NAME`, at its left, and the counts and the reload's age at its
++  right, two spaces apart, so the age ends in the rows' age column. With
++  nothing to count, it is `/projector` and the age. The blank line under the
++  divider goes too, so the rows start on the next line.
++- **A key hint is the panel's last line.** It takes the place a row of
++  bottom padding would, so the panel keeps its height, and it is one `Text`
++  in `subtle` at the panel's right, ending in the ages' column. While the
++  prompt has the keyboard it reads `ctrl+x tab to focus`, and once the band
++  has it, `esc to return · enter to open`. A `ui.focus` hook on the band's
++  site marks the band focused, in its state as `isBandFocused`, and redraws
++  it. Claude Code reports nothing when Esc gives the keyboard back, so a
++  `prompt.edit` hook clears the mark at the next keystroke in the prompt,
++  and the `prompt.submit` hook at a prompt sent from the terminal, such as
++  one a drawer filled, which no keystroke edited. Only the first of those
++  redraws the band, and neither hook waits on it, so typing stays as fast
++  as before. The hint leaves the arrow keys out: which
++  of them moves between lines depends on whether the band scrolls, so one
++  fixed hint would be wrong half the time.
++- **Every layout draws in the panel.** The list, an open item's drawer, and
++  the empty band with its tagline all do. An open item's drawer still has
++  the band to itself: the header steps aside, as the divider did, and the
++  item's ` ───` rule fills the panel's narrower line.
++- **The background follows the theme.** `dark` and `dark-daltonized` draw on
++  `rgb(20,20,20)`, and `light` and `light-daltonized` on `rgb(240,240,240)`.
++  A custom theme, which the theme setting names `custom:<slug>`, takes the
++  color of its file's `base`, read from `themes/<slug>.json` under the Claude
++  config directory, `$CLAUDE_CONFIG_DIR` or `~/.claude`, and `dark` when the
++  file names none. Any other theme, such as `dark-ansi`, and a custom theme
++  whose file the band cannot read, take the theme key `inverseText`. The
++  band reads the theme from `$.config.list()` when the session starts, takes
++  a new one from `config.set` once `/theme` writes it, and keeps the color in
++  its state, so the render waits on no read.
++- **`panel.background` chooses another shade.** The setting is a string,
++  `auto` by default, in `SETTINGS` and in the settings table of
++  `docs/cli.md`. `auto` leaves the color to the theme, and any other value
++  is drawn as written, such as `rgb(30,30,40)`, `#1e1e28`, `ansi256(236)`,
++  or `inverseText`. The band reads it with
++  `project config get panel.background --default auto --json` when the
++  session starts and on each reload, so an edit shows without a restart, and
++  it never parses TOML itself. A value that no surface can draw, one longer
++  than 40 characters or with a character other than a letter, a digit, or
++  one of `#(),.%_ -`, such as `ansi:black` or an empty string, falls back to
++  `auto`, and the band says so once in a toast.
++- **Other surfaces are unchanged.** Claude Desktop, VS Code, and the mobile
++  app draw no panel and no header, as they drew no divider.
++
++### 20.2 Why this design
++
++- **The panel shows what moves.** With a background of its own, the band
++  reads as one surface, so when it scrolls, it is easy to tell which lines
++  are moving. That is the owner's main reason for the change.
++- **A sunken background, chosen for you.** The owner tried the theme's
++  `inverseText`, which is black on a dark theme, Claude Code's side-panel
++  grey, `composerSidebarBackground`, which is lighter than the terminal and
++  so looked raised, and fixed greys. The owner chose a step darker than the
++  terminal, which reads as a sunken surface, picked from the theme so that
++  it needs no configuration. An ANSI theme leaves its colors to the
++  terminal's palette, so the band cannot know what is a step darker, and it
++  falls back to `inverseText`.
++- **A setting for a preferred shade.** The default needs no configuration,
++  and `panel.background` is for someone who prefers another shade. It lives
++  in `.projector.toml` with Projector's other settings, so
++  `project config set` and `unset` change it, and the band reads it through
++  the CLI rather than parsing the file. Claude Code refuses the band's whole
++  tree over a color it cannot draw, so the band checks the value first and
++  draws on the theme's color rather than not at all.
++- **A header instead of a rule.** The background sets the band apart from
++  the transcript, so a rule and a blank line no longer have to. The owner
++  chose `/projector` for the left, with the slash, because it is the command
++  that shows and hides the band. The counts sit beside the age at the right,
++  and the two spaces before the age match the gap before a row's age, as in
++  `approved  1d`.
++- **Room at the sides, with the right edge straight.** The owner previewed
++  the panel padded one column at each side, then asked for one column
++  beside the header and the hint and two beside the lines between, with
++  the header's age still in the rows' age column, and the hint at the right
++  in that column too.
++- **The keys where you look.** The owner previewed the hint in a session
++  mod and kept it: the panel's bottom row was padding, and now it says how
++  to reach the band's keyboard and how to leave it.
++- **The header steps aside for a drawer.** An open item's line already ends
++  in a rule to the panel's edge, so it serves as the panel's top bar, as it
++  served as the band's.
++
++### 20.3 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| In a terminal, the band is one `Box` with one column of inset and no background, holding one panel `bodyColumns - 1` wide, padded one column at each side and no row, which alone paints a background, with the rows in a `Box` padded one more column at each side | `in a terminal the band draws as one panel, inset a column and padded, on a background of its own` in `hooks/band.test.tsx` |
++| The header reads `/projector` at the left and `2 pull requests  0s` at the right of a `bodyColumns - 4` line, in `subtle`, with no `─`, and the first row follows it with no blank line | `draws one line per open pull request of the session’s own loops` |
++| The header puts the pull request count before the item counts, `bodyColumns - 4` wide | `asks through the tool, and the band lists the question below the pull requests`, and the inbox tests that find the header by its counts |
++| With nothing to count, the header is `/projector` and the age, and the tagline draws in the panel under it | `shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request` |
++| An open question's or notice's drawer draws in the panel, with no header, its line the top row | `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
++| The last line reads `ctrl+x tab to focus` in `subtle`, ending in the rows' age column, then `esc to return · enter to open` once a `ui.focus` lands, and the first again at the next prompt edit or a prompt sent from the terminal; only a change of hint redraws the band, and an edit with no mark set redraws nothing | `the panel’s last line says how to focus the band, and once the band has the keyboard, which keys work` |
++| An open item's rule ends at the rows' edge, 85 columns at a `bodyColumns` of 120 | `an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button` |
++| The header's age, a pull request's age, and the key hint end in one column: the header and hint start one column before the rows and are one column wider | `the header’s age, a pull request’s age, and the key hint end in one column` |
++| Claude Desktop, VS Code, and the mobile app draw no panel, no background, and no header | `draws no panel and no header on a surface that does not lay text out in columns` |
++| `dark`, `light`, their daltonized themes, the ANSI themes, custom themes built on each, one with no `base`, and one with no file each get their color | `the panel is <color> on the <theme> theme`, one test for each |
++| A custom theme's file is read under `$CLAUDE_CONFIG_DIR` when it is set | `a custom theme’s file is read from the Claude config directory CLAUDE_CONFIG_DIR names` |
++| A theme picked in `/theme` recolors the panel at once, and a refused change leaves it | `a theme picked in /theme recolors the panel at once, and one the change refuses leaves it` |
++| `panel.background` is read through `project config get` and drawn as written, a change shows on the next reload, and `auto` or an unset key gives the theme's color | `panel.background colors the panel, and auto or no value leaves the color to the theme` |
++| A value no surface can draw gives the theme's color and one toast for each such value | `a panel.background no surface can draw leaves the color to the theme, and the band says so once` |
++| `panel.background` is a string key that `project config set` and `unset` change, and the settings table lists it | `test_the_panel_background_is_set_and_unset_as_the_band_reads_it` and `test_the_documented_keys_are_the_known_keys` in `tests/test_config.py` |
+diff --git a/hooks/band.test.tsx b/hooks/band.test.tsx
+index 45586d04..6380b754 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/band.test.tsx
+@@ -1,4 +1,4 @@
+-import type { AgentInfo, FsEntry, On } from 'claude-code'
++import type { AgentInfo, ConfigRow, FsEntry, On, PromptEditInput, PromptEditResult } from 'claude-code'
+ import { expect, mock, test, type Engine, type Mounted } from 'claude-code/testing'
+ 
+ import type { Notice, Question } from './types'
+@@ -23,6 +23,16 @@ const BAND = {
+   },
+ } as const
+ 
++/**
++ * How wide the band's rows are in a terminal: `bodyColumns` less the panel's
++ * one-column inset, its padding of one column at each side, and the rows' own
++ * padding of one more.
++ */
++const COLUMNS = BAND.props.bodyColumns - 5
++
++/** How wide the panel's header and key hint are: they start a column before the rows and end where the rows do. */
++const EDGE = COLUMNS + 1
++
+ const COMMAND = {
+   command: 'projector',
+   args: '',
+@@ -120,15 +130,32 @@ type Outcome = Ran | { deny: string }
+ 
+ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
+ 
+-/** GitHub's answer to a query, where a test needs another, or needs it late. */
+-type Beneath = { github?: (query: string) => Ran | Promise<Ran> }
++/**
++ * GitHub's answer to a query, where a test needs another, or needs it late,
++ * and the settings `.projector.toml` holds, by dotted key, which a test may
++ * change between reloads.
++ */
++type Beneath = { github?: (query: string) => Ran | Promise<Ran>; settings?: Record<string, unknown> }
++
++/** `project config get <key> [--default <value>] --json`, answered from `settings` as the CLI answers it. */
++function configGet(argv: readonly string[], settings: Record<string, unknown>): Ran {
++  const key = argv[3] ?? ''
++  const at = argv.indexOf('--default')
++  const value = settings[key] ?? (at === -1 ? null : argv[at + 1])
++  const source = key in settings ? `${HOME}/.projector.toml` : null
++  return { ...ran(JSON.stringify({ key, schema_version: 2, source, value })), exitCode: value === null ? 1 : 0 }
++}
+ 
+-/** Answers the files, GitHub, prompt and Bash calls beneath the plugin, and `project` when given. */
++/**
++ * Answers the files, GitHub, prompt and Bash calls beneath the plugin,
++ * `project config get` from `settings`, and any other `project` command when
++ * given.
++ */
+ function world(
+   on: On,
+   files: Record<string, string>,
+   project?: (argv: string[]) => Outcome | Promise<Outcome>,
+-  { github = query => ran(answer(query)) }: Beneath = {},
++  { github = query => ran(answer(query)), settings = {} }: Beneath = {},
+ ) {
+   const commands: string[][] = []
+   const filled: string[] = []
+@@ -139,8 +166,15 @@ function world(
+   on('process.run', ($, e) => {
+     commands.push([...e.argv])
+     const answered = (outcome: Outcome) => ('deny' in outcome ? outcome : { value: outcome })
++    const [command, group, verb] = e.argv
+     const outcome =
+-      e.argv[0] === 'project' && project !== undefined ? project([...e.argv]) : github(e.argv.join(' '))
++      command !== 'project'
++        ? github(e.argv.join(' '))
++        : group === 'config' && verb === 'get'
++          ? configGet(e.argv, settings)
++          : project !== undefined
++            ? project([...e.argv])
++            : github(e.argv.join(' '))
+     return outcome instanceof Promise ? outcome.then(answered) : answered(outcome)
+   })
+   on('prompt.fill', ($, e) => {
+@@ -185,36 +219,25 @@ test('draws one line per open pull request of the session’s own loops', async
+   expect((await ui.findAll({ type: 'Text', text: '1*' })).map(found => found.props.color)).toContain('warning')
+   expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+-  // The divider counts the two open pull requests the band lists, not the merged one, in `subtle`. It ends with
+-  // how long ago the band reloaded as the rows end with their ages: in the short form, `0s` for a reload just now
+-  // as for an item posted just now, in `subtle`, and ending at bodyColumns.
+-  const divider = await ui.find({ type: 'Text', text: /^─ 2 pull requests ─+ 0s$/ })
+-  expect(divider?.text.length).toBe(BAND.props.bodyColumns)
+-  expect(await ui.find({ type: 'Text', text: /updated|ago|just now/ })).toBeUndefined()
+-  expect(partsOf(divider)).toEqual([
+-    '─ ',
+-    ['2 pull requests', 'subtle'],
+-    expect.stringMatching(/^ ─+ $/),
+-    ['0s', 'subtle'],
+-  ])
+-  // The rule is drawn at full strength, not muted like the rows' details.
+-  expect(divider?.props.color).toBeUndefined()
+-  expect(divider?.props.dimColor).toBeUndefined()
+-  // A blank line sets the divider apart from the rows under it.
++  // The panel's header starts with `/projector`, the command that shows and hides the band, at its left. At its
++  // right, it counts the two open pull requests the band lists, not the merged one, and then says how long ago the
++  // band reloaded as the rows say their ages: in the short form, `0s` for a reload just now as for an item posted
++  // just now. The two sit two spaces apart, so the time ends in the rows' age column, at the edge of the panel's
++  // lines. All of it is `subtle`, and no rule runs through it.
++  const header = await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  0s$/ })
++  expect(header?.text).toBe(`/projector${'2 pull requests  0s'.padStart(EDGE - '/projector'.length)}`)
++  expect(header?.props.color).toBe('subtle')
++  expect(await ui.find({ type: 'Text', text: /─|updated|ago|just now/ })).toBeUndefined()
++  // The rows start on the line under the header, with no blank line between.
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+-  expect(texts.slice(texts.indexOf(divider?.text ?? ''), texts.indexOf(divider?.text ?? '') + 4)).toEqual([
+-    divider?.text,
+-    '2 pull requests',
+-    '0s',
+-    ' ',
+-  ])
++  expect(texts.slice(0, 3)).toEqual([header?.text, 'ready', ''])
+   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
+   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
+   await ui.unmount()
+ })
+ 
+-test('draws no divider on a surface that does not lay text out in columns', async ($, on) => {
++test('draws no panel and no header on a surface that does not lay text out in columns', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\n' })
+@@ -223,11 +246,313 @@ test('draws no divider on a surface that does not lay text out in columns', asyn
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+-  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+-  expect(texts.filter(text => text.includes('─'))).toEqual([])
+-  expect(texts[0]).not.toBe(' ')
+-  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
++  for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
++    const ui = await $.ui.mount({ ...BAND, surface })
++    expect(await ui.find({ key: 'panel' })).toBeUndefined()
++    expect((await ui.findAll({ type: 'Box' })).filter(box => box.props.backgroundColor !== undefined)).toEqual([])
++    // The band starts with its first row.
++    const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
++    expect(texts.filter(text => text.includes('─') || text.startsWith('/projector') || /\d+s$/.test(text))).toEqual([])
++    expect(texts[0]).toBe('ready')
++    expect(texts).not.toContain('ctrl+x tab to focus')
++    expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
++    await ui.unmount()
++  }
++})
++
++/** A terminal's band: one column of inset in the terminal's own background, then the panel, which holds every line. */
++const inPanel = (backgroundColor: string) => ({
++  type: 'Box',
++  props: { width: BAND.props.bodyColumns, paddingLeft: 1 },
++  children: [
++    {
++      type: 'Box',
++      props: { width: BAND.props.bodyColumns - 1, paddingLeft: 1, paddingRight: 1, backgroundColor },
++    },
++  ],
++})
++
++/** The panel's background as drawn, or undefined when the band draws no panel. */
++const backgroundOf = async (ui: Pick<Mounted, 'find'>) => (await ui.find({ key: 'panel' }))?.props.backgroundColor
++
++test('in a terminal the band draws as one panel, inset a column and padded, on a background of its own', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#1\n' })
++
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  // The panel pads one column at each side, and no row: its header is its first line and its key hint its last.
++  // It ends at bodyColumns, where the engine draws the band's `[-]`. A band that has read no theme takes
++  // `inverseText`.
++  expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
++  const panel = await ui.find({ key: 'panel' })
++  expect([panel?.props.paddingTop, panel?.props.paddingBottom]).toEqual([undefined, undefined])
++  // Only the panel paints a background, so its inset keeps the terminal's.
++  expect((await ui.findAll({ type: 'Box' })).filter(box => box.props.backgroundColor !== undefined)).toHaveLength(1)
++  await ui.unmount()
++})
++
++test('the panel’s last line says how to focus the band, and once the band has the keyboard, which keys work', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#1\n' })
++  on('ui.focus', () => ({}))
++  on('prompt.edit', ($, e) => ({ text: e.text, cursor: e.cursor }))
++  on('prompt.submit', ($, e) => ({ text: e.text }))
++  const invalidated: string[] = []
++  on('ui.invalidate', ($, e, next) => {
++    invalidated.push(e.event)
++    return next(e)
++  })
++  // The person moves the ring onto a line of the band, as ctrl+x tab or Tab does, or types in the prompt.
++  const focus = (element: string) =>
++    $.ui.focus({ component: 'AbovePrompt', requestId: 'above-prompt', plugin: 'projector', element, origin: { kind: 'person' } })
++  // The kit raises `prompt.edit` as the prompt's editor does, though its typed `$` lists no call for it.
++  const prompt = $.prompt as unknown as { edit: (e: PromptEditInput) => Promise<PromptEditResult> }
++  const type = async (text: string) => {
++    await prompt.edit({ origin: { kind: 'composer' }, text: '', cursor: 0, start: 0, end: 0, inputText: text })
++    await clock.settle()
++  }
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  const hint = async () => {
++    const last = (await ui.findAll({ type: 'Text' })).at(-1)
++    return [last?.text.trimStart(), last?.props.color]
++  }
++  // With the keyboard in the prompt, the hint names the chord that moves it into the band, at the right of its line,
++  // which ends where the rows do. Typing redraws nothing.
++  expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
++  expect((await ui.findAll({ type: 'Text' })).at(-1)?.text).toBe('ctrl+x tab to focus'.padStart(EDGE))
++  await type('a')
++  expect(invalidated).toEqual([])
++
++  // Once the ring lands in the band, the hint names the keys that work there, and moving the ring on redraws
++  // nothing more.
++  await focus('pr:o/r#1')
++  expect(await hint()).toEqual(['esc to return · enter to open', 'subtle'])
++  await focus('pr:o/r#1')
++  expect(invalidated).toEqual(['ui.render'])
++
++  // Claude Code says nothing when Esc hands the keyboard back, so the next keystroke in the prompt puts the first
++  // hint back, and only that one redraws the band.
++  await type('b')
++  expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
++  await type('c')
++  expect(invalidated).toEqual(['ui.render', 'ui.render'])
++
++  // Sending a prompt from the terminal with no keystroke since Esc, as one a drawer filled, puts it back too, and
++  // only once.
++  const send = async () => {
++    await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } })
++    await clock.settle()
++  }
++  await focus('pr:o/r#1')
++  expect(await hint()).toEqual(['esc to return · enter to open', 'subtle'])
++  await send()
++  expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
++  await send()
++  expect(invalidated).toEqual(['ui.render', 'ui.render', 'ui.render', 'ui.render'])
++  await ui.unmount()
++})
++
++/** Who owns Claude Code's own `/config` rows. */
++const ENGINE = { plugin: 'engine', tier: 'core' } as const
++
++test('the header’s age, a pull request’s age, and the key hint end in one column', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#2\n' })
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(BAND)
++  // The header and the hint sit in the panel's padding of one column, and the rows in a Box one column further in at
++  // each side, whose last column is each row's age.
++  type Drawn = { type: string; props: Record<string, unknown>; children: (Drawn | string)[] }
++  const inset = (await ui.findAll({ type: 'Box' }))[0]?.props ?? {}
++  const panel = (await ui.find({ key: 'panel' })) as Drawn | undefined
++  const [header, rows, hint] = (panel?.children ?? []) as Drawn[]
++  expect(rows?.props).toMatchObject({ flexDirection: 'column', paddingLeft: 1, paddingRight: 1 })
++  const width = (value: unknown) => (typeof value === 'number' ? value : NaN)
++  const textOf = (element: Drawn | undefined) => (element?.children ?? []).join('')
++  const start = width(inset.paddingLeft) + width(panel?.props.paddingLeft)
++  const end = width(inset.paddingLeft) + width(panel?.props.width) - width(panel?.props.paddingRight)
++  const rowsEnd = end - width(rows?.props.paddingRight)
++  expect(rowsEnd - start - width(rows?.props.paddingLeft)).toBe(COLUMNS)
++  expect(textOf(header)).toMatch(/^\/projector +1 pull request  \d+s$/)
++  expect(start + textOf(header).length).toBe(rowsEnd)
++  expect(start + textOf(hint).length).toBe(rowsEnd)
++  // A row fills the rows' width, its title giving way, so its age ends at their edge.
++  expect(await ui.find({ type: 'Text', text: '45s' })).toBeDefined()
++  await ui.unmount()
++})
++
++/** The `/config` row of Claude Code's theme, holding `value`. */
++const themeRow = (value: string): ConfigRow => ({
++  key: 'theme',
++  label: 'Theme',
++  kind: 'choice',
++  value,
++  provider: ENGINE,
++  isLocked: false,
++})
++
++type PanelOptions = {
++  theme?: string
++  env?: Record<string, string>
++  files?: Record<string, string>
++  settings?: Record<string, unknown>
++}
++
++/**
++ * A session on a Claude Code theme whose review loop tracks o/r#1, with the
++ * theme's `/config` row, the files and the settings beneath the plugin. A
++ * change of theme to `dark-ansi` is refused.
++ */
++function panelWorld(on: On, { theme = 'dark', env = {}, files = {}, settings = {} }: PanelOptions = {}) {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME, ...env })
++  const { commands } = world(on, { [REVIEW]: 'o/r#1\n', ...files }, undefined, { settings })
++  const toasts = toastsOf(on)
++  on('session.start', ($, e) => ({ cwd: e.cwd }))
++  on('command.register', () => ({ value: { command: 'projector' } }))
++  on('config.list', () => ({ value: [themeRow(theme)] }))
++  on('config.set', ($, e) => (e.value === 'dark-ansi' ? { deny: 'the theme stays' } : { value: e.value }))
++  return { clock, commands, toasts }
++}
++
++const DARK = 'rgb(20,20,20)'
++const LIGHT = 'rgb(240,240,240)'
++const THEMES = `${HOME}/.claude/themes`
++
++for (const [theme, color, files] of [
++  ['dark', DARK, {}],
++  ['dark-daltonized', DARK, {}],
++  ['light', LIGHT, {}],
++  ['light-daltonized', LIGHT, {}],
++  ['dark-ansi', 'inverseText', {}],
++  ['light-ansi', 'inverseText', {}],
++  ['custom:dusk', DARK, { [`${THEMES}/dusk.json`]: '{"name": "Dusk", "base": "dark", "overrides": {}}' }],
++  ['custom:dawn', LIGHT, { [`${THEMES}/dawn.json`]: '{"name": "Dawn", "base": "light-daltonized"}' }],
++  ['custom:plain', DARK, { [`${THEMES}/plain.json`]: '{"name": "Plain"}' }],
++  ['custom:retro', 'inverseText', { [`${THEMES}/retro.json`]: '{"base": "dark-ansi"}' }],
++  ['custom:gone', 'inverseText', {}],
++  ['auto', 'inverseText', {}],
++] as const) {
++  test(`the panel is ${color} on the ${theme} theme`, async ($, on) => {
++    const { clock } = panelWorld(on, { theme, files })
++    await startSession($, clock)
++
++    const ui = await $.ui.mount(BAND)
++    expect(await ui.drawn()).toMatchObject(inPanel(color))
++    await ui.unmount()
++  })
++}
++
++test('a custom theme’s file is read from the Claude config directory CLAUDE_CONFIG_DIR names', async ($, on) => {
++  const { clock } = panelWorld(on, {
++    theme: 'custom:dawn',
++    env: { CLAUDE_CONFIG_DIR: `${HOME}/claude-config` },
++    files: {
++      [`${HOME}/claude-config/themes/dawn.json`]: '{"base": "light"}',
++      [`${THEMES}/dawn.json`]: '{"base": "dark"}',
++    },
++  })
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(BAND)
++  expect(await backgroundOf(ui)).toBe(LIGHT)
++  await ui.unmount()
++})
++
++test('a theme picked in /theme recolors the panel at once, and one the change refuses leaves it', async ($, on) => {
++  const { clock } = panelWorld(on, { theme: 'dark' })
++  await startSession($, clock)
++  const ui = await $.ui.mount(BAND)
++  expect(await backgroundOf(ui)).toBe(DARK)
++
++  // As the person picks a theme in `/theme`.
++  const pick = (value: string, previous: string) =>
++    $.config.set({ key: 'theme', value, previous, provider: ENGINE, origin: { kind: 'composer' } })
++  expect(await pick('light', 'dark')).toEqual({ value: 'light' })
++  expect(await backgroundOf(ui)).toBe(LIGHT)
++
++  expect(await pick('dark-ansi', 'light')).toEqual({ deny: 'the theme stays' })
++  expect(await backgroundOf(ui)).toBe(LIGHT)
++  await ui.unmount()
++})
++
++test('panel.background colors the panel, and auto or no value leaves the color to the theme', async ($, on) => {
++  const settings: Record<string, unknown> = { 'panel.background': '#202830' }
++  const { clock, commands, toasts } = panelWorld(on, { theme: 'light', settings })
++  await startSession($, clock)
++  const reload = async () => {
++    await $.command.run(COMMAND)
++    await $.command.run(COMMAND)
++    await clock.advance(1)
++    await clock.settle()
++  }
++
++  // The band reads the setting through the CLI, which merges the `.projector.toml` files.
++  expect(commands).toContainEqual(['project', 'config', 'get', 'panel.background', '--default', 'auto', '--json'])
++  const ui = await $.ui.mount(BAND)
++  expect(await backgroundOf(ui)).toBe('#202830')
++
++  // Each reload reads it again, so an edit to the file shows without a restart.
++  for (const value of ['ansi256(236)', 'rgb(30,30,40)', 'composerSidebarBackground']) {
++    settings['panel.background'] = value
++    await reload()
++    expect(await backgroundOf(ui)).toBe(value)
++  }
++  settings['panel.background'] = 'auto'
++  await reload()
++  expect(await backgroundOf(ui)).toBe(LIGHT)
++  delete settings['panel.background']
++  await reload()
++  expect(await backgroundOf(ui)).toBe(LIGHT)
++  expect(toasts).toEqual([])
++  await ui.unmount()
++})
++
++test('a panel.background no surface can draw leaves the color to the theme, and the band says so once', async ($, on) => {
++  const settings: Record<string, unknown> = { 'panel.background': 'ansi:black' }
++  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
++  await startSession($, clock)
++  const reload = async () => {
++    await $.command.run(COMMAND)
++    await $.command.run(COMMAND)
++    await clock.advance(1)
++    await clock.settle()
++  }
++
++  // The panel draws on the theme's color rather than not at all.
++  const ui = await $.ui.mount(BAND)
++  expect(await ui.drawn()).toMatchObject(inPanel(DARK))
++  await reload()
++  expect(await backgroundOf(ui)).toBe(DARK)
++  for (const value of ['', '   ', 'a/b', 'x'.repeat(41), 3]) {
++    settings['panel.background'] = value
++    await reload()
++    expect(await backgroundOf(ui)).toBe(DARK)
++  }
++  const told = (value: string) =>
++    `projector: panel.background is ${value}, not a color the panel can draw, so the panel takes its color from the theme`
++  expect(toasts).toEqual([
++    told('"ansi:black"'),
++    told('""'),
++    told('"   "'),
++    told('"a/b"'),
++    told(`"${'x'.repeat(41)}"`),
++    told('3'),
++  ])
+   await ui.unmount()
+ })
+ 
+@@ -373,10 +698,10 @@ test('lists your pull requests first, then everyone else’s by author, naming t
+   // Yours keep their order, then bob's, then grace's two in theirs, with nothing between the groups.
+   const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
+   expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+-  // The divider counts everyone's pull requests the band lists, the session's own and others'.
+-  expect(await ui.find({ type: 'Text', text: /^─ 5 pull requests ─+ \d+s$/ })).toBeDefined()
++  // The header counts everyone's pull requests the band lists, the session's own and others'.
++  expect(await ui.find({ type: 'Text', text: /^\/projector +5 pull requests  \d+s$/ })).toBeDefined()
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+-  expect(texts.filter(text => text === ' ')).toHaveLength(1)
++  expect(texts.filter(text => text === ' ')).toEqual([])
+ 
+   // Only someone else's line names its author, in `subtle`, in a column as wide as the longest login.
+   expect(await ui.find({ key: 'author:x/y#7' })).toBeUndefined()
+@@ -416,7 +741,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
+   await clock.settle()
+ 
+   const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Text', text: /^─ 2 pull requests ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  \d+s$/ })).toBeDefined()
+   await ui.press({ key: 'pr:x/y#7' })
+   // The drawer's actions are lines of their own, as an item's are.
+   expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
+@@ -427,7 +752,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
+   await ui.press({ key: 'confirm:x/y#7' })
+   await clock.settle()
+ 
+-  expect(commands.filter(argv => argv[0] === 'project')).toEqual([
++  expect(commands.filter(argv => argv[0] === 'project' && argv[1] === 'loop')).toEqual([
+     ['project', 'loop', 'drop', 'x/y#7', '--tracked', REVIEW],
+     ['project', 'loop', 'drop', 'x/y#7', '--tracked', WATCH],
+   ])
+@@ -435,8 +760,8 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+-  // The divider stops counting the dismissed pull request.
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request ─+ \d+s$/ })).toBeDefined()
++  // The header stops counting the dismissed pull request.
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -548,8 +873,8 @@ test('lists a pull request both loops track once, as watched and reviewed, and c
+   await clock.settle()
+ 
+   const ui = await $.ui.mount(BAND)
+-  // The divider counts its one line once, in the singular.
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request ─+ \d+s$/ })).toBeDefined()
++  // The header counts its one line once, in the singular.
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+   await ui.press({ key: 'pr:o/r#1' })
+   expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
+   // Each loop takes its own color, and the `and` between them the default color.
+@@ -569,7 +894,8 @@ test('`/projector` only shows or hides the band, whatever follows it', async ($,
+   const ui = await $.ui.mount(BAND)
+   expect(await ui.find({ type: 'Text', text: ` ${TAGLINE}` })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+-  expect(commands).toEqual([])
++  // The band runs nothing but its reload's read of the panel's setting.
++  expect(commands.filter(argv => argv.slice(0, 3).join(' ') !== 'project config get')).toEqual([])
+   await ui.unmount()
+ })
+ 
+@@ -686,16 +1012,23 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
+   // `dimColor` does not dim in every terminal, so the tagline takes the theme's subtle color.
+   expect((await ui.find({ type: 'Text', text: ` ${TAGLINE}` }))?.props.color).toBe('subtle')
+   expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
+-  // With nothing to count, the divider is the rule and the time, the full width of the band.
+-  const divider = await ui.find({ type: 'Text', text: /^─+ \d+s$/ })
+-  expect(divider?.text.length).toBe(BAND.props.bodyColumns)
+-  expect(partsOf(divider)).toEqual([expect.stringMatching(/^─+ $/), [expect.stringMatching(/^\d+s$/), 'subtle']])
++  // With nothing to count, the header is `/projector` and the reload's age alone, at the right of the panel's line,
++  // and the tagline is the line under it, in the panel.
++  const header = await ui.find({ type: 'Text', text: /^\/projector +\d+s$/ })
++  expect(header?.text.length).toBe(EDGE)
++  expect(header?.props.color).toBe('subtle')
++  expect((await ui.findAll({ type: 'Text' })).map(found => found.text)).toEqual([
++    header?.text,
++    ` ${TAGLINE}`,
++    'ctrl+x tab to focus'.padStart(EDGE),
++  ])
++  expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
+   await ui.unmount()
+ 
+   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+   const texts = (await desktop.findAll({ type: 'Text' })).map(found => found.text)
+-  expect(texts[0]).toBe(` ${TAGLINE}`)
+-  expect(texts.filter(text => text.includes('─'))).toEqual([])
++  expect(texts).toEqual([` ${TAGLINE}`])
++  expect(await desktop.find({ key: 'panel' })).toBeUndefined()
+   await desktop.unmount()
+ })
+ 
+@@ -1079,10 +1412,9 @@ test('asks through the tool, and the band lists the question below the pull requ
+   await clock.advance(1)
+   await clock.settle()
+   const ui = await $.ui.mount(BAND)
+-  // The divider starts with one `─` and the count, and its rule runs from the count to the reload's age, so the
+-  // row still ends at bodyColumns.
+-  const divider = await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })
+-  expect(divider?.text.length).toBe(BAND.props.bodyColumns)
++  // The header counts the pull request and then the question before the reload's age, ending at the panel's edge.
++  const header = await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })
++  expect(header?.text.length).toBe(EDGE)
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+   expect(texts).toContain('Conflicting change')
+   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
+@@ -1233,7 +1565,7 @@ test('a question asked from the shell shows the hidden band within a tick', asyn
+   await ui.unmount()
+ })
+ 
+-test('an idle session with no questions starts no project process', async ($, on) => {
++test('an idle session with no questions runs no inbox command', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock)
+@@ -1241,9 +1573,10 @@ test('an idle session with no questions starts no project process', async ($, on
+   await clock.advance(3 * TICK)
+   await clock.settle()
+ 
+-  expect(session.project()).toEqual([])
++  // Listing the store's directory starts no process; only a reload of the shown band reads the panel's setting.
++  expect(session.project().filter(command => !command.startsWith('config get'))).toEqual([])
+   const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -1267,9 +1600,13 @@ test('an option puts the question and its answer in the prompt, and sending it a
+ 
+   const ui = await $.ui.mount(BAND)
+   await ui.press({ key: 'item:1' })
+-  // The open question has the band to itself, the divider included, so it is the top row.
++  // The open question has the panel to itself, its header included, so it is the top row, and the key hint stays
++  // the last.
++  expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
++  expect((await ui.findAll({ type: 'Text' }))[0]?.text).toBe('Decline the finding?')
++  expect((await ui.findAll({ type: 'Text' })).at(-1)?.text.trimStart()).toBe('ctrl+x tab to focus')
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Text', text: /─+ \d+s$/ })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The loop caps retries at three.')
+   // An answer in your own words goes through discuss, so only the options are numbered.
+@@ -1322,7 +1659,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
+ 
+   await ui.press({ key: 'close:1' })
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+   await clock.advance(30_000 + TICK)
+   await clock.settle()
+   expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
+@@ -1466,7 +1803,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
+   expect(session.store.store.get('1')).toEqual(asked)
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+ 
+   // The question waits for its agent to settle it, and the band sends nothing.
+   await clock.advance(TICK)
+@@ -1746,7 +2083,7 @@ test('a subagent tells through the tool, and the band lists the notice in gray',
+   await clock.advance(1)
+   await clock.settle()
+   const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 notice ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
+   expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBe('inactive')
+   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
+   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
+@@ -1817,10 +2154,11 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question · 1 notice ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question · 1 notice  \d+s$/ })).toBeDefined()
+   await ui.press({ key: 'item:2' })
+-  // An open notice has the band to itself, the divider included, as an open question does.
+-  expect(await ui.find({ type: 'Text', text: /─+ \d+s$/ })).toBeUndefined()
++  // An open notice has the panel to itself, its header included, as an open question does.
++  expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
++  expect(await ui.find({ type: 'Text', text: /^\/projector/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
+   expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe('The file held a debug token.')
+   expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeUndefined()
+@@ -1861,7 +2199,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+   expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
+ 
+   await ui.press({ key: 'close:2' })
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+   await clock.advance(30_000 - 2 * TICK)
+   await clock.settle()
+   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+@@ -1889,7 +2227,7 @@ test('the withdraw tool takes an item out of the band at once, and nothing goes
+   // Before the band reads the store again, the item has gone and its drawer with it.
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 notice ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+ 
+   await clock.advance(TICK)
+@@ -1964,7 +2302,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
+   expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
+   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+ 
+   // The answer you chose from the old text answers nothing.
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
+@@ -2161,9 +2499,9 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
+   await clock.settle()
+   expect(session.project()).toContain('inbox snooze 1 --for 60 --session s1 --json')
+   expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
+-  // Each stays listed for 30 seconds, out of the divider's counts, and then leaves the band.
++  // Each stays listed for 30 seconds, out of the header's counts, and then leaves the band.
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+   await clock.advance(30_000 + TICK)
+   await clock.settle()
+   expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
+@@ -2184,7 +2522,7 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
+   expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
+   expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+-  expect(await woken.find({ type: 'Text', text: /^─ 1 pull request · 1 question · 1 notice ─+ \d+s$/ })).toBeDefined()
++  expect(await woken.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question · 1 notice  \d+s$/ })).toBeDefined()
+   await woken.unmount()
+ })
+ 
+@@ -2309,7 +2647,7 @@ test('an item whose snooze ends while the band is hidden is drawn the moment the
+   await clock.settle()
+   const woken = await $.ui.mount(BAND)
+   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+-  expect(await woken.find({ type: 'Text', text: /^─ 1 pull request · 1 notice ─+ \d+s$/ })).toBeDefined()
++  expect(await woken.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
+ 
+   await clock.advance(10 * TICK)
+   await clock.settle()
+@@ -2401,7 +2739,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
+   await ui.press({ key: 'snooze-60:2' })
+   await clock.settle()
+   expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
+-  // The drawer closes, and the line stays in the subtle color, not struck through, out of the divider's count.
++  // The drawer closes, and the line stays in the subtle color, not struck through, out of the header's count.
+   expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
+   const snoozed = await line()
+   expect([snoozed?.props.color, snoozed?.props.dimColor, snoozed?.props.strikethrough]).toEqual([
+@@ -2409,7 +2747,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
+     undefined,
+     false,
+   ])
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+ 
+   // Its line opens the drawer again, where unsnooze takes snooze's place.
+   await ui.press({ key: 'item:2' })
+@@ -2462,7 +2800,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
+   const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
+   expect([line?.props.color, line?.props.strikethrough]).toEqual(['permission', false])
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+   await clock.advance(TICK)
+   await clock.settle()
+   expect(session.submitted.map(one => one.text)).toEqual(['RESTORED 1 Decline the finding?'])
+@@ -2517,7 +2855,7 @@ test('a restore brings a hidden band back, from the tool or from a terminal, as
+     expect(await isHidden()).toBe(false)
+   }
+   const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 2 questions · 1 notice ─+ \d+s$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/ })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -3091,7 +3429,7 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
+   await ui.unmount()
+ })
+ 
+-test('an open item’s line ends in a rule to the band’s edge on a terminal, beside its Button', async ($, on) => {
++test('an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const long = 'Should the band '.padEnd(112, 'x')
+@@ -3100,12 +3438,13 @@ test('an open item’s line ends in a rule to the band’s edge on a terminal, b
+   const ui = await $.ui.mount(BAND)
+   const rule = async () => (await ui.find({ type: 'Text', text: /^ ─+$/ }))?.text
+ 
+-  // The rule fills the row: `0: `, the subject, a space and the rule, then ` #7` and ` 2m`, end at bodyColumns.
++  // The rule fills the panel's line: `0: `, the subject, a space and the rule, then ` #7` and ` 2m`, end at the
++  // rows' edge, five columns short of bodyColumns, where the rows' ages end.
+   await ui.press({ key: 'item:1' })
+   const drawn = await rule()
+-  expect(drawn).toBe(` ${'─'.repeat(90)}`)
++  expect(drawn).toBe(` ${'─'.repeat(85)}`)
+   expect('0: '.length + 'Decline the finding?'.length + (drawn ?? '').length + ' #7'.length + ' 2m'.length).toBe(
+-    BAND.props.bodyColumns,
++    COLUMNS,
+   )
+   // It sits beside the line's Button, so a hover or the focus ring inverts the title alone, and it draws in the
+   // default color while an open question's title takes `permission`.
+@@ -3121,7 +3460,7 @@ test('an open item’s line ends in a rule to the band’s edge on a terminal, b
+   expect(await rule()).toBeUndefined()
+   await ui.unmount()
+ 
+-  // Another surface draws the title alone, as it draws no divider.
++  // Another surface draws the title alone, as it draws no header.
+   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+   await desktop.press({ key: 'close:2' })
+   await desktop.press({ key: 'item:1' })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index a778c73a..2f1a6885 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1,5 +1,5 @@
+ import { atom, read, update } from 'claude-code'
+-import type { EngineInterface, FsEntry, Register } from 'claude-code'
++import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-code'
+ 
+ import type { Checks, Item, LoopKind, Notice, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
+ import { buildQuery, parseResponse, type Fetched } from './github'
+@@ -105,6 +105,53 @@ const DRAWER_INDENT = `${CLOSE_HOTKEY}: `.length
+ /** The shortest rule an open item's line draws; a title that leaves less draws none. */
+ const MIN_RULE = 3
+ 
++/**
++ * In a terminal the band draws as one panel: inset `PANEL_INSET` columns in
++ * the terminal's own background, then padded `PANEL_PADDING` columns at each
++ * side in the panel's, where its header and key hint start. The lines between
++ * them, the pull requests, the items and their drawers, sit `LINE_PADDING`
++ * columns further in at each side.
++ */
++const PANEL_INSET = 1
++const PANEL_PADDING = 1
++const LINE_PADDING = 1
++
++/**
++ * The panel's last line names its keys, at its right, so it ends where the
++ * ages do: the chord that takes the keyboard into the band, and once the
++ * band has it, the keys that work there. The arrows stay out, because which
++ * of them moves between lines depends on whether the band scrolls.
++ */
++const FOCUS_HINT = 'ctrl+x tab to focus'
++const FOCUSED_HINT = 'esc to return · enter to open'
++
++/** What the panel's header starts with, at its left: the command that shows and hides the band. */
++const HEADER_NAME = '/projector'
++
++/**
++ * The panel's background by Claude Code theme: a step darker than the
++ * terminal's own, so the panel reads as a sunken surface. Any other theme,
++ * an ANSI one included, takes `OTHER_BACKGROUND`.
++ */
++const THEME_BACKGROUNDS: Record<string, string> = {
++  dark: 'rgb(20,20,20)',
++  'dark-daltonized': 'rgb(20,20,20)',
++  light: 'rgb(240,240,240)',
++  'light-daltonized': 'rgb(240,240,240)',
++}
++const OTHER_BACKGROUND = 'inverseText'
++
++/** The setting that colors the panel, and its value that leaves the color to the theme. */
++const BACKGROUND_KEY = 'panel.background'
++const AUTO = 'auto'
++
++/**
++ * What a surface takes as a color, a theme key or a raw one alike: these
++ * characters, at most 40 of them. It refuses the band's whole tree over any
++ * other, such as `ansi:black` or an empty string.
++ */
++const PAINTABLE = /^[\w#(),.% -]{1,40}$/
++
+ /** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
+ const SNOOZES = [
+   { label: '15 min', minutes: 15 },
+@@ -121,6 +168,9 @@ const drawer = atom({ plugin: 'projector', key: 'bandDrawer' } as const, null)
+ const asked = atom({ plugin: 'projector', key: 'bandAsked' } as const, null)
+ const items = atom({ plugin: 'projector', key: 'bandInbox' } as const, [])
+ const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
++const themeBackground = atom({ plugin: 'projector', key: 'bandThemeBackground' } as const, OTHER_BACKGROUND)
++const background = atom({ plugin: 'projector', key: 'bandBackground' } as const, AUTO)
++const isFocused = atom({ plugin: 'projector', key: 'isBandFocused' } as const, false)
+ 
+ // The session keeps its state across a reload or an update of the plugin,
+ // so a value an earlier version wrote can have another shape.
+@@ -175,7 +225,7 @@ function propose(question: Question, answer: string): void {
+   proposed = [...proposed.filter(isKept), { ref: question.ref, quote, answer }]
+ }
+ 
+-/** The few variables a tracked path is written with, read once per load. */
++/** The few variables the band's paths are written with, read once per load. */
+ function envOf($: Engine): Promise<Env> {
+   envLoad ??= (async () => {
+     const values: Record<string, string | undefined> = {
+@@ -184,6 +234,7 @@ function envOf($: Engine): Promise<Env> {
+       XDG_CONFIG_HOME: await $.env.get('XDG_CONFIG_HOME'),
+       XDG_DATA_HOME: await $.env.get('XDG_DATA_HOME'),
+       XDG_STATE_HOME: await $.env.get('XDG_STATE_HOME'),
++      CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR'),
+     }
+     return (name: string) => (values[name] === '' ? undefined : values[name])
+   })()
+@@ -257,6 +308,62 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched>
+   }
+ }
+ 
++/**
++ * The panel's background for a Claude Code theme: by the theme's name, or
++ * for a custom theme, `custom:<slug>`, by the theme its file builds on,
++ * `dark` unless its `base` says otherwise. A custom theme whose file cannot
++ * be read takes `OTHER_BACKGROUND`.
++ */
++async function backgroundOf($: Engine, theme: unknown): Promise<string> {
++  if (typeof theme !== 'string') return OTHER_BACKGROUND
++  if (!theme.startsWith('custom:')) return THEME_BACKGROUNDS[theme] ?? OTHER_BACKGROUND
++  const env = await envOf($)
++  const home = env('HOME')
++  const config = env('CLAUDE_CONFIG_DIR') ?? (home === undefined ? undefined : `${home}/.claude`)
++  if (config === undefined) return OTHER_BACKGROUND
++  try {
++    const path = `${config}/themes/${theme.slice('custom:'.length)}.json`
++    const base = (JSON.parse(await $.fs.read(path)) as { base?: unknown }).base ?? 'dark'
++    return typeof base === 'string' ? (THEME_BACKGROUNDS[base] ?? OTHER_BACKGROUND) : OTHER_BACKGROUND
++  } catch {
++    return OTHER_BACKGROUND
++  }
++}
++
++/** Colors the panel for a theme ahead of the render, which then waits on no read. */
++async function paint($: Engine, theme: unknown): Promise<void> {
++  const color = await backgroundOf($, theme)
++  await update($, themeBackground, () => color)
++}
++
++/** The `panel.background` values the band said it cannot draw, so it says so once for each. */
++const unpaintable = new Set<string>()
++
++/**
++ * Reads `panel.background` through the CLI, which merges the `.projector.toml`
++ * files. A value no surface can draw leaves the color to the theme, and the
++ * band says so once. A read that fails keeps the value the band last read,
++ * and the next reload reads it again.
++ */
++async function readBackground($: Engine): Promise<void> {
++  try {
++    const ran = await project($, ['config', 'get', BACKGROUND_KEY, '--default', AUTO, '--json'])
++    if (ran.exitCode !== 0) return
++    const value = (JSON.parse(ran.stdout) as { value?: unknown }).value ?? AUTO
++    const isPaintable = typeof value === 'string' && value.trim() !== '' && PAINTABLE.test(value)
++    const written = JSON.stringify(value)
++    if (!isPaintable && !unpaintable.has(written)) {
++      unpaintable.add(written)
++      void $.ui.toast(
++        `projector: ${BACKGROUND_KEY} is ${written}, not a color the panel can draw, so the panel takes its color from the theme`,
++      )
++    }
++    await update($, background, () => (isPaintable ? value : AUTO))
++  } catch {
++    // The next reload reads it again.
++  }
++}
++
+ /** The session's own loops, the watchers it started, each with the pull requests its tracked file lists. */
+ async function trackedSets($: Engine): Promise<(SeenLoop & { entries: TrackedPr[] })[]> {
+   const loops = (await read($, seen)).filter(loop => isKind(loop.kind))
+@@ -283,7 +390,8 @@ async function load($: Engine): Promise<void> {
+     }
+   }
+ 
+-  const fetched = await fetchPrs($, [...tracked.values()])
++  // Each reload reads the panel's setting too, so an edit to it shows without a restart.
++  const [fetched] = await Promise.all([fetchPrs($, [...tracked.values()]), readBackground($)])
+ 
+   // When GitHub cannot be reached, keep drawing what it said last time.
+   const last = current(await read($, snapshot))
+@@ -678,6 +786,16 @@ function show($: Engine): void {
+   })
+ }
+ 
++/**
++ * Puts the band's key hint back on the chord into the band once the prompt
++ * has the keyboard again. Only a change of hint redraws the band.
++ */
++async function unfocus($: Engine): Promise<void> {
++  if (!(await read($, isFocused))) return
++  await update($, isFocused, () => false)
++  $.ui.invalidate('ui.render')
++}
++
+ /**
+  * Moves the band's focus ring onto one of its elements, which the engine
+  * waits for when the band has yet to draw it, and writes why the ring stayed
+@@ -786,12 +904,26 @@ export const register: Register = on => {
+     ]) {
+       await $.tool.register({ ...tool, isDeferred: false }).catch(() => undefined)
+     }
++    // The panel takes its color from the theme, and from its setting once a
++    // timer has read it, so the start waits on no process.
++    await $.config
++      .list()
++      .then(rows => paint($, rows.find(row => row.key === 'theme')?.value))
++      .catch(() => undefined)
++    $.clock.after(1, () => void readBackground($))
+     $.clock.every(TICK_MS, () => void tick($))
+     soon($)
+     checkSoon($)
+     return next(e)
+   })
+ 
++  // A theme picked in `/theme` recolors the panel at once.
++  on('config.set', { key: 'theme' }, async ($, e, next) => {
++    const set = await next(e)
++    if (set.deny === undefined) await paint($, set.value)
++    return set
++  }).catch(($, e, next) => next(e))
++
+   // The tools run the CLI, so what they post, withdraw, or revise and what
+   // the shell does land in the same store.
+   on('tool.call', { tool: ASK_TOOL }, async ($, e) => {
+@@ -889,6 +1021,10 @@ export const register: Register = on => {
+     // a pull request it tracks has changed.
+     if (e.origin.kind === 'task-notification') soon($)
+ 
++    // A prompt sent from the terminal means the prompt has the keyboard, even
++    // when no keystroke edited it since Esc, as with one a drawer filled.
++    if (e.origin.kind === 'composer') void unfocus($).catch(() => undefined)
++
+     // An answer the band submitted for the main loop has arrived. Seeing it
+     // here, rather than only where the band submitted it, settles it after a
+     // reload of the module too.
+@@ -939,15 +1075,30 @@ export const register: Register = on => {
+   }).catch(($, e, next) => next(e))
+ 
+   // Enter presses the band's element under the ring, so where the ring is
+-  // tells a press from the keyboard from a click.
++  // tells a press from the keyboard from a click. A ring that lands also
++  // means the band holds the keyboard, so its hint names the keys that work
++  // there.
+   on('ui.focus', { component: 'AbovePrompt' }, async ($, e, next) => {
+     const moved = await next(e)
+     if (moved.deny === undefined) {
+       ring = { requestId: e.requestId, key: e.plugin === 'projector' ? e.element : undefined }
++      if (!(await read($, isFocused))) {
++        await update($, isFocused, () => true)
++        $.ui.invalidate('ui.render')
++      }
+     }
+     return moved
+   }).catch(($, e, next) => next(e))
+ 
++  // Claude Code reports no event when Esc gives the keyboard back to the
++  // prompt, so the band's focused hint stays until the next keystroke in the
++  // prompt, or until a prompt is sent from it. Only that first keystroke
++  // redraws the band; it waits on nothing.
++  on('prompt.edit', ($, e, next) => {
++    void unfocus($).catch(() => undefined)
++    return next(e)
++  })
++
+   // A turn may have pushed, replied or resolved threads.
+   on('turn.complete', ($, e, next) => {
+     soon($)
+@@ -995,13 +1146,10 @@ export const register: Register = on => {
+       0,
+       ...shown.rows.filter(row => !isOwn(row.pr, shown.viewer)).map(row => (row.pr.author ?? '').length),
+     )
+-    // The divider starts with the counts and ends with how long ago the band
+-    // reloaded, in the short form and the color of the rows' ages, so the
+-    // time ends in their column.
+     const tally = counts.filter(part => part !== undefined).join(' · ')
+     const reloaded = shown.fetchedAt === null ? '' : span(secondsSince(time, shown.fetchedAt))
+     // A failed poll keeps drawing the pull requests GitHub last gave, and the
+-    // divider's time says how old they are, so the band says why it failed
++    // header's time says how old they are, so the band says why it failed
+     // only when it has none of them to draw.
+     const failure = shown.error === null || shown.rows.length > 0 ? undefined : `GitHub: ${shown.error}`
+     // Enter with the ring on the Button it presses takes the ring along,
+@@ -1025,43 +1173,72 @@ export const register: Register = on => {
+       carry(line, onto)
+     }
+ 
+-    // The engine draws the band's `[-]` just past `bodyColumns` on the first
+-    // row, so a divider that fills the body ends at the mark, and a blank line
+-    // sets it apart from the rows under it. The counts follow one `─` at its
+-    // start, and its rule runs from them to the time, as an open item's rule
+-    // runs from its subject to its age. The counts and the time draw quieter
+-    // than the rule, so the line still reads as a rule with labels on it.
+-    // Only a terminal lays text out in those columns; any other surface would
+-    // wrap the rule, so it draws none.
+-    const lead = tally === '' ? '' : `─ ${tally} `
+-    const tail = reloaded === '' ? '' : ` ${reloaded}`
+-    const rule = '─'.repeat(Math.max(0, e.props.bodyColumns - lead.length - tail.length))
+-    const ruled = [
+-      ...(tally === '' ? [] : ['─ ', <Text key="counts" color="subtle">{tally}</Text>]),
+-      `${tally === '' ? '' : ' '}${rule}${reloaded === '' ? '' : ' '}`,
+-      ...(reloaded === '' ? [] : [<Text key="age" color="subtle">{reloaded}</Text>]),
+-    ]
+-    const divider =
+-      e.surface === 'terminal'
+-        ? [
+-            <Text key="divider">{ruled}</Text>,
+-            <Text key="under-divider"> </Text>,
+-          ]
+-        : []
+-
+-    if (shown.rows.length === 0 && shownItems.length === 0) {
+-      return (
+-        <Box flexDirection="column">
+-          {divider}
+-          {failure !== undefined ? (
+-            <Text color="error">{failure}</Text>
+-          ) : shown.fetchedAt === null ? (
+-            <Text color="subtle">Looking for pull requests…</Text>
+-          ) : (
+-            <Text key="tagline" color="subtle">{` ${TAGLINE}`}</Text>
+-          )}
++    // In a terminal the band is one panel on a background of its own, so a
++    // line that moves as the band scrolls is plainly the band's. The panel
++    // ends at `bodyColumns`, where the engine draws the band's `[-]` on the
++    // first row, so the rows between its header and its hint are `columns`
++    // wide.
++    const isPanel = e.surface === 'terminal'
++    const columns = e.props.bodyColumns - PANEL_INSET - 2 * (PANEL_PADDING + LINE_PADDING)
++    // The header and the key hint start a column before the lines between
++    // them but end where those lines do, so their right ends line up with
++    // the rows' ages.
++    const edgeColumns = columns + LINE_PADDING
++    const setting = await read($, background)
++    const color = setting === AUTO ? await read($, themeBackground) : setting
++    const hint = (await read($, isFocused)) ? FOCUSED_HINT : FOCUS_HINT
++    // The panel's first line is its header, all in `subtle`: `HEADER_NAME` at
++    // its left, and the counts and how long ago the band reloaded at its
++    // right, so the time ends in the rows' age column. Two spaces set the
++    // counts apart from the time, about the gap a row leaves before its age.
++    // The rows start on the next line, the background setting the header
++    // apart from them. An open item's drawer has the band to itself, so it
++    // draws no header. Only a terminal lays text out in those columns, so no
++    // other surface draws a panel.
++    const status = [tally, reloaded].filter(part => part !== '').join('  ')
++    const gap = ' '.repeat(Math.max(1, edgeColumns - HEADER_NAME.length - status.length))
++    const panel = (lines: RenderChildren, isHeaded = true) =>
++      isPanel ? (
++        <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>
++          <Box
++            key="panel"
++            flexDirection="column"
++            width={e.props.bodyColumns - PANEL_INSET}
++            paddingLeft={PANEL_PADDING}
++            paddingRight={PANEL_PADDING}
++            backgroundColor={color}
++          >
++            {isHeaded && (
++              <Text key="header" color="subtle">
++                {`${HEADER_NAME}${gap}${status}`}
++              </Text>
++            )}
++            <Box flexDirection="column" paddingLeft={LINE_PADDING} paddingRight={LINE_PADDING}>
++              {lines}
++            </Box>
++            <Text key="hint" color="subtle">
++              {hint.padStart(edgeColumns)}
++            </Text>
++          </Box>
+         </Box>
++      ) : (
++        <Box flexDirection="column">{lines}</Box>
+       )
++
++    if (shown.rows.length === 0 && shownItems.length === 0) {
++      return panel([
++        failure !== undefined ? (
++          <Text key="failure" color="error">
++            {failure}
++          </Text>
++        ) : shown.fetchedAt === null ? (
++          <Text key="looking" color="subtle">
++            Looking for pull requests…
++          </Text>
++        ) : (
++          <Text key="tagline" color="subtle">{` ${TAGLINE}`}</Text>
++        ),
++      ])
+     }
+ 
+     // An item names its pull request as the band labels it, or in full when
+@@ -1270,15 +1447,15 @@ export const register: Register = on => {
+       const line = isOpened ? `close:${ref}` : key
+       const first = item.kind === 'question' && isOpen ? `answer:${ref}.${letterAt(0)}` : `discuss:${ref}`
+       const isSending = !isOpen && item.deliveredAt === undefined
+-      // An open item's line is the band's top bar while the divider steps
+-      // aside, so in a terminal a rule fills it to `bodyColumns`, as the
+-      // divider's does: a space and `─` from after the `0: ` and the subject
+-      // to the columns its notes and age take, each with the gap before it.
+-      // A title too long for one row with room for a short rule draws none.
++      // An open item's line is the panel's top bar while the header steps
++      // aside, so a rule fills it to the panel's `columns`: a space and `─`
++      // from after the `0: ` and the subject to the columns its notes and age
++      // take, each with the gap before it. A title too long for one row with
++      // room for a short rule draws none.
+       const notesWidth =
+         (isSending ? 'sending'.length + 1 : 0) + (pull === '' ? 0 : [...pull].length + 1) + ageWidth + 1
+-      const ruleWidth = e.props.bodyColumns - DRAWER_INDENT - [...item.subject].length - 1 - notesWidth
+-      const rule = isOpened && e.surface === 'terminal' && ruleWidth >= MIN_RULE ? ` ${'─'.repeat(ruleWidth)}` : ''
++      const ruleWidth = columns - DRAWER_INDENT - [...item.subject].length - 1 - notesWidth
++      const rule = isOpened && isPanel && ruleWidth >= MIN_RULE ? ` ${'─'.repeat(ruleWidth)}` : ''
+ 
+       return (
+         <Box key={`line:${ref}`} flexDirection="column">
+@@ -1456,25 +1633,23 @@ export const register: Register = on => {
+     }
+ 
+     // An open item's drawer has the band to itself, until it is closed or the
+-    // item leaves the band. The divider and the blank line under it step
+-    // aside too, so the item is the top row and, in a terminal, the drawer
+-    // has two more rows before the engine, which caps the band below half the
+-    // terminal, starts to scroll.
++    // item leaves the band. The header steps aside too, so the item is the
++    // top row and, in a terminal, the drawer has another row before the
++    // engine, which caps the band below half the terminal, starts to scroll.
+     const focused = shownItems.find(item => opened === `item:${item.ref}`)
+-    if (focused !== undefined) {
+-      return <Box flexDirection="column">{drawItem(focused)}</Box>
+-    }
+-
+-    return (
+-      <Box flexDirection="column">
+-        {divider}
+-        {byAuthor(shown.rows, shown.viewer).map(drawRow)}
+-        {failure !== undefined && <Text color="error">{failure}</Text>}
+-        {shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
+-          <Text key="before-items"> </Text>
+-        )}
+-        {[...shownItems].sort((a, b) => a.postedAt - b.postedAt).map(drawItem)}
+-      </Box>
+-    )
++    if (focused !== undefined) return panel(drawItem(focused), false)
++
++    return panel([
++      ...byAuthor(shown.rows, shown.viewer).map(drawRow),
++      failure !== undefined && (
++        <Text key="failure" color="error">
++          {failure}
++        </Text>
++      ),
++      shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
++        <Text key="before-items"> </Text>
++      ),
++      ...[...shownItems].sort((a, b) => a.postedAt - b.postedAt).map(drawItem),
++    ])
+   })
+ }
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 7929da88..41d6d0f4 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -119,6 +119,12 @@ declare module 'claude-code' {
+       bandInbox: Item[]
+       /** The answers the band is delivering, by reference. */
+       bandSending: Record<string, Sending>
++      /** The panel's background for the session's Claude Code theme, which `panel.background = "auto"` takes. */
++      bandThemeBackground: string
++      /** `panel.background` as the band last read it: `auto`, or a color a surface can draw. */
++      bandBackground: string
++      /** Whether the band took the keyboard since the last keystroke in the prompt, so its hint names its own keys. */
++      isBandFocused: boolean
+     }
+   }
+ }
+diff --git a/src/projector/config.py b/src/projector/config.py
+index 7d6fe5b7..84b0badf 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -60,6 +60,7 @@
+     "review.summarize": bool,
+     "fix.resolve_human_threads": bool,
+     "watch.auto_start": bool,
++    "panel.background": str,
+ }
+ 
+ 
+diff --git a/tests/test_config.py b/tests/test_config.py
+index 1187666c..4c8bf3b7 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -535,6 +535,25 @@ def test_a_key_in_an_inline_table_is_refused_untouched(self) -> None:
+             self.assertIn("the file is unchanged", stderr)
+             self.assertEqual(text, self.repo_file.read_text())
+ 
++    def test_the_panel_background_is_set_and_unset_as_the_band_reads_it(self) -> None:
++        def background() -> dict[str, object]:
++            code, stdout, stderr = self.invoke("config", "get", "panel.background", "--default", "auto", "--json")
++            self.assertEqual(0, code, stderr)
++            return json.loads(stdout)
++
++        self.assert_set("panel.background", "rgb(20,20,20)", "--user")
++
++        self.assertEqual('[panel]\nbackground = "rgb(20,20,20)"\n', self.user_file.read_text())
++        self.assertEqual("rgb(20,20,20)", background()["value"])
++        self.assertEqual(str(self.user_file), background()["source"])
++
++        code, _, stderr = self.invoke("config", "unset", "panel.background", "--user")
++
++        self.assertEqual(0, code, stderr)
++        self.assertEqual("[panel]\n", self.user_file.read_text())
++        self.assertEqual("auto", background()["value"])
++        self.assertIsNone(background()["source"])
++
+     def test_user_and_file_scopes_write_their_own_files(self) -> None:
+         parent = self.home / "work" / ".projector.toml"
+ 
