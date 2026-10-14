@@ -1,0 +1,119 @@
+{
+ "version": 1,
+ "name": "Drawer close key",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 328,
+  "title": "Close an open item's drawer on 0",
+  "head": "dc04b275a8db30e3d75d92d934a2cec9817c2f32",
+  "headRef": "item-close-key",
+  "base": "d4d05fbc92da81dcd9d1816a5426be0c7ce8d944",
+  "baseRef": "band-keys",
+  "basePr": 327
+ },
+ "overview": {
+  "summary": [
+   "Projector's band is the area above the Claude Code prompt that lists your pull requests and the inbox items agents leave for you: questions to answer and notices to read. Opening an item gives it a <em>drawer</em>, which shows its detail, its options, and its actions, and while the drawer is open the item's own line sits alone at the top of the band. Pressing that line closes the drawer.",
+   "From the keyboard, closing a drawer meant moving the focus ring back onto that line, or pressing Esc. This change gives the line the hotkey <code>0</code>, so one key closes the drawer from anywhere in it. The engine draws the key before the line, as <code>0: - Decline the finding?</code>.",
+   "<ul><li><b>Two ways to press it.</b> <code>0</code> presses the line while the band holds the keyboard, after ctrl+x tab or a click. It also presses the line when typed first into an empty prompt, the way Claude Code takes a digit for one of its own surveys.</li><li><b>Only closing.</b> The press runs the same <code>toggle</code> function as a click or Enter on the line. It closes the drawer and cannot answer, dismiss, or snooze the item.</li><li><b>Only open drawers.</b> Every inbox item's drawer gets the key while it is open, whatever state the item is in. A line in the list takes none, and neither does a pull request's drawer, whose label already opens and closes it.</li></ul>",
+   "This is the second layer of a stack on #327, which gives an open question's options the digits <code>1</code> to <code>6</code> and its actions the letters <code>d</code>, <code>x</code>, and <code>s</code>. The owner first asked for <code>/</code> and then <code>.</code>, but a Button's hotkey must be one digit or one lowercase letter, and <code>0</code> is the digit the options leave free."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>Projector reviewed head <code>1785f6c</code> clean, then this head, <code>dc04b27</code>, clean too. This head rebases the same change onto the newer <code>band-keys</code>, and no finding thread is open.</li><li><code>claude plugin test .</code> passed 118 of 118, and the type check, <code>claude plugin validate .</code>, and <code>project check</code> passed.</li><li>How the line looks with its prefix, and <code>0</code> from an empty prompt, are checked only by hand in a live terminal.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the area above the prompt that Projector draws.</li><li><b>Drawer</b>: the detail, options, and actions under an open item.</li><li><b>Hotkey</b>: a Button's one-key shortcut, a digit or a lowercase letter.</li><li><b>Focus ring</b>: the highlight on the control that Enter presses while the band holds the keyboard.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "key",
+   "title": "The line takes 0 while its drawer is open",
+   "kicker": "One prop on the item line's Button, and the tests that pin where 0 appears",
+   "intro": [
+    "Each inbox item draws its line as one plain Button. While the item's drawer is open, the Button is keyed <code>close:&lt;ref&gt;</code> and pressing it runs <code>toggle</code>, which closes the drawer. The change sets that Button's <code>hotkey</code> to <code>0</code> only while the drawer is open, so the line in the list, keyed <code>item:&lt;ref&gt;</code>, takes no key.",
+    "Claude Code's engine draws a plain Button's hotkey before its label in the accent color, followed by <code>: </code>. The line's bullet and subject keep their own colors after that prefix, and stay inverted while the drawer is open."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Only one <code>0</code> exists in the band at a time. Only one drawer is open at once, the options take <code>1</code> to <code>6</code>, the actions take <code>d</code>, <code>x</code>, and <code>s</code>, and a pull request's line takes no hotkey. Checked by reading every <code>hotkey</code> in <code>hooks/register.tsx</code>, and by the new test, which collects every Button on <code>0</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The item line's Button takes <code>hotkey=\"0\"</code> while its drawer is open, and none in the list.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1208,
+       "text": "A <code>0</code> typed into an empty prompt cannot discard typed text, answer, dismiss, or snooze. The engine presses a band Button for a bare digit only when the prompt is empty, and <code>toggle</code> writes only the <code>drawer</code> and <code>snoozing</code> state and moves the focus ring only when the ring was on the line. Checked against the engine's <code>Button.hotkey</code> declaration and by reading <code>toggle</code>."
+      },
+      {
+       "kind": "context",
+       "line": 1208,
+       "text": "A notice's drawer, a resolved question's drawer, and a drawer asking how long to snooze took no digit before this change. Now a <code>0</code> typed first into an empty prompt while one of them is open closes the drawer and does not reach the prompt. The PR describes this as intended. It is the same capture that #327 gives an open question's option digits."
+      }
+     ]
+    },
+    {
+     "path": "hooks/band.test.tsx",
+     "note": "A new test opens five items in every state and checks that each open line, and nothing else, takes <code>0</code>. Four digit assertions now expect the line's <code>0</code> in drawers that took no digit.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 2499,
+       "text": "The test opens and closes a pull request's drawer first, to show that it takes no <code>0</code>, then walks an open question, an open notice, an answered question, a dismissed notice, and a snoozed notice."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and plan",
+   "kicker": "How the key reads in the plugin guide and why the plan chose it",
+   "intro": [
+    "<code>docs/plugins.md</code> covers the key in its keyboard section and in its drawer example. The inbox plan records the change in a new § 17, appended after § 16."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The drawer example shows the <code>0: </code> prefix, and a new paragraph after the option digits describes <code>0</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 330,
+       "text": "The example line keeps its columns: the subject gained three characters and the padding lost three, so <code>#337</code> stays where it was."
+      },
+      {
+       "kind": "context",
+       "line": 510,
+       "text": "The paragraph just above now says a digit from an empty prompt works only while its option is wholly in view in the band. The engine applies the same limit to <code>0</code>: while a tall drawer is scrolled past its line, a <code>0</code> typed into the prompt reaches the prompt as text. This paragraph, and § 17.1 of the plan, could say so too."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "§ 17 says what changes, why <code>0</code> rather than <code>/</code> or <code>.</code>, and which tests cover it.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1692,
+       "text": "§ 17.3 names four tests, and each exists in <code>hooks/band.test.tsx</code> at this head."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
