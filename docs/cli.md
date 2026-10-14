@@ -1511,10 +1511,12 @@ keeps, with the reason, and removes nothing. With `--apply`, it removes them:
 | The current head of a closed pull request | The pull request is closed |
 
 `prune` asks GitHub only whether each pull request with a review set up here
-is open. When GitHub cannot say, it keeps that review's worktree. It leaves the
-review's state, locks, and start comment alone. To end a closed pull request's
-review, run `project review finish <pr> --repo <owner>/<repo> --force`. `prune`
-removes each worktree with `git worktree remove` in the checkout that made it, and
+is open. When GitHub cannot say, it keeps that review's worktree. Just before
+it removes each worktree, it reads that review's lock and state again, so a
+review that `setup` or `move` starts while `prune` runs keeps its worktree.
+It leaves the review's state, locks, and start comment alone. To end a closed
+pull request's review, run
+`project review finish <pr> --repo <owner>/<repo> --force`. `prune` removes each worktree with `git worktree remove` in the checkout that made it, and
 deletes the folder outright when that fails. It unlinks a symbolic link without
 following it, then runs `git worktree prune` in each checkout and removes the
 folders it emptied. `--repo` limits the sweep to one repository. With `--json`

@@ -1040,7 +1040,9 @@ def prune(root: Path, repo: Optional[str], apply: bool) -> dict:
     the worktree of any head whose lock is held and not yet stale. Everything else goes: an earlier head's
     worktree, one made before each model kept its own folder, one no review set up here names, and a closed
     pull request's. Asks GitHub only whether each pull request with a review set up here is still open, and
-    keeps that review's worktree when it cannot tell. `repo` limits the sweep to one repository."""
+    keeps that review's worktree when it cannot tell. Reads the locks and states once before those requests,
+    and again for each worktree just before removing it, so a review set up meanwhile keeps its own. `repo`
+    limits the sweep to one repository."""
     base = root / "worktrees"
     wanted = (lambda slug: slug.lower() == repo.lower()) if repo else (lambda slug: True)
     keep: dict[Path, str] = {}
@@ -1097,8 +1099,9 @@ def prune(root: Path, repo: Optional[str], apply: bool) -> dict:
                 candidates.append((path, why))
     repositories: set[Path] = set()
     for path, why in candidates:
-        if path.resolve() in keep:
-            result["kept"].append({"path": str(path), "reason": keep[path.resolve()]})
+        reason = keep.get(path.resolve()) or needed_now(root, base, path, current)
+        if reason:
+            result["kept"].append({"path": str(path), "reason": reason})
             continue
         entry = {"path": str(path), "reason": why}
         if apply:
@@ -1117,6 +1120,29 @@ def prune(root: Path, repo: Optional[str], apply: bool) -> dict:
         with suppress(ReviewError):
             git("--git-dir", str(repository), "worktree", "prune")
     return result
+
+
+def needed_now(root: Path, base: Path, path: Path, current: dict[Path, tuple[str, int]]) -> Optional[str]:
+    """Why a review set up since `prune` read the locks and states needs the worktree at `path` after all,
+    checked again just before `prune` removes it: its head's lock is held and not yet stale, or the review's
+    state now names it as the current head's when it named another before. None when nothing needs it."""
+    parts = path.relative_to(base).parts
+    if len(parts) != 5:
+        return None
+    folder = root / "prs" / Path(*parts[:4])
+    for lock in folder.glob("*.lock"):
+        try:
+            if lock.stem[:SHORT] == parts[4] and lock_age(lock) <= STALE_AFTER:
+                return "its head's lock is held"
+        except OSError:
+            continue
+    try:
+        named = json.loads((folder / "state.json").read_text(encoding="utf-8")).get("worktree")
+    except (OSError, ValueError):
+        return None
+    if named and Path(named).resolve() == path.resolve() and path.resolve() not in current:
+        return "the current head of a review set up while prune ran"
+    return None
 
 
 def scratch_repository(path: Path) -> Optional[Path]:

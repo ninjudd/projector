@@ -1776,6 +1776,33 @@ class PruneTests(PublishCase):
                       "ends its review\n", out)
         self.assertTrue((self.folder() / "state.json").is_file(), "prune leaves the review's state to finish")
 
+    def test_a_review_set_up_while_prune_asks_github_keeps_its_worktree(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean")[0])
+        self.github.pr["head"]["sha"] = self.push_head("second head")
+        lookup, pending = review.read_pull_request, [True]
+
+        def set_up_meanwhile(slug: str, number: int) -> dict:
+            # Another loop sets this model's review up on the new head and publishes it, which releases its
+            # lock, and a second model sets up its first review and still holds its lock.
+            if pending:
+                pending.clear()
+                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+                self.assertEqual(0, self.publish("clean")[0])
+                self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
+            return lookup(slug, number)
+
+        with mock.patch.object(review, "read_pull_request", side_effect=set_up_meanwhile):
+            code, out, err = self.prune("--apply")
+
+        self.assertEqual(0, code, err)
+        published = Path(self.read_state("claude-opus-5-5")["worktree"])
+        locked = Path(self.read_state("gpt-5.5")["worktree"])
+        self.assertTrue(published.is_dir(), out)
+        self.assertTrue(locked.is_dir(), out)
+        self.assertIn(f"kept {published}: the current head of a review set up while prune ran\n", out)
+        self.assertIn(f"kept {locked}: its head's lock is held\n", out)
+
     def test_repo_limits_the_sweep_and_a_link_is_unlinked_without_following_it(self) -> None:
         elsewhere = self.state / "worktrees" / "other" / "app" / "5" / "old-model" / ("e" * 12)
         elsewhere.mkdir(parents=True)
