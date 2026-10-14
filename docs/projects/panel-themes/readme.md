@@ -106,7 +106,7 @@ light the theme's own text sits on.
 | Key | Type | Default | Takes |
 | --- | --- | --- | --- |
 | `panel.theme` | string | `auto` | `auto`, or a built-in theme's name |
-| `panel.background` | string | `auto` | The list #341 sets: `auto`, a literal color, `sidebar`, `black`, or `white` |
+| `panel.background` | string | `auto` | The list #341 sets: `auto`, a literal color, `sidebar`, `black`, or `white`, less a background that § 2.5 refuses |
 | `panel.colors.<role>` | string | unset | A literal color, one of Claude Code's 23 public theme keys, or `default` for the engine's text color |
 
 A literal color is `rgb(r,g,b)` or `ansi256(n)` with each number from 0 to
@@ -185,13 +185,20 @@ palette's slots 0 to 15, so it compares those only for an exact match.
   and draws. When an override of the background meets an override of a
   role, the role gives way, so one element changes rather than the whole
   panel.
-- **The theme's own text counts too.** On a dark base, Claude Code's text
-  is near white, and on a light base near black, and the panel cannot
-  recolor the `Button` labels and links that draw in it. So a background
-  under 1.5:1 against white on a dark base, or against black on a light
-  one, is refused like any other color. That refuses `white` on a dark
-  theme and `black` on a light one, which #341 accepts, so the owner
-  confirms it first, as § 7 says.
+- **A background that would hide Claude Code's own text is refused.**
+  Claude Code draws some of the panel's text itself, and no role can
+  recolor it: a `Button`'s label, the accent of its key, and a Markdown
+  link. A `Button`'s label draws in the theme's text color, near white on
+  a dark base and near black on a light one. So the panel compares a
+  background it knows with white on a dark base and with black on a light
+  one. A background under 1.5:1 falls back to the layer below, which is
+  `auto`'s background until a built-in theme sets one, and the panel says
+  so once in a toast. That refuses `white` on a dark theme and `black` on
+  a light one. On a base the panel cannot tell, it makes no such check.
+- **This partly reverses #341.** #341 accepts `black` and `white` on every
+  theme. From step 2 of § 6, the panel draws `white` only on a light theme
+  and `black` only on a dark one, and a person who set the other gets
+  `auto` and one toast.
 - **Low contrast that stays readable draws as set.** A color at 1.5:1 or
   more draws with no warning. The panel's muted text sits at low contrast
   by design, so a warning at a higher ratio would flag looks like the
@@ -242,6 +249,11 @@ palette's slots 0 to 15, so it compares those only for an exact match.
   compute a theme key's value to adjust it anyway. A warning tier would
   flag the panel's own deliberate low-contrast muted text. Refusing only
   what vanishes keeps every role visible and leaves taste to the person.
+- **The engine's text sets a limit on the background.** No role can move
+  Claude Code's own text off a background that hides it, so a warning
+  alone would leave labels and links unreadable until the person noticed.
+  The owner chose to refuse such a background and fall back to `auto`,
+  the same as for any other value the panel cannot draw.
 - **Public theme keys only.** Claude Code draws a theme key it does not
   know as no color at all, and a mod cannot list the theme's keys at run
   time. Only the public 23 can be checked, through the `ThemeKey` type, so
@@ -263,6 +275,8 @@ palette's slots 0 to 15, so it compares those only for an exact match.
 | Set `panel.colors.muted` to `rgb(40,40,40)` on the default dark background | `muted` draws `subtle`, and one toast says it would vanish | `a role that would vanish on the background takes its default` |
 | Set `panel.colors.muted` to `rgb(70,70,70)` on the same background | It draws `rgb(70,70,70)` with no toast | the same test |
 | Set `panel.background` to `rgb(20,20,20)` and `panel.colors.muted` to `rgb(20,20,20)` | The background stays, and `muted` takes its default | the same test |
+| Set `panel.background` to `white` on `dark`, then to `black` on `light` | The panel draws `rgb(20,20,20)`, then `rgb(240,240,240)`, with one toast for each value | `a background that would hide Claude Code's own text falls back to auto and says so once` |
+| Set `panel.background` to `white` on `light`, then to `black` on `dark` | The panel draws `rgb(255,255,255)`, then `rgb(0,0,0)`, with no toast | the same test |
 | Run `project config set panel.colors.muted 'rgb(1,2,3)'` through the Bash tool | The panel redraws with the new color before the next reload | `a set of a panel key through Bash re-reads the settings at once` |
 | Run `project config set panel.colors.muted 'rgb(1,2,3)' --user`, then `unset` | The file gains and loses a `[panel.colors]` entry, and the key `panel.colors.Muted` is refused | `test_panel_colors_are_set_and_unset_under_any_role_name` in `tests/test_config.py` |
 | Read the settings table in `docs/cli.md` | `panel.theme` and `panel.colors.<role>` are listed with their types | `test_the_documented_keys_are_the_known_keys` |
@@ -286,7 +300,9 @@ seconds, and the render reads one state key, so cost does not matter here.
    set, the CLI keys, and the documentation. It needs step 1. Under a CLI
    from before this step, `project config set panel.colors.muted` refuses
    the key until `project upgrade`, while the panel still reads a table
-   written by hand.
+   written by hand. From this step, the panel refuses `white` on a dark
+   theme and `black` on a light one, which #341 draws, so `docs/plugins.md`
+   says so in the same change.
 3. Add `panel.theme` and the first built-in theme the owner chooses. It
    needs step 2.
 
@@ -296,9 +312,6 @@ seconds, and the render reads one state key, so cost does not matter here.
   previewing in a session mod. Candidates: one with no background, drawing
   on the terminal's own, and one that draws on `sidebar`, which looks
   raised.
-- **Whether the contrast rule refuses `white` on a dark theme and `black` on
-  a light one.** Owner, before step 2. The rule in § 2.5 refuses both
-  because the engine's text vanishes on them, but #341 accepts both.
 - **Whether `watching` and `branch` should follow the theme.** Owner, during
   step 3's preview. Their palette slots, `ansi256(4)` and `ansi256(6)`, keep
   the terminal's blue and cyan, which can be faint on the light background.
