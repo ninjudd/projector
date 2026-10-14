@@ -53,6 +53,7 @@ HOLD_BULLET = re.compile(r"^[-*]\s+(.+)$")
 # review-pr/SKILL.md § Label every review and finding writes it.
 MARK = "📽️"
 SHORT = 12
+SHORT_SHA = re.compile(r"^[0-9a-f]{12}$")
 STALE_AFTER = timedelta(days=1)
 LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 # A trailing bracketed variant of a model ID, such as the context window in `claude-opus-5-5[1m]`.
@@ -1093,14 +1094,21 @@ def prune(root: Path, repo: Optional[str], apply: bool) -> dict:
     candidates: list[tuple[Path, str]] = []
     for folder in sorted(base.glob("*/*/*")) if base.is_dir() else []:
         owner, name, number = folder.parts[-3:]
-        if not wanted(f"{owner}/{name}") or not folder.is_dir() or folder.is_symlink():
+        if not wanted(f"{owner}/{name}") or not is_folder(folder):
             continue
         for child in sorted(folder.iterdir()):
-            if child.is_symlink() or not child.is_dir() or (child / ".git").exists():
+            if not is_folder(child):
+                result["kept"].append(not_a_worktree(child))
+                continue
+            reviewed_model = (owner, name, number, child.name) in reviewed
+            if (child / ".git").exists() or (SHORT_SHA.match(child.name) and not reviewed_model):
                 candidates.append((child, "made before each model kept its own worktree folder"))
                 continue
             for path in sorted(child.iterdir()):
-                if (owner, name, number, child.name) not in reviewed:
+                if not is_folder(path):
+                    result["kept"].append(not_a_worktree(path))
+                    continue
+                if not reviewed_model:
                     why = "no review of the pull request by this model is set up here"
                 elif path.resolve() in current:
                     why = (f"{owner}/{name}#{number} is closed; `project review finish {number} --repo "
@@ -1131,6 +1139,18 @@ def prune(root: Path, repo: Optional[str], apply: bool) -> dict:
         with suppress(ReviewError):
             git("--git-dir", str(repository), "worktree", "prune")
     return result
+
+
+def is_folder(path: Path) -> bool:
+    """Whether `path` is a directory itself, not a link to one: the only entry `prune` removes."""
+    return path.is_dir() and not path.is_symlink()
+
+
+def not_a_worktree(path: Path) -> dict:
+    """The kept entry for a file or link that sits where `prune` looks for worktrees, such as a summary a
+    reviewer saved there; it is no scratch worktree, so `prune` leaves it."""
+    kind = "a link" if path.is_symlink() else "a file"
+    return {"path": str(path), "reason": f"{kind}, not a worktree; prune removes only worktree folders"}
 
 
 def needed_now(root: Path, base: Path, path: Path, current: dict[Path, tuple[str, int]]) -> Optional[str]:
@@ -1174,14 +1194,10 @@ def scratch_repository(path: Path) -> Optional[Path]:
 
 
 def remove_scratch(path: Path, base: Path) -> list[Path]:
-    """Remove one entry of the worktree folder: a worktree with `git worktree remove` in the checkout that
-    made it, or outright when that fails; a link or a file is unlinked, never followed. Returns the Git
-    directories to prune."""
-    if not path.resolve().is_relative_to(base.resolve()) and not path.is_symlink():
-        raise ReviewError(f"{path} is outside {base}, so prune leaves it alone")
-    if path.is_symlink() or not path.is_dir():
-        path.unlink()
-        return []
+    """Remove one worktree folder with `git worktree remove` in the checkout that made it, or outright when
+    that fails. Returns the Git directories to prune."""
+    if not is_folder(path) or not path.resolve().is_relative_to(base.resolve()):
+        raise ReviewError(f"{path} is no folder inside {base}, so prune leaves it alone")
     repository = scratch_repository(path)
     if repository is not None:
         with suppress(ReviewError):
