@@ -1,0 +1,2923 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 1244330a..46e740e4 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -143,7 +143,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 12 -->
++<!-- projector:begin 13 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -202,7 +202,7 @@ reply too. Always post it when it sits among a lot of other text, such as a
+ decision in the middle of a long report, where the person could skim past
+ it. Post news they need to act on, such as a failure that needs them, and
+ anything that comes up while they are away. Leave out what they already see
+-elsewhere, such as a pull request's state, which the band lists. An item
++elsewhere, such as a pull request's state, which the panel lists. An item
+ stays above their prompt until they answer or dismiss it, so keep the inbox
+ for what matters, not as a log of everything you did.
+ 
+diff --git a/README.md b/README.md
+index 2b856fc0..6fae4140 100644
+--- a/README.md
++++ b/README.md
+@@ -74,11 +74,11 @@ guide. Claude invokes a skill as `/projector:<skill>` and Codex as
+ `$<skill>`. See [Install Projector](docs/plugins.md) for how the skills
+ work together.
+ 
+-In Claude Code, the plugin also shows Projector's band above the prompt.
++In Claude Code, the plugin also shows Projector's panel above the prompt.
+ It lists your loops' pull requests and your inbox: the questions and
+ notices that agents post with the `ask` and `tell` tools or with
+ `project inbox`. See
+-[Read your inbox in Projector's band](docs/plugins.md#read-your-inbox-in-projectors-band)
++[Read your inbox in Projector's panel](docs/plugins.md#read-your-inbox-in-projectors-panel)
+ and [Use the inbox](docs/cli.md#use-the-inbox).
+ 
+ ## Publish a site
+diff --git a/docs/cli.md b/docs/cli.md
+index 9b55eddc..c8309d79 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -97,8 +97,8 @@ what it did to each:
+   abbreviated option such as `--prep`, so no shorter spelling slips past the
+   rule. `project inbox answer`, `dismiss`, and `snooze` record your answer to
+   an item an agent posted, or your choice to dismiss or put it off, so an
+-  agent running one could answer its own question. Projector's band runs
+-  them itself, not through an agent's shell, so answering from the band never
++  agent running one could answer its own question. Projector's panel runs
++  them itself, not through an agent's shell, so answering from the panel never
+   asks. Claude Code checks ask rules before allow rules, so an ask rule
+   prompts for a command that `Bash(project *)` also allows, and a trailing
+   ` *` matches the command with no arguments too. `Bash(project -*)` covers an
+@@ -625,7 +625,7 @@ reads, which are these:
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ | `watch.auto_start` | boolean | `true` | `implement`, to start `start-watch-loop` on each pull request it opens, or add the pull request to the watch loop the conversation already runs; `false` leaves starting the loop to you |
+-| `panel.background` | string | `auto` | Projector's band in Claude Code, as the background of the panel it draws in a terminal: `auto` picks one from the Claude Code theme, and any other value, such as `rgb(30,30,40)`, `#1e1e28`, `ansi256(236)`, or a theme color's name such as `inverseText`, is drawn as written |
++| `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme, and any other value, such as `rgb(30,30,40)`, `#1e1e28`, `ansi256(236)`, or a theme color's name such as `inverseText`, is drawn as written |
+ 
+ `review.allow_approve` is off unless it is exactly `true`; an unset key means
+ `false` rather than a question to ask. It never applies to a review of your own
+@@ -1965,11 +1965,11 @@ it as `dismissed`. Only `answer` takes a letter: every other command refuses
+ `3.a` with exit code 65, so `dismiss` never drops the answer you meant to
+ give.
+ 
+-In Projector's band, only an option answers a question. The band records an
++In Projector's panel, only an option answers a question. The panel records an
+ answer when a prompt you send quotes the question and follows the quote with
+ one of its options' text and nothing else, as pressing the option in its
+ drawer fills it in. Anything else you send under a quoted question, such as your own
+-words, an option with more after it, or a question back, is a reply. The band
++words, an option with more after it, or a question back, is a reply. The panel
+ records nothing, the question stays open, and the reply reaches the agent as
+ your prompt. The agent then withdraws the question if the reply settles it,
+ revises it if the reply shows it was unclear, or leaves it open while it still
+@@ -1978,7 +1978,7 @@ needs you.
+ `answer`, `dismiss`, and `snooze` record your choice, so the permission rules
+ `project init` adds ask you before an agent runs one, in Claude Code, and
+ leave them to Codex's usual approval. Otherwise an agent could answer its own
+-question. Projector's band runs them itself, so answering there never asks.
++question. Projector's panel runs them itself, so answering there never asks.
+ `restore` takes no choice from you, so an agent runs it without asking, in
+ either host, when you say a dismissal was a mistake.
+ 
+@@ -2001,7 +2001,7 @@ RESTORED 2 Run project init to add the publish rule?
+ `RESTORED` tells the agent that you brought back a question it already heard
+ `DISMISSED` for, so the question is open again, as `restore` below describes.
+ `watch --once` makes one pass and exits. A view that delivers answers itself,
+-such as Projector's band in Claude Code, uses the steps `watch` takes:
++such as Projector's panel in Claude Code, uses the steps `watch` takes:
+ 
+ | Command | What it does |
+ | --- | --- |
+@@ -2043,7 +2043,7 @@ delivered, and `list` shows it, as `dismissed`, only with `--all`.
+ 
+ To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
+ an hour, or for the whole minutes that `--for` gives, up to a day (1440
+-minutes), and `--for 0` wakes it now. Projector's band keeps a snoozed item
++minutes), and `--for 0` wakes it now. Projector's panel keeps a snoozed item
+ listed, muted, for 30 seconds, and then leaves it out until its time passes.
+ `list` shows it as `snoozed until <HH:MM>`, in local time, or as
+ `snoozed until tomorrow <HH:MM>` when it returns tomorrow:
+@@ -2072,7 +2072,7 @@ restored 3
+ 
+ `restore` reopens the item in place. It keeps its number, its text and
+ options, the pull request it is about, when it was posted, and the subagent
+-that posted it, and Projector's band lists it as open again. For a snoozed
++that posted it, and Projector's panel lists it as open again. For a snoozed
+ item, `restore` ends the snooze and changes nothing else. For a dismissed
+ item, it clears the dismissal, so a later `answer` records an answer as if the
+ item had never been dismissed. A dismissal clears any snooze, and `restore`
+@@ -2090,7 +2090,7 @@ restore, an answered question, an item its agent withdrew, which is the
+ agent's to post again, and an answer letter such as `3.a`. A number no
+ session holds exits 66, a busy store exits 75, and `restore` changes nothing
+ when it refuses. In Claude Code, the agent restores an item with Projector's
+-`restore` tool when you tell it a dismissal was a mistake, and the band
++`restore` tool when you tell it a dismissal was a mistake, and the panel
+ offers **restore** and **unsnooze** in the item's drawer.
+ 
+ An agent takes back an open item that no longer needs you with `withdraw`,
+@@ -2103,7 +2103,7 @@ withdrew 3
+ 
+ `withdraw` takes either kind. In one write, it records the item as dismissed
+ and withdrawn and marks it delivered, so nothing goes back to the agent, not
+-even a `DISMISSED` line for a question. Projector's band drops the item at
++even a `DISMISSED` line for a question. Projector's panel drops the item at
+ once, and `list --all` shows it as `withdrawn`. `withdraw` refuses what
+ `dismiss` refuses: an answer letter, such as `3.a`, and an item already
+ answered, dismissed, or withdrawn, with exit code 65, and a number no session
+@@ -2135,14 +2135,14 @@ characters or a sixth option, a revision with nothing to change, an answer
+ letter such as `3.a`, and a question already answered, dismissed, or
+ withdrawn, and it changes nothing when it refuses. A number no session holds
+ exits 66. In Claude Code, the agent revises a question with Projector's
+-`revise` tool, and the band redraws it at once.
++`revise` tool, and the panel redraws it at once.
+ 
+ ## Change a loop's tracked file
+ 
+ A watch or review loop reads its tracked file, one `owner/repo#number` a
+ line, and acts only on the pull requests the file lists. A line
+ `!owner/repo#number` keeps that pull request out of the loop wherever it sits
+-in the file, and both watchers and Projector's band match it without regard
++in the file, and both watchers and Projector's panel match it without regard
+ to case. Change the file with `project loop`, whose four commands each
+ change one kind of line:
+ 
+diff --git a/docs/plugins.md b/docs/plugins.md
+index eb5fd5a2..289ceefb 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -184,11 +184,11 @@ run `npm ci` in `site/`, before the first check, as
+ worktree that has no declarations or no `tsc` of its own uses the main
+ checkout's.
+ 
+-### See your loops' pull requests in Projector's band
++### See your loops' pull requests in Projector's panel
+ 
+ In Claude Code, the plugin also ships a hooks module in `hooks/` that lists
+-the open pull requests your loops track in the band above the prompt, one
+-line each. Run `/projector` to show or hide the band. It also appears when the
++the open pull requests your loops track in the panel above the prompt, one
++line each. Run `/projector` to show or hide the panel. It also appears when the
+ session starts a loop's watcher for the first time.
+ 
+ ```text
+@@ -214,27 +214,27 @@ narrow terminal.
+ 
+ Your own pull requests come first, then everyone else's, each author's
+ together and the authors in order of login, with no line between the groups.
+-The band tells which are yours by the account `gh` is signed in as, which it
++The panel tells which are yours by the account `gh` is signed in as, which it
+ asks for in the same query as the pull requests. A pull request that both a
+ `start-watch-loop` watcher, `watch-threads.sh`, and a `start-review-loop`
+ watcher, `watch-prs.sh`, track is listed once.
+ 
+-In a terminal, the band draws as one panel on a background of its own, so a
+-line that moves as the band scrolls is plainly the band's. The panel is
+-inset one column from the terminal's edge and ends where Claude Code's
+-`[-]`, which collapses the band, begins. Its header and its key hint sit one
+-column in from the panel's left edge, and the pull requests and items
+-between them two columns in from each side, so every line ends two columns
+-short of the panel's right edge, where the ages line up. The panel's
+-background follows your Claude Code theme, a step darker than the terminal
+-so that the panel reads as a sunken surface:
++In a terminal, the panel draws on a background of its own, so a line that
++moves as the panel scrolls is plainly the panel's. It is inset one column
++from the terminal's edge and ends where Claude Code's `[-]`, which collapses
++the panel, begins. Its header and its key hint sit one column in from the
++panel's left edge, and the pull requests and items between them two columns
++in from each side, so every line ends two columns short of the panel's right
++edge, where the ages line up. The panel's background follows your Claude
++Code theme, a step darker than the terminal so that the panel reads as a
++sunken surface:
+ 
+ - **`dark` and `dark-daltonized`** draw on `rgb(20,20,20)`.
+ - **`light` and `light-daltonized`** draw on `rgb(240,240,240)`.
+ - **A custom theme** takes the color of the theme it builds on, the `base`
+   in its file under `~/.claude/themes/`, or under `$CLAUDE_CONFIG_DIR/themes/`
+   when that variable is set. A file with no `base` builds on `dark`, and a
+-  file the band cannot read gives `inverseText`.
++  file the panel cannot read gives `inverseText`.
+ - **Any other theme**, such as `dark-ansi` or `light-ansi`, draws on its own
+   `inverseText` color.
+ 
+@@ -243,29 +243,30 @@ another shade, set `panel.background`, as
+ [Choose the panel's color](#choose-the-panels-color) describes.
+ 
+ The panel's first line is its header, drawn in the `subtle` color. It starts
+-with `/projector`, the command that shows and hides the band, at its left.
+-At its right, it counts the pull requests the band lists, a line each, such
+-as `2 pull requests`, and two spaces on, it says how long ago the band
++with `/projector`, the command that shows and hides the panel, at its left.
++At its right, it counts the pull requests the panel lists, a line each, such
++as `2 pull requests`, and two spaces on, it says how long ago the panel
+ reloaded, drawn as the rows draw their ages: in the short form, such as
+ `12s`, and ending in their column. A reload just now reads `0s`, as an item
+-posted just now does. A count of zero is left out, so a band with nothing to
+-count shows `/projector` and the time alone. The rows start on the line
++posted just now does. A count of zero is left out, so a panel with nothing
++to count shows `/projector` and the time alone. The rows start on the line
+ under the header.
+ 
+ The panel's last line is a key hint, also in `subtle`, at its right, so it
+ ends in the ages' column. While the prompt has the keyboard, it reads
+-`ctrl+x tab to focus`. Once the band has the keyboard, it reads
++`ctrl+x tab to focus`. Once the panel has the keyboard, it reads
+ `esc to return · enter to open`. Claude Code says nothing when Esc gives the
+ keyboard back, so that hint stays until you next type in the prompt or send
+ a prompt from it. The hint leaves the arrow keys out, because which of them
+-moves between lines depends on whether the band scrolls, as
+-[Use the band from the keyboard](#use-the-band-from-the-keyboard) describes.
++moves between lines depends on whether the panel scrolls, as
++[Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
++describes.
+ 
+-Claude Desktop, VS Code, and the mobile app do not set the band's text in a
+-terminal's columns, so they draw no panel, no header, and no hint, and there
+-the band starts with its first row.
++Claude Desktop, VS Code, and the mobile app do not set the panel's text in a
++terminal's columns, so they draw no background, no header, and no hint, and
++there the panel starts with its first row.
+ 
+-When a poll cannot reach GitHub, the band keeps showing the pull requests
++When a poll cannot reach GitHub, the panel keeps showing the pull requests
+ GitHub gave last, and the header's time shows how old they are. It shows
+ GitHub's error only when it has none of them to show.
+ 
+@@ -279,16 +280,16 @@ such as `+84`, in green and the deletions, such as `−12`, in red. The
+ checks' state takes a color of its own, and the rest, ` in 5 files` and
+ each `·` included, keeps the default text color. Below that come two
+ actions, a line each, on the digits `7` and `8`, as
+-[Use the band from the keyboard](#use-the-band-from-the-keyboard)
++[Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+ describes, and then two links:
+ 
+ - **discuss PR** puts the pull request's number in the prompt at the
+-  cursor, as `#258`, or as `owner/repo#258` when the band lists more than
++  cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
+   one repository.
+ - **dismiss PR** asks to be sure first, as
+-  [dismissing an item](#read-your-inbox-in-projectors-band) does, then
++  [dismissing an item](#read-your-inbox-in-projectors-panel) does, then
+   keeps the pull request out of every loop of this session that tracks
+-  it, and the band drops its line and says which loops stopped, such as
++  it, and the panel drops its line and says which loops stopped, such as
+   `stopped watching and reviewing acme/app#258`.
+ - **open in github** opens the pull request on GitHub.
+ - **open in projector** opens its Projector summary, when the pull
+@@ -301,31 +302,31 @@ another link would cut the URL off.
+ **dismiss** runs `project loop drop` once for each tracked file that lists
+ the pull request, which appends a `!owner/repo#number` line that both
+ watchers honor, so the loops stop acting on it. When the command fails, the
+-band shows its error and keeps the line. To bring a dismissed pull request
++panel shows its error and keeps the line. To bring a dismissed pull request
+ back, run `project loop restore` with the same reference and tracked file,
+ as [Change a loop's tracked file](cli.md#change-a-loops-tracked-file)
+-describes. A drawer closes whenever its pull request leaves the band,
++describes. A drawer closes whenever its pull request leaves the panel,
+ dismissed here, dropped from a terminal, or merged, so the line comes back
+ with its drawer closed.
+ 
+ On the main screen, which Claude Code uses under tmux and when
+-`CLAUDE_CODE_NO_FLICKER=0` is set, use the band from the keyboard, as
+-[Use the band from the keyboard](#use-the-band-from-the-keyboard)
++`CLAUDE_CODE_NO_FLICKER=0` is set, use the panel from the keyboard, as
++[Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+ describes. The **open in github** and **open in projector** links take no
+ press there; the terminal opens them the way it opens any other link.
+ 
+-The band lists only this session's loops. It finds a loop by the
++The panel lists only this session's loops. It finds a loop by the
+ `--tracked` file its watcher reads, and learns that file when the session
+ runs the watcher. A loop another session runs stays out of this session's
+-band. When the band cannot tell which file a watcher's `--tracked` argument
++panel. When the panel cannot tell which file a watcher's `--tracked` argument
+ names, such as a path built from a variable the session does not set, it
+ says so once and leaves that loop out.
+ 
+-The band reloads when one of the session's watchers reports a change and
++The panel reloads when one of the session's watchers reports a change and
+ when a turn ends, and every 30 seconds otherwise, only while it is shown.
+ Each reload asks GitHub for every pull request in one `gh api graphql` call
+ and reads `panel.background` with `project config get`. The skills never
+-depend on the band, and Codex has no equivalent.
++depend on the panel, and Codex has no equivalent.
+ 
+ #### Choose the panel's color
+ 
+@@ -337,16 +338,16 @@ repository:
+ project config set panel.background 'rgb(30,30,40)' --user
+ ```
+ 
+-The band draws any color Claude Code takes as written: `rgb(r,g,b)`,
++The panel draws any color Claude Code takes as written: `rgb(r,g,b)`,
+ `#rrggbb`, `ansi256(n)`, or the name of a theme color, such as
+ `inverseText`. The default, `auto`, leaves the color to the theme, and
+-`project config unset panel.background --user` returns to it. The band reads
+-the setting when the session starts and each time it reloads, so a change
+-shows within 30 seconds, without a restart. A value that Claude Code cannot
+-draw, such as `ansi:black` or an empty string, leaves the color to the
+-theme, and the band says so once.
++`project config unset panel.background --user` returns to it. The panel
++reads the setting when the session starts and each time it reloads, so a
++change shows within 30 seconds, without a restart. A value that Claude Code
++cannot draw, such as `ansi:black` or an empty string, leaves the color to
++the theme, and the panel says so once.
+ 
+-### Read your inbox in Projector's band
++### Read your inbox in Projector's panel
+ 
+ An agent in Claude Code asks you a question with Projector's `ask` tool,
+ which the model sees as `mcp__projector__ask`, and tells you something that
+@@ -369,7 +370,7 @@ because an agent's question usually asks leave to do something. An open
+ notice's line is drawn in the theme's mid gray, `inactive`, apart from the
+ `subtle` of a resolved or snoozed item, so you can tell which items want an
+ answer and which want a read. Each line ends with the pull request the item
+-is about, as the band labels it, and how long ago it was posted. The band
++is about, as the panel labels it, and how long ago it was posted. The panel
+ appears when an item arrives or is restored, even after you hid it, and in
+ a terminal the header counts the open questions and the open notices after
+ the pull requests, before its time.
+@@ -386,13 +387,13 @@ the pull requests, before its time.
+ 
+ Click anywhere on an item to open its drawer, and click it again to close
+ it. On the main screen, press Enter on it from the keyboard instead. While
+-its drawer is open, the item has the band to itself, so its line is the
++its drawer is open, the item has the panel to itself, so its line is the
+ top row, in its usual colors, with `0` in its bullet's place to close the
+ drawer. In a terminal, the header steps aside too, which gives the drawer
+-another row before the band scrolls, and the item's line takes the
++another row before the panel scrolls, and the item's line takes the
+ header's place as the panel's top bar: a rule in the default text color
+ runs from its subject to its pull request and age, so the row ends at the
+-panel's edge, where the band's `[-]` begins. A subject too long to leave a
++panel's edge, where the panel's `[-]` begins. A subject too long to leave a
+ few columns for the rule draws none. The drawer is indented to start under
+ the item's text, so its detail and the digits of its lines sit under the
+ item's first letter:
+@@ -414,7 +415,7 @@ item's first letter:
+ ```
+ 
+ The first option is always the agent's recommendation. Press an option by
+-clicking it, by Enter, or by its digit, and the band puts the question and
++clicking it, by Enter, or by its digit, and the panel puts the question and
+ that answer in your prompt, for you to send as it stands or change first:
+ 
+ ```text
+@@ -424,20 +425,20 @@ Add a budget of two retries per host, and keep the total cap
+ ```
+ 
+ The drawer stays open until you send. Sending the prompt as the option
+-filled it in answers the question and closes its drawer, so the band shows
+-its list again. The band finds each quoted question whose quote ends its
++filled it in answers the question and closes its drawer, so the panel shows
++its list again. The panel finds each quoted question whose quote ends its
+ line, and reads the text after the quote, up to the next quoted item or the
+ end of the prompt. When that text is one of the question's options, whatever
+ blank lines and spaces surround it, that option answers the question.
+ 
+ Anything else you send under a quoted question is a reply, not an answer:
+ your own words, an option with more text after it, or a question back. The
+-band records nothing and closes the question's drawer, and the question
++panel records nothing and closes the question's drawer, and the question
+ stays in the list. Your prompt carries the reply to the agent, which answers
+ what you asked and then settles the question. It withdraws the question if
+ your reply settles it, revises it if your reply shows it was unclear or the
+ choice has changed, or leaves it open while it still needs you. A revised
+-question keeps its place in the list, and the band shows its new text as
++question keeps its place in the list, and the panel shows its new text as
+ soon as the agent revises it. An option that a drawer put in your prompt
+ before the revision answers no question, and neither does an option you
+ type under a quote that **discuss** put there before it: either one replies
+@@ -484,7 +485,7 @@ A notice's drawer shows its detail, then the same three actions:
+ **discuss notice**, **dismiss notice**, and **snooze notice**. **discuss
+ notice** puts the quoted notice in the prompt. A prompt you send that quotes
+ a notice answers nothing, but it closes the notice's drawer; the notice
+-stays in the band until you dismiss it. **dismiss notice** clears the
++stays in the panel until you dismiss it. **dismiss notice** clears the
+ notice once you have read it and closes its drawer, and nothing goes back
+ to the agent.
+ 
+@@ -512,7 +513,7 @@ to the lengths it offers, and the action lines to a way back:
+    9: cancel
+ ```
+ 
+-Pick a length, and the band runs
++Pick a length, and the panel runs
+ `project inbox snooze <number> --for <minutes>` with 15, 60, 240, or 1440
+ minutes, a day being the longest the CLI takes, and closes the drawer. A
+ notice, which has no options, shows the same lines. **cancel** puts the
+@@ -521,9 +522,9 @@ another, so a drawer always opens on its actions.
+ 
+ A snoozed item leaves the header's counts at once, and stays in the list
+ for 30 seconds in the `subtle` color, not struck through, so it reads as put
+-off rather than dismissed. Then it leaves the band. When its time is up, it
+-returns to the list, and the band appears if you hid it. To wake an item
+-now, or to pick a length the band does not offer, find the item's number
++off rather than dismissed. Then it leaves the panel. When its time is up, it
++returns to the list, and the panel appears if you hid it. To wake an item
++now, or to pick a length the panel does not offer, find the item's number
+ with `project inbox list` in a terminal, then run
+ `project inbox snooze <number> --for <minutes>`. An item you answer or
+ dismiss from a terminal while it is snoozed does not return.
+@@ -531,7 +532,7 @@ dismiss from a terminal while it is snoozed does not return.
+ A resolved item stays in the list, muted, for 30 seconds after it is
+ delivered, and a dismissed one is struck through. A dismissed notice is
+ delivered at once, since nothing goes back to the agent. An item the agent
+-withdrew leaves the band at once, its drawer with it, and sends nothing back,
++withdrew leaves the panel at once, its drawer with it, and sends nothing back,
+ not even `DISMISSED` for a question. A question's drawer still opens and
+ lists its options, without their digits and with nothing to press, and
+ marks the answer given with `✓`, listing an answer typed in a terminal with
+@@ -546,41 +547,41 @@ runs `project inbox restore`, and the item is open again at once, in its
+ place in the list, with its drawer still open and **dismiss** and
+ **snooze** back in their places. A dismissed question whose `DISMISSED`
+ has not gone out sends its agent nothing; one whose agent already heard
+-`DISMISSED` sends `RESTORED`. Once the item has left the band, ask the
+-agent to restore it, and the band appears with the item open, even if you
+-hid it. A drawer closes when its line leaves the band, so a pull request
++`DISMISSED` sends `RESTORED`. Once the item has left the panel, ask the
++agent to restore it, and the panel appears with the item open, even if you
++hid it. A drawer closes when its line leaves the panel, so a pull request
+ or an item that comes back returns with its drawer closed.
+ 
+ An answer you give from a terminal with `project inbox answer` reaches the
+-agent through the band of the session that asked. A subagent that is still
++agent through the panel of the session that asked. A subagent that is still
+ running receives it directly, as a message that starts `ANSWER`,
+ `DISMISSED` for a dismissal, or `RESTORED` when you restore a question
+ whose agent heard `DISMISSED`. Otherwise the main loop receives it as a prompt
+ of its own once its turn ends, with the name of the subagent that asked, and
+ `sending` follows the question until it has gone.
+ 
+-Shown or hidden, the band lists the session's inbox directory every 5
++Shown or hidden, the panel lists the session's inbox directory every 5
+ seconds and runs `project inbox` only when the directory changed since
+ its last successful read or an answer is on its way, so a session with an
+ empty inbox starts no process. A read that fails runs again 5 seconds later.
+ 
+-### Use the band from the keyboard
++### Use the panel from the keyboard
+ 
+-Claude Code moves the keyboard between the prompt and the band, and draws
+-a focus ring, an inverted highlight, on the band's line or action that has
++Claude Code moves the keyboard between the prompt and the panel, and draws
++a focus ring, an inverted highlight, on the panel's line or action that has
+ it:
+ 
+-- **ctrl+x tab** moves the keyboard into the band, onto its first line.
++- **ctrl+x tab** moves the keyboard into the panel, onto its first line.
+   Press it again to move to the next.
+ - **Tab** and **→** move the ring to the next line or action, and
+-  **shift+Tab** and **←** to the one before. **↑** and **↓** scroll a band
++  **shift+Tab** and **←** to the one before. **↑** and **↓** scroll a panel
+   taller than the room it has.
+ - **Enter** presses what the ring is on, as a click does.
+ - **Esc** gives the keyboard back to the prompt.
+-- **ctrl+x ctrl+a** collapses the band to one line, and shows it again.
++- **ctrl+x ctrl+a** collapses the panel to one line, and shows it again.
+ 
+ In a terminal, the panel's last line names the chord that takes the
+-keyboard in, and once the band has it, Esc and Enter.
++keyboard in, and once the panel has it, Esc and Enter.
+ 
+ Enter on a line opens its drawer and moves the ring onto the drawer's first
+ control: a question's first option, otherwise **discuss**. Tab then walks
+@@ -592,17 +593,17 @@ ring onto the first length, and Enter on **cancel** moves it back onto the
+ Enter on `no, keep it` back onto **dismiss**.
+ 
+ An open question's options read `1:` to `6:`, the digit in the accent
+-color. Press a digit while the band has the keyboard, or type it first into
+-an empty prompt while the option is wholly in view in the band, as you
+-answer Claude Code's own surveys, and the band puts that option in your
++color. Press a digit while the panel has the keyboard, or type it first into
++an empty prompt while the option is wholly in view in the panel, as you
++answer Claude Code's own surveys, and the panel puts that option in your
+ prompt as a click does. A digit only fills the prompt,
+ so nothing reaches the agent until you send. A resolved question's options
+ have no digits.
+ 
+ An open item's own line, at the top of its drawer, reads `0:` before it,
+ for every item, open or resolved, question or notice. Press `0` the same
+-two ways, while the band has the keyboard or first into an empty prompt
+-while the line is wholly in view in the band, and the drawer closes, as a
++two ways, while the panel has the keyboard or first into an empty prompt
++while the line is wholly in view in the panel, and the drawer closes, as a
+ click or Enter on that line closes it. A pull
+ request's drawer has no `0`, since its number closes it.
+ 
+@@ -620,9 +621,9 @@ acts on: `question`, `notice`, or `PR`.
+   request's drawer does not offer. While snooze asks how long, the lengths
+   take `1` to `4` in the options' place and `9` cancels.
+ 
+-An action's digit works the two ways an option's does: while the band has
++An action's digit works the two ways an option's does: while the panel has
+ the keyboard, or first into an empty prompt while its line is wholly in
+-view in the band.
++view in the panel.
+ 
+ ## Install for Codex
+ 
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index b0c4a8b5..c7fdf9ec 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -2038,3 +2038,56 @@ divider's place:
+ | `panel.background` is read through `project config get` and drawn as written, a change shows on the next reload, and `auto` or an unset key gives the theme's color | `panel.background colors the panel, and auto or no value leaves the color to the theme` |
+ | A value no surface can draw gives the theme's color and one toast for each such value | `a panel.background no surface can draw leaves the color to the theme, and the band says so once` |
+ | `panel.background` is a string key that `project config set` and `unset` change, and the settings table lists it | `test_the_panel_background_is_set_and_unset_as_the_band_reads_it` and `test_the_documented_keys_are_the_known_keys` in `tests/test_config.py` |
++
++## 21. Call the band the panel
++
++Since § 20, Projector's band above the prompt draws as one panel on a
++background of its own, and "band" was an odd name for it. It is now the
++panel wherever Projector names it.
++
++### 21.1 What changes
++
++- **What you read says "panel".** `docs/plugins.md`, `docs/cli.md`, the
++  README, and the `start-watch-loop` and `start-review-loop` skills say it,
++  and so do the `/projector` command's description and the descriptions and
++  results of the `ask`, `tell`, `withdraw`, `revise`, and `restore` tools.
++  The headings of `docs/plugins.md` change with it, and so do their anchors,
++  such as `#read-your-inbox-in-projectors-panel`.
++- **The agent instructions say it too.** The template's line about what the
++  panel lists changed, so its begin marker moves to 13, its hash is pinned,
++  and `project init` refreshed this repository's block.
++- **So does the code.** The hooks module's identifiers, comments, and tests
++  say "panel", and `hooks/band.test.tsx` is now `hooks/panel.test.tsx`. Its
++  state keys are `panelSnapshot`, `panelNow`, `isPanelShown`, `panelDrawer`,
++  `panelAsked`, `panelInbox`, `panelSending`, `panelThemeBackground`,
++  `panelBackground`, and `isPanelFocused`. The state is the session's, so a
++  session that updates the plugin starts the new keys fresh, with the panel
++  hidden until a watcher, an item, or `/projector` shows it. Only
++  `bandSending` is still read: an answer the release before the rename
++  submitted behind a running turn is recorded there, and starting fresh
++  would let its claim lapse and deliver the answer a second time. So the
++  panel moves those entries into `panelSending` once per load of the module
++  and clears the old key. Comments in `src/projector` say "panel" as well.
++- **Some names stay.** Claude Code's own terms keep theirs: the
++  `AbovePrompt` site and its props, such as `bodyColumns`. The earlier
++  sections of this plan and of the `questions` plan keep "band" as their
++  history, and their evidence tables cite tests by the names and the file
++  they had when those sections were written.
++
++### 21.2 Why this design
++
++- **It draws as a panel.** Since § 20 it reads as one surface, a panel, and
++  the owner found "band" an odd name for it.
++- **One name everywhere.** The docs, the tools an agent reads, the command,
++  and the code all use the same word, so no reader wonders whether the band
++  and the panel are two things.
++
++### 21.3 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| The tools' results name Projector's panel | `a subagent tells through the tool, and the panel lists the notice in gray`, `the withdraw tool takes an item out of the panel at once, and nothing goes back to the agent`, `the revise tool redraws the question with its new text at once, keeping its number`, and `the restore tool brings a dismissed item back at once, its old drawer closed, and its agent hears RESTORED` in `hooks/panel.test.tsx` |
++| The state lives under the new keys | `draws over a snapshot an earlier version left in the session` and the delivery tests that seed `panelSending` |
++| A submit left under `bandSending` keeps its claim past 60 seconds, is not submitted again, and settles when its prompt arrives | `a submit the release before the rename left under bandSending keeps its claim and settles when its prompt arrives` |
++| The template's text is pinned under version 13 | `test_the_template_text_is_pinned_to_its_version` in `tests/test_instructions.py` |
++| No "band" names the feature outside Claude Code's terms, the plans' history, and the old `bandSending` key the panel takes over | `git grep -n -i band`, by hand |
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index 6e7d965a..4df29fe2 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -295,13 +295,13 @@ test('the note beside an answer or a reply names the subagent that asked', () =>
+   )
+ })
+ 
+-test('a delivered question leaves the band after 30 seconds', () => {
++test('a delivered question leaves the panel after 30 seconds', () => {
+   expect(isShownAt(question(), NOW)).toBe(true)
+   expect(isShownAt(question({ deliveredAt: NOW - 29_000 }), NOW)).toBe(true)
+   expect(isShownAt(question({ deliveredAt: NOW - 30_000 }), NOW)).toBe(false)
+ })
+ 
+-test('a withdrawn item leaves the band at once', () => {
++test('a withdrawn item leaves the panel at once', () => {
+   const dismissed = { dismissed: true as const, answeredAt: NOW }
+   const withdrawn = { ...dismissed, withdrawn: true as const }
+   expect(isShownAt(notice({ answer: dismissed, deliveredAt: NOW }), NOW)).toBe(true)
+@@ -406,7 +406,7 @@ test('the store is where the CLI keeps it', () => {
+   expect(storeOf(env({}), 's1')).toBeUndefined()
+ })
+ 
+-test('the band’s own renewal leaves the store’s signature alone', () => {
++test('the panel’s own renewal leaves the store’s signature alone', () => {
+   const before = [file('1.json', 1), file('count.json', 1), file('.lock', 1)]
+   const renewed = [file('1.json', 2), file('count.json', 1)]
+   const asked = [...renewed, file('2.json', 3)]
+@@ -455,7 +455,7 @@ test('a call of the tool becomes `project inbox ask`, text kept as text', () =>
+   })
+ })
+ 
+-test('a snoozed item leaves the band until its time, and wakes once between two ticks', () => {
++test('a snoozed item leaves the panel until its time, and wakes once between two ticks', () => {
+   const snoozed = notice({ snoozedUntil: NOW + 3_600_000 })
+   expect(isShownAt(snoozed, NOW)).toBe(false)
+   expect(isShownAt(snoozed, NOW + 3_600_000)).toBe(true)
+@@ -466,7 +466,7 @@ test('a snoozed item leaves the band until its time, and wakes once between two
+   expect(wokeBetween([dismissed], NOW, NOW + 3_600_000)).toEqual([])
+ })
+ 
+-test('a snoozed item stays in the band for 30 seconds after it is snoozed, then leaves until its time', () => {
++test('a snoozed item stays in the panel for 30 seconds after it is snoozed, then leaves until its time', () => {
+   const snoozed = notice({ snoozedAt: NOW, snoozedUntil: NOW + 3_600_000 })
+   expect(isSnoozedAt(snoozed, NOW + 29_000)).toBe(true)
+   expect(isShownAt(snoozed, NOW + 29_000)).toBe(true)
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index 61f48042..cb487b53 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -3,7 +3,7 @@ import type { AgentInfo, FsEntry } from 'claude-code'
+ import type { Item, Question } from './types'
+ import type { Env } from './parse'
+ 
+-/** How long a delivered item stays in the band. */
++/** How long a delivered item stays in the panel. */
+ export const RESOLVED_MS = 30_000
+ 
+ /** How long a claim lasts without renewal, as `project inbox claim` counts it. */
+@@ -23,7 +23,7 @@ export const isSnoozedAt = (item: Item, time: number) => item.snoozedUntil !== u
+ const isWithdrawn = (item: Item) => item.answer !== undefined && 'withdrawn' in item.answer
+ 
+ /**
+- * Whether the band shows an item: not withdrawn, not snoozed or snoozed
++ * Whether the panel shows an item: not withdrawn, not snoozed or snoozed
+  * within the last 30 seconds, and open, being delivered, or delivered within
+  * the last 30 seconds.
+  */
+@@ -32,7 +32,7 @@ export const isShownAt = (item: Item, time: number) =>
+   (!isSnoozedAt(item, time) || (item.snoozedAt !== undefined && time - item.snoozedAt < RESOLVED_MS)) &&
+   (item.deliveredAt === undefined || time - item.deliveredAt < RESOLVED_MS)
+ 
+-/** The open items whose snooze ended after `since` and by `time`, which bring a hidden band back. */
++/** The open items whose snooze ended after `since` and by `time`, which bring a hidden panel back. */
+ export const wokeBetween = (items: readonly Item[], since: number, time: number) =>
+   items.filter(
+     item =>
+@@ -48,10 +48,10 @@ export const needsDelivery = (item: Item, time: number): item is Question =>
+   (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined)) &&
+   (item.claim === undefined || time - item.claim.renewedAt >= CLAIM_MS)
+ 
+-/** What the band puts in the prompt to discuss an item: its subject, in quotes. */
++/** What the panel puts in the prompt to discuss an item: its subject, in quotes. */
+ export const quoteOf = (item: Item) => `"${item.subject}"`
+ 
+-/** What the band puts in the prompt for an answer: the quoted question, a blank line, and the answer's text. */
++/** What the panel puts in the prompt for an answer: the quoted question, a blank line, and the answer's text. */
+ export const proposalOf = (question: Question, answer: string) => `${quoteOf(question)}\n\n${answer}`
+ 
+ /** One answer a sent prompt gives: the letter of the option it picks. */
+@@ -68,7 +68,7 @@ export type Proposal = { ref: string; quote: string; answer: string; isStale?: b
+ export type Read = { answers: Given[]; replies: Question[] }
+ 
+ /**
+- * Reads a sent prompt as the band writes it, each quote speaking to one
++ * Reads a sent prompt as the panel writes it, each quote speaking to one
+  * question. A quoted open question takes an answer only when its quote ends
+  * its line and the text after it, up to the next quoted item or the prompt's
+  * end, is one of its options, whatever blank lines and spaces surround it:
+@@ -179,7 +179,7 @@ export function storeOf(env: Env, session: string): string | undefined {
+ /**
+  * What the store's directory holds: each item file's name, size and
+  * time, leaving out the lock and any file being written. A file whose claim
+- * the band itself renews counts by name alone, so the band's own renewal
++ * the panel itself renews counts by name alone, so the panel's own renewal
+  * never makes it read the store again.
+  */
+ export function signatureOf(entries: readonly FsEntry[], renewing: ReadonlySet<string>): string {
+@@ -206,7 +206,7 @@ export const span = (seconds: number) =>
+     : seconds < 86_400 ? `${Math.floor(seconds / 3600)}h` : `${Math.floor(seconds / 86_400)}d`
+ 
+ export const ASK_DESCRIPTION = [
+-  'Ask the person a question without stopping: it appears in Projector’s band above their prompt, and you keep working.',
++  'Ask the person a question without stopping: it appears in Projector’s panel above their prompt, and you keep working.',
+   'Ask in one short line of at most 120 characters, and put what they need to decide in `detail`.',
+   'Always recommend an answer, and write it and each option as a full answer they can pick as it stands.',
+   'Name the pull request the question is about in `pr`, as owner/repo#number.',
+@@ -270,7 +270,7 @@ export function askArguments(
+ }
+ 
+ export const TELL_DESCRIPTION = [
+-  'Tell the person something without stopping: it appears in Projector’s band above their prompt until they dismiss it.',
++  'Tell the person something without stopping: it appears in Projector’s panel above their prompt until they dismiss it.',
+   'Use it for the answer to a question they asked you, or for something you did that they should know about.',
+   'Write one short line of at most 120 characters, and put the rest in `detail`.',
+   'Name the pull request it is about in `pr`, as owner/repo#number.',
+@@ -307,7 +307,7 @@ export function tellArguments(
+ export const WITHDRAW_DESCRIPTION = [
+   'Withdraw a question or notice you posted that no longer needs the person,',
+   'such as a question their reply settled or news that has gone stale.',
+-  'Name it by the number `ask` or `tell` returned. It leaves Projector’s band at once.',
++  'Name it by the number `ask` or `tell` returned. It leaves Projector’s panel at once.',
+   'Nothing comes back to you: a withdrawn question sends no `DISMISSED` message.',
+ ].join(' ')
+ 
+@@ -343,7 +343,7 @@ const itemArguments =
+ export const withdrawArguments = itemArguments('withdraw')
+ 
+ export const RESTORE_DESCRIPTION = [
+-  'Restore a question or notice you posted that the person dismissed or snoozed: it reopens in Projector’s band',
++  'Restore a question or notice you posted that the person dismissed or snoozed: it reopens in Projector’s panel',
+   'under the same number, with the same text. Use it only when the person says a dismissal was a mistake or asks',
+   'for the item back, never on your own judgement, and never ask a dismissed question again as a new one.',
+   'Name it by the number `ask` or `tell` returned. A restored question’s answer arrives as before, as a message',
+@@ -359,7 +359,7 @@ export const REVISE_DESCRIPTION = [
+   'Revise a question you asked that is still open, keeping its number, when the person’s reply shows it was unclear',
+   'or the choice has changed. Name it by the number `ask` returned, and give only what changes:',
+   'the question, its detail, the recommendation, or the other options, which `options` replaces as a whole.',
+-  'Projector’s band redraws it at once, and its answer still arrives as a message that starts',
++  'Projector’s panel redraws it at once, and its answer still arrives as a message that starts',
+   '`ANSWER 3.<letter>` or `DISMISSED 3`.',
+ ].join(' ')
+ 
+diff --git a/hooks/band.test.tsx b/hooks/panel.test.tsx
+similarity index 92%
+rename from hooks/band.test.tsx
+rename to hooks/panel.test.tsx
+index 6380b754..b3643a5c 100644
+--- a/hooks/band.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -9,7 +9,7 @@ const WATCH = `${HOME}/loops/watch/tracked`
+ const REVIEW_COMMAND = 'scripts/watch-prs.sh --tracked ~/loops/review/tracked --state ~/loops/review/state'
+ const WATCH_COMMAND = 'bash /plugin/skills/start-watch-loop/scripts/watch-threads.sh --tracked ~/loops/watch/tracked --state s'
+ 
+-const BAND = {
++const PANEL = {
+   plugin: 'projector',
+   surface: 'terminal',
+   component: 'AbovePrompt',
+@@ -24,11 +24,11 @@ const BAND = {
+ } as const
+ 
+ /**
+- * How wide the band's rows are in a terminal: `bodyColumns` less the panel's
++ * How wide the panel's rows are in a terminal: `bodyColumns` less the panel's
+  * one-column inset, its padding of one column at each side, and the rows' own
+  * padding of one more.
+  */
+-const COLUMNS = BAND.props.bodyColumns - 5
++const COLUMNS = PANEL.props.bodyColumns - 5
+ 
+ /** How wide the panel's header and key hint are: they start a column before the rows and end where the rows do. */
+ const EDGE = COLUMNS + 1
+@@ -41,7 +41,7 @@ const COMMAND = {
+ } as const
+ 
+ const NOW = Date.UTC(2026, 9, 12, 12, 0)
+-/** The account the band's `gh` is signed in as. */
++/** The account the panel's `gh` is signed in as. */
+ const VIEWER = 'ada'
+ const SEVEN = 'https://github.com/x/y/pull/7'
+ const SUMMARY = 'https://example.com/site/reviews/7'
+@@ -117,8 +117,8 @@ const ran = (stdout: string) => ({
+   isStderrTruncated: false,
+ })
+ 
+-/** What the engine draws in the band when the plugin hands it on. */
+-const ENGINE_BAND = 'the engine’s own band'
++/** What the engine draws above the prompt when the plugin hands it on. */
++const ENGINE_SITE = 'the engine’s own AbovePrompt'
+ 
+ type Ran = ReturnType<typeof ran>
+ 
+@@ -187,7 +187,7 @@ function world(
+   }))
+   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+     const { Text } = $.ui.resolve(e)
+-    return <Text>{ENGINE_BAND}</Text>
++    return <Text>{ENGINE_SITE}</Text>
+   })
+   return { commands, filled }
+ }
+@@ -207,21 +207,21 @@ test('draws one line per open pull request of the session’s own loops', async
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  // The watch loop runs in another session, so the band does not list it.
++  // The watch loop runs in another session, so the panel does not list it.
+   const gh = commands.filter(argv => argv[0] === 'gh')
+   expect(gh.length).toBe(1)
+   expect(gh[0]?.join(' ')).not.toContain('repository(owner: "x", name: "y")')
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
+   // Open threads show as their count before a `*`, in yellow.
+   expect((await ui.findAll({ type: 'Text', text: '1*' })).map(found => found.props.color)).toContain('warning')
+   expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+-  // The panel's header starts with `/projector`, the command that shows and hides the band, at its left. At its
+-  // right, it counts the two open pull requests the band lists, not the merged one, and then says how long ago the
+-  // band reloaded as the rows say their ages: in the short form, `0s` for a reload just now as for an item posted
++  // The panel's header starts with `/projector`, the command that shows and hides the panel, at its left. At its
++  // right, it counts the two open pull requests the panel lists, not the merged one, and then says how long ago the
++  // panel reloaded as the rows say their ages: in the short form, `0s` for a reload just now as for an item posted
+   // just now. The two sit two spaces apart, so the time ends in the rows' age column, at the edge of the panel's
+   // lines. All of it is `subtle`, and no rule runs through it.
+   const header = await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  0s$/ })
+@@ -237,7 +237,7 @@ test('draws one line per open pull request of the session’s own loops', async
+   await ui.unmount()
+ })
+ 
+-test('draws no panel and no header on a surface that does not lay text out in columns', async ($, on) => {
++test('draws no background and no header on a surface that does not lay text out in columns', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\n' })
+@@ -247,10 +247,10 @@ test('draws no panel and no header on a surface that does not lay text out in co
+   await clock.settle()
+ 
+   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+-    const ui = await $.ui.mount({ ...BAND, surface })
++    const ui = await $.ui.mount({ ...PANEL, surface })
+     expect(await ui.find({ key: 'panel' })).toBeUndefined()
+     expect((await ui.findAll({ type: 'Box' })).filter(box => box.props.backgroundColor !== undefined)).toEqual([])
+-    // The band starts with its first row.
++    // The panel starts with its first row.
+     const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+     expect(texts.filter(text => text.includes('─') || text.startsWith('/projector') || /\d+s$/.test(text))).toEqual([])
+     expect(texts[0]).toBe('ready')
+@@ -260,22 +260,25 @@ test('draws no panel and no header on a surface that does not lay text out in co
+   }
+ })
+ 
+-/** A terminal's band: one column of inset in the terminal's own background, then the panel, which holds every line. */
++/**
++ * The panel in a terminal: one column of inset in the terminal's own
++ * background, then a Box on the panel's own, which holds every line.
++ */
+ const inPanel = (backgroundColor: string) => ({
+   type: 'Box',
+-  props: { width: BAND.props.bodyColumns, paddingLeft: 1 },
++  props: { width: PANEL.props.bodyColumns, paddingLeft: 1 },
+   children: [
+     {
+       type: 'Box',
+-      props: { width: BAND.props.bodyColumns - 1, paddingLeft: 1, paddingRight: 1, backgroundColor },
++      props: { width: PANEL.props.bodyColumns - 1, paddingLeft: 1, paddingRight: 1, backgroundColor },
+     },
+   ],
+ })
+ 
+-/** The panel's background as drawn, or undefined when the band draws no panel. */
++/** The panel's background as drawn, or undefined when the panel draws none. */
+ const backgroundOf = async (ui: Pick<Mounted, 'find'>) => (await ui.find({ key: 'panel' }))?.props.backgroundColor
+ 
+-test('in a terminal the band draws as one panel, inset a column and padded, on a background of its own', async ($, on) => {
++test('in a terminal the panel is inset a column and padded, on a background of its own', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\n' })
+@@ -284,9 +287,9 @@ test('in a terminal the band draws as one panel, inset a column and padded, on a
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   // The panel pads one column at each side, and no row: its header is its first line and its key hint its last.
+-  // It ends at bodyColumns, where the engine draws the band's `[-]`. A band that has read no theme takes
++  // It ends at bodyColumns, where the engine draws the panel's `[-]`. A panel that has read no theme takes
+   // `inverseText`.
+   expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
+   const panel = await ui.find({ key: 'panel' })
+@@ -296,7 +299,7 @@ test('in a terminal the band draws as one panel, inset a column and padded, on a
+   await ui.unmount()
+ })
+ 
+-test('the panel’s last line says how to focus the band, and once the band has the keyboard, which keys work', async ($, on) => {
++test('the panel’s last line says how to focus the panel, and once the panel has the keyboard, which keys work', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\n' })
+@@ -308,7 +311,7 @@ test('the panel’s last line says how to focus the band, and once the band has
+     invalidated.push(e.event)
+     return next(e)
+   })
+-  // The person moves the ring onto a line of the band, as ctrl+x tab or Tab does, or types in the prompt.
++  // The person moves the ring onto a line of the panel, as ctrl+x tab or Tab does, or types in the prompt.
+   const focus = (element: string) =>
+     $.ui.focus({ component: 'AbovePrompt', requestId: 'above-prompt', plugin: 'projector', element, origin: { kind: 'person' } })
+   // The kit raises `prompt.edit` as the prompt's editor does, though its typed `$` lists no call for it.
+@@ -321,19 +324,19 @@ test('the panel’s last line says how to focus the band, and once the band has
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   const hint = async () => {
+     const last = (await ui.findAll({ type: 'Text' })).at(-1)
+     return [last?.text.trimStart(), last?.props.color]
+   }
+-  // With the keyboard in the prompt, the hint names the chord that moves it into the band, at the right of its line,
++  // With the keyboard in the prompt, the hint names the chord that moves it into the panel, at the right of its line,
+   // which ends where the rows do. Typing redraws nothing.
+   expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
+   expect((await ui.findAll({ type: 'Text' })).at(-1)?.text).toBe('ctrl+x tab to focus'.padStart(EDGE))
+   await type('a')
+   expect(invalidated).toEqual([])
+ 
+-  // Once the ring lands in the band, the hint names the keys that work there, and moving the ring on redraws
++  // Once the ring lands in the panel, the hint names the keys that work there, and moving the ring on redraws
+   // nothing more.
+   await focus('pr:o/r#1')
+   expect(await hint()).toEqual(['esc to return · enter to open', 'subtle'])
+@@ -341,7 +344,7 @@ test('the panel’s last line says how to focus the band, and once the band has
+   expect(invalidated).toEqual(['ui.render'])
+ 
+   // Claude Code says nothing when Esc hands the keyboard back, so the next keystroke in the prompt puts the first
+-  // hint back, and only that one redraws the band.
++  // hint back, and only that one redraws the panel.
+   await type('b')
+   expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
+   await type('c')
+@@ -373,7 +376,7 @@ test('the header’s age, a pull request’s age, and the key hint end in one co
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   // The header and the hint sit in the panel's padding of one column, and the rows in a Box one column further in at
+   // each side, whose last column is each row's age.
+   type Drawn = { type: string; props: Record<string, unknown>; children: (Drawn | string)[] }
+@@ -451,7 +454,7 @@ for (const [theme, color, files] of [
+     const { clock } = panelWorld(on, { theme, files })
+     await startSession($, clock)
+ 
+-    const ui = await $.ui.mount(BAND)
++    const ui = await $.ui.mount(PANEL)
+     expect(await ui.drawn()).toMatchObject(inPanel(color))
+     await ui.unmount()
+   })
+@@ -468,7 +471,7 @@ test('a custom theme’s file is read from the Claude config directory CLAUDE_CO
+   })
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await backgroundOf(ui)).toBe(LIGHT)
+   await ui.unmount()
+ })
+@@ -476,7 +479,7 @@ test('a custom theme’s file is read from the Claude config directory CLAUDE_CO
+ test('a theme picked in /theme recolors the panel at once, and one the change refuses leaves it', async ($, on) => {
+   const { clock } = panelWorld(on, { theme: 'dark' })
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await backgroundOf(ui)).toBe(DARK)
+ 
+   // As the person picks a theme in `/theme`.
+@@ -501,9 +504,9 @@ test('panel.background colors the panel, and auto or no value leaves the color t
+     await clock.settle()
+   }
+ 
+-  // The band reads the setting through the CLI, which merges the `.projector.toml` files.
++  // The panel reads the setting through the CLI, which merges the `.projector.toml` files.
+   expect(commands).toContainEqual(['project', 'config', 'get', 'panel.background', '--default', 'auto', '--json'])
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await backgroundOf(ui)).toBe('#202830')
+ 
+   // Each reload reads it again, so an edit to the file shows without a restart.
+@@ -522,7 +525,7 @@ test('panel.background colors the panel, and auto or no value leaves the color t
+   await ui.unmount()
+ })
+ 
+-test('a panel.background no surface can draw leaves the color to the theme, and the band says so once', async ($, on) => {
++test('a panel.background no surface can draw leaves the color to the theme, and the panel says so once', async ($, on) => {
+   const settings: Record<string, unknown> = { 'panel.background': 'ansi:black' }
+   const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
+   await startSession($, clock)
+@@ -534,7 +537,7 @@ test('a panel.background no surface can draw leaves the color to the theme, and
+   }
+ 
+   // The panel draws on the theme's color rather than not at all.
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.drawn()).toMatchObject(inPanel(DARK))
+   await reload()
+   expect(await backgroundOf(ui)).toBe(DARK)
+@@ -564,7 +567,7 @@ test('a pull request’s notes take their own colors, and each ` · ` between th
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(partsOf(await ui.find({ type: 'Text', text: 'conflict · changes requested · 1*' }))).toEqual([
+     ['conflict', 'error'],
+     ' · ',
+@@ -591,7 +594,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   // The number is a plain button, so no terminal draws a URL beside it.
+   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
+   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
+@@ -664,7 +667,7 @@ test('ends each pull request’s line with its age, in one column as wide as the
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   // Ages of different widths sit right-aligned in one column, so the titles and notes before them line up.
+   const ages = await Promise.all(['o/r#1', 'o/r#2', 'x/y#7'].map(key => ui.find({ key: `age:${key}` })))
+   expect(ages.map(age => [age?.props.width, age?.props.justifyContent])).toEqual([
+@@ -684,7 +687,7 @@ test('lists your pull requests first, then everyone else’s by author, naming t
+   mock.env(on, { HOME })
+   const { commands } = world(on, { [REVIEW]: 'o/r#4\no/r#9\no/r#5\no/r#6\n', [WATCH]: 'x/y#7\n' })
+ 
+-  // One command starts both watchers, so the band loads once.
++  // One command starts both watchers, so the panel loads once.
+   await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
+   await clock.advance(1)
+   await clock.settle()
+@@ -694,11 +697,11 @@ test('lists your pull requests first, then everyone else’s by author, naming t
+   expect(gh).toHaveLength(1)
+   expect(gh[0]?.join(' ')).toContain('viewer { login }')
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   // Yours keep their order, then bob's, then grace's two in theirs, with nothing between the groups.
+   const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
+   expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+-  // The header counts everyone's pull requests the band lists, the session's own and others'.
++  // The header counts everyone's pull requests the panel lists, the session's own and others'.
+   expect(await ui.find({ type: 'Text', text: /^\/projector +5 pull requests  \d+s$/ })).toBeDefined()
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+   expect(texts.filter(text => text === ' ')).toEqual([])
+@@ -716,7 +719,7 @@ test('lists your pull requests first, then everyone else’s by author, naming t
+   await ui.unmount()
+ })
+ 
+-/** Records each toast the band shows. */
++/** Records each toast the panel shows. */
+ function toastsOf(on: On): string[] {
+   const toasts: string[] = []
+   on('ui.toast', ($, e) => {
+@@ -740,7 +743,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  \d+s$/ })).toBeDefined()
+   await ui.press({ key: 'pr:x/y#7' })
+   // The drawer's actions are lines of their own, as an item's are.
+@@ -775,7 +778,7 @@ test('a dismiss the CLI refuses says why and keeps the line', async ($, on) => {
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'pr:x/y#7' })
+   await ui.press({ key: 'dismiss:x/y#7' })
+   await ui.press({ key: 'confirm:x/y#7' })
+@@ -787,7 +790,7 @@ test('a dismiss the CLI refuses says why and keeps the line', async ($, on) => {
+   await ui.unmount()
+ })
+ 
+-test('a pull request’s drawer closes when its line leaves the band, so it does not open again when the line returns', async ($, on) => {
++test('a pull request’s drawer closes when its line leaves the panel, so it does not open again when the line returns', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const files: Record<string, string> = { [WATCH]: 'x/y#7\n' }
+@@ -798,7 +801,7 @@ test('a pull request’s drawer closes when its line leaves the band, so it does
+   await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+   await clock.advance(1)
+   await clock.settle()
+-  // Hiding and showing the band reloads it, as a watcher's report does.
++  // Hiding and showing the panel reloads it, as a watcher's report does.
+   const reload = async () => {
+     await $.command.run(COMMAND)
+     await $.command.run(COMMAND)
+@@ -806,8 +809,8 @@ test('a pull request’s drawer closes when its line leaves the band, so it does
+     await clock.settle()
+   }
+ 
+-  const ui = await $.ui.mount(BAND)
+-  // Dropped from a terminal while its drawer is open, the pull request leaves the band.
++  const ui = await $.ui.mount(PANEL)
++  // Dropped from a terminal while its drawer is open, the pull request leaves the panel.
+   await ui.press({ key: 'pr:x/y#7' })
+   files[WATCH] = 'x/y#7\n!x/y#7\n'
+   await reload()
+@@ -851,7 +854,7 @@ test('opening one drawer closes the one that was open', async ($, on) => {
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'pr:x/y#7' })
+   expect(await loopsOf(ui, 'x/y#7')).toEqual([['watching', 'ansi256(4)']])
+   await ui.press({ key: 'pr:o/r#1' })
+@@ -872,7 +875,7 @@ test('lists a pull request both loops track once, as watched and reviewed, and c
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   // The header counts its one line once, in the singular.
+   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+   await ui.press({ key: 'pr:o/r#1' })
+@@ -882,7 +885,7 @@ test('lists a pull request both loops track once, as watched and reviewed, and c
+   await ui.unmount()
+ })
+ 
+-test('`/projector` only shows or hides the band, whatever follows it', async ($, on) => {
++test('`/projector` only shows or hides the panel, whatever follows it', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const { commands } = world(on, { [WATCH]: 'x/y#7\n' })
+@@ -891,10 +894,10 @@ test('`/projector` only shows or hides the band, whatever follows it', async ($,
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: ` ${TAGLINE}` })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+-  // The band runs nothing but its reload's read of the panel's setting.
++  // The panel runs nothing but its reload's read of its setting.
+   expect(commands.filter(argv => argv.slice(0, 3).join(' ') !== 'project config get')).toEqual([])
+   await ui.unmount()
+ })
+@@ -916,7 +919,7 @@ test('leaves out a tracked file an earlier version was given by hand, until the
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+ 
+@@ -939,13 +942,13 @@ test('stays hidden until the session starts a watcher or asks for it', async ($,
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
++  const ui = await $.ui.mount(PANEL)
++  expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
+   await ui.unmount()
+ })
+ 
+-test('keeps a band you hid hidden when a known watcher starts again', async ($, on) => {
++test('keeps a panel you hid hidden when a known watcher starts again', async ($, on) => {
+   const clock = mock.clock(on)
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\n' })
+@@ -957,8 +960,8 @@ test('keeps a band you hid hidden when a known watcher starts again', async ($,
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
+-  expect(await ui.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
++  const ui = await $.ui.mount(PANEL)
++  expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
+   await ui.unmount()
+ })
+@@ -978,7 +981,7 @@ test('says once when it cannot tell which tracked file a watcher reads', async (
+   await $.tool.call({ tool: 'Bash', command })
+   await clock.settle()
+ 
+-  expect(toasts).toEqual(['projector: cannot tell which file $LOOP/tracked names, so the band does not list that loop'])
++  expect(toasts).toEqual(['projector: cannot tell which file $LOOP/tracked names, so the panel does not list that loop'])
+ })
+ 
+ test('draws over a snapshot an earlier version left in the session', async ($, on) => {
+@@ -986,7 +989,7 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\n' })
+   const earlier = { watching: [], reviewing: [], fetchedAt: null, error: null }
+-  on('state.get', { plugin: 'projector', key: 'bandSnapshot' }, () => ({
++  on('state.get', { plugin: 'projector', key: 'panelSnapshot' }, () => ({
+     value: { value: earlier as never, version: 1 },
+   }))
+ 
+@@ -994,7 +997,7 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeDefined()
+   await ui.unmount()
+ })
+@@ -1008,7 +1011,7 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   // `dimColor` does not dim in every terminal, so the tagline takes the theme's subtle color.
+   expect((await ui.find({ type: 'Text', text: ` ${TAGLINE}` }))?.props.color).toBe('subtle')
+   expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
+@@ -1025,7 +1028,7 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
+   expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
+   await ui.unmount()
+ 
+-  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
++  const desktop = await $.ui.mount({ ...PANEL, surface: 'desktop' })
+   const texts = (await desktop.findAll({ type: 'Text' })).map(found => found.text)
+   expect(texts).toEqual([` ${TAGLINE}`])
+   expect(await desktop.find({ key: 'panel' })).toBeUndefined()
+@@ -1035,12 +1038,12 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
+ /** What `gh` answers when it cannot reach GitHub. */
+ const DOWN = { ...ran(''), exitCode: 1, stderr: 'read: connection reset by peer\n' }
+ 
+-test('says why GitHub failed only when the band has no pull request from it to draw', async ($, on) => {
++test('says why GitHub failed only when the panel has no pull request from it to draw', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   let isDown = true
+   world(on, { [REVIEW]: 'o/r#1\n' }, undefined, { github: query => (isDown ? DOWN : ran(answer(query))) })
+-  // Hiding the band and showing it again loads it again.
++  // Hiding the panel and showing it again loads it again.
+   const reload = async () => {
+     await $.command.run(COMMAND)
+     await $.command.run(COMMAND)
+@@ -1052,7 +1055,7 @@ test('says why GitHub failed only when the band has no pull request from it to d
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeUndefined()
+ 
+@@ -1068,13 +1071,13 @@ test('says why GitHub failed only when the band has no pull request from it to d
+   await ui.unmount()
+ })
+ 
+-test('says why GitHub failed for a loop added after the band loaded with nothing to track', async ($, on) => {
++test('says why GitHub failed for a loop added after the panel loaded with nothing to track', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const files: Record<string, string> = {}
+   world(on, files, undefined, { github: () => DOWN })
+ 
+-  // A band shown before any loop tracks a pull request asks GitHub nothing.
++  // A panel shown before any loop tracks a pull request asks GitHub nothing.
+   await $.command.run(COMMAND)
+   await clock.advance(1)
+   await clock.settle()
+@@ -1084,7 +1087,7 @@ test('says why GitHub failed for a loop added after the band loaded with nothing
+   await clock.advance(1)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: 'GitHub: read: connection reset by peer' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: TAGLINE })).toBeUndefined()
+   await ui.unmount()
+@@ -1371,7 +1374,7 @@ function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options
+ 
+ async function startSession($: Engine, clock: Clock, isShown = true) {
+   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+-  // A shown band belongs to a session that started its review loop's watcher.
++  // A shown panel belongs to a session that started its review loop's watcher.
+   if (isShown) await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+   await clock.advance(1)
+   await clock.settle()
+@@ -1380,7 +1383,7 @@ async function startSession($: Engine, clock: Clock, isShown = true) {
+ const running = (status: AgentInfo['status']): AgentInfo =>
+   ({ id: 'agent-1', description: 'Fix #7', type: 'general-purpose', status }) as AgentInfo
+ 
+-test('asks through the tool, and the band lists the question below the pull requests', async ($, on) => {
++test('asks through the tool, and the panel lists the question below the pull requests', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock)
+@@ -1411,14 +1414,14 @@ test('asks through the tool, and the band lists the question below the pull requ
+ 
+   await clock.advance(1)
+   await clock.settle()
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   // The header counts the pull request and then the question before the reload's age, ending at the panel's edge.
+   const header = await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })
+   expect(header?.text.length).toBe(EDGE)
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+   expect(texts).toContain('Conflicting change')
+   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
+-  // The line names the question's pull request as the band labels it.
++  // The line names the question's pull request as the panel labels it.
+   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
+   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
+   await ui.unmount()
+@@ -1437,7 +1440,7 @@ test('every item takes the `-` bullet, an open question the permission color, an
+     notice({ ref: '5', number: 5, subject: 'Merged #6', snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR }),
+   ])
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   type Part = { props?: { color?: string; strikethrough?: boolean; inverse?: boolean }; children: string[] }
+   /** Each part of an item's line, the bullet then the subject: its text, color, and strikethrough. */
+   const lineOf = async (key: string) => {
+@@ -1501,7 +1504,7 @@ test('a pull request’s age and an item’s age end in one column', async ($, o
+   questionWorld(on, clock, [held({ postedAt: NOW - 12 * 60_000 })])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   // The pull request changed 5m ago and the question was posted 12m ago, so both ages take the wider one's width.
+   const ages = await Promise.all(['x/y#7', 'item:1'].map(key => ui.find({ key: `age:${key}` })))
+   expect(ages.map(age => [age?.text, age?.props.width, age?.props.justifyContent])).toEqual([
+@@ -1517,7 +1520,7 @@ test('a blank line sets GitHub’s error apart from the items under it', async (
+   questionWorld(on, clock, [notice()], { github: () => DOWN })
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+   const failure = texts.indexOf('GitHub: read: connection reset by peer')
+   expect(failure).toBeGreaterThan(-1)
+@@ -1551,7 +1554,7 @@ test('refuses what the CLI refuses, asks an old CLI to upgrade, and says when it
+   )
+ })
+ 
+-test('a question asked from the shell shows the hidden band within a tick', async ($, on) => {
++test('a question asked from the shell shows the hidden panel within a tick', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   questionWorld(on, clock, [held({ pr: null, subject: 'Run project init?' })])
+@@ -1559,7 +1562,7 @@ test('a question asked from the shell shows the hidden band within a tick', asyn
+   await clock.advance(TICK)
+   await clock.settle()
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: 'Run project init?' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: /1 question/ })).toBeDefined()
+   await ui.unmount()
+@@ -1573,9 +1576,9 @@ test('an idle session with no questions runs no inbox command', async ($, on) =>
+   await clock.advance(3 * TICK)
+   await clock.settle()
+ 
+-  // Listing the store's directory starts no process; only a reload of the shown band reads the panel's setting.
++  // Listing the store's directory starts no process; only a reload of the shown panel reads its setting.
+   expect(session.project().filter(command => !command.startsWith('config get'))).toEqual([])
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+   await ui.unmount()
+ })
+@@ -1585,7 +1588,7 @@ async function optionsOf(ui: Pick<Mounted, 'findAll'>) {
+   return (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('answer:'))
+ }
+ 
+-/** The keys of the band's Buttons that a digit presses. */
++/** The keys of the panel's Buttons that a digit presses. */
+ async function digitsOf(ui: Pick<Mounted, 'findAll'>) {
+   const buttons = await ui.findAll({ type: 'Button' })
+   return buttons.flatMap(button => (/^\d$/.test(String(button.props.hotkey ?? '')) ? [button.key] : []))
+@@ -1598,7 +1601,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
+   const session = questionWorld(on, clock, [held({ agentId: 'agent-1' }), later], { agents: [running('running')] })
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:1' })
+   // The open question has the panel to itself, its header included, so it is the top row, and the key hint stays
+   // the last.
+@@ -1614,7 +1617,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
+   expect(await ui.find({ key: 'answer:1.c' })).toBeUndefined()
+   expect(await ui.find({ type: 'Button', key: 'discuss:1' })).toBeDefined()
+   expect(await ui.find({ type: 'Button', key: 'dismiss:1' })).toBeDefined()
+-  // Each option is a plain Button on its digit, which the engine draws before it, so the band draws no number.
++  // Each option is a plain Button on its digit, which the engine draws before it, so the panel draws no number.
+   const options = await optionsOf(ui)
+   expect(options.map(option => [option.key, option.props.hotkey, option.props.plain, option.text])).toEqual([
+     ['answer:1.a', '1', true, 'Decline it (recommended)'],
+@@ -1639,10 +1642,10 @@ test('an option puts the question and its answer in the prompt, and sending it a
+   ])
+   expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'b' }))
+   expect(session.store.store.get('1')?.deliveredAt).toBeDefined()
+-  // The prompt delivered it, so the band sends nothing more.
++  // The prompt delivered it, so the panel sends nothing more.
+   expect(session.sent).toEqual([])
+ 
+-  // Sending the answer closed the drawer, so the band shows its list again.
++  // Sending the answer closed the drawer, so the panel shows its list again.
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
+ 
+@@ -1673,7 +1676,7 @@ test('a question another shares the text of takes only the answer its own drawer
+   const session = questionWorld(on, clock, [held(), newer])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'answer:2.a' })
+   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nDecline it\n'])
+@@ -1691,7 +1694,7 @@ test('a proposal you cleared from the prompt does not take the answer you sent f
+   const session = questionWorld(on, clock, [held({ postedAt: NOW - 30_000 }), newer])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'answer:2.a' })
+   // You clear that from the prompt, then choose the other answer in the older question's drawer.
+@@ -1738,7 +1741,7 @@ test('discuss keeps the drawer open with the question above a blank line, a repl
+   const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, subject: 'Rebase first?' }), squashed])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:1' })
+   await ui.press({ key: 'discuss:1' })
+   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\n'])
+@@ -1784,7 +1787,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
+   const session = questionWorld(on, clock, [asked], { agents: [running('running')] })
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:1' })
+   // You choose an option, then add to it before you send.
+   await ui.press({ key: 'answer:1.b' })
+@@ -1805,7 +1808,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+ 
+-  // The question waits for its agent to settle it, and the band sends nothing.
++  // The question waits for its agent to settle it, and the panel sends nothing.
+   await clock.advance(TICK)
+   await clock.settle()
+   expect(session.sent).toEqual([])
+@@ -1826,7 +1829,7 @@ test('a prompt about one of two questions that share a subject leaves the other
+   const session = questionWorld(on, clock, [first, second], { agents })
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   // You discuss the second question: your reply goes to its subagent alone.
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'discuss:2' })
+@@ -1868,7 +1871,7 @@ test('a quote two questions share goes to the one whose drawer you acted in last
+   const session = questionWorld(on, clock, [held(merge), second])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   // You pick Yes in the second question's drawer, think better of it, and discuss the first instead.
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'answer:2.a' })
+@@ -1928,7 +1931,7 @@ test('a dropped submit reopens the question and says why', async ($, on) => {
+     'projector: the answer to "Decline the finding?" did not reach its agent (a hook refused it); answer it again',
+   ])
+   expect(session.store.store.get('1')?.answer).toBeUndefined()
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
+   await ui.unmount()
+ })
+@@ -2028,8 +2031,8 @@ test('a submit an earlier copy of the module left keeps its claim and settles wh
+   const session = questionWorld(on, clock, [held({ answer, claim: { token: 'old', renewedAt: NOW } })])
+   let pending: Record<string, unknown> = { '1': { ref: '1', session: SESSION, token: 'old', route: 'submit', text } }
+   let version = 1
+-  on('state.get', { plugin: 'projector', key: 'bandSending' }, () => ({ value: { value: pending as never, version } }))
+-  on('state.set', { plugin: 'projector', key: 'bandSending' }, ($, e) => {
++  on('state.get', { plugin: 'projector', key: 'panelSending' }, () => ({ value: { value: pending as never, version } }))
++  on('state.set', { plugin: 'projector', key: 'panelSending' }, ($, e) => {
+     pending = e.value as Record<string, unknown>
+     version += 1
+     return { value: { isSet: true as const, version } }
+@@ -2047,6 +2050,47 @@ test('a submit an earlier copy of the module left keeps its claim and settles wh
+   expect(pending).toEqual({})
+ })
+ 
++test('a submit the release before the rename left under bandSending keeps its claim and settles when its prompt arrives', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const text = 'ANSWER 1.a Decline the finding? → Decline it'
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const session = questionWorld(on, clock, [held({ answer, claim: { token: 'old', renewedAt: NOW } })])
++  // The release before the rename kept the panel's deliveries under `bandSending`.
++  const stored = {
++    bandSending: {
++      value: { '1': { ref: '1', session: SESSION, token: 'old', route: 'submit', text } } as object,
++      version: 1,
++    },
++    panelSending: { value: {} as object, version: 1 },
++  }
++  const put = (key: keyof typeof stored, value: unknown) => {
++    stored[key] = { value: value as object, version: stored[key].version + 1 }
++    return { value: { isSet: true as const, version: stored[key].version } }
++  }
++  on('state.get', { plugin: 'projector', key: 'bandSending' }, () => ({
++    value: { value: stored.bandSending.value as never, version: stored.bandSending.version },
++  }))
++  on('state.set', { plugin: 'projector', key: 'bandSending' }, ($, e) => put('bandSending', e.value))
++  on('state.get', { plugin: 'projector', key: 'panelSending' }, () => ({
++    value: { value: stored.panelSending.value as never, version: stored.panelSending.version },
++  }))
++  on('state.set', { plugin: 'projector', key: 'panelSending' }, ($, e) => put('panelSending', e.value))
++  await startSession($, clock, false)
++  await clock.advance(90_000)
++  await clock.settle()
++
++  // The panel takes the entry over, so it keeps renewing the claim past its 60 seconds and submits nothing again.
++  expect(session.submitted).toEqual([])
++  expect(stored.bandSending.value).toEqual({})
++  const claims = session.project().filter(command => command.startsWith('inbox claim'))
++  expect(claims.length).toBeGreaterThanOrEqual(2)
++  for (const claim of claims) expect(claim).toBe('inbox claim 1 --renew old --session s1')
++  await $.prompt.submit({ text, wait: false, origin: { kind: 'plugin', name: 'projector' } })
++  expect(session.project()).toContain('inbox delivered 1 --claim old --session s1 --json')
++  expect(stored.panelSending.value).toEqual({})
++})
++
+ test('a number or an old reference typed in the prompt reaches the agent as plain text', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -2067,7 +2111,7 @@ test('a number or an old reference typed in the prompt reaches the agent as plai
+ 
+ const FORCE_PUSHED = 'Force-pushed #7 to drop a stray file'
+ 
+-test('a subagent tells through the tool, and the band lists the notice in gray', async ($, on) => {
++test('a subagent tells through the tool, and the panel lists the notice in gray', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock)
+@@ -2075,14 +2119,14 @@ test('a subagent tells through the tool, and the band lists the notice in gray',
+ 
+   const called = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, pr: 'x/y#7', agentId: 'agent-1' })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Posted 1. It waits in Projector’s band until the person dismisses it; nothing comes back to you.',
++    'Posted 1. It waits in Projector’s panel until the person dismisses it; nothing comes back to you.',
+   )
+   expect(session.project()).toContain(`inbox tell --session=s1 --pr=x/y#7 --agent=agent-1 -- ${FORCE_PUSHED}`)
+   expect(session.notified).toEqual([FORCE_PUSHED])
+ 
+   await clock.advance(1)
+   await clock.settle()
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
+   expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBe('inactive')
+   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
+@@ -2114,7 +2158,7 @@ test('no line or drawer shows an item’s number', async ($, on) => {
+   questionWorld(on, clock, [held({ ref: '42', number: 42 }), notice({ ref: '43', number: 43 })])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   const drawn = async () => (await ui.findAll({ type: 'Text' })).map(found => found.text).join('\n')
+   expect(await drawn()).toContain('Decline the finding?')
+   expect(await drawn()).not.toMatch(/42|43/)
+@@ -2153,7 +2197,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+   const session = questionWorld(on, clock, [held(), notice()])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question · 1 notice  \d+s$/ })).toBeDefined()
+   await ui.press({ key: 'item:2' })
+   // An open notice has the panel to itself, its header included, as an open question does.
+@@ -2209,22 +2253,22 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+   await ui.unmount()
+ })
+ 
+-test('the withdraw tool takes an item out of the band at once, and nothing goes back to the agent', async ($, on) => {
++test('the withdraw tool takes an item out of the panel at once, and nothing goes back to the agent', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [held(), notice()])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:1' })
+   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
+ 
+   const called = await $.tool.call({ tool: 'mcp__projector__withdraw', number: 1 })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Withdrew 1. It has left Projector’s band, and nothing comes back to you.',
++    'Withdrew 1. It has left Projector’s panel, and nothing comes back to you.',
+   )
+   expect(session.project()).toContain('inbox withdraw 1 --session s1 --json')
+-  // Before the band reads the store again, the item has gone and its drawer with it.
++  // Before the panel reads the store again, the item has gone and its drawer with it.
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
+@@ -2276,7 +2320,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
+   const session = questionWorld(on, clock, [held()])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:1' })
+   // You choose an option from the question as it reads now, and have not sent it yet.
+   await ui.press({ key: 'answer:1.b' })
+@@ -2284,12 +2328,12 @@ test('the revise tool redraws the question with its new text at once, keeping it
+   const options = ['Add a budget of two per host', 'Ask the reviewer']
+   const called = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, options, detail: 'The cap is three.' })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Revised 1. Projector’s band shows the new text, and its answer still arrives as a message that starts ANSWER 1 or DISMISSED 1.',
++    'Revised 1. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER 1 or DISMISSED 1.',
+   )
+   expect(session.project()).toContain(
+     'inbox revise 1 --session s1 --option=Add a budget of two per host --option=Ask the reviewer --detail=The cap is three. --json',
+   )
+-  // Before the band reads the store again, the open drawer shows the new text.
++  // Before the panel reads the store again, the open drawer shows the new text.
+   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The cap is three.')
+   expect((await optionsOf(ui)).map(option => [option.props.hotkey, option.text])).toEqual([
+     ['1', 'Decline it (recommended)'],
+@@ -2327,7 +2371,7 @@ test('an answer chosen before a revise answers no question, and a pick from the
+   await startSession($, clock)
+   const decline = '"Decline the finding?"\n\nDecline it\n'
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'answer:2.a' })
+   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
+@@ -2366,7 +2410,7 @@ test('an answer chosen before a revise rewords its question does not answer anot
+   const session = questionWorld(on, clock, [held(), newer])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'answer:2.a' })
+   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, question: 'Decline the retry finding?' })
+@@ -2389,7 +2433,7 @@ test('an option typed under a quote discussed before a revise answers no questio
+   const session = questionWorld(on, clock, [held(), newer], { agents: [running('running')] })
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'discuss:2' })
+   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
+@@ -2418,7 +2462,7 @@ test('a pick for a question withdrawn before you send answers no other question'
+   const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'answer:2.a' })
+   await $.tool.call({ tool: 'mcp__projector__withdraw', number: 2 })
+@@ -2435,7 +2479,7 @@ test('a pick made before a revise, for a question dismissed before you send, ans
+   const session = questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: 'x/y#8', postedAt: NOW - 60_000 })])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'answer:2.a' })
+   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
+@@ -2482,13 +2526,13 @@ test('the revise tool refuses what the CLI refuses, asks an old CLI to upgrade,
+   expect(session.store.store.get('1')).toEqual(answered)
+ })
+ 
+-test('snooze hides either kind for an hour, then brings a hidden band back', async ($, on) => {
++test('snooze hides either kind for an hour, then brings a hidden panel back', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [held(), notice()])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:1' })
+   await ui.press({ key: 'snooze:1' })
+   await ui.press({ key: 'snooze-60:1' })
+@@ -2499,7 +2543,7 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
+   await clock.settle()
+   expect(session.project()).toContain('inbox snooze 1 --for 60 --session s1 --json')
+   expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
+-  // Each stays listed for 30 seconds, out of the header's counts, and then leaves the band.
++  // Each stays listed for 30 seconds, out of the header's counts, and then leaves the panel.
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+   await clock.advance(30_000 + TICK)
+@@ -2512,14 +2556,14 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
+   await $.command.run(COMMAND)
+   await clock.advance(HOUR - 2 * TICK - 30_000)
+   await clock.settle()
+-  const hidden = await $.ui.mount(BAND)
+-  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
++  const hidden = await $.ui.mount(PANEL)
++  expect(await hidden.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
+   await hidden.unmount()
+ 
+   await clock.advance(2 * TICK)
+   await clock.settle()
+-  const woken = await $.ui.mount(BAND)
+-  expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
++  const woken = await $.ui.mount(PANEL)
++  expect(await woken.find({ type: 'Text', text: ENGINE_SITE })).toBeUndefined()
+   expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+   expect(await woken.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question · 1 notice  \d+s$/ })).toBeDefined()
+@@ -2532,7 +2576,7 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
+   const session = questionWorld(on, clock, [held()])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:1' })
+   session.store.failing.locks = 2
+   for (const keys of [['dismiss:1', 'confirm:1'], ['snooze:1', 'snooze-60:1']]) {
+@@ -2545,7 +2589,7 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
+   await ui.unmount()
+ })
+ 
+-test('a snooze ended while a tick reads the store brings a hidden band back', async ($, on) => {
++test('a snooze ended while a tick reads the store brings a hidden panel back', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [held({ snoozedUntil: NOW + HOUR })])
+@@ -2559,14 +2603,14 @@ test('a snooze ended while a tick reads the store brings a hidden band back', as
+   session.store.write(held({ snoozedUntil: NOW + HOUR }))
+   await clock.advance(TICK)
+   await clock.settle()
+-  const hidden = await $.ui.mount(BAND)
+-  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
++  const hidden = await $.ui.mount(PANEL)
++  expect(await hidden.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
+   await hidden.unmount()
+ 
+   await clock.advance(2 * TICK)
+   await clock.settle()
+-  const woken = await $.ui.mount(BAND)
+-  expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
++  const woken = await $.ui.mount(PANEL)
++  expect(await woken.find({ type: 'Text', text: ENGINE_SITE })).toBeUndefined()
+   expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+   await woken.unmount()
+ })
+@@ -2577,7 +2621,7 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
+   const session = questionWorld(on, clock, [notice()])
+   await startSession($, clock)
+ 
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'snooze:2' })
+   await ui.press({ key: 'snooze-60:2' })
+@@ -2589,8 +2633,8 @@ test('an item dismissed from a terminal while snoozed does not return', async ($
+ 
+   await clock.advance(HOUR + 2 * TICK)
+   await clock.settle()
+-  const hidden = await $.ui.mount(BAND)
+-  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
++  const hidden = await $.ui.mount(PANEL)
++  expect(await hidden.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
+   await hidden.unmount()
+ })
+ 
+@@ -2599,7 +2643,7 @@ test('a sent prompt that quotes a notice answers nothing, and closes its drawer'
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [notice()])
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:2' })
+   expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeDefined()
+ 
+@@ -2607,31 +2651,31 @@ test('a sent prompt that quotes a notice answers nothing, and closes its drawer'
+   await clock.settle()
+   expect(session.project().filter(command => /^inbox (answer|dismiss|claim)/.test(command))).toEqual([])
+   expect(session.store.store.get('2')?.answer).toBeUndefined()
+-  // The notice stays in the band, but the reply is done with its drawer.
++  // The notice stays in the panel, but the reply is done with its drawer.
+   expect(await ui.find({ type: 'Button', key: 'discuss:2' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+-test('a snoozed item read at the start leaves a hidden band hidden until its time', async ($, on) => {
++test('a snoozed item read at the start leaves a hidden panel hidden until its time', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   questionWorld(on, clock, [notice({ snoozedUntil: NOW + 3 * TICK })])
+   await startSession($, clock, false)
+   await clock.advance(TICK)
+   await clock.settle()
+-  const hidden = await $.ui.mount(BAND)
+-  expect(await hidden.find({ type: 'Text', text: ENGINE_BAND })).toBeDefined()
++  const hidden = await $.ui.mount(PANEL)
++  expect(await hidden.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
+   await hidden.unmount()
+ 
+   await clock.advance(3 * TICK)
+   await clock.settle()
+-  const woken = await $.ui.mount(BAND)
++  const woken = await $.ui.mount(PANEL)
+   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+   await woken.unmount()
+ })
+ 
+-test('an item whose snooze ends while the band is hidden is drawn the moment the band returns', async ($, on) => {
++test('an item whose snooze ends while the panel is hidden is drawn the moment the panel returns', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   let isSlow = false
+@@ -2642,10 +2686,10 @@ test('an item whose snooze ends while the band is hidden is drawn the moment the
+   await $.command.run(COMMAND)
+   isSlow = true
+ 
+-  // The tick that sees the snooze end brings the band back, and GitHub has not answered yet.
++  // The tick that sees the snooze end brings the panel back, and GitHub has not answered yet.
+   await clock.advance(3 * TICK)
+   await clock.settle()
+-  const woken = await $.ui.mount(BAND)
++  const woken = await $.ui.mount(PANEL)
+   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+   expect(await woken.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
+ 
+@@ -2666,7 +2710,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [held()])
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   const line = () => ui.find({ type: 'Text', text: 'Decline the finding?' })
+ 
+   await ui.press({ key: 'item:1' })
+@@ -2731,7 +2775,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [held(), notice()])
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   const line = () => ui.find({ type: 'Text', text: FORCE_PUSHED })
+ 
+   await ui.press({ key: 'item:2' })
+@@ -2760,7 +2804,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
+   expect((await line())?.props.color).toBe('inactive')
+   expect(session.store.store.get('2')).toEqual(notice())
+ 
+-  // Snoozed again, it leaves the band 30 seconds later, and nothing reached the agent.
++  // Snoozed again, it leaves the panel 30 seconds later, and nothing reached the agent.
+   await ui.press({ key: 'snooze:2' })
+   await ui.press({ key: 'snooze-15:2' })
+   await clock.advance(30_000 - TICK)
+@@ -2782,9 +2826,9 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
+   const read = notice({ answer: dismissed, deliveredAt: NOW - 1_000 })
+   const session = questionWorld(on, clock, [heard, read])
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+ 
+-  // You open the dismissed question's drawer, and the question leaves the band 30 seconds after its dismissal.
++  // You open the dismissed question's drawer, and the question leaves the panel 30 seconds after its dismissal.
+   await ui.press({ key: 'item:1' })
+   expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'restore:1'])
+   await clock.advance(30_000)
+@@ -2793,10 +2837,10 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
+ 
+   const called = await $.tool.call({ tool: 'mcp__projector__restore', number: 1 })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Restored 1. It is open in Projector’s band again, and its answer arrives as a message that starts ANSWER 1 or DISMISSED 1. An agent that already heard DISMISSED 1 hears RESTORED 1 first.',
++    'Restored 1. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER 1 or DISMISSED 1. An agent that already heard DISMISSED 1 hears RESTORED 1 first.',
+   )
+   expect(session.project()).toContain('inbox restore 1 --session s1 --json')
+-  // Before the band reads the store again, the question is open in the band, and its old drawer stays closed.
++  // Before the panel reads the store again, the question is open in the panel, and its old drawer stays closed.
+   const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
+   expect([line?.props.color, line?.props.strikethrough]).toEqual(['permission', false])
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+@@ -2808,7 +2852,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
+   // A notice comes back too, and nothing goes to the agent.
+   const told = await $.tool.call({ tool: 'mcp__projector__restore', number: 2 })
+   expect(String(told.text ?? told.result)).toBe(
+-    'Restored 2. It is back in Projector’s band until the person dismisses it; nothing comes back to you.',
++    'Restored 2. It is back in Projector’s panel until the person dismisses it; nothing comes back to you.',
+   )
+   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+   await clock.advance(TICK)
+@@ -2817,7 +2861,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
+   await ui.unmount()
+ })
+ 
+-test('a restore brings a hidden band back, from the tool or from a terminal, as a new item does', async ($, on) => {
++test('a restore brings a hidden panel back, from the tool or from a terminal, as a new item does', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const dismissed = { dismissed: true as const, answeredAt: NOW - 60_000 }
+@@ -2828,8 +2872,8 @@ test('a restore brings a hidden band back, from the tool or from a terminal, as
+   ])
+   await startSession($, clock)
+   const isHidden = async () => {
+-    const ui = await $.ui.mount(BAND)
+-    const hidden = (await ui.find({ type: 'Text', text: ENGINE_BAND })) !== undefined
++    const ui = await $.ui.mount(PANEL)
++    const hidden = (await ui.find({ type: 'Text', text: ENGINE_SITE })) !== undefined
+     await ui.unmount()
+     return hidden
+   }
+@@ -2854,7 +2898,7 @@ test('a restore brings a hidden band back, from the tool or from a terminal, as
+     await clock.settle()
+     expect(await isHidden()).toBe(false)
+   }
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/ })).toBeDefined()
+   await ui.unmount()
+ })
+@@ -2901,7 +2945,7 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while
+   const choices = ['Decline it', 'Add a budget', 'Cap per host', 'Ask the reviewer', 'Wait a day', 'Split the change']
+   const session = questionWorld(on, clock, [held({ choices }), notice()])
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   const digits = () => digitsOf(ui)
+ 
+   // A closed drawer leaves the digits to the prompt, and a notice's drawer takes only `0`, on its line, and its actions'.
+@@ -2947,7 +2991,7 @@ test('an open item’s line closes its drawer on 0, and no other line takes 0',
+     notice({ ref: '5', number: 5, subject: 'Merged #6', ...snoozed }),
+   ])
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   const zeros = async () =>
+     (await ui.findAll({ type: 'Button' })).flatMap(button => (button.props.hotkey === '0' ? [button.key] : []))
+ 
+@@ -3005,7 +3049,7 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named
+   mock.env(on, { HOME })
+   questionWorld(on, clock, [held(), notice()])
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+ 
+   // No line of the list takes a key; only an open drawer's lines do.
+   expect((await ui.findAll({ type: 'Button' })).filter(button => button.props.hotkey !== undefined)).toEqual([])
+@@ -3105,11 +3149,11 @@ test('a keyed line’s label takes the color of the `: ` before it, so it invert
+   mock.env(on, { HOME })
+   questionWorld(on, clock, [held()])
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+ 
+   // The engine draws a plain Button's key in its accent color and the `: ` in
+   // the Button's own color, which takes no color, `hover`, or `dimColor` from
+-  // the band. A label of plain text, with no colored child, takes that same
++  // the panel. A label of plain text, with no colored child, takes that same
+   // color, at rest and inverted.
+   const partsOf = async (key: string) => {
+     const line = await ui.find({ type: 'Button', key })
+@@ -3152,10 +3196,10 @@ test('a keyed line’s label takes the color of the `: ` before it, so it invert
+ })
+ 
+ /**
+- * Moves the band's focus ring as the person's Tab or ctrl+x tab does, and
+- * records each element the band then tried to move the ring onto. The kit
+- * serves no `$.ui.focus`, so it refuses every move the band tries, and the
+- * debug line the band writes for a refused move names the element.
++ * Moves the panel's focus ring as the person's Tab or ctrl+x tab does, and
++ * records each element the panel then tried to move the ring onto. The kit
++ * serves no `$.ui.focus`, so it refuses every move the panel tries, and the
++ * debug line the panel writes for a refused move names the element.
+  */
+ function keyboardOf(on: On) {
+   const tried: string[] = []
+@@ -3184,7 +3228,7 @@ test('Enter on a line moves the ring into the drawer it opens and back onto the
+   questionWorld(on, clock, [held(), notice(), answered])
+   const { tried, tab } = keyboardOf(on)
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+ 
+   // A click, with the ring on nothing or on another line, leaves the ring alone.
+   await ui.press({ key: 'item:1' })
+@@ -3226,7 +3270,7 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length
+   const session = questionWorld(on, clock, [held(), notice()])
+   const { tried, tab } = keyboardOf(on)
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   /** The open drawer's keyed lines under its own line, each by its key, its digit, and what it reads. */
+   const lines = async (ref: string) =>
+     (await ui.findAll({ type: 'Button' }))
+@@ -3316,7 +3360,7 @@ test('dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once',
+   ])
+   const { tried, tab } = keyboardOf(on)
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   /** The open drawer's keyed lines under its options, each by its key, its digit, and what it reads. */
+   const lines = async (id: string) =>
+     (await ui.findAll({ type: 'Button' }))
+@@ -3396,7 +3440,7 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [held()])
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   /** The open drawer's keyed lines under its options. */
+   const lines = async () =>
+     (await ui.findAll({ type: 'Button' }))
+@@ -3432,10 +3476,10 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
+ test('an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  const long = 'Should the band '.padEnd(112, 'x')
++  const long = 'Should the panel '.padEnd(112, 'x')
+   questionWorld(on, clock, [held(), held({ ref: '2', number: 2, pr: null, subject: long })])
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   const rule = async () => (await ui.find({ type: 'Text', text: /^ ─+$/ }))?.text
+ 
+   // The rule fills the panel's line: `0: `, the subject, a space and the rule, then ` #7` and ` 2m`, end at the
+@@ -3461,7 +3505,7 @@ test('an open item’s line ends in a rule to the panel’s edge on a terminal,
+   await ui.unmount()
+ 
+   // Another surface draws the title alone, as it draws no header.
+-  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
++  const desktop = await $.ui.mount({ ...PANEL, surface: 'desktop' })
+   await desktop.press({ key: 'close:2' })
+   await desktop.press({ key: 'item:1' })
+   expect(await desktop.find({ type: 'Text', text: /─/ })).toBeUndefined()
+@@ -3473,7 +3517,7 @@ test('a dismiss confirmation on a snoozed item survives an unrelated change to t
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [held({ snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR })])
+   await startSession($, clock)
+-  const ui = await $.ui.mount(BAND)
++  const ui = await $.ui.mount(PANEL)
+   const lines = async () =>
+     (await ui.findAll({ type: 'Button' }))
+       .map(button => button.key ?? '')
+@@ -3484,7 +3528,7 @@ test('a dismiss confirmation on a snoozed item survives an unrelated change to t
+   await ui.press({ key: 'dismiss:1' })
+   expect(await lines()).toEqual(['confirm:1', 'keep:1'])
+ 
+-  // Another item arriving makes the band read the store, and the question stands.
++  // Another item arriving makes the panel read the store, and the question stands.
+   session.store.write(notice())
+   await clock.advance(TICK)
+   await clock.settle()
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 2f1a6885..1f208338 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -106,11 +106,11 @@ const DRAWER_INDENT = `${CLOSE_HOTKEY}: `.length
+ const MIN_RULE = 3
+ 
+ /**
+- * In a terminal the band draws as one panel: inset `PANEL_INSET` columns in
+- * the terminal's own background, then padded `PANEL_PADDING` columns at each
+- * side in the panel's, where its header and key hint start. The lines between
+- * them, the pull requests, the items and their drawers, sit `LINE_PADDING`
+- * columns further in at each side.
++ * In a terminal the panel is inset `PANEL_INSET` columns in the terminal's
++ * own background, then padded `PANEL_PADDING` columns at each side in its
++ * own, where its header and key hint start. The lines between them, the pull
++ * requests, the items and their drawers, sit `LINE_PADDING` columns further
++ * in at each side.
+  */
+ const PANEL_INSET = 1
+ const PANEL_PADDING = 1
+@@ -118,14 +118,14 @@ const LINE_PADDING = 1
+ 
+ /**
+  * The panel's last line names its keys, at its right, so it ends where the
+- * ages do: the chord that takes the keyboard into the band, and once the
+- * band has it, the keys that work there. The arrows stay out, because which
+- * of them moves between lines depends on whether the band scrolls.
++ * ages do: the chord that takes the keyboard into the panel, and once the
++ * panel has it, the keys that work there. The arrows stay out, because which
++ * of them moves between lines depends on whether the panel scrolls.
+  */
+ const FOCUS_HINT = 'ctrl+x tab to focus'
+ const FOCUSED_HINT = 'esc to return · enter to open'
+ 
+-/** What the panel's header starts with, at its left: the command that shows and hides the band. */
++/** What the panel's header starts with, at its left: the command that shows and hides the panel. */
+ const HEADER_NAME = '/projector'
+ 
+ /**
+@@ -147,7 +147,7 @@ const AUTO = 'auto'
+ 
+ /**
+  * What a surface takes as a color, a theme key or a raw one alike: these
+- * characters, at most 40 of them. It refuses the band's whole tree over any
++ * characters, at most 40 of them. It refuses the panel's whole tree over any
+  * other, such as `ansi:black` or an empty string.
+  */
+ const PAINTABLE = /^[\w#(),.% -]{1,40}$/
+@@ -161,16 +161,23 @@ const SNOOZES = [
+ ] as const
+ 
+ const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
+-const snapshot = atom({ plugin: 'projector', key: 'bandSnapshot' } as const, EMPTY)
+-const now = atom({ plugin: 'projector', key: 'bandNow' } as const, 0)
+-const isShown = atom({ plugin: 'projector', key: 'isBandShown' } as const, false)
+-const drawer = atom({ plugin: 'projector', key: 'bandDrawer' } as const, null)
+-const asked = atom({ plugin: 'projector', key: 'bandAsked' } as const, null)
+-const items = atom({ plugin: 'projector', key: 'bandInbox' } as const, [])
+-const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
+-const themeBackground = atom({ plugin: 'projector', key: 'bandThemeBackground' } as const, OTHER_BACKGROUND)
+-const background = atom({ plugin: 'projector', key: 'bandBackground' } as const, AUTO)
+-const isFocused = atom({ plugin: 'projector', key: 'isBandFocused' } as const, false)
++const snapshot = atom({ plugin: 'projector', key: 'panelSnapshot' } as const, EMPTY)
++const now = atom({ plugin: 'projector', key: 'panelNow' } as const, 0)
++const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, false)
++const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
++const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
++const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
++const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
++const themeBackground = atom({ plugin: 'projector', key: 'panelThemeBackground' } as const, OTHER_BACKGROUND)
++const background = atom({ plugin: 'projector', key: 'panelBackground' } as const, AUTO)
++const isFocused = atom({ plugin: 'projector', key: 'isPanelFocused' } as const, false)
++/**
++ * The deliveries the release before the panel's rename recorded, under the
++ * key it gave them. A submit it made can still wait behind a running turn
++ * when the session updates, so the panel takes them over rather than letting
++ * their claims lapse and delivering those answers a second time.
++ */
++const oldSending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
+ 
+ // The session keeps its state across a reload or an update of the plugin,
+ // so a value an earlier version wrote can have another shape.
+@@ -186,12 +193,12 @@ let isQueued = false
+ let attemptedAt = 0
+ const unreadable = new Set<string>()
+ 
+-/** The store's directory as the band last read it, so it reads again only after a change. */
++/** The store's directory as the panel last read it, so it reads again only after a change. */
+ let listed: string | undefined
+ let isChecking = false
+ /** The answers this copy of the module is claiming or delivering, by reference. */
+ const delivering = new Set<string>()
+-/** The items and pull requests the band is dismissing or snoozing, so a second press does nothing. */
++/** The items and pull requests the panel is dismissing or snoozing, so a second press does nothing. */
+ const acting = new Set<string>()
+ /** When the last tick ran, so an item whose snooze ends between two ticks wakes once. */
+ let tickedAt: number | undefined
+@@ -204,11 +211,11 @@ let tickedAt: number | undefined
+  */
+ let proposed: Proposal[] = []
+ /**
+- * Where the band's focus ring last landed, as `ui.focus` reported it: the
+- * band's site, and the key of the band's element under the ring, absent when
+- * the ring is on none of them. The engine says nothing when the band hands
++ * Where the panel's focus ring last landed, as `ui.focus` reported it: the
++ * panel's site, and the key of the panel's element under the ring, absent when
++ * the ring is on none of them. The engine says nothing when the panel hands
+  * the keyboard back, so the ring can be stale, and the engine refuses a move
+- * once the band no longer holds the keyboard.
++ * once the panel no longer holds the keyboard.
+  */
+ let ring: { requestId: string; key: string | undefined } | undefined
+ 
+@@ -225,7 +232,7 @@ function propose(question: Question, answer: string): void {
+   proposed = [...proposed.filter(isKept), { ref: question.ref, quote, answer }]
+ }
+ 
+-/** The few variables the band's paths are written with, read once per load. */
++/** The few variables the panel's paths are written with, read once per load. */
+ function envOf($: Engine): Promise<Env> {
+   envLoad ??= (async () => {
+     const values: Record<string, string | undefined> = {
+@@ -273,7 +280,7 @@ async function remember($: Engine, loop: SeenLoop): Promise<boolean> {
+ 
+ /**
+  * Records the tracked file of each watcher a command starts, and shows the
+- * band when one is new. A loop restarts its watcher with the same command,
++ * panel when one is new. A loop restarts its watcher with the same command,
+  * as a Monitor does each time it expires, so a known one shows nothing and
+  * a path it cannot read is said once.
+  */
+@@ -285,7 +292,7 @@ async function adopt($: Engine, command: string): Promise<void> {
+     if (watcher.tracked === undefined) {
+       if (!unreadable.has(watcher.written)) {
+         unreadable.add(watcher.written)
+-        $.ui.toast(`projector: cannot tell which file ${watcher.written} names, so the band does not list that loop`)
++        $.ui.toast(`projector: cannot tell which file ${watcher.written} names, so the panel does not list that loop`)
+       }
+       continue
+     }
+@@ -336,13 +343,13 @@ async function paint($: Engine, theme: unknown): Promise<void> {
+   await update($, themeBackground, () => color)
+ }
+ 
+-/** The `panel.background` values the band said it cannot draw, so it says so once for each. */
++/** The `panel.background` values the panel said it cannot draw, so it says so once for each. */
+ const unpaintable = new Set<string>()
+ 
+ /**
+  * Reads `panel.background` through the CLI, which merges the `.projector.toml`
+  * files. A value no surface can draw leaves the color to the theme, and the
+- * band says so once. A read that fails keeps the value the band last read,
++ * panel says so once. A read that fails keeps the value the panel last read,
+  * and the next reload reads it again.
+  */
+ async function readBackground($: Engine): Promise<void> {
+@@ -415,7 +422,7 @@ async function load($: Engine): Promise<void> {
+ }
+ 
+ /**
+- * Reloads the loops and their pull requests, only while the band is shown
++ * Reloads the loops and their pull requests, only while the panel is shown
+  * unless forced. A request that arrives mid-load runs once more after it,
+  * so a change it was told about is never missed.
+  */
+@@ -444,7 +451,7 @@ function refresh($: Engine, isForced = false): Promise<void> {
+   return inFlight
+ }
+ 
+-/** Puts an item the CLI just changed in the band's list, in place of what it showed. */
++/** Puts an item the CLI just changed in the panel's list, in place of what it showed. */
+ async function replace($: Engine, item: Item): Promise<void> {
+   await update($, items, list => list.map(one => (one.ref === item.ref && one.session === item.session ? item : one)))
+   await forgetAsked($, [item])
+@@ -474,7 +481,7 @@ async function closeDrawer($: Engine, key: string): Promise<void> {
+ }
+ 
+ /**
+- * Closes the open drawer once its line has left the band, so it does not
++ * Closes the open drawer once its line has left the panel, so it does not
+  * open again by itself when the line comes back: a pull request a loop
+  * tracks again, or an item restored or woken from its snooze.
+  */
+@@ -488,7 +495,7 @@ async function closeLeftDrawer($: Engine, time: number): Promise<void> {
+ }
+ 
+ /**
+- * An item as the CLI prints it, without the session the band adds. Each kind
++ * An item as the CLI prints it, without the session the panel adds. Each kind
+  * is its own `Omit`, because one over the union would merge their `kind`s.
+  */
+ type Printed = Omit<Question, 'session'> | Omit<Notice, 'session'>
+@@ -500,8 +507,8 @@ const itemOf = (stdout: string, session: string): Item => ({
+ })
+ 
+ /**
+- * Takes the band's list from the store, and shows the band for an item that
+- * is open and not snoozed when the band last held it otherwise: a new item,
++ * Takes the panel's list from the store, and shows the panel for an item that
++ * is open and not snoozed when the panel last held it otherwise: a new item,
+  * or one restored or unsnoozed since.
+  */
+ async function setItems($: Engine, list: Item[]): Promise<void> {
+@@ -520,7 +527,7 @@ async function setItems($: Engine, list: Item[]): Promise<void> {
+ /**
+  * Reads the session's inbox when the store's directory changed since the
+  * last read that succeeded. Listing a directory starts no process, so an idle
+- * session, band shown or hidden, starts none. The signature is recorded only
++ * session, panel shown or hidden, starts none. The signature is recorded only
+  * once the read succeeds, so a read that fails runs again on the next tick.
+  */
+ async function readStore($: Engine, session: string): Promise<void> {
+@@ -541,7 +548,7 @@ async function readStore($: Engine, session: string): Promise<void> {
+   listed = signature
+ }
+ 
+-/** Remembers an answer the band is delivering, in the session's state so a reloaded module finds it. */
++/** Remembers an answer the panel is delivering, in the session's state so a reloaded module finds it. */
+ const track = ($: Engine, entry: Sending) => update($, sending, all => ({ ...all, [entry.ref]: entry }))
+ 
+ /**
+@@ -585,7 +592,7 @@ async function deliver($: Engine, question: Question): Promise<void> {
+   delivering.add(ref)
+   try {
+     const ran = await project($, ['inbox', 'claim', ref, '--session', session, '--json'])
+-    // Another deliverer holds it, or it was delivered since the band read the store.
++    // Another deliverer holds it, or it was delivered since the panel read the store.
+     if (ran.exitCode !== 0) return
+     const claimed = JSON.parse(ran.stdout) as { token: string; text: string }
+     await replace($, itemOf(ran.stdout, session))
+@@ -609,14 +616,31 @@ async function deliver($: Engine, question: Question): Promise<void> {
+   }
+ }
+ 
++/** The panel's takeover of `oldSending`, which runs once per load of the module. */
++let adoption: Promise<void> | undefined
++
++/** Moves the deliveries under `oldSending` into `sending`, once per load, and again after a failure. */
++function adoptOldSending($: Engine): Promise<void> {
++  adoption ??= (async () => {
++    const old = await read($, oldSending)
++    if (Object.keys(old).length === 0) return
++    await update($, sending, all => ({ ...old, ...all }))
++    await update($, oldSending, () => ({}))
++  })().catch(() => {
++    adoption = undefined
++  })
++  return adoption
++}
++
+ /**
+  * Keeps each delivery's claim live while it waits, as a submit behind a long
+  * turn does. A submit that an earlier copy of the module made still waits in
+  * the session's queue, so its claim is kept until the prompt hook sees it
+  * arrive. A send settles at once, so one an earlier copy left is let go, and
+- * its claim lapses for the band to deliver again.
++ * its claim lapses for the panel to deliver again.
+  */
+ async function renewClaims($: Engine): Promise<void> {
++  await adoptOldSending($)
+   for (const entry of Object.values(await read($, sending))) {
+     if (entry.route === 'send' && !delivering.has(entry.ref)) {
+       await update($, sending, all => Object.fromEntries(Object.entries(all).filter(([key]) => key !== entry.ref)))
+@@ -629,7 +653,7 @@ async function renewClaims($: Engine): Promise<void> {
+ }
+ 
+ /**
+- * Reads the store when it changed, renews the band's claims, and delivers
++ * Reads the store when it changed, renews the panel's claims, and delivers
+  * each answer nobody is delivering. A store read that fails, as one still
+  * running at the CLI's timeout does, skips nothing after it, so a waiting
+  * answer's claim never lapses because of it.
+@@ -658,7 +682,7 @@ async function checkInbox($: Engine): Promise<void> {
+ const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
+ 
+ /**
+- * Dismisses, snoozes for `minutes`, or restores an item from the band; a
++ * Dismisses, snoozes for `minutes`, or restores an item from the panel; a
+  * second press finds it changed and does nothing. Dismissing or snoozing
+  * closes the item's drawer, and the item stays listed, muted, for 30 seconds,
+  * so its line opens the drawer again to restore it. Restoring keeps the
+@@ -680,7 +704,7 @@ async function act(
+       await replace($, itemOf(ran.stdout, session))
+       if (command !== 'restore') await closeDrawer($, `item:${ref}`)
+     } else if (ran.exitCode === 65) {
+-      // Resolved elsewhere since the band read the store: read it again.
++      // Resolved elsewhere since the panel read the store: read it again.
+       listed = undefined
+     } else {
+       void $.ui.toast(`projector: ${errorOf(ran)}`)
+@@ -695,7 +719,7 @@ async function act(
+ 
+ /**
+  * Dismisses a pull request from the session's loops: `project loop drop`
+- * keeps it out of each tracked file that lists it, and the band reloads
++ * keeps it out of each tracked file that lists it, and the panel reloads
+  * without it. A failure says why, and the line stays.
+  */
+ async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
+@@ -727,7 +751,7 @@ async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
+ 
+ /**
+  * Records an answer a sent prompt gave and marks it delivered, because the
+- * prompt itself carries it to the main loop. The band's own deliverer leaves
++ * prompt itself carries it to the main loop. The panel's own deliverer leaves
+  * the question alone meanwhile, so the agent hears the answer once.
+  */
+ async function answerFromPrompt($: Engine, question: Question, letter: string): Promise<void> {
+@@ -742,16 +766,16 @@ async function answerFromPrompt($: Engine, question: Question, letter: string):
+     const ran = await project($, ['inbox', 'delivered', ref, '--claim', token, '--session', session, '--json'])
+     if (ran.exitCode === 0) await replace($, itemOf(ran.stdout, session))
+   } catch {
+-    // An answer recorded but not marked delivered is the band's to deliver on a later tick.
++    // An answer recorded but not marked delivered is the panel's to deliver on a later tick.
+   } finally {
+     delivering.delete(ref)
+   }
+ }
+ 
+ /**
+- * Reads the inbox whether or not the band is shown, closes the drawer of an
+- * item that left the band, and brings a hidden band back for an item whose
+- * snooze ended since the last tick. A shown band moves
++ * Reads the inbox whether or not the panel is shown, closes the drawer of an
++ * item that left the panel, and brings a hidden panel back for an item whose
++ * snooze ended since the last tick. A shown panel moves
+  * its clock on, which returns that item to the list, and polls GitHub once
+  * the last load is old enough.
+  */
+@@ -772,8 +796,8 @@ async function tick($: Engine): Promise<void> {
+ }
+ 
+ /**
+- * Shows the band and loads it, from a timer so no hook waits on GitHub. The
+- * band's clock moves on before it shows, so an item whose snooze ended while
++ * Shows the panel and loads it, from a timer so no hook waits on GitHub. The
++ * panel's clock moves on before it shows, so an item whose snooze ended while
+  * it was hidden is drawn at once rather than after GitHub answers.
+  */
+ function show($: Engine): void {
+@@ -787,8 +811,8 @@ function show($: Engine): void {
+ }
+ 
+ /**
+- * Puts the band's key hint back on the chord into the band once the prompt
+- * has the keyboard again. Only a change of hint redraws the band.
++ * Puts the panel's key hint back on the chord into the panel once the prompt
++ * has the keyboard again. Only a change of hint redraws the panel.
+  */
+ async function unfocus($: Engine): Promise<void> {
+   if (!(await read($, isFocused))) return
+@@ -797,8 +821,8 @@ async function unfocus($: Engine): Promise<void> {
+ }
+ 
+ /**
+- * Moves the band's focus ring onto one of its elements, which the engine
+- * waits for when the band has yet to draw it, and writes why the ring stayed
++ * Moves the panel's focus ring onto one of its elements, which the engine
++ * waits for when the panel has yet to draw it, and writes why the ring stayed
+  * to the debug log when the engine refuses the move.
+  */
+ async function focusOn($: Engine, requestId: string, key: string): Promise<void> {
+@@ -810,7 +834,7 @@ async function focusOn($: Engine, requestId: string, key: string): Promise<void>
+ const soon = ($: Engine) => $.clock.after(1, () => void refresh($))
+ 
+ /**
+- * Names a pull request for the prompt: `#12` when the band shows one
++ * Names a pull request for the prompt: `#12` when the panel shows one
+  * repository, `owner/repo#12` otherwise, so the reference is never ambiguous.
+  */
+ function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+@@ -831,11 +855,11 @@ function notesOf(pr: PullRequest): Note[] {
+   return notes
+ }
+ 
+-/** Whether the account the band's `gh` is signed in as wrote a pull request. */
++/** Whether the account the panel's `gh` is signed in as wrote a pull request. */
+ const isOwn = (pr: PullRequest, viewer: string | null) => viewer !== null && pr.author === viewer
+ 
+ /**
+- * The band's pull requests in the order it lists them: yours first, then
++ * The panel's pull requests in the order it lists them: yours first, then
+  * everyone else's, each author's together and the authors by login. Within
+  * each, they keep the order they came in.
+  */
+@@ -854,7 +878,7 @@ const secondsSince = (time: number, then: number) => Math.max(0, Math.round((tim
+ const countOf = (count: number, noun: string) =>
+   count === 0 ? undefined : `${count} ${noun}${count === 1 ? '' : 's'}`
+ 
+-/** Labels a pull request `#12` when the band shows one repository, else by its repository's name. */
++/** Labels a pull request `#12` when the panel shows one repository, else by its repository's name. */
+ function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+   const repos = [...new Set(prs.map(pr => pr.repo))]
+   if (repos.length <= 1) return pr => `#${pr.number}`
+@@ -892,9 +916,9 @@ export const register: Register = on => {
+   on('session.start', async ($, e, next) => {
+     await $.command.register({
+       name: 'projector',
+-      description: 'Show or hide Projector’s band of your loops’ pull requests and your inbox',
++      description: 'Show or hide Projector’s panel of your loops’ pull requests and your inbox',
+     })
+-    // A session whose engine cannot serve the tools keeps the band.
++    // A session whose engine cannot serve the tools keeps the panel.
+     for (const tool of [
+       { name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA },
+       { name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA },
+@@ -943,12 +967,12 @@ export const register: Register = on => {
+     const ref = posted.stdout.trim()
+     void $.ui.notify(String(e.notice), { title: 'Projector notice' }).catch(() => undefined)
+     return {
+-      result: `Posted ${ref}. It waits in Projector’s band until the person dismisses it; nothing comes back to you.`,
++      result: `Posted ${ref}. It waits in Projector’s panel until the person dismisses it; nothing comes back to you.`,
+     }
+   }).catch(() => ({ deny: 'Projector could not record the notice; tell the person in the conversation instead' }))
+ 
+-  // The band takes the withdrawn item from the CLI at once, so it leaves the
+-  // band before the next read of the store.
++  // The panel takes the withdrawn item from the CLI at once, so it leaves the
++  // panel before the next read of the store.
+   on('tool.call', { tool: WITHDRAW_TOOL }, async ($, e) => {
+     const session = await $.session.id()
+     const instead = 'tell the person in the conversation that it no longer needs them'
+@@ -957,12 +981,12 @@ export const register: Register = on => {
+     const item = itemOf(ran.stdout, session)
+     await replace($, item)
+     await closeDrawer($, `item:${item.ref}`)
+-    return { result: `Withdrew ${item.ref}. It has left Projector’s band, and nothing comes back to you.` }
++    return { result: `Withdrew ${item.ref}. It has left Projector’s panel, and nothing comes back to you.` }
+   }).catch(() => ({
+     deny: 'Projector could not withdraw the item; tell the person in the conversation that it no longer needs them',
+   }))
+ 
+-  // The band takes the revised question from the CLI at once, so it redraws
++  // The panel takes the revised question from the CLI at once, so it redraws
+   // before the next read of the store. An answer a drawer put in the prompt
+   // was chosen from the old text, so it turns stale: sent, it answers no
+   // question, this one or another that shares the old text.
+@@ -974,14 +998,14 @@ export const register: Register = on => {
+     await replace($, item)
+     proposed = proposed.map(proposal => (proposal.ref === item.ref ? { ...proposal, isStale: true } : proposal))
+     return {
+-      result: `Revised ${item.ref}. Projector’s band shows the new text, and its answer still arrives as a message that starts ANSWER ${item.ref} or DISMISSED ${item.ref}.`,
++      result: `Revised ${item.ref}. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER ${item.ref} or DISMISSED ${item.ref}.`,
+     }
+   }).catch(() => ({
+     deny: 'Projector could not revise the question; ask the revised question in the conversation instead',
+   }))
+ 
+-  // The band takes the restored item from the CLI at once, so it is open in
+-  // the band before the next read of the store, and comes back as a new item
++  // The panel takes the restored item from the CLI at once, so it is open in
++  // the panel before the next read of the store, and comes back as a new item
+   // does when the person hid it.
+   on('tool.call', { tool: RESTORE_TOOL }, async ($, e) => {
+     const session = await $.session.id()
+@@ -995,8 +1019,8 @@ export const register: Register = on => {
+     return {
+       result:
+         item.kind === 'notice'
+-          ? `Restored ${ref}. It is back in Projector’s band until the person dismisses it; nothing comes back to you.`
+-          : `Restored ${ref}. It is open in Projector’s band again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
++          ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it; nothing comes back to you.`
++          : `Restored ${ref}. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
+     }
+   }).catch(() => ({
+     deny: 'Projector could not restore the item; tell the person in the conversation that it could not be restored',
+@@ -1025,21 +1049,22 @@ export const register: Register = on => {
+     // when no keystroke edited it since Esc, as with one a drawer filled.
+     if (e.origin.kind === 'composer') void unfocus($).catch(() => undefined)
+ 
+-    // An answer the band submitted for the main loop has arrived. Seeing it
+-    // here, rather than only where the band submitted it, settles it after a
++    // An answer the panel submitted for the main loop has arrived. Seeing it
++    // here, rather than only where the panel submitted it, settles it after a
+     // reload of the module too.
+     if (e.origin.kind === 'plugin' && e.origin.name === 'projector') {
+       const entered = await next(e)
+       if (entered.drop === undefined) {
++        await adoptOldSending($)
+         const entry = Object.values(await read($, sending)).find(one => one.route === 'submit' && one.text === e.text)
+         if (entry !== undefined) await settle($, entry.ref, 'delivered')
+       }
+       return entered
+     }
+ 
+-    // An option the band put in the prompt answers its question: the prompt
++    // An option the panel put in the prompt answers its question: the prompt
+     // carries the answer to the main loop, and once the prompt has entered,
+-    // the band records it. Any other text under a quoted question replies to
++    // the panel records it. Any other text under a quoted question replies to
+     // it, and the prompt carries the reply while the question stays open.
+     // Either way the prompt is done with the question's drawer. A subagent's
+     // question gets a note naming it, so the main loop can pass the answer or
+@@ -1074,9 +1099,9 @@ export const register: Register = on => {
+     return entered
+   }).catch(($, e, next) => next(e))
+ 
+-  // Enter presses the band's element under the ring, so where the ring is
++  // Enter presses the panel's element under the ring, so where the ring is
+   // tells a press from the keyboard from a click. A ring that lands also
+-  // means the band holds the keyboard, so its hint names the keys that work
++  // means the panel holds the keyboard, so its hint names the keys that work
+   // there.
+   on('ui.focus', { component: 'AbovePrompt' }, async ($, e, next) => {
+     const moved = await next(e)
+@@ -1091,9 +1116,9 @@ export const register: Register = on => {
+   }).catch(($, e, next) => next(e))
+ 
+   // Claude Code reports no event when Esc gives the keyboard back to the
+-  // prompt, so the band's focused hint stays until the next keystroke in the
++  // prompt, so the panel's focused hint stays until the next keystroke in the
+   // prompt, or until a prompt is sent from it. Only that first keystroke
+-  // redraws the band; it waits on nothing.
++  // redraws the panel; it waits on nothing.
+   on('prompt.edit', ($, e, next) => {
+     void unfocus($).catch(() => undefined)
+     return next(e)
+@@ -1105,17 +1130,17 @@ export const register: Register = on => {
+     return next(e)
+   })
+ 
+-  // `/projector` shows or hides the band.
++  // `/projector` shows or hides the panel.
+   on('command.run', { command: 'projector' }, async $ => {
+     if (await read($, isShown)) {
+       await update($, isShown, () => false)
+-      return { text: 'Hid Projector’s band.' }
++      return { text: 'Hid Projector’s panel.' }
+     }
+     show($)
+-    return { text: 'Showing Projector’s band above the prompt.' }
++    return { text: 'Showing Projector’s panel above the prompt.' }
+   })
+ 
+-  // The band above the prompt spans the terminal and is as tall as its rows,
++  // The panel above the prompt spans the terminal and is as tall as its rows,
+   // so each pull request and each item takes one line, and a drawer more.
+   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+     if (e.props.hasSurvey || !(await read($, isShown))) return next(e)
+@@ -1149,7 +1174,7 @@ export const register: Register = on => {
+     const tally = counts.filter(part => part !== undefined).join(' · ')
+     const reloaded = shown.fetchedAt === null ? '' : span(secondsSince(time, shown.fetchedAt))
+     // A failed poll keeps drawing the pull requests GitHub last gave, and the
+-    // header's time says how old they are, so the band says why it failed
++    // header's time says how old they are, so the panel says why it failed
+     // only when it has none of them to draw.
+     const failure = shown.error === null || shown.rows.length > 0 ? undefined : `GitHub: ${shown.error}`
+     // Enter with the ring on the Button it presses takes the ring along,
+@@ -1173,12 +1198,11 @@ export const register: Register = on => {
+       carry(line, onto)
+     }
+ 
+-    // In a terminal the band is one panel on a background of its own, so a
+-    // line that moves as the band scrolls is plainly the band's. The panel
+-    // ends at `bodyColumns`, where the engine draws the band's `[-]` on the
+-    // first row, so the rows between its header and its hint are `columns`
+-    // wide.
+-    const isPanel = e.surface === 'terminal'
++    // In a terminal the panel draws on a background of its own, so a line
++    // that moves as the panel scrolls is plainly the panel's. It ends at
++    // `bodyColumns`, where the engine draws the panel's `[-]` on the first
++    // row, so the rows between its header and its hint are `columns` wide.
++    const isTerminal = e.surface === 'terminal'
+     const columns = e.props.bodyColumns - PANEL_INSET - 2 * (PANEL_PADDING + LINE_PADDING)
+     // The header and the key hint start a column before the lines between
+     // them but end where those lines do, so their right ends line up with
+@@ -1188,17 +1212,17 @@ export const register: Register = on => {
+     const color = setting === AUTO ? await read($, themeBackground) : setting
+     const hint = (await read($, isFocused)) ? FOCUSED_HINT : FOCUS_HINT
+     // The panel's first line is its header, all in `subtle`: `HEADER_NAME` at
+-    // its left, and the counts and how long ago the band reloaded at its
++    // its left, and the counts and how long ago the panel reloaded at its
+     // right, so the time ends in the rows' age column. Two spaces set the
+     // counts apart from the time, about the gap a row leaves before its age.
+     // The rows start on the next line, the background setting the header
+-    // apart from them. An open item's drawer has the band to itself, so it
++    // apart from them. An open item's drawer has the panel to itself, so it
+     // draws no header. Only a terminal lays text out in those columns, so no
+     // other surface draws a panel.
+     const status = [tally, reloaded].filter(part => part !== '').join('  ')
+     const gap = ' '.repeat(Math.max(1, edgeColumns - HEADER_NAME.length - status.length))
+     const panel = (lines: RenderChildren, isHeaded = true) =>
+-      isPanel ? (
++      isTerminal ? (
+         <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>
+           <Box
+             key="panel"
+@@ -1241,8 +1265,8 @@ export const register: Register = on => {
+       ])
+     }
+ 
+-    // An item names its pull request as the band labels it, or in full when
+-    // the band does not list it.
++    // An item names its pull request as the panel labels it, or in full when
++    // the panel does not list it.
+     const pullOf = (item: Item) => {
+       const row = shown.rows.find(one => keyOf(one.pr) === item.pr?.toLowerCase())
+       return row === undefined ? (item.pr ?? '') : label(row.pr)
+@@ -1259,7 +1283,7 @@ export const register: Register = on => {
+     // `project inbox answer --text` after them.
+ 
+     // A pull request's line and an item's line each end with an age, in one
+-    // column as wide as the widest age in the band, so what comes before the
++    // column as wide as the widest age in the panel, so what comes before the
+     // ages ends in one column too.
+     const ageOf = (then: number | null) => (then === null ? '' : span(secondsSince(time, then)))
+     const ageWidth = Math.max(
+@@ -1297,7 +1321,7 @@ export const register: Register = on => {
+       ))
+     // An open question's options are plain Buttons on the digits 1 to 6,
+     // which the engine draws before them, as `1: Decline it`. A digit presses
+-    // its option from the band, or typed first into an empty prompt, as a
++    // its option from the panel, or typed first into an empty prompt, as a
+     // survey's does; either only fills the prompt, so a stray one sends
+     // nothing. A resolved question's options are text, its answer marked.
+     const drawAnswers = (question: Question) => {
+@@ -1440,10 +1464,10 @@ export const register: Register = on => {
+         },
+       ]
+       const isChoosingLength = isOpen && !isSnoozed && isAsked(key, 'snooze')
+-      // An open item's line has the band to itself, so closing its drawer
++      // An open item's line has the panel to itself, so closing its drawer
+       // puts the line back lower in the list. The engine keeps the ring by
+       // position, and the open line's key is one the list never draws, so a
+-      // move onto the line in the list waits for the band to draw the list.
++      // move onto the line in the list waits for the panel to draw the list.
+       const line = isOpened ? `close:${ref}` : key
+       const first = item.kind === 'question' && isOpen ? `answer:${ref}.${letterAt(0)}` : `discuss:${ref}`
+       const isSending = !isOpen && item.deliveredAt === undefined
+@@ -1455,7 +1479,7 @@ export const register: Register = on => {
+       const notesWidth =
+         (isSending ? 'sending'.length + 1 : 0) + (pull === '' ? 0 : [...pull].length + 1) + ageWidth + 1
+       const ruleWidth = columns - DRAWER_INDENT - [...item.subject].length - 1 - notesWidth
+-      const rule = isOpened && isPanel && ruleWidth >= MIN_RULE ? ` ${'─'.repeat(ruleWidth)}` : ''
++      const rule = isOpened && isTerminal && ruleWidth >= MIN_RULE ? ` ${'─'.repeat(ruleWidth)}` : ''
+ 
+       return (
+         <Box key={`line:${ref}`} flexDirection="column">
+@@ -1632,10 +1656,10 @@ export const register: Register = on => {
+       )
+     }
+ 
+-    // An open item's drawer has the band to itself, until it is closed or the
+-    // item leaves the band. The header steps aside too, so the item is the
++    // An open item's drawer has the panel to itself, until it is closed or the
++    // item leaves the panel. The header steps aside too, so the item is the
+     // top row and, in a terminal, the drawer has another row before the
+-    // engine, which caps the band below half the terminal, starts to scroll.
++    // engine, which caps the panel below half the terminal, starts to scroll.
+     const focused = shownItems.find(item => opened === `item:${item.ref}`)
+     if (focused !== undefined) return panel(drawItem(focused), false)
+ 
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 41d6d0f4..668017d9 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -29,12 +29,12 @@ export type PullRequest = {
+   summaryUrl: string | null
+ }
+ 
+-/** One line of the band: an open pull request and what the loops do with it. */
++/** One line of the panel: an open pull request and what the loops do with it. */
+ export type Row = { pr: PullRequest; kinds: LoopKind[] }
+ 
+ export type Snapshot = {
+   rows: Row[]
+-  /** The login of the account the band's `gh` is signed in as; null until GitHub says. */
++  /** The login of the account the panel's `gh` is signed in as; null until GitHub says. */
+   viewer: string | null
+   fetchedAt: number | null
+   error: string | null
+@@ -88,7 +88,7 @@ export type Notice = Posted & {
+ export type Item = Question | Notice
+ 
+ /**
+- * An answer the band claimed and is delivering: the claim's token, the route
++ * An answer the panel claimed and is delivering: the claim's token, the route
+  * it took, and the text sent, so a later copy of the module keeps renewing
+  * the claim and knows the prompt when it arrives.
+  */
+@@ -104,27 +104,29 @@ declare module 'claude-code' {
+   interface PluginState {
+     projector: {
+       seenLoops: SeenLoop[]
+-      bandSnapshot: Snapshot
+-      bandNow: number
+-      isBandShown: boolean
++      panelSnapshot: Snapshot
++      panelNow: number
++      isPanelShown: boolean
+       /** The drawer that is open: a pull request's by `keyOf`, or `item:` and an item's reference. */
+-      bandDrawer: string | null
++      panelDrawer: string | null
+       /**
+        * What an open drawer asks before it acts, in its actions' place: how
+        * long to snooze, or whether to dismiss. `drawer` is the key
+-       * `bandDrawer` holds.
++       * `panelDrawer` holds.
+        */
+-      bandAsked: { drawer: string; about: 'snooze' | 'dismiss' } | null
+-      /** The session's inbox, as the band last read it. */
+-      bandInbox: Item[]
+-      /** The answers the band is delivering, by reference. */
++      panelAsked: { drawer: string; about: 'snooze' | 'dismiss' } | null
++      /** The session's inbox, as the panel last read it. */
++      panelInbox: Item[]
++      /** The answers the panel is delivering, by reference. */
++      panelSending: Record<string, Sending>
++      /** What the release before the rename kept as `panelSending`, which the panel takes over. */
+       bandSending: Record<string, Sending>
+       /** The panel's background for the session's Claude Code theme, which `panel.background = "auto"` takes. */
+-      bandThemeBackground: string
+-      /** `panel.background` as the band last read it: `auto`, or a color a surface can draw. */
+-      bandBackground: string
+-      /** Whether the band took the keyboard since the last keystroke in the prompt, so its hint names its own keys. */
+-      isBandFocused: boolean
++      panelThemeBackground: string
++      /** `panel.background` as the panel last read it: `auto`, or a color a surface can draw. */
++      panelBackground: string
++      /** Whether the panel took the keyboard since the last keystroke in the prompt, so its hint names its own keys. */
++      isPanelFocused: boolean
+     }
+   }
+ }
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 9831a0f2..10e93115 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -34,7 +34,7 @@ never moves its draft state. Adoption only adds lines, so it stays tracked
+ after the request is answered, and every later push gets a review until it
+ closes. A line `!owner/repo#number` keeps one pull request out when the user
+ asks. `project loop drop owner/repo#number --tracked <file>` appends one, as
+-Projector's band does when the user dismisses a pull request, and `project
++Projector's panel does when the user dismisses a pull request, and `project
+ loop restore` with the same arguments removes it. `project loop add` with the
+ same arguments lists a pull request the user assigns, and `project loop
+ remove` removes the pull request's own line once it closes. The four commands
+diff --git a/skills/start-watch-loop/SKILL.md b/skills/start-watch-loop/SKILL.md
+index cea25cca..71a5ed70 100644
+--- a/skills/start-watch-loop/SKILL.md
++++ b/skills/start-watch-loop/SKILL.md
+@@ -70,7 +70,7 @@ push to.
+    cycle, so neither change needs a restart. A line `!owner/repo#number`
+    keeps that pull request out of the watch wherever it sits in the file,
+    matched without regard to case. `project loop drop` with the same
+-   arguments appends one, as Projector's band does when the user dismisses
++   arguments appends one, as Projector's panel does when the user dismisses
+    a pull request, and `project loop restore` removes it. The four
+    commands change different lines: `add` lists a pull request, `remove`
+    forgets one that merged or closed, `drop` keeps an open one out, and
+diff --git a/src/projector/inbox.py b/src/projector/inbox.py
+index a5eb65ce..dddef6a6 100644
+--- a/src/projector/inbox.py
++++ b/src/projector/inbox.py
+@@ -186,7 +186,7 @@ def sessions() -> list[str]:
+ # Asking
+ 
+ def is_one_line(text: str) -> bool:
+-    """Whether text keeps to one line, as `watch` prints an answer and the band reads one."""
++    """Whether text keeps to one line, as `watch` prints an answer and the panel reads one."""
+     return "\n" not in text and "\r" not in text
+ 
+ 
+@@ -345,7 +345,7 @@ def resolution(item: dict) -> str:
+ 
+ 
+ def message(question: dict) -> str:
+-    """The line that tells the agent what became of its question, as `watch` prints it and the band
++    """The line that tells the agent what became of its question, as `watch` prints it and the panel
+     sends it: its answer, its dismissal, or that a dismissal it may have heard of was undone."""
+     if question.get("restoredAt"):
+         return f"RESTORED {question['ref']} {question['subject']}"
+@@ -525,7 +525,7 @@ def take(question: dict) -> None:
+ 
+ def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dict:
+     """Mark a claimed answer delivered, or reopen the question when its delivery failed. A claimed
+-    `RESTORED` line is done either way: the band does not retry it, and the question's answer or
++    `RESTORED` line is done either way: the panel does not retry it, and the question's answer or
+     next dismissal still reaches the agent."""
+     def finish(question: dict) -> None:
+         if question.get("deliveredAt"):
+diff --git a/src/projector/loop.py b/src/projector/loop.py
+index 695facb2..456be19d 100644
+--- a/src/projector/loop.py
++++ b/src/projector/loop.py
+@@ -2,7 +2,7 @@
+ 
+ A tracked file holds one `owner/repo#number` per line, and a line
+ `!owner/repo#number` keeps that pull request out of the loop wherever it
+-sits in the file. Both watchers and the band honor such a line, matching
++sits in the file. Both watchers and the panel honor such a line, matching
+ the reference without regard to case, as GitHub does.
+ """
+ 
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 7ddae52d..c190eb5e 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -26,8 +26,8 @@
+ also cover what only the person may record: `project inbox answer`,
+ `dismiss`, and `snooze` record the person's answer to an item an agent
+ posted, or their choice to dismiss or put it off, so an agent running one
+-could answer its own question. Projector's band runs those commands itself,
+-not through an agent's shell, so the person answering from the band is never
++could answer its own question. Projector's panel runs those commands itself,
++not through an agent's shell, so the person answering from the panel is never
+ asked. `project inbox restore` needs no ask rule: it reopens an item the
+ person dismissed or snoozed, which takes no choice from them, and an agent
+ runs it when the person says a dismissal was a mistake. The rules go in the
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index c9e1a3e8..9a0a09a3 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 12 -->
++<!-- projector:begin 13 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -57,7 +57,7 @@ reply too. Always post it when it sits among a lot of other text, such as a
+ decision in the middle of a long report, where the person could skim past
+ it. Post news they need to act on, such as a failure that needs them, and
+ anything that comes up while they are away. Leave out what they already see
+-elsewhere, such as a pull request's state, which the band lists. An item
++elsewhere, such as a pull request's state, which the panel lists. An item
+ stays above their prompt until they answer or dismiss it, so keep the inbox
+ for what matters, not as a log of everything you did.
+ 
+diff --git a/tests/test_config.py b/tests/test_config.py
+index 4c8bf3b7..bbf8e8c5 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -535,7 +535,7 @@ def test_a_key_in_an_inline_table_is_refused_untouched(self) -> None:
+             self.assertIn("the file is unchanged", stderr)
+             self.assertEqual(text, self.repo_file.read_text())
+ 
+-    def test_the_panel_background_is_set_and_unset_as_the_band_reads_it(self) -> None:
++    def test_the_panel_background_is_set_and_unset_as_the_panel_reads_it(self) -> None:
+         def background() -> dict[str, object]:
+             code, stdout, stderr = self.invoke("config", "get", "panel.background", "--default", "auto", "--json")
+             self.assertEqual(0, code, stderr)
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 1dbcc262..441edebe 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -24,6 +24,7 @@
+     10: "79ad714d61653a155a8d3ea8168ceb4f72bd1bd2e247a91abc4489cf3870324d",
+     11: "76b426bb38c4943dfcf471b3b9aa958f36b988d766f153df5a120aa325a7db05",
+     12: "63875baaa115d20fb8662ce521fdebf9bc7a10e84a4d0ea53698fd935d9b06f8",
++    13: "d0a5ecaad619d65f4bf6f445cc85be91dddcdf13e2f776fdcefe0a2f26390150",
+ }
+ 
+ 
