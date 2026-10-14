@@ -1285,11 +1285,8 @@ export const register: Register = on => {
           {/* The drawer starts where the state does, one column past the label. */}
           {opened === key && (
             <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
-              {/* The facts line: what each loop does with the pull request in
-                  its own color, its branch in cyan, and its size as a diff
-                  stat, insertions in `success` and deletions in `error`, then
-                  its checks in theirs. The ` and ` between two loops, each
-                  `·`, and the files keep the default color. */}
+              {/* Each `·` keeps the default color, so a piece's color, such
+                  as the checks', stops at its own text. */}
               <Text wrap="truncate-end">
                 {kinds.flatMap((kind, at) => [
                   ...(at === 0 ? [] : [' and ']),
