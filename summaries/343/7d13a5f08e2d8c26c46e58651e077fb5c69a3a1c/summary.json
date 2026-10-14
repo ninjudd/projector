@@ -1,0 +1,83 @@
+{
+ "version": 1,
+ "name": "Panel theme system plan",
+ "project": "panel-themes",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 343,
+  "title": "Spec a theme system for the panel",
+  "head": "7d13a5f08e2d8c26c46e58651e077fb5c69a3a1c",
+  "headRef": "panel-themes-spec",
+  "base": "9c53036545ab778af3f7c717bc5220de78415d9b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the area Claude Code draws above the prompt. It lists the pull requests that the session's loops track and the inbox's questions and notices, and it colors each element by what the element means. Today every color is written into <code>hooks/register.tsx</code> where the element draws it, and only the background is a setting, <code>panel.background</code>, whose allowlist #341 merged.",
+   "This pull request adds one draft plan, <code>docs/projects/panel-themes/readme.md</code>, at priority <code>later</code>. It changes no code. The plan routes every color through thirteen named roles, such as <code>muted</code>, <code>question</code>, <code>added</code>, and <code>removed</code>. Each role defaults to the color it draws today, so the panel looks the same with no settings. A person overrides one role with <code>panel.colors.&lt;role&gt;</code>, picks a built-in theme with <code>panel.theme</code>, and keeps <code>panel.background</code> for the background. The panel reads the whole <code>panel</code> table in one <code>project config get panel</code> call, and it alone owns the role list and every check.",
+   "The later commits record two decisions by the owner. The panel refuses a background that would hide the text Claude Code draws itself, which means <code>white</code> on a dark theme and <code>black</code> on a light one, so the plan partly reverses #341. And <code>watching</code> and <code>branch</code> move from terminal palette slots to theme keys that the owner picks by preview."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Role</b>: a named meaning, such as <code>muted</code>, that every element of that meaning draws in.</li><li><b>Theme key</b>: a Claude Code color name, such as <code>subtle</code>, that resolves per theme. The public 23 are the ones the <code>ThemeKey</code> type lists.</li><li><b>Base</b>: whether the Claude Code theme is dark or light, which picks the default background.</li><li><b>Layer</b>: one source of a role's color: <code>auto</code>'s defaults, then a built-in theme, then the person's own setting.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review, of <code>7d13a5f</code>, opened one finding: the contrast check compares a theme key with a literal background only for an exact match, so a background such as <code>rgb(80,80,80)</code> on <code>dark</code> hides the <code>subtle</code> header, hint, and ages with no toast. It also listed three suggestions. The plan is at <code>draft</code>, so its open questions don't block.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The panel themes plan",
+   "kicker": "Thirteen color roles, three settings, a contrast check, and a three-step rollout",
+   "intro": [
+    "The plan reads in order: the problem, the design in six parts, the reasons for it, the acceptance tests, the cost, the rollout, and the open questions. The design is what to check against the code, because each default claims to keep today's look.",
+    "Every claim about today's code held when the review checked it against <code>main</code>: the role table matches every color in <code>hooks/register.tsx</code>, the background table matches <code>THEME_BACKGROUNDS</code>, and the CLI reads and refuses the new keys as the plan says."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/panel-themes/readme.md",
+     "note": "The new plan. Read § 2 for the design and § 2.5 for the contrast rules, which carry the open finding.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 59,
+       "text": "§ 2.1: the role table matches every <code>color</code> and <code>backgroundColor</code> prop in <code>hooks/register.tsx</code> on <code>main</code>, checked prop by prop. No element uses <code>dimColor</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 109,
+       "text": "§ 2.3: the literal colors and aliases match what #341 merged as <code>BACKGROUND_ALIASES</code>, <code>HEX_COLOR</code>, and <code>NUMBERED_COLORS</code>, and Claude Code's <code>ThemeKey</code> type lists exactly 23 keys."
+      },
+      {
+       "kind": "verify",
+       "line": 150,
+       "text": "§ 2.4: run in a scratch home, <code>project config get panel --json</code> prints <code>null</code> and exits 1 with no <code>panel</code> table, and prints the table merged across files otherwise. 0.7.20 behaves the same, and both refuse <code>project config set panel.colors.muted</code> with exit status 2."
+      },
+      {
+       "kind": "flag",
+       "line": 184,
+       "text": "Open finding: the panel compares a theme key with the background only for an exact match, and every default but <code>text</code> is a theme key or palette slot. Claude Code's <code>dark</code> theme sets <code>subtle</code> to <code>rgb(80,80,80)</code>, so <code>panel.background = \"rgb(80,80,80)\"</code> passes both checks and draws the header, hint, and ages at 1:1 with no toast. That contradicts the plan's claim that no role vanishes."
+      },
+      {
+       "kind": "context",
+       "line": 203,
+       "text": "§ 2.5 refuses <code>white</code> on a dark theme and <code>black</code> on a light one, which #341 accepts. The plan records this as the owner's choice, and step 2 of the rollout updates <code>docs/plugins.md</code> with it."
+      },
+      {
+       "kind": "context",
+       "line": 322,
+       "text": "§ 7: the owner picks the built-in themes before step 3, and the theme keys for <code>watching</code> and <code>branch</code> before step 2, both by preview in a session mod. The plan defers the rest."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
