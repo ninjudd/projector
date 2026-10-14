@@ -1,4 +1,4 @@
-<!-- projector:begin 13 -->
+<!-- projector:begin 14 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -70,6 +70,7 @@ open while it still needs them. Each time the person writes to you, also
 look over the other items you posted that are still open, and withdraw any
 that no longer need them, such as news that has gone stale. When the person
 says they dismissed an item by mistake, restore it with the `restore` tool or
-`project inbox restore` rather than asking again. Name an item by the number
-`ask` or `tell` returned.
+`project inbox restore` rather than asking again. Name an item to the tools
+by the number `ask` or `tell` returned. The person never sees that number, so
+in what you write to them, name an item by what it asks or tells.
 <!-- projector:end -->

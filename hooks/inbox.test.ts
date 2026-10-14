@@ -17,12 +17,15 @@ import {
   RESTORE_DESCRIPTION,
   RESTORE_SCHEMA,
   restoreArguments,
+  REVISE_DESCRIPTION,
   reviseArguments,
   signatureOf,
   span,
   storeOf,
+  TELL_DESCRIPTION,
   tellArguments,
   typedLetter,
+  WITHDRAW_DESCRIPTION,
   WITHDRAW_SCHEMA,
   withdrawArguments,
   wokeBetween,
@@ -91,6 +94,20 @@ test('the restore tool is for a dismissal the person calls a mistake, never a qu
     'Use it only when the person says a dismissal was a mistake or asks for the item back, never on your own judgement, and never ask a dismissed question again as a new one.',
   )
   expect(RESTORE_SCHEMA).toEqual(WITHDRAW_SCHEMA)
+})
+
+test('every inbox tool tells the agent to name an item to the person by its text, since the person never sees its number', () => {
+  for (const description of [
+    ASK_DESCRIPTION,
+    TELL_DESCRIPTION,
+    WITHDRAW_DESCRIPTION,
+    REVISE_DESCRIPTION,
+    RESTORE_DESCRIPTION,
+  ]) {
+    expect(description).toMatch(
+      / The person never sees an item’s number, so name the item to them by what it asks or tells, never by its number\.$/,
+    )
+  }
 })
 
 test('letters run from the recommendation to the typed answer', () => {

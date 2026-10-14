@@ -354,13 +354,14 @@ which the model sees as `mcp__projector__ask`, and tells you something that
 needs no answer with the `tell` tool, `mcp__projector__tell`. Either way it
 keeps working. When an item it posted no longer needs you, such as a question
 your reply settled, the agent takes it back with the `withdraw` tool,
-`mcp__projector__withdraw`, by the number `ask` or `tell` returned. When your
-reply shows that a question was unclear, the agent rewrites the question in
-place with the `revise` tool, `mcp__projector__revise`. When you tell it you
-dismissed or snoozed an item by mistake, the agent brings the item back
-under its number with the `restore` tool, `mcp__projector__restore`, rather
-than asking again. An agent that runs `project inbox ask`, `tell`, `withdraw`,
-`revise`, or `restore` from the shell reaches the same inbox, as
+`mcp__projector__withdraw`, by the number `ask` or `tell` returned. The panel
+never shows that number, so the agent names an item to you by what it asks or
+tells. When your reply shows that a question was unclear, the agent rewrites
+the question in place with the `revise` tool, `mcp__projector__revise`. When
+you tell it you dismissed or snoozed an item by mistake, the agent brings the
+item back under its number with the `restore` tool, `mcp__projector__restore`,
+rather than asking again. An agent that runs `project inbox ask`, `tell`,
+`withdraw`, `revise`, or `restore` from the shell reaches the same inbox, as
 [Use the inbox](cli.md#use-the-inbox) describes.
 
 The items are a list below the pull requests, oldest first, each line

@@ -205,7 +205,13 @@ export const span = (seconds: number) =>
   seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m`
     : seconds < 86_400 ? `${Math.floor(seconds / 3600)}h` : `${Math.floor(seconds / 86_400)}d`
 
-export const ASK_DESCRIPTION = [
+const UNSEEN_NUMBER =
+  'The person never sees an item’s number, so name the item to them by what it asks or tells, never by its number.'
+
+/** A tool's description: its own lines, then the sentence every inbox tool ends with about an item's number. */
+const described = (lines: readonly string[]) => [...lines, UNSEEN_NUMBER].join(' ')
+
+export const ASK_DESCRIPTION = described([
   'Ask the person a question without stopping: it appears in Projector’s panel above their prompt, and you keep working.',
   'Ask in one short line of at most 120 characters, and put what they need to decide in `detail`.',
   'Always recommend an answer, and write it and each option as a full answer they can pick as it stands.',
@@ -216,7 +222,7 @@ export const ASK_DESCRIPTION = [
   'When they reply in their own words instead, the reply arrives as their prompt, quoting the question, and the question stays open:',
   'answer what they asked, then withdraw the question if the reply settles it, revise it if it was unclear or the choice has changed,',
   'or leave it open while it still needs them.',
-].join(' ')
+])
 
 export const ASK_SCHEMA = {
   type: 'object',
@@ -269,13 +275,13 @@ export function askArguments(
   ]
 }
 
-export const TELL_DESCRIPTION = [
+export const TELL_DESCRIPTION = described([
   'Tell the person something without stopping: it appears in Projector’s panel above their prompt until they dismiss it.',
   'Use it for the answer to a question they asked you, or for something you did that they should know about.',
   'Write one short line of at most 120 characters, and put the rest in `detail`.',
   'Name the pull request it is about in `pr`, as owner/repo#number.',
   'Nothing comes back to you; when you need the person to decide something, use `ask` instead.',
-].join(' ')
+])
 
 export const TELL_SCHEMA = {
   type: 'object',
@@ -304,12 +310,12 @@ export function tellArguments(
   return ['inbox', 'tell', `--session=${session}`, ...postedFlags(detail, pr, agentId), '--', notice]
 }
 
-export const WITHDRAW_DESCRIPTION = [
+export const WITHDRAW_DESCRIPTION = described([
   'Withdraw a question or notice you posted that no longer needs the person,',
   'such as a question their reply settled or news that has gone stale.',
   'Name it by the number `ask` or `tell` returned. It leaves Projector’s panel at once.',
   'Nothing comes back to you: a withdrawn question sends no `DISMISSED` message.',
-].join(' ')
+])
 
 /** The schema of a tool that takes one item, by the number `ask` or `tell` returned. */
 const ITEM_SCHEMA = {
@@ -342,26 +348,26 @@ const itemArguments =
 /** The arguments of `project inbox withdraw` for one call of the tool, or why the call cannot be one. */
 export const withdrawArguments = itemArguments('withdraw')
 
-export const RESTORE_DESCRIPTION = [
+export const RESTORE_DESCRIPTION = described([
   'Restore a question or notice you posted that the person dismissed or snoozed: it reopens in Projector’s panel',
   'under the same number, with the same text. Use it only when the person says a dismissal was a mistake or asks',
   'for the item back, never on your own judgement, and never ask a dismissed question again as a new one.',
   'Name it by the number `ask` or `tell` returned. A restored question’s answer arrives as before, as a message',
   'that starts `ANSWER 3.<letter>` or `DISMISSED 3`.',
-].join(' ')
+])
 
 export const RESTORE_SCHEMA = ITEM_SCHEMA
 
 /** The arguments of `project inbox restore` for one call of the tool, or why the call cannot be one. */
 export const restoreArguments = itemArguments('restore')
 
-export const REVISE_DESCRIPTION = [
+export const REVISE_DESCRIPTION = described([
   'Revise a question you asked that is still open, keeping its number, when the person’s reply shows it was unclear',
   'or the choice has changed. Name it by the number `ask` returned, and give only what changes:',
   'the question, its detail, the recommendation, or the other options, which `options` replaces as a whole.',
   'Projector’s panel redraws it at once, and its answer still arrives as a message that starts',
   '`ANSWER 3.<letter>` or `DISMISSED 3`.',
-].join(' ')
+])
 
 export const REVISE_SCHEMA = {
   type: 'object',
