@@ -96,7 +96,7 @@ test('the restore tool is for a dismissal the person calls a mistake, never a qu
   expect(RESTORE_SCHEMA).toEqual(WITHDRAW_SCHEMA)
 })
 
-test('every inbox tool tells the agent to name an item to the person by its text, since the person never sees its number', () => {
+test('every inbox tool tells the agent to name an item to the person by its text, since the panel never shows its number', () => {
   for (const description of [
     ASK_DESCRIPTION,
     TELL_DESCRIPTION,
@@ -105,7 +105,7 @@ test('every inbox tool tells the agent to name an item to the person by its text
     RESTORE_DESCRIPTION,
   ]) {
     expect(description).toMatch(
-      / The person never sees an item’s number, so name the item to them by what it asks or tells, never by its number\.$/,
+      / The panel never shows an item’s number, so name the item to the person by what it asks or tells, never by its number\.$/,
     )
   }
 })

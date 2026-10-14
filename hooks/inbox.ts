@@ -206,7 +206,7 @@ export const span = (seconds: number) =>
     : seconds < 86_400 ? `${Math.floor(seconds / 3600)}h` : `${Math.floor(seconds / 86_400)}d`
 
 const UNSEEN_NUMBER =
-  'The person never sees an item’s number, so name the item to them by what it asks or tells, never by its number.'
+  'The panel never shows an item’s number, so name the item to the person by what it asks or tells, never by its number.'
 
 /** A tool's description: its own lines, then the sentence every inbox tool ends with about an item's number. */
 const described = (lines: readonly string[]) => [...lines, UNSEEN_NUMBER].join(' ')

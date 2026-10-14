@@ -1397,7 +1397,7 @@ test('asks through the tool, and the panel lists the question below the pull req
     pr: 'x/y#7',
   })
   expect(String(called.text ?? called.result)).toBe(
-    'Asked 1. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER 1 or DISMISSED 1. The person never sees this number, so name the question to them by what it asks.',
+    'Asked 1. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER 1 or DISMISSED 1. Projector’s panel never shows this number, so name the question to the person by what it asks.',
   )
   expect(session.registered).toEqual([
     expect.objectContaining({ name: 'ask', isDeferred: false }),
@@ -2119,7 +2119,7 @@ test('a subagent tells through the tool, and the panel lists the notice in gray'
 
   const called = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, pr: 'x/y#7', agentId: 'agent-1' })
   expect(String(called.text ?? called.result)).toBe(
-    'Posted 1. It waits in Projector’s panel until the person dismisses it; nothing comes back to you. The person never sees this number, so name the notice to them by what it tells.',
+    'Posted 1. It waits in Projector’s panel until the person dismisses it; nothing comes back to you. Projector’s panel never shows this number, so name the notice to the person by what it tells.',
   )
   expect(session.project()).toContain(`inbox tell --session=s1 --pr=x/y#7 --agent=agent-1 -- ${FORCE_PUSHED}`)
   expect(session.notified).toEqual([FORCE_PUSHED])
