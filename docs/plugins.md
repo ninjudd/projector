@@ -322,12 +322,12 @@ and in a terminal the divider counts the open questions and the open notices.
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press Enter on it from the keyboard instead. While
 its drawer is open, the item stays highlighted and has the band to itself,
-so the item is the top row. In a terminal, the divider and the blank line
-under it step aside too, which gives the drawer two more rows before the
-band scrolls:
+so the item is the top row, and `0` before it closes the drawer. In a
+terminal, the divider and the blank line under it step aside too, which
+gives the drawer two more rows before the band scrolls:
 
 ```text
-- Decline the finding about the retry budget?                 #337  5m [-]
+0: - Decline the finding about the retry budget?              #337  5m [-]
 
   The review asks for a retry budget per host. The loop caps retries at
   three in total, which covers the case the finding names.
@@ -504,6 +504,13 @@ answer Claude Code's own surveys, and the band puts that option in your
 prompt as a click does. A digit only fills the prompt,
 so nothing reaches the agent until you send. A resolved question's options
 have no digits.
+
+An open item's own line, at the top of its drawer, reads `0:` before it,
+for every item, open or resolved, question or notice. Press `0` the same
+two ways, while the band has the keyboard or first into an empty prompt
+while the line is wholly in view in the band, and the drawer closes, as a
+click or Enter on that line closes it. A pull
+request's drawer has no `0`, since its number closes it.
 
 A drawer's actions follow its options, a line each, with the letter that
 presses it before the label in the accent color, such as

@@ -1198,8 +1198,16 @@ export const register: Register = on => {
                 opens its drawer: a click in fullscreen, Enter on the main
                 screen. */}
             <Box flexGrow={1} flexShrink={1}>
-              {/* An open drawer keeps its item inverted, as the pointer draws it. */}
-              <Button key={line} plain onPress={() => toggle(key, line, isOpened ? key : first)}>
+              {/* An open drawer keeps its item inverted, as the pointer draws it,
+                  and its line closes the drawer on `0`, a digit the options
+                  leave free, drawn before it as `0: `. Like the options' digits,
+                  it works from an empty prompt too. */}
+              <Button
+                key={line}
+                plain
+                hotkey={isOpened ? '0' : undefined}
+                onPress={() => toggle(key, line, isOpened ? key : first)}
+              >
                 <Text color={color} inverse={isOpened}>
                   -{' '}
                 </Text>
