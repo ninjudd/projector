@@ -119,6 +119,12 @@ declare module 'claude-code' {
       bandInbox: Item[]
       /** The answers the band is delivering, by reference. */
       bandSending: Record<string, Sending>
+      /** The panel's background for the session's Claude Code theme, which `panel.background = "auto"` takes. */
+      bandThemeBackground: string
+      /** `panel.background` as the band last read it: `auto`, or a color a surface can draw. */
+      bandBackground: string
+      /** Whether the band took the keyboard since the last keystroke in the prompt, so its hint names its own keys. */
+      isBandFocused: boolean
     }
   }
 }

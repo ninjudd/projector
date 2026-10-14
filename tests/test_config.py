@@ -535,6 +535,25 @@ class ConfigSetTests(unittest.TestCase):
             self.assertIn("the file is unchanged", stderr)
             self.assertEqual(text, self.repo_file.read_text())
 
+    def test_the_panel_background_is_set_and_unset_as_the_band_reads_it(self) -> None:
+        def background() -> dict[str, object]:
+            code, stdout, stderr = self.invoke("config", "get", "panel.background", "--default", "auto", "--json")
+            self.assertEqual(0, code, stderr)
+            return json.loads(stdout)
+
+        self.assert_set("panel.background", "rgb(20,20,20)", "--user")
+
+        self.assertEqual('[panel]\nbackground = "rgb(20,20,20)"\n', self.user_file.read_text())
+        self.assertEqual("rgb(20,20,20)", background()["value"])
+        self.assertEqual(str(self.user_file), background()["source"])
+
+        code, _, stderr = self.invoke("config", "unset", "panel.background", "--user")
+
+        self.assertEqual(0, code, stderr)
+        self.assertEqual("[panel]\n", self.user_file.read_text())
+        self.assertEqual("auto", background()["value"])
+        self.assertIsNone(background()["source"])
+
     def test_user_and_file_scopes_write_their_own_files(self) -> None:
         parent = self.home / "work" / ".projector.toml"
 

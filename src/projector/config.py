@@ -60,6 +60,7 @@ SETTINGS: dict[str, type] = {
     "review.summarize": bool,
     "fix.resolve_human_threads": bool,
     "watch.auto_start": bool,
+    "panel.background": str,
 }
 
 

@@ -625,6 +625,7 @@ reads, which are these:
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | `implement`, to start `start-watch-loop` on each pull request it opens, or add the pull request to the watch loop the conversation already runs; `false` leaves starting the loop to you |
+| `panel.background` | string | `auto` | Projector's band in Claude Code, as the background of the panel it draws in a terminal: `auto` picks one from the Claude Code theme, and any other value, such as `rgb(30,30,40)`, `#1e1e28`, `ansi256(236)`, or a theme color's name such as `inverseText`, is drawn as written |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own

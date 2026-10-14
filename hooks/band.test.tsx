@@ -1,4 +1,4 @@
-import type { AgentInfo, FsEntry, On } from 'claude-code'
+import type { AgentInfo, ConfigRow, FsEntry, On, PromptEditInput, PromptEditResult } from 'claude-code'
 import { expect, mock, test, type Engine, type Mounted } from 'claude-code/testing'
 
 import type { Notice, Question } from './types'
@@ -22,6 +22,16 @@ const BAND = {
     view: {},
   },
 } as const
+
+/**
+ * How wide the band's rows are in a terminal: `bodyColumns` less the panel's
+ * one-column inset, its padding of one column at each side, and the rows' own
+ * padding of one more.
+ */
+const COLUMNS = BAND.props.bodyColumns - 5
+
+/** How wide the panel's header and key hint are: they start a column before the rows and end where the rows do. */
+const EDGE = COLUMNS + 1
 
 const COMMAND = {
   command: 'projector',
@@ -120,15 +130,32 @@ type Outcome = Ran | { deny: string }
 
 const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
 
-/** GitHub's answer to a query, where a test needs another, or needs it late. */
-type Beneath = { github?: (query: string) => Ran | Promise<Ran> }
+/**
+ * GitHub's answer to a query, where a test needs another, or needs it late,
+ * and the settings `.projector.toml` holds, by dotted key, which a test may
+ * change between reloads.
+ */
+type Beneath = { github?: (query: string) => Ran | Promise<Ran>; settings?: Record<string, unknown> }
 
-/** Answers the files, GitHub, prompt and Bash calls beneath the plugin, and `project` when given. */
+/** `project config get <key> [--default <value>] --json`, answered from `settings` as the CLI answers it. */
+function configGet(argv: readonly string[], settings: Record<string, unknown>): Ran {
+  const key = argv[3] ?? ''
+  const at = argv.indexOf('--default')
+  const value = settings[key] ?? (at === -1 ? null : argv[at + 1])
+  const source = key in settings ? `${HOME}/.projector.toml` : null
+  return { ...ran(JSON.stringify({ key, schema_version: 2, source, value })), exitCode: value === null ? 1 : 0 }
+}
+
+/**
+ * Answers the files, GitHub, prompt and Bash calls beneath the plugin,
+ * `project config get` from `settings`, and any other `project` command when
+ * given.
+ */
 function world(
   on: On,
   files: Record<string, string>,
   project?: (argv: string[]) => Outcome | Promise<Outcome>,
-  { github = query => ran(answer(query)) }: Beneath = {},
+  { github = query => ran(answer(query)), settings = {} }: Beneath = {},
 ) {
   const commands: string[][] = []
   const filled: string[] = []
@@ -139,8 +166,15 @@ function world(
   on('process.run', ($, e) => {
     commands.push([...e.argv])
     const answered = (outcome: Outcome) => ('deny' in outcome ? outcome : { value: outcome })
+    const [command, group, verb] = e.argv
     const outcome =
-      e.argv[0] === 'project' && project !== undefined ? project([...e.argv]) : github(e.argv.join(' '))
+      command !== 'project'
+        ? github(e.argv.join(' '))
+        : group === 'config' && verb === 'get'
+          ? configGet(e.argv, settings)
+          : project !== undefined
+            ? project([...e.argv])
+            : github(e.argv.join(' '))
     return outcome instanceof Promise ? outcome.then(answered) : answered(outcome)
   })
   on('prompt.fill', ($, e) => {
@@ -185,36 +219,25 @@ test('draws one line per open pull request of the session’s own loops', async 
   expect((await ui.findAll({ type: 'Text', text: '1*' })).map(found => found.props.color)).toContain('warning')
   expect(await ui.find({ type: 'Text', text: /open thread/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-  // The divider counts the two open pull requests the band lists, not the merged one, in `subtle`. It ends with
-  // how long ago the band reloaded as the rows end with their ages: in the short form, `0s` for a reload just now
-  // as for an item posted just now, in `subtle`, and ending at bodyColumns.
-  const divider = await ui.find({ type: 'Text', text: /^─ 2 pull requests ─+ 0s$/ })
-  expect(divider?.text.length).toBe(BAND.props.bodyColumns)
-  expect(await ui.find({ type: 'Text', text: /updated|ago|just now/ })).toBeUndefined()
-  expect(partsOf(divider)).toEqual([
-    '─ ',
-    ['2 pull requests', 'subtle'],
-    expect.stringMatching(/^ ─+ $/),
-    ['0s', 'subtle'],
-  ])
-  // The rule is drawn at full strength, not muted like the rows' details.
-  expect(divider?.props.color).toBeUndefined()
-  expect(divider?.props.dimColor).toBeUndefined()
-  // A blank line sets the divider apart from the rows under it.
+  // The panel's header starts with `/projector`, the command that shows and hides the band, at its left. At its
+  // right, it counts the two open pull requests the band lists, not the merged one, and then says how long ago the
+  // band reloaded as the rows say their ages: in the short form, `0s` for a reload just now as for an item posted
+  // just now. The two sit two spaces apart, so the time ends in the rows' age column, at the edge of the panel's
+  // lines. All of it is `subtle`, and no rule runs through it.
+  const header = await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  0s$/ })
+  expect(header?.text).toBe(`/projector${'2 pull requests  0s'.padStart(EDGE - '/projector'.length)}`)
+  expect(header?.props.color).toBe('subtle')
+  expect(await ui.find({ type: 'Text', text: /─|updated|ago|just now/ })).toBeUndefined()
+  // The rows start on the line under the header, with no blank line between.
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts.slice(texts.indexOf(divider?.text ?? ''), texts.indexOf(divider?.text ?? '') + 4)).toEqual([
-    divider?.text,
-    '2 pull requests',
-    '0s',
-    ' ',
-  ])
+  expect(texts.slice(0, 3)).toEqual([header?.text, 'ready', ''])
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('draws no divider on a surface that does not lay text out in columns', async ($, on) => {
+test('draws no panel and no header on a surface that does not lay text out in columns', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\n' })
@@ -223,11 +246,313 @@ test('draws no divider on a surface that does not lay text out in columns', asyn
   await clock.advance(1)
   await clock.settle()
 
-  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts.filter(text => text.includes('─'))).toEqual([])
-  expect(texts[0]).not.toBe(' ')
-  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+  for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ key: 'panel' })).toBeUndefined()
+    expect((await ui.findAll({ type: 'Box' })).filter(box => box.props.backgroundColor !== undefined)).toEqual([])
+    // The band starts with its first row.
+    const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+    expect(texts.filter(text => text.includes('─') || text.startsWith('/projector') || /\d+s$/.test(text))).toEqual([])
+    expect(texts[0]).toBe('ready')
+    expect(texts).not.toContain('ctrl+x tab to focus')
+    expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+/** A terminal's band: one column of inset in the terminal's own background, then the panel, which holds every line. */
+const inPanel = (backgroundColor: string) => ({
+  type: 'Box',
+  props: { width: BAND.props.bodyColumns, paddingLeft: 1 },
+  children: [
+    {
+      type: 'Box',
+      props: { width: BAND.props.bodyColumns - 1, paddingLeft: 1, paddingRight: 1, backgroundColor },
+    },
+  ],
+})
+
+/** The panel's background as drawn, or undefined when the band draws no panel. */
+const backgroundOf = async (ui: Pick<Mounted, 'find'>) => (await ui.find({ key: 'panel' }))?.props.backgroundColor
+
+test('in a terminal the band draws as one panel, inset a column and padded, on a background of its own', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#1\n' })
+
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  // The panel pads one column at each side, and no row: its header is its first line and its key hint its last.
+  // It ends at bodyColumns, where the engine draws the band's `[-]`. A band that has read no theme takes
+  // `inverseText`.
+  expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
+  const panel = await ui.find({ key: 'panel' })
+  expect([panel?.props.paddingTop, panel?.props.paddingBottom]).toEqual([undefined, undefined])
+  // Only the panel paints a background, so its inset keeps the terminal's.
+  expect((await ui.findAll({ type: 'Box' })).filter(box => box.props.backgroundColor !== undefined)).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('the panel’s last line says how to focus the band, and once the band has the keyboard, which keys work', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#1\n' })
+  on('ui.focus', () => ({}))
+  on('prompt.edit', ($, e) => ({ text: e.text, cursor: e.cursor }))
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  const invalidated: string[] = []
+  on('ui.invalidate', ($, e, next) => {
+    invalidated.push(e.event)
+    return next(e)
+  })
+  // The person moves the ring onto a line of the band, as ctrl+x tab or Tab does, or types in the prompt.
+  const focus = (element: string) =>
+    $.ui.focus({ component: 'AbovePrompt', requestId: 'above-prompt', plugin: 'projector', element, origin: { kind: 'person' } })
+  // The kit raises `prompt.edit` as the prompt's editor does, though its typed `$` lists no call for it.
+  const prompt = $.prompt as unknown as { edit: (e: PromptEditInput) => Promise<PromptEditResult> }
+  const type = async (text: string) => {
+    await prompt.edit({ origin: { kind: 'composer' }, text: '', cursor: 0, start: 0, end: 0, inputText: text })
+    await clock.settle()
+  }
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  const hint = async () => {
+    const last = (await ui.findAll({ type: 'Text' })).at(-1)
+    return [last?.text.trimStart(), last?.props.color]
+  }
+  // With the keyboard in the prompt, the hint names the chord that moves it into the band, at the right of its line,
+  // which ends where the rows do. Typing redraws nothing.
+  expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
+  expect((await ui.findAll({ type: 'Text' })).at(-1)?.text).toBe('ctrl+x tab to focus'.padStart(EDGE))
+  await type('a')
+  expect(invalidated).toEqual([])
+
+  // Once the ring lands in the band, the hint names the keys that work there, and moving the ring on redraws
+  // nothing more.
+  await focus('pr:o/r#1')
+  expect(await hint()).toEqual(['esc to return · enter to open', 'subtle'])
+  await focus('pr:o/r#1')
+  expect(invalidated).toEqual(['ui.render'])
+
+  // Claude Code says nothing when Esc hands the keyboard back, so the next keystroke in the prompt puts the first
+  // hint back, and only that one redraws the band.
+  await type('b')
+  expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
+  await type('c')
+  expect(invalidated).toEqual(['ui.render', 'ui.render'])
+
+  // Sending a prompt from the terminal with no keystroke since Esc, as one a drawer filled, puts it back too, and
+  // only once.
+  const send = async () => {
+    await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } })
+    await clock.settle()
+  }
+  await focus('pr:o/r#1')
+  expect(await hint()).toEqual(['esc to return · enter to open', 'subtle'])
+  await send()
+  expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
+  await send()
+  expect(invalidated).toEqual(['ui.render', 'ui.render', 'ui.render', 'ui.render'])
+  await ui.unmount()
+})
+
+/** Who owns Claude Code's own `/config` rows. */
+const ENGINE = { plugin: 'engine', tier: 'core' } as const
+
+test('the header’s age, a pull request’s age, and the key hint end in one column', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#2\n' })
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  // The header and the hint sit in the panel's padding of one column, and the rows in a Box one column further in at
+  // each side, whose last column is each row's age.
+  type Drawn = { type: string; props: Record<string, unknown>; children: (Drawn | string)[] }
+  const inset = (await ui.findAll({ type: 'Box' }))[0]?.props ?? {}
+  const panel = (await ui.find({ key: 'panel' })) as Drawn | undefined
+  const [header, rows, hint] = (panel?.children ?? []) as Drawn[]
+  expect(rows?.props).toMatchObject({ flexDirection: 'column', paddingLeft: 1, paddingRight: 1 })
+  const width = (value: unknown) => (typeof value === 'number' ? value : NaN)
+  const textOf = (element: Drawn | undefined) => (element?.children ?? []).join('')
+  const start = width(inset.paddingLeft) + width(panel?.props.paddingLeft)
+  const end = width(inset.paddingLeft) + width(panel?.props.width) - width(panel?.props.paddingRight)
+  const rowsEnd = end - width(rows?.props.paddingRight)
+  expect(rowsEnd - start - width(rows?.props.paddingLeft)).toBe(COLUMNS)
+  expect(textOf(header)).toMatch(/^\/projector +1 pull request  \d+s$/)
+  expect(start + textOf(header).length).toBe(rowsEnd)
+  expect(start + textOf(hint).length).toBe(rowsEnd)
+  // A row fills the rows' width, its title giving way, so its age ends at their edge.
+  expect(await ui.find({ type: 'Text', text: '45s' })).toBeDefined()
+  await ui.unmount()
+})
+
+/** The `/config` row of Claude Code's theme, holding `value`. */
+const themeRow = (value: string): ConfigRow => ({
+  key: 'theme',
+  label: 'Theme',
+  kind: 'choice',
+  value,
+  provider: ENGINE,
+  isLocked: false,
+})
+
+type PanelOptions = {
+  theme?: string
+  env?: Record<string, string>
+  files?: Record<string, string>
+  settings?: Record<string, unknown>
+}
+
+/**
+ * A session on a Claude Code theme whose review loop tracks o/r#1, with the
+ * theme's `/config` row, the files and the settings beneath the plugin. A
+ * change of theme to `dark-ansi` is refused.
+ */
+function panelWorld(on: On, { theme = 'dark', env = {}, files = {}, settings = {} }: PanelOptions = {}) {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME, ...env })
+  const { commands } = world(on, { [REVIEW]: 'o/r#1\n', ...files }, undefined, { settings })
+  const toasts = toastsOf(on)
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: { command: 'projector' } }))
+  on('config.list', () => ({ value: [themeRow(theme)] }))
+  on('config.set', ($, e) => (e.value === 'dark-ansi' ? { deny: 'the theme stays' } : { value: e.value }))
+  return { clock, commands, toasts }
+}
+
+const DARK = 'rgb(20,20,20)'
+const LIGHT = 'rgb(240,240,240)'
+const THEMES = `${HOME}/.claude/themes`
+
+for (const [theme, color, files] of [
+  ['dark', DARK, {}],
+  ['dark-daltonized', DARK, {}],
+  ['light', LIGHT, {}],
+  ['light-daltonized', LIGHT, {}],
+  ['dark-ansi', 'inverseText', {}],
+  ['light-ansi', 'inverseText', {}],
+  ['custom:dusk', DARK, { [`${THEMES}/dusk.json`]: '{"name": "Dusk", "base": "dark", "overrides": {}}' }],
+  ['custom:dawn', LIGHT, { [`${THEMES}/dawn.json`]: '{"name": "Dawn", "base": "light-daltonized"}' }],
+  ['custom:plain', DARK, { [`${THEMES}/plain.json`]: '{"name": "Plain"}' }],
+  ['custom:retro', 'inverseText', { [`${THEMES}/retro.json`]: '{"base": "dark-ansi"}' }],
+  ['custom:gone', 'inverseText', {}],
+  ['auto', 'inverseText', {}],
+] as const) {
+  test(`the panel is ${color} on the ${theme} theme`, async ($, on) => {
+    const { clock } = panelWorld(on, { theme, files })
+    await startSession($, clock)
+
+    const ui = await $.ui.mount(BAND)
+    expect(await ui.drawn()).toMatchObject(inPanel(color))
+    await ui.unmount()
+  })
+}
+
+test('a custom theme’s file is read from the Claude config directory CLAUDE_CONFIG_DIR names', async ($, on) => {
+  const { clock } = panelWorld(on, {
+    theme: 'custom:dawn',
+    env: { CLAUDE_CONFIG_DIR: `${HOME}/claude-config` },
+    files: {
+      [`${HOME}/claude-config/themes/dawn.json`]: '{"base": "light"}',
+      [`${THEMES}/dawn.json`]: '{"base": "dark"}',
+    },
+  })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(BAND)
+  expect(await backgroundOf(ui)).toBe(LIGHT)
+  await ui.unmount()
+})
+
+test('a theme picked in /theme recolors the panel at once, and one the change refuses leaves it', async ($, on) => {
+  const { clock } = panelWorld(on, { theme: 'dark' })
+  await startSession($, clock)
+  const ui = await $.ui.mount(BAND)
+  expect(await backgroundOf(ui)).toBe(DARK)
+
+  // As the person picks a theme in `/theme`.
+  const pick = (value: string, previous: string) =>
+    $.config.set({ key: 'theme', value, previous, provider: ENGINE, origin: { kind: 'composer' } })
+  expect(await pick('light', 'dark')).toEqual({ value: 'light' })
+  expect(await backgroundOf(ui)).toBe(LIGHT)
+
+  expect(await pick('dark-ansi', 'light')).toEqual({ deny: 'the theme stays' })
+  expect(await backgroundOf(ui)).toBe(LIGHT)
+  await ui.unmount()
+})
+
+test('panel.background colors the panel, and auto or no value leaves the color to the theme', async ($, on) => {
+  const settings: Record<string, unknown> = { 'panel.background': '#202830' }
+  const { clock, commands, toasts } = panelWorld(on, { theme: 'light', settings })
+  await startSession($, clock)
+  const reload = async () => {
+    await $.command.run(COMMAND)
+    await $.command.run(COMMAND)
+    await clock.advance(1)
+    await clock.settle()
+  }
+
+  // The band reads the setting through the CLI, which merges the `.projector.toml` files.
+  expect(commands).toContainEqual(['project', 'config', 'get', 'panel.background', '--default', 'auto', '--json'])
+  const ui = await $.ui.mount(BAND)
+  expect(await backgroundOf(ui)).toBe('#202830')
+
+  // Each reload reads it again, so an edit to the file shows without a restart.
+  for (const value of ['ansi256(236)', 'rgb(30,30,40)', 'composerSidebarBackground']) {
+    settings['panel.background'] = value
+    await reload()
+    expect(await backgroundOf(ui)).toBe(value)
+  }
+  settings['panel.background'] = 'auto'
+  await reload()
+  expect(await backgroundOf(ui)).toBe(LIGHT)
+  delete settings['panel.background']
+  await reload()
+  expect(await backgroundOf(ui)).toBe(LIGHT)
+  expect(toasts).toEqual([])
+  await ui.unmount()
+})
+
+test('a panel.background no surface can draw leaves the color to the theme, and the band says so once', async ($, on) => {
+  const settings: Record<string, unknown> = { 'panel.background': 'ansi:black' }
+  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
+  await startSession($, clock)
+  const reload = async () => {
+    await $.command.run(COMMAND)
+    await $.command.run(COMMAND)
+    await clock.advance(1)
+    await clock.settle()
+  }
+
+  // The panel draws on the theme's color rather than not at all.
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.drawn()).toMatchObject(inPanel(DARK))
+  await reload()
+  expect(await backgroundOf(ui)).toBe(DARK)
+  for (const value of ['', '   ', 'a/b', 'x'.repeat(41), 3]) {
+    settings['panel.background'] = value
+    await reload()
+    expect(await backgroundOf(ui)).toBe(DARK)
+  }
+  const told = (value: string) =>
+    `projector: panel.background is ${value}, not a color the panel can draw, so the panel takes its color from the theme`
+  expect(toasts).toEqual([
+    told('"ansi:black"'),
+    told('""'),
+    told('"   "'),
+    told('"a/b"'),
+    told(`"${'x'.repeat(41)}"`),
+    told('3'),
+  ])
   await ui.unmount()
 })
 
@@ -373,10 +698,10 @@ test('lists your pull requests first, then everyone else’s by author, naming t
   // Yours keep their order, then bob's, then grace's two in theirs, with nothing between the groups.
   const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
   expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
-  // The divider counts everyone's pull requests the band lists, the session's own and others'.
-  expect(await ui.find({ type: 'Text', text: /^─ 5 pull requests ─+ \d+s$/ })).toBeDefined()
+  // The header counts everyone's pull requests the band lists, the session's own and others'.
+  expect(await ui.find({ type: 'Text', text: /^\/projector +5 pull requests  \d+s$/ })).toBeDefined()
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts.filter(text => text === ' ')).toHaveLength(1)
+  expect(texts.filter(text => text === ' ')).toEqual([])
 
   // Only someone else's line names its author, in `subtle`, in a column as wide as the longest login.
   expect(await ui.find({ key: 'author:x/y#7' })).toBeUndefined()
@@ -416,7 +741,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
   await clock.settle()
 
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─ 2 pull requests ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  \d+s$/ })).toBeDefined()
   await ui.press({ key: 'pr:x/y#7' })
   // The drawer's actions are lines of their own, as an item's are.
   expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
@@ -427,7 +752,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
   await ui.press({ key: 'confirm:x/y#7' })
   await clock.settle()
 
-  expect(commands.filter(argv => argv[0] === 'project')).toEqual([
+  expect(commands.filter(argv => argv[0] === 'project' && argv[1] === 'loop')).toEqual([
     ['project', 'loop', 'drop', 'x/y#7', '--tracked', REVIEW],
     ['project', 'loop', 'drop', 'x/y#7', '--tracked', WATCH],
   ])
@@ -435,8 +760,8 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
-  // The divider stops counting the dismissed pull request.
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request ─+ \d+s$/ })).toBeDefined()
+  // The header stops counting the dismissed pull request.
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -548,8 +873,8 @@ test('lists a pull request both loops track once, as watched and reviewed, and c
   await clock.settle()
 
   const ui = await $.ui.mount(BAND)
-  // The divider counts its one line once, in the singular.
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request ─+ \d+s$/ })).toBeDefined()
+  // The header counts its one line once, in the singular.
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
   await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
   // Each loop takes its own color, and the `and` between them the default color.
@@ -569,7 +894,8 @@ test('`/projector` only shows or hides the band, whatever follows it', async ($,
   const ui = await $.ui.mount(BAND)
   expect(await ui.find({ type: 'Text', text: ` ${TAGLINE}` })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
-  expect(commands).toEqual([])
+  // The band runs nothing but its reload's read of the panel's setting.
+  expect(commands.filter(argv => argv.slice(0, 3).join(' ') !== 'project config get')).toEqual([])
   await ui.unmount()
 })
 
@@ -686,16 +1012,23 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
   // `dimColor` does not dim in every terminal, so the tagline takes the theme's subtle color.
   expect((await ui.find({ type: 'Text', text: ` ${TAGLINE}` }))?.props.color).toBe('subtle')
   expect(await ui.find({ type: 'Text', text: /No open pull requests/ })).toBeUndefined()
-  // With nothing to count, the divider is the rule and the time, the full width of the band.
-  const divider = await ui.find({ type: 'Text', text: /^─+ \d+s$/ })
-  expect(divider?.text.length).toBe(BAND.props.bodyColumns)
-  expect(partsOf(divider)).toEqual([expect.stringMatching(/^─+ $/), [expect.stringMatching(/^\d+s$/), 'subtle']])
+  // With nothing to count, the header is `/projector` and the reload's age alone, at the right of the panel's line,
+  // and the tagline is the line under it, in the panel.
+  const header = await ui.find({ type: 'Text', text: /^\/projector +\d+s$/ })
+  expect(header?.text.length).toBe(EDGE)
+  expect(header?.props.color).toBe('subtle')
+  expect((await ui.findAll({ type: 'Text' })).map(found => found.text)).toEqual([
+    header?.text,
+    ` ${TAGLINE}`,
+    'ctrl+x tab to focus'.padStart(EDGE),
+  ])
+  expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
   await ui.unmount()
 
   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
   const texts = (await desktop.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts[0]).toBe(` ${TAGLINE}`)
-  expect(texts.filter(text => text.includes('─'))).toEqual([])
+  expect(texts).toEqual([` ${TAGLINE}`])
+  expect(await desktop.find({ key: 'panel' })).toBeUndefined()
   await desktop.unmount()
 })
 
@@ -1079,10 +1412,9 @@ test('asks through the tool, and the band lists the question below the pull requ
   await clock.advance(1)
   await clock.settle()
   const ui = await $.ui.mount(BAND)
-  // The divider starts with one `─` and the count, and its rule runs from the count to the reload's age, so the
-  // row still ends at bodyColumns.
-  const divider = await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })
-  expect(divider?.text.length).toBe(BAND.props.bodyColumns)
+  // The header counts the pull request and then the question before the reload's age, ending at the panel's edge.
+  const header = await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })
+  expect(header?.text.length).toBe(EDGE)
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts).toContain('Conflicting change')
   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
@@ -1233,7 +1565,7 @@ test('a question asked from the shell shows the hidden band within a tick', asyn
   await ui.unmount()
 })
 
-test('an idle session with no questions starts no project process', async ($, on) => {
+test('an idle session with no questions runs no inbox command', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
@@ -1241,9 +1573,10 @@ test('an idle session with no questions starts no project process', async ($, on
   await clock.advance(3 * TICK)
   await clock.settle()
 
-  expect(session.project()).toEqual([])
+  // Listing the store's directory starts no process; only a reload of the shown band reads the panel's setting.
+  expect(session.project().filter(command => !command.startsWith('config get'))).toEqual([])
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -1267,9 +1600,13 @@ test('an option puts the question and its answer in the prompt, and sending it a
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:1' })
-  // The open question has the band to itself, the divider included, so it is the top row.
+  // The open question has the panel to itself, its header included, so it is the top row, and the key hint stays
+  // the last.
+  expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
+  expect((await ui.findAll({ type: 'Text' }))[0]?.text).toBe('Decline the finding?')
+  expect((await ui.findAll({ type: 'Text' })).at(-1)?.text.trimStart()).toBe('ctrl+x tab to focus')
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /─+ \d+s$/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('The loop caps retries at three.')
   // An answer in your own words goes through discuss, so only the options are numbered.
@@ -1322,7 +1659,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
 
   await ui.press({ key: 'close:1' })
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
   await clock.advance(30_000 + TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
@@ -1466,7 +1803,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   expect(session.store.store.get('1')).toEqual(asked)
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
 
   // The question waits for its agent to settle it, and the band sends nothing.
   await clock.advance(TICK)
@@ -1746,7 +2083,7 @@ test('a subagent tells through the tool, and the band lists the notice in gray',
   await clock.advance(1)
   await clock.settle()
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 notice ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
   expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBe('inactive')
   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
@@ -1817,10 +2154,11 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   await startSession($, clock)
 
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question · 1 notice ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question · 1 notice  \d+s$/ })).toBeDefined()
   await ui.press({ key: 'item:2' })
-  // An open notice has the band to itself, the divider included, as an open question does.
-  expect(await ui.find({ type: 'Text', text: /─+ \d+s$/ })).toBeUndefined()
+  // An open notice has the panel to itself, its header included, as an open question does.
+  expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
+  expect(await ui.find({ type: 'Text', text: /^\/projector/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe('The file held a debug token.')
   expect(await ui.find({ type: 'Text', text: ' (recommended)' })).toBeUndefined()
@@ -1861,7 +2199,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
 
   await ui.press({ key: 'close:2' })
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
   await clock.advance(30_000 - 2 * TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
@@ -1889,7 +2227,7 @@ test('the withdraw tool takes an item out of the band at once, and nothing goes 
   // Before the band reads the store again, the item has gone and its drawer with it.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 notice ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
 
   await clock.advance(TICK)
@@ -1964,7 +2302,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
   expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
 
   // The answer you chose from the old text answers nothing.
   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
@@ -2161,9 +2499,9 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   await clock.settle()
   expect(session.project()).toContain('inbox snooze 1 --for 60 --session s1 --json')
   expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
-  // Each stays listed for 30 seconds, out of the divider's counts, and then leaves the band.
+  // Each stays listed for 30 seconds, out of the header's counts, and then leaves the band.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
   await clock.advance(30_000 + TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
@@ -2184,7 +2522,7 @@ test('snooze hides either kind for an hour, then brings a hidden band back', asy
   expect(await woken.find({ type: 'Text', text: ENGINE_BAND })).toBeUndefined()
   expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
-  expect(await woken.find({ type: 'Text', text: /^─ 1 pull request · 1 question · 1 notice ─+ \d+s$/ })).toBeDefined()
+  expect(await woken.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question · 1 notice  \d+s$/ })).toBeDefined()
   await woken.unmount()
 })
 
@@ -2309,7 +2647,7 @@ test('an item whose snooze ends while the band is hidden is drawn the moment the
   await clock.settle()
   const woken = await $.ui.mount(BAND)
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
-  expect(await woken.find({ type: 'Text', text: /^─ 1 pull request · 1 notice ─+ \d+s$/ })).toBeDefined()
+  expect(await woken.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
 
   await clock.advance(10 * TICK)
   await clock.settle()
@@ -2401,7 +2739,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
   await ui.press({ key: 'snooze-60:2' })
   await clock.settle()
   expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
-  // The drawer closes, and the line stays in the subtle color, not struck through, out of the divider's count.
+  // The drawer closes, and the line stays in the subtle color, not struck through, out of the header's count.
   expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
   const snoozed = await line()
   expect([snoozed?.props.color, snoozed?.props.dimColor, snoozed?.props.strikethrough]).toEqual([
@@ -2409,7 +2747,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
     undefined,
     false,
   ])
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
 
   // Its line opens the drawer again, where unsnooze takes snooze's place.
   await ui.press({ key: 'item:2' })
@@ -2462,7 +2800,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
   const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
   expect([line?.props.color, line?.props.strikethrough]).toEqual(['permission', false])
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 1 question ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
   await clock.advance(TICK)
   await clock.settle()
   expect(session.submitted.map(one => one.text)).toEqual(['RESTORED 1 Decline the finding?'])
@@ -2517,7 +2855,7 @@ test('a restore brings a hidden band back, from the tool or from a terminal, as 
     expect(await isHidden()).toBe(false)
   }
   const ui = await $.ui.mount(BAND)
-  expect(await ui.find({ type: 'Text', text: /^─ 1 pull request · 2 questions · 1 notice ─+ \d+s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -3091,7 +3429,7 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
   await ui.unmount()
 })
 
-test('an open item’s line ends in a rule to the band’s edge on a terminal, beside its Button', async ($, on) => {
+test('an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const long = 'Should the band '.padEnd(112, 'x')
@@ -3100,12 +3438,13 @@ test('an open item’s line ends in a rule to the band’s edge on a terminal, b
   const ui = await $.ui.mount(BAND)
   const rule = async () => (await ui.find({ type: 'Text', text: /^ ─+$/ }))?.text
 
-  // The rule fills the row: `0: `, the subject, a space and the rule, then ` #7` and ` 2m`, end at bodyColumns.
+  // The rule fills the panel's line: `0: `, the subject, a space and the rule, then ` #7` and ` 2m`, end at the
+  // rows' edge, five columns short of bodyColumns, where the rows' ages end.
   await ui.press({ key: 'item:1' })
   const drawn = await rule()
-  expect(drawn).toBe(` ${'─'.repeat(90)}`)
+  expect(drawn).toBe(` ${'─'.repeat(85)}`)
   expect('0: '.length + 'Decline the finding?'.length + (drawn ?? '').length + ' #7'.length + ' 2m'.length).toBe(
-    BAND.props.bodyColumns,
+    COLUMNS,
   )
   // It sits beside the line's Button, so a hover or the focus ring inverts the title alone, and it draws in the
   // default color while an open question's title takes `permission`.
@@ -3121,7 +3460,7 @@ test('an open item’s line ends in a rule to the band’s edge on a terminal, b
   expect(await rule()).toBeUndefined()
   await ui.unmount()
 
-  // Another surface draws the title alone, as it draws no divider.
+  // Another surface draws the title alone, as it draws no header.
   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
   await desktop.press({ key: 'close:2' })
   await desktop.press({ key: 'item:1' })
