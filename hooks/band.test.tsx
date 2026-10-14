@@ -1,4 +1,4 @@
-import type { AgentInfo, ConfigRow, FsEntry, On } from 'claude-code'
+import type { AgentInfo, ConfigRow, FsEntry, On, PromptEditInput, PromptEditResult } from 'claude-code'
 import { expect, mock, test, type Engine, type Mounted } from 'claude-code/testing'
 
 import type { Notice, Question } from './types'
@@ -247,6 +247,7 @@ test('draws no panel and no header on a surface that does not lay text out in co
     const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
     expect(texts.filter(text => text.includes('─') || text.startsWith('/projector') || /\d+s$/.test(text))).toEqual([])
     expect(texts[0]).toBe('ready')
+    expect(texts).not.toContain('ctrl+x tab to focus')
     expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
     await ui.unmount()
   }
@@ -259,7 +260,7 @@ const inPanel = (backgroundColor: string) => ({
   children: [
     {
       type: 'Box',
-      props: { width: COLUMNS + 2, paddingLeft: 1, paddingRight: 1, paddingBottom: 1, backgroundColor },
+      props: { width: COLUMNS + 2, paddingLeft: 1, paddingRight: 1, backgroundColor },
     },
   ],
 })
@@ -277,13 +278,66 @@ test('in a terminal the band draws as one panel, inset a column and padded, on a
   await clock.settle()
 
   const ui = await $.ui.mount(BAND)
-  // The panel pads one column at each side and one row at its bottom, none at its top, where its header sits, and
-  // ends at bodyColumns, where the engine draws the band's `[-]`. A band that has read no theme takes
+  // The panel pads one column at each side, and no row: its header is its first line and its key hint its last.
+  // It ends at bodyColumns, where the engine draws the band's `[-]`. A band that has read no theme takes
   // `inverseText`.
   expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
-  expect((await ui.find({ key: 'panel' }))?.props.paddingTop).toBeUndefined()
+  const panel = await ui.find({ key: 'panel' })
+  expect([panel?.props.paddingTop, panel?.props.paddingBottom]).toEqual([undefined, undefined])
   // Only the panel paints a background, so its inset keeps the terminal's.
   expect((await ui.findAll({ type: 'Box' })).filter(box => box.props.backgroundColor !== undefined)).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('the panel’s last line says how to focus the band, and once the band has the keyboard, which keys work', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#1\n' })
+  on('ui.focus', () => ({}))
+  on('prompt.edit', ($, e) => ({ text: e.text, cursor: e.cursor }))
+  const invalidated: string[] = []
+  on('ui.invalidate', ($, e, next) => {
+    invalidated.push(e.event)
+    return next(e)
+  })
+  // The person moves the ring onto a line of the band, as ctrl+x tab or Tab does, or types in the prompt.
+  const focus = (element: string) =>
+    $.ui.focus({ component: 'AbovePrompt', requestId: 'above-prompt', plugin: 'projector', element, origin: { kind: 'person' } })
+  // The kit raises `prompt.edit` as the prompt's editor does, though its typed `$` lists no call for it.
+  const prompt = $.prompt as unknown as { edit: (e: PromptEditInput) => Promise<PromptEditResult> }
+  const type = async (text: string) => {
+    await prompt.edit({ origin: { kind: 'composer' }, text: '', cursor: 0, start: 0, end: 0, inputText: text })
+    await clock.settle()
+  }
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  const hint = async () => {
+    const last = (await ui.findAll({ type: 'Text' })).at(-1)
+    return [last?.text.trimStart(), last?.props.color]
+  }
+  // With the keyboard in the prompt, the hint names the chord that moves it into the band. It sits at the right of
+  // a line as wide as the rows, so it ends in their age column. Typing redraws nothing.
+  expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
+  expect((await ui.findAll({ type: 'Text' })).at(-1)?.text).toBe('ctrl+x tab to focus'.padStart(COLUMNS))
+  await type('a')
+  expect(invalidated).toEqual([])
+
+  // Once the ring lands in the band, the hint names the keys that work there, and moving the ring on redraws
+  // nothing more.
+  await focus('pr:o/r#1')
+  expect(await hint()).toEqual(['esc to return · enter to open', 'subtle'])
+  await focus('pr:o/r#1')
+  expect(invalidated).toEqual(['ui.render'])
+
+  // Claude Code says nothing when Esc hands the keyboard back, so the next keystroke in the prompt puts the first
+  // hint back, and only that one redraws the band.
+  await type('b')
+  expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
+  await type('c')
+  expect(invalidated).toEqual(['ui.render', 'ui.render'])
   await ui.unmount()
 })
 
@@ -912,7 +966,11 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
   const header = await ui.find({ type: 'Text', text: /^\/projector +\d+s$/ })
   expect(header?.text.length).toBe(COLUMNS)
   expect(header?.props.color).toBe('subtle')
-  expect((await ui.findAll({ type: 'Text' })).map(found => found.text)).toEqual([header?.text, ` ${TAGLINE}`])
+  expect((await ui.findAll({ type: 'Text' })).map(found => found.text)).toEqual([
+    header?.text,
+    ` ${TAGLINE}`,
+    'ctrl+x tab to focus'.padStart(COLUMNS),
+  ])
   expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
   await ui.unmount()
 
@@ -1491,9 +1549,11 @@ test('an option puts the question and its answer in the prompt, and sending it a
 
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'item:1' })
-  // The open question has the panel to itself, its header included, so it is the top row.
+  // The open question has the panel to itself, its header included, so it is the top row, and the key hint stays
+  // the last.
   expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
   expect((await ui.findAll({ type: 'Text' }))[0]?.text).toBe('Decline the finding?')
+  expect((await ui.findAll({ type: 'Text' })).at(-1)?.text.trimStart()).toBe('ctrl+x tab to focus')
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^\/projector/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()

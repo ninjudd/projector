@@ -123,6 +123,8 @@ declare module 'claude-code' {
       bandThemeBackground: string
       /** `panel.background` as the band last read it: `auto`, or a color a surface can draw. */
       bandBackground: string
+      /** Whether the band took the keyboard since the last keystroke in the prompt, so its hint names its own keys. */
+      isBandFocused: boolean
     }
   }
 }

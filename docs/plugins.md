@@ -200,6 +200,7 @@ session starts a loop's watcher for the first time.
        8: dismiss PR
        open in github
        open in projector
+                                                            ctrl+x tab to focus
 ```
 
 Each line is the pull request's number, `draft` or `ready`, its author when
@@ -221,8 +222,8 @@ watcher, `watch-prs.sh`, track is listed once.
 In a terminal, the band draws as one panel on a background of its own, so
 a line that moves as the band scrolls is plainly the band's. The panel is
 inset one column from the terminal's edge and padded one column at each
-side and one row at its bottom, and it ends where Claude Code's `[-]`,
-which collapses the band, begins. Its background follows your Claude Code
+side, and it ends where Claude Code's `[-]`, which collapses the band,
+begins. Its background follows your Claude Code
 theme, a step darker than the terminal so that the panel reads as a sunken
 surface:
 
@@ -248,9 +249,19 @@ their ages: in the short form, such as `12s`, and ending in their column. A
 reload just now reads `0s`, as an item posted just now does. A count of zero
 is left out, so a band with nothing to count shows `/projector` and the
 time alone. The rows start on the line under the header.
+
+The panel's last line is a key hint, also in `subtle`, at its right, so it
+ends in the ages' column. While the prompt has the keyboard, it reads
+`ctrl+x tab to focus`. Once the band has the keyboard, it reads
+`esc to return · enter to open`. Claude Code says nothing when Esc gives the
+keyboard back, so that hint stays until you next type in the prompt. The
+hint leaves the arrow keys out, because which of them moves between lines
+depends on whether the band scrolls, as
+[Use the band from the keyboard](#use-the-band-from-the-keyboard) describes.
+
 Claude Desktop, VS Code, and the mobile app do not set the band's text in a
-terminal's columns, so they draw no panel and no header, and there the band
-starts with its first row.
+terminal's columns, so they draw no panel, no header, and no hint, and there
+the band starts with its first row.
 
 When a poll cannot reach GitHub, the band keeps showing the pull requests
 GitHub gave last, and the header's time shows how old they are. It shows
@@ -367,6 +378,7 @@ the pull requests, before its time.
   - Run project init to add the publish rule?                          2m
   - Decline the finding about the retry budget?                  #337  5m
   - Force-pushed #337 to drop a stray debug file                 #337  1m
+                                                      ctrl+x tab to focus
 ```
 
 Click anywhere on an item to open its drawer, and click it again to close
@@ -395,6 +407,7 @@ item's first letter:
      7: discuss question
      8: dismiss question
      9: snooze question
+                                                      ctrl+x tab to focus
 ```
 
 The first option is always the agent's recommendation. Press an option by
@@ -562,6 +575,9 @@ it:
 - **Enter** presses what the ring is on, as a click does.
 - **Esc** gives the keyboard back to the prompt.
 - **ctrl+x ctrl+a** collapses the band to one line, and shows it again.
+
+In a terminal, the panel's last line names the chord that takes the
+keyboard in, and once the band has it, Esc and Enter.
 
 Enter on a line opens its drawer and moves the ring onto the drawer's first
 control: a question's first option, otherwise **discuss**. Tab then walks

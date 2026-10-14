@@ -1923,8 +1923,8 @@ divider's place:
 
 - **One panel.** In a terminal, every line of the band sits in one `Box`
   with a background. One column of the terminal's own background comes
-  first, `PANEL_INSET`, and then the panel, padded one column at each side
-  and one row at its bottom, `PANEL_PADDING`. The panel ends at
+  first, `PANEL_INSET`, and then the panel, padded one column at each side,
+  `PANEL_PADDING`. The panel ends at
   `bodyColumns`, where Claude Code draws the band's `[-]`, so its lines are
   `bodyColumns - 3` wide, and every width the band works out, the header's
   and an open item's rule's, uses that.
@@ -1934,6 +1934,18 @@ divider's place:
   right, two spaces apart, so the age ends in the rows' age column. With
   nothing to count, it is `/projector` and the age. The blank line under the
   divider goes too, so the rows start on the next line.
+- **A key hint is the panel's last line.** It takes the place a row of
+  bottom padding would, so the panel keeps its height, and it is one `Text`
+  in `subtle` at the panel's right, ending in the ages' column. While the
+  prompt has the keyboard it reads `ctrl+x tab to focus`, and once the band
+  has it, `esc to return · enter to open`. A `ui.focus` hook on the band's
+  site marks the band focused, in its state as `isBandFocused`, and redraws
+  it. Claude Code reports nothing when Esc gives the keyboard back, so a
+  `prompt.edit` hook clears the mark at the next keystroke in the prompt.
+  Only that keystroke redraws the band, and the hook waits on nothing, so
+  typing stays as fast as before. The hint leaves the arrow keys out: which
+  of them moves between lines depends on whether the band scrolls, so one
+  fixed hint would be wrong half the time.
 - **Every layout draws in the panel.** The list, an open item's drawer, and
   the empty band with its tagline all do. An open item's drawer still has
   the band to itself: the header steps aside, as the divider did, and the
@@ -1988,6 +2000,9 @@ divider's place:
   that shows and hides the band. The counts sit beside the age at the right,
   and the two spaces before the age match the gap before a row's age, as in
   `approved  1d`.
+- **The keys where you look.** The owner previewed the hint in a session
+  mod and kept it: the panel's bottom row was padding, and now it says how
+  to reach the band's keyboard and how to leave it.
 - **The header steps aside for a drawer.** An open item's line already ends
   in a rule to the panel's edge, so it serves as the panel's top bar, as it
   served as the band's.
@@ -1996,11 +2011,12 @@ divider's place:
 
 | Behavior | Test |
 | --- | --- |
-| In a terminal, the band is one `Box` with one column of inset and no background, holding one panel `bodyColumns - 1` wide, padded one column at each side and one row at its bottom, which alone paints a background | `in a terminal the band draws as one panel, inset a column and padded, on a background of its own` in `hooks/band.test.tsx` |
+| In a terminal, the band is one `Box` with one column of inset and no background, holding one panel `bodyColumns - 1` wide, padded one column at each side and no row, which alone paints a background | `in a terminal the band draws as one panel, inset a column and padded, on a background of its own` in `hooks/band.test.tsx` |
 | The header reads `/projector` at the left and `2 pull requests  0s` at the right of a `bodyColumns - 3` line, in `subtle`, with no `─`, and the first row follows it with no blank line | `draws one line per open pull request of the session’s own loops` |
 | The header puts the pull request count before the item counts, `bodyColumns - 3` wide | `asks through the tool, and the band lists the question below the pull requests`, and the inbox tests that find the header by its counts |
 | With nothing to count, the header is `/projector` and the age, and the tagline draws in the panel under it | `shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request` |
 | An open question's or notice's drawer draws in the panel, with no header, its line the top row | `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
+| The last line reads `ctrl+x tab to focus` in `subtle`, ending in the rows' age column, then `esc to return · enter to open` once a `ui.focus` lands, and the first again at the next prompt edit; only a change of hint redraws the band, and an edit with no mark set redraws nothing | `the panel’s last line says how to focus the band, and once the band has the keyboard, which keys work` |
 | An open item's rule ends at the panel's edge, 87 columns at a `bodyColumns` of 120 | `an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button` |
 | Claude Desktop, VS Code, and the mobile app draw no panel, no background, and no header | `draws no panel and no header on a surface that does not lay text out in columns` |
 | `dark`, `light`, their daltonized themes, the ANSI themes, custom themes built on each, one with no `base`, and one with no file each get their color | `the panel is <color> on the <theme> theme`, one test for each |

@@ -107,11 +107,20 @@ const MIN_RULE = 3
 
 /**
  * In a terminal the band draws as one panel: inset this many columns in the
- * terminal's own background, then padded this many columns at each side and
- * rows at its bottom in the panel's.
+ * terminal's own background, then padded this many columns at each side in
+ * the panel's.
  */
 const PANEL_INSET = 1
 const PANEL_PADDING = 1
+
+/**
+ * The panel's last line names its keys, at its right, so it ends where the
+ * ages do: the chord that takes the keyboard into the band, and once the
+ * band has it, the keys that work there. The arrows stay out, because which
+ * of them moves between lines depends on whether the band scrolls.
+ */
+const FOCUS_HINT = 'ctrl+x tab to focus'
+const FOCUSED_HINT = 'esc to return · enter to open'
 
 /** What the panel's header starts with, at its left: the command that shows and hides the band. */
 const HEADER_NAME = '/projector'
@@ -158,6 +167,7 @@ const items = atom({ plugin: 'projector', key: 'bandInbox' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
 const themeBackground = atom({ plugin: 'projector', key: 'bandThemeBackground' } as const, OTHER_BACKGROUND)
 const background = atom({ plugin: 'projector', key: 'bandBackground' } as const, AUTO)
+const isFocused = atom({ plugin: 'projector', key: 'isBandFocused' } as const, false)
 
 // The session keeps its state across a reload or an update of the plugin,
 // so a value an earlier version wrote can have another shape.
@@ -1048,14 +1058,32 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   // Enter presses the band's element under the ring, so where the ring is
-  // tells a press from the keyboard from a click.
+  // tells a press from the keyboard from a click. A ring that lands also
+  // means the band holds the keyboard, so its hint names the keys that work
+  // there.
   on('ui.focus', { component: 'AbovePrompt' }, async ($, e, next) => {
     const moved = await next(e)
     if (moved.deny === undefined) {
       ring = { requestId: e.requestId, key: e.plugin === 'projector' ? e.element : undefined }
+      if (!(await read($, isFocused))) {
+        await update($, isFocused, () => true)
+        $.ui.invalidate('ui.render')
+      }
     }
     return moved
   }).catch(($, e, next) => next(e))
+
+  // Claude Code reports no event when Esc gives the keyboard back to the
+  // prompt, so the band's focused hint stays until the next keystroke in the
+  // prompt. Only that first keystroke redraws the band; it waits on nothing.
+  on('prompt.edit', ($, e, next) => {
+    void (async () => {
+      if (!(await read($, isFocused))) return
+      await update($, isFocused, () => false)
+      $.ui.invalidate('ui.render')
+    })().catch(() => undefined)
+    return next(e)
+  })
 
   // A turn may have pushed, replied or resolved threads.
   on('turn.complete', ($, e, next) => {
@@ -1139,6 +1167,7 @@ export const register: Register = on => {
     const columns = e.props.bodyColumns - PANEL_INSET - 2 * PANEL_PADDING
     const setting = await read($, background)
     const color = setting === AUTO ? await read($, themeBackground) : setting
+    const hint = (await read($, isFocused)) ? FOCUSED_HINT : FOCUS_HINT
     const panel = (lines: RenderChildren) =>
       isPanel ? (
         <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>
@@ -1148,10 +1177,12 @@ export const register: Register = on => {
             width={columns + 2 * PANEL_PADDING}
             paddingLeft={PANEL_PADDING}
             paddingRight={PANEL_PADDING}
-            paddingBottom={PANEL_PADDING}
             backgroundColor={color}
           >
             {lines}
+            <Text key="hint" color="subtle">
+              {hint.padStart(columns)}
+            </Text>
           </Box>
         </Box>
       ) : (
