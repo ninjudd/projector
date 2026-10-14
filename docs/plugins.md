@@ -256,9 +256,9 @@ The panel's last line is a key hint, also in `subtle`, at its right, so it
 ends in the ages' column. While the prompt has the keyboard, it reads
 `ctrl+x tab to focus`. Once the band has the keyboard, it reads
 `esc to return · enter to open`. Claude Code says nothing when Esc gives the
-keyboard back, so that hint stays until you next type in the prompt. The
-hint leaves the arrow keys out, because which of them moves between lines
-depends on whether the band scrolls, as
+keyboard back, so that hint stays until you next type in the prompt or send
+a prompt from it. The hint leaves the arrow keys out, because which of them
+moves between lines depends on whether the band scrolls, as
 [Use the band from the keyboard](#use-the-band-from-the-keyboard) describes.
 
 Claude Desktop, VS Code, and the mobile app do not set the band's text in a

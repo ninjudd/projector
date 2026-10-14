@@ -787,6 +787,16 @@ function show($: Engine): void {
 }
 
 /**
+ * Puts the band's key hint back on the chord into the band once the prompt
+ * has the keyboard again. Only a change of hint redraws the band.
+ */
+async function unfocus($: Engine): Promise<void> {
+  if (!(await read($, isFocused))) return
+  await update($, isFocused, () => false)
+  $.ui.invalidate('ui.render')
+}
+
+/**
  * Moves the band's focus ring onto one of its elements, which the engine
  * waits for when the band has yet to draw it, and writes why the ring stayed
  * to the debug log when the engine refuses the move.
@@ -1011,6 +1021,10 @@ export const register: Register = on => {
     // a pull request it tracks has changed.
     if (e.origin.kind === 'task-notification') soon($)
 
+    // A prompt sent from the terminal means the prompt has the keyboard, even
+    // when no keystroke edited it since Esc, as with one a drawer filled.
+    if (e.origin.kind === 'composer') void unfocus($).catch(() => undefined)
+
     // An answer the band submitted for the main loop has arrived. Seeing it
     // here, rather than only where the band submitted it, settles it after a
     // reload of the module too.
@@ -1078,13 +1092,10 @@ export const register: Register = on => {
 
   // Claude Code reports no event when Esc gives the keyboard back to the
   // prompt, so the band's focused hint stays until the next keystroke in the
-  // prompt. Only that first keystroke redraws the band; it waits on nothing.
+  // prompt, or until a prompt is sent from it. Only that first keystroke
+  // redraws the band; it waits on nothing.
   on('prompt.edit', ($, e, next) => {
-    void (async () => {
-      if (!(await read($, isFocused))) return
-      await update($, isFocused, () => false)
-      $.ui.invalidate('ui.render')
-    })().catch(() => undefined)
+    void unfocus($).catch(() => undefined)
     return next(e)
   })
 

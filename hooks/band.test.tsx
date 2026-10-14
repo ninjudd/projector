@@ -302,6 +302,7 @@ test('the panel’s last line says how to focus the band, and once the band has 
   world(on, { [REVIEW]: 'o/r#1\n' })
   on('ui.focus', () => ({}))
   on('prompt.edit', ($, e) => ({ text: e.text, cursor: e.cursor }))
+  on('prompt.submit', ($, e) => ({ text: e.text }))
   const invalidated: string[] = []
   on('ui.invalidate', ($, e, next) => {
     invalidated.push(e.event)
@@ -345,6 +346,19 @@ test('the panel’s last line says how to focus the band, and once the band has 
   expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
   await type('c')
   expect(invalidated).toEqual(['ui.render', 'ui.render'])
+
+  // Sending a prompt from the terminal with no keystroke since Esc, as one a drawer filled, puts it back too, and
+  // only once.
+  const send = async () => {
+    await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } })
+    await clock.settle()
+  }
+  await focus('pr:o/r#1')
+  expect(await hint()).toEqual(['esc to return · enter to open', 'subtle'])
+  await send()
+  expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
+  await send()
+  expect(invalidated).toEqual(['ui.render', 'ui.render', 'ui.render', 'ui.render'])
   await ui.unmount()
 })
 

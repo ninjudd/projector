@@ -1946,9 +1946,11 @@ divider's place:
   has it, `esc to return · enter to open`. A `ui.focus` hook on the band's
   site marks the band focused, in its state as `isBandFocused`, and redraws
   it. Claude Code reports nothing when Esc gives the keyboard back, so a
-  `prompt.edit` hook clears the mark at the next keystroke in the prompt.
-  Only that keystroke redraws the band, and the hook waits on nothing, so
-  typing stays as fast as before. The hint leaves the arrow keys out: which
+  `prompt.edit` hook clears the mark at the next keystroke in the prompt,
+  and the `prompt.submit` hook at a prompt sent from the terminal, such as
+  one a drawer filled, which no keystroke edited. Only the first of those
+  redraws the band, and neither hook waits on it, so typing stays as fast
+  as before. The hint leaves the arrow keys out: which
   of them moves between lines depends on whether the band scrolls, so one
   fixed hint would be wrong half the time.
 - **Every layout draws in the panel.** The list, an open item's drawer, and
@@ -2026,7 +2028,7 @@ divider's place:
 | The header puts the pull request count before the item counts, `bodyColumns - 4` wide | `asks through the tool, and the band lists the question below the pull requests`, and the inbox tests that find the header by its counts |
 | With nothing to count, the header is `/projector` and the age, and the tagline draws in the panel under it | `shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request` |
 | An open question's or notice's drawer draws in the panel, with no header, its line the top row | `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
-| The last line reads `ctrl+x tab to focus` in `subtle`, ending in the rows' age column, then `esc to return · enter to open` once a `ui.focus` lands, and the first again at the next prompt edit; only a change of hint redraws the band, and an edit with no mark set redraws nothing | `the panel’s last line says how to focus the band, and once the band has the keyboard, which keys work` |
+| The last line reads `ctrl+x tab to focus` in `subtle`, ending in the rows' age column, then `esc to return · enter to open` once a `ui.focus` lands, and the first again at the next prompt edit or a prompt sent from the terminal; only a change of hint redraws the band, and an edit with no mark set redraws nothing | `the panel’s last line says how to focus the band, and once the band has the keyboard, which keys work` |
 | An open item's rule ends at the rows' edge, 85 columns at a `bodyColumns` of 120 | `an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button` |
 | The header's age, a pull request's age, and the key hint end in one column: the header and hint start one column before the rows and are one column wider | `the header’s age, a pull request’s age, and the key hint end in one column` |
 | Claude Desktop, VS Code, and the mobile app draw no panel, no background, and no header | `draws no panel and no header on a surface that does not lay text out in columns` |
