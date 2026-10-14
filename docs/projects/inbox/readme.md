@@ -2123,3 +2123,61 @@ the drawer anymore".
 | --- | --- |
 | An open question's line is its subject in `permission`, its pull request, and its age, with no `─`, on a terminal and on another surface, and a subject too long for the line draws none either | `an open item’s line draws its title with no rule after it` in `hooks/panel.test.tsx` |
 | An open notice's line draws no `─` either | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle `` |
+
+## 23. Take only colors that look right in panel.background
+
+§ 20 let `panel.background` hold any value whose characters a surface takes
+as a color, at most 40 of them. That guarded against a value such as
+`ansi:black`, which makes Claude Code refuse the panel's whole tree, but
+not against a theme key's name it does not know. The #336 review found
+that Claude Code draws such a name, a typo like `inverseTxt` included, as
+no color at all, so the panel lost its background without a word, while
+`docs/plugins.md` said a value Claude Code cannot draw falls back to the
+theme.
+
+### 23.1 What changes
+
+- **An exact list.** `panel.background` takes `auto`, a literal color, or
+  one of three aliases, and nothing else:
+  - **Literal colors** draw as written: `rgb(r,g,b)` and `ansi256(n)` with
+    each number from 0 to 255, written as Claude Code reads them, with a
+    space allowed after `(`, each comma, and before `)`; and `#rgb` or
+    `#rrggbb`.
+  - **`sidebar`** draws the theme key `composerSidebarBackground`, the grey
+    of Claude Code's side panel.
+  - **`black`** draws `rgb(0,0,0)`, and **`white`** draws
+    `rgb(255,255,255)`.
+- **No theme key names.** `inverseText`, `composerSidebarBackground`,
+  `text`, `subtle`, and every other key are refused. Any value outside the
+  list falls back to `auto`, and the panel's one toast names what it takes.
+- **The panel owns the list.** `BACKGROUND_ALIASES` and the literal color
+  patterns live in `hooks/register.tsx`. `SETTINGS` keeps `panel.background`
+  a plain string, so `project config set` stores any string, and the panel
+  decides what it draws.
+
+### 23.2 Why this design
+
+- **Only shades that look right.** The owner first asked for Claude Code's
+  23 public theme keys and `composerSidebarBackground`, then narrowed it:
+  most theme colors are text colors that make a poor background. Three
+  aliases cover the shades worth having, with names a person would type.
+- **No `subtle`.** It was an alias until the owner dropped it: the panel
+  draws its header, hint, ages, labels, and counts in `subtle`, so on a
+  `subtle` background they would vanish.
+- **`black` and `white` stay put.** `inverseText` flips between black and
+  white with the theme, and `ansi256(0)` is the terminal palette's black,
+  which is often the terminal's own background, so the panel would vanish.
+  Literal `rgb()` values draw the same on every theme.
+- **One owner for the list.** The plugin and the CLI install and upgrade
+  apart. A panel that trusted the CLI's verdict would, under an older CLI,
+  pass through a value such as `ansi:black`, which makes Claude Code refuse
+  the whole tree and draw nothing. Keeping the list in the CLI as well would
+  be two copies to keep in step. So the panel, which is what draws the
+  color, checks it, and the CLI's schema stays a string.
+
+### 23.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| `#abc`, `#FFFFFF`, `rgb(0,0,0)`, `rgb(255, 255, 255)`, `rgb( 30,30,40 )`, `ansi256(0)`, and `ansi256(255)` draw as written, and `sidebar`, `black`, and `white` draw `composerSidebarBackground`, `rgb(0,0,0)`, and `rgb(255,255,255)` | `panel.background colors the panel, and auto or no value leaves the color to the theme` in `hooks/panel.test.tsx` |
+| `rgb(256,0,0)`, `rgb(1,2)`, `ansi256(256)`, `#12345`, `#abcd`, `inverseText`, `composerSidebarBackground`, `text`, `subtle`, `sidebr`, `gray`, an empty string, and a number each draw the theme's color, with one toast per value naming what the panel takes | `a panel.background the panel does not take leaves the color to the theme, and the panel says so once` |

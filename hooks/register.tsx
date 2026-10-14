@@ -143,11 +143,38 @@ const BACKGROUND_KEY = 'panel.background'
 const AUTO = 'auto'
 
 /**
- * What a surface takes as a color, a theme key or a raw one alike: these
- * characters, at most 40 of them. It refuses the panel's whole tree over any
- * other, such as `ansi:black` or an empty string.
+ * The names `panel.background` takes besides `auto` and a literal color, and
+ * what each draws. Claude Code draws any theme key by name, but the panel
+ * refuses the others by choice: most are text colors that look wrong as a
+ * background, and a misspelled name, which is no key, draws nothing at all.
+ * `subtle` is refused too, as the color of the panel's own muted text, which
+ * would vanish on it. `black` and `white` are literal colors: `inverseText`
+ * flips between the two with the theme, and `ansi256(0)` is the terminal
+ * palette's black, often the terminal's own background, which would make the
+ * panel vanish.
  */
-const PAINTABLE = /^[\w#(),.% -]{1,40}$/
+const BACKGROUND_ALIASES = new Map([
+  ['sidebar', 'composerSidebarBackground'],
+  ['black', 'rgb(0,0,0)'],
+  ['white', 'rgb(255,255,255)'],
+])
+
+/**
+ * The literal colors `panel.background` takes, written as Claude Code reads
+ * them: `#rgb` or `#rrggbb`, and `rgb(r,g,b)` or `ansi256(n)`, with a space
+ * allowed after `(`, each comma, and before `)`. Each number is at most 255.
+ */
+const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
+const NUMBERED_COLORS = [/^rgb\( ?(\d{1,3}), ?(\d{1,3}), ?(\d{1,3}) ?\)$/, /^ansi256\( ?(\d{1,3}) ?\)$/]
+
+/** What the panel draws for a `panel.background` value other than `auto`, or undefined when it takes none. */
+function backgroundFor(value: string): string | undefined {
+  const alias = BACKGROUND_ALIASES.get(value)
+  if (alias !== undefined) return alias
+  if (HEX_COLOR.test(value)) return value
+  const numbers = NUMBERED_COLORS.map(pattern => pattern.exec(value)).find(match => match !== null)
+  return numbers?.slice(1).every(number => Number(number) <= 255) === true ? value : undefined
+}
 
 /** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
 const SNOOZES = [
@@ -340,12 +367,13 @@ async function paint($: Engine, theme: unknown): Promise<void> {
   await update($, themeBackground, () => color)
 }
 
-/** The `panel.background` values the panel said it cannot draw, so it says so once for each. */
+/** The `panel.background` values the panel said it does not take, so it says so once for each. */
 const unpaintable = new Set<string>()
 
 /**
  * Reads `panel.background` through the CLI, which merges the `.projector.toml`
- * files. A value no surface can draw leaves the color to the theme, and the
+ * files. The panel alone decides which values it takes, so the CLI stores any
+ * string. A value it does not take leaves the color to the theme, and the
  * panel says so once. A read that fails keeps the value the panel last read,
  * and the next reload reads it again.
  */
@@ -354,15 +382,15 @@ async function readBackground($: Engine): Promise<void> {
     const ran = await project($, ['config', 'get', BACKGROUND_KEY, '--default', AUTO, '--json'])
     if (ran.exitCode !== 0) return
     const value = (JSON.parse(ran.stdout) as { value?: unknown }).value ?? AUTO
-    const isPaintable = typeof value === 'string' && value.trim() !== '' && PAINTABLE.test(value)
+    const color = value === AUTO ? AUTO : typeof value === 'string' ? backgroundFor(value) : undefined
     const written = JSON.stringify(value)
-    if (!isPaintable && !unpaintable.has(written)) {
+    if (color === undefined && !unpaintable.has(written)) {
       unpaintable.add(written)
       void $.ui.toast(
-        `projector: ${BACKGROUND_KEY} is ${written}, not a color the panel can draw, so the panel takes its color from the theme`,
+        `projector: ${BACKGROUND_KEY} is ${written}, which is not rgb(r,g,b), #rrggbb, ansi256(n), sidebar, black or white, so the panel takes its color from the theme`,
       )
     }
-    await update($, background, () => (isPaintable ? value : AUTO))
+    await update($, background, () => color ?? AUTO)
   } catch {
     // The next reload reads it again.
   }
