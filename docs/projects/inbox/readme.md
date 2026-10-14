@@ -1906,3 +1906,105 @@ keeps the default color:
 | With nothing to count, the divider is the rule and a `subtle` time, `bodyColumns` wide | `shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request` |
 | `conflict` and `changes requested` take `error`, `approved` takes `success`, and the thread count reads `N*` in `warning`; every ` · ` between notes takes the default color, and no line draws `⋮` | `` a pull request’s notes take their own colors, and each ` · ` between them the default color `` |
 | The thread count comes last, after `conflict`, as `conflict · 2*` | `a press on a pull request’s number opens its drawer, and discuss puts it in the prompt`, `draws one line per open pull request of the session’s own loops` |
+
+## 20. Draw the band as one panel
+
+In a terminal, the band drew its rows under a divider: § 19's rule with the
+counts and the reload's age set in it, and a blank line under it. It now
+draws as one panel on a background of its own, and a header takes the
+divider's place:
+
+```text
+  projector                  1 pull request · 2 questions · 1 notice  12s  [-]
+  #337 draft Retry failed webhook deliveries with backoff              1h
+```
+
+### 20.1 What changes
+
+- **One panel.** In a terminal, every line of the band sits in one `Box`
+  with a background. One column of the terminal's own background comes
+  first, `PANEL_INSET`, and then the panel, padded one column at each side
+  and one row at its bottom, `PANEL_PADDING`. The panel ends at
+  `bodyColumns`, where Claude Code draws the band's `[-]`, so its lines are
+  `bodyColumns - 3` wide, and every width the band works out, the header's
+  and an open item's rule's, uses that.
+- **A header, not a divider.** The divider's rule and its leading `─ ` go.
+  The panel's first line is its header, all in `subtle`: the word
+  `projector`, `HEADER_NAME`, at its left, and the counts and the reload's
+  age at its right, two spaces apart, so the age ends in the rows' age
+  column. With nothing to count, it is `projector` and the age. The blank
+  line under the divider goes too, so the rows start on the next line.
+- **Every layout draws in the panel.** The list, an open item's drawer, and
+  the empty band with its tagline all do. An open item's drawer still has
+  the band to itself: the header steps aside, as the divider did, and the
+  item's ` ───` rule fills the panel's narrower line.
+- **The background follows the theme.** `dark` and `dark-daltonized` draw on
+  `rgb(20,20,20)`, and `light` and `light-daltonized` on `rgb(240,240,240)`.
+  A custom theme, which the theme setting names `custom:<slug>`, takes the
+  color of its file's `base`, read from `themes/<slug>.json` under the Claude
+  config directory, `$CLAUDE_CONFIG_DIR` or `~/.claude`, and `dark` when the
+  file names none. Any other theme, such as `dark-ansi`, and a custom theme
+  whose file the band cannot read, take the theme key `inverseText`. The
+  band reads the theme from `$.config.list()` when the session starts, takes
+  a new one from `config.set` once `/theme` writes it, and keeps the color in
+  its state, so the render waits on no read.
+- **`panel.background` chooses another shade.** The setting is a string,
+  `auto` by default, in `SETTINGS` and in the settings table of
+  `docs/cli.md`. `auto` leaves the color to the theme, and any other value
+  is drawn as written, such as `rgb(30,30,40)`, `#1e1e28`, `ansi256(236)`,
+  or `inverseText`. The band reads it with
+  `project config get panel.background --default auto --json` when the
+  session starts and on each reload, so an edit shows without a restart, and
+  it never parses TOML itself. A value that no surface can draw, one longer
+  than 40 characters or with a character other than a letter, a digit, or
+  one of `#(),.%_ -`, such as `ansi:black` or an empty string, falls back to
+  `auto`, and the band says so once in a toast.
+- **Other surfaces are unchanged.** Claude Desktop, VS Code, and the mobile
+  app draw no panel and no header, as they drew no divider.
+
+### 20.2 Why this design
+
+- **The panel shows what moves.** With a background of its own, the band
+  reads as one surface, so when it scrolls, it is easy to tell which lines
+  are moving. That is the owner's main reason for the change.
+- **A sunken background, chosen for you.** The owner tried the theme's
+  `inverseText`, which is black on a dark theme, Claude Code's side-panel
+  grey, `composerSidebarBackground`, which is lighter than the terminal and
+  so looked raised, and fixed greys. The owner chose a step darker than the
+  terminal, which reads as a sunken surface, picked from the theme so that
+  it needs no configuration. An ANSI theme leaves its colors to the
+  terminal's palette, so the band cannot know what is a step darker, and it
+  falls back to `inverseText`.
+- **A setting for a preferred shade.** The default needs no configuration,
+  and `panel.background` is for someone who prefers another shade. It lives
+  in `.projector.toml` with Projector's other settings, so
+  `project config set` and `unset` change it, and the band reads it through
+  the CLI rather than parsing the file. Claude Code refuses the band's whole
+  tree over a color it cannot draw, so the band checks the value first and
+  draws on the theme's color rather than not at all.
+- **A header instead of a rule.** The background sets the band apart from
+  the transcript, so a rule and a blank line no longer have to. The word
+  `projector` at the left names whose panel it is, the counts sit beside the
+  age at the right, and the two spaces before the age match the gap before a
+  row's age, as in `approved  1d`.
+- **The header steps aside for a drawer.** An open item's line already ends
+  in a rule to the panel's edge, so it serves as the panel's top bar, as it
+  served as the band's.
+
+### 20.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| In a terminal, the band is one `Box` with one column of inset and no background, holding one panel `bodyColumns - 1` wide, padded one column at each side and one row at its bottom, which alone paints a background | `in a terminal the band draws as one panel, inset a column and padded, on a background of its own` in `hooks/band.test.tsx` |
+| The header reads `projector` at the left and `2 pull requests  0s` at the right of a `bodyColumns - 3` line, in `subtle`, with no `─`, and the first row follows it with no blank line | `draws one line per open pull request of the session’s own loops` |
+| The header puts the pull request count before the item counts, `bodyColumns - 3` wide | `asks through the tool, and the band lists the question below the pull requests`, and the inbox tests that find the header by its counts |
+| With nothing to count, the header is `projector` and the age, and the tagline draws in the panel under it | `shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request` |
+| An open question's or notice's drawer draws in the panel, with no header, its line the top row | `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
+| An open item's rule ends at the panel's edge, 87 columns at a `bodyColumns` of 120 | `an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button` |
+| Claude Desktop, VS Code, and the mobile app draw no panel, no background, and no header | `draws no panel and no header on a surface that does not lay text out in columns` |
+| `dark`, `light`, their daltonized themes, the ANSI themes, custom themes built on each, one with no `base`, and one with no file each get their color | `the panel is <color> on the <theme> theme`, one test for each |
+| A custom theme's file is read under `$CLAUDE_CONFIG_DIR` when it is set | `a custom theme’s file is read from the Claude config directory CLAUDE_CONFIG_DIR names` |
+| A theme picked in `/theme` recolors the panel at once, and a refused change leaves it | `a theme picked in /theme recolors the panel at once, and one the change refuses leaves it` |
+| `panel.background` is read through `project config get` and drawn as written, a change shows on the next reload, and `auto` or an unset key gives the theme's color | `panel.background colors the panel, and auto or no value leaves the color to the theme` |
+| A value no surface can draw gives the theme's color and one toast for each such value | `a panel.background no surface can draw leaves the color to the theme, and the band says so once` |
+| `panel.background` is a string key that `project config set` and `unset` change, and the settings table lists it | `test_the_panel_background_is_set_and_unset_as_the_band_reads_it` and `test_the_documented_keys_are_the_known_keys` in `tests/test_config.py` |

@@ -192,15 +192,14 @@ line each. Run `/projector` to show or hide the band. It also appears when the
 session starts a loop's watcher for the first time.
 
 ```text
-─ 2 pull requests ────────────────────────────────────────────────────────── 12s [-]
-
-#267 draft List a loop's open pull requests above the Claude Code prompt      2h
-#258 draft grace Name the reviewed head in a review's signature conflict · 5* 5m
-     reviewing · review-signature · +84 −12 in 5 files · checks passing
-     7: discuss PR
-     8: dismiss PR
-     open in github
-     open in projector
+  projector                                                2 pull requests  12s  [-]
+  #267 draft List a loop's open pull requests above the Claude Code prompt   2h
+  #258 draft grace Name the reviewed head in a review's signa… conflict · 5* 5m
+       reviewing · review-signature · +84 −12 in 5 files · checks passing
+       7: discuss PR
+       8: dismiss PR
+       open in github
+       open in projector
 ```
 
 Each line is the pull request's number, `draft` or `ready`, its author when
@@ -219,21 +218,41 @@ asks for in the same query as the pull requests. A pull request that both a
 `start-watch-loop` watcher, `watch-threads.sh`, and a `start-review-loop`
 watcher, `watch-prs.sh`, track is listed once.
 
-The divider starts with one `─` and how many pull requests the band lists,
-a line each, such as `2 pull requests`. It ends with how long ago the band
-reloaded, drawn as the rows draw their ages: in the short form, such as
-`12s`, and ending in their column. A reload just now reads `0s`, as an item
-posted just now does. The count and the time are drawn in the `subtle`
-color, and the rule between them in the default text color. A count of
-zero is left out, so a band with nothing to count draws the rule and the
-time alone. Claude Code's `[-]` at the divider's end collapses the band. A
-blank line sets the divider apart from the rows under it. Only a terminal
-draws the divider and that blank line. Claude Desktop, VS Code, and the
-mobile app do not set the band's text in a terminal's columns, so a rule
-sized to them would wrap, and there the band starts with its first row.
+In a terminal, the band draws as one panel on a background of its own, so
+a line that moves as the band scrolls is plainly the band's. The panel is
+inset one column from the terminal's edge and padded one column at each
+side and one row at its bottom, and it ends where Claude Code's `[-]`,
+which collapses the band, begins. Its background follows your Claude Code
+theme, a step darker than the terminal so that the panel reads as a sunken
+surface:
+
+- **`dark` and `dark-daltonized`** draw on `rgb(20,20,20)`.
+- **`light` and `light-daltonized`** draw on `rgb(240,240,240)`.
+- **A custom theme** takes the color of the theme it builds on, the `base`
+  in its file under `~/.claude/themes/`, or under `$CLAUDE_CONFIG_DIR/themes/`
+  when that variable is set. A file with no `base` builds on `dark`, and a
+  file the band cannot read gives `inverseText`.
+- **Any other theme**, such as `dark-ansi` or `light-ansi`, draws on its own
+  `inverseText` color.
+
+A theme you pick with `/theme` recolors the panel at once. To choose
+another shade, set `panel.background`, as
+[Choose the panel's color](#choose-the-panels-color) describes.
+
+The panel's first line is its header, drawn in the `subtle` color. It
+starts with `projector` at its left. At its right, it counts the pull
+requests the band lists, a line each, such as `2 pull requests`, and two
+spaces on, it says how long ago the band reloaded, drawn as the rows draw
+their ages: in the short form, such as `12s`, and ending in their column. A
+reload just now reads `0s`, as an item posted just now does. A count of zero
+is left out, so a band with nothing to count shows `projector` and the time
+alone. The rows start on the line under the header.
+Claude Desktop, VS Code, and the mobile app do not set the band's text in a
+terminal's columns, so they draw no panel and no header, and there the band
+starts with its first row.
 
 When a poll cannot reach GitHub, the band keeps showing the pull requests
-GitHub gave last, and the divider's time shows how old they are. It shows
+GitHub gave last, and the header's time shows how old they are. It shows
 GitHub's error only when it has none of them to show.
 
 Click a pull request's number to open a drawer under it, and click it again
@@ -289,9 +308,28 @@ names, such as a path built from a variable the session does not set, it
 says so once and leaves that loop out.
 
 The band reloads when one of the session's watchers reports a change and
-when a turn ends, and every 30 seconds otherwise. Each reload asks GitHub
-for every pull request in one `gh api graphql` call, and only while the band
-is shown. The skills never depend on the band, and Codex has no equivalent.
+when a turn ends, and every 30 seconds otherwise, only while it is shown.
+Each reload asks GitHub for every pull request in one `gh api graphql` call
+and reads `panel.background` with `project config get`. The skills never
+depend on the band, and Codex has no equivalent.
+
+#### Choose the panel's color
+
+The panel takes its background from your Claude Code theme unless you set
+`panel.background`. Set it in `~/.projector.toml` to use one shade in every
+repository:
+
+```sh
+project config set panel.background 'rgb(30,30,40)' --user
+```
+
+The band draws any color Claude Code takes as written: `rgb(r,g,b)`,
+`#rrggbb`, `ansi256(n)`, or the name of a theme color, such as
+`inverseText`. The default, `auto`, leaves the color to the theme, and
+`project config unset panel.background --user` returns to it. The band reads
+the setting when the session starts and each time it reloads, so a change
+shows within 30 seconds, without a restart. A value that Claude Code cannot draw, such as `ansi:black`
+or an empty string, leaves the color to the theme, and the band says so once.
 
 ### Read your inbox in Projector's band
 
@@ -318,46 +356,44 @@ notice's line is drawn in the theme's mid gray, `inactive`, apart from the
 answer and which want a read. Each line ends with the pull request the item
 is about, as the band labels it, and how long ago it was posted. The band
 appears when an item arrives or is restored, even after you hid it, and in
-a terminal the divider counts the open questions and the open notices after
-the pull requests, in the same `subtle` color, its rule running from the
-counts to its time.
+a terminal the header counts the open questions and the open notices after
+the pull requests, before its time.
 
 ```text
-─ 1 pull request · 2 questions · 1 notice ──────────────────────────── 12s [-]
+  projector                  1 pull request · 2 questions · 1 notice  12s  [-]
+  #337 draft Retry failed webhook deliveries with backoff              1h
 
-#337 draft Retry failed webhook deliveries with backoff                 1h
-
-- Run project init to add the publish rule?                             2m
-- Decline the finding about the retry budget?                     #337  5m
-- Force-pushed #337 to drop a stray debug file                    #337  1m
+  - Run project init to add the publish rule?                          2m
+  - Decline the finding about the retry budget?                  #337  5m
+  - Force-pushed #337 to drop a stray debug file                 #337  1m
 ```
 
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press Enter on it from the keyboard instead. While
 its drawer is open, the item has the band to itself, so its line is the
 top row, in its usual colors, with `0` in its bullet's place to close the
-drawer. In a terminal, the divider and the blank line under it step aside
-too, which gives the drawer two more rows before the band scrolls, and the
-item's line takes the divider's place as the band's top bar: a rule in the
-default text color runs from its subject to its pull request and age, so
-the row ends where the band's `[-]` begins. A subject too long to leave a
+drawer. In a terminal, the header steps aside too, which gives the drawer
+another row before the band scrolls, and the item's line takes the
+header's place as the panel's top bar: a rule in the default text color
+runs from its subject to its pull request and age, so the row ends at the
+panel's edge, where the band's `[-]` begins. A subject too long to leave a
 few columns for the rule draws none. The drawer is indented to start under
 the item's text, so its detail and the digits of its lines sit under the
 item's first letter:
 
 ```text
-0: Decline the finding about the retry budget? ────────────── #337  5m [-]
+  0: Decline the finding about the retry budget? ─────────────── #337  5m  [-]
 
-   The review asks for a retry budget per host. The loop caps retries at
-   three in total, which covers the case the finding names.
+     The review asks for a retry budget per host. The loop caps retries at
+     three in total, which covers the case the finding names.
 
-   1: Decline it: the total cap already bounds retries to one host
-   (recommended)
-   2: Add a budget of two retries per host, and keep the total cap
+     1: Decline it: the total cap already bounds retries to one host
+     (recommended)
+     2: Add a budget of two retries per host, and keep the total cap
 
-   7: discuss question
-   8: dismiss question
-   9: snooze question
+     7: discuss question
+     8: dismiss question
+     9: snooze question
 ```
 
 The first option is always the agent's recommendation. Press an option by
@@ -466,7 +502,7 @@ notice, which has no options, shows the same lines. **cancel** puts the
 options and the actions back, and so does closing the drawer or opening
 another, so a drawer always opens on its actions.
 
-A snoozed item leaves the divider's counts at once, and stays in the list
+A snoozed item leaves the header's counts at once, and stays in the list
 for 30 seconds in the `subtle` color, not struck through, so it reads as put
 off rather than dismissed. Then it leaves the band. When its time is up, it
 returns to the list, and the band appears if you hid it. To wake an item

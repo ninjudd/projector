@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, FsEntry, Register } from 'claude-code'
+import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-code'
 
 import type { Checks, Item, LoopKind, Notice, PullRequest, Question, Row, SeenLoop, Sending, Snapshot } from './types'
 import { buildQuery, parseResponse, type Fetched } from './github'
@@ -105,6 +105,41 @@ const DRAWER_INDENT = `${CLOSE_HOTKEY}: `.length
 /** The shortest rule an open item's line draws; a title that leaves less draws none. */
 const MIN_RULE = 3
 
+/**
+ * In a terminal the band draws as one panel: inset this many columns in the
+ * terminal's own background, then padded this many columns at each side and
+ * rows at its bottom in the panel's.
+ */
+const PANEL_INSET = 1
+const PANEL_PADDING = 1
+
+/** The word the panel's header starts with, at its left. */
+const HEADER_NAME = 'projector'
+
+/**
+ * The panel's background by Claude Code theme: a step darker than the
+ * terminal's own, so the panel reads as a sunken surface. Any other theme,
+ * an ANSI one included, takes `OTHER_BACKGROUND`.
+ */
+const THEME_BACKGROUNDS: Record<string, string> = {
+  dark: 'rgb(20,20,20)',
+  'dark-daltonized': 'rgb(20,20,20)',
+  light: 'rgb(240,240,240)',
+  'light-daltonized': 'rgb(240,240,240)',
+}
+const OTHER_BACKGROUND = 'inverseText'
+
+/** The setting that colors the panel, and its value that leaves the color to the theme. */
+const BACKGROUND_KEY = 'panel.background'
+const AUTO = 'auto'
+
+/**
+ * What a surface takes as a color, a theme key or a raw one alike: these
+ * characters, at most 40 of them. It refuses the band's whole tree over any
+ * other, such as `ansi:black` or an empty string.
+ */
+const PAINTABLE = /^[\w#(),.% -]{1,40}$/
+
 /** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
 const SNOOZES = [
   { label: '15 min', minutes: 15 },
@@ -121,6 +156,8 @@ const drawer = atom({ plugin: 'projector', key: 'bandDrawer' } as const, null)
 const asked = atom({ plugin: 'projector', key: 'bandAsked' } as const, null)
 const items = atom({ plugin: 'projector', key: 'bandInbox' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'bandSending' } as const, {})
+const themeBackground = atom({ plugin: 'projector', key: 'bandThemeBackground' } as const, OTHER_BACKGROUND)
+const background = atom({ plugin: 'projector', key: 'bandBackground' } as const, AUTO)
 
 // The session keeps its state across a reload or an update of the plugin,
 // so a value an earlier version wrote can have another shape.
@@ -175,7 +212,7 @@ function propose(question: Question, answer: string): void {
   proposed = [...proposed.filter(isKept), { ref: question.ref, quote, answer }]
 }
 
-/** The few variables a tracked path is written with, read once per load. */
+/** The few variables the band's paths are written with, read once per load. */
 function envOf($: Engine): Promise<Env> {
   envLoad ??= (async () => {
     const values: Record<string, string | undefined> = {
@@ -184,6 +221,7 @@ function envOf($: Engine): Promise<Env> {
       XDG_CONFIG_HOME: await $.env.get('XDG_CONFIG_HOME'),
       XDG_DATA_HOME: await $.env.get('XDG_DATA_HOME'),
       XDG_STATE_HOME: await $.env.get('XDG_STATE_HOME'),
+      CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR'),
     }
     return (name: string) => (values[name] === '' ? undefined : values[name])
   })()
@@ -257,6 +295,62 @@ async function fetchPrs($: Engine, prs: readonly TrackedPr[]): Promise<Fetched> 
   }
 }
 
+/**
+ * The panel's background for a Claude Code theme: by the theme's name, or
+ * for a custom theme, `custom:<slug>`, by the theme its file builds on,
+ * `dark` unless its `base` says otherwise. A custom theme whose file cannot
+ * be read takes `OTHER_BACKGROUND`.
+ */
+async function backgroundOf($: Engine, theme: unknown): Promise<string> {
+  if (typeof theme !== 'string') return OTHER_BACKGROUND
+  if (!theme.startsWith('custom:')) return THEME_BACKGROUNDS[theme] ?? OTHER_BACKGROUND
+  const env = await envOf($)
+  const home = env('HOME')
+  const config = env('CLAUDE_CONFIG_DIR') ?? (home === undefined ? undefined : `${home}/.claude`)
+  if (config === undefined) return OTHER_BACKGROUND
+  try {
+    const path = `${config}/themes/${theme.slice('custom:'.length)}.json`
+    const base = (JSON.parse(await $.fs.read(path)) as { base?: unknown }).base ?? 'dark'
+    return typeof base === 'string' ? (THEME_BACKGROUNDS[base] ?? OTHER_BACKGROUND) : OTHER_BACKGROUND
+  } catch {
+    return OTHER_BACKGROUND
+  }
+}
+
+/** Colors the panel for a theme ahead of the render, which then waits on no read. */
+async function paint($: Engine, theme: unknown): Promise<void> {
+  const color = await backgroundOf($, theme)
+  await update($, themeBackground, () => color)
+}
+
+/** The `panel.background` values the band said it cannot draw, so it says so once for each. */
+const unpaintable = new Set<string>()
+
+/**
+ * Reads `panel.background` through the CLI, which merges the `.projector.toml`
+ * files. A value no surface can draw leaves the color to the theme, and the
+ * band says so once. A read that fails keeps the value the band last read,
+ * and the next reload reads it again.
+ */
+async function readBackground($: Engine): Promise<void> {
+  try {
+    const ran = await project($, ['config', 'get', BACKGROUND_KEY, '--default', AUTO, '--json'])
+    if (ran.exitCode !== 0) return
+    const value = (JSON.parse(ran.stdout) as { value?: unknown }).value ?? AUTO
+    const isPaintable = typeof value === 'string' && value.trim() !== '' && PAINTABLE.test(value)
+    const written = JSON.stringify(value)
+    if (!isPaintable && !unpaintable.has(written)) {
+      unpaintable.add(written)
+      void $.ui.toast(
+        `projector: ${BACKGROUND_KEY} is ${written}, not a color the panel can draw, so the panel takes its color from the theme`,
+      )
+    }
+    await update($, background, () => (isPaintable ? value : AUTO))
+  } catch {
+    // The next reload reads it again.
+  }
+}
+
 /** The session's own loops, the watchers it started, each with the pull requests its tracked file lists. */
 async function trackedSets($: Engine): Promise<(SeenLoop & { entries: TrackedPr[] })[]> {
   const loops = (await read($, seen)).filter(loop => isKind(loop.kind))
@@ -283,7 +377,8 @@ async function load($: Engine): Promise<void> {
     }
   }
 
-  const fetched = await fetchPrs($, [...tracked.values()])
+  // Each reload reads the panel's setting too, so an edit to it shows without a restart.
+  const [fetched] = await Promise.all([fetchPrs($, [...tracked.values()]), readBackground($)])
 
   // When GitHub cannot be reached, keep drawing what it said last time.
   const last = current(await read($, snapshot))
@@ -786,11 +881,25 @@ export const register: Register = on => {
     ]) {
       await $.tool.register({ ...tool, isDeferred: false }).catch(() => undefined)
     }
+    // The panel takes its color from the theme, and from its setting once a
+    // timer has read it, so the start waits on no process.
+    await $.config
+      .list()
+      .then(rows => paint($, rows.find(row => row.key === 'theme')?.value))
+      .catch(() => undefined)
+    $.clock.after(1, () => void readBackground($))
     $.clock.every(TICK_MS, () => void tick($))
     soon($)
     checkSoon($)
     return next(e)
   })
+
+  // A theme picked in `/theme` recolors the panel at once.
+  on('config.set', { key: 'theme' }, async ($, e, next) => {
+    const set = await next(e)
+    if (set.deny === undefined) await paint($, set.value)
+    return set
+  }).catch(($, e, next) => next(e))
 
   // The tools run the CLI, so what they post, withdraw, or revise and what
   // the shell does land in the same store.
@@ -995,13 +1104,10 @@ export const register: Register = on => {
       0,
       ...shown.rows.filter(row => !isOwn(row.pr, shown.viewer)).map(row => (row.pr.author ?? '').length),
     )
-    // The divider starts with the counts and ends with how long ago the band
-    // reloaded, in the short form and the color of the rows' ages, so the
-    // time ends in their column.
     const tally = counts.filter(part => part !== undefined).join(' · ')
     const reloaded = shown.fetchedAt === null ? '' : span(secondsSince(time, shown.fetchedAt))
     // A failed poll keeps drawing the pull requests GitHub last gave, and the
-    // divider's time says how old they are, so the band says why it failed
+    // header's time says how old they are, so the band says why it failed
     // only when it has none of them to draw.
     const failure = shown.error === null || shown.rows.length > 0 ? undefined : `GitHub: ${shown.error}`
     // Enter with the ring on the Button it presses takes the ring along,
@@ -1025,43 +1131,64 @@ export const register: Register = on => {
       carry(line, onto)
     }
 
-    // The engine draws the band's `[-]` just past `bodyColumns` on the first
-    // row, so a divider that fills the body ends at the mark, and a blank line
-    // sets it apart from the rows under it. The counts follow one `─` at its
-    // start, and its rule runs from them to the time, as an open item's rule
-    // runs from its subject to its age. The counts and the time draw quieter
-    // than the rule, so the line still reads as a rule with labels on it.
-    // Only a terminal lays text out in those columns; any other surface would
-    // wrap the rule, so it draws none.
-    const lead = tally === '' ? '' : `─ ${tally} `
-    const tail = reloaded === '' ? '' : ` ${reloaded}`
-    const rule = '─'.repeat(Math.max(0, e.props.bodyColumns - lead.length - tail.length))
-    const ruled = [
-      ...(tally === '' ? [] : ['─ ', <Text key="counts" color="subtle">{tally}</Text>]),
-      `${tally === '' ? '' : ' '}${rule}${reloaded === '' ? '' : ' '}`,
-      ...(reloaded === '' ? [] : [<Text key="age" color="subtle">{reloaded}</Text>]),
-    ]
-    const divider =
-      e.surface === 'terminal'
-        ? [
-            <Text key="divider">{ruled}</Text>,
-            <Text key="under-divider"> </Text>,
-          ]
-        : []
+    // In a terminal the band is one panel on a background of its own, so a
+    // line that moves as the band scrolls is plainly the band's. The panel
+    // ends at `bodyColumns`, where the engine draws the band's `[-]` on the
+    // first row, so its lines are `columns` wide.
+    const isPanel = e.surface === 'terminal'
+    const columns = e.props.bodyColumns - PANEL_INSET - 2 * PANEL_PADDING
+    const setting = await read($, background)
+    const color = setting === AUTO ? await read($, themeBackground) : setting
+    const panel = (lines: RenderChildren) =>
+      isPanel ? (
+        <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>
+          <Box
+            key="panel"
+            flexDirection="column"
+            width={columns + 2 * PANEL_PADDING}
+            paddingLeft={PANEL_PADDING}
+            paddingRight={PANEL_PADDING}
+            paddingBottom={PANEL_PADDING}
+            backgroundColor={color}
+          >
+            {lines}
+          </Box>
+        </Box>
+      ) : (
+        <Box flexDirection="column">{lines}</Box>
+      )
+    // The panel's first line is its header, all in `subtle`: `HEADER_NAME` at
+    // its left, and the counts and how long ago the band reloaded at its
+    // right, so the time ends in the rows' age column. Two spaces set the
+    // counts apart from the time, about the gap a row leaves before its age.
+    // The rows start on the next line, the background setting the header
+    // apart from them. Only a terminal lays text out in those columns, so no
+    // other surface draws a header.
+    const status = [tally, reloaded].filter(part => part !== '').join('  ')
+    const gap = ' '.repeat(Math.max(1, columns - HEADER_NAME.length - status.length))
+    const header = isPanel
+      ? [
+          <Text key="header" color="subtle">
+            {`${HEADER_NAME}${gap}${status}`}
+          </Text>,
+        ]
+      : []
 
     if (shown.rows.length === 0 && shownItems.length === 0) {
-      return (
-        <Box flexDirection="column">
-          {divider}
-          {failure !== undefined ? (
-            <Text color="error">{failure}</Text>
-          ) : shown.fetchedAt === null ? (
-            <Text color="subtle">Looking for pull requests…</Text>
-          ) : (
-            <Text key="tagline" color="subtle">{` ${TAGLINE}`}</Text>
-          )}
-        </Box>
-      )
+      return panel([
+        ...header,
+        failure !== undefined ? (
+          <Text key="failure" color="error">
+            {failure}
+          </Text>
+        ) : shown.fetchedAt === null ? (
+          <Text key="looking" color="subtle">
+            Looking for pull requests…
+          </Text>
+        ) : (
+          <Text key="tagline" color="subtle">{` ${TAGLINE}`}</Text>
+        ),
+      ])
     }
 
     // An item names its pull request as the band labels it, or in full when
@@ -1270,15 +1397,15 @@ export const register: Register = on => {
       const line = isOpened ? `close:${ref}` : key
       const first = item.kind === 'question' && isOpen ? `answer:${ref}.${letterAt(0)}` : `discuss:${ref}`
       const isSending = !isOpen && item.deliveredAt === undefined
-      // An open item's line is the band's top bar while the divider steps
-      // aside, so in a terminal a rule fills it to `bodyColumns`, as the
-      // divider's does: a space and `─` from after the `0: ` and the subject
-      // to the columns its notes and age take, each with the gap before it.
-      // A title too long for one row with room for a short rule draws none.
+      // An open item's line is the panel's top bar while the header steps
+      // aside, so a rule fills it to the panel's `columns`: a space and `─`
+      // from after the `0: ` and the subject to the columns its notes and age
+      // take, each with the gap before it. A title too long for one row with
+      // room for a short rule draws none.
       const notesWidth =
         (isSending ? 'sending'.length + 1 : 0) + (pull === '' ? 0 : [...pull].length + 1) + ageWidth + 1
-      const ruleWidth = e.props.bodyColumns - DRAWER_INDENT - [...item.subject].length - 1 - notesWidth
-      const rule = isOpened && e.surface === 'terminal' && ruleWidth >= MIN_RULE ? ` ${'─'.repeat(ruleWidth)}` : ''
+      const ruleWidth = columns - DRAWER_INDENT - [...item.subject].length - 1 - notesWidth
+      const rule = isOpened && isPanel && ruleWidth >= MIN_RULE ? ` ${'─'.repeat(ruleWidth)}` : ''
 
       return (
         <Box key={`line:${ref}`} flexDirection="column">
@@ -1456,25 +1583,24 @@ export const register: Register = on => {
     }
 
     // An open item's drawer has the band to itself, until it is closed or the
-    // item leaves the band. The divider and the blank line under it step
-    // aside too, so the item is the top row and, in a terminal, the drawer
-    // has two more rows before the engine, which caps the band below half the
-    // terminal, starts to scroll.
+    // item leaves the band. The header steps aside too, so the item is the
+    // top row and, in a terminal, the drawer has another row before the
+    // engine, which caps the band below half the terminal, starts to scroll.
     const focused = shownItems.find(item => opened === `item:${item.ref}`)
-    if (focused !== undefined) {
-      return <Box flexDirection="column">{drawItem(focused)}</Box>
-    }
+    if (focused !== undefined) return panel(drawItem(focused))
 
-    return (
-      <Box flexDirection="column">
-        {divider}
-        {byAuthor(shown.rows, shown.viewer).map(drawRow)}
-        {failure !== undefined && <Text color="error">{failure}</Text>}
-        {shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
-          <Text key="before-items"> </Text>
-        )}
-        {[...shownItems].sort((a, b) => a.postedAt - b.postedAt).map(drawItem)}
-      </Box>
-    )
+    return panel([
+      ...header,
+      ...byAuthor(shown.rows, shown.viewer).map(drawRow),
+      failure !== undefined && (
+        <Text key="failure" color="error">
+          {failure}
+        </Text>
+      ),
+      shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
+        <Text key="before-items"> </Text>
+      ),
+      ...[...shownItems].sort((a, b) => a.postedAt - b.postedAt).map(drawItem),
+    ])
   })
 }
