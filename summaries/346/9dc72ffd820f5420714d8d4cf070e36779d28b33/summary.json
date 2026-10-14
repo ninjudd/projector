@@ -1,0 +1,184 @@
+{
+ "version": 1,
+ "name": "Panel themes",
+ "project": "panel-themes",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 346,
+  "title": "Theme the panel through named roles, with ink as its default",
+  "head": "9dc72ffd820f5420714d8d4cf070e36779d28b33",
+  "headRef": "panel-themes",
+  "base": "04a11fa5517c5079c0285efcad7d7c4b3e0999c5",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the area Claude Code draws above the prompt, listing the session's pull requests and the inbox's questions and notices. Until now each element's color was a name written where the element draws it, and only the background was a setting, <code>panel.background</code>. A background could hide the text drawn on it, and no other color could change.",
+   "This pull request routes every color through one of thirteen named <b>roles</b>, such as <code>muted</code> for the header, ages, and hint, or <code>question</code> for an open question's line. Each role's default is a Claude Code <b>theme key</b>, a color name like <code>subtle</code> that Claude Code resolves differently on each of its themes, so the defaults follow dark, light, daltonized, and custom themes. The new module <code>hooks/theme.ts</code> owns the roles, the built-in panel themes, and a contrast check, and resolves them into one color per role.",
+   "Three settings change the look:",
+   "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Setting</th><th>Takes</th></tr></thead><tbody><tr><td><code>panel.theme</code></td><td>A built-in theme: <code>ink</code> (the default), <code>umber</code>, <code>stone</code>, or <code>graphite</code>. Each is only a background, one shade for dark Claude Code themes and one for light.</td></tr><tr><td><code>panel.background</code></td><td>A theme's name, <code>smoke</code>, <code>black</code>, <code>white</code>, or a literal color such as <code>rgb(30,30,40)</code>. <code>auto</code> and <code>sidebar</code> no longer work.</td></tr><tr><td><code>panel.colors.&lt;role&gt;</code></td><td>A literal color, one of Claude Code's 23 public theme keys, or <code>default</code> for Claude Code's own text color.</td></tr></tbody></table></div>",
+   "The panel refuses a color that would <b>vanish</b>: under 1.5:1 contrast, as the Web Content Accessibility Guidelines (WCAG) 2 define the ratio, against the color it draws on. To measure a theme key, it keeps a copy of Claude Code's palette for <code>dark</code>, <code>light</code>, and their daltonized themes. A role's override that would vanish gives way to the role's default, and a background that would hide a default, or Claude Code's own text, gives way to the theme's background and then to <code>ink</code>'s. Each refusal is said once a session in a toast. The CLI learns only that the new keys hold strings."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Where the review stands",
+    "html": "<ul class=\"tight\"><li>One open finding: the panel re-reads its settings after <code>project config set panel.…</code> runs through Bash, but not when an option such as <code>--user</code> comes before the key. That change then waits for the next reload, up to 30 seconds.</li><li>The palette copy matches Claude Code 2.1.299 and 2.1.300, whose theme values are identical.</li><li>The gate passes at this head: 224 hook tests, 1098 Python tests, the type check, and both plugin validations.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Role</b>: a named meaning a color has in the panel, such as <code>muted</code> or <code>branch</code>.</li><li><b>Theme key</b>: a color name Claude Code resolves per theme, such as <code>subtle</code> or <code>permission</code>.</li><li><b>Base</b>: whether a Claude Code theme is dark or light; a custom theme names its base in its file.</li><li><b>Vanish</b>: contrast under 1.5:1 against the color drawn on.</li><li><b>ANSI theme</b>: <code>dark-ansi</code> or <code>light-ansi</code>, whose colors come from the terminal's palette, which the panel cannot see.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "types",
+   "title": "The shapes the panel stores",
+   "kicker": "New types for the theme, the roles, and the resolved colors",
+   "intro": [
+    "The panel keeps its state in atoms, small named stores the hooks module declares in <code>hooks/types.d.ts</code>. Three atoms replace the two background ones: <code>panelTheme</code> holds what the panel knows of the Claude Code theme, <code>panelSettings</code> holds the <code>panel</code> table as the CLI printed it, and <code>panelColors</code> holds one color per role. The types live in this file because the plugin's types contract may import nothing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds <code>Base</code>, <code>ClaudeCodeTheme</code>, <code>TextRole</code>, and <code>Colors</code>, and swaps the state keys. A role absent from <code>Colors</code> draws in Claude Code's text color."
+    }
+   ]
+  },
+  {
+   "id": "theme",
+   "title": "The roles, themes, and contrast check",
+   "kicker": "hooks/theme.ts, the module that turns a theme and settings into colors",
+   "intro": [
+    "<code>resolve(theme, settings)</code> is the heart of the change. It reads the <code>panel</code> table and returns one color per role plus a list of problems to toast. It builds a list of backgrounds to try, in order: <code>panel.background</code>, then the theme <code>panel.theme</code> names, then <code>ink</code>. On each it gives every role its override when the override would not vanish, and its default otherwise. If a default, or Claude Code's own text, would still vanish, it moves to the next background. <code>ink</code> always stands.",
+    "The contrast check can only measure colors it knows: literal <code>rgb()</code> and hex colors, <code>ansi256(n)</code> from 16 up through the standard xterm table, and theme keys on the four themes whose palette it holds. On an ANSI theme or an unreadable custom theme it compares names only, so a background there can still hide a role, as the plan records."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "No role's default comes within 1.5:1 of any built-in background on the four known themes; measured with <code>contrast</code> for every role, theme, and background. The lowest is <code>reviewing</code> on <code>stone</code> on <code>light-daltonized</code>, at 1.79:1."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/theme.ts",
+     "note": "New. Role defaults, the four built-in themes, the background aliases, Claude Code's palettes, the contrast ratio, and <code>resolve</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>ROLE_DEFAULTS</code> is where <code>watching</code> and <code>branch</code> moved from palette slots to <code>remember</code> and <code>planMode</code>, the theme keys nearest in hue to the old blue and cyan.",
+       "line": 23
+      },
+      {
+       "kind": "verify",
+       "text": "Each palette matches the theme objects in the Claude Code 2.1.299 and 2.1.300 binaries key for key; the two releases hold identical theme values. Extracted from both binaries and compared.",
+       "line": 72
+      },
+      {
+       "kind": "context",
+       "text": "Claude Code draws a button's label and a link in its own text color, which no role can change, so the check compares a background with white on a dark base and black on a light one. That is what refuses <code>white</code> on <code>dark</code>.",
+       "line": 205
+      },
+      {
+       "kind": "verify",
+       "text": "On <code>dark</code>, <code>panel.background</code> of <code>rgb(80,80,80)</code>, <code>#505050</code>, or <code>ansi256(239)</code> matches <code>subtle</code> and falls back to <code>#100f0c</code> with one problem; adding <code>panel.colors.muted = rgb(200,200,200)</code> lets both draw. Run against <code>resolve</code> directly.",
+       "line": 379
+      }
+     ]
+    },
+    {
+     "path": "hooks/theme.test.ts",
+     "note": "New. Tables of contrast ratios, theme reads, and <code>resolve</code> cases, including fallbacks through several backgrounds."
+    }
+   ]
+  },
+  {
+   "id": "cli",
+   "title": "The CLI's new keys",
+   "kicker": "config.py learns panel.theme and a table of any lowercase role names",
+   "intro": [
+    "<code>project config set</code> only writes keys it knows. This group adds <code>panel.theme</code> as a string and a new <code>TABLES</code> map whose entry <code>panel.colors.&lt;role&gt;</code> accepts any lowercase name under <code>panel.colors</code>. The panel owns the list of roles, so adding a role needs no CLI release; the panel itself toasts an unknown name. Reading needs no change: <code>project config get panel</code> already returns the merged table, and exits 1 with a null value when no file sets one."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/config.py",
+     "note": "<code>_known_type</code> looks a key up in <code>SETTINGS</code>, then matches it against each <code>TABLES</code> pattern. <code>set</code> and <code>unset</code> both go through it.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A name must match <code>[a-z][a-z0-9_-]*</code>, so <code>panel.colors.Muted</code> and <code>panel.colors.muted.dark</code> are refused with the key list.",
+       "line": 75
+      }
+     ]
+    },
+    {
+     "path": "tests/test_config.py",
+     "note": "Sets and unsets <code>panel.theme</code> and <code>panel.colors.&lt;name&gt;</code>, reads them back as the panel reads them, and checks the refused spellings."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "Drawing through the roles",
+   "kicker": "register.tsx reads the resolved colors and re-reads settings when they change",
+   "intro": [
+    "Every <code>color=</code> in the panel's render now reads <code>colors.&lt;role&gt;</code> from the <code>panelColors</code> atom, and the old constants such as <code>QUESTION_COLOR</code> and <code>THEME_BACKGROUNDS</code> are gone. Two inputs feed the atom. <code>paint</code> runs when the session starts and when <code>/theme</code> changes the theme; it reads a custom theme's file and stores the theme. <code>readSettings</code> runs one timer tick after start, on each reload, and after the session runs <code>project config set</code> or <code>unset</code> on a <code>panel.</code> key through Bash. Both then call <code>recolor</code>, which chains each resolve after the last so a stale one never stores its colors over a newer one."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Draws every color through the roles, reads the <code>panel</code> table in one CLI call, and toasts each new problem once a session.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "<code>SETS_PANEL</code> matches only when the key follows <code>set</code> or <code>unset</code> directly. <code>project config set --user panel.theme umber</code> is a valid command it misses, so that change waits for the next reload, up to 30 seconds. Reproduced by putting <code>--user</code> first in the re-read test, which then fails.",
+       "line": 352
+      },
+      {
+       "kind": "context",
+       "text": "A custom theme's file gives the base and the overrides. A <code>base</code> outside Claude Code's six theme names is read as unknown here, while Claude Code draws it as <code>dark</code>.",
+       "line": 292
+      },
+      {
+       "kind": "context",
+       "text": "<code>recolor</code> chains on the previous promise, so resolves land in the order they started.",
+       "line": 312
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "One test per acceptance criterion in the plan's § 4: defaults on each Claude Code theme, each setting, each refusal and its toast, and the re-read after a Bash set."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The user docs, the settings table, and the plan marked completed",
+   "intro": [
+    "<code>docs/plugins.md</code> rewrites \"Choose the panel's color\" around the three settings, the themes, the roles table, and what the panel refuses, keeping its anchor. <code>docs/cli.md</code> adds the two keys to the settings table. The <code>panel-themes</code> plan moves to <code>completed</code> and records the owner's decisions in a new § 9 and the outcome in § 10."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The panel's background paragraph now names <code>ink</code>, and the color section is rewritten."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Adds <code>panel.theme</code> and <code>panel.colors.&lt;role&gt;</code>, and rewrites <code>panel.background</code>'s row."
+    },
+    {
+     "path": "docs/projects/panel-themes/readme.md",
+     "note": "Rewritten from a draft to what shipped: the themes table in § 2.3, the fallback order in § 2.5, the decisions in § 9, and the outcome in § 10."
+    }
+   ]
+  }
+ ]
+}
