@@ -1,0 +1,300 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index c8309d79..7e2c6038 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -625,7 +625,7 @@ reads, which are these:
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ | `watch.auto_start` | boolean | `true` | `implement`, to start `start-watch-loop` on each pull request it opens, or add the pull request to the watch loop the conversation already runs; `false` leaves starting the loop to you |
+-| `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme, and any other value, such as `rgb(30,30,40)`, `#1e1e28`, `ansi256(236)`, or a theme color's name such as `inverseText`, is drawn as written |
++| `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
+ 
+ `review.allow_approve` is off unless it is exactly `true`; an unset key means
+ `false` rather than a question to ask. It never applies to a review of your own
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 65cc5e3c..40d899e1 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -338,14 +338,23 @@ repository:
+ project config set panel.background 'rgb(30,30,40)' --user
+ ```
+ 
+-The panel draws any color Claude Code takes as written: `rgb(r,g,b)`,
+-`#rrggbb`, `ansi256(n)`, or the name of a theme color, such as
+-`inverseText`. The default, `auto`, leaves the color to the theme, and
+-`project config unset panel.background --user` returns to it. The panel
+-reads the setting when the session starts and each time it reloads, so a
+-change shows within 30 seconds, without a restart. A value that Claude Code
+-cannot draw, such as `ansi:black` or an empty string, leaves the color to
+-the theme, and the panel says so once.
++`panel.background` takes these values:
++
++- **`auto`**, the default, leaves the color to the theme, and
++  `project config unset panel.background --user` returns to it.
++- **A literal color** draws as written: `rgb(r,g,b)` with each number from
++  0 to 255, `#rgb` or `#rrggbb`, or `ansi256(n)` with `n` from 0 to 255.
++- **`sidebar`** draws the grey of Claude Code's side panel, its theme's
++  `composerSidebarBackground`.
++- **`black`** draws `rgb(0,0,0)`, and **`white`** draws `rgb(255,255,255)`,
++  whatever the theme.
++
++Any other value, such as another theme color's name like `inverseText`, a
++misspelling like `sidebr`, or `ansi:black`, leaves the color to the theme,
++and the panel says so once. `subtle` is refused too, because the panel draws
++its own muted text in `subtle`, which would vanish on it. The panel reads
++the setting when the session starts and each time it reloads, so a change
++shows within 30 seconds, without a restart.
+ 
+ ### Read your inbox in Projector's panel
+ 
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 183738cf..1ee25f4d 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -2123,3 +2123,61 @@ the drawer anymore".
+ | --- | --- |
+ | An open question's line is its subject in `permission`, its pull request, and its age, with no `─`, on a terminal and on another surface, and a subject too long for the line draws none either | `an open item’s line draws its title with no rule after it` in `hooks/panel.test.tsx` |
+ | An open notice's line draws no `─` either | `` every item takes the `-` bullet, an open question the permission color, an open notice gray, and a resolved or snoozed one subtle `` |
++
++## 23. Take only colors that look right in panel.background
++
++§ 20 let `panel.background` hold any value whose characters a surface takes
++as a color, at most 40 of them. That guarded against a value such as
++`ansi:black`, which makes Claude Code refuse the panel's whole tree, but
++not against a theme key's name it does not know. The #336 review found
++that Claude Code draws such a name, a typo like `inverseTxt` included, as
++no color at all, so the panel lost its background without a word, while
++`docs/plugins.md` said a value Claude Code cannot draw falls back to the
++theme.
++
++### 23.1 What changes
++
++- **An exact list.** `panel.background` takes `auto`, a literal color, or
++  one of three aliases, and nothing else:
++  - **Literal colors** draw as written: `rgb(r,g,b)` and `ansi256(n)` with
++    each number from 0 to 255, written as Claude Code reads them, with a
++    space allowed after `(`, each comma, and before `)`; and `#rgb` or
++    `#rrggbb`.
++  - **`sidebar`** draws the theme key `composerSidebarBackground`, the grey
++    of Claude Code's side panel.
++  - **`black`** draws `rgb(0,0,0)`, and **`white`** draws
++    `rgb(255,255,255)`.
++- **No theme key names.** `inverseText`, `composerSidebarBackground`,
++  `text`, `subtle`, and every other key are refused. Any value outside the
++  list falls back to `auto`, and the panel's one toast names what it takes.
++- **The panel owns the list.** `BACKGROUND_ALIASES` and the literal color
++  patterns live in `hooks/register.tsx`. `SETTINGS` keeps `panel.background`
++  a plain string, so `project config set` stores any string, and the panel
++  decides what it draws.
++
++### 23.2 Why this design
++
++- **Only shades that look right.** The owner first asked for Claude Code's
++  23 public theme keys and `composerSidebarBackground`, then narrowed it:
++  most theme colors are text colors that make a poor background. Three
++  aliases cover the shades worth having, with names a person would type.
++- **No `subtle`.** It was an alias until the owner dropped it: the panel
++  draws its header, hint, ages, labels, and counts in `subtle`, so on a
++  `subtle` background they would vanish.
++- **`black` and `white` stay put.** `inverseText` flips between black and
++  white with the theme, and `ansi256(0)` is the terminal palette's black,
++  which is often the terminal's own background, so the panel would vanish.
++  Literal `rgb()` values draw the same on every theme.
++- **One owner for the list.** The plugin and the CLI install and upgrade
++  apart. A panel that trusted the CLI's verdict would, under an older CLI,
++  pass through a value such as `ansi:black`, which makes Claude Code refuse
++  the whole tree and draw nothing. Keeping the list in the CLI as well would
++  be two copies to keep in step. So the panel, which is what draws the
++  color, checks it, and the CLI's schema stays a string.
++
++### 23.3 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| `#abc`, `#FFFFFF`, `rgb(0,0,0)`, `rgb(255, 255, 255)`, `rgb( 30,30,40 )`, `ansi256(0)`, and `ansi256(255)` draw as written, and `sidebar`, `black`, and `white` draw `composerSidebarBackground`, `rgb(0,0,0)`, and `rgb(255,255,255)` | `panel.background colors the panel, and auto or no value leaves the color to the theme` in `hooks/panel.test.tsx` |
++| `rgb(256,0,0)`, `rgb(1,2)`, `ansi256(256)`, `#12345`, `#abcd`, `inverseText`, `composerSidebarBackground`, `text`, `subtle`, `sidebr`, `gray`, an empty string, and a number each draw the theme's color, with one toast per value naming what the panel takes | `a panel.background the panel does not take leaves the color to the theme, and the panel says so once` |
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index a9c9b895..ebf54b67 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -509,12 +509,24 @@ test('panel.background colors the panel, and auto or no value leaves the color t
+   const ui = await $.ui.mount(PANEL)
+   expect(await backgroundOf(ui)).toBe('#202830')
+ 
+-  // Each reload reads it again, so an edit to the file shows without a restart.
+-  for (const value of ['ansi256(236)', 'rgb(30,30,40)', 'composerSidebarBackground']) {
++  // Each reload reads it again, so an edit to the file shows without a restart. A literal color draws as written,
++  // to the ends of its range, with a space after `(`, a comma, or before `)` as Claude Code reads one.
++  const literals = ['#abc', '#FFFFFF', 'rgb(0,0,0)', 'rgb(255, 255, 255)', 'rgb( 30,30,40 )', 'ansi256(0)', 'ansi256(255)']
++  for (const value of literals) {
+     settings['panel.background'] = value
+     await reload()
+     expect(await backgroundOf(ui)).toBe(value)
+   }
++  // Each alias draws its color: `black` and `white` as literal colors, so they stay put whatever the theme.
++  for (const [alias, color] of [
++    ['sidebar', 'composerSidebarBackground'],
++    ['black', 'rgb(0,0,0)'],
++    ['white', 'rgb(255,255,255)'],
++  ]) {
++    settings['panel.background'] = alias
++    await reload()
++    expect(await backgroundOf(ui)).toBe(color)
++  }
+   settings['panel.background'] = 'auto'
+   await reload()
+   expect(await backgroundOf(ui)).toBe(LIGHT)
+@@ -525,7 +537,7 @@ test('panel.background colors the panel, and auto or no value leaves the color t
+   await ui.unmount()
+ })
+ 
+-test('a panel.background no surface can draw leaves the color to the theme, and the panel says so once', async ($, on) => {
++test('a panel.background the panel does not take leaves the color to the theme, and the panel says so once', async ($, on) => {
+   const settings: Record<string, unknown> = { 'panel.background': 'ansi:black' }
+   const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
+   await startSession($, clock)
+@@ -541,21 +553,37 @@ test('a panel.background no surface can draw leaves the color to the theme, and
+   expect(await ui.drawn()).toMatchObject(inPanel(DARK))
+   await reload()
+   expect(await backgroundOf(ui)).toBe(DARK)
+-  for (const value of ['', '   ', 'a/b', 'x'.repeat(41), 3]) {
++  // Past the ends of a literal color's range, a theme key's name, which the panel no longer takes, `subtle`, the
++  // color of the panel's own muted text, a misspelled alias, a color's plain name, and a value that is no string.
++  const refused = [
++    'rgb(256,0,0)',
++    'rgb(1,2)',
++    'ansi256(256)',
++    '#12345',
++    '#abcd',
++    'inverseText',
++    'composerSidebarBackground',
++    'text',
++    'subtle',
++    'sidebr',
++    'gray',
++    '',
++    3,
++  ]
++  for (const value of refused) {
+     settings['panel.background'] = value
+     await reload()
+     expect(await backgroundOf(ui)).toBe(DARK)
+   }
+-  const told = (value: string) =>
+-    `projector: panel.background is ${value}, not a color the panel can draw, so the panel takes its color from the theme`
+-  expect(toasts).toEqual([
+-    told('"ansi:black"'),
+-    told('""'),
+-    told('"   "'),
+-    told('"a/b"'),
+-    told(`"${'x'.repeat(41)}"`),
+-    told('3'),
+-  ])
++  // Each refused value is said once, however many reloads read it.
++  settings['panel.background'] = 'sidebr'
++  await reload()
++  expect(toasts).toEqual(
++    ['ansi:black', ...refused].map(
++      value =>
++        `projector: panel.background is ${JSON.stringify(value)}, which is not rgb(r,g,b), #rrggbb, ansi256(n), sidebar, black or white, so the panel takes its color from the theme`,
++    ),
++  )
+   await ui.unmount()
+ })
+ 
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 04323f0d..751e9861 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -143,11 +143,38 @@ const BACKGROUND_KEY = 'panel.background'
+ const AUTO = 'auto'
+ 
+ /**
+- * What a surface takes as a color, a theme key or a raw one alike: these
+- * characters, at most 40 of them. It refuses the panel's whole tree over any
+- * other, such as `ansi:black` or an empty string.
++ * The names `panel.background` takes besides `auto` and a literal color, and
++ * what each draws. Claude Code draws any theme key by name, but the panel
++ * refuses the others by choice: most are text colors that look wrong as a
++ * background, and a misspelled name, which is no key, draws nothing at all.
++ * `subtle` is refused too, as the color of the panel's own muted text, which
++ * would vanish on it. `black` and `white` are literal colors: `inverseText`
++ * flips between the two with the theme, and `ansi256(0)` is the terminal
++ * palette's black, often the terminal's own background, which would make the
++ * panel vanish.
+  */
+-const PAINTABLE = /^[\w#(),.% -]{1,40}$/
++const BACKGROUND_ALIASES = new Map([
++  ['sidebar', 'composerSidebarBackground'],
++  ['black', 'rgb(0,0,0)'],
++  ['white', 'rgb(255,255,255)'],
++])
++
++/**
++ * The literal colors `panel.background` takes, written as Claude Code reads
++ * them: `#rgb` or `#rrggbb`, and `rgb(r,g,b)` or `ansi256(n)`, with a space
++ * allowed after `(`, each comma, and before `)`. Each number is at most 255.
++ */
++const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
++const NUMBERED_COLORS = [/^rgb\( ?(\d{1,3}), ?(\d{1,3}), ?(\d{1,3}) ?\)$/, /^ansi256\( ?(\d{1,3}) ?\)$/]
++
++/** What the panel draws for a `panel.background` value other than `auto`, or undefined when it takes none. */
++function backgroundFor(value: string): string | undefined {
++  const alias = BACKGROUND_ALIASES.get(value)
++  if (alias !== undefined) return alias
++  if (HEX_COLOR.test(value)) return value
++  const numbers = NUMBERED_COLORS.map(pattern => pattern.exec(value)).find(match => match !== null)
++  return numbers?.slice(1).every(number => Number(number) <= 255) === true ? value : undefined
++}
+ 
+ /** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
+ const SNOOZES = [
+@@ -340,12 +367,13 @@ async function paint($: Engine, theme: unknown): Promise<void> {
+   await update($, themeBackground, () => color)
+ }
+ 
+-/** The `panel.background` values the panel said it cannot draw, so it says so once for each. */
++/** The `panel.background` values the panel said it does not take, so it says so once for each. */
+ const unpaintable = new Set<string>()
+ 
+ /**
+  * Reads `panel.background` through the CLI, which merges the `.projector.toml`
+- * files. A value no surface can draw leaves the color to the theme, and the
++ * files. The panel alone decides which values it takes, so the CLI stores any
++ * string. A value it does not take leaves the color to the theme, and the
+  * panel says so once. A read that fails keeps the value the panel last read,
+  * and the next reload reads it again.
+  */
+@@ -354,15 +382,15 @@ async function readBackground($: Engine): Promise<void> {
+     const ran = await project($, ['config', 'get', BACKGROUND_KEY, '--default', AUTO, '--json'])
+     if (ran.exitCode !== 0) return
+     const value = (JSON.parse(ran.stdout) as { value?: unknown }).value ?? AUTO
+-    const isPaintable = typeof value === 'string' && value.trim() !== '' && PAINTABLE.test(value)
++    const color = value === AUTO ? AUTO : typeof value === 'string' ? backgroundFor(value) : undefined
+     const written = JSON.stringify(value)
+-    if (!isPaintable && !unpaintable.has(written)) {
++    if (color === undefined && !unpaintable.has(written)) {
+       unpaintable.add(written)
+       void $.ui.toast(
+-        `projector: ${BACKGROUND_KEY} is ${written}, not a color the panel can draw, so the panel takes its color from the theme`,
++        `projector: ${BACKGROUND_KEY} is ${written}, which is not rgb(r,g,b), #rrggbb, ansi256(n), sidebar, black or white, so the panel takes its color from the theme`,
+       )
+     }
+-    await update($, background, () => (isPaintable ? value : AUTO))
++    await update($, background, () => color ?? AUTO)
+   } catch {
+     // The next reload reads it again.
+   }
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 668017d9..8df723e6 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -123,7 +123,7 @@ declare module 'claude-code' {
+       bandSending: Record<string, Sending>
+       /** The panel's background for the session's Claude Code theme, which `panel.background = "auto"` takes. */
+       panelThemeBackground: string
+-      /** `panel.background` as the panel last read it: `auto`, or a color a surface can draw. */
++      /** `panel.background` as the panel last read it: `auto`, or the color it draws for the value. */
+       panelBackground: string
+       /** Whether the panel took the keyboard since the last keystroke in the prompt, so its hint names its own keys. */
+       isPanelFocused: boolean

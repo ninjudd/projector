@@ -1,0 +1,108 @@
+{
+ "version": 1,
+ "name": "Panel background allowlist",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 341,
+  "title": "Accept only colors that look right in panel.background",
+  "head": "d03c36d0cb893ef1ed18247b255e83c314ec195b",
+  "headRef": "panel-background-allowlist",
+  "base": "9c53036545ab778af3f7c717bc5220de78415d9b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the box it draws above Claude Code's prompt, listing tracked pull requests and inbox items. In a terminal the panel sits on a background color of its own. By default that color follows the Claude Code theme, and the <code>panel.background</code> setting in <code>.projector.toml</code> picks another.",
+   "Before this change the panel drew any value made of color-like characters. Claude Code treats a value that starts with <code>rgb(</code>, <code>#</code> or <code>ansi256(</code> as a literal color, and looks any other value up as a <em>theme key</em>, a named color in the active theme such as <code>inverseText</code>. A name that is no key, such as the typo <code>inverseTxt</code>, draws no color at all. So a typo left the panel with no background and no warning, although <code>docs/plugins.md</code> promised a fallback.",
+   "This change makes the panel accept only an exact list, and fall back to the theme's color with one toast for anything else:",
+   "<ul><li><code>auto</code>, the default, which follows the theme.</li><li>A literal color: <code>rgb(r,g,b)</code> or <code>ansi256(n)</code> with each number from 0 to 255, or <code>#rgb</code> or <code>#rrggbb</code>.</li><li>Three aliases: <code>sidebar</code> draws the theme key <code>composerSidebarBackground</code>, the grey of Claude Code's side panel; <code>black</code> and <code>white</code> draw <code>rgb(0,0,0)</code> and <code>rgb(255,255,255)</code> whatever the theme.</li></ul>",
+   "The panel owns the list. The CLI still stores any string, because the plugin and the CLI upgrade separately and two copies of the list could drift apart."
+  ],
+  "cards": [
+   {
+    "id": "history",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first commit also offered a <code>subtle</code> alias. A test on that head showed the header, key hint, and ages, all drawn in <code>subtle</code>, vanishing on a <code>subtle</code> background. The second commit drops the alias and refuses <code>subtle</code>.</li><li>The review of <code>6a13f50</code> opened two threads: the comment above <code>BACKGROUND_ALIASES</code> said Claude Code cannot draw a theme key's name, and one plan line ran past the wrap width. <code>d03c36d</code> fixes both, and its review is clean.</li><li>Still open with the owner: whether the docs should say that <code>black</code> suits a dark terminal and <code>white</code> a light one, since unstyled text keeps the terminal's default color.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Theme key</b>: a named color in Claude Code's active theme, such as <code>subtle</code> or <code>inverseText</code>.</li><li><b>Literal color</b>: a value Claude Code draws as written, such as <code>rgb(30,30,40)</code>.</li><li><b>Alias</b>: a short name the panel maps to a color, such as <code>sidebar</code>.</li><li><b>Toast</b>: a one-line notice Claude Code shows briefly above the prompt.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "panel",
+   "title": "What the panel accepts",
+   "kicker": "The allowlist, the literal-color patterns, and the fallback with its toast",
+   "intro": [
+    "The panel reads <code>panel.background</code> through <code>project config get</code> when the session starts and on each reload. <code>backgroundFor</code> turns a value into the color the panel draws, or <code>undefined</code> when the panel does not take it. An undefined result falls back to <code>auto</code> and shows a toast once per distinct value.",
+    "The literal patterns are a subset of what Claude Code itself parses, so every color the panel accepts is one Claude Code can draw. Claude Code allows <code>\\s?</code> where the panel allows one space, and any number of digits where the panel allows three."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Replaces the character-class check <code>PAINTABLE</code> with <code>BACKGROUND_ALIASES</code>, the hex and numbered-color patterns, and <code>backgroundFor</code>; <code>readBackground</code> uses it and names the accepted values in its toast.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 147,
+       "text": "The comment says Claude Code draws any theme key by name and refuses the others by choice. That matches Claude Code 2.1.299, which looks a name up among the theme's keys and draws nothing only for a name that is no key."
+      },
+      {
+       "kind": "verify",
+       "line": 166,
+       "text": "Checked against Claude Code 2.1.299's parser, <code>/^rgb\\(\\s?(\\d+),\\s?(\\d+),\\s?(\\d+)\\s?\\)$/</code> and <code>/^ansi256\\(\\s?(\\d+)\\s?\\)$/</code>: every value these patterns accept, Claude Code parses too."
+      },
+      {
+       "kind": "context",
+       "line": 383,
+       "text": "<code>auto</code> is checked before <code>backgroundFor</code>, and a non-string value is refused here, so a number in the TOML file toasts rather than throwing."
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Updates the doc comment on the <code>panelBackground</code> state key: it now holds the color drawn, not the raw setting."
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "The two <code>panel.background</code> tests now cover each literal at the ends of its range and with the spaces the parser allows, each alias, and a list of refused values that each toast once.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Ran <code>claude plugin test .</code> at <code>d03c36d</code>: 143 pass, 0 fail."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The settings reference, the plugin guide, and the decision record in the inbox plan",
+   "intro": [
+    "The user-facing docs list the accepted values and what each alias draws. The inbox plan, already <code>completed</code>, gains § 23 to record why the list is exact, why <code>black</code> and <code>white</code> are literal colors rather than theme keys, and why <code>subtle</code> was dropped."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Rewrites the <code>panel.background</code> paragraph as a list of accepted values and says what happens to any other value."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Updates the <code>panel.background</code> row of the settings table to match."
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Adds § 23, the decision record for the allowlist, with its evidence table.",
+     "checks": []
+    }
+   ]
+  }
+ ]
+}
