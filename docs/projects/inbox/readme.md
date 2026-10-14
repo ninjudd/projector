@@ -1949,10 +1949,10 @@ divider's place:
   `prompt.edit` hook clears the mark at the next keystroke in the prompt,
   and the `prompt.submit` hook at a prompt sent from the terminal, such as
   one a drawer filled, which no keystroke edited. Only the first of those
-  redraws the band, and neither hook waits on it, so typing stays as fast
-  as before. The hint leaves the arrow keys out: which
-  of them moves between lines depends on whether the band scrolls, so one
-  fixed hint would be wrong half the time.
+  redraws the band, and neither hook waits on it, so typing stays as fast as
+  before. The hint leaves the arrow keys out: which of them moves between
+  lines depends on whether the band scrolls, so one fixed hint would be
+  wrong half the time.
 - **Every layout draws in the panel.** The list, an open item's drawer, and
   the empty band with its tagline all do. An open item's drawer still has
   the band to itself: the header steps aside, as the divider did, and the
@@ -1971,13 +1971,13 @@ divider's place:
   `auto` by default, in `SETTINGS` and in the settings table of
   `docs/cli.md`. `auto` leaves the color to the theme, and any other value
   is drawn as written, such as `rgb(30,30,40)`, `#1e1e28`, `ansi256(236)`,
-  or `inverseText`. The band reads it with
-  `project config get panel.background --default auto --json` when the
-  session starts and on each reload, so an edit shows without a restart, and
-  it never parses TOML itself. A value that no surface can draw, one longer
-  than 40 characters or with a character other than a letter, a digit, or
-  one of `#(),.%_ -`, such as `ansi:black` or an empty string, falls back to
-  `auto`, and the band says so once in a toast.
+  or `inverseText`. The band reads it when the session starts and on each
+  reload, so an edit shows without a restart. It never parses TOML itself:
+  `project config get panel.background --default auto --json` reads it. A
+  value that no surface can draw, one longer than 40 characters or with a
+  character other than a letter, a digit, or one of `#(),.%_ -`, such as
+  `ansi:black` or an empty string, falls back to `auto`, and the band says
+  so once in a toast.
 - **Other surfaces are unchanged.** Claude Desktop, VS Code, and the mobile
   app draw no panel and no header, as they drew no divider.
 
