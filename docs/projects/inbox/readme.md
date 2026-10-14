@@ -2148,8 +2148,8 @@ theme.
   - **`black`** draws `rgb(0,0,0)`, and **`white`** draws
     `rgb(255,255,255)`.
 - **No theme key names.** `inverseText`, `composerSidebarBackground`,
-  `text`, `subtle`, and every other key are refused. Any value outside the list falls
-  back to `auto`, and the panel says so once, naming what it takes.
+  `text`, `subtle`, and every other key are refused. Any value outside the
+  list falls back to `auto`, and the panel's one toast names what it takes.
 - **The panel owns the list.** `BACKGROUND_ALIASES` and the literal color
   patterns live in `hooks/register.tsx`. `SETTINGS` keeps `panel.background`
   a plain string, so `project config set` stores any string, and the panel

@@ -144,12 +144,14 @@ const AUTO = 'auto'
 
 /**
  * The names `panel.background` takes besides `auto` and a literal color, and
- * what each draws. Claude Code draws another theme key's name, or a typo of
- * one, as no color at all, so no other name is taken; nor is `subtle`, the
- * color of the panel's own muted text, which would vanish on it. `black` and
- * `white` are literal colors: `inverseText` flips between the two with the
- * theme, and `ansi256(0)` is the terminal palette's black, often the
- * terminal's own background, which would make the panel vanish.
+ * what each draws. Claude Code draws any theme key by name, but the panel
+ * refuses the others by choice: most are text colors that look wrong as a
+ * background, and a misspelled name, which is no key, draws nothing at all.
+ * `subtle` is refused too, as the color of the panel's own muted text, which
+ * would vanish on it. `black` and `white` are literal colors: `inverseText`
+ * flips between the two with the theme, and `ansi256(0)` is the terminal
+ * palette's black, often the terminal's own background, which would make the
+ * panel vanish.
  */
 const BACKGROUND_ALIASES = new Map([
   ['sidebar', 'composerSidebarBackground'],
