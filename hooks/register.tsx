@@ -106,12 +106,15 @@ const DRAWER_INDENT = `${CLOSE_HOTKEY}: `.length
 const MIN_RULE = 3
 
 /**
- * In a terminal the band draws as one panel: inset this many columns in the
- * terminal's own background, then padded this many columns at each side in
- * the panel's.
+ * In a terminal the band draws as one panel: inset `PANEL_INSET` columns in
+ * the terminal's own background, then padded `PANEL_PADDING` columns at each
+ * side in the panel's, where its header and key hint start. The lines between
+ * them, the pull requests, the items and their drawers, sit `LINE_PADDING`
+ * columns further in at each side.
  */
 const PANEL_INSET = 1
 const PANEL_PADDING = 1
+const LINE_PADDING = 1
 
 /**
  * The panel's last line names its keys, at its right, so it ends where the
@@ -1162,52 +1165,57 @@ export const register: Register = on => {
     // In a terminal the band is one panel on a background of its own, so a
     // line that moves as the band scrolls is plainly the band's. The panel
     // ends at `bodyColumns`, where the engine draws the band's `[-]` on the
-    // first row, so its lines are `columns` wide.
+    // first row, so the rows between its header and its hint are `columns`
+    // wide.
     const isPanel = e.surface === 'terminal'
-    const columns = e.props.bodyColumns - PANEL_INSET - 2 * PANEL_PADDING
+    const columns = e.props.bodyColumns - PANEL_INSET - 2 * (PANEL_PADDING + LINE_PADDING)
+    // The header and the key hint start a column before the lines between
+    // them but end where those lines do, so their right ends line up with
+    // the rows' ages.
+    const edgeColumns = columns + LINE_PADDING
     const setting = await read($, background)
     const color = setting === AUTO ? await read($, themeBackground) : setting
     const hint = (await read($, isFocused)) ? FOCUSED_HINT : FOCUS_HINT
-    const panel = (lines: RenderChildren) =>
+    // The panel's first line is its header, all in `subtle`: `HEADER_NAME` at
+    // its left, and the counts and how long ago the band reloaded at its
+    // right, so the time ends in the rows' age column. Two spaces set the
+    // counts apart from the time, about the gap a row leaves before its age.
+    // The rows start on the next line, the background setting the header
+    // apart from them. An open item's drawer has the band to itself, so it
+    // draws no header. Only a terminal lays text out in those columns, so no
+    // other surface draws a panel.
+    const status = [tally, reloaded].filter(part => part !== '').join('  ')
+    const gap = ' '.repeat(Math.max(1, edgeColumns - HEADER_NAME.length - status.length))
+    const panel = (lines: RenderChildren, isHeaded = true) =>
       isPanel ? (
         <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>
           <Box
             key="panel"
             flexDirection="column"
-            width={columns + 2 * PANEL_PADDING}
+            width={e.props.bodyColumns - PANEL_INSET}
             paddingLeft={PANEL_PADDING}
             paddingRight={PANEL_PADDING}
             backgroundColor={color}
           >
-            {lines}
+            {isHeaded && (
+              <Text key="header" color="subtle">
+                {`${HEADER_NAME}${gap}${status}`}
+              </Text>
+            )}
+            <Box flexDirection="column" paddingLeft={LINE_PADDING} paddingRight={LINE_PADDING}>
+              {lines}
+            </Box>
             <Text key="hint" color="subtle">
-              {hint.padStart(columns)}
+              {hint.padStart(edgeColumns)}
             </Text>
           </Box>
         </Box>
       ) : (
         <Box flexDirection="column">{lines}</Box>
       )
-    // The panel's first line is its header, all in `subtle`: `HEADER_NAME` at
-    // its left, and the counts and how long ago the band reloaded at its
-    // right, so the time ends in the rows' age column. Two spaces set the
-    // counts apart from the time, about the gap a row leaves before its age.
-    // The rows start on the next line, the background setting the header
-    // apart from them. Only a terminal lays text out in those columns, so no
-    // other surface draws a header.
-    const status = [tally, reloaded].filter(part => part !== '').join('  ')
-    const gap = ' '.repeat(Math.max(1, columns - HEADER_NAME.length - status.length))
-    const header = isPanel
-      ? [
-          <Text key="header" color="subtle">
-            {`${HEADER_NAME}${gap}${status}`}
-          </Text>,
-        ]
-      : []
 
     if (shown.rows.length === 0 && shownItems.length === 0) {
       return panel([
-        ...header,
         failure !== undefined ? (
           <Text key="failure" color="error">
             {failure}
@@ -1618,10 +1626,9 @@ export const register: Register = on => {
     // top row and, in a terminal, the drawer has another row before the
     // engine, which caps the band below half the terminal, starts to scroll.
     const focused = shownItems.find(item => opened === `item:${item.ref}`)
-    if (focused !== undefined) return panel(drawItem(focused))
+    if (focused !== undefined) return panel(drawItem(focused), false)
 
     return panel([
-      ...header,
       ...byAuthor(shown.rows, shown.viewer).map(drawRow),
       failure !== undefined && (
         <Text key="failure" color="error">

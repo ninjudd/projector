@@ -1915,8 +1915,8 @@ draws as one panel on a background of its own, and a header takes the
 divider's place:
 
 ```text
-  /projector                 1 pull request · 2 questions · 1 notice  12s  [-]
-  #337 draft Retry failed webhook deliveries with backoff              1h
+  /projector                1 pull request · 2 questions · 1 notice  12s   [-]
+   #337 draft Retry failed webhook deliveries with backoff            1h
 ```
 
 ### 20.1 What changes
@@ -1924,10 +1924,15 @@ divider's place:
 - **One panel.** In a terminal, every line of the band sits in one `Box`
   with a background. One column of the terminal's own background comes
   first, `PANEL_INSET`, and then the panel, padded one column at each side,
-  `PANEL_PADDING`. The panel ends at
-  `bodyColumns`, where Claude Code draws the band's `[-]`, so its lines are
-  `bodyColumns - 3` wide, and every width the band works out, the header's
-  and an open item's rule's, uses that.
+  `PANEL_PADDING`, which ends at `bodyColumns`, where Claude Code draws the
+  band's `[-]`. Its header and key hint sit in that padding, and the lines
+  between them, the pull requests, the items, and an open item's drawer, in
+  a `Box` padded one more column at each side, `LINE_PADDING`. So the rows
+  are `bodyColumns - 5` wide, and every width the band works out for them,
+  an open item's rule's included, uses that. The header and the hint are
+  one column wider, starting a column further left and ending where the
+  rows do, so the header's age, the rows' ages, and the hint end in one
+  column.
 - **A header, not a divider.** The divider's rule and its leading `─ ` go.
   The panel's first line is its header, all in `subtle`: `/projector`,
   `HEADER_NAME`, at its left, and the counts and the reload's age at its
@@ -2000,6 +2005,11 @@ divider's place:
   that shows and hides the band. The counts sit beside the age at the right,
   and the two spaces before the age match the gap before a row's age, as in
   `approved  1d`.
+- **Room at the sides, with the right edge straight.** The owner previewed
+  the panel padded one column at each side, then asked for one column
+  beside the header and the hint and two beside the lines between, with
+  the header's age still in the rows' age column, and the hint at the right
+  in that column too.
 - **The keys where you look.** The owner previewed the hint in a session
   mod and kept it: the panel's bottom row was padding, and now it says how
   to reach the band's keyboard and how to leave it.
@@ -2011,13 +2021,14 @@ divider's place:
 
 | Behavior | Test |
 | --- | --- |
-| In a terminal, the band is one `Box` with one column of inset and no background, holding one panel `bodyColumns - 1` wide, padded one column at each side and no row, which alone paints a background | `in a terminal the band draws as one panel, inset a column and padded, on a background of its own` in `hooks/band.test.tsx` |
-| The header reads `/projector` at the left and `2 pull requests  0s` at the right of a `bodyColumns - 3` line, in `subtle`, with no `─`, and the first row follows it with no blank line | `draws one line per open pull request of the session’s own loops` |
-| The header puts the pull request count before the item counts, `bodyColumns - 3` wide | `asks through the tool, and the band lists the question below the pull requests`, and the inbox tests that find the header by its counts |
+| In a terminal, the band is one `Box` with one column of inset and no background, holding one panel `bodyColumns - 1` wide, padded one column at each side and no row, which alone paints a background, with the rows in a `Box` padded one more column at each side | `in a terminal the band draws as one panel, inset a column and padded, on a background of its own` in `hooks/band.test.tsx` |
+| The header reads `/projector` at the left and `2 pull requests  0s` at the right of a `bodyColumns - 4` line, in `subtle`, with no `─`, and the first row follows it with no blank line | `draws one line per open pull request of the session’s own loops` |
+| The header puts the pull request count before the item counts, `bodyColumns - 4` wide | `asks through the tool, and the band lists the question below the pull requests`, and the inbox tests that find the header by its counts |
 | With nothing to count, the header is `/projector` and the age, and the tagline draws in the panel under it | `shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request` |
 | An open question's or notice's drawer draws in the panel, with no header, its line the top row | `an option puts the question and its answer in the prompt, and sending it answers the question and closes its drawer`, `a notice’s drawer quotes it, and dismiss clears it without sending anything` |
 | The last line reads `ctrl+x tab to focus` in `subtle`, ending in the rows' age column, then `esc to return · enter to open` once a `ui.focus` lands, and the first again at the next prompt edit; only a change of hint redraws the band, and an edit with no mark set redraws nothing | `the panel’s last line says how to focus the band, and once the band has the keyboard, which keys work` |
-| An open item's rule ends at the panel's edge, 87 columns at a `bodyColumns` of 120 | `an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button` |
+| An open item's rule ends at the rows' edge, 85 columns at a `bodyColumns` of 120 | `an open item’s line ends in a rule to the panel’s edge on a terminal, beside its Button` |
+| The header's age, a pull request's age, and the key hint end in one column: the header and hint start one column before the rows and are one column wider | `the header’s age, a pull request’s age, and the key hint end in one column` |
 | Claude Desktop, VS Code, and the mobile app draw no panel, no background, and no header | `draws no panel and no header on a surface that does not lay text out in columns` |
 | `dark`, `light`, their daltonized themes, the ANSI themes, custom themes built on each, one with no `base`, and one with no file each get their color | `the panel is <color> on the <theme> theme`, one test for each |
 | A custom theme's file is read under `$CLAUDE_CONFIG_DIR` when it is set | `a custom theme’s file is read from the Claude config directory CLAUDE_CONFIG_DIR names` |

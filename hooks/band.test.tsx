@@ -23,8 +23,15 @@ const BAND = {
   },
 } as const
 
-/** How wide the panel's lines are: `bodyColumns` less its one-column inset and its padding at each side. */
-const COLUMNS = BAND.props.bodyColumns - 3
+/**
+ * How wide the band's rows are in a terminal: `bodyColumns` less the panel's
+ * one-column inset, its padding of one column at each side, and the rows' own
+ * padding of one more.
+ */
+const COLUMNS = BAND.props.bodyColumns - 5
+
+/** How wide the panel's header and key hint are: they start a column before the rows and end where the rows do. */
+const EDGE = COLUMNS + 1
 
 const COMMAND = {
   command: 'projector',
@@ -218,7 +225,7 @@ test('draws one line per open pull request of the session’s own loops', async 
   // just now. The two sit two spaces apart, so the time ends in the rows' age column, at the edge of the panel's
   // lines. All of it is `subtle`, and no rule runs through it.
   const header = await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  0s$/ })
-  expect(header?.text).toBe(`/projector${'2 pull requests  0s'.padStart(COLUMNS - '/projector'.length)}`)
+  expect(header?.text).toBe(`/projector${'2 pull requests  0s'.padStart(EDGE - '/projector'.length)}`)
   expect(header?.props.color).toBe('subtle')
   expect(await ui.find({ type: 'Text', text: /─|updated|ago|just now/ })).toBeUndefined()
   // The rows start on the line under the header, with no blank line between.
@@ -260,7 +267,7 @@ const inPanel = (backgroundColor: string) => ({
   children: [
     {
       type: 'Box',
-      props: { width: COLUMNS + 2, paddingLeft: 1, paddingRight: 1, backgroundColor },
+      props: { width: BAND.props.bodyColumns - 1, paddingLeft: 1, paddingRight: 1, backgroundColor },
     },
   ],
 })
@@ -318,10 +325,10 @@ test('the panel’s last line says how to focus the band, and once the band has 
     const last = (await ui.findAll({ type: 'Text' })).at(-1)
     return [last?.text.trimStart(), last?.props.color]
   }
-  // With the keyboard in the prompt, the hint names the chord that moves it into the band. It sits at the right of
-  // a line as wide as the rows, so it ends in their age column. Typing redraws nothing.
+  // With the keyboard in the prompt, the hint names the chord that moves it into the band, at the right of its line,
+  // which ends where the rows do. Typing redraws nothing.
   expect(await hint()).toEqual(['ctrl+x tab to focus', 'subtle'])
-  expect((await ui.findAll({ type: 'Text' })).at(-1)?.text).toBe('ctrl+x tab to focus'.padStart(COLUMNS))
+  expect((await ui.findAll({ type: 'Text' })).at(-1)?.text).toBe('ctrl+x tab to focus'.padStart(EDGE))
   await type('a')
   expect(invalidated).toEqual([])
 
@@ -343,6 +350,36 @@ test('the panel’s last line says how to focus the band, and once the band has 
 
 /** Who owns Claude Code's own `/config` rows. */
 const ENGINE = { plugin: 'engine', tier: 'core' } as const
+
+test('the header’s age, a pull request’s age, and the key hint end in one column', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#2\n' })
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(BAND)
+  // The header and the hint sit in the panel's padding of one column, and the rows in a Box one column further in at
+  // each side, whose last column is each row's age.
+  type Drawn = { type: string; props: Record<string, unknown>; children: (Drawn | string)[] }
+  const inset = (await ui.findAll({ type: 'Box' }))[0]?.props ?? {}
+  const panel = (await ui.find({ key: 'panel' })) as Drawn | undefined
+  const [header, rows, hint] = (panel?.children ?? []) as Drawn[]
+  expect(rows?.props).toMatchObject({ flexDirection: 'column', paddingLeft: 1, paddingRight: 1 })
+  const width = (value: unknown) => (typeof value === 'number' ? value : NaN)
+  const textOf = (element: Drawn | undefined) => (element?.children ?? []).join('')
+  const start = width(inset.paddingLeft) + width(panel?.props.paddingLeft)
+  const end = width(inset.paddingLeft) + width(panel?.props.width) - width(panel?.props.paddingRight)
+  const rowsEnd = end - width(rows?.props.paddingRight)
+  expect(rowsEnd - start - width(rows?.props.paddingLeft)).toBe(COLUMNS)
+  expect(textOf(header)).toMatch(/^\/projector +1 pull request  \d+s$/)
+  expect(start + textOf(header).length).toBe(rowsEnd)
+  expect(start + textOf(hint).length).toBe(rowsEnd)
+  // A row fills the rows' width, its title giving way, so its age ends at their edge.
+  expect(await ui.find({ type: 'Text', text: '45s' })).toBeDefined()
+  await ui.unmount()
+})
 
 /** The `/config` row of Claude Code's theme, holding `value`. */
 const themeRow = (value: string): ConfigRow => ({
@@ -964,12 +1001,12 @@ test('shows its tagline, one space in and in the subtle color, when no loop trac
   // With nothing to count, the header is `/projector` and the reload's age alone, at the right of the panel's line,
   // and the tagline is the line under it, in the panel.
   const header = await ui.find({ type: 'Text', text: /^\/projector +\d+s$/ })
-  expect(header?.text.length).toBe(COLUMNS)
+  expect(header?.text.length).toBe(EDGE)
   expect(header?.props.color).toBe('subtle')
   expect((await ui.findAll({ type: 'Text' })).map(found => found.text)).toEqual([
     header?.text,
     ` ${TAGLINE}`,
-    'ctrl+x tab to focus'.padStart(COLUMNS),
+    'ctrl+x tab to focus'.padStart(EDGE),
   ])
   expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
   await ui.unmount()
@@ -1363,7 +1400,7 @@ test('asks through the tool, and the band lists the question below the pull requ
   const ui = await $.ui.mount(BAND)
   // The header counts the pull request and then the question before the reload's age, ending at the panel's edge.
   const header = await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })
-  expect(header?.text.length).toBe(COLUMNS)
+  expect(header?.text.length).toBe(EDGE)
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts).toContain('Conflicting change')
   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
@@ -3388,10 +3425,10 @@ test('an open item’s line ends in a rule to the panel’s edge on a terminal, 
   const rule = async () => (await ui.find({ type: 'Text', text: /^ ─+$/ }))?.text
 
   // The rule fills the panel's line: `0: `, the subject, a space and the rule, then ` #7` and ` 2m`, end at the
-  // panel's edge, three columns short of bodyColumns.
+  // rows' edge, five columns short of bodyColumns, where the rows' ages end.
   await ui.press({ key: 'item:1' })
   const drawn = await rule()
-  expect(drawn).toBe(` ${'─'.repeat(87)}`)
+  expect(drawn).toBe(` ${'─'.repeat(85)}`)
   expect('0: '.length + 'Decline the finding?'.length + (drawn ?? '').length + ' #7'.length + ' 2m'.length).toBe(
     COLUMNS,
   )

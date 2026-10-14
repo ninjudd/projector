@@ -192,15 +192,15 @@ line each. Run `/projector` to show or hide the band. It also appears when the
 session starts a loop's watcher for the first time.
 
 ```text
-  /projector                                               2 pull requests  12s  [-]
-  #267 draft List a loop's open pull requests above the Claude Code prompt   2h
-  #258 draft grace Name the reviewed head in a review's signa… conflict · 5* 5m
-       reviewing · review-signature · +84 −12 in 5 files · checks passing
-       7: discuss PR
-       8: dismiss PR
-       open in github
-       open in projector
-                                                            ctrl+x tab to focus
+  /projector                                              2 pull requests  12s   [-]
+   #267 draft List a loop's open pull requests above the Claude Code prompt 2h
+   #258 draft grace Name the reviewed head in a review's sig… conflict · 5* 5m
+        reviewing · review-signature · +84 −12 in 5 files · checks passing
+        7: discuss PR
+        8: dismiss PR
+        open in github
+        open in projector
+                                                           ctrl+x tab to focus
 ```
 
 Each line is the pull request's number, `draft` or `ready`, its author when
@@ -219,13 +219,15 @@ asks for in the same query as the pull requests. A pull request that both a
 `start-watch-loop` watcher, `watch-threads.sh`, and a `start-review-loop`
 watcher, `watch-prs.sh`, track is listed once.
 
-In a terminal, the band draws as one panel on a background of its own, so
-a line that moves as the band scrolls is plainly the band's. The panel is
-inset one column from the terminal's edge and padded one column at each
-side, and it ends where Claude Code's `[-]`, which collapses the band,
-begins. Its background follows your Claude Code
-theme, a step darker than the terminal so that the panel reads as a sunken
-surface:
+In a terminal, the band draws as one panel on a background of its own, so a
+line that moves as the band scrolls is plainly the band's. The panel is
+inset one column from the terminal's edge and ends where Claude Code's
+`[-]`, which collapses the band, begins. Its header and its key hint sit one
+column in from the panel's left edge, and the pull requests and items
+between them two columns in from each side, so every line ends two columns
+short of the panel's right edge, where the ages line up. The panel's
+background follows your Claude Code theme, a step darker than the terminal
+so that the panel reads as a sunken surface:
 
 - **`dark` and `dark-daltonized`** draw on `rgb(20,20,20)`.
 - **`light` and `light-daltonized`** draw on `rgb(240,240,240)`.
@@ -372,13 +374,13 @@ a terminal the header counts the open questions and the open notices after
 the pull requests, before its time.
 
 ```text
-  /projector                 1 pull request · 2 questions · 1 notice  12s  [-]
-  #337 draft Retry failed webhook deliveries with backoff              1h
+  /projector                1 pull request · 2 questions · 1 notice  12s   [-]
+   #337 draft Retry failed webhook deliveries with backoff            1h
 
-  - Run project init to add the publish rule?                          2m
-  - Decline the finding about the retry budget?                  #337  5m
-  - Force-pushed #337 to drop a stray debug file                 #337  1m
-                                                      ctrl+x tab to focus
+   - Run project init to add the publish rule?                        2m
+   - Decline the finding about the retry budget?                #337  5m
+   - Force-pushed #337 to drop a stray debug file               #337  1m
+                                                     ctrl+x tab to focus
 ```
 
 Click anywhere on an item to open its drawer, and click it again to close
@@ -395,19 +397,19 @@ the item's text, so its detail and the digits of its lines sit under the
 item's first letter:
 
 ```text
-  0: Decline the finding about the retry budget? ─────────────── #337  5m  [-]
+   0: Decline the finding about the retry budget? ───────────── #337  5m   [-]
 
-     The review asks for a retry budget per host. The loop caps retries at
-     three in total, which covers the case the finding names.
+      The review asks for a retry budget per host. The loop caps retries at
+      three in total, which covers the case the finding names.
 
-     1: Decline it: the total cap already bounds retries to one host
-     (recommended)
-     2: Add a budget of two retries per host, and keep the total cap
+      1: Decline it: the total cap already bounds retries to one host
+      (recommended)
+      2: Add a budget of two retries per host, and keep the total cap
 
-     7: discuss question
-     8: dismiss question
-     9: snooze question
-                                                      ctrl+x tab to focus
+      7: discuss question
+      8: dismiss question
+      9: snooze question
+                                                     ctrl+x tab to focus
 ```
 
 The first option is always the agent's recommendation. Press an option by
