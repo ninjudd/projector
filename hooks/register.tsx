@@ -102,9 +102,6 @@ const CLOSE_HOTKEY = '0'
  */
 const DRAWER_INDENT = `${CLOSE_HOTKEY}: `.length
 
-/** The shortest rule an open item's line draws; a title that leaves less draws none. */
-const MIN_RULE = 3
-
 /**
  * In a terminal the panel is inset `PANEL_INSET` columns in the terminal's
  * own background, then padded `PANEL_PADDING` columns at each side in its
@@ -1471,15 +1468,6 @@ export const register: Register = on => {
       const line = isOpened ? `close:${ref}` : key
       const first = item.kind === 'question' && isOpen ? `answer:${ref}.${letterAt(0)}` : `discuss:${ref}`
       const isSending = !isOpen && item.deliveredAt === undefined
-      // An open item's line is the panel's top bar while the header steps
-      // aside, so a rule fills it to the panel's `columns`: a space and `─`
-      // from after the `0: ` and the subject to the columns its notes and age
-      // take, each with the gap before it. A title too long for one row with
-      // room for a short rule draws none.
-      const notesWidth =
-        (isSending ? 'sending'.length + 1 : 0) + (pull === '' ? 0 : [...pull].length + 1) + ageWidth + 1
-      const ruleWidth = columns - DRAWER_INDENT - [...item.subject].length - 1 - notesWidth
-      const rule = isOpened && isTerminal && ruleWidth >= MIN_RULE ? ` ${'─'.repeat(ruleWidth)}` : ''
 
       return (
         <Box key={`line:${ref}`} flexDirection="column">
@@ -1503,9 +1491,6 @@ export const register: Register = on => {
                   {item.subject}
                 </Text>
               </Button>
-              {/* Beside the Button, not in it, so a hover or the focus ring
-                  inverts the title alone. */}
-              {rule !== '' && <Text key={`rule:${ref}`}>{rule}</Text>}
             </Box>
             {isSending && (
               <Box flexShrink={0}>
