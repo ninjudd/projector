@@ -87,7 +87,36 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       url: SEVEN,
       isDraft: true,
       mergeable: 'CONFLICTING',
-      reviewThreads: { nodes: [{ isResolved: false }, { isResolved: false }] },
+      reviewThreads: {
+        nodes: [
+          {
+            isResolved: false,
+            isOutdated: false,
+            path: 'src/fetch.ts',
+            line: 40,
+            comments: {
+              nodes: [
+                {
+                  url: `${SEVEN}#discussion_r1`,
+                  bodyText: 'P2 · The retry loop never sleeps between attempts, so a flaky server gets hammered\nMore.',
+                  author: { login: 'grace' },
+                },
+              ],
+            },
+          },
+          { isResolved: true, path: 'src/old.ts', line: 1 },
+          {
+            isResolved: false,
+            isOutdated: true,
+            path: 'src/[draft]_notes.md',
+            line: null,
+            originalLine: 3,
+            comments: {
+              nodes: [{ url: `${SEVEN}#discussion_r2`, bodyText: 'Why *this*?', author: { login: 'bob' } }],
+            },
+          },
+        ],
+      },
       author: { login: 'ada' },
       headRefName: 'fix-branch',
       additions: 12,
@@ -413,17 +442,18 @@ type PanelOptions = {
   env?: Record<string, string>
   files?: Record<string, string>
   settings?: Record<string, unknown>
+  github?: Beneath['github']
 }
 
 /**
  * A session on a Claude Code theme whose review loop tracks o/r#1, with the
- * theme's `/config` row, the files and the settings beneath the plugin. A
- * change of theme to `dark-ansi` is refused.
+ * theme's `/config` row, the files, the settings and GitHub's answers beneath
+ * the plugin. A change of theme to `dark-ansi` is refused.
  */
-function panelWorld(on: On, { theme = 'dark', env = {}, files = {}, settings = {} }: PanelOptions = {}) {
+function panelWorld(on: On, { theme = 'dark', env = {}, files = {}, settings = {}, github }: PanelOptions = {}) {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME, ...env })
-  const { commands } = world(on, { [REVIEW]: 'o/r#1\n', ...files }, undefined, { settings })
+  const { commands } = world(on, { [REVIEW]: 'o/r#1\n', ...files }, undefined, { settings, github })
   const toasts = toastsOf(on)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'projector' } }))
@@ -635,6 +665,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   ])
 
   await ui.press({ key: 'pr:x/y#7' })
+  await clock.settle()
   // The drawer's facts name no author, whoever wrote the pull request.
   const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files · checks passing$/ })
   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
@@ -663,16 +694,32 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect(opened).toBeDefined()
   expect(opened?.props.marginLeft).toBe(4)
   // Under the facts come the actions, a line each, then the links, each on a line of its own, so a terminal without hyperlinks shows the whole URL.
-  const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
-  expect(lines.map(line => line.props.key ?? line.type)).toEqual([
+  // The thread lines come as one list among the children, so the children are flattened first. A thread's line
+  // is a Text, which carries no key of its own.
+  type Line = { type: string; props?: { key?: string }; children?: unknown[] }
+  const lines = ((opened?.children ?? []) as unknown[]).flat() as Line[]
+  expect(lines.map(line => line.props?.key ?? line.type)).toEqual([
     'Text',
     'discuss:x/y#7',
     'dismiss:x/y#7',
     'github:x/y#7',
     'projector:x/y#7',
+    'Text',
+    'Text',
   ])
   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
+  // Each unresolved thread links to its first comment: where it is, who opened it, how it starts, cut to fit,
+  // and whether a push left it outdated. Its text is a Link's children, so brackets and stars stay as written.
+  const links = lines.slice(-2).map(line => (line.children as { type: string; props: { href: string }; children: string[] }[])[0])
+  expect(links.map(link => [link?.type, link?.props.href, link?.children.join('')])).toEqual([
+    [
+      'Link',
+      `${SEVEN}#discussion_r1`,
+      'src/fetch.ts:40 · grace · P2 · The retry loop never sleeps between attempts, so a fla…',
+    ],
+    ['Link', `${SEVEN}#discussion_r2`, 'src/[draft]_notes.md:3 · bob · Why *this*? · outdated'],
+  ])
   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
 
   // discuss is a plain Button, so Enter fills the prompt on the main screen too.
@@ -682,6 +729,84 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
 
   await ui.press({ key: 'pr:x/y#7' })
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('reads a pull request’s threads only while its drawer is open, and only when the poll counted one', async ($, on) => {
+  const { clock, commands } = panelWorld(on, { files: { [WATCH]: 'x/y#7\n' } })
+  // The queries the panel sent GitHub since the last call.
+  let read = 0
+  const fresh = () => {
+    const sent = commands.filter(argv => argv[0] === 'gh').map(argv => argv.join(' '))
+    const since = sent.slice(read)
+    read = sent.length
+    return since
+  }
+  const isThreads = (query: string) => query.includes('comments(')
+
+  await startSession($, clock)
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+  // Each thread's first comment is a connection of its own, which would cost a point per pull request on every poll,
+  // so the poll asks only whether each thread is resolved.
+  const polls = fresh()
+  expect(polls.length).toBeGreaterThan(0)
+  expect(polls.filter(isThreads)).toEqual([])
+
+  const ui = await $.ui.mount(PANEL)
+  // GitHub counted no open thread on #1, so its drawer asks it nothing.
+  await ui.press({ key: 'pr:o/r#1' })
+  await clock.settle()
+  expect(fresh()).toEqual([])
+
+  // #7's drawer asks for #7's threads alone as it opens, and again on each poll while it stays open.
+  await ui.press({ key: 'pr:x/y#7' })
+  await clock.settle()
+  const [opening, ...rest] = fresh()
+  expect(rest).toEqual([])
+  expect(opening).toContain('r0: repository(owner: "x", name: "y") { p7: pullRequest(number: 7) { reviewThreads')
+  expect(opening).not.toContain('name: "r"')
+  expect(isThreads(opening ?? '')).toBe(true)
+  expect((await ui.findAll({ type: 'Link' })).map(link => link.props.href)).toEqual([
+    `${SEVEN}#discussion_r1`,
+    `${SEVEN}#discussion_r2`,
+  ])
+  await clock.advance(30_000 + TICK)
+  await clock.settle()
+  expect(fresh().map(isThreads)).toEqual([false, true])
+
+  // Once it closes, the poll reads no threads.
+  await ui.press({ key: 'pr:x/y#7' })
+  await clock.settle()
+  await clock.advance(30_000 + TICK)
+  await clock.settle()
+  expect(fresh().map(isThreads)).toEqual([false])
+  await ui.unmount()
+})
+
+test('keeps listing a drawer’s threads when GitHub cannot say what they are now', async ($, on) => {
+  let isOffline = false
+  const offline = { ...ran(''), exitCode: 1, stderr: 'error connecting to api.github.com\n' }
+  const { clock } = panelWorld(on, {
+    files: { [WATCH]: 'x/y#7\n' },
+    github: query => (isOffline && query.includes('comments(') ? offline : ran(answer(query))),
+  })
+
+  await startSession($, clock)
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'pr:x/y#7' })
+  await clock.settle()
+  expect(await ui.findAll({ type: 'Link' })).toHaveLength(2)
+
+  isOffline = true
+  await clock.advance(30_000 + TICK)
+  await clock.settle()
+  expect(await ui.findAll({ type: 'Link' })).toHaveLength(2)
   await ui.unmount()
 })
 
