@@ -232,21 +232,24 @@ from the terminal's edge and ends where Claude Code's `[-]`, which collapses
 the panel, begins. Its header and its key hint sit one column in from the
 panel's left edge, and the pull requests and items between them two columns
 in from each side, so every line ends two columns short of the panel's right
-edge, where the ages line up. The panel's background follows your Claude
-Code theme, a step darker than the terminal so that the panel reads as a
-sunken surface:
+edge, where the ages line up. The panel's background is `ink`, the page
+color of Projector's site, [projector.bot](https://projector.bot): near
+black on a dark Claude Code theme and a warm off-white on a light one.
 
-- **`dark` and `dark-daltonized`** draw on `rgb(20,20,20)`.
-- **`light` and `light-daltonized`** draw on `rgb(240,240,240)`.
+- **`dark` and `dark-daltonized`** draw on `#100f0c`.
+- **`light` and `light-daltonized`** draw on `#f6f4ee`.
 - **A custom theme** takes the color of the theme it builds on, the `base`
   in its file under `~/.claude/themes/`, or under `$CLAUDE_CONFIG_DIR/themes/`
-  when that variable is set. A file with no `base` builds on `dark`, and a
-  file the panel cannot read gives `inverseText`.
+  when that variable is set. A file whose `base` is missing or names none of
+  Claude Code's themes builds on `dark`, as Claude Code draws it, and a file
+  the panel cannot read gives `inverseText`.
 - **Any other theme**, such as `dark-ansi` or `light-ansi`, draws on its own
-  `inverseText` color.
+  `inverseText` color, because its colors come from the terminal's palette,
+  which the panel cannot see.
 
-A theme you pick with `/theme` recolors the panel at once. To choose
-another shade, set `panel.background`, as
+A theme you pick with `/theme` recolors the panel at once. To draw another
+of the panel's themes, or a shade or a text color of your own, set
+`panel.theme`, `panel.background`, or `panel.colors`, as
 [Choose the panel's color](#choose-the-panels-color) describes.
 
 The panel's first line is its header, drawn in the `subtle` color. It starts
@@ -280,13 +283,13 @@ GitHub's error only when it has none of them to show.
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
 one column past the number, under `draft` or `ready`. It says whether your
-loops are watching the pull request, in the terminal palette's blue, or
-reviewing it, in Claude's orange, then its branch, in the palette's cyan,
-its size, and its checks. The size reads as a diff stat: the insertions,
-such as `+84`, in green and the deletions, such as `−12`, in red. The
-checks' state takes a color of its own, and the rest, ` in 5 files` and
-each `·` included, keeps the default text color. Below that come two
-actions, a line each, on the digits `7` and `8`, as
+loops are watching the pull request, in the theme's `remember` blue, or
+reviewing it, in Claude's orange, then its branch, in the theme's
+`planMode` teal, its size, and its checks. The size reads as a diff stat:
+the insertions, such as `+84`, in green and the deletions, such as `−12`,
+in red. The checks' state takes a color of its own, and the rest,
+` in 5 files` and each `·` included, keeps the default text color. Below
+that come two actions, a line each, on the digits `7` and `8`, as
 [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
 describes, and then the links:
 
@@ -341,9 +344,9 @@ says so once and leaves that loop out.
 The panel reloads when one of the session's watchers reports a change and
 when a turn ends, and every 30 seconds otherwise, only while it is shown.
 Each reload asks GitHub for every pull request in one `gh api graphql` call
-and reads `panel.background` with `project config get`. That call costs one
-point of the account's hourly GraphQL quota for each 50 or so pull
-requests, because it asks only whether each thread is resolved. An open
+and reads the `panel` settings with `project config get panel`. The GitHub
+call costs one point of the account's hourly GraphQL quota for each 50 or so
+pull requests, because it asks only whether each thread is resolved. An open
 drawer's threads cost a point of their own, because GitHub charges for each
 thread's first comment. So the panel asks for them in a second call, for
 that one pull request, when the drawer opens and on each reload while it
@@ -352,31 +355,138 @@ thread. The skills never depend on the panel, and Codex has no equivalent.
 
 #### Choose the panel's color
 
-The panel takes its background from your Claude Code theme unless you set
-`panel.background`. Set it in `~/.projector.toml` to use one shade in every
-repository:
+The panel draws every color through a role, named for what the color means,
+and each role's default follows your Claude Code theme. Three settings
+change them, and each takes a name that describes its color:
+
+- **`panel.theme`** picks one of the panel's built-in themes.
+- **`panel.background`** sets the background alone, over the theme's.
+- **`panel.colors.<role>`** sets the color of one role.
+
+Set them in `~/.projector.toml` to use them in every repository:
 
 ```sh
-project config set panel.background 'rgb(30,30,40)' --user
+project config set panel.theme umber --user
+project config set panel.colors.muted 'ansi256(244)' --user
 ```
 
-`panel.background` takes these values:
+```toml
+[panel]
+theme = "umber"
 
-- **`auto`**, the default, leaves the color to the theme, and
-  `project config unset panel.background --user` returns to it.
-- **A literal color** draws as written: `rgb(r,g,b)` with each number from
-  0 to 255, `#rgb` or `#rrggbb`, or `ansi256(n)` with `n` from 0 to 255.
-- **`sidebar`** draws the grey of Claude Code's side panel, its theme's
+[panel.colors]
+muted = "ansi256(244)"
+```
+
+`project config unset` returns a setting to its default. A change the
+session makes with `project config set` or `unset` shows as soon as the
+command finishes. The panel also reads the settings when the session
+starts, when `/projector` shows the panel, and each time the panel reloads,
+so a file you edit by hand shows within 30 seconds, without a restart.
+
+##### The themes
+
+Each built-in theme is a background for a dark and for a light Claude Code
+theme, drawn from the palette of [projector.bot](https://projector.bot).
+Every other role keeps its default.
+
+| Theme | On a dark theme | On a light theme | What it looks like |
+| --- | --- | --- | --- |
+| `ink`, the default | `#100f0c` | `#f6f4ee` | The site's page: near black, or a warm off-white |
+| `umber` | `#171510` | `#fdfcf8` | The site's code blocks: a warm brown-black, or near white |
+| `stone` | `#1e1c16` | `#eeebe2` | The site's inline code: a step lighter than `ink` on dark, a step darker on light |
+| `graphite` | `rgb(20,20,20)` | `rgb(240,240,240)` | A neutral gray, a step darker than most terminals |
+
+On a Claude Code theme whose colors come from the terminal's palette, such
+as `dark-ansi` or `light-ansi`, and on a custom theme whose file the panel
+cannot read, every theme draws the Claude Code theme's `inverseText`. The
+panel draws `ink` for any other value of `panel.theme`.
+
+##### The background
+
+`panel.background` takes these values, and with no value the panel draws
+the theme's background:
+
+- **A theme's name**, such as `stone`, draws that theme's background.
+- **`smoke`** draws the gray of Claude Code's side panel, its theme's
   `composerSidebarBackground`.
 - **`black`** draws `rgb(0,0,0)`, and **`white`** draws `rgb(255,255,255)`,
   whatever the theme.
+- **A literal color** draws as written: `rgb(r,g,b)` with each number from
+  0 to 255, `#rgb` or `#rrggbb`, or `ansi256(n)` with `n` from 0 to 255.
 
-Any other value, such as another theme color's name like `inverseText`, a
-misspelling like `sidebr`, or `ansi:black`, leaves the color to the theme,
-and the panel says so once. `subtle` is refused too, because the panel draws
-its own muted text in `subtle`, which would vanish on it. The panel reads
-the setting when the session starts and each time it reloads, so a change
-shows within 30 seconds, without a restart.
+The panel refuses any other value, such as a theme color's name like
+`inverseText` or `subtle`, a misspelling like `smok`, or `ansi:black`, and
+draws the theme's background instead.
+
+##### The roles
+
+| Role | What it colors | Default |
+| --- | --- | --- |
+| `text` | A pull request's title, each ` · `, ` in 5 files`, and a chosen or typed answer | Claude Code's text color |
+| `muted` | The header, the key hint, ages, another person's login, an item's pull request, `sending`, a resolved or snoozed item, the options a question's answer passed over, the tagline, and `Looking for pull requests…` | `subtle` |
+| `question` | An open question's line | `permission` |
+| `notice` | An open notice's line | `inactive` |
+| `success` | `ready`, `approved`, `checks passing`, `(recommended)`, and `✓` | `success` |
+| `warning` | `draft`, an open thread count such as `5*`, and `checks pending` | `warning` |
+| `error` | `conflict`, `changes requested`, `checks failing`, and GitHub's error | `error` |
+| `added` | A drawer's insertions, such as `+84` | `success` |
+| `removed` | A drawer's deletions, such as `−12` | `error` |
+| `watching` | `watching` in a pull request's drawer | `remember` |
+| `reviewing` | `reviewing` in a pull request's drawer | `claude` |
+| `branch` | A pull request's branch in its drawer | `planMode` |
+
+Each default is a Claude Code theme color, so it follows your theme, the
+daltonized and custom themes included. `panel.colors.<role>` takes a
+literal color as `panel.background` takes one, one of Claude Code's public
+theme colors, from `text` to `diffRemovedWord`, or `default` for Claude
+Code's own text color. The panel refuses any other value, such as a color's
+plain name like `gray`, which Claude Code draws in the default color, an
+`ansi:` name, which makes Claude Code refuse the whole panel, or a theme
+color outside the public ones, such as `composerSidebarBackground`. A
+`panel.colors.background` is refused too, because `panel.background` sets
+the background.
+
+Claude Code draws some of the panel's text itself, and no role changes it:
+a key's label, such as `7: discuss PR`, a pull request's number, and a link,
+such as `open in github` or an unresolved thread's line in a drawer.
+
+##### What the panel refuses
+
+The panel refuses a color that would vanish: one under a contrast ratio of
+1.5:1 against the color it draws on, as the Web Content Accessibility
+Guidelines (WCAG) 2 measure contrast. It measures a color it knows: a
+literal color, `ansi256(n)` from 16 to 255, which terminals take from the
+standard xterm table, and a theme color on `dark`, `light`, their
+daltonized themes, or a custom theme built on one of them, whose own colors
+count. It settles the background first, then each role:
+
+- **A role that would vanish draws its default.** For example, `muted` set
+  to `rgb(40,40,40)` is 1.30:1 on `ink`'s `#100f0c`, so `muted` draws
+  `subtle`. `rgb(70,70,70)` is 2.03:1 and draws as set. Low contrast that
+  stays readable draws with no warning, because the panel's muted text is
+  quiet by design.
+- **A background that would hide a role's default gives way.** On `dark`,
+  `subtle` is `rgb(80,80,80)`, so `panel.background = "rgb(80,80,80)"`
+  would hide the header, the hint, and the ages, and the panel draws the
+  theme's background. Set `panel.colors.muted` to a color that shows on it,
+  such as `rgb(200,200,200)`, and both draw as set.
+- **A background that would hide Claude Code's own text gives way.** A
+  key's label and a link draw in the theme's text color, near white on a
+  dark theme and near black on a light one. So the panel draws `white` only
+  on a light theme and `black` only on a dark one.
+
+When the background that `panel.theme` names gives way too, the panel draws
+`ink`. On a Claude Code theme whose colors come from the terminal's palette,
+or whose file the panel cannot read, the panel knows only literal colors,
+so a background can still hide a role that keeps its default there.
+
+Each time the panel refuses a value, it says why once a session, in one
+toast for everything one read finds:
+
+```text
+projector: panel.colors.mutd is not a role (the roles are text, muted, question, notice, success, warning, error, added, removed, watching, reviewing, and branch); panel.colors.muted rgb(40,40,40) would vanish on the panel’s #100f0c, so muted draws subtle
+```
 
 ### Read your inbox in Projector's panel
 

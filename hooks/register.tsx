@@ -3,6 +3,7 @@ import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-
 
 import type {
   Checks,
+  ClaudeCodeTheme,
   Item,
   LoopKind,
   Notice,
@@ -12,10 +13,12 @@ import type {
   SeenLoop,
   Sending,
   Snapshot,
+  TextRole,
   Thread,
 } from './types'
 import { buildQuery, buildThreadsQuery, parseResponse, parseThreads, type Fetched } from './github'
 import { findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
+import { claudeCodeTheme, customTheme, resolve, UNKNOWN_THEME } from './theme'
 import {
   ASK_DESCRIPTION,
   ASK_SCHEMA,
@@ -68,41 +71,12 @@ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
 // watch loop puts it.
 const KINDS: readonly LoopKind[] = ['watching', 'reviewing']
 
-const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
+/** The role each state of a pull request's checks draws in. */
+const CHECK_ROLES: Record<Checks, TextRole> = {
   passing: 'success',
   failing: 'error',
   pending: 'warning',
 }
-
-/**
- * The theme color of an open question's line: the one Claude Code gives its
- * own permission prompts, since an agent's question usually asks leave to do
- * something.
- */
-const QUESTION_COLOR = 'permission'
-
-/**
- * The color of an open notice's line: the theme's mid gray, which stays
- * apart from the `subtle` of a resolved or snoozed item. A plain `gray` would
- * draw in the default color.
- */
-const NOTICE_COLOR = 'inactive'
-
-/**
- * The color of a pull request's branch on its drawer's facts line: the
- * terminal palette's own cyan, slot 6, so it follows the person's palette as
- * a named color would. Claude Code draws a plain name such as `cyan` in the
- * default color and refuses `ansi:cyan` on a plugin's Text, but takes
- * `ansi256()`.
- */
-const BRANCH_COLOR = 'ansi256(6)'
-
-/**
- * The color of what a loop does with a pull request, on its drawer's facts
- * line: watching in the terminal palette's blue, slot 4, in the same form as
- * `BRANCH_COLOR`, and reviewing in the theme's `claude` orange.
- */
-const LOOP_COLORS: Record<LoopKind, string> = { watching: 'ansi256(4)', reviewing: 'claude' }
 
 /** The key that closes an open item's drawer, from its line at the drawer's top. */
 const CLOSE_HOTKEY = '0'
@@ -137,57 +111,6 @@ const FOCUSED_HINT = 'esc to return · enter to open'
 /** What the panel's header starts with, at its left: the command that shows and hides the panel. */
 const HEADER_NAME = '/projector'
 
-/**
- * The panel's background by Claude Code theme: a step darker than the
- * terminal's own, so the panel reads as a sunken surface. Any other theme,
- * an ANSI one included, takes `OTHER_BACKGROUND`.
- */
-const THEME_BACKGROUNDS: Record<string, string> = {
-  dark: 'rgb(20,20,20)',
-  'dark-daltonized': 'rgb(20,20,20)',
-  light: 'rgb(240,240,240)',
-  'light-daltonized': 'rgb(240,240,240)',
-}
-const OTHER_BACKGROUND = 'inverseText'
-
-/** The setting that colors the panel, and its value that leaves the color to the theme. */
-const BACKGROUND_KEY = 'panel.background'
-const AUTO = 'auto'
-
-/**
- * The names `panel.background` takes besides `auto` and a literal color, and
- * what each draws. Claude Code draws any theme key by name, but the panel
- * refuses the others by choice: most are text colors that look wrong as a
- * background, and a misspelled name, which is no key, draws nothing at all.
- * `subtle` is refused too, as the color of the panel's own muted text, which
- * would vanish on it. `black` and `white` are literal colors: `inverseText`
- * flips between the two with the theme, and `ansi256(0)` is the terminal
- * palette's black, often the terminal's own background, which would make the
- * panel vanish.
- */
-const BACKGROUND_ALIASES = new Map([
-  ['sidebar', 'composerSidebarBackground'],
-  ['black', 'rgb(0,0,0)'],
-  ['white', 'rgb(255,255,255)'],
-])
-
-/**
- * The literal colors `panel.background` takes, written as Claude Code reads
- * them: `#rgb` or `#rrggbb`, and `rgb(r,g,b)` or `ansi256(n)`, with a space
- * allowed after `(`, each comma, and before `)`. Each number is at most 255.
- */
-const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
-const NUMBERED_COLORS = [/^rgb\( ?(\d{1,3}), ?(\d{1,3}), ?(\d{1,3}) ?\)$/, /^ansi256\( ?(\d{1,3}) ?\)$/]
-
-/** What the panel draws for a `panel.background` value other than `auto`, or undefined when it takes none. */
-function backgroundFor(value: string): string | undefined {
-  const alias = BACKGROUND_ALIASES.get(value)
-  if (alias !== undefined) return alias
-  if (HEX_COLOR.test(value)) return value
-  const numbers = NUMBERED_COLORS.map(pattern => pattern.exec(value)).find(match => match !== null)
-  return numbers?.slice(1).every(number => Number(number) <= 255) === true ? value : undefined
-}
-
 /** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
 const SNOOZES = [
   { label: '15 min', minutes: 15 },
@@ -205,8 +128,9 @@ const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
 const drawerThreads = atom({ plugin: 'projector', key: 'panelThreads' } as const, null)
 const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
-const themeBackground = atom({ plugin: 'projector', key: 'panelThemeBackground' } as const, OTHER_BACKGROUND)
-const background = atom({ plugin: 'projector', key: 'panelBackground' } as const, AUTO)
+const claudeTheme = atom({ plugin: 'projector', key: 'panelTheme' } as const, UNKNOWN_THEME)
+const settings = atom({ plugin: 'projector', key: 'panelSettings' } as const, null)
+const panelColors = atom({ plugin: 'projector', key: 'panelColors' } as const, resolve(UNKNOWN_THEME, null).colors)
 const isFocused = atom({ plugin: 'projector', key: 'isPanelFocused' } as const, false)
 /**
  * The deliveries the release before the panel's rename recorded, under the
@@ -383,61 +307,85 @@ async function loadThreads($: Engine): Promise<void> {
 }
 
 /**
- * The panel's background for a Claude Code theme: by the theme's name, or
- * for a custom theme, `custom:<slug>`, by the theme its file builds on,
- * `dark` unless its `base` says otherwise. A custom theme whose file cannot
- * be read takes `OTHER_BACKGROUND`.
+ * What the panel knows of a Claude Code theme: by the theme's name, or for a
+ * custom theme, `custom:<slug>`, from its file, which names the theme it
+ * builds on and may override the base's colors. A custom theme whose file
+ * cannot be read is one the panel knows nothing of.
  */
-async function backgroundOf($: Engine, theme: unknown): Promise<string> {
-  if (typeof theme !== 'string') return OTHER_BACKGROUND
-  if (!theme.startsWith('custom:')) return THEME_BACKGROUNDS[theme] ?? OTHER_BACKGROUND
+async function claudeThemeOf($: Engine, name: unknown): Promise<ClaudeCodeTheme> {
+  if (typeof name !== 'string' || !name.startsWith('custom:')) return claudeCodeTheme(name)
   const env = await envOf($)
   const home = env('HOME')
   const config = env('CLAUDE_CONFIG_DIR') ?? (home === undefined ? undefined : `${home}/.claude`)
-  if (config === undefined) return OTHER_BACKGROUND
+  if (config === undefined) return UNKNOWN_THEME
   try {
-    const path = `${config}/themes/${theme.slice('custom:'.length)}.json`
-    const base = (JSON.parse(await $.fs.read(path)) as { base?: unknown }).base ?? 'dark'
-    return typeof base === 'string' ? (THEME_BACKGROUNDS[base] ?? OTHER_BACKGROUND) : OTHER_BACKGROUND
+    const path = `${config}/themes/${name.slice('custom:'.length)}.json`
+    const file = JSON.parse(await $.fs.read(path)) as { base?: unknown; overrides?: unknown }
+    return customTheme(file.base, file.overrides)
   } catch {
-    return OTHER_BACKGROUND
+    return UNKNOWN_THEME
   }
 }
 
-/** Colors the panel for a theme ahead of the render, which then waits on no read. */
-async function paint($: Engine, theme: unknown): Promise<void> {
-  const color = await backgroundOf($, theme)
-  await update($, themeBackground, () => color)
-}
-
-/** The `panel.background` values the panel said it does not take, so it says so once for each. */
-const unpaintable = new Set<string>()
+/** The problems with the panel's settings that it has toasted, so it says each once a session. */
+const toasted = new Set<string>()
 
 /**
- * Reads `panel.background` through the CLI, which merges the `.projector.toml`
- * files. The panel alone decides which values it takes, so the CLI stores any
- * string. A value it does not take leaves the color to the theme, and the
- * panel says so once. A read that fails keeps the value the panel last read,
- * and the next reload reads it again.
+ * The last recolor, which the next waits for, so a recolor that read a theme
+ * or settings since replaced never stores its colors over a later one's.
  */
-async function readBackground($: Engine): Promise<void> {
+let recoloring: Promise<void> = Promise.resolve()
+
+/**
+ * Resolves the panel's colors for the theme and the settings it last read,
+ * ahead of the render, which then waits on no read. The problems it has not
+ * toasted yet go in one toast.
+ */
+function recolor($: Engine): Promise<void> {
+  recoloring = recoloring
+    .then(async () => {
+      const { colors, problems } = resolve(await read($, claudeTheme), await read($, settings))
+      await update($, panelColors, () => colors)
+      const fresh = problems.filter(problem => !toasted.has(problem))
+      for (const problem of fresh) toasted.add(problem)
+      if (fresh.length > 0) void $.ui.toast(`projector: ${fresh.join('; ')}`)
+    })
+    .catch(() => undefined)
+  return recoloring
+}
+
+/** Colors the panel for a Claude Code theme. */
+async function paint($: Engine, name: unknown): Promise<void> {
+  const theme = await claudeThemeOf($, name)
+  await update($, claudeTheme, () => theme)
+  await recolor($)
+}
+
+/**
+ * Reads the `panel` settings through the CLI, which merges the
+ * `.projector.toml` files, and colors the panel by them. The panel alone
+ * decides which values it takes, so the CLI stores any string. Exit status 1
+ * says no file sets any. A read that fails keeps the settings the panel last
+ * read, and the next reload reads them again.
+ */
+async function readSettings($: Engine): Promise<void> {
   try {
-    const ran = await project($, ['config', 'get', BACKGROUND_KEY, '--default', AUTO, '--json'])
-    if (ran.exitCode !== 0) return
-    const value = (JSON.parse(ran.stdout) as { value?: unknown }).value ?? AUTO
-    const color = value === AUTO ? AUTO : typeof value === 'string' ? backgroundFor(value) : undefined
-    const written = JSON.stringify(value)
-    if (color === undefined && !unpaintable.has(written)) {
-      unpaintable.add(written)
-      void $.ui.toast(
-        `projector: ${BACKGROUND_KEY} is ${written}, which is not rgb(r,g,b), #rrggbb, ansi256(n), sidebar, black or white, so the panel takes its color from the theme`,
-      )
-    }
-    await update($, background, () => color ?? AUTO)
+    const ran = await project($, ['config', 'get', 'panel', '--json'])
+    if (ran.exitCode !== 0 && ran.exitCode !== 1) return
+    const { value } = JSON.parse(ran.stdout) as { value?: unknown }
+    await update($, settings, () => value ?? null)
+    await recolor($)
   } catch {
-    // The next reload reads it again.
+    // The next reload reads them again.
   }
 }
+
+/**
+ * A `project config set` or `unset` of a panel setting, which the panel reads
+ * again at once. The CLI takes options before the key as well as after it,
+ * and `--root` and `--file` take a value.
+ */
+const SETS_PANEL = /\bconfig\s+(?:un)?set\s+(?:--(?:root|file)(?:=|\s+)\S+\s+|-\S+\s+)*['"]?panel\./
 
 /** The session's own loops, the watchers it started, each with the pull requests its tracked file lists. */
 async function trackedSets($: Engine): Promise<(SeenLoop & { entries: TrackedPr[] })[]> {
@@ -465,8 +413,8 @@ async function load($: Engine): Promise<void> {
     }
   }
 
-  // Each reload reads the panel's setting too, so an edit to it shows without a restart.
-  const [fetched] = await Promise.all([fetchPrs($, [...tracked.values()]), readBackground($)])
+  // Each reload reads the panel's settings too, so an edit to them shows without a restart.
+  const [fetched] = await Promise.all([fetchPrs($, [...tracked.values()]), readSettings($)])
 
   // When GitHub cannot be reached, keep drawing what it said last time.
   const last = current(await read($, snapshot))
@@ -911,16 +859,16 @@ function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
   return pr => (isOneRepo ? `#${pr.number}` : `${pr.repo}#${pr.number}`)
 }
 
-type Note = { text: string; color: 'error' | 'warning' | 'success' }
+type Note = { text: string; role: TextRole }
 
 /** What a row says after the title: what holds the pull request back, or its approval. */
 function notesOf(pr: PullRequest): Note[] {
   const notes: Note[] = []
-  if (pr.isConflicting) notes.push({ text: 'conflict', color: 'error' })
-  if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
-  if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
+  if (pr.isConflicting) notes.push({ text: 'conflict', role: 'error' })
+  if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', role: 'error' })
+  if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', role: 'success' })
   // The open threads' count comes last, beside the age.
-  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, color: 'warning' })
+  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, role: 'warning' })
   return notes
 }
 
@@ -1013,13 +961,13 @@ export const register: Register = on => {
     ]) {
       await $.tool.register({ ...tool, isDeferred: false }).catch(() => undefined)
     }
-    // The panel takes its color from the theme, and from its setting once a
-    // timer has read it, so the start waits on no process.
+    // The panel takes its colors from the theme, and from its settings once a
+    // timer has read them, so the start waits on no process.
     await $.config
       .list()
       .then(rows => paint($, rows.find(row => row.key === 'theme')?.value))
       .catch(() => undefined)
-    $.clock.after(1, () => void readBackground($))
+    $.clock.after(1, () => void readSettings($))
     $.clock.every(TICK_MS, () => void tick($))
     soon($)
     checkSoon($)
@@ -1115,7 +1063,10 @@ export const register: Register = on => {
   // so a failure here never runs a tool twice or refuses anything.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
-    if (ran.deny === undefined) await adopt($, e.command)
+    if (ran.deny === undefined) {
+      if (SETS_PANEL.test(e.command)) $.clock.after(1, () => void readSettings($))
+      await adopt($, e.command)
+    }
     return ran
   }).catch(($, e, next) => next(e))
 
@@ -1236,6 +1187,7 @@ export const register: Register = on => {
     const opened = await read($, drawer)
     const shownThreads = await read($, drawerThreads)
     const asking = await read($, asked)
+    const colors = await read($, panelColors)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
     const counts = [
       countOf(shown.rows.length, 'pull request'),
@@ -1297,10 +1249,8 @@ export const register: Register = on => {
     // them but end where those lines do, so their right ends line up with
     // the rows' ages.
     const edgeColumns = columns + LINE_PADDING
-    const setting = await read($, background)
-    const color = setting === AUTO ? await read($, themeBackground) : setting
     const hint = (await read($, isFocused)) ? FOCUSED_HINT : FOCUS_HINT
-    // The panel's first line is its header, all in `subtle`: `HEADER_NAME` at
+    // The panel's first line is its header, all in `muted`: `HEADER_NAME` at
     // its left, and the counts and how long ago the panel reloaded at its
     // right, so the time ends in the rows' age column. Two spaces set the
     // counts apart from the time, about the gap a row leaves before its age.
@@ -1319,17 +1269,17 @@ export const register: Register = on => {
             width={e.props.bodyColumns - PANEL_INSET}
             paddingLeft={PANEL_PADDING}
             paddingRight={PANEL_PADDING}
-            backgroundColor={color}
+            backgroundColor={colors.background}
           >
             {isHeaded && (
-              <Text key="header" color="subtle">
+              <Text key="header" color={colors.muted}>
                 {`${HEADER_NAME}${gap}${status}`}
               </Text>
             )}
             <Box flexDirection="column" paddingLeft={LINE_PADDING} paddingRight={LINE_PADDING}>
               {lines}
             </Box>
-            <Text key="hint" color="subtle">
+            <Text key="hint" color={colors.muted}>
               {hint.padStart(edgeColumns)}
             </Text>
           </Box>
@@ -1341,15 +1291,15 @@ export const register: Register = on => {
     if (shown.rows.length === 0 && shownItems.length === 0) {
       return panel([
         failure !== undefined ? (
-          <Text key="failure" color="error">
+          <Text key="failure" color={colors.error}>
             {failure}
           </Text>
         ) : shown.fetchedAt === null ? (
-          <Text key="looking" color="subtle">
+          <Text key="looking" color={colors.muted}>
             Looking for pull requests…
           </Text>
         ) : (
-          <Text key="tagline" color="subtle">{` ${TAGLINE}`}</Text>
+          <Text key="tagline" color={colors.muted}>{` ${TAGLINE}`}</Text>
         ),
       ])
     }
@@ -1362,8 +1312,8 @@ export const register: Register = on => {
     }
 
     // The items are a list below the pull requests, oldest first, each
-    // bulleted `-`; an open question's line takes `QUESTION_COLOR`, and a
-    // resolved or snoozed item's `subtle`. An open question's drawer numbers
+    // bulleted `-`; an open question's line takes the `question` role, and a
+    // resolved or snoozed item's `muted`. An open question's drawer numbers
     // its options; choosing one puts the question and that answer in the
     // prompt as text, for you to send or change, and sending it unchanged is
     // what answers the question. Discuss puts the question alone, for a reply
@@ -1383,7 +1333,7 @@ export const register: Register = on => {
     )
     const ageColumn = (key: string, then: number | null) => (
       <Box key={`age:${key}`} flexShrink={0} width={ageWidth} justifyContent="flex-end">
-        <Text color="subtle">{ageOf(then)}</Text>
+        <Text color={colors.muted}>{ageOf(then)}</Text>
       </Box>
     )
     const fill = (text: string) => {
@@ -1417,7 +1367,7 @@ export const register: Register = on => {
       const { ref, answer } = question
       const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
       const recommended = ' (recommended)'
-      const marked = <Text color="success"> ✓</Text>
+      const marked = <Text color={colors.success}> ✓</Text>
       const pick = (choice: string) => {
         propose(question, choice)
         fill(`${proposalOf(question, choice)}\n`)
@@ -1432,15 +1382,15 @@ export const register: Register = on => {
               {index === 0 ? `${choice}${recommended}` : choice}
             </Button>
           ) : (
-            <Text key={`option:${ref}.${letter}`} color={letter === chosen ? undefined : 'subtle'}>
+            <Text key={`option:${ref}.${letter}`} color={letter === chosen ? colors.text : colors.muted}>
               {choice}
-              {index === 0 && <Text color="success">{recommended}</Text>}
+              {index === 0 && <Text color={colors.success}>{recommended}</Text>}
               {letter === chosen && marked}
             </Text>
           )
         }),
         chosen === typedLetter(question) && answer !== undefined && 'text' in answer && (
-          <Text key={`option:${ref}.${chosen}`}>
+          <Text key={`option:${ref}.${chosen}`} color={colors.text}>
             {answer.text}
             {marked}
           </Text>
@@ -1456,7 +1406,7 @@ export const register: Register = on => {
       // through, so it reads as put off rather than dismissed.
       const isSnoozed = isSnoozedAt(item, time)
       const isOpened = opened === key
-      const color = !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' ? QUESTION_COLOR : NOTICE_COLOR
+      const color = colors[!isOpen || isSnoozed ? 'muted' : item.kind]
       const pull = pullOf(item)
       // Each action names the kind of item it acts on. A dismissed or snoozed
       // item's drawer offers to bring it back where it offered to dismiss or
@@ -1586,12 +1536,12 @@ export const register: Register = on => {
             </Box>
             {isSending && (
               <Box flexShrink={0}>
-                <Text color="subtle">sending</Text>
+                <Text color={colors.muted}>sending</Text>
               </Box>
             )}
             {pull !== '' && (
               <Box flexShrink={0}>
-                <Text color="subtle">{pull}</Text>
+                <Text color={colors.muted}>{pull}</Text>
               </Box>
             )}
             {ageColumn(key, item.postedAt)}
@@ -1638,22 +1588,24 @@ export const register: Register = on => {
               />
             </Box>
             <Box flexShrink={0}>
-              <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
+              <Text color={pr.isDraft ? colors.warning : colors.success}>{pr.isDraft ? 'draft' : 'ready'}</Text>
             </Box>
             {!isOwn(pr, shown.viewer) && (
               <Box key={`author:${key}`} flexShrink={0} width={authorWidth}>
-                <Text color="subtle">{pr.author ?? ''}</Text>
+                <Text color={colors.muted}>{pr.author ?? ''}</Text>
               </Box>
             )}
             <Box flexGrow={1} flexShrink={1}>
-              <Text wrap="truncate-end">{pr.title}</Text>
+              <Text wrap="truncate-end" color={colors.text}>
+                {pr.title}
+              </Text>
             </Box>
             {notes.length > 0 && (
               <Box flexShrink={0}>
-                <Text>
+                <Text color={colors.text}>
                   {notes.flatMap((note, at) => [
                     ...(at > 0 ? [' · '] : []),
-                    <Text key={note.text} color={note.color}>
+                    <Text key={note.text} color={colors[note.role]}>
                       {note.text}
                     </Text>,
                   ])}
@@ -1665,23 +1617,23 @@ export const register: Register = on => {
           {/* The drawer starts where the state does, one column past the label. */}
           {opened === key && (
             <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
-              {/* Each `·` keeps the default color, so a piece's color, such
-                  as the checks', stops at its own text. */}
-              <Text wrap="truncate-end">
+              {/* Each `·` keeps the text color, so a piece's color, such as
+                  the checks', stops at its own text. */}
+              <Text wrap="truncate-end" color={colors.text}>
                 {kinds.flatMap((kind, at) => [
                   ...(at === 0 ? [] : [' and ']),
-                  <Text key={`loop:${kind}`} color={LOOP_COLORS[kind]}>
+                  <Text key={`loop:${kind}`} color={colors[kind]}>
                     {kind}
                   </Text>,
                 ])}
                 {pr.branch !== '' && ' · '}
-                {pr.branch !== '' && <Text color={BRANCH_COLOR}>{pr.branch}</Text>}
+                {pr.branch !== '' && <Text color={colors.branch}>{pr.branch}</Text>}
                 {' · '}
-                <Text color="success">{`+${pr.additions}`}</Text>{' '}
-                <Text color="error">{`−${pr.deletions}`}</Text>
+                <Text color={colors.added}>{`+${pr.additions}`}</Text>{' '}
+                <Text color={colors.removed}>{`−${pr.deletions}`}</Text>
                 {` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
                 {pr.checks !== null && ' · '}
-                {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
+                {pr.checks !== null && <Text color={colors[CHECK_ROLES[pr.checks]]}>checks {pr.checks}</Text>}
               </Text>
               {/* Under the facts come the actions, a line each, and then the
                   links. Each link has a line of its own: a terminal without
@@ -1752,7 +1704,7 @@ export const register: Register = on => {
     return panel([
       ...byAuthor(shown.rows, shown.viewer).map(drawRow),
       failure !== undefined && (
-        <Text key="failure" color="error">
+        <Text key="failure" color={colors.error}>
           {failure}
         </Text>
       ),
