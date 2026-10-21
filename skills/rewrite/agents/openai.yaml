@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rewrite"
+  short_description: "Rewrite existing text so it follows Projector's writing guide"
+  default_prompt: "Use $rewrite to rewrite this text so it follows Projector's writing guide."

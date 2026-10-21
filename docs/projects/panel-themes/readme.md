@@ -92,8 +92,9 @@ they adapt to light and dark themes like every other role (§ 9).
 
 Some text stays outside every role, because Claude Code draws it and a
 plugin cannot set its color: a plain `Button`'s label and its key, such as
-`7: discuss PR` and a pull request's number, and a Markdown link, such as
-`open in github`. No role uses `dimColor`, which some terminals draw at full
+`7: discuss PR` and a pull request's number, and a link, such as the
+Markdown `open in github` or the `Link` of an unresolved thread's line in a
+drawer. No role uses `dimColor`, which some terminals draw at full
 strength.
 
 ### 2.2 The background by Claude Code theme

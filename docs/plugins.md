@@ -13,7 +13,8 @@ instructions and supporting scripts without a generated copy or host-specific
 fork.
 
 The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
-`start-review-loop`, `start-watch-loop`, `summarize-pr`, and `write`.
+`start-review-loop`, `start-watch-loop`, `summarize-pr`, `write`, and
+`rewrite`.
 `summarize-pr` summarizes a pull request's changes as a guided review page.
 Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
 `$<skill>`.
@@ -58,8 +59,12 @@ reviews and links the summary from its review;
 review and fix against. Every skill that writes prose a person reads, such as
 a plan, a review, a summary, or a pull request body, follows the writing
 guide in `skills/writing.md`. `write` applies the same guide to any other
-prose you ask for, such as `/projector:write tighten the install section of
-the README`. The core workflows use the local CLI and do not require MCP.
+prose you ask for, such as `/projector:write a README section on the
+site`. `rewrite` revises text that already exists, such as a file, a pull
+request description, a comment, or a Slack message, and writes the result
+back where the text lives when it can, such as
+`/projector:rewrite the install section of the README`. The core workflows
+use the local CLI and do not require MCP.
 
 When dependent work needs more than one pull request to stay reviewable,
 `implement` opens it as a stack that GitHub records, using the `gh stack`
@@ -194,12 +199,14 @@ session starts a loop's watcher for the first time.
 ```text
   /projector                                              2 pull requests  12s   [-]
    #267 draft List a loop's open pull requests above the Claude Code prompt 2h
-   #258 draft grace Name the reviewed head in a review's sig… conflict · 5* 5m
+   #258 draft grace Name the reviewed head in a review's sig… conflict · 2* 5m
         reviewing · review-signature · +84 −12 in 5 files · checks passing
         7: discuss PR
         8: dismiss PR
         open in github
         open in projector
+        src/review.py:412 · ada · P2 · The signature names the base, not the head
+        docs/cli.md:88 · ada · P3 · Say which head the line names · outdated
                                                            ctrl+x tab to focus
 ```
 
@@ -207,7 +214,7 @@ Each line is the pull request's number, `draft` or `ready`, its author when
 someone else wrote it, and the title. Notes follow when the pull request
 has them: `conflict` or `changes requested` in red, `approved` in green,
 and last the number of unresolved review threads before a `*` in yellow,
-such as `5*`. The ` · ` between two notes keeps the default text color. The
+such as `2*`. The ` · ` between two notes keeps the default text color. The
 line ends with how long ago the pull request last changed, in the column
 where the inbox's items end with their ages. Only the title shortens on a
 narrow terminal.
@@ -278,13 +285,13 @@ to close the drawer; opening one drawer closes any other. The drawer starts
 one column past the number, under `draft` or `ready`. It says whether your
 loops are watching the pull request, in the theme's `remember` blue, or
 reviewing it, in Claude's orange, then its branch, in the theme's
-`planMode` teal, its size, and its checks. The size reads as a diff stat: the insertions,
-such as `+84`, in green and the deletions, such as `−12`, in red. The
-checks' state takes a color of its own, and the rest, ` in 5 files` and
-each `·` included, keeps the default text color. Below that come two
-actions, a line each, on the digits `7` and `8`, as
+`planMode` teal, its size, and its checks. The size reads as a diff stat:
+the insertions, such as `+84`, in green and the deletions, such as `−12`,
+in red. The checks' state takes a color of its own, and the rest,
+` in 5 files` and each `·` included, keeps the default text color. Below
+that come two actions, a line each, on the digits `7` and `8`, as
 [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
-describes, and then two links:
+describes, and then the links:
 
 - **discuss PR** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
@@ -297,6 +304,15 @@ describes, and then two links:
 - **open in github** opens the pull request on GitHub.
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
+- **Each unresolved review thread**, oldest first, opens the thread's first
+  comment on GitHub. Its line names the file and line the thread is on, who
+  opened it, and the first line of its first comment, cut to 60 characters,
+  and ends in `outdated` when a later push changed the lines it is on. These
+  are the threads the yellow `*` counts. GitHub folds an outdated thread
+  away, and hides an older one on a long timeline behind **Load more**, so
+  the link reaches a thread the pull request's page does not show. The
+  threads appear once GitHub answers the drawer's own query, a moment
+  after the drawer opens.
 
 Each link has a line of its own, because a terminal that does not draw
 hyperlinks shows a link's URL after its text, and a line shared with
@@ -315,8 +331,8 @@ with its drawer closed.
 On the main screen, which Claude Code uses under tmux and when
 `CLAUDE_CODE_NO_FLICKER=0` is set, use the panel from the keyboard, as
 [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
-describes. The **open in github** and **open in projector** links take no
-press there; the terminal opens them the way it opens any other link.
+describes. The **open in github**, **open in projector**, and thread links take
+no press there; the terminal opens them the way it opens any other link.
 
 The panel lists only this session's loops. It finds a loop by the
 `--tracked` file its watcher reads, and learns that file when the session
@@ -328,8 +344,14 @@ says so once and leaves that loop out.
 The panel reloads when one of the session's watchers reports a change and
 when a turn ends, and every 30 seconds otherwise, only while it is shown.
 Each reload asks GitHub for every pull request in one `gh api graphql` call
-and reads the `panel` settings with `project config get panel`. The skills
-never depend on the panel, and Codex has no equivalent.
+and reads the `panel` settings with `project config get panel`. The GitHub
+call costs one point of the account's hourly GraphQL quota for each 50 or so
+pull requests, because it asks only whether each thread is resolved. An open
+drawer's threads cost a point of their own, because GitHub charges for each
+thread's first comment. So the panel asks for them in a second call, for
+that one pull request, when the drawer opens and on each reload while it
+stays open. It skips the call when the pull request has no unresolved
+thread. The skills never depend on the panel, and Codex has no equivalent.
 
 #### Choose the panel's color
 
@@ -427,7 +449,7 @@ the background.
 
 Claude Code draws some of the panel's text itself, and no role changes it:
 a key's label, such as `7: discuss PR`, a pull request's number, and a link,
-such as `open in github`.
+such as `open in github` or an unresolved thread's line in a drawer.
 
 ##### What the panel refuses
 
