@@ -1,0 +1,127 @@
+{
+ "version": 1,
+ "name": "Rewrite skill",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 349,
+  "title": "Add a rewrite skill that revises existing text and writes it back",
+  "head": "01f8079a65d501ede7c7ef9f042b1854c9ac6923",
+  "headRef": "worktree-rewrite-skill",
+  "base": "04a11fa5517c5079c0285efcad7d7c4b3e0999c5",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's skills write prose by one writing guide, <code>skills/writing.md</code>. The <code>write</code> skill applies that guide to any prose a user asks for. Revising text that already exists takes two more steps: finding the text, and putting the result back. A file is easy, but a pull request description, a review comment, or a commit message each needs its own command to read it and another to update it.",
+   "This pull request adds a <code>rewrite</code> skill for that. It takes pasted text or a reference to text, reads it with the command that fits the reference, revises it with <code>write</code>'s steps, and writes it back where it lives. It writes back only when the user wrote the text and something can edit it; otherwise it returns the revised text in the reply. <code>write</code>'s description narrows to new prose, so the two skills don't compete for one request."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Skill</b>: a <code>SKILL.md</code> file of instructions an agent follows, published from the root <code>skills/</code> directory to both Claude Code and Codex.</li><li><b>Write back</b>: replace the original text in place, such as with <code>gh pr edit --body-file</code>.</li><li><b>Author check</b>: compare who wrote the text with the user running the skill before writing back.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review, of <code>01f8079</code>, opened two threads: a line in <code>docs/plugins.md</code> that breaks the paragraph's wrapping, and <code>write</code>'s Codex interface, which still offers it for revisions. It also asks whether <code>rewrite</code> should keep Projector's hidden <code>&lt;!-- projector-… --&gt;</code> marker comments when it rewrites a pull request description or a review.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "skill",
+   "title": "The rewrite skill",
+   "kicker": "How rewrite finds text, revises it, and decides whether to write it back",
+   "intro": [
+    "The skill has three parts. <b>Find the text</b> maps each kind of reference to a read command and a write-back command. <b>Rewrite it</b> reuses <code>write</code>'s steps and adds rules only an existing text needs, such as keeping every fact and identifier and updating links when a heading changes. <b>Hand it over</b> writes the result back, or returns it in the reply when the source can't be edited, someone else wrote it, the commit is pushed, or the user asks for the text.",
+    "The author check is what keeps the skill within Projector's rule that seeing a text doesn't authorize changing it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/rewrite/SKILL.md",
+     "note": "The new skill: the reference table, the rules for an existing text, and when to write back.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The table's <code>gh api</code> reads return a comment's or review's author as <code>user.login</code>, while the author check names <code>author.login</code>, which only <code>gh pr view</code> and <code>gh issue view</code> return. The review lists this as a suggestion.",
+       "line": 85
+      },
+      {
+       "kind": "context",
+       "text": "\"Keep the format the text must have\" doesn't name HTML marker comments, such as the <code>projector-summary</code> block at the end of a pull request description. The review asks whether it should.",
+       "line": 55
+      }
+     ]
+    },
+    {
+     "path": "skills/rewrite/agents/openai.yaml",
+     "note": "Codex's display name, short description, and default prompt for the new skill."
+    }
+   ]
+  },
+  {
+   "id": "write",
+   "title": "Narrowing write to new prose",
+   "kicker": "write's description stops claiming revisions",
+   "intro": [
+    "<code>write</code>'s frontmatter description now covers only new prose and points revisions to <code>rewrite</code>. The host reads this description to pick a skill, so the change decides which skill a request to revise text reaches."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/write/SKILL.md",
+     "note": "Only the frontmatter description changes.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "Open finding: <code>skills/write/agents/openai.yaml</code> still gives Codex the short description \"Write or revise prose\" and the default prompt \"Use $write to revise this text\", so in Codex <code>write</code> still competes with <code>rewrite</code> for revisions.",
+       "line": 3
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and packaging",
+   "kicker": "Naming the new skill where the skills are listed, and in the packaging test",
+   "intro": [
+    "The README, <code>docs/plugins.md</code>, and the writing guide's opening name <code>rewrite</code>. The packaging test's set of published skills gains <code>rewrite</code>, so the test fails if the skill directory goes missing or another appears."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The repository's full gate passed at <code>01f8079</code>: 1097 unit tests with one skip, <code>project check</code>, both <code>claude plugin validate</code> commands, 144 hooks tests, <code>hooks/typecheck.sh</code>, and <code>git diff --check</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "README.md",
+     "note": "Adds <code>rewrite</code> to the list of skills."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Adds <code>rewrite</code> to the plugin's skill list and describes it beside <code>write</code>.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "Open finding: this line is 116 characters in a paragraph wrapped at 79, against the repository's rule to match the wrapping around a Markdown edit.",
+       "line": 66
+      }
+     ]
+    },
+    {
+     "path": "skills/writing.md",
+     "note": "The guide's opening now names <code>rewrite</code> beside <code>write</code>."
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "Adds <code>rewrite</code> to the published skill set."
+    }
+   ]
+  }
+ ]
+}
