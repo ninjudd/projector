@@ -63,7 +63,8 @@ prose you ask for, such as `/projector:write a README section on the
 site`. `rewrite` revises text that already exists, such as a file, a pull
 request description, a comment, or a Slack message, and writes the result
 back where the text lives when it can, such as
-`/projector:rewrite the install section of the README`. The core workflows use the local CLI and do not require MCP.
+`/projector:rewrite the install section of the README`. The core workflows
+use the local CLI and do not require MCP.
 
 When dependent work needs more than one pull request to stay reviewable,
 `implement` opens it as a stack that GitHub records, using the `gh stack`
