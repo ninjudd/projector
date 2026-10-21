@@ -18,6 +18,7 @@ PUBLISHED_SKILLS = {
     "start-watch-loop",
     "summarize-pr",
     "write",
+    "rewrite",
 }
 # A skill cites another skill's section as: `../<skill>/SKILL.md` describes
 # under "<heading>". The heading may be at any level.

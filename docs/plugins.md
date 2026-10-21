@@ -13,7 +13,8 @@ instructions and supporting scripts without a generated copy or host-specific
 fork.
 
 The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
-`start-review-loop`, `start-watch-loop`, `summarize-pr`, and `write`.
+`start-review-loop`, `start-watch-loop`, `summarize-pr`, `write`, and
+`rewrite`.
 `summarize-pr` summarizes a pull request's changes as a guided review page.
 Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
 `$<skill>`.
@@ -58,8 +59,12 @@ reviews and links the summary from its review;
 review and fix against. Every skill that writes prose a person reads, such as
 a plan, a review, a summary, or a pull request body, follows the writing
 guide in `skills/writing.md`. `write` applies the same guide to any other
-prose you ask for, such as `/projector:write tighten the install section of
-the README`. The core workflows use the local CLI and do not require MCP.
+prose you ask for, such as `/projector:write a README section on the
+site`. `rewrite` revises text that already exists, such as a file, a pull
+request description, a comment, or a Slack message, and writes the result
+back where the text lives when it can, such as
+`/projector:rewrite the install section of the README`. The core workflows
+use the local CLI and do not require MCP.
 
 When dependent work needs more than one pull request to stay reviewable,
 `implement` opens it as a stack that GitHub records, using the `gh stack`
