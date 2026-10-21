@@ -81,10 +81,11 @@ these cases:
   that has no edit command, or the host has no tool that edits that
   service.
 - **Someone else wrote the text.** Reading a text does not give you
-  permission to change it. Compare the author with the user, such as
-  `author.login` from `gh` with `gh api user --jq .login`. Write the text
-  back only when the user wrote it, or when they ask you to change it
-  anyway.
+  permission to change it. Compare the author's login with
+  `gh api user --jq .login`. `gh pr view` and `gh issue view` name the
+  author as `author.login`, and a comment or review read through `gh api`
+  names it as `user.login`. Write the text back only when the user wrote
+  it, or when they ask you to change it anyway.
 - **The commit is pushed.** Changing a pushed commit rewrites history that
   others may have, so leave that change to the user.
 - **The user asks for the text.** For example, they want to paste the
