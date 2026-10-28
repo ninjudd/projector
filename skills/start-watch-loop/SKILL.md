@@ -135,6 +135,12 @@ The watcher is level-triggered:
   when the pull request is marked ready, which a review loop's `publish`
   does when the newest verdict on the current head is clean, whichever model
   gave it, no finding thread is open, and no hold is open.
+- `MERGED` reports, once, that a tracked pull request merged, as
+  `MERGED acme/app#74 into main at 2026-10-23T01:36:44Z (merge commit ea9a364a)`,
+  and `CLOSED` that one closed without merging, as
+  `CLOSED acme/app#80 without merging`. Act on either at once, as "Give each
+  pull request its own subagent" describes, and stop reporting the pull
+  request as open.
 - `TRACKED` reports a line in the tracked file the watcher cannot use, once.
 - `DONE` reports, under `--exit-when-closed`, that every tracked pull request
   has merged or closed, and the watcher exits after it. A pass in which a
@@ -187,9 +193,10 @@ the recurrence it is instead of as new work.
   from, or ended, and the validation results. A question for the user
   comes back to the main loop to ask, and the subagent goes on with the
   pull request's unrelated work meanwhile.
-- When a pull request merges or closes, remove its line from the tracked
-  file at once with `project loop remove owner/repo#number --tracked <file>`.
-  Tell its subagent to finish, remove its worktrees, and close only when
+- On `MERGED` or `CLOSED`, remove the pull request's line from the tracked
+  file at once with `project loop remove owner/repo#number --tracked <file>`,
+  and tell the user it merged or closed. Send it no more work. Tell its
+  subagent to finish, remove its worktrees, and close only when
   no layer it owns is still open. The user merges a stack as a unit, the
   whole of it or any number of layers from the bottom up, so when only the
   bottom layers merge, the `fix-stack-<number>` subagent keeps its name and
@@ -237,9 +244,9 @@ Remove closed or merged pull requests from the tracked file with
 idle, not an instruction to stop; remain ready to run `project loop add` for
 pull requests this conversation creates or adopts later. A loop `implement`
 started is the exception: its watcher reports `DONE` and exits once every
-pull request it tracks has merged or closed. The watcher announces no merge,
-so `DONE` can be the first the loop hears of one, and the file can name a
-pull request added after the watcher last read it. On `DONE`, check the
+pull request it tracks has merged or closed. Each merge or close arrives
+first as its own `MERGED` or `CLOSED` line, but the file can name a pull
+request added after the watcher last read it. On `DONE`, check the
 state of each pull request the tracked file names:
 
 ```sh
