@@ -528,10 +528,10 @@ async function replace($: Engine, item: Item): Promise<void> {
 
 /**
  * Forgets what an item's drawer was asking once the question no longer fits
- * the item, wherever that happened: either question once the item is
- * resolved, and how long to snooze once it is snoozed. The drawer then opens
- * on its actions when the item comes back. Only a pull request's drawer
- * asks before it dismisses.
+ * the item, wherever that happened: how long to snooze, once the item is
+ * resolved or snoozed. That is the only question an item's drawer asks; only
+ * a pull request's drawer asks before it dismisses. The drawer then opens on
+ * its actions when the item comes back.
  */
 async function forgetAsked($: Engine, changed: readonly Item[]): Promise<void> {
   const was = await read($, asked)
