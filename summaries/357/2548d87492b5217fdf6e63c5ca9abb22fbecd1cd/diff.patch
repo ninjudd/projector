@@ -1,0 +1,117 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 1198130c..d8d4a925 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -397,7 +397,7 @@ rather than asking again. An agent that runs `project inbox ask`, `tell`,
+ `withdraw`, `revise`, or `restore` from the shell reaches the same inbox, as
+ [Use the inbox](cli.md#use-the-inbox) describes.
+ 
+-The items are a list below the pull requests, oldest first, each line
++The items are a list below the pull requests, newest first, each line
+ starting with `-`. An open question's line is drawn in the theme's
+ `permission` color, the one Claude Code gives its own permission prompts,
+ because an agent's question usually asks leave to do something. An open
+@@ -413,9 +413,9 @@ the pull requests, before its time.
+   /projector                1 pull request · 2 questions · 1 notice  12s   [-]
+    #337 draft Retry failed webhook deliveries with backoff            1h
+ 
++   - Force-pushed #337 to drop a stray debug file               #337  1m
+    - Run project init to add the publish rule?                        2m
+    - Decline the finding about the retry budget?                #337  5m
+-   - Force-pushed #337 to drop a stray debug file               #337  1m
+                                                      ctrl+x tab to focus
+ ```
+ 
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 315b707e..43242c34 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -2204,3 +2204,27 @@ inbox, most of all when several sessions post at once.
+ | Behavior | Test |
+ | --- | --- |
+ | An item's `8` dismisses at once and closes the drawer, a notice's too; restore and unsnooze act at once; a pull request's dismiss shows its confirmation, `9` keeps it, and the ring moves onto the confirmation and back | `an item’s dismiss, restore, and unsnooze act at once, and a pull request’s dismiss asks to be sure` in `hooks/panel.test.tsx` |
++
++## 25. List the items newest first
++
++The panel listed its items oldest first, so when a session posted several
++in a row, the one that just arrived, usually the one to act on next, landed
++at the bottom and could be missed. Issue #353 asked for the newest on top.
++
++### 25.1 What changes
++
++- **Newest first.** The panel lists every item it shows, questions and
++  notices from every session, by when it was posted, newest at the top.
++  This supersedes the oldest-first order of § 2.6 of the `questions` plan.
++- **A revision keeps its place.** `revise` leaves `postedAt` as it was, so
++  a revised question stays where it was first posted rather than looking
++  new.
++- **Matching keeps its order.** A typed quote that more than one open
++  question shares still goes to the oldest, as `readPrompt` decides; only
++  the drawn order changes.
++
++### 25.2 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| Three items list newest first, a revised question keeps its place, and an item posted later goes on top | `the panel lists its items newest first, and a revised question keeps its place` in `hooks/panel.test.tsx` |
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 208c5357..50a842bd 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -2464,6 +2464,34 @@ test('the withdraw tool refuses what the CLI refuses, asks an old CLI to upgrade
+   expect(session.store.store.get('1')).toEqual(answered)
+ })
+ 
++test('the panel lists its items newest first, and a revised question keeps its place', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [
++    held(),
++    notice(),
++    held({ ref: '3', number: 3, subject: 'Rebase first?', postedAt: NOW - 30_000 }),
++  ])
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++  const order = async () =>
++    (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('item:'))
++
++  expect(await order()).toEqual(['item:3', 'item:2', 'item:1'])
++
++  // Revising the oldest question leaves it where it was posted.
++  await $.tool.call({ tool: 'mcp__projector__revise', number: 1, question: 'Decline the retry finding?' })
++  await clock.settle()
++  expect(await order()).toEqual(['item:3', 'item:2', 'item:1'])
++
++  // An item posted now goes on top.
++  session.store.write(notice({ ref: '4', number: 4, subject: 'Merged #6', postedAt: clock.now() }))
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(await order()).toEqual(['item:4', 'item:3', 'item:2', 'item:1'])
++  await ui.unmount()
++})
++
+ test('the revise tool redraws the question with its new text at once, keeping its number', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 8a09af80..7af10bf0 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1361,7 +1361,7 @@ export const register: Register = on => {
+       return row === undefined ? (item.pr ?? '') : label(row.pr)
+     }
+ 
+-    // The items are a list below the pull requests, oldest first, each
++    // The items are a list below the pull requests, newest first, each
+     // bulleted `-`; an open question's line takes `QUESTION_COLOR`, and a
+     // resolved or snoozed item's `subtle`. An open question's drawer numbers
+     // its options; choosing one puts the question and that answer in the
+@@ -1733,7 +1733,7 @@ export const register: Register = on => {
+       shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
+         <Text key="before-items"> </Text>
+       ),
+-      ...[...shownItems].sort((a, b) => a.postedAt - b.postedAt).map(drawItem),
++      ...[...shownItems].sort((a, b) => b.postedAt - a.postedAt).map(drawItem),
+     ])
+   })
+ }

@@ -1,0 +1,89 @@
+{
+ "version": 1,
+ "name": "Faster inbox triage in the panel",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 357,
+  "title": "List the inbox's items newest first",
+  "head": "2548d87492b5217fdf6e63c5ca9abb22fbecd1cd",
+  "headRef": "inbox-newest-first",
+  "base": "2e9d1dbf3de107a37641fd154c5cd5b989e6cc11",
+  "baseRef": "inbox-dismiss-at-once",
+  "basePr": 356
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the area Claude Code draws above your prompt. Below the pull requests it tracks, it lists your <b>inbox</b>: the questions an agent asks you and the notices it sends you, each on one line that ends with how long ago it was posted.",
+   "The panel listed those items oldest first. When a session posted several in a row, the one that had just arrived, usually the one to act on next, landed at the bottom and was easy to miss. This pull request reverses the order so the newest item is on top (issue #353).",
+   "The change is one comparator in <code>hooks/register.tsx</code>. Everything else keeps its order: <code>readPrompt</code>, which decides which open question a quote you type answers, still picks the oldest question that shares the quote, and <code>project inbox</code> on the command line still lists oldest first.",
+   "This is the middle layer of a stack. It sits on #356, which makes an item's dismiss act at once, and #358 sits on it."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Item</b>: one question or notice in the inbox.</li><li><b><code>postedAt</code></b>: when an item was posted, in milliseconds. The panel sorts by it.</li><li><b>Revise</b>: an agent changes an open question's text in place. It keeps the question's number and its <code>postedAt</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review found that the comment at <code>hooks/register.tsx:1364</code> still said oldest first. Commit <code>2548d87</code> changed it to newest first, and the thread is resolved.</li><li>The full gate passes at this head, and the new test fails with the old comparator.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "order",
+   "title": "The panel draws its items newest first",
+   "kicker": "One comparator flips, and a test pins the new order",
+   "intro": [
+    "The panel's render function ends by drawing the pull request rows, then the items. The items were sorted by <code>a.postedAt - b.postedAt</code>, oldest first; they are now sorted by <code>b.postedAt - a.postedAt</code>. The sort runs on a copy of <code>shownItems</code>, so the other code that reads that list, such as the age column's width and the open drawer's lookup, sees the same items as before.",
+    "Because <code>revise</code> leaves <code>postedAt</code> alone, a revised question stays where it was first posted rather than jumping to the top as if it were new. The new test checks that, and checks that an item written to the store later lands on top."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The panel's render: the comparator that orders the items flips to newest first, and the comment that describes the item list now says newest first too.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Only the drawn order changes: <code>readPrompt</code> in <code>hooks/inbox.ts</code> sorts open questions oldest first on its own, and <code>src/projector/inbox.py</code> keeps the CLI's oldest-first order. Checked by reading every reader of <code>postedAt</code>."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "A new test lists three items, revises the oldest question, then adds a fourth item, and checks the button order after each step.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "With the old comparator restored in a scratch copy, this test fails and the rest of <code>claude plugin test .</code> passes; at this head all 150 tests pass."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The plugin guide and the inbox plan describe the new order",
+   "intro": [
+    "<code>docs/plugins.md</code> now says the items are listed newest first, and its example panel moves the one-minute-old notice above the two- and five-minute-old questions.",
+    "The <code>inbox</code> plan gains § 25, which records the change, says it supersedes the oldest-first order in § 2.6 of the <code>questions</code> plan, and names the new test as its evidence. The plan stays <code>completed</code>, and no earlier section is renumbered."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The prose and the example panel now show newest first."
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Appends § 25, \"List the items newest first\", with what changes and its evidence."
+    }
+   ]
+  }
+ ]
+}
