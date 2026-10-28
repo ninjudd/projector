@@ -1,0 +1,276 @@
+diff --git a/skills/start-watch-loop/SKILL.md b/skills/start-watch-loop/SKILL.md
+index 71a5ed70..edf5abfd 100644
+--- a/skills/start-watch-loop/SKILL.md
++++ b/skills/start-watch-loop/SKILL.md
+@@ -105,12 +105,14 @@ push to.
+    one `implement` started is running, restart its watcher without that
+    flag, so it stays idle on an empty file as a loop the user started does.
+ 
+-Before adopting an existing watcher, fetch unresolved threads, verdicts,
+-body-only reviews, and mergeability directly, and dispatch that work at
+-once. The watcher repeats a finding, verdict, conflict, or draft it already
+-announced only at the renotification interval, and never repeats a review
+-body, so fetching the work yourself is what catches what it told a
+-conversation before this one. Its state file needs no check: it records
++Before adopting an existing watcher, fetch each tracked pull request's
++state, unresolved threads, verdicts, body-only reviews, and mergeability
++directly, and dispatch that work at once. Handle a pull request that has
++merged or closed as its `MERGED` or `CLOSED` line calls for. The watcher
++repeats a finding, verdict, conflict, or draft it already announced only at
++the renotification interval, and never repeats a review body or a `MERGED`
++or `CLOSED` line, so fetching the work yourself is what catches what it
++told a conversation before this one. Its state file needs no check: it records
+ only what the watcher announced, not whether anyone acted on it. Confirm
+ its tracked file is the set this conversation owns -- a watcher another
+ session started watches that session's set. Restart the watcher when its
+@@ -135,6 +137,12 @@ The watcher is level-triggered:
+   when the pull request is marked ready, which a review loop's `publish`
+   does when the newest verdict on the current head is clean, whichever model
+   gave it, no finding thread is open, and no hold is open.
++- `MERGED` reports, once, that a tracked pull request merged, as
++  `MERGED acme/app#74 into main at 2026-10-23T01:36:44Z (merge commit ea9a364a)`,
++  and `CLOSED` that one closed without merging, as
++  `CLOSED acme/app#80 without merging`. Act on either at once, as "Give each
++  pull request its own subagent" describes, and stop reporting the pull
++  request as open.
+ - `TRACKED` reports a line in the tracked file the watcher cannot use, once.
+ - `DONE` reports, under `--exit-when-closed`, that every tracked pull request
+   has merged or closed, and the watcher exits after it. A pass in which a
+@@ -187,9 +195,10 @@ the recurrence it is instead of as new work.
+   from, or ended, and the validation results. A question for the user
+   comes back to the main loop to ask, and the subagent goes on with the
+   pull request's unrelated work meanwhile.
+-- When a pull request merges or closes, remove its line from the tracked
+-  file at once with `project loop remove owner/repo#number --tracked <file>`.
+-  Tell its subagent to finish, remove its worktrees, and close only when
++- On `MERGED` or `CLOSED`, remove the pull request's line from the tracked
++  file at once with `project loop remove owner/repo#number --tracked <file>`,
++  and tell the user it merged or closed. Send it no more work. Tell its
++  subagent to finish, remove its worktrees, and close only when
+   no layer it owns is still open. The user merges a stack as a unit, the
+   whole of it or any number of layers from the bottom up, so when only the
+   bottom layers merge, the `fix-stack-<number>` subagent keeps its name and
+@@ -237,9 +246,9 @@ Remove closed or merged pull requests from the tracked file with
+ idle, not an instruction to stop; remain ready to run `project loop add` for
+ pull requests this conversation creates or adopts later. A loop `implement`
+ started is the exception: its watcher reports `DONE` and exits once every
+-pull request it tracks has merged or closed. The watcher announces no merge,
+-so `DONE` can be the first the loop hears of one, and the file can name a
+-pull request added after the watcher last read it. On `DONE`, check the
++pull request it tracks has merged or closed. Each merge or close arrives
++first as its own `MERGED` or `CLOSED` line, but the file can name a pull
++request added after the watcher last read it. On `DONE`, check the
+ state of each pull request the tracked file names:
+ 
+ ```sh
+diff --git a/skills/start-watch-loop/scripts/watch-threads.sh b/skills/start-watch-loop/scripts/watch-threads.sh
+index 1a8e8712..a61a00be 100755
+--- a/skills/start-watch-loop/scripts/watch-threads.sh
++++ b/skills/start-watch-loop/scripts/watch-threads.sh
+@@ -21,6 +21,9 @@
+ #             owner/repo#number, or a number that names no pull request.
+ #             Announced once each, so a mistake in the file is heard rather
+ #             than mistaken for a quiet repository
++#   MERGED    a tracked pull request merged, with its base, when, and its
++#             merge commit. Announced once, while its line stays in the file
++#   CLOSED    a tracked pull request closed without merging. Announced once
+ #   DONE      with --exit-when-closed, every tracked pull request has merged
+ #             or closed, and the watch exits
+ #
+@@ -157,13 +160,13 @@ EOF
+ # the one reading that must never be wrong.
+ PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
+   pullRequest(number:$n){
+-    state isDraft reviewDecision headRefOid mergeable baseRefName
++    state isDraft reviewDecision headRefOid mergeable baseRefName mergedAt mergeCommit{oid}
+     reviews(states:[CHANGES_REQUESTED], last:1){ nodes{ author{login} body commit{oid} } }
+     reviewThreads(first:100){ nodes{
+       id isResolved path line
+       comments(last:1){nodes{author{login} body}} } } } } }'
+ PR_JQ='.data.repository.pullRequest as $pr
+-  | "P\t\($pr.state)\t\($pr.isDraft)\t\($pr.reviewDecision // "NONE")\t\($pr.headRefOid)\t\($pr.mergeable // "UNKNOWN")\t\($pr.baseRefName // "?")",
++  | "P\t\($pr.state)\t\($pr.isDraft)\t\($pr.reviewDecision // "NONE")\t\($pr.headRefOid)\t\($pr.mergeable // "UNKNOWN")\t\($pr.baseRefName // "?")\t\($pr.mergedAt // "?")\t\($pr.mergeCommit.oid // "?")",
+     (if $pr.reviewDecision == "CHANGES_REQUESTED"
+      then $pr.reviews.nodes[]
+           | "V\t\(.commit.oid // "?")\t\(.author.login // "?")\t\(.body // "" | gsub("[\r\n\t]+"; " ") | .[0:130])"
+@@ -302,11 +305,32 @@ EOF
+       continue
+     fi
+ 
+-    IFS=$'\t' read -r kind pstate pdraft pdecision psha pmergeable pbase <<EOF
++    IFS=$'\t' read -r kind pstate pdraft pdecision psha pmergeable pbase pmergedat pcommit <<EOF
+ $(printf '%s\n' "$pr" | head -n 1)
+ EOF
+-    # Merged or closed: nothing here is outstanding, and its rows fall out.
+-    [ "$pstate" = "OPEN" ] || continue
++    # MERGED or CLOSED — a pull request that left OPEN. Nothing on it is
++    # outstanding, so its other rows fall out, but the loop has to hear of it
++    # once: it removes the line, tells its subagent to finish, and stops
++    # reporting the pull request as open. The row stays while the line does,
++    # so the announcement is never repeated, a restart on the same --state
++    # included.
++    if [ "$pstate" != "OPEN" ]; then
++      cid="closed:$slug#$n"
++      last=$(awk -v t="$cid" '$1==t {print $4}' "$STATE" 2>/dev/null)
++      if [ -z "$last" ]; then
++        if [ "$pstate" = "MERGED" ]; then
++          when=""; [ "$pmergedat" != "?" ] && when=" at $pmergedat"
++          commit=""; [ "$pcommit" != "?" ] && commit=" (merge commit ${pcommit:0:8})"
++          echo "MERGED $slug#$n into $pbase$when$commit"
++        else
++          echo "CLOSED $slug#$n without merging"
++        fi
++        last=$now
++      fi
++      new_state="$new_state$cid $slug $n $last
++"
++      continue
++    fi
+     open=1
+ 
+     # DRAFT — a pull request the review loop has not signed off. On a
+@@ -423,9 +447,11 @@ EOF
+ 
+   # Rows are `<id> <owner/repo> <pr> <lastAnnouncedEpoch>`. Rebuilt each cycle
+   # from what is currently outstanding on the tracked set, so a thread that
+-  # got resolved, a pull request that merged, or a line deleted from the
+-  # tracked file simply falls out. Rows are only ever carried forward for a
+-  # pull request whose query failed — never for one that answered.
++  # got resolved, a merged pull request's threads, or a line deleted from the
++  # tracked file simply falls out. A merged or closed pull request keeps only
++  # its `closed:` row, which says its MERGED or CLOSED line went out. Rows are
++  # only ever carried forward for a pull request whose query failed — never
++  # for one that answered.
+   printf '%s' "$new_state" | grep -v '^[[:space:]]*$' > "$STATE.tmp" 2>/dev/null
+   mv "$STATE.tmp" "$STATE" 2>/dev/null
+ 
+diff --git a/tests/test_watchers.py b/tests/test_watchers.py
+index e7f367ac..d27301f3 100644
+--- a/tests/test_watchers.py
++++ b/tests/test_watchers.py
+@@ -24,6 +24,7 @@
+ SHA_A = "a" * 40
+ SHA_B = "b" * 40
+ DONE = "DONE every tracked pull request has merged or closed; the watch is exiting"
++MERGED_1 = "MERGED acme/app#1 into main"
+ 
+ FAKE_GH = r"""#!/usr/bin/env bash
+ # Serves fixtures from $FAKE_GH_DIR:
+@@ -168,6 +169,8 @@ def pull_request(
+         ref="feature",
+         base="main",
+         mergeable="MERGEABLE",
++        merged_at=None,
++        merge_commit=None,
+         author="operator",
+         requested=(),
+         verdict=None,
+@@ -186,6 +189,8 @@ def pull_request(
+             "headRefName": ref,
+             "baseRefName": base,
+             "mergeable": mergeable,
++            "mergedAt": merged_at,
++            "mergeCommit": {"oid": merge_commit} if merge_commit else None,
+             "author": {"login": author},
+             "reviewRequests": {"nodes": [{"requestedReviewer": {"login": login}} for login in requested]},
+             "reviews": {"nodes": ([verdict] if verdict else []) + list(verdicts)},
+@@ -404,19 +409,60 @@ def test_an_unsettled_mergeability_is_not_a_conflict(self) -> None:
+         self.assertEqual("", result.stdout)
+         self.assertEqual([], self.state_rows())
+ 
+-    def test_a_merged_pull_request_falls_silent_and_out_of_the_state(self) -> None:
++    def test_a_merged_pull_request_is_announced_once_and_its_work_falls_out_of_the_state(self) -> None:
+         self.pull_request(1, draft=True, threads=[thread("T1")])
+         self.track("acme/app#1")
+         self.assert_ok(self.run_watcher(THREADS))
+         self.assertEqual(2, len(self.state_rows()))
+ 
+-        self.pull_request(1, state="MERGED", draft=True, threads=[thread("T1")])
++        self.pull_request(1, state="MERGED", draft=True, threads=[thread("T1")],
++                          merged_at="2026-10-23T01:36:44Z", merge_commit="ea9a364" + "0" * 33)
++        result = self.run_watcher(THREADS)
++
++        self.assert_ok(result)
++        self.assertEqual(["MERGED acme/app#1 into main at 2026-10-23T01:36:44Z (merge commit ea9a3640)"],
++                         result.stdout.splitlines())
++        self.assertEqual([["closed:acme/app#1", "acme/app", "1"]], [row[:3] for row in self.state_rows()])
++
++        # The next pass, a restart on the same state included, says nothing more.
+         result = self.run_watcher(THREADS)
+ 
+         self.assert_ok(result)
+         self.assertEqual("", result.stdout)
++        self.assertEqual(1, len(self.state_rows()))
++
++    def test_a_closed_pull_request_is_announced_once_without_a_merge(self) -> None:
++        self.pull_request(2, state="CLOSED", threads=[thread("T2")])
++        self.track("acme/app#2")
++
++        result = self.run_watcher(THREADS)
++
++        self.assert_ok(result)
++        self.assertEqual(["CLOSED acme/app#2 without merging"], result.stdout.splitlines())
++        self.assertEqual("", self.run_watcher(THREADS).stdout)
++
++    def test_a_removed_line_drops_its_closed_row(self) -> None:
++        self.pull_request(1, state="MERGED")
++        self.pull_request(2)
++        self.track("acme/app#1", "acme/app#2")
++        self.assert_ok(self.run_watcher(THREADS))
++
++        self.track("acme/app#2")
++        self.assert_ok(self.run_watcher(THREADS))
++
+         self.assertEqual([], self.state_rows())
+ 
++    def test_a_failed_query_announces_no_merge(self) -> None:
++        self.pull_request(1, state="MERGED")
++        self.track("acme/app#1")
++
++        # One entry costs one verification call; every call after it fails.
++        result = self.run_watcher(THREADS, down_after=1)
++
++        self.assert_ok(result)
++        self.assertEqual("", result.stdout)
++        self.assertEqual([MERGED_1], self.run_watcher(THREADS).stdout.splitlines())
++
+     def test_exit_when_closed_ends_the_watch_once_every_tracked_pull_request_closed(self) -> None:
+         self.pull_request(1, state="MERGED")
+         self.pull_request(2, state="CLOSED")
+@@ -425,7 +471,7 @@ def test_exit_when_closed_ends_the_watch_once_every_tracked_pull_request_closed(
+         result = self.run_watcher(THREADS, "--exit-when-closed")
+ 
+         self.assert_ok(result)
+-        self.assertEqual([DONE], result.stdout.splitlines())
++        self.assertEqual([MERGED_1, "CLOSED acme/app#2 without merging", DONE], result.stdout.splitlines())
+ 
+     def test_exit_when_closed_keeps_watching_while_one_is_open(self) -> None:
+         self.pull_request(1, state="MERGED")
+@@ -435,7 +481,7 @@ def test_exit_when_closed_keeps_watching_while_one_is_open(self) -> None:
+         result = self.run_watcher(THREADS, "--exit-when-closed")
+ 
+         self.assert_ok(result)
+-        self.assertEqual("", result.stdout)
++        self.assertEqual([MERGED_1], result.stdout.splitlines())
+ 
+     def test_exit_when_closed_ends_a_watch_whose_file_names_none(self) -> None:
+         self.tracked.write_text("# every pull request merged\n")
+@@ -464,7 +510,8 @@ def test_exit_when_closed_never_ends_on_a_bad_tracked_line(self) -> None:
+         result = self.run_watcher(THREADS, "--exit-when-closed", late_line="2013")
+ 
+         self.assert_ok(result)
+-        self.assertEqual([f"TRACKED {self.tracked}:2 is not owner/repo#number: 2013"], result.stdout.splitlines())
++        self.assertEqual([f"TRACKED {self.tracked}:2 is not owner/repo#number: 2013", MERGED_1],
++                         result.stdout.splitlines())
+ 
+     def test_exit_when_closed_stops_a_running_watch(self) -> None:
+         self.pull_request(1, state="MERGED")
+@@ -480,7 +527,7 @@ def test_exit_when_closed_stops_a_running_watch(self) -> None:
+         )
+ 
+         self.assert_ok(result)
+-        self.assertEqual([DONE], result.stdout.splitlines())
++        self.assertEqual([MERGED_1, DONE], result.stdout.splitlines())
+ 
+     def test_the_tracked_file_is_read_again_on_every_pass(self) -> None:
+         self.pull_request(1, threads=[thread("T1")])
