@@ -1,0 +1,107 @@
+{
+ "version": 1,
+ "name": "Faster inbox triage in the panel",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 356,
+  "title": "Dismiss an inbox item without asking for confirmation",
+  "head": "2e9d1dbf3de107a37641fd154c5cd5b989e6cc11",
+  "headRef": "inbox-dismiss-at-once",
+  "base": "8f0a28f3c7dd661988e7650da1c282e6d059c43d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel lists an agent's questions and notices, its inbox items, above the Claude Code prompt. Opening an item's line shows a drawer with its actions on digits: <code>7</code> discusses the item, <code>8</code> dismisses it, and <code>9</code> snoozes it.",
+   "Until now, <code>8</code> dismissed nothing. It swapped the actions for <code>8: yes, dismiss</code> and <code>9: no, keep it</code>, so every dismissal took two presses. Issue #354 found that the confirmation guards a mistake that is already easy to undo: a dismissed item stays in the list for 30 seconds, struck through, and its drawer offers <b>restore</b> on the same <code>8</code>.",
+   "This pull request makes an item's <b>dismiss</b> act on the first press. A pull request's <b>dismiss PR</b> keeps its confirmation, because a dismissed pull request leaves the panel at once and only <code>project loop restore</code> brings it back. It is the bottom layer of a stack: #357 lists the inbox newest first, and #358 collapses items by kind."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Drawer</b>: the lines that open under an item or pull request in the panel, holding its options and actions.</li><li><b>Asked question</b>: what a drawer shows in its actions' place while it waits for a choice, such as the snooze lengths. The <code>panelAsked</code> atom records it.</li><li><b>Focus ring</b>: Claude Code's highlight on the panel line that has the keyboard.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The review of <code>ac09d3c</code> was clean and suggested two changes: reword the comment on <code>forgetAsked</code>, and strengthen a test so it covers what happens when the item is resolved.</li><li>This head, <code>2e9d1db</code>, takes both, and its review is clean with no suggestions.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "panel",
+   "title": "Dismiss acts on the first press",
+   "kicker": "The item drawer's dismiss line calls the CLI directly, and the item confirmation is gone.",
+   "intro": [
+    "In <code>hooks/register.tsx</code>, each item's drawer builds its action lines. The <b>dismiss</b> line used to record a dismiss question in <code>panelAsked</code>, and the drawer then drew a <code>confirmation</code> list in place of its actions. Now the line's press calls <code>act</code>, which runs <code>project inbox dismiss</code>, replaces the item in the panel's list, and closes the drawer.",
+    "The <code>confirmation</code> list and the branch that drew it are removed. An item's drawer now asks only one question, how long to snooze. The pull request drawer's own confirmation, further down the file, is unchanged."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "An item's <b>dismiss</b> now calls <code>act</code> at once. The item confirmation is gone, and the comment on <code>forgetAsked</code> says an item's drawer asks only how long to snooze.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1490,
+       "text": "A quick second <code>8</code> does nothing. <code>act</code> keeps the item's ref in <code>acting</code> until it has replaced the item and closed the drawer, so a press on the <b>restore</b> line, drawn for a moment between the two, returns without running <code>inbox restore</code>. Checked by reading <code>act</code> at this head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests follow the one-press dismiss",
+   "kicker": "Item tests drop the confirm press, and the keyboard check moves to the pull request's confirmation.",
+   "intro": [
+    "Every test that dismissed an item pressed <code>dismiss</code> and then <code>confirm</code>. Each now presses <code>dismiss</code> alone. The renamed test checks that an item's and a notice's <code>8</code> run <code>inbox dismiss</code> at once, that restore and unsnooze act at once, and that a pull request's dismiss still asks.",
+    "The test that a snoozed item's dismiss confirmation survives an unrelated store read is deleted, since items no longer confirm.",
+    "The test of forgotten questions now covers both cases in <code>forgetAsked</code>. In the first block, the drawer asks how long to snooze, and a terminal dismisses the item and then restores it. The drawer must then open on its actions."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>claude plugin test .</code> reports 149 pass and 0 fail at this head, and the rest of the repository's gate passes too."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Each item test drops its <code>confirm</code> press. The dismiss test is rewritten, the snoozed-confirmation test is deleted, and the forgotten-question test now asks how long to snooze before the item is resolved.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 3586,
+       "text": "This block now asks how long to snooze, lets a terminal dismiss the item, and restores the item from a terminal. That covers the case in <code>forgetAsked</code> where the item is resolved. To check it, <code>item.answer !== undefined</code> was replaced with <code>false</code>. This test then fails, and the other 148 pass."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Docs and the inbox plan",
+   "kicker": "The panel docs describe the one-press dismiss, and plan § 24 records it.",
+   "intro": [
+    "<code>docs/plugins.md</code> now says that <b>dismiss</b>, <b>restore</b>, and <b>unsnooze</b> act at once, and that you undo a dismissal with <b>restore</b> while the item is still listed. The confirmation's description moves to <b>dismiss PR</b>, the one action that still asks.",
+    "The <code>inbox</code> plan gains § 24, which supersedes § 18's confirmation for items. The plan stays <code>completed</code>, and no earlier section is renumbered."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Moves the confirmation's description to <b>dismiss PR</b> and says item actions act at once."
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Appends § 24, Dismiss an item at once, with its evidence table."
+    }
+   ]
+  }
+ ]
+}

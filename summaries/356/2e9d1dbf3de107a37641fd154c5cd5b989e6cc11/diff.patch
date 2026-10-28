@@ -1,0 +1,366 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index d4b04888..1198130c 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -293,11 +293,13 @@ describes, and then the links:
+ - **discuss PR** puts the pull request's number in the prompt at the
+   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
+   one repository.
+-- **dismiss PR** asks to be sure first, as
+-  [dismissing an item](#read-your-inbox-in-projectors-panel) does, then
+-  keeps the pull request out of every loop of this session that tracks
+-  it, and the panel drops its line and says which loops stopped, such as
+-  `stopped watching and reviewing acme/app#258`.
++- **dismiss PR** asks to be sure first, because a dismissed pull request
++  leaves the panel at once. It replaces the action lines with
++  `8: yes, dismiss PR` and `9: no, keep it`, so a stray `8` only asks.
++  Press `8` again to keep the pull request out of every loop of this
++  session that tracks it, and the panel drops its line and says which
++  loops stopped, such as `stopped watching and reviewing acme/app#258`.
++  `9`, closing the drawer, or opening another keeps it.
+ - **open in github** opens the pull request on GitHub.
+ - **open in projector** opens its Projector summary, when the pull
+   request's description links one.
+@@ -506,9 +508,8 @@ question's drawer has three actions:
+   stay in view while you type. Type your reply under the quote, or on the
+   quote's own line, and send the prompt. The reply reaches the agent and
+   answers nothing.
+-- **dismiss question** asks to be sure, as the paragraph after the next
+-  describes, then sets the question aside without an answer and closes the
+-  drawer.
++- **dismiss question** sets the question aside without an answer and
++  closes the drawer.
+ - **snooze question** asks how long to put the question off, as the next
+   paragraph but one describes.
+ 
+@@ -520,20 +521,12 @@ stays in the panel until you dismiss it. **dismiss notice** clears the
+ notice once you have read it and closes its drawer, and nothing goes back
+ to the agent.
+ 
+-**dismiss** dismisses nothing at once. It replaces the action lines with
+-a confirmation, so a stray `8` only asks:
++**dismiss**, **restore**, and **unsnooze** act at once. A dismissed item
++stays in the list a while, struck through, as the paragraph on resolved
++items below describes, so you undo a dismissal you did not mean by opening
++its line again and choosing **restore**.
+ 
+-```text
+-   8: yes, dismiss question
+-   9: no, keep it
+-```
+-
+-Press `8` again, or click the first line, to dismiss; a notice's reads
+-`yes, dismiss notice`. `9`, closing the drawer, or opening another keeps
+-the item and puts the actions back. **restore** and **unsnooze** act at
+-once.
+-
+-**snooze** snoozes nothing at once either. A question's options give way
++**snooze** snoozes nothing at once. A question's options give way
+ to the lengths it offers, and the action lines to a way back:
+ 
+ ```text
+@@ -620,8 +613,8 @@ the options and the actions. Enter on the open line closes the drawer and
+ leaves the ring on the line. A click opens and closes a drawer without
+ moving the ring. In the same way, Enter on the **snooze** line moves the
+ ring onto the first length, and Enter on **cancel** moves it back onto the
+-**snooze** line. Enter on **dismiss** moves it onto the confirmation, and
+-Enter on `no, keep it` back onto **dismiss**.
++**snooze** line. Enter on a pull request's **dismiss** moves it onto the
++confirmation, and Enter on `no, keep it` back onto **dismiss**.
+ 
+ An open question's options read `1:` to `6:`, the digit in the accent
+ color. Press a digit while the panel has the keyboard, or type it first into
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index 1ee25f4d..315b707e 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -2181,3 +2181,26 @@ theme.
+ | --- | --- |
+ | `#abc`, `#FFFFFF`, `rgb(0,0,0)`, `rgb(255, 255, 255)`, `rgb( 30,30,40 )`, `ansi256(0)`, and `ansi256(255)` draw as written, and `sidebar`, `black`, and `white` draw `composerSidebarBackground`, `rgb(0,0,0)`, and `rgb(255,255,255)` | `panel.background colors the panel, and auto or no value leaves the color to the theme` in `hooks/panel.test.tsx` |
+ | `rgb(256,0,0)`, `rgb(1,2)`, `ansi256(256)`, `#12345`, `#abcd`, `inverseText`, `composerSidebarBackground`, `text`, `subtle`, `sidebr`, `gray`, an empty string, and a number each draw the theme's color, with one toast per value naming what the panel takes | `a panel.background the panel does not take leaves the color to the theme, and the panel says so once` |
++
++## 24. Dismiss an item at once
++
++§ 18 made an item's **dismiss** ask to be sure, so a stray `8` only asked.
++Issue #354 found the step guards against a mistake that is already easy to
++undo: a dismissed item stays in the list, struck through, and its drawer
++offers **restore** on the same digit. The step slowed down clearing a busy
++inbox, most of all when several sessions post at once.
++
++### 24.1 What changes
++
++- **An item's dismiss acts at once.** `8` on an open question or notice
++  runs `project inbox dismiss` and closes the drawer, as `yes, dismiss` did.
++  This supersedes § 18's confirmation for items.
++- **A pull request's dismiss still asks.** A dismissed pull request leaves
++  the panel at once and comes back only through `project loop restore`, so
++  its `8: yes, dismiss PR` and `9: no, keep it` stay.
++
++### 24.2 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| An item's `8` dismisses at once and closes the drawer, a notice's too; restore and unsnooze act at once; a pull request's dismiss shows its confirmation, `9` keeps it, and the ring moves onto the confirmation and back | `an item’s dismiss, restore, and unsnooze act at once, and a pull request’s dismiss asks to be sure` in `hooks/panel.test.tsx` |
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index e340371c..208c5357 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -1925,7 +1925,6 @@ test('discuss keeps the drawer open with the question above a blank line, a repl
+   await ui.press({ key: 'close:3' })
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'dismiss:2' })
+-  await ui.press({ key: 'confirm:2' })
+   expect(session.project()).toContain('inbox dismiss 2 --session s1 --json')
+   await clock.advance(1)
+   await clock.settle()
+@@ -2372,8 +2371,6 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+   expect(session.filled).toEqual([`insert:"${FORCE_PUSHED}"\n\n`])
+ 
+   await ui.press({ key: 'dismiss:2' })
+-
+-  await ui.press({ key: 'confirm:2' })
+   await clock.settle()
+   expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([
+     'inbox dismiss 2 --session s1 --json',
+@@ -2637,7 +2634,6 @@ test('a pick made before a revise, for a question dismissed before you send, ans
+   await ui.press({ key: 'answer:2.a' })
+   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
+   await ui.press({ key: 'dismiss:2' })
+-  await ui.press({ key: 'confirm:2' })
+   await clock.settle()
+   expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ dismissed: true }))
+   await $.prompt.submit({ text: DECLINE, wait: false, origin: { kind: 'composer' } })
+@@ -2732,7 +2728,7 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
+   const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:1' })
+   session.store.failing.locks = 2
+-  for (const keys of [['dismiss:1', 'confirm:1'], ['snooze:1', 'snooze-60:1']]) {
++  for (const keys of [['dismiss:1'], ['snooze:1', 'snooze-60:1']]) {
+     for (const key of keys) await ui.press({ key })
+     await clock.settle()
+   }
+@@ -2869,7 +2865,6 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
+   await ui.press({ key: 'item:1' })
+   expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
+   await ui.press({ key: 'dismiss:1' })
+-  await ui.press({ key: 'confirm:1' })
+   await clock.settle()
+   // The drawer closes, and the line stays, muted in the subtle color and struck through.
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+@@ -2901,7 +2896,6 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
+ 
+   // Once the agent has heard DISMISSED, a restore sends RESTORED after it.
+   await ui.press({ key: 'dismiss:1' })
+-  await ui.press({ key: 'confirm:1' })
+   await clock.advance(1)
+   await clock.settle()
+   expect(session.submitted.map(one => one.text)).toEqual(['DISMISSED 1 Decline the finding?'])
+@@ -3264,7 +3258,6 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named
+ 
+   // Dismissed, restore takes dismiss's place, and a resolved item has nothing to snooze.
+   await ui.press({ key: 'dismiss:1' })
+-  await ui.press({ key: 'confirm:1' })
+   await clock.settle()
+   await ui.press({ key: 'item:1' })
+   expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss question', 'restore:1 8 restore question'])
+@@ -3501,7 +3494,7 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length
+   await ui.unmount()
+ })
+ 
+-test('dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once', async ($, on) => {
++test('an item’s dismiss, restore, and unsnooze act at once, and a pull request’s dismiss asks to be sure', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const dismissed = { dismissed: true as const, answeredAt: NOW - 1_000 }
+@@ -3527,45 +3520,24 @@ test('dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once',
+   const keys = (await ui.findAll({ type: 'Button' })).map(button => String(button.props.hotkey ?? ''))
+   expect(keys.filter(key => key !== '' && !/^\d$/.test(key))).toEqual([])
+ 
+-  // Dismiss runs nothing: it asks, on 8 to dismiss and 9 to keep the item.
+-  await ui.press({ key: 'dismiss:1' })
+-  expect(await lines('1')).toEqual(['confirm:1 8 yes, dismiss question', 'keep:1 9 no, keep it'])
+-  expect(ran('dismiss')).toEqual([])
+-  // 9 keeps it and puts the actions back.
+-  await ui.press({ key: 'keep:1' })
++  // 8 dismisses at once, and closes the drawer.
+   expect(await lines('1')).toEqual([
+     'discuss:1 7 discuss question',
+     'dismiss:1 8 dismiss question',
+     'snooze:1 9 snooze question',
+   ])
+-  // Closing the drawer puts them back too.
+-  await ui.press({ key: 'dismiss:1' })
+-  await ui.press({ key: 'close:1' })
+-  await ui.press({ key: 'item:1' })
+-  expect((await lines('1'))[1]).toBe('dismiss:1 8 dismiss question')
+-  expect(ran('dismiss')).toEqual([])
+-
+-  // From the keyboard, the ring goes onto the confirmation, and from 9 back onto dismiss.
+-  await tab($, 'dismiss:1')
+-  await ui.press({ key: 'dismiss:1' })
+-  await tab($, 'keep:1')
+-  await ui.press({ key: 'keep:1' })
+-  expect(tried).toEqual(['confirm:1', 'dismiss:1'])
+-
+-  // 8 then 8 dismisses.
+   await ui.press({ key: 'dismiss:1' })
+-  await ui.press({ key: 'confirm:1' })
+   await clock.settle()
+   expect(ran('dismiss')).toEqual(['inbox dismiss 1 --session s1 --json'])
+   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
+ 
+-  // A notice's confirmation names a notice.
++  // A notice's dismiss acts at once too.
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'dismiss:2' })
+-  expect(await lines('2')).toEqual(['confirm:2 8 yes, dismiss notice', 'keep:2 9 no, keep it'])
+-  await ui.press({ key: 'close:2' })
++  await clock.settle()
++  expect(ran('dismiss')).toEqual(['inbox dismiss 1 --session s1 --json', 'inbox dismiss 2 --session s1 --json'])
+ 
+-  // Restore and unsnooze need no confirmation.
++  // Restore and unsnooze act at once.
+   await ui.press({ key: 'item:3' })
+   await ui.press({ key: 'restore:3' })
+   await clock.settle()
+@@ -3577,7 +3549,7 @@ test('dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once',
+   expect(ran('restore')).toEqual(['inbox restore 3 --session s1 --json', 'inbox restore 4 --session s1 --json'])
+   await ui.press({ key: 'close:4' })
+ 
+-  // A pull request's dismiss asks the same, and 9 keeps it in its loops.
++  // A pull request's dismiss asks to be sure, and 9 keeps it in its loops.
+   await ui.press({ key: 'pr:x/y#7' })
+   expect(await lines('x/y#7')).toEqual(['discuss:x/y#7 7 discuss PR', 'dismiss:x/y#7 8 dismiss PR'])
+   await ui.press({ key: 'dismiss:x/y#7' })
+@@ -3585,6 +3557,13 @@ test('dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once',
+   await ui.press({ key: 'keep:x/y#7' })
+   expect(await lines('x/y#7')).toEqual(['discuss:x/y#7 7 discuss PR', 'dismiss:x/y#7 8 dismiss PR'])
+   expect(session.project().filter(line => line.startsWith('loop drop'))).toEqual([])
++
++  // From the keyboard, the ring goes onto the confirmation, and from 9 back onto dismiss.
++  await tab($, 'dismiss:x/y#7')
++  await ui.press({ key: 'dismiss:x/y#7' })
++  await tab($, 'keep:x/y#7')
++  await ui.press({ key: 'keep:x/y#7' })
++  expect(tried).toEqual(['confirm:x/y#7', 'dismiss:x/y#7'])
+   await ui.unmount()
+ })
+ 
+@@ -3601,14 +3580,16 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
+       .filter(key => key.endsWith(':1') && !key.startsWith('close:') && !key.startsWith('answer:'))
+   const actions = ['discuss:1', 'dismiss:1', 'snooze:1']
+ 
+-  // Dismiss asks, and a terminal dismisses the question meanwhile; restoring it opens its drawer on its actions.
++  // A terminal dismisses the question while its drawer asks how long to snooze; restoring it from a terminal opens
++  // its drawer on its actions, not on the snooze it was asking about.
+   await ui.press({ key: 'item:1' })
+-  await ui.press({ key: 'dismiss:1' })
++  await ui.press({ key: 'snooze:1' })
+   session.store.run(['project', 'inbox', 'dismiss', '1', '--session', SESSION])
+   await clock.advance(TICK)
+   await clock.settle()
+   expect(await lines()).toEqual(['discuss:1', 'restore:1'])
+-  await ui.press({ key: 'restore:1' })
++  session.store.run(['project', 'inbox', 'restore', '1', '--session', SESSION])
++  await clock.advance(TICK)
+   await clock.settle()
+   expect(await lines()).toEqual(actions)
+   expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([])
+@@ -3654,27 +3635,3 @@ test('an open item’s line draws its title with no rule after it', async ($, on
+   expect(await desktop.find({ type: 'Text', text: /─/ })).toBeUndefined()
+   await desktop.unmount()
+ })
+-
+-test('a dismiss confirmation on a snoozed item survives an unrelated change to the store', async ($, on) => {
+-  const clock = mock.clock(on, { now: NOW })
+-  mock.env(on, { HOME })
+-  const session = questionWorld(on, clock, [held({ snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR })])
+-  await startSession($, clock)
+-  const ui = await $.ui.mount(PANEL)
+-  const lines = async () =>
+-    (await ui.findAll({ type: 'Button' }))
+-      .map(button => button.key ?? '')
+-      .filter(key => /^(discuss|dismiss|unsnooze|confirm|keep):1$/.test(key))
+-
+-  // The item is snoozed already when dismiss asks to be sure.
+-  await ui.press({ key: 'item:1' })
+-  await ui.press({ key: 'dismiss:1' })
+-  expect(await lines()).toEqual(['confirm:1', 'keep:1'])
+-
+-  // Another item arriving makes the panel read the store, and the question stands.
+-  session.store.write(notice())
+-  await clock.advance(TICK)
+-  await clock.settle()
+-  expect(await lines()).toEqual(['confirm:1', 'keep:1'])
+-  await ui.unmount()
+-})
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 59b6ad1e..8a09af80 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -528,10 +528,10 @@ async function replace($: Engine, item: Item): Promise<void> {
+ 
+ /**
+  * Forgets what an item's drawer was asking once the question no longer fits
+- * the item, wherever that happened: either question once the item is
+- * resolved, and how long to snooze once it is snoozed. The drawer then opens
+- * on its actions when the item comes back. A snoozed item can still be
+- * dismissed, so its dismiss confirmation stands.
++ * the item, wherever that happened: how long to snooze, once the item is
++ * resolved or snoozed. That is the only question an item's drawer asks; only
++ * a pull request's drawer asks before it dismisses. The drawer then opens on
++ * its actions when the item comes back.
+  */
+ async function forgetAsked($: Engine, changed: readonly Item[]): Promise<void> {
+   const was = await read($, asked)
+@@ -1487,8 +1487,7 @@ export const register: Register = on => {
+                 label: `dismiss ${item.kind}`,
+                 hotkey: '8',
+                 onPress: () => {
+-                  ask(key, 'dismiss')
+-                  carry(`dismiss:${ref}`, `confirm:${ref}`)
++                  void act($, item, 'dismiss')
+                 },
+               },
+               isSnoozed
+@@ -1530,28 +1529,6 @@ export const register: Register = on => {
+           },
+         },
+       ]
+-      // Dismiss asks to be sure: its own digit again dismisses, so a stray `8`
+-      // only asks, and `9` keeps the item and puts the actions back.
+-      const confirmation: Line[] = [
+-        {
+-          name: 'confirm',
+-          label: `yes, dismiss ${item.kind}`,
+-          hotkey: '8',
+-          onPress: () => {
+-            ask(key, null)
+-            void act($, item, 'dismiss')
+-          },
+-        },
+-        {
+-          name: 'keep',
+-          label: 'no, keep it',
+-          hotkey: '9',
+-          onPress: () => {
+-            ask(key, null)
+-            carry(`keep:${ref}`, `dismiss:${ref}`)
+-          },
+-        },
+-      ]
+       const isChoosingLength = isOpen && !isSnoozed && isAsked(key, 'snooze')
+       // An open item's line has the panel to itself, so closing its drawer
+       // puts the line back lower in the list. The engine keeps the ring by
+@@ -1606,10 +1583,7 @@ export const register: Register = on => {
+               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
+               {item.kind === 'question' && !isChoosingLength && drawAnswers(item)}
+               <Text key={`before-buttons:${ref}`}> </Text>
+-              {drawLines(
+-                ref,
+-                isChoosingLength ? lengths : isOpen && isAsked(key, 'dismiss') ? confirmation : actions,
+-              )}
++              {drawLines(ref, isChoosingLength ? lengths : actions)}
+             </Box>
+           )}
+         </Box>
