@@ -1,0 +1,111 @@
+{
+ "version": 1,
+ "name": "Watch loop merge announcements",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 361,
+  "title": "Announce merged and closed pull requests in the watch loop",
+  "head": "2b9054a99cb263131d92e161192b99e5108f0251",
+  "headRef": "watch-announce-merged",
+  "base": "8f0a28f3c7dd661988e7650da1c282e6d059c43d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The watch loop, which <code>start-watch-loop</code> runs, fixes review findings on the pull requests a conversation owns. Its watcher, <code>watch-threads.sh</code>, polls GitHub for each pull request named in a tracked file and prints one line per piece of outstanding work, such as <code>FINDING</code> or <code>DRAFT</code>. The conversation acts on each line.",
+   "The watcher skipped every pull request that was not <code>OPEN</code>, so a merge or a close printed nothing. Only a watcher started with <code>--exit-when-closed</code> said anything, a <code>DONE</code> line once every tracked pull request had left the open state. A loop the user starts runs without that flag, so the conversation never heard about a merge, kept reporting the pull request as open, and kept sending it work.",
+   "This change makes the watcher print one line when a tracked pull request leaves the open state:",
+   "<pre>MERGED acme/app#74 into main at 2026-10-23T01:36:44Z (merge commit ea9a364a)\nCLOSED acme/app#80 without merging</pre>",
+   "The skill tells the conversation what to do on each line: remove the pull request from the tracked file, tell the user, and finish its fixing subagent."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Tracked file</b>: the list of <code>owner/repo#number</code> lines the watcher polls. The conversation edits it with <code>project loop add</code> and <code>project loop remove</code>.</li><li><b>State file</b>: the watcher's record of what it already announced, one row per item, so it repeats a line only at the renotification interval.</li><li><b><code>closed:</code> row</b>: the new state row that records a <code>MERGED</code> or <code>CLOSED</code> announcement.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first Projector review of <code>2b9054a</code> found it clean, with no finding threads, and listed two suggestions: name <code>MERGED</code> and <code>CLOSED</code> in the skill's paragraph on adopting an existing watcher, and rewrap one long comment line.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "watcher",
+   "title": "The watcher announces each merge or close once",
+   "kicker": "The query, the new event lines, and the state row that keeps them from repeating",
+   "intro": [
+    "The watcher's GraphQL query now also reads <code>mergedAt</code> and <code>mergeCommit</code>, so the <code>MERGED</code> line can say when the pull request merged and into which commit. Both default to <code>?</code> in the tab-separated row the script parses, because an empty field in the middle of that row would shift every field after it.",
+    "When a pull request answers as anything but <code>OPEN</code>, the script looks for a <code>closed:owner/repo#number</code> row in the state file. With no row, it prints <code>MERGED</code> or <code>CLOSED</code> and writes one. With a row, it prints nothing and carries the row forward. The row lasts as long as the pull request's line stays in the tracked file, so neither a later pass nor a restart on the same state file repeats the line. Once the conversation removes the line, the row falls out with the pull request's other rows."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran the watcher against GitHub twice on one state file: the first pass printed <code>MERGED ninjudd/projector#350 into main at 2026-10-21T19:21:21Z (merge commit 8f0a28f3)</code>, and the second printed nothing. A pass over <code>#241</code>, closed without merging, printed <code>CLOSED ninjudd/projector#241 without merging</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/start-watch-loop/scripts/watch-threads.sh",
+     "note": "The query's two new fields, the <code>closed:</code> row, and the <code>MERGED</code> and <code>CLOSED</code> lines.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A failed query carries every state row for the pull request forward, the <code>closed:</code> row included, so a network blip neither repeats nor loses the announcement.",
+       "line": 317
+      },
+      {
+       "kind": "context",
+       "text": "A reopened pull request answers <code>OPEN</code>, so its <code>closed:</code> row drops. Closing it again announces again.",
+       "line": 320
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "skill",
+   "title": "The skill says what the conversation does on each line",
+   "kicker": "Event list, subagent hand-off, and the DONE paragraph",
+   "intro": [
+    "<code>start-watch-loop/SKILL.md</code> is the instruction file the conversation follows. It now lists <code>MERGED</code> and <code>CLOSED</code> among the watcher's lines. On either one, the conversation removes the pull request from the tracked file, tells the user, sends it no more work, and finishes its subagent as before. The paragraph on <code>DONE</code> no longer claims the watcher announces no merge."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/start-watch-loop/SKILL.md",
+     "note": "The event list, the subagent bullet, and the <code>DONE</code> paragraph.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The paragraph on adopting an existing watcher, above this hunk, lists what the watcher repeats and what it never repeats, but not <code>MERGED</code> or <code>CLOSED</code>. A conversation that adopts a watcher never hears a merge the watcher already announced to an earlier conversation. The review lists this as a suggestion.",
+       "line": 138
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "New cases for merge, close, line removal, and a failed query",
+   "intro": [
+    "The fake GitHub fixture gains <code>mergedAt</code> and <code>mergeCommit</code>. New tests cover a merge announced once, a close announced once, a removed line dropping its <code>closed:</code> row, and a failed query announcing nothing. The <code>--exit-when-closed</code> tests now expect the <code>MERGED</code> and <code>CLOSED</code> lines before <code>DONE</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran the full suite under Python 3.12: 1,100 tests, one skip, no failures."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_watchers.py"
+    }
+   ]
+  }
+ ]
+}
