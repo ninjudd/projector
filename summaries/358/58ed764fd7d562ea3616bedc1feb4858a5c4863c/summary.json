@@ -1,0 +1,123 @@
+{
+ "version": 1,
+ "name": "Faster inbox triage in the panel",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 358,
+  "title": "Collapse the inbox's questions or notices from the header's counts",
+  "head": "58ed764fd7d562ea3616bedc1feb4858a5c4863c",
+  "headRef": "inbox-collapse-kind",
+  "base": "ec6abbc73acf781fbdde5a755486bfeb779b2563",
+  "baseRef": "inbox-newest-first",
+  "basePr": 357
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel sits above Claude Code's prompt. It lists your pull requests, then your inbox: questions an agent asked you and notices it told you, newest first. Its first line, the header, counts the open pull requests, questions, and notices.",
+   "When several sessions post at once, a burst of notices can push the questions, the items waiting on your answer, out of view. This change makes each item count in the header a button. Pressing <code>1 notice</code> hides every notice and puts one line, <code>- 1 notice</code>, at the top of the list in the notice color. Pressing that line, or the count again, brings the notices back. Questions and notices collapse separately.",
+   "The collapsed kinds live in session state, so a new notice that arrives while notices are collapsed stays hidden and only raises the count. A kind with nothing open has no count in the header, so there would be nothing to press to expand it; while that holds, its muted items show."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Kind</b>: an inbox item is a <code>question</code> or a <code>notice</code>.</li><li><b>Open</b>: an item that is not answered and not snoozed. Only open items are counted.</li><li><b>Muted</b>: a resolved or snoozed item, drawn in <code>subtle</code> gray.</li><li><b>Drawer</b>: the detail view an item opens into, which takes the whole panel.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>Reviewed clean at <code>58ed764</code>, with no finding threads.</li><li>One open question in the review: whether ctrl+x tab should now land on a header count before the first pull request line.</li><li>This head is a restack onto the moved lower layers (#357, #356); this layer's diff did not change.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "panel",
+   "title": "Collapsing a kind in the panel",
+   "kicker": "The header's counts become buttons, and a collapsed kind becomes one line",
+   "intro": [
+    "The panel's render handler in <code>hooks/register.tsx</code> draws the header and the list on every redraw. It now reads a new session atom, <code>panelCollapsed</code>, which holds the kinds you collapsed, and declares its type in <code>hooks/types.d.ts</code>.",
+    "<code>isCollapsed(kind)</code> is true only while the kind is in that list <em>and</em> the header has a count for it. That second condition is what lets the muted items show when a kind has nothing open: with no count, nothing on screen could expand the kind. <code>fold(kind)</code> toggles the kind in the atom, the action both the count and the expand line run.",
+    "The header was one <code>Text</code>. When it counts items it is now a row: a <code>Text</code> holding the name, the padding, and the pull request count, then each item count as a plain <code>Button</code>, then the age. The pieces add up to the same string as before, so the header still ends at the panel's edge."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds the collapse state, the header row of count buttons, and the expand lines at the top of the item list.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>isCollapsed</code> also requires a count for the kind, so a kind with nothing open shows its muted items instead of an expand line nobody could reach from the header.",
+       "line": 1259
+      },
+      {
+       "kind": "verify",
+       "text": "The header row's pieces add up to the old <code>status</code> string: the edited test <code>asks through the tool, and the panel lists the question below the pull requests</code> asserts the header still matches its text and ends at the panel's edge, and <code>claude plugin test .</code> passes.",
+       "line": 1333
+      },
+      {
+       "kind": "context",
+       "text": "The header's count buttons come before the pull request lines, so they are the first things the keyboard focus ring can reach. The review asks whether that order is intended.",
+       "line": 1340
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Declares the <code>panelCollapsed</code> session state as a list of item kinds.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>hooks/typecheck.sh</code> passes, and fails at the <code>collapsed</code> atom when this line is removed, so the declaration is what types it.",
+       "line": 141
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "One new test for collapsing, and the header read through a helper",
+   "intro": [
+    "Because the header is now a row of pieces whenever it counts items, the existing tests can no longer find it as a single <code>Text</code>. A new helper, <code>headerOf</code>, reads the text of the element keyed <code>header</code>, and every header assertion uses it.",
+    "The new test walks the whole feature: collapse notices, collapse questions apart from them, expand from the line and from the count, dismiss the last notice so its kind shows again, then post a new notice and see it collapse."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Adds <code>headerOf</code> and the collapse test, and moves the header assertions onto the helper.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>claude plugin test .</code> passes at this head: 151 pass, 0 fail.",
+       "line": 2473
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The user guide and the inbox plan describe collapsing",
+   "intro": [
+    "<code>docs/plugins.md</code> gains a paragraph under the panel's example on how to collapse and expand a kind. The <code>inbox</code> plan, already <code>completed</code>, gains § 26, which records what changed, why the list filters rather than groups, and the tests that cover it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Says how to collapse a kind from the header and when muted items show."
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Appends § 26 after § 25 without renumbering; the status stays <code>completed</code>."
+    }
+   ]
+  }
+ ]
+}
