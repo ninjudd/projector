@@ -3580,13 +3580,16 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
       .filter(key => key.endsWith(':1') && !key.startsWith('close:') && !key.startsWith('answer:'))
   const actions = ['discuss:1', 'dismiss:1', 'snooze:1']
 
-  // A terminal dismisses the question while its drawer is open; restoring it opens its drawer on its actions.
+  // A terminal dismisses the question while its drawer asks how long to snooze; restoring it from a terminal opens
+  // its drawer on its actions, not on the snooze it was asking about.
   await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'snooze:1' })
   session.store.run(['project', 'inbox', 'dismiss', '1', '--session', SESSION])
   await clock.advance(TICK)
   await clock.settle()
   expect(await lines()).toEqual(['discuss:1', 'restore:1'])
-  await ui.press({ key: 'restore:1' })
+  session.store.run(['project', 'inbox', 'restore', '1', '--session', SESSION])
+  await clock.advance(TICK)
   await clock.settle()
   expect(await lines()).toEqual(actions)
   expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([])
