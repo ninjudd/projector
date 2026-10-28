@@ -171,6 +171,20 @@ the recurrence it is instead of as new work.
   `gh stack` still gets one subagent.
 - Have each subagent work in its own worktree of its pull request's branch,
   so two subagents never share a checkout and none touches the main loop's.
+  Start each subagent with a working directory of its own where the host
+  offers one; in Claude Code, pass `isolation: "worktree"` to the Agent
+  tool. An isolated subagent's directory is pinned at launch, so entering
+  its pull request's worktree moves only that subagent. A subagent started
+  without one shares the session's directory, and its `EnterWorktree`
+  moves every subagent with it.
+- Where the host cannot give a subagent a directory of its own, tell the
+  subagent never to change the session's directory: run every Git command
+  as `git -C <worktree>` and give every file tool an absolute path. Where
+  you cannot be sure it will, run the subagents one at a time.
+- Before you hand a branch to its subagent, make sure the main loop's
+  checkout does not hold that branch, for example with
+  `git switch --detach`. Git checks a branch out in only one worktree, so
+  the subagent's `git worktree add` of it fails while yours holds it.
 - Send every later event for that pull request, or for any layer of its
   stack, to the same subagent as a message; never start a second one for it.
   Each message is another run of `fix-pr` for the pull request's current
