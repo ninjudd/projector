@@ -1733,7 +1733,7 @@ export const register: Register = on => {
       shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
         <Text key="before-items"> </Text>
       ),
-      ...[...shownItems].sort((a, b) => a.postedAt - b.postedAt).map(drawItem),
+      ...[...shownItems].sort((a, b) => b.postedAt - a.postedAt).map(drawItem),
     ])
   })
 }

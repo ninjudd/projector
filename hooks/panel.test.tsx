@@ -2464,6 +2464,34 @@ test('the withdraw tool refuses what the CLI refuses, asks an old CLI to upgrade
   expect(session.store.store.get('1')).toEqual(answered)
 })
 
+test('the panel lists its items newest first, and a revised question keeps its place', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [
+    held(),
+    notice(),
+    held({ ref: '3', number: 3, subject: 'Rebase first?', postedAt: NOW - 30_000 }),
+  ])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  const order = async () =>
+    (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('item:'))
+
+  expect(await order()).toEqual(['item:3', 'item:2', 'item:1'])
+
+  // Revising the oldest question leaves it where it was posted.
+  await $.tool.call({ tool: 'mcp__projector__revise', number: 1, question: 'Decline the retry finding?' })
+  await clock.settle()
+  expect(await order()).toEqual(['item:3', 'item:2', 'item:1'])
+
+  // An item posted now goes on top.
+  session.store.write(notice({ ref: '4', number: 4, subject: 'Merged #6', postedAt: clock.now() }))
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await order()).toEqual(['item:4', 'item:3', 'item:2', 'item:1'])
+  await ui.unmount()
+})
+
 test('the revise tool redraws the question with its new text at once, keeping its number', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

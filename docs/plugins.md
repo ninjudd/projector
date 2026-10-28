@@ -397,7 +397,7 @@ rather than asking again. An agent that runs `project inbox ask`, `tell`,
 `withdraw`, `revise`, or `restore` from the shell reaches the same inbox, as
 [Use the inbox](cli.md#use-the-inbox) describes.
 
-The items are a list below the pull requests, oldest first, each line
+The items are a list below the pull requests, newest first, each line
 starting with `-`. An open question's line is drawn in the theme's
 `permission` color, the one Claude Code gives its own permission prompts,
 because an agent's question usually asks leave to do something. An open

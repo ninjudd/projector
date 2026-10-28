@@ -2204,3 +2204,27 @@ inbox, most of all when several sessions post at once.
 | Behavior | Test |
 | --- | --- |
 | An item's `8` dismisses at once and closes the drawer, a notice's too; restore and unsnooze act at once; a pull request's dismiss shows its confirmation, `9` keeps it, and the ring moves onto the confirmation and back | `an item’s dismiss, restore, and unsnooze act at once, and a pull request’s dismiss asks to be sure` in `hooks/panel.test.tsx` |
+
+## 25. List the items newest first
+
+The panel listed its items oldest first, so when a session posted several
+in a row, the one that just arrived, usually the one to act on next, landed
+at the bottom and could be missed. Issue #353 asked for the newest on top.
+
+### 25.1 What changes
+
+- **Newest first.** The panel lists every item it shows, questions and
+  notices from every session, by when it was posted, newest at the top.
+  This supersedes the oldest-first order of § 2.6 of the `questions` plan.
+- **A revision keeps its place.** `revise` leaves `postedAt` as it was, so
+  a revised question stays where it was first posted rather than looking
+  new.
+- **Matching keeps its order.** A typed quote that more than one open
+  question shares still goes to the oldest, as `readPrompt` decides; only
+  the drawn order changes.
+
+### 25.2 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| Three items list newest first, a revised question keeps its place, and an item posted later goes on top | `the panel lists its items newest first, and a revised question keeps its place` in `hooks/panel.test.tsx` |
