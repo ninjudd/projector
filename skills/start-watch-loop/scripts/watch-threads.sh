@@ -449,8 +449,9 @@ EOF
   # from what is currently outstanding on the tracked set, so a thread that
   # got resolved, a merged pull request's threads, or a line deleted from the
   # tracked file simply falls out. A merged or closed pull request keeps only
-  # its `closed:` row, which says its MERGED or CLOSED line went out. Rows are only ever carried forward for a
-  # pull request whose query failed — never for one that answered.
+  # its `closed:` row, which says its MERGED or CLOSED line went out. Rows are
+  # only ever carried forward for a pull request whose query failed — never
+  # for one that answered.
   printf '%s' "$new_state" | grep -v '^[[:space:]]*$' > "$STATE.tmp" 2>/dev/null
   mv "$STATE.tmp" "$STATE" 2>/dev/null
 
