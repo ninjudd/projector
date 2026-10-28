@@ -88,6 +88,11 @@ const QUESTION_COLOR = 'permission'
  */
 const NOTICE_COLOR = 'inactive'
 
+/** The kinds of item, in the order the header counts them. */
+const ITEM_KINDS: readonly Item['kind'][] = ['question', 'notice']
+
+const KIND_COLORS: Record<Item['kind'], string> = { question: QUESTION_COLOR, notice: NOTICE_COLOR }
+
 /**
  * The color of a pull request's branch on its drawer's facts line: the
  * terminal palette's own cyan, slot 6, so it follows the person's palette as
@@ -204,6 +209,7 @@ const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
 const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
 const drawerThreads = atom({ plugin: 'projector', key: 'panelThreads' } as const, null)
 const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
+const collapsed = atom({ plugin: 'projector', key: 'panelCollapsed' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
 const themeBackground = atom({ plugin: 'projector', key: 'panelThemeBackground' } as const, OTHER_BACKGROUND)
 const background = atom({ plugin: 'projector', key: 'panelBackground' } as const, AUTO)
@@ -1237,16 +1243,27 @@ export const register: Register = on => {
     const shownThreads = await read($, drawerThreads)
     const asking = await read($, asked)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
-    const counts = [
-      countOf(shown.rows.length, 'pull request'),
-      ...(['question', 'notice'] as const).map(kind =>
-        countOf(
-          shownItems.filter(item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time))
-            .length,
-          kind,
-        ),
-      ),
-    ]
+    // Each kind's count in the header is a button that collapses its items to
+    // one line at the top of the list, and the line expands them again. A
+    // kind stays collapsed until it is expanded, but while it has nothing
+    // open the header has no count to expand it from, so its items show.
+    const kindCounts = ITEM_KINDS.map(kind => {
+      const open = shownItems.filter(
+        item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time),
+      ).length
+      return { kind, count: countOf(open, kind) }
+    })
+    const folded = await read($, collapsed)
+    const isCollapsed = (kind: Item['kind']) =>
+      Array.isArray(folded) && folded.includes(kind) && kindCounts.some(one => one.kind === kind && one.count !== undefined)
+    const fold = (kind: Item['kind']) => {
+      update($, collapsed, was => {
+        const kinds = Array.isArray(was) ? was.filter(one => ITEM_KINDS.includes(one)) : []
+        return isCollapsed(kind) ? kinds.filter(one => one !== kind) : [...kinds, kind]
+      }).catch(() => undefined)
+    }
+    const prCount = countOf(shown.rows.length, 'pull request')
+    const counts = [prCount, ...kindCounts.map(one => one.count)]
     const label = labeler(shown.rows.map(row => row.pr))
     const reference = referencer(shown.rows.map(row => row.pr))
     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
@@ -1310,6 +1327,26 @@ export const register: Register = on => {
     // other surface draws a panel.
     const status = [tally, reloaded].filter(part => part !== '').join('  ')
     const gap = ' '.repeat(Math.max(1, edgeColumns - HEADER_NAME.length - status.length))
+    // Each count of a kind of item is a Button of its own, which collapses or
+    // expands that kind, so a header that counts items is a row of pieces.
+    const itemCounts = kindCounts.flatMap(({ kind, count }) => (count === undefined ? [] : [{ kind, count }]))
+    const header =
+      itemCounts.length === 0 ? (
+        <Text key="header" color="subtle">
+          {`${HEADER_NAME}${gap}${status}`}
+        </Text>
+      ) : (
+        <Box key="header" flexDirection="row">
+          <Text color="subtle">{`${HEADER_NAME}${gap}${prCount === undefined ? '' : `${prCount} · `}`}</Text>
+          {itemCounts.flatMap(({ kind, count }, at) => [
+            ...(at === 0 ? [] : [<Text key={`between:${kind}`} color="subtle">{' · '}</Text>]),
+            <Button key={`count:${kind}`} plain onPress={() => fold(kind)}>
+              <Text color="subtle">{count}</Text>
+            </Button>,
+          ])}
+          {reloaded !== '' && <Text color="subtle">{`  ${reloaded}`}</Text>}
+        </Box>
+      )
     const panel = (lines: RenderChildren, isHeaded = true) =>
       isTerminal ? (
         <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>
@@ -1321,11 +1358,7 @@ export const register: Register = on => {
             paddingRight={PANEL_PADDING}
             backgroundColor={color}
           >
-            {isHeaded && (
-              <Text key="header" color="subtle">
-                {`${HEADER_NAME}${gap}${status}`}
-              </Text>
-            )}
+            {isHeaded && header}
             <Box flexDirection="column" paddingLeft={LINE_PADDING} paddingRight={LINE_PADDING}>
               {lines}
             </Box>
@@ -1733,7 +1766,19 @@ export const register: Register = on => {
       shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
         <Text key="before-items"> </Text>
       ),
-      ...[...shownItems].sort((a, b) => b.postedAt - a.postedAt).map(drawItem),
+      // A collapsed kind's items give way to one line at the top of the list,
+      // its count in the kind's color, which expands them again.
+      ...itemCounts
+        .filter(({ kind }) => isCollapsed(kind))
+        .map(({ kind, count }) => (
+          <Button key={`expand:${kind}`} plain onPress={() => fold(kind)}>
+            <Text color={KIND_COLORS[kind]}>{`- ${count}`}</Text>
+          </Button>
+        )),
+      ...[...shownItems]
+        .filter(item => !isCollapsed(item.kind))
+        .sort((a, b) => b.postedAt - a.postedAt)
+        .map(drawItem),
     ])
   })
 }

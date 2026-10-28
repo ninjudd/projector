@@ -1525,6 +1525,11 @@ function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options
   return { store, registered, notified, toasts, sent, submitted, filled, project, release }
 }
 
+/** The panel's header as it reads, pieced together when its counts are buttons. */
+async function headerOf(ui: Pick<Mounted, 'find'>): Promise<string> {
+  return (await ui.find({ key: 'header' }))?.text ?? ''
+}
+
 async function startSession($: Engine, clock: Clock, isShown = true) {
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   // A shown panel belongs to a session that started its review loop's watcher.
@@ -1569,8 +1574,9 @@ test('asks through the tool, and the panel lists the question below the pull req
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
   // The header counts the pull request and then the question before the reload's age, ending at the panel's edge.
-  const header = await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })
-  expect(header?.text.length).toBe(EDGE)
+  const header = await headerOf(ui)
+  expect(header).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
+  expect(header.length).toBe(EDGE)
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts).toContain('Conflicting change')
   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
@@ -1815,7 +1821,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
 
   await ui.press({ key: 'close:1' })
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
   await clock.advance(30_000 + TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
@@ -1958,7 +1964,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   expect(session.store.store.get('1')).toEqual(asked)
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
 
   // The question waits for its agent to settle it, and the panel sends nothing.
   await clock.advance(TICK)
@@ -2279,7 +2285,7 @@ test('a subagent tells through the tool, and the panel lists the notice in gray'
   await clock.advance(1)
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 notice  \d+s$/)
   expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBe('inactive')
   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
@@ -2350,7 +2356,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   await startSession($, clock)
 
   const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question · 1 notice  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question · 1 notice  \d+s$/)
   await ui.press({ key: 'item:2' })
   // An open notice has the panel to itself, its header included, as an open question does.
   expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
@@ -2393,7 +2399,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
 
   await ui.press({ key: 'close:2' })
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
   await clock.advance(30_000 - 2 * TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
@@ -2421,7 +2427,7 @@ test('the withdraw tool takes an item out of the panel at once, and nothing goes
   // Before the panel reads the store again, the item has gone and its drawer with it.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 notice  \d+s$/)
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
 
   await clock.advance(TICK)
@@ -2462,6 +2468,54 @@ test('the withdraw tool refuses what the CLI refuses, asks an old CLI to upgrade
     /^project did not finish \(.*\); tell the person in the conversation that it no longer needs them$/,
   )
   expect(session.store.store.get('1')).toEqual(answered)
+})
+
+test('a count in the header collapses its kind to one line at the top of the items, and the line expands it', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [
+    held(),
+    notice(),
+    held({ ref: '3', number: 3, subject: 'Rebase first?', postedAt: NOW - 30_000 }),
+  ])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  /** The lines under the pull requests, an item by its key and a collapsed kind by what it reads. */
+  const lines = async () =>
+    (await ui.findAll({ type: 'Button' }))
+      .filter(button => /^(item|expand):/.test(button.key ?? ''))
+      .map(button => (button.key?.startsWith('expand:') === true ? button.text : (button.key ?? '')))
+
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/)
+  expect(await lines()).toEqual(['item:3', 'item:2', 'item:1'])
+
+  // The notices collapse to one line in their color, and the header keeps counting them.
+  await ui.press({ key: 'count:notice' })
+  expect(await lines()).toEqual(['- 1 notice', 'item:3', 'item:1'])
+  expect((await ui.find({ type: 'Text', text: '- 1 notice' }))?.props.color).toBe('inactive')
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/)
+
+  // The questions collapse apart from the notices, their line first.
+  await ui.press({ key: 'count:question' })
+  expect(await lines()).toEqual(['- 2 questions', '- 1 notice'])
+
+  // The line expands its kind, and so does the count again.
+  await ui.press({ key: 'expand:question' })
+  expect(await lines()).toEqual(['- 1 notice', 'item:3', 'item:1'])
+  await ui.press({ key: 'count:question' })
+  await ui.press({ key: 'count:question' })
+  expect(await lines()).toEqual(['- 1 notice', 'item:3', 'item:1'])
+
+  // A kind with nothing open has no count to expand it from, so its items show; a new one collapses again.
+  session.store.run(['project', 'inbox', 'dismiss', '2', '--session', SESSION])
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await lines()).toEqual(['item:3', 'item:2', 'item:1'])
+  session.store.write(notice({ ref: '4', number: 4, subject: 'Merged #6', postedAt: clock.now() }))
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await lines()).toEqual(['- 1 notice', 'item:3', 'item:1'])
+  await ui.unmount()
 })
 
 test('the panel lists its items newest first, and a revised question keeps its place', async ($, on) => {
@@ -2524,7 +2578,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
   expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
 
   // The answer you chose from the old text answers nothing.
   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
@@ -2743,7 +2797,7 @@ test('snooze hides either kind for an hour, then brings a hidden panel back', as
   expect(await woken.find({ type: 'Text', text: ENGINE_SITE })).toBeUndefined()
   expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
-  expect(await woken.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question · 1 notice  \d+s$/ })).toBeDefined()
+  expect(await headerOf(woken)).toMatch(/^\/projector +1 pull request · 1 question · 1 notice  \d+s$/)
   await woken.unmount()
 })
 
@@ -2868,7 +2922,7 @@ test('an item whose snooze ends while the panel is hidden is drawn the moment th
   await clock.settle()
   const woken = await $.ui.mount(PANEL)
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
-  expect(await woken.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
+  expect(await headerOf(woken)).toMatch(/^\/projector +1 pull request · 1 notice  \d+s$/)
 
   await clock.advance(10 * TICK)
   await clock.settle()
@@ -2966,7 +3020,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
     undefined,
     false,
   ])
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
 
   // Its line opens the drawer again, where unsnooze takes snooze's place.
   await ui.press({ key: 'item:2' })
@@ -3019,7 +3073,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
   const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
   expect([line?.props.color, line?.props.strikethrough]).toEqual(['permission', false])
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
   await clock.advance(TICK)
   await clock.settle()
   expect(session.submitted.map(one => one.text)).toEqual(['RESTORED 1 Decline the finding?'])
@@ -3074,7 +3128,7 @@ test('a restore brings a hidden panel back, from the tool or from a terminal, as
     expect(await isHidden()).toBe(false)
   }
   const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/)
   await ui.unmount()
 })
 

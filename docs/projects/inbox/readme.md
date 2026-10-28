@@ -2228,3 +2228,36 @@ at the bottom and could be missed. Issue #353 asked for the newest on top.
 | Behavior | Test |
 | --- | --- |
 | Three items list newest first, a revised question keeps its place, and an item posted later goes on top | `the panel lists its items newest first, and a revised question keeps its place` in `hooks/panel.test.tsx` |
+
+## 26. Collapse a kind of item from the header's counts
+
+When several sessions post at once, a burst of notices can push the
+questions, the items waiting on an answer, out of view. Issue #355 asked to
+collapse either kind to one line from the counts the header already shows.
+
+### 26.1 What changes
+
+- **Each count is a button.** In a terminal, the header's `2 questions` and
+  `1 notice` are plain Buttons, in `subtle` as before. When the header counts
+  no items it stays one `Text`.
+- **A collapsed kind is one line.** Its items leave the list, and a line
+  such as `- 2 questions`, in the kind's color, takes their place at the top
+  of the items, questions before notices. Pressing the line, or the count
+  again, expands the kind.
+- **The panel remembers it.** `panelCollapsed` holds the collapsed kinds for
+  the session, so a new item of a collapsed kind stays folded away.
+- **Nothing open, nothing folded.** A kind with no open item has no count to
+  expand it from, so its muted items show until another one arrives.
+
+### 26.2 Why this design
+
+- **Filtering, not grouping.** The list keeps one newest-first order, as
+  § 25 set; collapsing only filters a kind out and puts its count on top, so
+  no section headers are needed.
+
+### 26.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| A notice count collapses notices to `- 1 notice` in `inactive` at the top while the header keeps counting; questions collapse apart, their line first; the line and the count each expand; a kind with nothing open shows its items, and a new item collapses again | `a count in the header collapses its kind to one line at the top of the items, and the line expands it` in `hooks/panel.test.tsx` |
+| The header reads the same, its age ending at the panel's edge, with its counts as Buttons | `asks through the tool, and the panel lists the question below the pull requests` |
