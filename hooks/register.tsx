@@ -530,8 +530,8 @@ async function replace($: Engine, item: Item): Promise<void> {
  * Forgets what an item's drawer was asking once the question no longer fits
  * the item, wherever that happened: either question once the item is
  * resolved, and how long to snooze once it is snoozed. The drawer then opens
- * on its actions when the item comes back. A snoozed item can still be
- * dismissed, so its dismiss confirmation stands.
+ * on its actions when the item comes back. Only a pull request's drawer
+ * asks before it dismisses.
  */
 async function forgetAsked($: Engine, changed: readonly Item[]): Promise<void> {
   const was = await read($, asked)
@@ -1487,8 +1487,7 @@ export const register: Register = on => {
                 label: `dismiss ${item.kind}`,
                 hotkey: '8',
                 onPress: () => {
-                  ask(key, 'dismiss')
-                  carry(`dismiss:${ref}`, `confirm:${ref}`)
+                  void act($, item, 'dismiss')
                 },
               },
               isSnoozed
@@ -1527,28 +1526,6 @@ export const register: Register = on => {
           onPress: () => {
             ask(key, null)
             carry(`cancel:${ref}`, `snooze:${ref}`)
-          },
-        },
-      ]
-      // Dismiss asks to be sure: its own digit again dismisses, so a stray `8`
-      // only asks, and `9` keeps the item and puts the actions back.
-      const confirmation: Line[] = [
-        {
-          name: 'confirm',
-          label: `yes, dismiss ${item.kind}`,
-          hotkey: '8',
-          onPress: () => {
-            ask(key, null)
-            void act($, item, 'dismiss')
-          },
-        },
-        {
-          name: 'keep',
-          label: 'no, keep it',
-          hotkey: '9',
-          onPress: () => {
-            ask(key, null)
-            carry(`keep:${ref}`, `dismiss:${ref}`)
           },
         },
       ]
@@ -1606,10 +1583,7 @@ export const register: Register = on => {
               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
               {item.kind === 'question' && !isChoosingLength && drawAnswers(item)}
               <Text key={`before-buttons:${ref}`}> </Text>
-              {drawLines(
-                ref,
-                isChoosingLength ? lengths : isOpen && isAsked(key, 'dismiss') ? confirmation : actions,
-              )}
+              {drawLines(ref, isChoosingLength ? lengths : actions)}
             </Box>
           )}
         </Box>
