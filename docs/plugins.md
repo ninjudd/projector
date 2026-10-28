@@ -413,9 +413,9 @@ the pull requests, before its time.
   /projector                1 pull request · 2 questions · 1 notice  12s   [-]
    #337 draft Retry failed webhook deliveries with backoff            1h
 
+   - Force-pushed #337 to drop a stray debug file               #337  1m
    - Run project init to add the publish rule?                        2m
    - Decline the finding about the retry budget?                #337  5m
-   - Force-pushed #337 to drop a stray debug file               #337  1m
                                                      ctrl+x tab to focus
 ```
 
