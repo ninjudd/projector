@@ -78,6 +78,9 @@ const CHECK_ROLES: Record<Checks, TextRole> = {
   pending: 'warning',
 }
 
+/** The kinds of item, in the order the header counts them. */
+const ITEM_KINDS: readonly Item['kind'][] = ['question', 'notice']
+
 /** The key that closes an open item's drawer, from its line at the drawer's top. */
 const CLOSE_HOTKEY = '0'
 
@@ -127,6 +130,7 @@ const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
 const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
 const drawerThreads = atom({ plugin: 'projector', key: 'panelThreads' } as const, null)
 const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
+const collapsed = atom({ plugin: 'projector', key: 'panelCollapsed' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
 const claudeTheme = atom({ plugin: 'projector', key: 'panelTheme' } as const, UNKNOWN_THEME)
 const settings = atom({ plugin: 'projector', key: 'panelSettings' } as const, null)
@@ -476,10 +480,10 @@ async function replace($: Engine, item: Item): Promise<void> {
 
 /**
  * Forgets what an item's drawer was asking once the question no longer fits
- * the item, wherever that happened: either question once the item is
- * resolved, and how long to snooze once it is snoozed. The drawer then opens
- * on its actions when the item comes back. A snoozed item can still be
- * dismissed, so its dismiss confirmation stands.
+ * the item, wherever that happened: how long to snooze, once the item is
+ * resolved or snoozed. That is the only question an item's drawer asks; only
+ * a pull request's drawer asks before it dismisses. The drawer then opens on
+ * its actions when the item comes back.
  */
 async function forgetAsked($: Engine, changed: readonly Item[]): Promise<void> {
   const was = await read($, asked)
@@ -1189,16 +1193,27 @@ export const register: Register = on => {
     const asking = await read($, asked)
     const colors = await read($, panelColors)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
-    const counts = [
-      countOf(shown.rows.length, 'pull request'),
-      ...(['question', 'notice'] as const).map(kind =>
-        countOf(
-          shownItems.filter(item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time))
-            .length,
-          kind,
-        ),
-      ),
-    ]
+    // Each kind's count in the header is a button that collapses its items to
+    // one line at the top of the list, and the line expands them again. A
+    // kind stays collapsed until it is expanded, but while it has nothing
+    // open the header has no count to expand it from, so its items show.
+    const kindCounts = ITEM_KINDS.map(kind => {
+      const open = shownItems.filter(
+        item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time),
+      ).length
+      return { kind, count: countOf(open, kind) }
+    })
+    const folded = await read($, collapsed)
+    const isCollapsed = (kind: Item['kind']) =>
+      Array.isArray(folded) && folded.includes(kind) && kindCounts.some(one => one.kind === kind && one.count !== undefined)
+    const fold = (kind: Item['kind']) => {
+      update($, collapsed, was => {
+        const kinds = Array.isArray(was) ? was.filter(one => ITEM_KINDS.includes(one)) : []
+        return isCollapsed(kind) ? kinds.filter(one => one !== kind) : [...kinds, kind]
+      }).catch(() => undefined)
+    }
+    const prCount = countOf(shown.rows.length, 'pull request')
+    const counts = [prCount, ...kindCounts.map(one => one.count)]
     const label = labeler(shown.rows.map(row => row.pr))
     const reference = referencer(shown.rows.map(row => row.pr))
     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
@@ -1260,6 +1275,26 @@ export const register: Register = on => {
     // other surface draws a panel.
     const status = [tally, reloaded].filter(part => part !== '').join('  ')
     const gap = ' '.repeat(Math.max(1, edgeColumns - HEADER_NAME.length - status.length))
+    // Each count of a kind of item is a Button of its own, which collapses or
+    // expands that kind, so a header that counts items is a row of pieces.
+    const itemCounts = kindCounts.flatMap(({ kind, count }) => (count === undefined ? [] : [{ kind, count }]))
+    const header =
+      itemCounts.length === 0 ? (
+        <Text key="header" color={colors.muted}>
+          {`${HEADER_NAME}${gap}${status}`}
+        </Text>
+      ) : (
+        <Box key="header" flexDirection="row">
+          <Text color={colors.muted}>{`${HEADER_NAME}${gap}${prCount === undefined ? '' : `${prCount} · `}`}</Text>
+          {itemCounts.flatMap(({ kind, count }, at) => [
+            ...(at === 0 ? [] : [<Text key={`between:${kind}`} color={colors.muted}>{' · '}</Text>]),
+            <Button key={`count:${kind}`} plain onPress={() => fold(kind)}>
+              <Text color={colors.muted}>{count}</Text>
+            </Button>,
+          ])}
+          {reloaded !== '' && <Text color={colors.muted}>{`  ${reloaded}`}</Text>}
+        </Box>
+      )
     const panel = (lines: RenderChildren, isHeaded = true) =>
       isTerminal ? (
         <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>
@@ -1271,11 +1306,7 @@ export const register: Register = on => {
             paddingRight={PANEL_PADDING}
             backgroundColor={colors.background}
           >
-            {isHeaded && (
-              <Text key="header" color={colors.muted}>
-                {`${HEADER_NAME}${gap}${status}`}
-              </Text>
-            )}
+            {isHeaded && header}
             <Box flexDirection="column" paddingLeft={LINE_PADDING} paddingRight={LINE_PADDING}>
               {lines}
             </Box>
@@ -1311,7 +1342,7 @@ export const register: Register = on => {
       return row === undefined ? (item.pr ?? '') : label(row.pr)
     }
 
-    // The items are a list below the pull requests, oldest first, each
+    // The items are a list below the pull requests, newest first, each
     // bulleted `-`; an open question's line takes the `question` role, and a
     // resolved or snoozed item's `muted`. An open question's drawer numbers
     // its options; choosing one puts the question and that answer in the
@@ -1437,8 +1468,7 @@ export const register: Register = on => {
                 label: `dismiss ${item.kind}`,
                 hotkey: '8',
                 onPress: () => {
-                  ask(key, 'dismiss')
-                  carry(`dismiss:${ref}`, `confirm:${ref}`)
+                  void act($, item, 'dismiss')
                 },
               },
               isSnoozed
@@ -1477,28 +1507,6 @@ export const register: Register = on => {
           onPress: () => {
             ask(key, null)
             carry(`cancel:${ref}`, `snooze:${ref}`)
-          },
-        },
-      ]
-      // Dismiss asks to be sure: its own digit again dismisses, so a stray `8`
-      // only asks, and `9` keeps the item and puts the actions back.
-      const confirmation: Line[] = [
-        {
-          name: 'confirm',
-          label: `yes, dismiss ${item.kind}`,
-          hotkey: '8',
-          onPress: () => {
-            ask(key, null)
-            void act($, item, 'dismiss')
-          },
-        },
-        {
-          name: 'keep',
-          label: 'no, keep it',
-          hotkey: '9',
-          onPress: () => {
-            ask(key, null)
-            carry(`keep:${ref}`, `dismiss:${ref}`)
           },
         },
       ]
@@ -1556,10 +1564,7 @@ export const register: Register = on => {
               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
               {item.kind === 'question' && !isChoosingLength && drawAnswers(item)}
               <Text key={`before-buttons:${ref}`}> </Text>
-              {drawLines(
-                ref,
-                isChoosingLength ? lengths : isOpen && isAsked(key, 'dismiss') ? confirmation : actions,
-              )}
+              {drawLines(ref, isChoosingLength ? lengths : actions)}
             </Box>
           )}
         </Box>
@@ -1711,7 +1716,20 @@ export const register: Register = on => {
       shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
         <Text key="before-items"> </Text>
       ),
-      ...[...shownItems].sort((a, b) => a.postedAt - b.postedAt).map(drawItem),
+      // A collapsed kind's items give way to one line at the top of the list,
+      // its count in its kind's role, `question` or `notice`, which expands
+      // them again.
+      ...itemCounts
+        .filter(({ kind }) => isCollapsed(kind))
+        .map(({ kind, count }) => (
+          <Button key={`expand:${kind}`} plain onPress={() => fold(kind)}>
+            <Text color={colors[kind]}>{`- ${count}`}</Text>
+          </Button>
+        )),
+      ...[...shownItems]
+        .filter(item => !isCollapsed(item.kind))
+        .sort((a, b) => b.postedAt - a.postedAt)
+        .map(drawItem),
     ])
   })
 }

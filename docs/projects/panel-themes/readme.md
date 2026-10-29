@@ -78,9 +78,9 @@ they adapt to light and dark themes like every other role (§ 9).
 | --- | --- | --- |
 | `background` | The panel's `Box` | By base, as § 2.2 says |
 | `text` | A pull request's title, each ` · `, ` in 5 files`, a chosen or typed answer | No color: the engine's text color |
-| `muted` | The header, the key hint, ages, a pull request's author, an item's pull request label, `sending`, resolved and snoozed items, a resolved question's other options, the tagline, `Looking for pull requests…` | `subtle` |
-| `question` | An open question's line | `permission` |
-| `notice` | An open notice's line | `inactive` |
+| `muted` | The header and its counts, the key hint, ages, a pull request's author, an item's pull request label, `sending`, resolved and snoozed items, a resolved question's other options, the tagline, `Looking for pull requests…` | `subtle` |
+| `question` | An open question's line, and the line that stands for collapsed questions, such as `- 2 questions` | `permission` |
+| `notice` | An open notice's line, and the line that stands for collapsed notices | `inactive` |
 | `success` | `ready`, `approved`, `checks passing`, `(recommended)`, `✓` | `success` |
 | `warning` | `draft`, an open thread count such as `5*`, `checks pending` | `warning` |
 | `error` | `conflict`, `changes requested`, `checks failing`, a GitHub error | `error` |

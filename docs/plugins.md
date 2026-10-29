@@ -296,11 +296,13 @@ describes, and then the links:
 - **discuss PR** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
   one repository.
-- **dismiss PR** asks to be sure first, as
-  [dismissing an item](#read-your-inbox-in-projectors-panel) does, then
-  keeps the pull request out of every loop of this session that tracks
-  it, and the panel drops its line and says which loops stopped, such as
-  `stopped watching and reviewing acme/app#258`.
+- **dismiss PR** asks to be sure first, because a dismissed pull request
+  leaves the panel at once. It replaces the action lines with
+  `8: yes, dismiss PR` and `9: no, keep it`, so a stray `8` only asks.
+  Press `8` again to keep the pull request out of every loop of this
+  session that tracks it, and the panel drops its line and says which
+  loops stopped, such as `stopped watching and reviewing acme/app#258`.
+  `9`, closing the drawer, or opening another keeps it.
 - **open in github** opens the pull request on GitHub.
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
@@ -424,9 +426,9 @@ draws the theme's background instead.
 | Role | What it colors | Default |
 | --- | --- | --- |
 | `text` | A pull request's title, each ` · `, ` in 5 files`, and a chosen or typed answer | Claude Code's text color |
-| `muted` | The header, the key hint, ages, another person's login, an item's pull request, `sending`, a resolved or snoozed item, the options a question's answer passed over, the tagline, and `Looking for pull requests…` | `subtle` |
-| `question` | An open question's line | `permission` |
-| `notice` | An open notice's line | `inactive` |
+| `muted` | The header and its counts, the key hint, ages, another person's login, an item's pull request, `sending`, a resolved or snoozed item, the options a question's answer passed over, the tagline, and `Looking for pull requests…` | `subtle` |
+| `question` | An open question's line, and the line that stands for collapsed questions, such as `- 2 questions` | `permission` |
+| `notice` | An open notice's line, and the line that stands for collapsed notices | `inactive` |
 | `success` | `ready`, `approved`, `checks passing`, `(recommended)`, and `✓` | `success` |
 | `warning` | `draft`, an open thread count such as `5*`, and `checks pending` | `warning` |
 | `error` | `conflict`, `changes requested`, `checks failing`, and GitHub's error | `error` |
@@ -505,7 +507,7 @@ rather than asking again. An agent that runs `project inbox ask`, `tell`,
 `withdraw`, `revise`, or `restore` from the shell reaches the same inbox, as
 [Use the inbox](cli.md#use-the-inbox) describes.
 
-The items are a list below the pull requests, oldest first, each line
+The items are a list below the pull requests, newest first, each line
 starting with `-`. An open question's line is drawn in the theme's
 `permission` color, the one Claude Code gives its own permission prompts,
 because an agent's question usually asks leave to do something. An open
@@ -521,11 +523,19 @@ the pull requests, before its time.
   /projector                1 pull request · 2 questions · 1 notice  12s   [-]
    #337 draft Retry failed webhook deliveries with backoff            1h
 
+   - Force-pushed #337 to drop a stray debug file               #337  1m
    - Run project init to add the publish rule?                        2m
    - Decline the finding about the retry budget?                #337  5m
-   - Force-pushed #337 to drop a stray debug file               #337  1m
                                                      ctrl+x tab to focus
 ```
+
+Click a count of questions or notices in the header to collapse that kind
+to one line at the top of the items, such as `- 2 questions`, drawn in the
+kind's color, so a burst of notices does not push the questions out of view.
+Click the line, or the count again, to expand it. Questions and notices
+collapse apart from each other, and a collapsed kind stays collapsed, new
+items included, until you expand it. While a collapsed kind has nothing
+open, the header has no count for it, so its muted items show in the list.
 
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press Enter on it from the keyboard instead. While
@@ -616,9 +626,8 @@ question's drawer has three actions:
   stay in view while you type. Type your reply under the quote, or on the
   quote's own line, and send the prompt. The reply reaches the agent and
   answers nothing.
-- **dismiss question** asks to be sure, as the paragraph after the next
-  describes, then sets the question aside without an answer and closes the
-  drawer.
+- **dismiss question** sets the question aside without an answer and
+  closes the drawer.
 - **snooze question** asks how long to put the question off, as the next
   paragraph but one describes.
 
@@ -630,20 +639,12 @@ stays in the panel until you dismiss it. **dismiss notice** clears the
 notice once you have read it and closes its drawer, and nothing goes back
 to the agent.
 
-**dismiss** dismisses nothing at once. It replaces the action lines with
-a confirmation, so a stray `8` only asks:
+**dismiss**, **restore**, and **unsnooze** act at once. A dismissed item
+stays in the list a while, struck through, as the paragraph on resolved
+items below describes, so you undo a dismissal you did not mean by opening
+its line again and choosing **restore**.
 
-```text
-   8: yes, dismiss question
-   9: no, keep it
-```
-
-Press `8` again, or click the first line, to dismiss; a notice's reads
-`yes, dismiss notice`. `9`, closing the drawer, or opening another keeps
-the item and puts the actions back. **restore** and **unsnooze** act at
-once.
-
-**snooze** snoozes nothing at once either. A question's options give way
+**snooze** snoozes nothing at once. A question's options give way
 to the lengths it offers, and the action lines to a way back:
 
 ```text
@@ -730,8 +731,8 @@ the options and the actions. Enter on the open line closes the drawer and
 leaves the ring on the line. A click opens and closes a drawer without
 moving the ring. In the same way, Enter on the **snooze** line moves the
 ring onto the first length, and Enter on **cancel** moves it back onto the
-**snooze** line. Enter on **dismiss** moves it onto the confirmation, and
-Enter on `no, keep it` back onto **dismiss**.
+**snooze** line. Enter on a pull request's **dismiss** moves it onto the
+confirmation, and Enter on `no, keep it` back onto **dismiss**.
 
 An open question's options read `1:` to `6:`, the digit in the accent
 color. Press a digit while the panel has the keyboard, or type it first into
