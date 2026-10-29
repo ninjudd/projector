@@ -397,7 +397,7 @@ rather than asking again. An agent that runs `project inbox ask`, `tell`,
 `withdraw`, `revise`, or `restore` from the shell reaches the same inbox, as
 [Use the inbox](cli.md#use-the-inbox) describes.
 
-The items are a list below the pull requests, oldest first, each line
+The items are a list below the pull requests, newest first, each line
 starting with `-`. An open question's line is drawn in the theme's
 `permission` color, the one Claude Code gives its own permission prompts,
 because an agent's question usually asks leave to do something. An open
@@ -413,9 +413,9 @@ the pull requests, before its time.
   /projector                1 pull request · 2 questions · 1 notice  12s   [-]
    #337 draft Retry failed webhook deliveries with backoff            1h
 
+   - Force-pushed #337 to drop a stray debug file               #337  1m
    - Run project init to add the publish rule?                        2m
    - Decline the finding about the retry budget?                #337  5m
-   - Force-pushed #337 to drop a stray debug file               #337  1m
                                                      ctrl+x tab to focus
 ```
 

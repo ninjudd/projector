@@ -1361,7 +1361,7 @@ export const register: Register = on => {
       return row === undefined ? (item.pr ?? '') : label(row.pr)
     }
 
-    // The items are a list below the pull requests, oldest first, each
+    // The items are a list below the pull requests, newest first, each
     // bulleted `-`; an open question's line takes `QUESTION_COLOR`, and a
     // resolved or snoozed item's `subtle`. An open question's drawer numbers
     // its options; choosing one puts the question and that answer in the
@@ -1733,7 +1733,7 @@ export const register: Register = on => {
       shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
         <Text key="before-items"> </Text>
       ),
-      ...[...shownItems].sort((a, b) => a.postedAt - b.postedAt).map(drawItem),
+      ...[...shownItems].sort((a, b) => b.postedAt - a.postedAt).map(drawItem),
     ])
   })
 }
