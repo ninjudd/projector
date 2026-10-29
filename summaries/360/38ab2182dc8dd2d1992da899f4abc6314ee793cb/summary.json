@@ -1,0 +1,87 @@
+{
+ "version": 1,
+ "name": "Loop subagent working directories",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 360,
+  "title": "Start each loop subagent in a working directory of its own",
+  "head": "38ab2182dc8dd2d1992da899f4abc6314ee793cb",
+  "headRef": "watch-fixer-own-directory",
+  "base": "8f0a28f3c7dd661988e7650da1c282e6d059c43d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector has two long-running loops that each start one subagent per pull request. <code>start-watch-loop</code> starts a fixing subagent, which runs <code>fix-pr</code> to answer review findings and push fixes. <code>start-review-loop</code> starts a reviewing subagent, which runs <code>review-pr</code> on every new head. Both skills are instructions an agent follows, so the change is in Markdown, not code.",
+   "Before this change, <code>start-watch-loop</code> said each fixer should work in its own worktree of its branch, but not how to start the fixer. In Claude Code, a subagent started without isolation shares its parent session's working directory. When such a fixer calls <code>EnterWorktree</code>, the whole session moves, and every other fixer moves with it. In issue #348, that made the host refuse one fixer's Git commands until the other fixer finished. Separately, the main loop's own checkout still held one pull request's branch, so that fixer's <code>git worktree add</code> failed, because Git checks a branch out in only one worktree at a time.",
+   "Both skills now tell the loop to start each subagent with a directory of its own where the host offers one, which in Claude Code means <code>isolation: \"worktree\"</code> on the Agent tool. Where the host can't, the subagent works by path and never changes the session's directory. The watch loop also frees each branch in its own checkout before handing it to a fixer."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Main loop</b>: the session that runs the watcher and routes each pull request's events to its subagent.</li><li><b>Isolated subagent</b>: in Claude Code, a subagent started with <code>isolation: \"worktree\"</code>. Its working directory is pinned at launch, so changing it moves only that subagent.</li><li><b>Scratch worktree</b>: the detached worktree that <code>project review setup</code> creates under Projector's state directory for each head under review.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review of this head found no defect and opened no finding thread. It asked two questions it could not verify from the host's documentation alone: whether Claude Code removes an isolated review subagent's worktree between turns, which <code>project review move</code> reads as the review's checkout, and where an isolated fixer should create its pull request's worktree so that <code>EnterWorktree</code> accepts it.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "watch-loop",
+   "title": "Fixing subagents get a directory of their own",
+   "kicker": "start-watch-loop: how to start each fixer and hand it its branch",
+   "intro": [
+    "The watch loop's section \"Give each pull request its own subagent\" already told each fixer to work in its own worktree. The change adds how to make that worktree really its own, in three bullets.",
+    "<ol><li><b>Isolate where the host can.</b> In Claude Code, pass <code>isolation: \"worktree\"</code> to the Agent tool. The isolated fixer can then enter its pull request's worktree without moving any other fixer.</li><li><b>Work by path where it can't.</b> The fixer runs Git as <code>git -C &lt;worktree&gt;</code> and gives file tools absolute paths. When the loop can't be sure a fixer will, it runs fixers one at a time.</li><li><b>Free the branch first.</b> The main loop makes sure its own checkout doesn't hold the branch, for example with <code>git switch --detach</code>, before the fixer adds a worktree of it.</li></ol>"
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/start-watch-loop/SKILL.md",
+     "note": "Three new bullets in \"Give each pull request its own subagent\": isolate the fixer, fall back to path-based work, and free the branch in the main loop's checkout.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The host documents that a subagent pinned at launch can enter only a worktree under <code>.claude/worktrees/</code> of the same repository. In #348 the fixers' worktrees were there, but neither this skill nor <code>fix-pr</code> names a location for the worktree.",
+       "line": 177
+      },
+      {
+       "kind": "verify",
+       "text": "<code>git switch --detach</code> keeps uncommitted changes in the checkout, because it moves <code>HEAD</code> to the same commit. Freeing the branch overwrites nothing in the main loop's checkout.",
+       "line": 186
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "review-loop",
+   "title": "Reviewing subagents get the same instruction",
+   "kicker": "start-review-loop: isolate each reviewer, or have it work by path",
+   "intro": [
+    "The review loop also runs one subagent per pull request, so its section gets one matching bullet. A reviewer never needs to enter a worktree: <code>project review setup</code> creates a scratch worktree for each head and prints its path, and <code>review-pr</code> already says <code>move</code>, <code>publish</code>, and <code>finish</code> run from any directory. So the fallback asks the reviewer only to reach that worktree by path."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "note": "One new bullet: start each reviewing subagent isolated, or tell it to reach the scratch worktree by path and never change the session's directory.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>project review setup</code> records the directory it runs in as the review's checkout, and <code>move</code>, <code>gate</code>, and <code>publish</code> read that checkout later (<code>src/projector/review.py</code> line 861). For an isolated reviewer, that checkout is the worktree Claude Code made for it. Whether Claude Code removes that worktree between the subagent's turns decides whether a later <code>NEW HEAD</code> still finds it.",
+       "line": 194
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

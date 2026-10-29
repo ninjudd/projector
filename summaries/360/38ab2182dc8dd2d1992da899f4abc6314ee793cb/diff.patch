@@ -1,0 +1,42 @@
+diff --git a/skills/start-review-loop/SKILL.md b/skills/start-review-loop/SKILL.md
+index 10e93115..cde50cac 100644
+--- a/skills/start-review-loop/SKILL.md
++++ b/skills/start-review-loop/SKILL.md
+@@ -190,6 +190,12 @@ reads the new head against that history instead of rediscovering it.
+   mode, the loop's id to pass as `--loop`, the model ID to pass as
+   `--model`, and the path of
+   `../review-pr/SKILL.md`, and have it run that skill for the head.
++- Start each subagent with a working directory of its own where the host
++  offers one; in Claude Code, pass `isolation: "worktree"` to the Agent
++  tool. Otherwise tell the subagent never to change the session's
++  directory: it reaches the worktree `project review setup` prints by path,
++  with `git -C <worktree>` and absolute paths for file tools. A subagent
++  that moves a shared directory moves every other subagent with it.
+ - Send every later `NEW HEAD` and `RESPONDED` for that pull request to the
+   same subagent as a message; never start a second one for it. Each message
+   is another run of `review-pr`, for the head it names; a `RESPONDED`
+diff --git a/skills/start-watch-loop/SKILL.md b/skills/start-watch-loop/SKILL.md
+index 71a5ed70..f8e75989 100644
+--- a/skills/start-watch-loop/SKILL.md
++++ b/skills/start-watch-loop/SKILL.md
+@@ -171,6 +171,20 @@ the recurrence it is instead of as new work.
+   `gh stack` still gets one subagent.
+ - Have each subagent work in its own worktree of its pull request's branch,
+   so two subagents never share a checkout and none touches the main loop's.
++  Start each subagent with a working directory of its own where the host
++  offers one; in Claude Code, pass `isolation: "worktree"` to the Agent
++  tool. An isolated subagent's directory is pinned at launch, so entering
++  its pull request's worktree moves only that subagent. A subagent started
++  without one shares the session's directory, and its `EnterWorktree`
++  moves every subagent with it.
++- Where the host cannot give a subagent a directory of its own, tell the
++  subagent never to change the session's directory: run every Git command
++  as `git -C <worktree>` and give every file tool an absolute path. Where
++  you cannot be sure it will, run the subagents one at a time.
++- Before you hand a branch to its subagent, make sure the main loop's
++  checkout does not hold that branch, for example with
++  `git switch --detach`. Git checks a branch out in only one worktree, so
++  the subagent's `git worktree add` of it fails while yours holds it.
+ - Send every later event for that pull request, or for any layer of its
+   stack, to the same subagent as a message; never start a second one for it.
+   Each message is another run of `fix-pr` for the pull request's current
