@@ -2181,3 +2181,26 @@ theme.
 | --- | --- |
 | `#abc`, `#FFFFFF`, `rgb(0,0,0)`, `rgb(255, 255, 255)`, `rgb( 30,30,40 )`, `ansi256(0)`, and `ansi256(255)` draw as written, and `sidebar`, `black`, and `white` draw `composerSidebarBackground`, `rgb(0,0,0)`, and `rgb(255,255,255)` | `panel.background colors the panel, and auto or no value leaves the color to the theme` in `hooks/panel.test.tsx` |
 | `rgb(256,0,0)`, `rgb(1,2)`, `ansi256(256)`, `#12345`, `#abcd`, `inverseText`, `composerSidebarBackground`, `text`, `subtle`, `sidebr`, `gray`, an empty string, and a number each draw the theme's color, with one toast per value naming what the panel takes | `a panel.background the panel does not take leaves the color to the theme, and the panel says so once` |
+
+## 24. Dismiss an item at once
+
+§ 18 made an item's **dismiss** ask to be sure, so a stray `8` only asked.
+Issue #354 found the step guards against a mistake that is already easy to
+undo: a dismissed item stays in the list, struck through, and its drawer
+offers **restore** on the same digit. The step slowed down clearing a busy
+inbox, most of all when several sessions post at once.
+
+### 24.1 What changes
+
+- **An item's dismiss acts at once.** `8` on an open question or notice
+  runs `project inbox dismiss` and closes the drawer, as `yes, dismiss` did.
+  This supersedes § 18's confirmation for items.
+- **A pull request's dismiss still asks.** A dismissed pull request leaves
+  the panel at once and comes back only through `project loop restore`, so
+  its `8: yes, dismiss PR` and `9: no, keep it` stay.
+
+### 24.2 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| An item's `8` dismisses at once and closes the drawer, a notice's too; restore and unsnooze act at once; a pull request's dismiss shows its confirmation, `9` keeps it, and the ring moves onto the confirmation and back | `an item’s dismiss, restore, and unsnooze act at once, and a pull request’s dismiss asks to be sure` in `hooks/panel.test.tsx` |

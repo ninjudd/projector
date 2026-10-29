@@ -293,11 +293,13 @@ describes, and then the links:
 - **discuss PR** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
   one repository.
-- **dismiss PR** asks to be sure first, as
-  [dismissing an item](#read-your-inbox-in-projectors-panel) does, then
-  keeps the pull request out of every loop of this session that tracks
-  it, and the panel drops its line and says which loops stopped, such as
-  `stopped watching and reviewing acme/app#258`.
+- **dismiss PR** asks to be sure first, because a dismissed pull request
+  leaves the panel at once. It replaces the action lines with
+  `8: yes, dismiss PR` and `9: no, keep it`, so a stray `8` only asks.
+  Press `8` again to keep the pull request out of every loop of this
+  session that tracks it, and the panel drops its line and says which
+  loops stopped, such as `stopped watching and reviewing acme/app#258`.
+  `9`, closing the drawer, or opening another keeps it.
 - **open in github** opens the pull request on GitHub.
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
@@ -506,9 +508,8 @@ question's drawer has three actions:
   stay in view while you type. Type your reply under the quote, or on the
   quote's own line, and send the prompt. The reply reaches the agent and
   answers nothing.
-- **dismiss question** asks to be sure, as the paragraph after the next
-  describes, then sets the question aside without an answer and closes the
-  drawer.
+- **dismiss question** sets the question aside without an answer and
+  closes the drawer.
 - **snooze question** asks how long to put the question off, as the next
   paragraph but one describes.
 
@@ -520,20 +521,12 @@ stays in the panel until you dismiss it. **dismiss notice** clears the
 notice once you have read it and closes its drawer, and nothing goes back
 to the agent.
 
-**dismiss** dismisses nothing at once. It replaces the action lines with
-a confirmation, so a stray `8` only asks:
+**dismiss**, **restore**, and **unsnooze** act at once. A dismissed item
+stays in the list a while, struck through, as the paragraph on resolved
+items below describes, so you undo a dismissal you did not mean by opening
+its line again and choosing **restore**.
 
-```text
-   8: yes, dismiss question
-   9: no, keep it
-```
-
-Press `8` again, or click the first line, to dismiss; a notice's reads
-`yes, dismiss notice`. `9`, closing the drawer, or opening another keeps
-the item and puts the actions back. **restore** and **unsnooze** act at
-once.
-
-**snooze** snoozes nothing at once either. A question's options give way
+**snooze** snoozes nothing at once. A question's options give way
 to the lengths it offers, and the action lines to a way back:
 
 ```text
@@ -620,8 +613,8 @@ the options and the actions. Enter on the open line closes the drawer and
 leaves the ring on the line. A click opens and closes a drawer without
 moving the ring. In the same way, Enter on the **snooze** line moves the
 ring onto the first length, and Enter on **cancel** moves it back onto the
-**snooze** line. Enter on **dismiss** moves it onto the confirmation, and
-Enter on `no, keep it` back onto **dismiss**.
+**snooze** line. Enter on a pull request's **dismiss** moves it onto the
+confirmation, and Enter on `no, keep it` back onto **dismiss**.
 
 An open question's options read `1:` to `6:`, the digit in the accent
 color. Press a digit while the panel has the keyboard, or type it first into
