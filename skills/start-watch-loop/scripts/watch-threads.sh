@@ -21,6 +21,9 @@
 #             owner/repo#number, or a number that names no pull request.
 #             Announced once each, so a mistake in the file is heard rather
 #             than mistaken for a quiet repository
+#   MERGED    a tracked pull request merged, with its base, when, and its
+#             merge commit. Announced once, while its line stays in the file
+#   CLOSED    a tracked pull request closed without merging. Announced once
 #   DONE      with --exit-when-closed, every tracked pull request has merged
 #             or closed, and the watch exits
 #
@@ -157,13 +160,13 @@ EOF
 # the one reading that must never be wrong.
 PR_QUERY='query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
   pullRequest(number:$n){
-    state isDraft reviewDecision headRefOid mergeable baseRefName
+    state isDraft reviewDecision headRefOid mergeable baseRefName mergedAt mergeCommit{oid}
     reviews(states:[CHANGES_REQUESTED], last:1){ nodes{ author{login} body commit{oid} } }
     reviewThreads(first:100){ nodes{
       id isResolved path line
       comments(last:1){nodes{author{login} body}} } } } } }'
 PR_JQ='.data.repository.pullRequest as $pr
-  | "P\t\($pr.state)\t\($pr.isDraft)\t\($pr.reviewDecision // "NONE")\t\($pr.headRefOid)\t\($pr.mergeable // "UNKNOWN")\t\($pr.baseRefName // "?")",
+  | "P\t\($pr.state)\t\($pr.isDraft)\t\($pr.reviewDecision // "NONE")\t\($pr.headRefOid)\t\($pr.mergeable // "UNKNOWN")\t\($pr.baseRefName // "?")\t\($pr.mergedAt // "?")\t\($pr.mergeCommit.oid // "?")",
     (if $pr.reviewDecision == "CHANGES_REQUESTED"
      then $pr.reviews.nodes[]
           | "V\t\(.commit.oid // "?")\t\(.author.login // "?")\t\(.body // "" | gsub("[\r\n\t]+"; " ") | .[0:130])"
@@ -302,11 +305,32 @@ EOF
       continue
     fi
 
-    IFS=$'\t' read -r kind pstate pdraft pdecision psha pmergeable pbase <<EOF
+    IFS=$'\t' read -r kind pstate pdraft pdecision psha pmergeable pbase pmergedat pcommit <<EOF
 $(printf '%s\n' "$pr" | head -n 1)
 EOF
-    # Merged or closed: nothing here is outstanding, and its rows fall out.
-    [ "$pstate" = "OPEN" ] || continue
+    # MERGED or CLOSED — a pull request that left OPEN. Nothing on it is
+    # outstanding, so its other rows fall out, but the loop has to hear of it
+    # once: it removes the line, tells its subagent to finish, and stops
+    # reporting the pull request as open. The row stays while the line does,
+    # so the announcement is never repeated, a restart on the same --state
+    # included.
+    if [ "$pstate" != "OPEN" ]; then
+      cid="closed:$slug#$n"
+      last=$(awk -v t="$cid" '$1==t {print $4}' "$STATE" 2>/dev/null)
+      if [ -z "$last" ]; then
+        if [ "$pstate" = "MERGED" ]; then
+          when=""; [ "$pmergedat" != "?" ] && when=" at $pmergedat"
+          commit=""; [ "$pcommit" != "?" ] && commit=" (merge commit ${pcommit:0:8})"
+          echo "MERGED $slug#$n into $pbase$when$commit"
+        else
+          echo "CLOSED $slug#$n without merging"
+        fi
+        last=$now
+      fi
+      new_state="$new_state$cid $slug $n $last
+"
+      continue
+    fi
     open=1
 
     # DRAFT — a pull request the review loop has not signed off. On a
@@ -423,9 +447,11 @@ EOF
 
   # Rows are `<id> <owner/repo> <pr> <lastAnnouncedEpoch>`. Rebuilt each cycle
   # from what is currently outstanding on the tracked set, so a thread that
-  # got resolved, a pull request that merged, or a line deleted from the
-  # tracked file simply falls out. Rows are only ever carried forward for a
-  # pull request whose query failed — never for one that answered.
+  # got resolved, a merged pull request's threads, or a line deleted from the
+  # tracked file simply falls out. A merged or closed pull request keeps only
+  # its `closed:` row, which says its MERGED or CLOSED line went out. Rows are
+  # only ever carried forward for a pull request whose query failed — never
+  # for one that answered.
   printf '%s' "$new_state" | grep -v '^[[:space:]]*$' > "$STATE.tmp" 2>/dev/null
   mv "$STATE.tmp" "$STATE" 2>/dev/null
 
