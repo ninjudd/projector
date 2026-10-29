@@ -13,7 +13,7 @@ from unittest import mock
 
 from projector import config as config_module
 from projector.cli import main
-from projector.config import SETTINGS, ConfigError, config_paths, load, merge, user_config_path
+from projector.config import SETTINGS, TABLES, ConfigError, config_paths, load, merge, user_config_path
 from projector.core import json_scalar
 
 
@@ -535,24 +535,57 @@ class ConfigSetTests(unittest.TestCase):
             self.assertIn("the file is unchanged", stderr)
             self.assertEqual(text, self.repo_file.read_text())
 
-    def test_the_panel_background_is_set_and_unset_as_the_panel_reads_it(self) -> None:
-        def background() -> dict[str, object]:
-            code, stdout, stderr = self.invoke("config", "get", "panel.background", "--default", "auto", "--json")
-            self.assertEqual(0, code, stderr)
-            return json.loads(stdout)
+    def panel(self) -> tuple[int, object]:
+        """The `panel` table as the panel reads it, with the exit status: 1 when no file sets any of it."""
 
+        code, stdout, stderr = self.invoke("config", "get", "panel", "--json")
+        self.assertIn(code, (0, 1), stderr)
+        return code, json.loads(stdout)["value"]
+
+    def test_the_panel_theme_and_background_are_set_and_unset_as_the_panel_reads_them(self) -> None:
+        self.assertEqual((1, None), self.panel())
+
+        self.assert_set("panel.theme", "umber", "--user")
         self.assert_set("panel.background", "rgb(20,20,20)", "--user")
 
-        self.assertEqual('[panel]\nbackground = "rgb(20,20,20)"\n', self.user_file.read_text())
-        self.assertEqual("rgb(20,20,20)", background()["value"])
-        self.assertEqual(str(self.user_file), background()["source"])
+        self.assertEqual('[panel]\ntheme = "umber"\nbackground = "rgb(20,20,20)"\n', self.user_file.read_text())
+        self.assertEqual((0, {"theme": "umber", "background": "rgb(20,20,20)"}), self.panel())
 
-        code, _, stderr = self.invoke("config", "unset", "panel.background", "--user")
+        for key in ("panel.theme", "panel.background"):
+            code, _, stderr = self.invoke("config", "unset", key, "--user")
+            self.assertEqual(0, code, stderr)
 
-        self.assertEqual(0, code, stderr)
         self.assertEqual("[panel]\n", self.user_file.read_text())
-        self.assertEqual("auto", background()["value"])
-        self.assertIsNone(background()["source"])
+        self.assertEqual((0, {}), self.panel())
+
+    def test_panel_colors_are_set_and_unset_under_any_role_name(self) -> None:
+        self.assert_set("panel.background", "stone", "--user")
+        self.assert_set("panel.colors.muted", "rgb(170,170,170)", "--user")
+        # The panel owns the role names, so the CLI takes any lowercase name.
+        self.assert_set("panel.colors.new_role", "suggestion", "--user")
+
+        self.assertEqual(
+            '[panel]\nbackground = "stone"\n\n[panel.colors]\nmuted = "rgb(170,170,170)"\nnew_role = "suggestion"\n',
+            self.user_file.read_text(),
+        )
+        self.assertEqual(
+            (0, {"background": "stone", "colors": {"muted": "rgb(170,170,170)", "new_role": "suggestion"}}),
+            self.panel(),
+        )
+
+        for key in ("panel.colors.muted", "panel.colors.new_role"):
+            code, _, stderr = self.invoke("config", "unset", key, "--user")
+            self.assertEqual(0, code, stderr)
+
+        self.assertEqual('[panel]\nbackground = "stone"\n\n[panel.colors]\n', self.user_file.read_text())
+
+        for key in ("panel.colors.Muted", "panel.colors", "panel.colors.muted.dark", "panel.colors.1st", "panel.shades.muted"):
+            code, _, stderr = self.invoke("config", "set", key, "rgb(1,2,3)", "--user")
+
+            self.assertEqual(2, code, key)
+            self.assertIn(f"unknown key {key!r}", stderr)
+            self.assertIn("panel.colors.<role>", stderr)
+        self.assertEqual('[panel]\nbackground = "stone"\n\n[panel.colors]\n', self.user_file.read_text())
 
     def test_user_and_file_scopes_write_their_own_files(self) -> None:
         parent = self.home / "work" / ".projector.toml"
@@ -649,7 +682,7 @@ class ConfigSetTests(unittest.TestCase):
 
     def test_the_documented_keys_are_the_known_keys(self) -> None:
         documentation = (Path(__file__).resolve().parents[1] / "docs" / "cli.md").read_text()
-        rows = re.findall(r"^\| `([a-z_.]+)` \| (boolean|string) \|", documentation, re.MULTILINE)
+        rows = re.findall(r"^\| `([a-z_.]+(?:<[a-z]+>)?)` \| (boolean|string) \|", documentation, re.MULTILINE)
         names = {bool: "boolean", str: "string"}
 
-        self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))
+        self.assertEqual({key: names[kind] for key, kind in {**SETTINGS, **TABLES}.items()}, dict(rows))

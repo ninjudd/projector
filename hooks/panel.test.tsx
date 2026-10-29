@@ -166,12 +166,24 @@ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
  */
 type Beneath = { github?: (query: string) => Ran | Promise<Ran>; settings?: Record<string, unknown> }
 
-/** `project config get <key> [--default <value>] --json`, answered from `settings` as the CLI answers it. */
+/**
+ * `project config get <key> [--default <value>] --json`, answered from
+ * `settings` as the CLI answers it: a table for a key that only prefixes
+ * others, as `panel` prefixes `panel.colors.muted`.
+ */
 function configGet(argv: readonly string[], settings: Record<string, unknown>): Ran {
   const key = argv[3] ?? ''
   const at = argv.indexOf('--default')
-  const value = settings[key] ?? (at === -1 ? null : argv[at + 1])
-  const source = key in settings ? `${HOME}/.projector.toml` : null
+  const table: Record<string, unknown> = {}
+  for (const [dotted, setting] of Object.entries(settings)) {
+    if (!dotted.startsWith(`${key}.`)) continue
+    const path = dotted.slice(key.length + 1).split('.')
+    let node = table
+    for (const part of path.slice(0, -1)) node = (node[part] ??= {}) as Record<string, unknown>
+    node[path.at(-1) ?? ''] = setting
+  }
+  const value = settings[key] ?? (Object.keys(table).length > 0 ? table : at === -1 ? null : argv[at + 1])
+  const source = value === null ? null : `${HOME}/.projector.toml`
   return { ...ran(JSON.stringify({ key, schema_version: 2, source, value })), exitCode: value === null ? 1 : 0 }
 }
 
@@ -462,33 +474,99 @@ function panelWorld(on: On, { theme = 'dark', env = {}, files = {}, settings = {
   return { clock, commands, toasts }
 }
 
-const DARK = 'rgb(20,20,20)'
-const LIGHT = 'rgb(240,240,240)'
+/** The default theme's background, ink, on a dark and on a light Claude Code theme. */
+const INK_DARK = '#100f0c'
+const INK_LIGHT = '#f6f4ee'
 const THEMES = `${HOME}/.claude/themes`
 
+/** Hides and shows the panel, which reloads it and reads its settings again. */
+async function reload($: Engine, clock: Clock) {
+  await $.command.run(COMMAND)
+  await $.command.run(COMMAND)
+  await clock.advance(1)
+  await clock.settle()
+}
+
+/** Picks a Claude Code theme, as the person does in `/theme`. */
+const pickTheme = ($: Engine, value: string, previous: string) =>
+  $.config.set({ key: 'theme', value, previous, provider: ENGINE, origin: { kind: 'composer' } })
+
+/** The header's color, which the `muted` role draws. */
+const headerColorOf = async (ui: Pick<Mounted, 'find'>) =>
+  (await ui.find({ type: 'Text', text: /^\/projector / }))?.props.color
+
+/** The facts line of x/y#7's drawer as each role draws it with no settings. */
+const DEFAULT_FACTS = [
+  ['watching', 'remember'],
+  ' · ',
+  ['fix-branch', 'planMode'],
+  ' · ',
+  ['+12', 'success'],
+  ' ',
+  ['−3', 'error'],
+  ' in 2 files',
+  ' · ',
+  ['checks passing', 'success'],
+]
+
+/** A session on `theme` whose watch loop tracks x/y#7, besides the review loop on o/r#1, with x/y#7's drawer open. */
+async function drawerWorld($: Engine, on: On, options: PanelOptions = {}) {
+  const session = panelWorld(on, { ...options, files: { [WATCH]: 'x/y#7\n', ...options.files } })
+  await startSession($, session.clock)
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await session.clock.advance(1)
+  await session.clock.settle()
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'pr:x/y#7' })
+  const facts = async () => partsOf(await ui.find({ type: 'Text', text: /^watching · / }))
+  return { ...session, ui, facts }
+}
+
 for (const [theme, color, files] of [
-  ['dark', DARK, {}],
-  ['dark-daltonized', DARK, {}],
-  ['light', LIGHT, {}],
-  ['light-daltonized', LIGHT, {}],
+  ['dark', INK_DARK, {}],
+  ['dark-daltonized', INK_DARK, {}],
+  ['light', INK_LIGHT, {}],
+  ['light-daltonized', INK_LIGHT, {}],
   ['dark-ansi', 'inverseText', {}],
   ['light-ansi', 'inverseText', {}],
-  ['custom:dusk', DARK, { [`${THEMES}/dusk.json`]: '{"name": "Dusk", "base": "dark", "overrides": {}}' }],
-  ['custom:dawn', LIGHT, { [`${THEMES}/dawn.json`]: '{"name": "Dawn", "base": "light-daltonized"}' }],
-  ['custom:plain', DARK, { [`${THEMES}/plain.json`]: '{"name": "Plain"}' }],
+  ['custom:dusk', INK_DARK, { [`${THEMES}/dusk.json`]: '{"name": "Dusk", "base": "dark", "overrides": {}}' }],
+  ['custom:dawn', INK_LIGHT, { [`${THEMES}/dawn.json`]: '{"name": "Dawn", "base": "light-daltonized"}' }],
+  ['custom:plain', INK_DARK, { [`${THEMES}/plain.json`]: '{"name": "Plain"}' }],
+  ['custom:typo', INK_DARK, { [`${THEMES}/typo.json`]: '{"base": "lihgt"}' }],
   ['custom:retro', 'inverseText', { [`${THEMES}/retro.json`]: '{"base": "dark-ansi"}' }],
   ['custom:gone', 'inverseText', {}],
   ['auto', 'inverseText', {}],
 ] as const) {
-  test(`the panel is ${color} on the ${theme} theme`, async ($, on) => {
-    const { clock } = panelWorld(on, { theme, files })
-    await startSession($, clock)
+  test(`with no settings the panel draws ${color}, and each role its default, on the ${theme} theme`, async ($, on) => {
+    const { ui, facts, toasts } = await drawerWorld($, on, { theme, files })
 
-    const ui = await $.ui.mount(PANEL)
     expect(await ui.drawn()).toMatchObject(inPanel(color))
+    expect(await headerColorOf(ui)).toBe('subtle')
+    expect((await ui.find({ type: 'Text', text: 'draft' }))?.props.color).toBe('warning')
+    expect((await ui.find({ type: 'Text', text: 'ready' }))?.props.color).toBe('success')
+    expect((await ui.find({ type: 'Text', text: 'Signed-off change' }))?.props.color).toBeUndefined()
+    expect(partsOf(await ui.find({ type: 'Text', text: 'conflict · 2*' }))).toEqual([
+      ['conflict', 'error'],
+      ' · ',
+      ['2*', 'warning'],
+    ])
+    expect(await facts()).toEqual(DEFAULT_FACTS)
+    expect(toasts).toEqual([])
     await ui.unmount()
   })
 }
+
+test('watching and the branch draw theme keys, so they follow the theme', async ($, on) => {
+  const { ui, facts } = await drawerWorld($, on, { theme: 'dark' })
+
+  // `remember` and `planMode` are the theme's blue and teal, nearest in hue to the terminal palette's blue and cyan.
+  expect(await facts()).toEqual(DEFAULT_FACTS)
+  expect(await pickTheme($, 'light', 'dark')).toEqual({ value: 'light' })
+  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
+  expect(await facts()).toEqual(DEFAULT_FACTS)
+  expect(JSON.stringify(await facts())).not.toMatch(/ansi256/)
+  await ui.unmount()
+})
 
 test('a custom theme’s file is read from the Claude config directory CLAUDE_CONFIG_DIR names', async ($, on) => {
   const { clock } = panelWorld(on, {
@@ -502,7 +580,7 @@ test('a custom theme’s file is read from the Claude config directory CLAUDE_CO
   await startSession($, clock)
 
   const ui = await $.ui.mount(PANEL)
-  expect(await backgroundOf(ui)).toBe(LIGHT)
+  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
   await ui.unmount()
 })
 
@@ -510,32 +588,24 @@ test('a theme picked in /theme recolors the panel at once, and one the change re
   const { clock } = panelWorld(on, { theme: 'dark' })
   await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
-  expect(await backgroundOf(ui)).toBe(DARK)
+  expect(await backgroundOf(ui)).toBe(INK_DARK)
 
-  // As the person picks a theme in `/theme`.
-  const pick = (value: string, previous: string) =>
-    $.config.set({ key: 'theme', value, previous, provider: ENGINE, origin: { kind: 'composer' } })
-  expect(await pick('light', 'dark')).toEqual({ value: 'light' })
-  expect(await backgroundOf(ui)).toBe(LIGHT)
+  expect(await pickTheme($, 'light', 'dark')).toEqual({ value: 'light' })
+  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
 
-  expect(await pick('dark-ansi', 'light')).toEqual({ deny: 'the theme stays' })
-  expect(await backgroundOf(ui)).toBe(LIGHT)
+  expect(await pickTheme($, 'dark-ansi', 'light')).toEqual({ deny: 'the theme stays' })
+  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
   await ui.unmount()
 })
 
-test('panel.background colors the panel, and auto or no value leaves the color to the theme', async ($, on) => {
+test('panel.background colors the panel, and a theme’s name draws that theme’s background', async ($, on) => {
   const settings: Record<string, unknown> = { 'panel.background': '#202830' }
-  const { clock, commands, toasts } = panelWorld(on, { theme: 'light', settings })
+  // On a theme the panel knows nothing of, it measures no color, so every value it takes draws.
+  const { clock, commands, toasts } = panelWorld(on, { theme: 'auto', settings })
   await startSession($, clock)
-  const reload = async () => {
-    await $.command.run(COMMAND)
-    await $.command.run(COMMAND)
-    await clock.advance(1)
-    await clock.settle()
-  }
 
-  // The panel reads the setting through the CLI, which merges the `.projector.toml` files.
-  expect(commands).toContainEqual(['project', 'config', 'get', 'panel.background', '--default', 'auto', '--json'])
+  // The panel reads its settings through the CLI, which merges the `.projector.toml` files, as one table.
+  expect(commands).toContainEqual(['project', 'config', 'get', 'panel', '--json'])
   const ui = await $.ui.mount(PANEL)
   expect(await backgroundOf(ui)).toBe('#202830')
 
@@ -544,47 +614,88 @@ test('panel.background colors the panel, and auto or no value leaves the color t
   const literals = ['#abc', '#FFFFFF', 'rgb(0,0,0)', 'rgb(255, 255, 255)', 'rgb( 30,30,40 )', 'ansi256(0)', 'ansi256(255)']
   for (const value of literals) {
     settings['panel.background'] = value
-    await reload()
+    await reload($, clock)
     expect(await backgroundOf(ui)).toBe(value)
   }
-  // Each alias draws its color: `black` and `white` as literal colors, so they stay put whatever the theme.
-  for (const [alias, color] of [
-    ['sidebar', 'composerSidebarBackground'],
+  // Each other name draws its color: `black` and `white` as literal colors, so they stay put whatever the theme.
+  for (const [name, color] of [
+    ['smoke', 'composerSidebarBackground'],
     ['black', 'rgb(0,0,0)'],
     ['white', 'rgb(255,255,255)'],
+    ['ink', 'inverseText'],
+    ['graphite', 'inverseText'],
   ]) {
-    settings['panel.background'] = alias
-    await reload()
+    settings['panel.background'] = name
+    await reload($, clock)
     expect(await backgroundOf(ui)).toBe(color)
   }
-  settings['panel.background'] = 'auto'
-  await reload()
-  expect(await backgroundOf(ui)).toBe(LIGHT)
+
+  // A theme's name draws its background for the side of light the Claude Code theme sits on.
+  for (const [theme, previous, names] of [
+    ['dark', 'auto', { ink: INK_DARK, umber: '#171510', stone: '#1e1c16', graphite: 'rgb(20,20,20)' }],
+    ['light', 'dark', { ink: INK_LIGHT, umber: '#fdfcf8', stone: '#eeebe2', graphite: 'rgb(240,240,240)' }],
+  ] as const) {
+    await pickTheme($, theme, previous)
+    for (const [name, color] of Object.entries(names)) {
+      settings['panel.background'] = name
+      await reload($, clock)
+      expect(await backgroundOf(ui)).toBe(color)
+    }
+  }
   delete settings['panel.background']
-  await reload()
-  expect(await backgroundOf(ui)).toBe(LIGHT)
+  await reload($, clock)
+  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
   expect(toasts).toEqual([])
   await ui.unmount()
 })
 
-test('a panel.background the panel does not take leaves the color to the theme, and the panel says so once', async ($, on) => {
+test('panel.theme picks a built-in theme, and panel.background overrides its background', async ($, on) => {
+  const settings: Record<string, unknown> = { 'panel.theme': 'umber' }
+  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+
+  expect(await backgroundOf(ui)).toBe('#171510')
+  for (const [name, color] of [
+    ['stone', '#1e1c16'],
+    ['graphite', 'rgb(20,20,20)'],
+    ['ink', INK_DARK],
+  ]) {
+    settings['panel.theme'] = name
+    await reload($, clock)
+    expect(await backgroundOf(ui)).toBe(color)
+  }
+  // The theme leaves every other role its default.
+  expect(await headerColorOf(ui)).toBe('subtle')
+
+  settings['panel.theme'] = 'stone'
+  settings['panel.background'] = 'ink'
+  await reload($, clock)
+  expect(await backgroundOf(ui)).toBe(INK_DARK)
+  expect(toasts).toEqual([])
+
+  // A background the panel does not take gives way to the theme's.
+  settings['panel.background'] = 'auto'
+  await reload($, clock)
+  expect(await backgroundOf(ui)).toBe('#1e1c16')
+  expect(toasts).toEqual([
+    'projector: panel.background is "auto", which is not ink, umber, stone, graphite, smoke, black, white, rgb(r,g,b), #rrggbb, or ansi256(n), so the panel draws stone',
+  ])
+  await ui.unmount()
+})
+
+test('a panel.background the panel does not take leaves the theme’s background, and the panel says so once', async ($, on) => {
   const settings: Record<string, unknown> = { 'panel.background': 'ansi:black' }
   const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
   await startSession($, clock)
-  const reload = async () => {
-    await $.command.run(COMMAND)
-    await $.command.run(COMMAND)
-    await clock.advance(1)
-    await clock.settle()
-  }
 
-  // The panel draws on the theme's color rather than not at all.
+  // The panel draws on the default theme's background rather than not at all.
   const ui = await $.ui.mount(PANEL)
-  expect(await ui.drawn()).toMatchObject(inPanel(DARK))
-  await reload()
-  expect(await backgroundOf(ui)).toBe(DARK)
-  // Past the ends of a literal color's range, a theme key's name, which the panel no longer takes, `subtle`, the
-  // color of the panel's own muted text, a misspelled alias, a color's plain name, and a value that is no string.
+  expect(await ui.drawn()).toMatchObject(inPanel(INK_DARK))
+  await reload($, clock)
+  expect(await backgroundOf(ui)).toBe(INK_DARK)
+  // Past the ends of a literal color's range, a theme key's name, `subtle`, the color of the panel's own muted text, a
+  // misspelled name, a color's plain name, a value that is no string, and the names that say nothing of the color.
   const refused = [
     'rgb(256,0,0)',
     'rgb(1,2)',
@@ -595,25 +706,236 @@ test('a panel.background the panel does not take leaves the color to the theme, 
     'composerSidebarBackground',
     'text',
     'subtle',
-    'sidebr',
+    'smok',
     'gray',
     '',
     3,
+    'auto',
+    'sidebar',
   ]
   for (const value of refused) {
     settings['panel.background'] = value
-    await reload()
-    expect(await backgroundOf(ui)).toBe(DARK)
+    await reload($, clock)
+    expect(await backgroundOf(ui)).toBe(INK_DARK)
   }
   // Each refused value is said once, however many reloads read it.
-  settings['panel.background'] = 'sidebr'
-  await reload()
+  settings['panel.background'] = 'smok'
+  await reload($, clock)
   expect(toasts).toEqual(
     ['ansi:black', ...refused].map(
       value =>
-        `projector: panel.background is ${JSON.stringify(value)}, which is not rgb(r,g,b), #rrggbb, ansi256(n), sidebar, black or white, so the panel takes its color from the theme`,
+        `projector: panel.background is ${JSON.stringify(value)}, which is not ink, umber, stone, graphite, smoke, black, white, rgb(r,g,b), #rrggbb, or ansi256(n), so the panel draws ink`,
     ),
   )
+  await ui.unmount()
+})
+
+test('panel.colors overrides the elements of its role', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+  const settings = { 'panel.colors.muted': 'ansi256(244)', 'panel.colors.question': 'suggestion' }
+  const { toasts } = questionWorld(
+    on,
+    clock,
+    [held(), notice(), held({ ref: '3', number: 3, subject: 'Rebase first?', answer, deliveredAt: NOW - 1_000 })],
+    { settings, files: { [WATCH]: 'o/r#4\n' } },
+  )
+  await startSession($, clock)
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+  const ui = await $.ui.mount(PANEL)
+  const colorOf = async (text: string | RegExp) => (await ui.find({ type: 'Text', text }))?.props.color
+
+  // `muted` draws the header, the key hint, the ages, another person's login, an item's pull request, and a resolved item.
+  expect(await headerColorOf(ui)).toBe('ansi256(244)')
+  expect(await colorOf(/ctrl\+x tab to focus$/)).toBe('ansi256(244)')
+  expect(await colorOf('5m')).toBe('ansi256(244)')
+  expect(await colorOf('grace')).toBe('ansi256(244)')
+  expect(await colorOf('y#7')).toBe('ansi256(244)')
+  expect(await colorOf('Rebase first?')).toBe('ansi256(244)')
+  // `question` draws an open question's line, and a notice keeps its own role's default.
+  expect(await colorOf('Decline the finding?')).toBe('suggestion')
+  expect(await colorOf(FORCE_PUSHED)).toBe('inactive')
+  expect(toasts).toEqual([])
+  await ui.unmount()
+})
+
+test('an unknown role or theme leaves the defaults and says so once', async ($, on) => {
+  const settings: Record<string, unknown> = {
+    'panel.colors.mutd': 'rgb(170,170,170)',
+    'panel.theme': 'nope',
+    'panel.colors.background': 'rgb(30,30,40)',
+  }
+  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+
+  expect(await backgroundOf(ui)).toBe(INK_DARK)
+  expect(await headerColorOf(ui)).toBe('subtle')
+  // Every problem one read finds goes in one toast, and a reload that finds the same problems says nothing more.
+  await reload($, clock)
+  expect(toasts).toEqual([
+    'projector: panel.theme is "nope", which is not ink, umber, stone, or graphite, so the panel draws ink; panel.colors.mutd is not a role (the roles are text, muted, question, notice, success, warning, error, added, removed, watching, reviewing, and branch); panel.colors.background is not a role (panel.background sets the background)',
+  ])
+  await ui.unmount()
+})
+
+test('a role value the panel does not take leaves its default and says so once', async ($, on) => {
+  const settings: Record<string, unknown> = {}
+  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+
+  // A color's plain name draws in the default color, an `ansi:` name makes Claude Code refuse the whole tree, and a
+  // theme key outside the public ones cannot be checked, so each leaves the role its default and the tree drawn.
+  const refused = ['gray', 'ansi:black', 'composerSidebarBackground', 'rgb(256,0,0)', '', 3]
+  for (const value of [...refused, 'gray']) {
+    settings['panel.colors.muted'] = value
+    await reload($, clock)
+    expect(await ui.drawn()).toMatchObject(inPanel(INK_DARK))
+    expect(await headerColorOf(ui)).toBe('subtle')
+  }
+  expect(toasts).toEqual(
+    refused.map(
+      value =>
+        `projector: panel.colors.muted is ${JSON.stringify(value)}, which is not rgb(r,g,b), #rrggbb, ansi256(n), a Claude Code theme color such as subtle, or default, so muted draws subtle`,
+    ),
+  )
+  await ui.unmount()
+})
+
+test('a role that would vanish on the background takes its default', async ($, on) => {
+  const settings: Record<string, unknown> = { 'panel.colors.muted': 'rgb(40,40,40)' }
+  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+
+  // rgb(40,40,40) on ink's #100f0c is 1.30:1, under the 1.5:1 the panel requires.
+  expect(await headerColorOf(ui)).toBe('subtle')
+  expect(toasts).toEqual([
+    'projector: panel.colors.muted rgb(40,40,40) would vanish on the panel’s #100f0c, so muted draws subtle',
+  ])
+
+  // rgb(70,70,70) is 2.03:1, low but readable, so it draws with no word.
+  settings['panel.colors.muted'] = 'rgb(70,70,70)'
+  await reload($, clock)
+  expect(await headerColorOf(ui)).toBe('rgb(70,70,70)')
+  expect(toasts).toHaveLength(1)
+
+  // When both are overridden, the role gives way and the background stays.
+  settings['panel.background'] = 'rgb(20,20,20)'
+  settings['panel.colors.muted'] = 'rgb(20,20,20)'
+  await reload($, clock)
+  expect(await backgroundOf(ui)).toBe('rgb(20,20,20)')
+  expect(await headerColorOf(ui)).toBe('subtle')
+  expect(toasts.at(-1)).toBe(
+    'projector: panel.colors.muted rgb(20,20,20) would vanish on the panel’s rgb(20,20,20), so muted draws subtle',
+  )
+  await ui.unmount()
+})
+
+test('a background that would hide a role’s default falls back to ink and says so once', async ($, on) => {
+  const settings: Record<string, unknown> = { 'panel.background': 'rgb(80,80,80)' }
+  const mist = `${THEMES}/mist.json`
+  const files = { [mist]: '{"base": "light", "overrides": {"subtle": "rgb(225,225,225)"}}' }
+  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings, files })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+
+  // On `dark`, `subtle` is rgb(80,80,80), so the header, the hint, and the ages would vanish.
+  expect(await backgroundOf(ui)).toBe(INK_DARK)
+  await reload($, clock)
+  expect(toasts).toEqual(['projector: panel.background rgb(80,80,80) would hide muted, so the panel draws ink'])
+
+  // An override of `muted` that shows on the background lets both draw as set.
+  settings['panel.colors.muted'] = 'rgb(200,200,200)'
+  await reload($, clock)
+  expect(await backgroundOf(ui)).toBe('rgb(80,80,80)')
+  expect(await headerColorOf(ui)).toBe('rgb(200,200,200)')
+  expect(toasts).toHaveLength(1)
+
+  // A custom theme's own colors count: on one built on `light` whose `subtle` is rgb(225,225,225), rgb(230,230,230)
+  // would hide `muted`, though it draws on `light` itself.
+  delete settings['panel.colors.muted']
+  delete settings['panel.background']
+  await reload($, clock)
+  await pickTheme($, 'custom:mist', 'dark')
+  settings['panel.background'] = 'rgb(230,230,230)'
+  await reload($, clock)
+  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
+  expect(toasts.at(-1)).toBe('projector: panel.background rgb(230,230,230) would hide muted, so the panel draws ink')
+  await pickTheme($, 'light', 'custom:mist')
+  expect(await backgroundOf(ui)).toBe('rgb(230,230,230)')
+  expect(toasts).toHaveLength(2)
+  await ui.unmount()
+})
+
+test('a background that would hide Claude Code’s own text falls back to ink and says so once', async ($, on) => {
+  const settings: Record<string, unknown> = { 'panel.background': 'white' }
+  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+
+  // A Button's label and a link draw in the theme's text color, near white on `dark` and near black on `light`.
+  expect(await backgroundOf(ui)).toBe(INK_DARK)
+  settings['panel.background'] = 'black'
+  await reload($, clock)
+  expect(await backgroundOf(ui)).toBe('rgb(0,0,0)')
+
+  await pickTheme($, 'light', 'dark')
+  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
+  settings['panel.background'] = 'white'
+  await reload($, clock)
+  expect(await backgroundOf(ui)).toBe('rgb(255,255,255)')
+  expect(toasts).toEqual([
+    'projector: panel.background white would hide Claude Code’s own text, so the panel draws ink',
+    'projector: panel.background black would hide Claude Code’s own text, so the panel draws ink',
+  ])
+  await ui.unmount()
+})
+
+test('a set of a panel key through Bash re-reads the settings at once', async ($, on) => {
+  const settings: Record<string, unknown> = {}
+  const { clock, commands } = panelWorld(on, { theme: 'dark', settings })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  const reads = () => commands.filter(argv => argv.join(' ') === 'project config get panel --json').length
+  const run = async (command: string) => {
+    await $.tool.call({ tool: 'Bash', command })
+    await clock.advance(1)
+    await clock.settle()
+  }
+
+  // A file edited by hand shows on the next reload, so until then the panel keeps what it read.
+  settings['panel.colors.muted'] = 'rgb(170,170,170)'
+  await clock.settle()
+  expect(await headerColorOf(ui)).toBe('subtle')
+
+  // The session's own `project config set` shows at once, long before the next reload.
+  const before = reads()
+  await run("project config set panel.colors.muted 'rgb(170,170,170)' --user")
+  expect(reads()).toBe(before + 1)
+  expect(await headerColorOf(ui)).toBe('rgb(170,170,170)')
+
+  delete settings['panel.colors.muted']
+  await run('project config unset panel.colors.muted --user')
+  expect(await headerColorOf(ui)).toBe('subtle')
+
+  // The CLI takes its options before the key too, a value-taking one included.
+  settings['panel.theme'] = 'umber'
+  await run('project config set --user panel.theme umber')
+  expect(await backgroundOf(ui)).toBe('#171510')
+  delete settings['panel.theme']
+  await run(`project config unset --file ${HOME}/.projector.toml --json panel.theme`)
+  expect(await backgroundOf(ui)).toBe(INK_DARK)
+  expect(reads()).toBe(before + 4)
+
+  // A command that sets no panel key reads nothing, whatever its value names.
+  await run('project config set watch.auto_start false')
+  await run('project config set --user review.gate "make panel.check"')
+  expect(reads()).toBe(before + 4)
   await ui.unmount()
 })
 
@@ -669,16 +991,16 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   // The drawer's facts name no author, whoever wrote the pull request.
   const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files · checks passing$/ })
   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
-  // What the loop does takes its loop's color, the branch the palette's cyan, and the size reads as a diff stat:
-  // insertions green, deletions red. The checks take theirs, and the files and each `·` keep the default color.
+  // What the loop does takes its loop's color, the branch the theme's `planMode` teal, and the size reads as a diff
+  // stat: insertions green, deletions red. The checks take theirs, and the files and each `·` keep the default color.
   expect([facts?.props.color, facts?.props.dimColor]).toEqual([undefined, undefined])
   const pieces = (facts?.children ?? []) as (string | { props: { color?: string }; children: string[] })[]
   expect(
     pieces.map(piece => (typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.color])),
   ).toEqual([
-    ['watching', 'ansi256(4)'],
+    ['watching', 'remember'],
     ' · ',
-    ['fix-branch', 'ansi256(6)'],
+    ['fix-branch', 'planMode'],
     ' · ',
     ['+12', 'success'],
     ' ',
@@ -1009,11 +1331,11 @@ test('opening one drawer closes the one that was open', async ($, on) => {
 
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'pr:x/y#7' })
-  expect(await loopsOf(ui, 'x/y#7')).toEqual([['watching', 'ansi256(4)']])
+  expect(await loopsOf(ui, 'x/y#7')).toEqual([['watching', 'remember']])
   await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ key: 'github:o/r#1' })).toBeDefined()
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
-  // Reviewing takes the theme's `claude` orange, as watching takes the palette's blue.
+  // Reviewing takes the theme's `claude` orange, as watching takes its `remember` blue.
   expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewing', 'claude']])
   await ui.unmount()
 })
@@ -1034,7 +1356,7 @@ test('lists a pull request both loops track once, as watched and reviewed, and c
   await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
   // Each loop takes its own color, and the `and` between them the default color.
-  expect(await loopsOf(ui, 'o/r#1')).toEqual([['watching', 'ansi256(4)'], ' and ', ['reviewing', 'claude']])
+  expect(await loopsOf(ui, 'o/r#1')).toEqual([['watching', 'remember'], ' and ', ['reviewing', 'claude']])
   await ui.unmount()
 })
 
@@ -1478,12 +1800,17 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
   return { run, files, store, refusal, failing, during, write: put }
 }
 
-type Options = Beneath & { agents?: AgentInfo[]; drop?: string; isTurnRunning?: boolean }
+type Options = Beneath & {
+  agents?: AgentInfo[]
+  drop?: string
+  isTurnRunning?: boolean
+  files?: Record<string, string>
+}
 
 /** A session with a loop on x/y#7 and a store of questions beneath the plugin. */
 function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options: Options = {}) {
   const store = questionStore(clock, seed)
-  const { commands, filled } = world(on, { [REVIEW]: 'x/y#7\n' }, store.run, options)
+  const { commands, filled } = world(on, { [REVIEW]: 'x/y#7\n', ...options.files }, store.run, options)
   const registered: unknown[] = []
   const notified: string[] = []
   const toasts: string[] = []
