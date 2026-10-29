@@ -1,0 +1,2962 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 64a2de88..756f0b74 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -636,7 +636,13 @@ reads, which are these:
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+ | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
+ | `watch.auto_start` | boolean | `true` | `implement`, to start `start-watch-loop` on each pull request it opens, or add the pull request to the watch loop the conversation already runs; `false` leaves starting the loop to you |
+-| `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
++| `panel.theme` | string | `ink` | Projector's panel in Claude Code, as the built-in theme it draws: `ink`, `umber`, `stone`, or `graphite`, each a background for a dark and for a light Claude Code theme. The panel draws any other value as `ink` and says so once |
++| `panel.background` | string | none | Projector's panel in Claude Code, as its background in a terminal, over the theme's: a theme's name draws that theme's background; `smoke` draws the Claude Code theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written. The panel draws the theme's background instead of any other value, or of one that would hide its text, and says so once |
++| `panel.colors.<role>` | string | none | Projector's panel in Claude Code, as the color of one role, such as `muted` or `question`: a literal color as `panel.background` takes one, one of Claude Code's public theme colors such as `subtle`, or `default` for the engine's own text color. The panel draws the role's default instead of any other value, or of a color that would vanish on the background, and says so once. [Choose the panel's color](plugins.md#choose-the-panels-color) lists the roles |
++
++In `panel.colors.<role>`, `<role>` stands for any lowercase name, such as
++`muted`. `set` stores a value under any of them, because the panel owns the
++list of roles, and the panel says once when it does not know a name.
+ 
+ `review.allow_approve` is off unless it is exactly `true`; an unset key means
+ `false` rather than a question to ask. It never applies to a review of your own
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 5462f7ed..2967ad16 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -232,21 +232,24 @@ from the terminal's edge and ends where Claude Code's `[-]`, which collapses
+ the panel, begins. Its header and its key hint sit one column in from the
+ panel's left edge, and the pull requests and items between them two columns
+ in from each side, so every line ends two columns short of the panel's right
+-edge, where the ages line up. The panel's background follows your Claude
+-Code theme, a step darker than the terminal so that the panel reads as a
+-sunken surface:
++edge, where the ages line up. The panel's background is `ink`, the page
++color of Projector's site, [projector.bot](https://projector.bot): near
++black on a dark Claude Code theme and a warm off-white on a light one.
+ 
+-- **`dark` and `dark-daltonized`** draw on `rgb(20,20,20)`.
+-- **`light` and `light-daltonized`** draw on `rgb(240,240,240)`.
++- **`dark` and `dark-daltonized`** draw on `#100f0c`.
++- **`light` and `light-daltonized`** draw on `#f6f4ee`.
+ - **A custom theme** takes the color of the theme it builds on, the `base`
+   in its file under `~/.claude/themes/`, or under `$CLAUDE_CONFIG_DIR/themes/`
+-  when that variable is set. A file with no `base` builds on `dark`, and a
+-  file the panel cannot read gives `inverseText`.
++  when that variable is set. A file whose `base` is missing or names none of
++  Claude Code's themes builds on `dark`, as Claude Code draws it, and a file
++  the panel cannot read gives `inverseText`.
+ - **Any other theme**, such as `dark-ansi` or `light-ansi`, draws on its own
+-  `inverseText` color.
++  `inverseText` color, because its colors come from the terminal's palette,
++  which the panel cannot see.
+ 
+-A theme you pick with `/theme` recolors the panel at once. To choose
+-another shade, set `panel.background`, as
++A theme you pick with `/theme` recolors the panel at once. To draw another
++of the panel's themes, or a shade or a text color of your own, set
++`panel.theme`, `panel.background`, or `panel.colors`, as
+ [Choose the panel's color](#choose-the-panels-color) describes.
+ 
+ The panel's first line is its header, drawn in the `subtle` color. It starts
+@@ -280,13 +283,13 @@ GitHub's error only when it has none of them to show.
+ Click a pull request's number to open a drawer under it, and click it again
+ to close the drawer; opening one drawer closes any other. The drawer starts
+ one column past the number, under `draft` or `ready`. It says whether your
+-loops are watching the pull request, in the terminal palette's blue, or
+-reviewing it, in Claude's orange, then its branch, in the palette's cyan,
+-its size, and its checks. The size reads as a diff stat: the insertions,
+-such as `+84`, in green and the deletions, such as `−12`, in red. The
+-checks' state takes a color of its own, and the rest, ` in 5 files` and
+-each `·` included, keeps the default text color. Below that come two
+-actions, a line each, on the digits `7` and `8`, as
++loops are watching the pull request, in the theme's `remember` blue, or
++reviewing it, in Claude's orange, then its branch, in the theme's
++`planMode` teal, its size, and its checks. The size reads as a diff stat:
++the insertions, such as `+84`, in green and the deletions, such as `−12`,
++in red. The checks' state takes a color of its own, and the rest,
++` in 5 files` and each `·` included, keeps the default text color. Below
++that come two actions, a line each, on the digits `7` and `8`, as
+ [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+ describes, and then the links:
+ 
+@@ -343,9 +346,9 @@ says so once and leaves that loop out.
+ The panel reloads when one of the session's watchers reports a change and
+ when a turn ends, and every 30 seconds otherwise, only while it is shown.
+ Each reload asks GitHub for every pull request in one `gh api graphql` call
+-and reads `panel.background` with `project config get`. That call costs one
+-point of the account's hourly GraphQL quota for each 50 or so pull
+-requests, because it asks only whether each thread is resolved. An open
++and reads the `panel` settings with `project config get panel`. The GitHub
++call costs one point of the account's hourly GraphQL quota for each 50 or so
++pull requests, because it asks only whether each thread is resolved. An open
+ drawer's threads cost a point of their own, because GitHub charges for each
+ thread's first comment. So the panel asks for them in a second call, for
+ that one pull request, when the drawer opens and on each reload while it
+@@ -354,31 +357,138 @@ thread. The skills never depend on the panel, and Codex has no equivalent.
+ 
+ #### Choose the panel's color
+ 
+-The panel takes its background from your Claude Code theme unless you set
+-`panel.background`. Set it in `~/.projector.toml` to use one shade in every
+-repository:
++The panel draws every color through a role, named for what the color means,
++and each role's default follows your Claude Code theme. Three settings
++change them, and each takes a name that describes its color:
++
++- **`panel.theme`** picks one of the panel's built-in themes.
++- **`panel.background`** sets the background alone, over the theme's.
++- **`panel.colors.<role>`** sets the color of one role.
++
++Set them in `~/.projector.toml` to use them in every repository:
+ 
+ ```sh
+-project config set panel.background 'rgb(30,30,40)' --user
++project config set panel.theme umber --user
++project config set panel.colors.muted 'ansi256(244)' --user
+ ```
+ 
+-`panel.background` takes these values:
++```toml
++[panel]
++theme = "umber"
+ 
+-- **`auto`**, the default, leaves the color to the theme, and
+-  `project config unset panel.background --user` returns to it.
+-- **A literal color** draws as written: `rgb(r,g,b)` with each number from
+-  0 to 255, `#rgb` or `#rrggbb`, or `ansi256(n)` with `n` from 0 to 255.
+-- **`sidebar`** draws the grey of Claude Code's side panel, its theme's
++[panel.colors]
++muted = "ansi256(244)"
++```
++
++`project config unset` returns a setting to its default. A change the
++session makes with `project config set` or `unset` shows as soon as the
++command finishes. The panel also reads the settings when the session
++starts, when `/projector` shows the panel, and each time the panel reloads,
++so a file you edit by hand shows within 30 seconds, without a restart.
++
++##### The themes
++
++Each built-in theme is a background for a dark and for a light Claude Code
++theme, drawn from the palette of [projector.bot](https://projector.bot).
++Every other role keeps its default.
++
++| Theme | On a dark theme | On a light theme | What it looks like |
++| --- | --- | --- | --- |
++| `ink`, the default | `#100f0c` | `#f6f4ee` | The site's page: near black, or a warm off-white |
++| `umber` | `#171510` | `#fdfcf8` | The site's code blocks: a warm brown-black, or near white |
++| `stone` | `#1e1c16` | `#eeebe2` | The site's inline code: a step lighter than `ink` on dark, a step darker on light |
++| `graphite` | `rgb(20,20,20)` | `rgb(240,240,240)` | A neutral gray, a step darker than most terminals |
++
++On a Claude Code theme whose colors come from the terminal's palette, such
++as `dark-ansi` or `light-ansi`, and on a custom theme whose file the panel
++cannot read, every theme draws the Claude Code theme's `inverseText`. The
++panel draws `ink` for any other value of `panel.theme`.
++
++##### The background
++
++`panel.background` takes these values, and with no value the panel draws
++the theme's background:
++
++- **A theme's name**, such as `stone`, draws that theme's background.
++- **`smoke`** draws the gray of Claude Code's side panel, its theme's
+   `composerSidebarBackground`.
+ - **`black`** draws `rgb(0,0,0)`, and **`white`** draws `rgb(255,255,255)`,
+   whatever the theme.
++- **A literal color** draws as written: `rgb(r,g,b)` with each number from
++  0 to 255, `#rgb` or `#rrggbb`, or `ansi256(n)` with `n` from 0 to 255.
++
++The panel refuses any other value, such as a theme color's name like
++`inverseText` or `subtle`, a misspelling like `smok`, or `ansi:black`, and
++draws the theme's background instead.
++
++##### The roles
++
++| Role | What it colors | Default |
++| --- | --- | --- |
++| `text` | A pull request's title, each ` · `, ` in 5 files`, and a chosen or typed answer | Claude Code's text color |
++| `muted` | The header and its counts, the key hint, ages, another person's login, an item's pull request, `sending`, a resolved or snoozed item, the options a question's answer passed over, the tagline, and `Looking for pull requests…` | `subtle` |
++| `question` | An open question's line, and the line that stands for collapsed questions, such as `- 2 questions` | `permission` |
++| `notice` | An open notice's line, and the line that stands for collapsed notices | `inactive` |
++| `success` | `ready`, `approved`, `checks passing`, `(recommended)`, and `✓` | `success` |
++| `warning` | `draft`, an open thread count such as `5*`, and `checks pending` | `warning` |
++| `error` | `conflict`, `changes requested`, `checks failing`, and GitHub's error | `error` |
++| `added` | A drawer's insertions, such as `+84` | `success` |
++| `removed` | A drawer's deletions, such as `−12` | `error` |
++| `watching` | `watching` in a pull request's drawer | `remember` |
++| `reviewing` | `reviewing` in a pull request's drawer | `claude` |
++| `branch` | A pull request's branch in its drawer | `planMode` |
++
++Each default is a Claude Code theme color, so it follows your theme, the
++daltonized and custom themes included. `panel.colors.<role>` takes a
++literal color as `panel.background` takes one, one of Claude Code's public
++theme colors, from `text` to `diffRemovedWord`, or `default` for Claude
++Code's own text color. The panel refuses any other value, such as a color's
++plain name like `gray`, which Claude Code draws in the default color, an
++`ansi:` name, which makes Claude Code refuse the whole panel, or a theme
++color outside the public ones, such as `composerSidebarBackground`. A
++`panel.colors.background` is refused too, because `panel.background` sets
++the background.
++
++Claude Code draws some of the panel's text itself, and no role changes it:
++a key's label, such as `7: discuss PR`, a pull request's number, and a link,
++such as `open in github` or an unresolved thread's line in a drawer.
++
++##### What the panel refuses
++
++The panel refuses a color that would vanish: one under a contrast ratio of
++1.5:1 against the color it draws on, as the Web Content Accessibility
++Guidelines (WCAG) 2 measure contrast. It measures a color it knows: a
++literal color, `ansi256(n)` from 16 to 255, which terminals take from the
++standard xterm table, and a theme color on `dark`, `light`, their
++daltonized themes, or a custom theme built on one of them, whose own colors
++count. It settles the background first, then each role:
++
++- **A role that would vanish draws its default.** For example, `muted` set
++  to `rgb(40,40,40)` is 1.30:1 on `ink`'s `#100f0c`, so `muted` draws
++  `subtle`. `rgb(70,70,70)` is 2.03:1 and draws as set. Low contrast that
++  stays readable draws with no warning, because the panel's muted text is
++  quiet by design.
++- **A background that would hide a role's default gives way.** On `dark`,
++  `subtle` is `rgb(80,80,80)`, so `panel.background = "rgb(80,80,80)"`
++  would hide the header, the hint, and the ages, and the panel draws the
++  theme's background. Set `panel.colors.muted` to a color that shows on it,
++  such as `rgb(200,200,200)`, and both draw as set.
++- **A background that would hide Claude Code's own text gives way.** A
++  key's label and a link draw in the theme's text color, near white on a
++  dark theme and near black on a light one. So the panel draws `white` only
++  on a light theme and `black` only on a dark one.
++
++When the background that `panel.theme` names gives way too, the panel draws
++`ink`. On a Claude Code theme whose colors come from the terminal's palette,
++or whose file the panel cannot read, the panel knows only literal colors,
++so a background can still hide a role that keeps its default there.
++
++Each time the panel refuses a value, it says why once a session, in one
++toast for everything one read finds:
+ 
+-Any other value, such as another theme color's name like `inverseText`, a
+-misspelling like `sidebr`, or `ansi:black`, leaves the color to the theme,
+-and the panel says so once. `subtle` is refused too, because the panel draws
+-its own muted text in `subtle`, which would vanish on it. The panel reads
+-the setting when the session starts and each time it reloads, so a change
+-shows within 30 seconds, without a restart.
++```text
++projector: panel.colors.mutd is not a role (the roles are text, muted, question, notice, success, warning, error, added, removed, watching, reviewing, and branch); panel.colors.muted rgb(40,40,40) would vanish on the panel’s #100f0c, so muted draws subtle
++```
+ 
+ ### Read your inbox in Projector's panel
+ 
+diff --git a/docs/projects/panel-themes/readme.md b/docs/projects/panel-themes/readme.md
+index 14c394ae..27aa40f7 100644
+--- a/docs/projects/panel-themes/readme.md
++++ b/docs/projects/panel-themes/readme.md
+@@ -1,6 +1,6 @@
+ ---
+-status: draft
+-priority: later
++status: completed
++priority: now
+ ---
+ 
+ # Theme Projector's panel
+@@ -19,44 +19,46 @@ each element by what the element means: muted text in the theme's `subtle`,
+ an open question in `permission`, an open notice in `inactive`, and a pull
+ request's state in `success`, `warning`, or `error`.
+ 
+-Each of those colors is written into `hooks/register.tsx` where an element
++Each of those colors was written into `hooks/register.tsx` where an element
+ draws it, as a handful of constants and about twenty inline names. Only the
+-background is a setting, `panel.background`, and that causes three problems:
++background was a setting, `panel.background`, and that caused three
++problems:
+ 
+-- **A setting can hide what draws on it.** The background's check knows
++- **A setting can hide what draws on it.** The background's check knew
+   nothing of the colors drawn on the background. The list of values that
+   #341 merged leaves out a `subtle` alias for `panel.background`
+   (`docs/projects/inbox/readme.md` § 23), because the panel's header, key
+   hint, ages, and counts are `subtle` and would vanish on it. The same
+-  conflict remains for values the check accepts: `white` on a dark Claude
+-  Code theme puts the pull request titles, drawn in the theme's light text
++  conflict remained for values the check accepted: `white` on a dark Claude
++  Code theme puts the key labels and links, drawn in the theme's light text
+   color, on white.
+-- **No other color can change.** Someone whose terminal palette makes the
++- **No other color can change.** Someone whose terminal palette made the
+   `watching` blue, `ansi256(4)`, hard to read on the panel, or who wants
+-  questions in another color, has no setting to reach for.
+-- **Colors have no names.** A new element picks a color where it draws.
++  questions in another color, had no setting to reach for.
++- **Colors have no names.** A new element picked a color where it drew.
+   `success` means both a pull request that is ready and a count of inserted
+-  lines, so nothing says which colors may change together.
++  lines, so nothing said which colors may change together.
+ 
+-It matters little today, because the defaults look right on every built-in
+-Claude Code theme. It grows with every color setting the panel adds, which
+-is why the work is recorded now and scheduled later.
++It mattered little while the defaults looked right on every built-in Claude
++Code theme. It grows with every color setting the panel adds, and the
++owner's choice of a new default background, `ink`, is one.
+ 
+ ## 2. Solution
+ 
+ The panel draws every color through one of thirteen named roles. A small
+ module, `hooks/theme.ts`, holds the roles, their defaults, the built-in
+ themes, the values each role takes, and the contrast check, and resolves
+-them into one color per role. With no settings, every role draws exactly
+-what it draws today, so the panel looks right with no configuration. A
+-person changes the look with `panel.theme`, which picks a built-in theme,
+-and `panel.colors.<role>`, which overrides one role. `panel.background`
+-stays the background's setting. The panel reads all of it in one
+-`project config get panel` call. It refuses any value it cannot draw, or
+-that would vanish on what it draws against when it knows both colors, falls
+-back to the role's default, and says so once in a toast. The role list and
+-its checks live only in the panel, and the CLI learns only that these keys
+-hold strings.
++them into one color per role. With no settings, every role draws its
++default, a Claude Code theme key, on the background of the default theme,
++`ink`, so the panel looks right with no configuration. A person changes the
++look with `panel.theme`, which picks a built-in theme, `panel.background`,
++which sets the background alone, and `panel.colors.<role>`, which overrides
++one role. Every name these settings take describes its color. The panel
++reads all of it in one `project config get panel` call. It refuses any value
++it cannot draw, or that would vanish on what it draws against when it knows
++both colors, falls back to the layer below, and says so once in a toast. The
++role list and its checks live only in the panel, and the CLI learns only
++that these keys hold strings.
+ 
+ ### 2.1 The roles
+ 
+@@ -66,56 +68,78 @@ variants, the ANSI themes, and a custom theme's overrides. No color leaves
+ the text to the engine. So one default serves every theme, and only the
+ background's default depends on the theme, by its base.
+ 
+-`watching` and `branch` draw in the terminal palette's blue and cyan today,
++`watching` and `branch` drew in the terminal palette's blue and cyan,
+ `ansi256(4)` and `ansi256(6)`, which follow the terminal's palette but not
+-the Claude Code theme. They move to theme keys, so they adapt to light and
+-dark themes like every other role. The owner picks the two keys by preview,
+-as § 7 says, and until then step 1 of § 6 keeps the palette slots.
++the Claude Code theme. They draw `remember` and `planMode`, the public theme
++keys nearest in hue to that blue and cyan on both `dark` and `light`, so
++they adapt to light and dark themes like every other role (§ 9).
+ 
+ | Role | What draws in it | Default |
+ | --- | --- | --- |
+ | `background` | The panel's `Box` | By base, as § 2.2 says |
+ | `text` | A pull request's title, each ` · `, ` in 5 files`, a chosen or typed answer | No color: the engine's text color |
+-| `muted` | The header, the key hint, ages, a pull request's author, an item's pull request label, `sending`, resolved and snoozed items, a resolved question's other options, the tagline, `Looking for pull requests…` | `subtle` |
+-| `question` | An open question's line | `permission` |
+-| `notice` | An open notice's line | `inactive` |
++| `muted` | The header and its counts, the key hint, ages, a pull request's author, an item's pull request label, `sending`, resolved and snoozed items, a resolved question's other options, the tagline, `Looking for pull requests…` | `subtle` |
++| `question` | An open question's line, and the line that stands for collapsed questions, such as `- 2 questions` | `permission` |
++| `notice` | An open notice's line, and the line that stands for collapsed notices | `inactive` |
+ | `success` | `ready`, `approved`, `checks passing`, `(recommended)`, `✓` | `success` |
+ | `warning` | `draft`, an open thread count such as `5*`, `checks pending` | `warning` |
+ | `error` | `conflict`, `changes requested`, `checks failing`, a GitHub error | `error` |
+ | `added` | A drawer's insertions, such as `+84` | `success` |
+ | `removed` | A drawer's deletions, such as `−12` | `error` |
+-| `watching` | `watching` in a pull request's drawer | A theme key, picked by preview |
++| `watching` | `watching` in a pull request's drawer | `remember` |
+ | `reviewing` | `reviewing` in a pull request's drawer | `claude` |
+-| `branch` | A pull request's branch in its drawer | A theme key, picked by preview |
++| `branch` | A pull request's branch in its drawer | `planMode` |
+ 
+ Some text stays outside every role, because Claude Code draws it and a
+ plugin cannot set its color: a plain `Button`'s label and its key, such as
+-`7: discuss PR` and a pull request's number, and a Markdown link, such as
+-`open in github`. No role uses `dimColor`, which some terminals draw at full
++`7: discuss PR` and a pull request's number, and a link, such as the
++Markdown `open in github` or the `Link` of an unresolved thread's line in a
++drawer. No role uses `dimColor`, which some terminals draw at full
+ strength.
+ 
+ ### 2.2 The background by Claude Code theme
+ 
++Every built-in theme is a background for each base, dark and light. The
++default theme, `ink`, draws these:
++
+ | Claude Code theme | Base | Background default |
+ | --- | --- | --- |
+-| `dark`, `dark-daltonized` | dark | `rgb(20,20,20)` |
+-| `light`, `light-daltonized` | light | `rgb(240,240,240)` |
++| `dark`, `dark-daltonized` | dark | `#100f0c` |
++| `light`, `light-daltonized` | light | `#f6f4ee` |
+ | `dark-ansi`, `light-ansi` | dark or light | `inverseText` |
+-| `custom:<slug>` | its file's `base`, `dark` when it names none | its base's |
++| `custom:<slug>` | its file's `base`, `dark` when it names none of Claude Code's themes, as Claude Code reads it | its base's |
+ | a custom theme whose file the panel cannot read, or any other | unknown | `inverseText` |
+ 
+-That is today's `THEME_BACKGROUNDS` and `OTHER_BACKGROUND`, kept as `auto`'s
+-background. The base also tells the contrast check in § 2.5 which side of
+-light the theme's own text sits on.
++Every built-in theme falls back to `inverseText` where `ink` does, because
++a fixed shade could clash with a terminal palette the panel cannot see. The
++base also tells the contrast check in § 2.5 which side of light the theme's
++own text sits on.
+ 
+ ### 2.3 The settings
+ 
+ | Key | Type | Default | Takes |
+ | --- | --- | --- | --- |
+-| `panel.theme` | string | `auto` | `auto`, or a built-in theme's name |
+-| `panel.background` | string | `auto` | The list #341 sets: `auto`, a literal color, `sidebar`, `black`, or `white`, less a background that § 2.5 refuses |
++| `panel.theme` | string | `ink` | A built-in theme's name |
++| `panel.background` | string | unset, which draws the theme's background | A built-in theme's name for that theme's background, `smoke`, `black`, `white`, or a literal color, less a background that § 2.5 refuses |
+ | `panel.colors.<role>` | string | unset | A literal color, one of Claude Code's 23 public theme keys, or `default` for the engine's text color |
+ 
++The built-in themes come from the palette of the project's site,
++projector.bot, in `web/app/globals.css`, plus the gray the panel drew
++before `ink`:
++
++| Theme | Dark | Light | Source |
++| --- | --- | --- | --- |
++| `ink` | `#100f0c` | `#f6f4ee` | The site's `--bg`, its page |
++| `umber` | `#171510` | `#fdfcf8` | The site's `--surface`, its code blocks |
++| `stone` | `#1e1c16` | `#eeebe2` | The site's `--surface-2`, its inline code |
++| `graphite` | `rgb(20,20,20)` | `rgb(240,240,240)` | The panel's earlier gray |
++
++`panel.background` names three more colors: `smoke` draws the theme key
++`composerSidebarBackground`, the gray of Claude Code's side panel, and
++`black` and `white` draw `rgb(0,0,0)` and `rgb(255,255,255)`. Each name is
++kept in one constant in `hooks/theme.ts`, `PANEL_THEMES` or
++`BACKGROUND_ALIASES`, so renaming one is a one-line change.
++
+ A literal color is `rgb(r,g,b)` or `ansi256(n)` with each number from 0 to
+ 255, or `#rgb` or `#rrggbb`, as #341 parses them. The public keys are the
+ ones Claude Code's `ThemeKey` type lists, from `text` to `diffRemovedWord`.
+@@ -131,6 +155,7 @@ A role refuses every name Claude Code would not draw as meant:
+ 
+ ```toml
+ [panel]
++theme = "umber"
+ background = "rgb(30,30,40)"
+ 
+ [panel.colors]
+@@ -140,10 +165,11 @@ question = "suggestion"
+ 
+ Each layer overrides the one before it:
+ 
+-1. The `auto` defaults for the session's base, § 2.1 and § 2.2.
+-2. The built-in theme `panel.theme` names. A built-in theme is a partial
+-   role table, so a role it leaves out keeps `auto`'s default and still
+-   follows the Claude Code theme.
++1. Each role's default for the session's base, § 2.1, and `ink`'s
++   background, § 2.2.
++2. The built-in theme `panel.theme` names. A built-in theme sets only the
++   background, so every other role keeps its default and still follows the
++   Claude Code theme.
+ 3. `panel.background` for the background, and `panel.colors.<role>` for each
+    other role.
+ 
+@@ -151,16 +177,12 @@ Each layer overrides the one before it:
+ `panel.background` sets. The panel treats `panel.colors.background` as a
+ role it does not know, and its toast names `panel.background` instead.
+ 
+-`auto` is the only built-in theme until the owner chooses the first other
+-one, as § 7 says. The key and the layer exist from the start so that a
+-built-in theme needs no new setting.
+-
+ ### 2.4 The flow
+ 
+ 1. When the session starts, the panel reads the Claude Code theme from
+    `$.config.list()` and works out its base, reading a custom theme's file
+-   as it does today. It stores the base, and a custom theme's own colors
+-   from that file, in `panelTheme`.
++   as it does today. It stores the base, and the theme's colors with a
++   custom theme's own `overrides` over its base's, in `panelTheme`.
+ 2. One timer tick later, and on each reload, the panel runs
+    `project config get panel --json` once. The CLI merges every
+    `.projector.toml` that applies, table by table. A missing `panel` table,
+@@ -174,7 +196,7 @@ built-in theme needs no new setting.
+    such as this one:
+ 
+    ```text
+-   projector: panel.colors.mutd is not a role (the roles are text, muted, question, …); panel.colors.muted rgb(25,25,25) would vanish on the panel's rgb(20,20,20), so it draws subtle
++   projector: panel.colors.mutd is not a role (the roles are text, muted, question, …); panel.colors.muted rgb(25,25,25) would vanish on the panel’s #100f0c, so muted draws subtle
+    ```
+ 
+ 5. The render reads `panelColors` and passes `colors.<role>` to the panel's
+@@ -182,10 +204,13 @@ built-in theme needs no new setting.
+ 6. A theme picked in `/theme` recolors at once: the `config.set` hook stores
+    the new theme's base and colors and resolves again. A
+    `project config set` or `unset` of a `panel.` key that the session runs
+-   through its Bash tool re-reads the settings as soon as the command
+-   finishes, through the `tool.call` hook that already reads the session's
+-   commands, and so does `/projector`. Any other change shows on the next
+-   reload, within 30 seconds.
++   through its Bash tool re-reads the settings one timer tick after the
++   command finishes, through the `tool.call` hook that already reads the
++   session's commands. `/projector` re-reads them when it shows the panel,
++   because showing it reloads it. Any other change shows on the next
++   reload, within 30 seconds. Each resolve waits for the one before it, so
++   a resolve that read a theme or settings since replaced never stores its
++   colors over a later one's.
+ 
+ ### 2.5 Contrast
+ 
+@@ -200,12 +225,11 @@ and it knows two kinds:
+   standard xterm table.
+ - **A theme key on a theme whose values the panel holds.** `hooks/theme.ts`
+   keeps the value of each public theme key, and of
+-  `composerSidebarBackground`, which `sidebar` draws, on `dark`, `light`,
+-  and their daltonized themes. They are copied from Claude Code, as
+-  `THEME_BACKGROUNDS` already holds a value for each theme. On `dark`, for
+-  example, Claude Code 2.1.299 draws `subtle` as `rgb(80,80,80)`. A custom
+-  theme takes its base's values, with the colors its own file sets over
+-  them.
++  `composerSidebarBackground`, which `smoke` draws, on `dark`, `light`, and
++  their daltonized themes. They are copied from Claude Code 2.1.300, as the
++  panel's built-in backgrounds are fixed values too. On `dark`, for
++  example, Claude Code draws `subtle` as `rgb(80,80,80)`. A custom theme
++  takes its base's values, with the colors its own file sets over them.
+ 
+ The panel cannot know a color on an ANSI theme, whose keys draw from the
+ terminal's palette, or on a custom theme whose file it cannot read, or in
+@@ -219,8 +243,9 @@ The panel settles the background first, then every other role:
+    background `panel.background` sets, and its default otherwise.
+ 2. When a role's color from step 1 would still vanish on that background, or
+    Claude Code's own text would, the background falls back to the layer
+-   below, which is `auto`'s background until a built-in theme sets one. Step
+-   1 then runs again against the background that stands.
++   below: the background of the theme `panel.theme` names, then `ink`'s,
++   which always stands. Step 1 then runs again against the background that
++   stands.
+ 
+ So when an override of the background meets an override of a role, the role
+ gives way, and one element changes rather than the whole panel. The
+@@ -229,12 +254,12 @@ Claude Code's own text. Each refusal adds a problem, which the panel toasts
+ once, as § 2.4 says.
+ 
+ - **A role that would vanish is refused.** For example, a `muted` override
+-  of `rgb(40,40,40)` on the default `rgb(20,20,20)` is 1.25:1, so `muted`
+-  draws `subtle`. `rgb(70,70,70)` is 1.95:1 and draws.
++  of `rgb(40,40,40)` on the default `#100f0c` is 1.30:1, so `muted` draws
++  `subtle`. `rgb(70,70,70)` is 2.03:1 and draws.
+ - **A background that would hide a role's default is refused.** On `dark`,
+   `panel.background = "rgb(80,80,80)"` matches `subtle`, so with no `muted`
+   override the header, the key hint, and the ages would vanish. The panel
+-  draws `rgb(20,20,20)` instead. With `panel.colors.muted` set to
++  draws `#100f0c` instead. With `panel.colors.muted` set to
+   `rgb(200,200,200)` as well, `muted` no longer vanishes, so both draw as
+   set unless another role's default would vanish on `rgb(80,80,80)`.
+ - **A background that would hide Claude Code's own text is refused.** Claude
+@@ -246,9 +271,9 @@ once, as § 2.4 says.
+   a light one. That refuses `white` on a dark theme and `black` on a light
+   one. On a base the panel cannot tell, it makes no such check.
+ - **This partly reverses #341.** #341 accepts `black` and `white` on every
+-  theme. From step 2 of § 6, the panel draws `white` only on a light theme
+-  and `black` only on a dark one, and a person who set the other gets `auto`
+-  and one toast.
++  theme. The panel draws `white` only on a light theme and `black` only on a
++  dark one, and a person who set the other gets the theme's background and
++  one toast.
+ - **Low contrast that stays readable draws as set.** A color at 1.5:1 or
+   more draws with no warning. The panel's muted text sits at low contrast by
+   design, so a warning at a higher ratio would flag looks like the default.
+@@ -257,14 +282,14 @@ once, as § 2.4 says.
+ 
+ | File | Change |
+ | --- | --- |
+-| `hooks/theme.ts` (new) | `ROLES` with their defaults, `BASE_BACKGROUNDS`, `BUILT_IN_THEMES`, the literal color patterns and `BACKGROUND_ALIASES` from #341, `PUBLIC_THEME_KEYS` checked against Claude Code's `ThemeKey` type at compile time, `THEME_VALUES`, which holds each public key's and `composerSidebarBackground`'s value on `dark`, `light`, and their daltonized themes, the contrast ratio, and `resolve(theme, settings)`, which returns `{ colors, problems }` |
+-| `hooks/register.tsx` | Draws every color through `colors.<role>`. Removes `QUESTION_COLOR`, `NOTICE_COLOR`, `BRANCH_COLOR`, `LOOP_COLORS`, `CHECK_COLORS`, the colors in `Note`, `THEME_BACKGROUNDS`, `OTHER_BACKGROUND`, and the background check, which move into `hooks/theme.ts`. `readBackground` becomes `readSettings`, which reads the `panel` table, and `paint` stores the base and a custom theme's own colors. The Bash hook re-reads after a `project config set` or `unset` of a `panel.` key |
+-| `hooks/types.d.ts` | The state keys `panelTheme`, `panelSettings`, and `panelColors` replace `panelThemeBackground` and `panelBackground` |
+-| `hooks/theme.test.ts` (new) | `resolve` and the contrast ratio, table by table |
+-| `hooks/panel.test.tsx` | The defaults on each Claude Code theme, overrides, refusals, toasts, and the re-read after a set |
+-| `src/projector/config.py` | `SETTINGS` gains `panel.theme` as a string, and a table entry, `panel.colors`, whose keys `set` and `unset` accept under any lowercase role name, each value a string |
+-| `tests/test_config.py` | `set` and `unset` of `panel.colors.<name>`, and the documented keys test reads the `panel.colors.<role>` row |
+-| `docs/plugins.md` | "Choose the panel's color" describes the roles, the settings, the contrast rule, and the toasts. Keep its anchor, `#choose-the-panels-color`, which other sections link to |
++| `hooks/theme.ts` (new) | `ROLE_DEFAULTS`, `PANEL_THEMES`, `BACKGROUND_ALIASES`, the literal color patterns from #341, Claude Code's colors for each public key and `composerSidebarBackground` on `dark`, `light`, and their daltonized themes, typed so the compiler requires every key of Claude Code's `ThemeKey` and no other, `PUBLIC_THEME_KEYS`, the contrast ratio, `claudeCodeTheme(name, overrides)`, which gives a Claude Code theme's base and colors, `customTheme(base, overrides)`, which reads a custom theme's file as Claude Code does, and `resolve(theme, settings)`, which returns `{ colors, problems }` |
++| `hooks/register.tsx` | Draws every color through `colors.<role>`. Removes `QUESTION_COLOR`, `NOTICE_COLOR`, `BRANCH_COLOR`, `LOOP_COLORS`, `CHECK_COLORS`, the colors in `Note`, `THEME_BACKGROUNDS`, `OTHER_BACKGROUND`, and the background check, which move into `hooks/theme.ts`. `readBackground` becomes `readSettings`, which reads the `panel` table, `paint` stores the base and the theme's colors, and `recolor` resolves both and toasts. The Bash hook re-reads after a `project config set` or `unset` of a `panel.` key |
++| `hooks/types.d.ts` | The state keys `panelTheme`, `panelSettings`, and `panelColors` replace `panelThemeBackground` and `panelBackground`. The types they hold, `ClaudeCodeTheme`, `TextRole`, and `Colors`, live here too, because the plugin's types contract must import nothing |
++| `hooks/theme.test.ts` (new) | `resolve`, `claudeCodeTheme`, `customTheme`, and the contrast ratio, table by table |
++| `hooks/panel.test.tsx` | The defaults on each Claude Code theme, the built-in themes, overrides, refusals, toasts, and the re-read after a set |
++| `src/projector/config.py` | `SETTINGS` gains `panel.theme` as a string, and `TABLES` holds `panel.colors.<role>`, whose keys `set` and `unset` accept under any lowercase name, each value a string |
++| `tests/test_config.py` | `set` and `unset` of `panel.theme` and `panel.colors.<name>`, read back as the panel reads them, and the documented keys test reads the `panel.colors.<role>` row |
++| `docs/plugins.md` | "Choose the panel's color" describes the themes, the background, the roles, the contrast rule, and the toasts. Keep its anchor, `#choose-the-panels-color`, which other sections link to |
+ | `docs/cli.md` | The settings table gains `panel.theme` and `panel.colors.<role>` |
+ 
+ ## 3. Why this design
+@@ -272,26 +297,39 @@ once, as § 2.4 says.
+ - **Roles, not elements.** A role names what a color means, so a new element
+   picks a role instead of a color, and an override changes every element
+   that means the same thing. Thirteen roles cover every color the panel
+-  draws today. `added` and `removed` are apart from `success` and `error`,
+-  because a diff stat and a verdict can want different colors.
++  draws. `added` and `removed` are apart from `success` and `error`, because
++  a diff stat and a verdict can want different colors.
+ - **Theme keys as defaults.** A theme key already follows every Claude Code
+-  theme, the daltonized ones and a custom theme's overrides included. The
+-  defaults keep today's choices, so step 1 of § 6 changes nothing anyone
+-  sees. Only the background needs a table by base, because no theme key
+-  means "a step darker than the terminal".
++  theme, the daltonized ones and a custom theme's overrides included. Only
++  the background needs a table by base, because no theme key means "the
++  panel's own surface".
+ - **`watching` and `branch` follow the theme too.** A palette slot keeps the
+   terminal's own blue or cyan on every theme, and those can be faint on the
+   light background. The owner chose theme keys for both, so they adapt to
+   light and dark as the other roles do.
++- **Names that describe the color.** `auto` said nothing about what the
++  panel draws, and `sidebar` named a place. A person choosing between
++  `ink`, `umber`, `stone`, `graphite`, and `smoke` can tell them apart
++  before trying any.
++- **The project's own palette.** The site's background colors already come
++  in dark and light pairs chosen to sit together, so each pair is a
++  background for both bases with no new design.
++- **Built-in themes set only the background.** Each shipped theme differs
++  from the others only in its background, so a theme is a pair of colors.
++  A theme that sets other roles can grow `PANEL_THEMES` to hold them, and
++  no setting changes.
++- **`panel.background` takes a theme's name.** It is the setting people
++  already use, so the name that replaces `auto` there is the default
++  theme's, and one list of names serves both settings.
+ - **Settings, not theme files.** `.projector.toml` already merges per file,
+   and `project config set` already writes it, so a person's own theme is a
+   `[panel.colors]` table in `~/.projector.toml`. A theme file format would
+   need a reader, a location, and a command of its own. Named user themes
+   wait until someone switches between several (§ 7).
+ - **`panel.background` stays.** It already ships, and a background takes
+-  different values from a text role: #341's aliases are shades that look
+-  right behind text. A second key for the same color, such as
+-  `panel.colors.background`, would make the reader ask which one wins.
++  different values from a text role: shades that look right behind text. A
++  second key for the same color, such as `panel.colors.background`, would
++  make the reader ask which one wins.
+ - **One owner for each list.** The plugin and the CLI install and upgrade
+   apart, as #341 found, so the panel, which draws the colors, owns the
+   roles, the theme names, and every check. The CLI knows only that the keys
+@@ -305,16 +343,15 @@ once, as § 2.4 says.
+   visible, and leaves taste to the person.
+ - **A copy of Claude Code's theme values.** A plugin cannot read a theme
+   key's value at run time, so the check needs a copy to measure a default
+-  against a literal background, as `THEME_BACKGROUNDS` already copies a
+-  shade per theme. A value Claude Code changes later leaves the copy stale
+-  until someone updates it. The check refuses only colors within 1.5:1 of
+-  each other, so a small change rarely turns its verdict. The copy is Claude
+-  Code's data, not a list Projector keeps in two places.
++  against a literal background. A value Claude Code changes later leaves
++  the copy stale until someone updates it. The check refuses only colors
++  within 1.5:1 of each other, so a small change rarely turns its verdict.
++  The copy is Claude Code's data, not a list Projector keeps in two places.
+ - **The engine's text sets a limit on the background.** No role can move
+   Claude Code's own text off a background that hides it, so a warning alone
+   would leave labels and links unreadable until the person noticed. The
+-  owner chose to refuse such a background and fall back to `auto`, the same
+-  as for any other value the panel cannot draw.
++  owner chose to refuse such a background and fall back to the theme's, the
++  same as for any other value the panel cannot draw.
+ - **Public theme keys only.** Claude Code draws a theme key it does not know
+   as no color at all, and a mod cannot list the theme's keys at run time.
+   Only the public 23 can be checked, through the `ThemeKey` type, so a typo
+@@ -328,63 +365,65 @@ once, as § 2.4 says.
+ 
+ | Do | Expect | Test |
+ | --- | --- | --- |
+-| Draw the panel with no settings on `dark`, `light`, both daltonized themes, both ANSI themes, custom themes on each base, one with no `base`, and one with no file | Every element draws exactly the color it draws before the change | `with no settings every role draws today's color on the <theme> theme` in `hooks/panel.test.tsx`, one test per theme |
+-| Open a pull request's drawer with no settings on `dark`, then on `light` | `watching` and the branch draw the theme keys the owner picked, not `ansi256(4)` or `ansi256(6)` | `watching and the branch draw theme keys, so they follow the theme` |
++| Draw the panel with no settings on `dark`, `light`, both daltonized themes, both ANSI themes, custom themes on each base, one with no `base`, one whose `base` is misspelled, and one with no file | The background is `ink`'s for the theme's base, `inverseText` where the panel cannot know the colors, and every element draws its role's default | `with no settings the panel draws <color>, and each role its default, on the <theme> theme` in `hooks/panel.test.tsx`, one test per theme, and `with no settings, the <theme> theme draws ink’s background and every role its default` in `hooks/theme.test.ts` |
++| Open a pull request's drawer with no settings on `dark`, then on `light` | `watching` and the branch draw `remember` and `planMode`, not `ansi256(4)` or `ansi256(6)` | `watching and the branch draw theme keys, so they follow the theme` |
++| Set `panel.theme` to `umber`, `stone`, `graphite`, and `ink` | Each draws its background for the theme's base, and every other role keeps its default | `panel.theme picks a built-in theme, and panel.background overrides its background`, and `panel.theme <name> draws its background by the theme’s base` in `hooks/theme.test.ts` |
++| Set `panel.background` to each theme's name, `smoke`, `black`, `white`, and literal colors | Each draws its color, over the theme's background | `panel.background colors the panel, and a theme’s name draws that theme’s background` |
++| Set `panel.background` to `auto`, `sidebar`, or another value it does not take | The theme's background draws, and one toast per value lists the names the panel takes | `a panel.background the panel does not take leaves the theme’s background, and the panel says so once` |
+ | Set `panel.colors.muted` to `ansi256(244)` | The header, hint, ages, author, labels, and resolved items draw `ansi256(244)` | `panel.colors overrides the elements of its role` |
+ | Set `panel.colors.question` to `suggestion` | An open question's line draws `suggestion` | the same test |
+ | Set `panel.colors.mutd`, or `panel.theme` to `nope` | Defaults draw, and one toast names the roles or the themes | `an unknown role or theme leaves the defaults and says so once` |
+ | Set a role to `gray`, `ansi:black`, `composerSidebarBackground`, `rgb(256,0,0)`, an empty string, or a number | The role draws its default, the tree is never refused, and one toast names the value | `a role value the panel does not take leaves its default and says so once` |
+-| Set `panel.colors.muted` to `rgb(40,40,40)` on the default dark background | `muted` draws `subtle`, and one toast says it would vanish | `a role that would vanish on the background takes its default` |
++| Set `panel.colors.muted` to `rgb(40,40,40)` on the default dark background, `#100f0c` | `muted` draws `subtle`, and one toast says it would vanish | `a role that would vanish on the background takes its default` |
+ | Set `panel.colors.muted` to `rgb(70,70,70)` on the same background | It draws `rgb(70,70,70)` with no toast | the same test |
+ | Set `panel.background` to `rgb(20,20,20)` and `panel.colors.muted` to `rgb(20,20,20)` | The background stays, and `muted` takes its default | the same test |
+-| Set `panel.background` to `rgb(80,80,80)` on `dark`, where `subtle` is `rgb(80,80,80)` | The panel draws `rgb(20,20,20)`, and one toast says the background would hide `muted` | `a background that would hide a role's default falls back to auto and says so once` |
++| Set `panel.background` to `rgb(80,80,80)` on `dark`, where `subtle` is `rgb(80,80,80)` | The panel draws `#100f0c`, and one toast says the background would hide `muted` | `a background that would hide a role’s default falls back to ink and says so once` |
+ | Set `panel.background` to `rgb(80,80,80)` and `panel.colors.muted` to `rgb(200,200,200)` on `dark` | Both draw as set, with no toast | the same test |
+-| Set `panel.background` to `rgb(80,80,80)` on a custom theme built on `light` whose file sets `subtle` to `rgb(80,80,80)` | The panel draws `rgb(240,240,240)`, and one toast says the background would hide `muted` | the same test |
++| Set `panel.background` to `rgb(230,230,230)` on a custom theme built on `light` whose file sets `subtle` to `rgb(225,225,225)`, then pick `light` | The panel draws `#f6f4ee`, and one toast says the background would hide `muted`; on `light` itself it draws `rgb(230,230,230)` | the same test |
+ | Set `panel.colors.background` | Defaults draw, and one toast names `panel.background` | `an unknown role or theme leaves the defaults and says so once` |
+-| Set `panel.background` to `white` on `dark`, then to `black` on `light` | The panel draws `rgb(20,20,20)`, then `rgb(240,240,240)`, with one toast for each value | `a background that would hide Claude Code's own text falls back to auto and says so once` |
++| Set `panel.background` to `white` on `dark`, then to `black` on `light` | The panel draws `#100f0c`, then `#f6f4ee`, with one toast for each value | `a background that would hide Claude Code’s own text falls back to ink and says so once` |
+ | Set `panel.background` to `white` on `light`, then to `black` on `dark` | The panel draws `rgb(255,255,255)`, then `rgb(0,0,0)`, with no toast | the same test |
+-| Run `project config set panel.colors.muted 'rgb(1,2,3)'` through the Bash tool | The panel redraws with the new color before the next reload | `a set of a panel key through Bash re-reads the settings at once` |
+-| Run `project config set panel.colors.muted 'rgb(1,2,3)' --user`, then `unset` | The file gains and loses a `[panel.colors]` entry, and the key `panel.colors.Muted` is refused | `test_panel_colors_are_set_and_unset_under_any_role_name` in `tests/test_config.py` |
++| Run `project config set panel.colors.muted 'rgb(170,170,170)'` through the Bash tool | The panel redraws with the new color before the next reload | `a set of a panel key through Bash re-reads the settings at once` |
++| Run `project config set panel.colors.muted 'rgb(170,170,170)' --user`, then `unset` | The file gains and loses a `[panel.colors]` entry, and the key `panel.colors.Muted` is refused | `test_panel_colors_are_set_and_unset_under_any_role_name` in `tests/test_config.py` |
+ | Read the settings table in `docs/cli.md` | `panel.theme` and `panel.colors.<role>` are listed with their types | `test_the_documented_keys_are_the_known_keys` |
+ 
+-The first row's tests pass before the change and after step 1 of § 6,
+-because they pin today's look. Step 2 changes the colors they expect for
+-`watching` and the branch to the picked theme keys. Every other test fails
+-before the change.
++Each test fails on the code before this change, which drew `rgb(20,20,20)`
++on `dark`, took no `panel.theme` or `panel.colors`, refused no background by
++contrast, and drew `watching` and the branch in palette slots.
+ 
+ ## 5. Cost
+ 
+-The panel spawns the same number of processes as today: one
+-`project config get panel` per reload in place of the
+-`project config get panel.background` it runs now. Resolving thirteen roles
+-and a few dozen contrast ratios runs once per read, on each reload rather
+-than on each render, and the render reads one state key, so cost does not
+-matter here.
++The panel spawns the same number of processes as before on each reload:
++one `project config get panel` in place of the
++`project config get panel.background` it ran. A `project config set` or
++`unset` of a `panel.` key that the session runs adds one read. Resolving
++thirteen roles and a few dozen contrast ratios runs once per read, on each
++reload rather than on each render, and the render reads one state key, so
++cost does not matter here.
+ 
+ ## 6. Rollout
+ 
+-1. Route every color through the roles, with today's colors as `auto`'s
+-   defaults. Nothing visible changes, so this step ships alone.
++The plan's three steps land in one pull request, because the default
++background and the names changed with the themes, so no step alone would
++ship the look it promises:
++
++1. Route every color through the roles.
+ 2. Add `panel.colors.<role>`, the checks, the toasts, the re-read after a
+-   set, the CLI keys, and the documentation. It needs step 1. Under a CLI
+-   from before this step, `project config set panel.colors.muted` refuses
+-   the key until `project upgrade`, while the panel still reads a table
+-   written by hand. From this step, the panel refuses `white` on a dark
+-   theme and `black` on a light one, which #341 draws, so `docs/plugins.md`
+-   says so in the same change. The step also moves `watching` and `branch`
+-   to the theme keys the owner picks by preview.
+-3. Add `panel.theme` and the first built-in theme the owner chooses. It
+-   needs step 2.
++   set, the CLI keys, and the documentation, and move `watching` and
++   `branch` to `remember` and `planMode`. Under a CLI from before this
++   change, `project config set panel.colors.muted` and
++   `project config set panel.theme` refuse the key until
++   `project upgrade`, while the panel still reads a table written by hand.
++   The panel refuses `white` on a dark theme and `black` on a light one,
++   which #341 draws, and `docs/plugins.md` says so.
++3. Add `panel.theme` and the built-in themes `ink`, `umber`, `stone`, and
++   `graphite`, with `ink` as the default, and rename `panel.background`'s
++   `sidebar` to `smoke`. A `.projector.toml` that still says `auto` or
++   `sidebar` draws the theme's background, and the toast lists the names
++   the panel takes.
+ 
+ ## 7. Open questions
+ 
+-- **Which built-in themes ship besides `auto`.** Owner, before step 3. The
+-  owner decides by previewing both candidates in a session mod: `none`,
+-  which draws no background so the panel sits on the terminal's own, and
+-  `sidebar`, which draws on Claude Code's side-panel grey and looks raised.
+-- **Which theme keys `watching` and `branch` take.** Owner, before step 2.
+-  Both move to theme keys, as § 2.1 says, and the owner picks the two keys
+-  by preview.
+ - **Whether a repository can set the panel's colors.** Deferred. The CLI
+   merges a repository's `.projector.toml` over `~/.projector.toml`, so a
+   repository can already set `panel.background`. Keep that until a
+@@ -398,14 +437,18 @@ matter here.
+   a `Button`'s label color, its key's accent, or a link's color.
+ - **A swatch that shows every role at once.** Deferred. The plugin draws no
+   made-up rows, and the real rows show most roles.
++- **Named user themes.** Deferred until someone switches between several of
++  their own `[panel.colors]` tables.
+ 
+ ## 8. Background
+ 
+-The role table in § 2.1 gives each element's color at the time of writing,
+-as the role's default. In `hooks/register.tsx`, about twenty of them are
+-inline names, and the rest come from `THEME_BACKGROUNDS`,
+-`OTHER_BACKGROUND`, `QUESTION_COLOR`, `NOTICE_COLOR`, `CHECK_COLORS`, the
+-`Note` type, `LOOP_COLORS`, and `BRANCH_COLOR`.
++The role table in § 2.1 gives each role's default. Before this change,
++about twenty of the colors were inline names in `hooks/register.tsx`, and
++the rest came from `THEME_BACKGROUNDS`, `OTHER_BACKGROUND`,
++`QUESTION_COLOR`, `NOTICE_COLOR`, `CHECK_COLORS`, the `Note` type,
++`LOOP_COLORS`, and `BRANCH_COLOR`. `watching` drew `ansi256(4)`, the branch
++`ansi256(6)`, and the background `rgb(20,20,20)` on a dark theme and
++`rgb(240,240,240)` on a light one.
+ 
+ What Claude Code does with a plugin's color, which the design depends on:
+ 
+@@ -418,6 +461,10 @@ What Claude Code does with a plugin's color, which the design depends on:
+ - An `ansi:` name makes Claude Code refuse the plugin's whole tree.
+ - A mod cannot list the theme's keys at run time. Claude Code's `ThemeKey`
+   type lists the 23 public ones.
++- A custom theme's file holds a `base` and `overrides`. Claude Code builds
++  on `dark` when the `base` names none of its six themes, and lays each
++  override that names a key of the base and a color it reads, `rgb()`, hex,
++  `ansi256()`, or an `ansi:` name, over the base's colors.
+ 
+ A live preview of the panel's colors in a Claude Code session showed how
+ each kind of name draws: theme keys, `rgb()`, hex, and `ansi256()` drew as
+@@ -431,3 +478,52 @@ or hex", so the panel's refusal of them rests on what the preview showed.
+ `project config get panel --json` returns the merged `panel` table,
+ `[panel.colors]` and all, while `project config set panel.colors.muted`
+ refuses the key.
++
++## 9. Decisions made during implementation
++
++The owner previewed the palette of projector.bot on the live panel, settled
++on its page color, and settled the questions this plan left open:
++
++- **The default background is `ink`, projector.bot's page color.**
++  `web/app/globals.css` pairs a dark `--bg` of `#100f0c` with a light one of
++  `#f6f4ee`. The default draws `#100f0c` on Claude Code's dark themes,
++  `#f6f4ee` on light ones, and a custom theme by its `base`. The other
++  fallbacks of § 2.2 stay.
++- **Every name describes its color.** The owner: "all themes should be
++  named after the color, though we can be creative. auto says nothing about
++  the actual color". So `auto` becomes `ink` wherever it appeared,
++  `panel.background`'s `sidebar` becomes `smoke`, and the earlier gray ships
++  as `graphite`. Neither old name keeps an alias. A `.projector.toml` that
++  still uses one draws the theme's background, with the one toast that lists
++  the names the panel takes.
++- **The built-in themes are projector.bot's palette, plus `graphite`.** They
++  are every background pair in `web/app/globals.css` that has a dark and a
++  light value: `--bg` as `ink`, `--surface` as `umber`, and `--surface-2` as
++  `stone`. `--term-bg` stays out: it colors the site's mock terminal, which
++  is dark on both, so it has no light background to give. This answers the
++  open question of which built-in themes ship besides the default, whose
++  candidates were `none` and `sidebar`. `none` does not ship, and `sidebar`
++  ships only as `panel.background`'s `smoke`.
++- **`watching` and `branch` take `remember` and `planMode`.** They are the
++  public theme keys whose `dark` and `light` values sit nearest in hue to
++  the palette's blue, 240°, and cyan, 180°. `remember` is `rgb(177,185,249)`
++  on `dark`, 233°, and `rgb(0,0,255)` on `light`, 240°. `planMode` is
++  `rgb(72,150,140)` on `dark`, 172°, and `rgb(0,102,102)` on `light`, 180°.
++  On `dark`, `remember` matches `permission`, so `watching` draws in the
++  color of an open question. This answers the open question of which keys
++  the two take; the owner can swap either after a preview, in
++  `ROLE_DEFAULTS`.
++- **Muted text stays `subtle`.** The owner tried a warm muted tint in the
++  preview but did not ask for it.
++
++## 10. Outcome
++
++Shipped. Every color the panel draws goes through a role in
++`hooks/theme.ts`, and `panel.theme`, `panel.background`, and
++`panel.colors.<role>` change them, with the contrast checks and toasts of
++§ 2.5. Each acceptance criterion in § 4 has a passing test. The design
++changed in two places, both recorded in § 9: the default background is
++`ink` rather than the earlier gray, and a built-in theme is a background
++pair rather than a partial role table. The owner can still swap any theme
++name, `smoke`, or the keys `watching` and `branch` take after a preview,
++each a one-line change.
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 9fa0ac53..87976fe9 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -166,12 +166,24 @@ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
+  */
+ type Beneath = { github?: (query: string) => Ran | Promise<Ran>; settings?: Record<string, unknown> }
+ 
+-/** `project config get <key> [--default <value>] --json`, answered from `settings` as the CLI answers it. */
++/**
++ * `project config get <key> [--default <value>] --json`, answered from
++ * `settings` as the CLI answers it: a table for a key that only prefixes
++ * others, as `panel` prefixes `panel.colors.muted`.
++ */
+ function configGet(argv: readonly string[], settings: Record<string, unknown>): Ran {
+   const key = argv[3] ?? ''
+   const at = argv.indexOf('--default')
+-  const value = settings[key] ?? (at === -1 ? null : argv[at + 1])
+-  const source = key in settings ? `${HOME}/.projector.toml` : null
++  const table: Record<string, unknown> = {}
++  for (const [dotted, setting] of Object.entries(settings)) {
++    if (!dotted.startsWith(`${key}.`)) continue
++    const path = dotted.slice(key.length + 1).split('.')
++    let node = table
++    for (const part of path.slice(0, -1)) node = (node[part] ??= {}) as Record<string, unknown>
++    node[path.at(-1) ?? ''] = setting
++  }
++  const value = settings[key] ?? (Object.keys(table).length > 0 ? table : at === -1 ? null : argv[at + 1])
++  const source = value === null ? null : `${HOME}/.projector.toml`
+   return { ...ran(JSON.stringify({ key, schema_version: 2, source, value })), exitCode: value === null ? 1 : 0 }
+ }
+ 
+@@ -462,34 +474,100 @@ function panelWorld(on: On, { theme = 'dark', env = {}, files = {}, settings = {
+   return { clock, commands, toasts }
+ }
+ 
+-const DARK = 'rgb(20,20,20)'
+-const LIGHT = 'rgb(240,240,240)'
++/** The default theme's background, ink, on a dark and on a light Claude Code theme. */
++const INK_DARK = '#100f0c'
++const INK_LIGHT = '#f6f4ee'
+ const THEMES = `${HOME}/.claude/themes`
+ 
++/** Hides and shows the panel, which reloads it and reads its settings again. */
++async function reload($: Engine, clock: Clock) {
++  await $.command.run(COMMAND)
++  await $.command.run(COMMAND)
++  await clock.advance(1)
++  await clock.settle()
++}
++
++/** Picks a Claude Code theme, as the person does in `/theme`. */
++const pickTheme = ($: Engine, value: string, previous: string) =>
++  $.config.set({ key: 'theme', value, previous, provider: ENGINE, origin: { kind: 'composer' } })
++
++/** The header's color, which the `muted` role draws. */
++const headerColorOf = async (ui: Pick<Mounted, 'find'>) =>
++  (await ui.find({ type: 'Text', text: /^\/projector / }))?.props.color
++
++/** The facts line of x/y#7's drawer as each role draws it with no settings. */
++const DEFAULT_FACTS = [
++  ['watching', 'remember'],
++  ' · ',
++  ['fix-branch', 'planMode'],
++  ' · ',
++  ['+12', 'success'],
++  ' ',
++  ['−3', 'error'],
++  ' in 2 files',
++  ' · ',
++  ['checks passing', 'success'],
++]
++
++/** A session on `theme` whose watch loop tracks x/y#7, besides the review loop on o/r#1, with x/y#7's drawer open. */
++async function drawerWorld($: Engine, on: On, options: PanelOptions = {}) {
++  const session = panelWorld(on, { ...options, files: { [WATCH]: 'x/y#7\n', ...options.files } })
++  await startSession($, session.clock)
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
++  await session.clock.advance(1)
++  await session.clock.settle()
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'pr:x/y#7' })
++  const facts = async () => partsOf(await ui.find({ type: 'Text', text: /^watching · / }))
++  return { ...session, ui, facts }
++}
++
+ for (const [theme, color, files] of [
+-  ['dark', DARK, {}],
+-  ['dark-daltonized', DARK, {}],
+-  ['light', LIGHT, {}],
+-  ['light-daltonized', LIGHT, {}],
++  ['dark', INK_DARK, {}],
++  ['dark-daltonized', INK_DARK, {}],
++  ['light', INK_LIGHT, {}],
++  ['light-daltonized', INK_LIGHT, {}],
+   ['dark-ansi', 'inverseText', {}],
+   ['light-ansi', 'inverseText', {}],
+-  ['custom:dusk', DARK, { [`${THEMES}/dusk.json`]: '{"name": "Dusk", "base": "dark", "overrides": {}}' }],
+-  ['custom:dawn', LIGHT, { [`${THEMES}/dawn.json`]: '{"name": "Dawn", "base": "light-daltonized"}' }],
+-  ['custom:plain', DARK, { [`${THEMES}/plain.json`]: '{"name": "Plain"}' }],
++  ['custom:dusk', INK_DARK, { [`${THEMES}/dusk.json`]: '{"name": "Dusk", "base": "dark", "overrides": {}}' }],
++  ['custom:dawn', INK_LIGHT, { [`${THEMES}/dawn.json`]: '{"name": "Dawn", "base": "light-daltonized"}' }],
++  ['custom:plain', INK_DARK, { [`${THEMES}/plain.json`]: '{"name": "Plain"}' }],
++  ['custom:typo', INK_DARK, { [`${THEMES}/typo.json`]: '{"base": "lihgt"}' }],
+   ['custom:retro', 'inverseText', { [`${THEMES}/retro.json`]: '{"base": "dark-ansi"}' }],
+   ['custom:gone', 'inverseText', {}],
+   ['auto', 'inverseText', {}],
+ ] as const) {
+-  test(`the panel is ${color} on the ${theme} theme`, async ($, on) => {
+-    const { clock } = panelWorld(on, { theme, files })
+-    await startSession($, clock)
++  test(`with no settings the panel draws ${color}, and each role its default, on the ${theme} theme`, async ($, on) => {
++    const { ui, facts, toasts } = await drawerWorld($, on, { theme, files })
+ 
+-    const ui = await $.ui.mount(PANEL)
+     expect(await ui.drawn()).toMatchObject(inPanel(color))
++    expect(await headerColorOf(ui)).toBe('subtle')
++    expect((await ui.find({ type: 'Text', text: 'draft' }))?.props.color).toBe('warning')
++    expect((await ui.find({ type: 'Text', text: 'ready' }))?.props.color).toBe('success')
++    expect((await ui.find({ type: 'Text', text: 'Signed-off change' }))?.props.color).toBeUndefined()
++    expect(partsOf(await ui.find({ type: 'Text', text: 'conflict · 2*' }))).toEqual([
++      ['conflict', 'error'],
++      ' · ',
++      ['2*', 'warning'],
++    ])
++    expect(await facts()).toEqual(DEFAULT_FACTS)
++    expect(toasts).toEqual([])
+     await ui.unmount()
+   })
+ }
+ 
++test('watching and the branch draw theme keys, so they follow the theme', async ($, on) => {
++  const { ui, facts } = await drawerWorld($, on, { theme: 'dark' })
++
++  // `remember` and `planMode` are the theme's blue and teal, nearest in hue to the terminal palette's blue and cyan.
++  expect(await facts()).toEqual(DEFAULT_FACTS)
++  expect(await pickTheme($, 'light', 'dark')).toEqual({ value: 'light' })
++  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
++  expect(await facts()).toEqual(DEFAULT_FACTS)
++  expect(JSON.stringify(await facts())).not.toMatch(/ansi256/)
++  await ui.unmount()
++})
++
+ test('a custom theme’s file is read from the Claude config directory CLAUDE_CONFIG_DIR names', async ($, on) => {
+   const { clock } = panelWorld(on, {
+     theme: 'custom:dawn',
+@@ -502,7 +580,7 @@ test('a custom theme’s file is read from the Claude config directory CLAUDE_CO
+   await startSession($, clock)
+ 
+   const ui = await $.ui.mount(PANEL)
+-  expect(await backgroundOf(ui)).toBe(LIGHT)
++  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
+   await ui.unmount()
+ })
+ 
+@@ -510,32 +588,24 @@ test('a theme picked in /theme recolors the panel at once, and one the change re
+   const { clock } = panelWorld(on, { theme: 'dark' })
+   await startSession($, clock)
+   const ui = await $.ui.mount(PANEL)
+-  expect(await backgroundOf(ui)).toBe(DARK)
++  expect(await backgroundOf(ui)).toBe(INK_DARK)
+ 
+-  // As the person picks a theme in `/theme`.
+-  const pick = (value: string, previous: string) =>
+-    $.config.set({ key: 'theme', value, previous, provider: ENGINE, origin: { kind: 'composer' } })
+-  expect(await pick('light', 'dark')).toEqual({ value: 'light' })
+-  expect(await backgroundOf(ui)).toBe(LIGHT)
++  expect(await pickTheme($, 'light', 'dark')).toEqual({ value: 'light' })
++  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
+ 
+-  expect(await pick('dark-ansi', 'light')).toEqual({ deny: 'the theme stays' })
+-  expect(await backgroundOf(ui)).toBe(LIGHT)
++  expect(await pickTheme($, 'dark-ansi', 'light')).toEqual({ deny: 'the theme stays' })
++  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
+   await ui.unmount()
+ })
+ 
+-test('panel.background colors the panel, and auto or no value leaves the color to the theme', async ($, on) => {
++test('panel.background colors the panel, and a theme’s name draws that theme’s background', async ($, on) => {
+   const settings: Record<string, unknown> = { 'panel.background': '#202830' }
+-  const { clock, commands, toasts } = panelWorld(on, { theme: 'light', settings })
++  // On a theme the panel knows nothing of, it measures no color, so every value it takes draws.
++  const { clock, commands, toasts } = panelWorld(on, { theme: 'auto', settings })
+   await startSession($, clock)
+-  const reload = async () => {
+-    await $.command.run(COMMAND)
+-    await $.command.run(COMMAND)
+-    await clock.advance(1)
+-    await clock.settle()
+-  }
+ 
+-  // The panel reads the setting through the CLI, which merges the `.projector.toml` files.
+-  expect(commands).toContainEqual(['project', 'config', 'get', 'panel.background', '--default', 'auto', '--json'])
++  // The panel reads its settings through the CLI, which merges the `.projector.toml` files, as one table.
++  expect(commands).toContainEqual(['project', 'config', 'get', 'panel', '--json'])
+   const ui = await $.ui.mount(PANEL)
+   expect(await backgroundOf(ui)).toBe('#202830')
+ 
+@@ -544,47 +614,88 @@ test('panel.background colors the panel, and auto or no value leaves the color t
+   const literals = ['#abc', '#FFFFFF', 'rgb(0,0,0)', 'rgb(255, 255, 255)', 'rgb( 30,30,40 )', 'ansi256(0)', 'ansi256(255)']
+   for (const value of literals) {
+     settings['panel.background'] = value
+-    await reload()
++    await reload($, clock)
+     expect(await backgroundOf(ui)).toBe(value)
+   }
+-  // Each alias draws its color: `black` and `white` as literal colors, so they stay put whatever the theme.
+-  for (const [alias, color] of [
+-    ['sidebar', 'composerSidebarBackground'],
++  // Each other name draws its color: `black` and `white` as literal colors, so they stay put whatever the theme.
++  for (const [name, color] of [
++    ['smoke', 'composerSidebarBackground'],
+     ['black', 'rgb(0,0,0)'],
+     ['white', 'rgb(255,255,255)'],
++    ['ink', 'inverseText'],
++    ['graphite', 'inverseText'],
+   ]) {
+-    settings['panel.background'] = alias
+-    await reload()
++    settings['panel.background'] = name
++    await reload($, clock)
+     expect(await backgroundOf(ui)).toBe(color)
+   }
+-  settings['panel.background'] = 'auto'
+-  await reload()
+-  expect(await backgroundOf(ui)).toBe(LIGHT)
++
++  // A theme's name draws its background for the side of light the Claude Code theme sits on.
++  for (const [theme, previous, names] of [
++    ['dark', 'auto', { ink: INK_DARK, umber: '#171510', stone: '#1e1c16', graphite: 'rgb(20,20,20)' }],
++    ['light', 'dark', { ink: INK_LIGHT, umber: '#fdfcf8', stone: '#eeebe2', graphite: 'rgb(240,240,240)' }],
++  ] as const) {
++    await pickTheme($, theme, previous)
++    for (const [name, color] of Object.entries(names)) {
++      settings['panel.background'] = name
++      await reload($, clock)
++      expect(await backgroundOf(ui)).toBe(color)
++    }
++  }
+   delete settings['panel.background']
+-  await reload()
+-  expect(await backgroundOf(ui)).toBe(LIGHT)
++  await reload($, clock)
++  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
+   expect(toasts).toEqual([])
+   await ui.unmount()
+ })
+ 
+-test('a panel.background the panel does not take leaves the color to the theme, and the panel says so once', async ($, on) => {
+-  const settings: Record<string, unknown> = { 'panel.background': 'ansi:black' }
++test('panel.theme picks a built-in theme, and panel.background overrides its background', async ($, on) => {
++  const settings: Record<string, unknown> = { 'panel.theme': 'umber' }
+   const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
+   await startSession($, clock)
+-  const reload = async () => {
+-    await $.command.run(COMMAND)
+-    await $.command.run(COMMAND)
+-    await clock.advance(1)
+-    await clock.settle()
++  const ui = await $.ui.mount(PANEL)
++
++  expect(await backgroundOf(ui)).toBe('#171510')
++  for (const [name, color] of [
++    ['stone', '#1e1c16'],
++    ['graphite', 'rgb(20,20,20)'],
++    ['ink', INK_DARK],
++  ]) {
++    settings['panel.theme'] = name
++    await reload($, clock)
++    expect(await backgroundOf(ui)).toBe(color)
+   }
++  // The theme leaves every other role its default.
++  expect(await headerColorOf(ui)).toBe('subtle')
+ 
+-  // The panel draws on the theme's color rather than not at all.
++  settings['panel.theme'] = 'stone'
++  settings['panel.background'] = 'ink'
++  await reload($, clock)
++  expect(await backgroundOf(ui)).toBe(INK_DARK)
++  expect(toasts).toEqual([])
++
++  // A background the panel does not take gives way to the theme's.
++  settings['panel.background'] = 'auto'
++  await reload($, clock)
++  expect(await backgroundOf(ui)).toBe('#1e1c16')
++  expect(toasts).toEqual([
++    'projector: panel.background is "auto", which is not ink, umber, stone, graphite, smoke, black, white, rgb(r,g,b), #rrggbb, or ansi256(n), so the panel draws stone',
++  ])
++  await ui.unmount()
++})
++
++test('a panel.background the panel does not take leaves the theme’s background, and the panel says so once', async ($, on) => {
++  const settings: Record<string, unknown> = { 'panel.background': 'ansi:black' }
++  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
++  await startSession($, clock)
++
++  // The panel draws on the default theme's background rather than not at all.
+   const ui = await $.ui.mount(PANEL)
+-  expect(await ui.drawn()).toMatchObject(inPanel(DARK))
+-  await reload()
+-  expect(await backgroundOf(ui)).toBe(DARK)
+-  // Past the ends of a literal color's range, a theme key's name, which the panel no longer takes, `subtle`, the
+-  // color of the panel's own muted text, a misspelled alias, a color's plain name, and a value that is no string.
++  expect(await ui.drawn()).toMatchObject(inPanel(INK_DARK))
++  await reload($, clock)
++  expect(await backgroundOf(ui)).toBe(INK_DARK)
++  // Past the ends of a literal color's range, a theme key's name, `subtle`, the color of the panel's own muted text, a
++  // misspelled name, a color's plain name, a value that is no string, and the names that say nothing of the color.
+   const refused = [
+     'rgb(256,0,0)',
+     'rgb(1,2)',
+@@ -595,28 +706,239 @@ test('a panel.background the panel does not take leaves the color to the theme,
+     'composerSidebarBackground',
+     'text',
+     'subtle',
+-    'sidebr',
++    'smok',
+     'gray',
+     '',
+     3,
++    'auto',
++    'sidebar',
+   ]
+   for (const value of refused) {
+     settings['panel.background'] = value
+-    await reload()
+-    expect(await backgroundOf(ui)).toBe(DARK)
++    await reload($, clock)
++    expect(await backgroundOf(ui)).toBe(INK_DARK)
+   }
+   // Each refused value is said once, however many reloads read it.
+-  settings['panel.background'] = 'sidebr'
+-  await reload()
++  settings['panel.background'] = 'smok'
++  await reload($, clock)
+   expect(toasts).toEqual(
+     ['ansi:black', ...refused].map(
+       value =>
+-        `projector: panel.background is ${JSON.stringify(value)}, which is not rgb(r,g,b), #rrggbb, ansi256(n), sidebar, black or white, so the panel takes its color from the theme`,
++        `projector: panel.background is ${JSON.stringify(value)}, which is not ink, umber, stone, graphite, smoke, black, white, rgb(r,g,b), #rrggbb, or ansi256(n), so the panel draws ink`,
++    ),
++  )
++  await ui.unmount()
++})
++
++test('panel.colors overrides the elements of its role', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
++  const settings = { 'panel.colors.muted': 'ansi256(244)', 'panel.colors.question': 'suggestion' }
++  const { toasts } = questionWorld(
++    on,
++    clock,
++    [held(), notice(), held({ ref: '3', number: 3, subject: 'Rebase first?', answer, deliveredAt: NOW - 1_000 })],
++    { settings, files: { [WATCH]: 'o/r#4\n' } },
++  )
++  await startSession($, clock)
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++  const ui = await $.ui.mount(PANEL)
++  const colorOf = async (text: string | RegExp) => (await ui.find({ type: 'Text', text }))?.props.color
++
++  // `muted` draws the header, the key hint, the ages, another person's login, an item's pull request, and a resolved item.
++  expect(await headerColorOf(ui)).toBe('ansi256(244)')
++  expect(await colorOf(/ctrl\+x tab to focus$/)).toBe('ansi256(244)')
++  expect(await colorOf('5m')).toBe('ansi256(244)')
++  expect(await colorOf('grace')).toBe('ansi256(244)')
++  expect(await colorOf('y#7')).toBe('ansi256(244)')
++  expect(await colorOf('Rebase first?')).toBe('ansi256(244)')
++  // `question` draws an open question's line, and a notice keeps its own role's default.
++  expect(await colorOf('Decline the finding?')).toBe('suggestion')
++  expect(await colorOf(FORCE_PUSHED)).toBe('inactive')
++  expect(toasts).toEqual([])
++  await ui.unmount()
++})
++
++test('an unknown role or theme leaves the defaults and says so once', async ($, on) => {
++  const settings: Record<string, unknown> = {
++    'panel.colors.mutd': 'rgb(170,170,170)',
++    'panel.theme': 'nope',
++    'panel.colors.background': 'rgb(30,30,40)',
++  }
++  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++
++  expect(await backgroundOf(ui)).toBe(INK_DARK)
++  expect(await headerColorOf(ui)).toBe('subtle')
++  // Every problem one read finds goes in one toast, and a reload that finds the same problems says nothing more.
++  await reload($, clock)
++  expect(toasts).toEqual([
++    'projector: panel.theme is "nope", which is not ink, umber, stone, or graphite, so the panel draws ink; panel.colors.mutd is not a role (the roles are text, muted, question, notice, success, warning, error, added, removed, watching, reviewing, and branch); panel.colors.background is not a role (panel.background sets the background)',
++  ])
++  await ui.unmount()
++})
++
++test('a role value the panel does not take leaves its default and says so once', async ($, on) => {
++  const settings: Record<string, unknown> = {}
++  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++
++  // A color's plain name draws in the default color, an `ansi:` name makes Claude Code refuse the whole tree, and a
++  // theme key outside the public ones cannot be checked, so each leaves the role its default and the tree drawn.
++  const refused = ['gray', 'ansi:black', 'composerSidebarBackground', 'rgb(256,0,0)', '', 3]
++  for (const value of [...refused, 'gray']) {
++    settings['panel.colors.muted'] = value
++    await reload($, clock)
++    expect(await ui.drawn()).toMatchObject(inPanel(INK_DARK))
++    expect(await headerColorOf(ui)).toBe('subtle')
++  }
++  expect(toasts).toEqual(
++    refused.map(
++      value =>
++        `projector: panel.colors.muted is ${JSON.stringify(value)}, which is not rgb(r,g,b), #rrggbb, ansi256(n), a Claude Code theme color such as subtle, or default, so muted draws subtle`,
+     ),
+   )
+   await ui.unmount()
+ })
+ 
++test('a role that would vanish on the background takes its default', async ($, on) => {
++  const settings: Record<string, unknown> = { 'panel.colors.muted': 'rgb(40,40,40)' }
++  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++
++  // rgb(40,40,40) on ink's #100f0c is 1.30:1, under the 1.5:1 the panel requires.
++  expect(await headerColorOf(ui)).toBe('subtle')
++  expect(toasts).toEqual([
++    'projector: panel.colors.muted rgb(40,40,40) would vanish on the panel’s #100f0c, so muted draws subtle',
++  ])
++
++  // rgb(70,70,70) is 2.03:1, low but readable, so it draws with no word.
++  settings['panel.colors.muted'] = 'rgb(70,70,70)'
++  await reload($, clock)
++  expect(await headerColorOf(ui)).toBe('rgb(70,70,70)')
++  expect(toasts).toHaveLength(1)
++
++  // When both are overridden, the role gives way and the background stays.
++  settings['panel.background'] = 'rgb(20,20,20)'
++  settings['panel.colors.muted'] = 'rgb(20,20,20)'
++  await reload($, clock)
++  expect(await backgroundOf(ui)).toBe('rgb(20,20,20)')
++  expect(await headerColorOf(ui)).toBe('subtle')
++  expect(toasts.at(-1)).toBe(
++    'projector: panel.colors.muted rgb(20,20,20) would vanish on the panel’s rgb(20,20,20), so muted draws subtle',
++  )
++  await ui.unmount()
++})
++
++test('a background that would hide a role’s default falls back to ink and says so once', async ($, on) => {
++  const settings: Record<string, unknown> = { 'panel.background': 'rgb(80,80,80)' }
++  const mist = `${THEMES}/mist.json`
++  const files = { [mist]: '{"base": "light", "overrides": {"subtle": "rgb(225,225,225)"}}' }
++  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings, files })
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++
++  // On `dark`, `subtle` is rgb(80,80,80), so the header, the hint, and the ages would vanish.
++  expect(await backgroundOf(ui)).toBe(INK_DARK)
++  await reload($, clock)
++  expect(toasts).toEqual(['projector: panel.background rgb(80,80,80) would hide muted, so the panel draws ink'])
++
++  // An override of `muted` that shows on the background lets both draw as set.
++  settings['panel.colors.muted'] = 'rgb(200,200,200)'
++  await reload($, clock)
++  expect(await backgroundOf(ui)).toBe('rgb(80,80,80)')
++  expect(await headerColorOf(ui)).toBe('rgb(200,200,200)')
++  expect(toasts).toHaveLength(1)
++
++  // A custom theme's own colors count: on one built on `light` whose `subtle` is rgb(225,225,225), rgb(230,230,230)
++  // would hide `muted`, though it draws on `light` itself.
++  delete settings['panel.colors.muted']
++  delete settings['panel.background']
++  await reload($, clock)
++  await pickTheme($, 'custom:mist', 'dark')
++  settings['panel.background'] = 'rgb(230,230,230)'
++  await reload($, clock)
++  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
++  expect(toasts.at(-1)).toBe('projector: panel.background rgb(230,230,230) would hide muted, so the panel draws ink')
++  await pickTheme($, 'light', 'custom:mist')
++  expect(await backgroundOf(ui)).toBe('rgb(230,230,230)')
++  expect(toasts).toHaveLength(2)
++  await ui.unmount()
++})
++
++test('a background that would hide Claude Code’s own text falls back to ink and says so once', async ($, on) => {
++  const settings: Record<string, unknown> = { 'panel.background': 'white' }
++  const { clock, toasts } = panelWorld(on, { theme: 'dark', settings })
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++
++  // A Button's label and a link draw in the theme's text color, near white on `dark` and near black on `light`.
++  expect(await backgroundOf(ui)).toBe(INK_DARK)
++  settings['panel.background'] = 'black'
++  await reload($, clock)
++  expect(await backgroundOf(ui)).toBe('rgb(0,0,0)')
++
++  await pickTheme($, 'light', 'dark')
++  expect(await backgroundOf(ui)).toBe(INK_LIGHT)
++  settings['panel.background'] = 'white'
++  await reload($, clock)
++  expect(await backgroundOf(ui)).toBe('rgb(255,255,255)')
++  expect(toasts).toEqual([
++    'projector: panel.background white would hide Claude Code’s own text, so the panel draws ink',
++    'projector: panel.background black would hide Claude Code’s own text, so the panel draws ink',
++  ])
++  await ui.unmount()
++})
++
++test('a set of a panel key through Bash re-reads the settings at once', async ($, on) => {
++  const settings: Record<string, unknown> = {}
++  const { clock, commands } = panelWorld(on, { theme: 'dark', settings })
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++  const reads = () => commands.filter(argv => argv.join(' ') === 'project config get panel --json').length
++  const run = async (command: string) => {
++    await $.tool.call({ tool: 'Bash', command })
++    await clock.advance(1)
++    await clock.settle()
++  }
++
++  // A file edited by hand shows on the next reload, so until then the panel keeps what it read.
++  settings['panel.colors.muted'] = 'rgb(170,170,170)'
++  await clock.settle()
++  expect(await headerColorOf(ui)).toBe('subtle')
++
++  // The session's own `project config set` shows at once, long before the next reload.
++  const before = reads()
++  await run("project config set panel.colors.muted 'rgb(170,170,170)' --user")
++  expect(reads()).toBe(before + 1)
++  expect(await headerColorOf(ui)).toBe('rgb(170,170,170)')
++
++  delete settings['panel.colors.muted']
++  await run('project config unset panel.colors.muted --user')
++  expect(await headerColorOf(ui)).toBe('subtle')
++
++  // The CLI takes its options before the key too, a value-taking one included.
++  settings['panel.theme'] = 'umber'
++  await run('project config set --user panel.theme umber')
++  expect(await backgroundOf(ui)).toBe('#171510')
++  delete settings['panel.theme']
++  await run(`project config unset --file ${HOME}/.projector.toml --json panel.theme`)
++  expect(await backgroundOf(ui)).toBe(INK_DARK)
++  expect(reads()).toBe(before + 4)
++
++  // A command that sets no panel key reads nothing, whatever its value names.
++  await run('project config set watch.auto_start false')
++  await run('project config set --user review.gate "make panel.check"')
++  expect(reads()).toBe(before + 4)
++  await ui.unmount()
++})
++
+ test('a pull request’s notes take their own colors, and each ` · ` between them the default color', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -669,16 +991,16 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   // The drawer's facts name no author, whoever wrote the pull request.
+   const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files · checks passing$/ })
+   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
+-  // What the loop does takes its loop's color, the branch the palette's cyan, and the size reads as a diff stat:
+-  // insertions green, deletions red. The checks take theirs, and the files and each `·` keep the default color.
++  // What the loop does takes its loop's color, the branch the theme's `planMode` teal, and the size reads as a diff
++  // stat: insertions green, deletions red. The checks take theirs, and the files and each `·` keep the default color.
+   expect([facts?.props.color, facts?.props.dimColor]).toEqual([undefined, undefined])
+   const pieces = (facts?.children ?? []) as (string | { props: { color?: string }; children: string[] })[]
+   expect(
+     pieces.map(piece => (typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.color])),
+   ).toEqual([
+-    ['watching', 'ansi256(4)'],
++    ['watching', 'remember'],
+     ' · ',
+-    ['fix-branch', 'ansi256(6)'],
++    ['fix-branch', 'planMode'],
+     ' · ',
+     ['+12', 'success'],
+     ' ',
+@@ -1009,11 +1331,11 @@ test('opening one drawer closes the one that was open', async ($, on) => {
+ 
+   const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'pr:x/y#7' })
+-  expect(await loopsOf(ui, 'x/y#7')).toEqual([['watching', 'ansi256(4)']])
++  expect(await loopsOf(ui, 'x/y#7')).toEqual([['watching', 'remember']])
+   await ui.press({ key: 'pr:o/r#1' })
+   expect(await ui.find({ key: 'github:o/r#1' })).toBeDefined()
+   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+-  // Reviewing takes the theme's `claude` orange, as watching takes the palette's blue.
++  // Reviewing takes the theme's `claude` orange, as watching takes its `remember` blue.
+   expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewing', 'claude']])
+   await ui.unmount()
+ })
+@@ -1034,7 +1356,7 @@ test('lists a pull request both loops track once, as watched and reviewed, and c
+   await ui.press({ key: 'pr:o/r#1' })
+   expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
+   // Each loop takes its own color, and the `and` between them the default color.
+-  expect(await loopsOf(ui, 'o/r#1')).toEqual([['watching', 'ansi256(4)'], ' and ', ['reviewing', 'claude']])
++  expect(await loopsOf(ui, 'o/r#1')).toEqual([['watching', 'remember'], ' and ', ['reviewing', 'claude']])
+   await ui.unmount()
+ })
+ 
+@@ -1478,12 +1800,17 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+   return { run, files, store, refusal, failing, during, write: put }
+ }
+ 
+-type Options = Beneath & { agents?: AgentInfo[]; drop?: string; isTurnRunning?: boolean }
++type Options = Beneath & {
++  agents?: AgentInfo[]
++  drop?: string
++  isTurnRunning?: boolean
++  files?: Record<string, string>
++}
+ 
+ /** A session with a loop on x/y#7 and a store of questions beneath the plugin. */
+ function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options: Options = {}) {
+   const store = questionStore(clock, seed)
+-  const { commands, filled } = world(on, { [REVIEW]: 'x/y#7\n' }, store.run, options)
++  const { commands, filled } = world(on, { [REVIEW]: 'x/y#7\n', ...options.files }, store.run, options)
+   const registered: unknown[] = []
+   const notified: string[] = []
+   const toasts: string[] = []
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 1b698031..2cb6b6b7 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -3,6 +3,7 @@ import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-
+ 
+ import type {
+   Checks,
++  ClaudeCodeTheme,
+   Item,
+   LoopKind,
+   Notice,
+@@ -12,10 +13,12 @@ import type {
+   SeenLoop,
+   Sending,
+   Snapshot,
++  TextRole,
+   Thread,
+ } from './types'
+ import { buildQuery, buildThreadsQuery, parseResponse, parseThreads, type Fetched } from './github'
+ import { findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
++import { claudeCodeTheme, customTheme, resolve, UNKNOWN_THEME } from './theme'
+ import {
+   ASK_DESCRIPTION,
+   ASK_SCHEMA,
+@@ -68,47 +71,16 @@ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
+ // watch loop puts it.
+ const KINDS: readonly LoopKind[] = ['watching', 'reviewing']
+ 
+-const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
++/** The role each state of a pull request's checks draws in. */
++const CHECK_ROLES: Record<Checks, TextRole> = {
+   passing: 'success',
+   failing: 'error',
+   pending: 'warning',
+ }
+ 
+-/**
+- * The theme color of an open question's line: the one Claude Code gives its
+- * own permission prompts, since an agent's question usually asks leave to do
+- * something.
+- */
+-const QUESTION_COLOR = 'permission'
+-
+-/**
+- * The color of an open notice's line: the theme's mid gray, which stays
+- * apart from the `subtle` of a resolved or snoozed item. A plain `gray` would
+- * draw in the default color.
+- */
+-const NOTICE_COLOR = 'inactive'
+-
+ /** The kinds of item, in the order the header counts them. */
+ const ITEM_KINDS: readonly Item['kind'][] = ['question', 'notice']
+ 
+-const KIND_COLORS: Record<Item['kind'], string> = { question: QUESTION_COLOR, notice: NOTICE_COLOR }
+-
+-/**
+- * The color of a pull request's branch on its drawer's facts line: the
+- * terminal palette's own cyan, slot 6, so it follows the person's palette as
+- * a named color would. Claude Code draws a plain name such as `cyan` in the
+- * default color and refuses `ansi:cyan` on a plugin's Text, but takes
+- * `ansi256()`.
+- */
+-const BRANCH_COLOR = 'ansi256(6)'
+-
+-/**
+- * The color of what a loop does with a pull request, on its drawer's facts
+- * line: watching in the terminal palette's blue, slot 4, in the same form as
+- * `BRANCH_COLOR`, and reviewing in the theme's `claude` orange.
+- */
+-const LOOP_COLORS: Record<LoopKind, string> = { watching: 'ansi256(4)', reviewing: 'claude' }
+-
+ /** The key that closes an open item's drawer, from its line at the drawer's top. */
+ const CLOSE_HOTKEY = '0'
+ 
+@@ -142,57 +114,6 @@ const FOCUSED_HINT = 'esc to return · enter to open'
+ /** What the panel's header starts with, at its left: the command that shows and hides the panel. */
+ const HEADER_NAME = '/projector'
+ 
+-/**
+- * The panel's background by Claude Code theme: a step darker than the
+- * terminal's own, so the panel reads as a sunken surface. Any other theme,
+- * an ANSI one included, takes `OTHER_BACKGROUND`.
+- */
+-const THEME_BACKGROUNDS: Record<string, string> = {
+-  dark: 'rgb(20,20,20)',
+-  'dark-daltonized': 'rgb(20,20,20)',
+-  light: 'rgb(240,240,240)',
+-  'light-daltonized': 'rgb(240,240,240)',
+-}
+-const OTHER_BACKGROUND = 'inverseText'
+-
+-/** The setting that colors the panel, and its value that leaves the color to the theme. */
+-const BACKGROUND_KEY = 'panel.background'
+-const AUTO = 'auto'
+-
+-/**
+- * The names `panel.background` takes besides `auto` and a literal color, and
+- * what each draws. Claude Code draws any theme key by name, but the panel
+- * refuses the others by choice: most are text colors that look wrong as a
+- * background, and a misspelled name, which is no key, draws nothing at all.
+- * `subtle` is refused too, as the color of the panel's own muted text, which
+- * would vanish on it. `black` and `white` are literal colors: `inverseText`
+- * flips between the two with the theme, and `ansi256(0)` is the terminal
+- * palette's black, often the terminal's own background, which would make the
+- * panel vanish.
+- */
+-const BACKGROUND_ALIASES = new Map([
+-  ['sidebar', 'composerSidebarBackground'],
+-  ['black', 'rgb(0,0,0)'],
+-  ['white', 'rgb(255,255,255)'],
+-])
+-
+-/**
+- * The literal colors `panel.background` takes, written as Claude Code reads
+- * them: `#rgb` or `#rrggbb`, and `rgb(r,g,b)` or `ansi256(n)`, with a space
+- * allowed after `(`, each comma, and before `)`. Each number is at most 255.
+- */
+-const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
+-const NUMBERED_COLORS = [/^rgb\( ?(\d{1,3}), ?(\d{1,3}), ?(\d{1,3}) ?\)$/, /^ansi256\( ?(\d{1,3}) ?\)$/]
+-
+-/** What the panel draws for a `panel.background` value other than `auto`, or undefined when it takes none. */
+-function backgroundFor(value: string): string | undefined {
+-  const alias = BACKGROUND_ALIASES.get(value)
+-  if (alias !== undefined) return alias
+-  if (HEX_COLOR.test(value)) return value
+-  const numbers = NUMBERED_COLORS.map(pattern => pattern.exec(value)).find(match => match !== null)
+-  return numbers?.slice(1).every(number => Number(number) <= 255) === true ? value : undefined
+-}
+-
+ /** The lengths a drawer offers to snooze an item for, within the CLI's cap of a day. */
+ const SNOOZES = [
+   { label: '15 min', minutes: 15 },
+@@ -211,8 +132,9 @@ const drawerThreads = atom({ plugin: 'projector', key: 'panelThreads' } as const
+ const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
+ const collapsed = atom({ plugin: 'projector', key: 'panelCollapsed' } as const, [])
+ const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
+-const themeBackground = atom({ plugin: 'projector', key: 'panelThemeBackground' } as const, OTHER_BACKGROUND)
+-const background = atom({ plugin: 'projector', key: 'panelBackground' } as const, AUTO)
++const claudeTheme = atom({ plugin: 'projector', key: 'panelTheme' } as const, UNKNOWN_THEME)
++const settings = atom({ plugin: 'projector', key: 'panelSettings' } as const, null)
++const panelColors = atom({ plugin: 'projector', key: 'panelColors' } as const, resolve(UNKNOWN_THEME, null).colors)
+ const isFocused = atom({ plugin: 'projector', key: 'isPanelFocused' } as const, false)
+ /**
+  * The deliveries the release before the panel's rename recorded, under the
+@@ -389,62 +311,86 @@ async function loadThreads($: Engine): Promise<void> {
+ }
+ 
+ /**
+- * The panel's background for a Claude Code theme: by the theme's name, or
+- * for a custom theme, `custom:<slug>`, by the theme its file builds on,
+- * `dark` unless its `base` says otherwise. A custom theme whose file cannot
+- * be read takes `OTHER_BACKGROUND`.
++ * What the panel knows of a Claude Code theme: by the theme's name, or for a
++ * custom theme, `custom:<slug>`, from its file, which names the theme it
++ * builds on and may override the base's colors. A custom theme whose file
++ * cannot be read is one the panel knows nothing of.
+  */
+-async function backgroundOf($: Engine, theme: unknown): Promise<string> {
+-  if (typeof theme !== 'string') return OTHER_BACKGROUND
+-  if (!theme.startsWith('custom:')) return THEME_BACKGROUNDS[theme] ?? OTHER_BACKGROUND
++async function claudeThemeOf($: Engine, name: unknown): Promise<ClaudeCodeTheme> {
++  if (typeof name !== 'string' || !name.startsWith('custom:')) return claudeCodeTheme(name)
+   const env = await envOf($)
+   const home = env('HOME')
+   const config = env('CLAUDE_CONFIG_DIR') ?? (home === undefined ? undefined : `${home}/.claude`)
+-  if (config === undefined) return OTHER_BACKGROUND
++  if (config === undefined) return UNKNOWN_THEME
+   try {
+-    const path = `${config}/themes/${theme.slice('custom:'.length)}.json`
+-    const base = (JSON.parse(await $.fs.read(path)) as { base?: unknown }).base ?? 'dark'
+-    return typeof base === 'string' ? (THEME_BACKGROUNDS[base] ?? OTHER_BACKGROUND) : OTHER_BACKGROUND
++    const path = `${config}/themes/${name.slice('custom:'.length)}.json`
++    const file = JSON.parse(await $.fs.read(path)) as { base?: unknown; overrides?: unknown }
++    return customTheme(file.base, file.overrides)
+   } catch {
+-    return OTHER_BACKGROUND
++    return UNKNOWN_THEME
+   }
+ }
+ 
+-/** Colors the panel for a theme ahead of the render, which then waits on no read. */
+-async function paint($: Engine, theme: unknown): Promise<void> {
+-  const color = await backgroundOf($, theme)
+-  await update($, themeBackground, () => color)
++/** The problems with the panel's settings that it has toasted, so it says each once a session. */
++const toasted = new Set<string>()
++
++/**
++ * The last recolor, which the next waits for, so a recolor that read a theme
++ * or settings since replaced never stores its colors over a later one's.
++ */
++let recoloring: Promise<void> = Promise.resolve()
++
++/**
++ * Resolves the panel's colors for the theme and the settings it last read,
++ * ahead of the render, which then waits on no read. The problems it has not
++ * toasted yet go in one toast.
++ */
++function recolor($: Engine): Promise<void> {
++  recoloring = recoloring
++    .then(async () => {
++      const { colors, problems } = resolve(await read($, claudeTheme), await read($, settings))
++      await update($, panelColors, () => colors)
++      const fresh = problems.filter(problem => !toasted.has(problem))
++      for (const problem of fresh) toasted.add(problem)
++      if (fresh.length > 0) void $.ui.toast(`projector: ${fresh.join('; ')}`)
++    })
++    .catch(() => undefined)
++  return recoloring
+ }
+ 
+-/** The `panel.background` values the panel said it does not take, so it says so once for each. */
+-const unpaintable = new Set<string>()
++/** Colors the panel for a Claude Code theme. */
++async function paint($: Engine, name: unknown): Promise<void> {
++  const theme = await claudeThemeOf($, name)
++  await update($, claudeTheme, () => theme)
++  await recolor($)
++}
+ 
+ /**
+- * Reads `panel.background` through the CLI, which merges the `.projector.toml`
+- * files. The panel alone decides which values it takes, so the CLI stores any
+- * string. A value it does not take leaves the color to the theme, and the
+- * panel says so once. A read that fails keeps the value the panel last read,
+- * and the next reload reads it again.
++ * Reads the `panel` settings through the CLI, which merges the
++ * `.projector.toml` files, and colors the panel by them. The panel alone
++ * decides which values it takes, so the CLI stores any string. Exit status 1
++ * says no file sets any. A read that fails keeps the settings the panel last
++ * read, and the next reload reads them again.
+  */
+-async function readBackground($: Engine): Promise<void> {
++async function readSettings($: Engine): Promise<void> {
+   try {
+-    const ran = await project($, ['config', 'get', BACKGROUND_KEY, '--default', AUTO, '--json'])
+-    if (ran.exitCode !== 0) return
+-    const value = (JSON.parse(ran.stdout) as { value?: unknown }).value ?? AUTO
+-    const color = value === AUTO ? AUTO : typeof value === 'string' ? backgroundFor(value) : undefined
+-    const written = JSON.stringify(value)
+-    if (color === undefined && !unpaintable.has(written)) {
+-      unpaintable.add(written)
+-      void $.ui.toast(
+-        `projector: ${BACKGROUND_KEY} is ${written}, which is not rgb(r,g,b), #rrggbb, ansi256(n), sidebar, black or white, so the panel takes its color from the theme`,
+-      )
+-    }
+-    await update($, background, () => color ?? AUTO)
++    const ran = await project($, ['config', 'get', 'panel', '--json'])
++    if (ran.exitCode !== 0 && ran.exitCode !== 1) return
++    const { value } = JSON.parse(ran.stdout) as { value?: unknown }
++    await update($, settings, () => value ?? null)
++    await recolor($)
+   } catch {
+-    // The next reload reads it again.
++    // The next reload reads them again.
+   }
+ }
+ 
++/**
++ * A `project config set` or `unset` of a panel setting, which the panel reads
++ * again at once. The CLI takes options before the key as well as after it,
++ * and `--root` and `--file` take a value.
++ */
++const SETS_PANEL = /\bconfig\s+(?:un)?set\s+(?:--(?:root|file)(?:=|\s+)\S+\s+|-\S+\s+)*['"]?panel\./
++
+ /** The session's own loops, the watchers it started, each with the pull requests its tracked file lists. */
+ async function trackedSets($: Engine): Promise<(SeenLoop & { entries: TrackedPr[] })[]> {
+   const loops = (await read($, seen)).filter(loop => isKind(loop.kind))
+@@ -471,8 +417,8 @@ async function load($: Engine): Promise<void> {
+     }
+   }
+ 
+-  // Each reload reads the panel's setting too, so an edit to it shows without a restart.
+-  const [fetched] = await Promise.all([fetchPrs($, [...tracked.values()]), readBackground($)])
++  // Each reload reads the panel's settings too, so an edit to them shows without a restart.
++  const [fetched] = await Promise.all([fetchPrs($, [...tracked.values()]), readSettings($)])
+ 
+   // When GitHub cannot be reached, keep drawing what it said last time.
+   const last = current(await read($, snapshot))
+@@ -917,16 +863,16 @@ function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+   return pr => (isOneRepo ? `#${pr.number}` : `${pr.repo}#${pr.number}`)
+ }
+ 
+-type Note = { text: string; color: 'error' | 'warning' | 'success' }
++type Note = { text: string; role: TextRole }
+ 
+ /** What a row says after the title: what holds the pull request back, or its approval. */
+ function notesOf(pr: PullRequest): Note[] {
+   const notes: Note[] = []
+-  if (pr.isConflicting) notes.push({ text: 'conflict', color: 'error' })
+-  if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
+-  if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
++  if (pr.isConflicting) notes.push({ text: 'conflict', role: 'error' })
++  if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', role: 'error' })
++  if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', role: 'success' })
+   // The open threads' count comes last, beside the age.
+-  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, color: 'warning' })
++  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, role: 'warning' })
+   return notes
+ }
+ 
+@@ -1019,13 +965,13 @@ export const register: Register = on => {
+     ]) {
+       await $.tool.register({ ...tool, isDeferred: false }).catch(() => undefined)
+     }
+-    // The panel takes its color from the theme, and from its setting once a
+-    // timer has read it, so the start waits on no process.
++    // The panel takes its colors from the theme, and from its settings once a
++    // timer has read them, so the start waits on no process.
+     await $.config
+       .list()
+       .then(rows => paint($, rows.find(row => row.key === 'theme')?.value))
+       .catch(() => undefined)
+-    $.clock.after(1, () => void readBackground($))
++    $.clock.after(1, () => void readSettings($))
+     $.clock.every(TICK_MS, () => void tick($))
+     soon($)
+     checkSoon($)
+@@ -1121,7 +1067,10 @@ export const register: Register = on => {
+   // so a failure here never runs a tool twice or refuses anything.
+   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+     const ran = await next(e)
+-    if (ran.deny === undefined) await adopt($, e.command)
++    if (ran.deny === undefined) {
++      if (SETS_PANEL.test(e.command)) $.clock.after(1, () => void readSettings($))
++      await adopt($, e.command)
++    }
+     return ran
+   }).catch(($, e, next) => next(e))
+ 
+@@ -1242,6 +1191,7 @@ export const register: Register = on => {
+     const opened = await read($, drawer)
+     const shownThreads = await read($, drawerThreads)
+     const asking = await read($, asked)
++    const colors = await read($, panelColors)
+     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
+     // Each kind's count in the header is a button that collapses its items to
+     // one line at the top of the list, and the line expands them again. A
+@@ -1314,10 +1264,8 @@ export const register: Register = on => {
+     // them but end where those lines do, so their right ends line up with
+     // the rows' ages.
+     const edgeColumns = columns + LINE_PADDING
+-    const setting = await read($, background)
+-    const color = setting === AUTO ? await read($, themeBackground) : setting
+     const hint = (await read($, isFocused)) ? FOCUSED_HINT : FOCUS_HINT
+-    // The panel's first line is its header, all in `subtle`: `HEADER_NAME` at
++    // The panel's first line is its header, all in `muted`: `HEADER_NAME` at
+     // its left, and the counts and how long ago the panel reloaded at its
+     // right, so the time ends in the rows' age column. Two spaces set the
+     // counts apart from the time, about the gap a row leaves before its age.
+@@ -1332,19 +1280,19 @@ export const register: Register = on => {
+     const itemCounts = kindCounts.flatMap(({ kind, count }) => (count === undefined ? [] : [{ kind, count }]))
+     const header =
+       itemCounts.length === 0 ? (
+-        <Text key="header" color="subtle">
++        <Text key="header" color={colors.muted}>
+           {`${HEADER_NAME}${gap}${status}`}
+         </Text>
+       ) : (
+         <Box key="header" flexDirection="row">
+-          <Text color="subtle">{`${HEADER_NAME}${gap}${prCount === undefined ? '' : `${prCount} · `}`}</Text>
++          <Text color={colors.muted}>{`${HEADER_NAME}${gap}${prCount === undefined ? '' : `${prCount} · `}`}</Text>
+           {itemCounts.flatMap(({ kind, count }, at) => [
+-            ...(at === 0 ? [] : [<Text key={`between:${kind}`} color="subtle">{' · '}</Text>]),
++            ...(at === 0 ? [] : [<Text key={`between:${kind}`} color={colors.muted}>{' · '}</Text>]),
+             <Button key={`count:${kind}`} plain onPress={() => fold(kind)}>
+-              <Text color="subtle">{count}</Text>
++              <Text color={colors.muted}>{count}</Text>
+             </Button>,
+           ])}
+-          {reloaded !== '' && <Text color="subtle">{`  ${reloaded}`}</Text>}
++          {reloaded !== '' && <Text color={colors.muted}>{`  ${reloaded}`}</Text>}
+         </Box>
+       )
+     const panel = (lines: RenderChildren, isHeaded = true) =>
+@@ -1356,13 +1304,13 @@ export const register: Register = on => {
+             width={e.props.bodyColumns - PANEL_INSET}
+             paddingLeft={PANEL_PADDING}
+             paddingRight={PANEL_PADDING}
+-            backgroundColor={color}
++            backgroundColor={colors.background}
+           >
+             {isHeaded && header}
+             <Box flexDirection="column" paddingLeft={LINE_PADDING} paddingRight={LINE_PADDING}>
+               {lines}
+             </Box>
+-            <Text key="hint" color="subtle">
++            <Text key="hint" color={colors.muted}>
+               {hint.padStart(edgeColumns)}
+             </Text>
+           </Box>
+@@ -1374,15 +1322,15 @@ export const register: Register = on => {
+     if (shown.rows.length === 0 && shownItems.length === 0) {
+       return panel([
+         failure !== undefined ? (
+-          <Text key="failure" color="error">
++          <Text key="failure" color={colors.error}>
+             {failure}
+           </Text>
+         ) : shown.fetchedAt === null ? (
+-          <Text key="looking" color="subtle">
++          <Text key="looking" color={colors.muted}>
+             Looking for pull requests…
+           </Text>
+         ) : (
+-          <Text key="tagline" color="subtle">{` ${TAGLINE}`}</Text>
++          <Text key="tagline" color={colors.muted}>{` ${TAGLINE}`}</Text>
+         ),
+       ])
+     }
+@@ -1395,8 +1343,8 @@ export const register: Register = on => {
+     }
+ 
+     // The items are a list below the pull requests, newest first, each
+-    // bulleted `-`; an open question's line takes `QUESTION_COLOR`, and a
+-    // resolved or snoozed item's `subtle`. An open question's drawer numbers
++    // bulleted `-`; an open question's line takes the `question` role, and a
++    // resolved or snoozed item's `muted`. An open question's drawer numbers
+     // its options; choosing one puts the question and that answer in the
+     // prompt as text, for you to send or change, and sending it unchanged is
+     // what answers the question. Discuss puts the question alone, for a reply
+@@ -1416,7 +1364,7 @@ export const register: Register = on => {
+     )
+     const ageColumn = (key: string, then: number | null) => (
+       <Box key={`age:${key}`} flexShrink={0} width={ageWidth} justifyContent="flex-end">
+-        <Text color="subtle">{ageOf(then)}</Text>
++        <Text color={colors.muted}>{ageOf(then)}</Text>
+       </Box>
+     )
+     const fill = (text: string) => {
+@@ -1450,7 +1398,7 @@ export const register: Register = on => {
+       const { ref, answer } = question
+       const chosen = answer !== undefined && 'letter' in answer ? answer.letter : undefined
+       const recommended = ' (recommended)'
+-      const marked = <Text color="success"> ✓</Text>
++      const marked = <Text color={colors.success}> ✓</Text>
+       const pick = (choice: string) => {
+         propose(question, choice)
+         fill(`${proposalOf(question, choice)}\n`)
+@@ -1465,15 +1413,15 @@ export const register: Register = on => {
+               {index === 0 ? `${choice}${recommended}` : choice}
+             </Button>
+           ) : (
+-            <Text key={`option:${ref}.${letter}`} color={letter === chosen ? undefined : 'subtle'}>
++            <Text key={`option:${ref}.${letter}`} color={letter === chosen ? colors.text : colors.muted}>
+               {choice}
+-              {index === 0 && <Text color="success">{recommended}</Text>}
++              {index === 0 && <Text color={colors.success}>{recommended}</Text>}
+               {letter === chosen && marked}
+             </Text>
+           )
+         }),
+         chosen === typedLetter(question) && answer !== undefined && 'text' in answer && (
+-          <Text key={`option:${ref}.${chosen}`}>
++          <Text key={`option:${ref}.${chosen}`} color={colors.text}>
+             {answer.text}
+             {marked}
+           </Text>
+@@ -1489,7 +1437,7 @@ export const register: Register = on => {
+       // through, so it reads as put off rather than dismissed.
+       const isSnoozed = isSnoozedAt(item, time)
+       const isOpened = opened === key
+-      const color = !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' ? QUESTION_COLOR : NOTICE_COLOR
++      const color = colors[!isOpen || isSnoozed ? 'muted' : item.kind]
+       const pull = pullOf(item)
+       // Each action names the kind of item it acts on. A dismissed or snoozed
+       // item's drawer offers to bring it back where it offered to dismiss or
+@@ -1596,12 +1544,12 @@ export const register: Register = on => {
+             </Box>
+             {isSending && (
+               <Box flexShrink={0}>
+-                <Text color="subtle">sending</Text>
++                <Text color={colors.muted}>sending</Text>
+               </Box>
+             )}
+             {pull !== '' && (
+               <Box flexShrink={0}>
+-                <Text color="subtle">{pull}</Text>
++                <Text color={colors.muted}>{pull}</Text>
+               </Box>
+             )}
+             {ageColumn(key, item.postedAt)}
+@@ -1645,22 +1593,24 @@ export const register: Register = on => {
+               />
+             </Box>
+             <Box flexShrink={0}>
+-              <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
++              <Text color={pr.isDraft ? colors.warning : colors.success}>{pr.isDraft ? 'draft' : 'ready'}</Text>
+             </Box>
+             {!isOwn(pr, shown.viewer) && (
+               <Box key={`author:${key}`} flexShrink={0} width={authorWidth}>
+-                <Text color="subtle">{pr.author ?? ''}</Text>
++                <Text color={colors.muted}>{pr.author ?? ''}</Text>
+               </Box>
+             )}
+             <Box flexGrow={1} flexShrink={1}>
+-              <Text wrap="truncate-end">{pr.title}</Text>
++              <Text wrap="truncate-end" color={colors.text}>
++                {pr.title}
++              </Text>
+             </Box>
+             {notes.length > 0 && (
+               <Box flexShrink={0}>
+-                <Text>
++                <Text color={colors.text}>
+                   {notes.flatMap((note, at) => [
+                     ...(at > 0 ? [' · '] : []),
+-                    <Text key={note.text} color={note.color}>
++                    <Text key={note.text} color={colors[note.role]}>
+                       {note.text}
+                     </Text>,
+                   ])}
+@@ -1672,23 +1622,23 @@ export const register: Register = on => {
+           {/* The drawer starts where the state does, one column past the label. */}
+           {opened === key && (
+             <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
+-              {/* Each `·` keeps the default color, so a piece's color, such
+-                  as the checks', stops at its own text. */}
+-              <Text wrap="truncate-end">
++              {/* Each `·` keeps the text color, so a piece's color, such as
++                  the checks', stops at its own text. */}
++              <Text wrap="truncate-end" color={colors.text}>
+                 {kinds.flatMap((kind, at) => [
+                   ...(at === 0 ? [] : [' and ']),
+-                  <Text key={`loop:${kind}`} color={LOOP_COLORS[kind]}>
++                  <Text key={`loop:${kind}`} color={colors[kind]}>
+                     {kind}
+                   </Text>,
+                 ])}
+                 {pr.branch !== '' && ' · '}
+-                {pr.branch !== '' && <Text color={BRANCH_COLOR}>{pr.branch}</Text>}
++                {pr.branch !== '' && <Text color={colors.branch}>{pr.branch}</Text>}
+                 {' · '}
+-                <Text color="success">{`+${pr.additions}`}</Text>{' '}
+-                <Text color="error">{`−${pr.deletions}`}</Text>
++                <Text color={colors.added}>{`+${pr.additions}`}</Text>{' '}
++                <Text color={colors.removed}>{`−${pr.deletions}`}</Text>
+                 {` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
+                 {pr.checks !== null && ' · '}
+-                {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
++                {pr.checks !== null && <Text color={colors[CHECK_ROLES[pr.checks]]}>checks {pr.checks}</Text>}
+               </Text>
+               {/* Under the facts come the actions, a line each, and then the
+                   links. Each link has a line of its own: a terminal without
+@@ -1759,7 +1709,7 @@ export const register: Register = on => {
+     return panel([
+       ...byAuthor(shown.rows, shown.viewer).map(drawRow),
+       failure !== undefined && (
+-        <Text key="failure" color="error">
++        <Text key="failure" color={colors.error}>
+           {failure}
+         </Text>
+       ),
+@@ -1767,12 +1717,13 @@ export const register: Register = on => {
+         <Text key="before-items"> </Text>
+       ),
+       // A collapsed kind's items give way to one line at the top of the list,
+-      // its count in the kind's color, which expands them again.
++      // its count in its kind's role, `question` or `notice`, which expands
++      // them again.
+       ...itemCounts
+         .filter(({ kind }) => isCollapsed(kind))
+         .map(({ kind, count }) => (
+           <Button key={`expand:${kind}`} plain onPress={() => fold(kind)}>
+-            <Text color={KIND_COLORS[kind]}>{`- ${count}`}</Text>
++            <Text color={colors[kind]}>{`- ${count}`}</Text>
+           </Button>
+         )),
+       ...[...shownItems]
+diff --git a/hooks/theme.test.ts b/hooks/theme.test.ts
+new file mode 100644
+index 00000000..2c9e95e6
+--- /dev/null
++++ b/hooks/theme.test.ts
+@@ -0,0 +1,247 @@
++import { describe, expect, test } from 'claude-code/testing'
++
++import { claudeCodeTheme, contrast, customTheme, resolve, UNKNOWN_THEME } from './theme'
++
++const DARK = claudeCodeTheme('dark')
++const LIGHT = claudeCodeTheme('light')
++
++/** Each role's color with no settings, less the background. */
++const DEFAULTS = {
++  muted: 'subtle',
++  question: 'permission',
++  notice: 'inactive',
++  success: 'success',
++  warning: 'warning',
++  error: 'error',
++  added: 'success',
++  removed: 'error',
++  watching: 'remember',
++  reviewing: 'claude',
++  branch: 'planMode',
++}
++
++const BACKGROUND_NAMES =
++  'ink, umber, stone, graphite, smoke, black, white, rgb(r,g,b), #rrggbb, or ansi256(n)'
++const ROLE_VALUES = 'rgb(r,g,b), #rrggbb, ansi256(n), a Claude Code theme color such as subtle, or default'
++
++const rounded = (ratio: number | undefined) => (ratio === undefined ? undefined : Math.round(ratio * 100) / 100)
++
++describe('contrast', () => {
++  for (const [one, other, ratio] of [
++    ['rgb(0,0,0)', 'rgb(255,255,255)', 21],
++    ['#fff', '#000000', 21],
++    ['rgb(20,20,20)', 'rgb( 20, 20, 20 )', 1],
++    ['rgb(40,40,40)', '#100f0c', 1.3],
++    ['rgb(70,70,70)', '#100f0c', 2.03],
++    ['ansi256(16)', 'ansi256(231)', 21],
++    ['ansi256(232)', 'rgb(8,8,8)', 1],
++    ['ansi256(255)', 'rgb(238,238,238)', 1],
++    ['ansi256(67)', 'rgb(95,135,175)', 1],
++  ] as const) {
++    test(`${one} against ${other} is ${ratio}:1`, () => {
++      expect(rounded(contrast(one, other))).toBe(ratio)
++    })
++  }
++
++  for (const [what, color] of [
++    ['a palette slot, which the terminal sets', 'ansi256(4)'],
++    ['a number past 255', 'rgb(256,0,0)'],
++    ['a plain name', 'gray'],
++    ['a theme key on a theme whose colors the panel does not hold', 'subtle'],
++  ]) {
++    test(`is unknown for ${what}`, () => {
++      expect(contrast(color ?? '', 'rgb(0,0,0)')).toBeUndefined()
++    })
++  }
++
++  test('measures a theme key by the theme’s colors', () => {
++    expect(rounded(contrast('subtle', 'rgb(80,80,80)', DARK.palette))).toBe(1)
++    expect(rounded(contrast('subtle', 'rgb(175,175,175)', LIGHT.palette))).toBe(1)
++    expect(rounded(contrast('composerSidebarBackground', 'rgb(38,38,38)', DARK.palette))).toBe(1)
++  })
++})
++
++describe('claudeCodeTheme', () => {
++  test('knows the base of every built-in theme, and the colors of those that are not the terminal’s', () => {
++    expect([DARK.base, DARK.palette?.subtle]).toEqual(['dark', 'rgb(80,80,80)'])
++    expect([LIGHT.base, LIGHT.palette?.subtle]).toEqual(['light', 'rgb(175,175,175)'])
++    expect(claudeCodeTheme('dark-daltonized').palette?.success).toBe('rgb(51,153,255)')
++    expect(claudeCodeTheme('light-daltonized').palette?.success).toBe('rgb(0,102,153)')
++    expect(claudeCodeTheme('dark-ansi')).toEqual({ base: 'dark', palette: null })
++    expect(claudeCodeTheme('light-ansi')).toEqual({ base: 'light', palette: null })
++    expect(claudeCodeTheme('auto')).toEqual(UNKNOWN_THEME)
++    expect(claudeCodeTheme(undefined)).toEqual(UNKNOWN_THEME)
++  })
++
++  test('lays a custom theme’s own colors over its base’s, as Claude Code takes them', () => {
++    const theme = claudeCodeTheme('light', {
++      subtle: 'rgb(225,225,225)',
++      text: '#123',
++      error: 'ansi:red',
++      warning: 'orange',
++      success: 3,
++      madeUp: 'rgb(1,2,3)',
++    })
++    expect(theme.palette).toMatchObject({
++      subtle: 'rgb(225,225,225)',
++      text: '#123',
++      error: 'ansi:red',
++      warning: 'rgb(150,108,30)',
++      success: 'rgb(44,122,57)',
++    })
++    expect(theme.palette).not.toHaveProperty('madeUp')
++    expect(claudeCodeTheme('dark-ansi', { subtle: 'rgb(1,2,3)' }).palette).toBeNull()
++  })
++})
++
++describe('customTheme', () => {
++  test('builds on the base its file names', () => {
++    expect(customTheme('light', {})).toEqual(LIGHT)
++    expect(customTheme('light-ansi', {})).toEqual({ base: 'light', palette: null })
++    expect(customTheme('dark', { subtle: 'rgb(1,2,3)' }).palette?.subtle).toBe('rgb(1,2,3)')
++  })
++
++  test('builds on dark when its file names no base Claude Code has, as Claude Code does', () => {
++    for (const base of [undefined, 'lihgt', 'auto', 'custom:other', 3, null]) {
++      expect(customTheme(base, undefined)).toEqual(DARK)
++    }
++  })
++})
++
++describe('resolve', () => {
++  for (const [name, theme, background] of [
++    ['dark', DARK, '#100f0c'],
++    ['dark-daltonized', claudeCodeTheme('dark-daltonized'), '#100f0c'],
++    ['light', LIGHT, '#f6f4ee'],
++    ['light-daltonized', claudeCodeTheme('light-daltonized'), '#f6f4ee'],
++    ['dark-ansi', claudeCodeTheme('dark-ansi'), 'inverseText'],
++    ['an unknown', UNKNOWN_THEME, 'inverseText'],
++  ] as const) {
++    test(`with no settings, the ${name} theme draws ink’s background and every role its default`, () => {
++      expect(resolve(theme, null)).toEqual({ colors: { background, text: undefined, ...DEFAULTS }, problems: [] })
++      expect(resolve(theme, {})).toEqual(resolve(theme, null))
++    })
++  }
++
++  for (const [name, dark, light] of [
++    ['umber', '#171510', '#fdfcf8'],
++    ['stone', '#1e1c16', '#eeebe2'],
++    ['graphite', 'rgb(20,20,20)', 'rgb(240,240,240)'],
++    ['ink', '#100f0c', '#f6f4ee'],
++  ] as const) {
++    test(`panel.theme ${name} draws its background by the theme’s base`, () => {
++      expect(resolve(DARK, { theme: name }).colors.background).toBe(dark)
++      expect(resolve(LIGHT, { theme: name }).colors.background).toBe(light)
++      expect(resolve(claudeCodeTheme('light-ansi'), { theme: name }).colors.background).toBe('inverseText')
++    })
++  }
++
++  for (const [value, color] of [
++    ['umber', '#171510'],
++    ['smoke', 'composerSidebarBackground'],
++    ['black', 'rgb(0,0,0)'],
++    ['#20283a', '#20283a'],
++    ['ansi256(17)', 'ansi256(17)'],
++  ] as const) {
++    test(`panel.background ${value} draws ${color}, over the theme’s`, () => {
++      expect(resolve(DARK, { theme: 'stone', background: value })).toEqual({
++        colors: { background: color, text: undefined, ...DEFAULTS },
++        problems: [],
++      })
++    })
++  }
++
++  for (const value of ['ansi256(244)', '#abc', 'rgb(200, 200, 200)', 'suggestion', 'diffRemovedWord']) {
++    test(`panel.colors takes ${value}`, () => {
++      expect(resolve(DARK, { colors: { muted: value } })).toEqual({
++        colors: { background: '#100f0c', text: undefined, ...DEFAULTS, muted: value },
++        problems: [],
++      })
++    })
++  }
++
++  test('panel.colors takes default for the engine’s own text color', () => {
++    const { colors, problems } = resolve(DARK, { colors: { muted: 'default', text: 'rgb(220,220,220)' } })
++    expect([colors.muted, colors.text, problems]).toEqual([undefined, 'rgb(220,220,220)', []])
++  })
++
++  for (const [settings, problem] of [
++    [{ theme: 'nope' }, 'panel.theme is "nope", which is not ink, umber, stone, or graphite, so the panel draws ink'],
++    [{ theme: 3 }, 'panel.theme is 3, which is not ink, umber, stone, or graphite, so the panel draws ink'],
++    [{ background: 'auto' }, `panel.background is "auto", which is not ${BACKGROUND_NAMES}, so the panel draws ink`],
++    [{ background: 'sidebar' }, `panel.background is "sidebar", which is not ${BACKGROUND_NAMES}, so the panel draws ink`],
++    [{ background: 'ansi:black' }, `panel.background is "ansi:black", which is not ${BACKGROUND_NAMES}, so the panel draws ink`],
++    [{ background: false }, `panel.background is false, which is not ${BACKGROUND_NAMES}, so the panel draws ink`],
++    [{ colors: 'red' }, 'panel.colors is "red", which is not a table of roles'],
++    [
++      { colors: { mutd: 'red' } },
++      'panel.colors.mutd is not a role (the roles are text, muted, question, notice, success, warning, error, added, removed, watching, reviewing, and branch)',
++    ],
++    [{ colors: { background: '#000' } }, 'panel.colors.background is not a role (panel.background sets the background)'],
++    [{ colors: { muted: 'gray' } }, `panel.colors.muted is "gray", which is not ${ROLE_VALUES}, so muted draws subtle`],
++    [{ colors: { muted: 'ansi:white' } }, `panel.colors.muted is "ansi:white", which is not ${ROLE_VALUES}, so muted draws subtle`],
++    [
++      { colors: { muted: 'composerSidebarBackground' } },
++      `panel.colors.muted is "composerSidebarBackground", which is not ${ROLE_VALUES}, so muted draws subtle`,
++    ],
++    [{ colors: { text: 'ansi256(256)' } }, `panel.colors.text is "ansi256(256)", which is not ${ROLE_VALUES}, so text draws default`],
++    [{ colors: { error: '' } }, `panel.colors.error is "", which is not ${ROLE_VALUES}, so error draws error`],
++    [{ colors: { error: ['red'] } }, `panel.colors.error is ["red"], which is not ${ROLE_VALUES}, so error draws error`],
++    ['ink', 'panel is "ink", which is not a table'],
++  ] as const) {
++    test(`${JSON.stringify(settings)} leaves the defaults and says why`, () => {
++      expect(resolve(DARK, settings)).toEqual({
++        colors: { background: '#100f0c', text: undefined, ...DEFAULTS },
++        problems: [problem],
++      })
++    })
++  }
++
++  const VANISH = 'would vanish on the panel’s'
++  const ENGINE = 'would hide Claude Code’s own text, so the panel draws ink'
++  const MIST = claudeCodeTheme('light', { subtle: 'rgb(225,225,225)' })
++  const DARK_ANSI = claudeCodeTheme('dark-ansi')
++  for (const [name, theme, settings, background, muted, problem] of [
++    ['a role under 1.5:1', DARK, { colors: { muted: 'rgb(40,40,40)' } }, '#100f0c', 'subtle', `panel.colors.muted rgb(40,40,40) ${VANISH} #100f0c, so muted draws subtle`],
++    ['a role over 1.5:1', DARK, { colors: { muted: 'rgb(70,70,70)' } }, '#100f0c', 'rgb(70,70,70)', undefined],
++    ['a role on a background set to its own color', DARK, { background: 'rgb(20,20,20)', colors: { muted: 'rgb(20,20,20)' } }, 'rgb(20,20,20)', 'subtle', `panel.colors.muted rgb(20,20,20) ${VANISH} rgb(20,20,20), so muted draws subtle`],
++    ['a background that hides a default', DARK, { background: 'rgb(80,80,80)' }, '#100f0c', 'subtle', 'panel.background rgb(80,80,80) would hide muted, so the panel draws ink'],
++    ['the same background over a role that shows on it', DARK, { background: 'rgb(80,80,80)', colors: { muted: 'rgb(200,200,200)' } }, 'rgb(80,80,80)', 'rgb(200,200,200)', undefined],
++    ['a background that gives way to the theme’s', DARK, { theme: 'umber', background: 'rgb(80,80,80)' }, '#171510', 'subtle', 'panel.background rgb(80,80,80) would hide muted, so the panel draws umber'],
++    ['white on dark', DARK, { background: 'white' }, '#100f0c', 'subtle', `panel.background white ${ENGINE}`],
++    ['black on light', LIGHT, { background: 'black' }, '#f6f4ee', 'subtle', `panel.background black ${ENGINE}`],
++    ['white on light', LIGHT, { background: 'white' }, 'rgb(255,255,255)', 'subtle', undefined],
++    ['black on dark', DARK, { background: 'black' }, 'rgb(0,0,0)', 'subtle', undefined],
++    ['a light gray on light', LIGHT, { background: 'rgb(230,230,230)' }, 'rgb(230,230,230)', 'subtle', undefined],
++    ['a light gray on a custom theme whose subtle matches it', MIST, { background: 'rgb(230,230,230)' }, '#f6f4ee', 'subtle', 'panel.background rgb(230,230,230) would hide muted, so the panel draws ink'],
++    ['white on dark-ansi', DARK_ANSI, { background: 'white' }, 'inverseText', 'subtle', `panel.background white ${ENGINE}`],
++    ['a gray on dark-ansi, whose colors the panel cannot know', DARK_ANSI, { background: 'rgb(80,80,80)' }, 'rgb(80,80,80)', 'subtle', undefined],
++    ['a role named as the background on dark-ansi', DARK_ANSI, { colors: { muted: 'inverseText' } }, 'inverseText', 'subtle', `panel.colors.muted inverseText ${VANISH} inverseText, so muted draws subtle`],
++    ['white on a theme of unknown base', UNKNOWN_THEME, { background: 'white' }, 'rgb(255,255,255)', 'subtle', undefined],
++  ] as const) {
++    test(`contrast: ${name} draws ${background} with muted ${muted}`, () => {
++      const { colors, problems } = resolve(theme, settings)
++      expect([colors.background, colors.muted, problems]).toEqual([
++        background,
++        muted,
++        problem === undefined ? [] : [problem],
++      ])
++    })
++  }
++
++  test('a theme whose background would hide a role gives way to ink, which stands', () => {
++    const dusk = claudeCodeTheme('dark', { subtle: 'rgb(25,23,18)' })
++    expect(resolve(dusk, { theme: 'umber' })).toEqual({
++      colors: { background: '#100f0c', text: undefined, ...DEFAULTS },
++      problems: ['panel.theme umber would hide muted, so the panel draws ink'],
++    })
++  })
++
++  test('a background that hides several roles names them all', () => {
++    const { colors, problems } = resolve(LIGHT, { background: 'rgb(80,80,80)', colors: { muted: 'rgb(200,200,200)' } })
++    expect([colors.background, colors.muted]).toEqual(['#f6f4ee', 'rgb(200,200,200)'])
++    expect(problems).toEqual([
++      'panel.background rgb(80,80,80) would hide notice, error, removed, watching, and branch, so the panel draws ink',
++    ])
++  })
++})
+diff --git a/hooks/theme.ts b/hooks/theme.ts
+new file mode 100644
+index 00000000..f5893f00
+--- /dev/null
++++ b/hooks/theme.ts
+@@ -0,0 +1,441 @@
++import type { ThemeKey } from 'claude-code'
++
++import type { Base, ClaudeCodeTheme, Colors, TextRole } from './types'
++
++/** What a role takes to draw in the engine's own text color, as Claude Code draws text with no color. */
++const ENGINE_COLOR = 'default'
++
++/**
++ * Each role's color when no setting overrides it. Every default but `text`'s
++ * is a theme key, so it follows the Claude Code theme, daltonized and custom
++ * themes included.
++ */
++const ROLE_DEFAULTS = {
++  text: ENGINE_COLOR,
++  muted: 'subtle',
++  question: 'permission',
++  notice: 'inactive',
++  success: 'success',
++  warning: 'warning',
++  error: 'error',
++  added: 'success',
++  removed: 'error',
++  watching: 'remember',
++  reviewing: 'claude',
++  branch: 'planMode',
++} as const satisfies Record<TextRole, ThemeKey | typeof ENGINE_COLOR>
++
++const TEXT_ROLES = Object.keys(ROLE_DEFAULTS) as TextRole[]
++
++/**
++ * The panel's built-in themes, each named for the color of its background,
++ * which it draws by the side of light the Claude Code theme sits on.
++ */
++const DEFAULT_THEME = 'ink'
++const PANEL_THEMES = new Map<string, Record<Base, string>>([
++  [DEFAULT_THEME, { dark: '#100f0c', light: '#f6f4ee' }],
++  ['umber', { dark: '#171510', light: '#fdfcf8' }],
++  ['stone', { dark: '#1e1c16', light: '#eeebe2' }],
++  ['graphite', { dark: 'rgb(20,20,20)', light: 'rgb(240,240,240)' }],
++])
++
++/**
++ * What every theme draws on a Claude Code theme whose colors come from the
++ * terminal's palette, or whose colors the panel cannot read: the theme's own
++ * `inverseText`, since a fixed shade could clash with a palette it cannot see.
++ */
++const PALETTE_BACKGROUND = 'inverseText'
++
++/** The theme key of the gray Claude Code draws its side panel on. */
++const SIDEBAR_KEY = 'composerSidebarBackground'
++
++/**
++ * The names `panel.background` takes besides a theme's name and a literal
++ * color. `black` and `white` are literal colors: `inverseText` flips between
++ * the two with the theme, and `ansi256(0)` is the terminal palette's black,
++ * often the terminal's own background, which would make the panel vanish.
++ */
++const BACKGROUND_ALIASES = new Map([
++  ['smoke', SIDEBAR_KEY],
++  ['black', 'rgb(0,0,0)'],
++  ['white', 'rgb(255,255,255)'],
++])
++
++/**
++ * Claude Code's colors for each public theme key, and for the key `smoke`
++ * draws, on the themes whose colors are not the terminal's, as Claude Code
++ * 2.1.300 holds them. A plugin cannot read a theme key's value at run time,
++ * so the contrast check measures a theme key against this copy.
++ */
++type Palette = Record<ThemeKey | typeof SIDEBAR_KEY, string>
++
++const DARK: Palette = {
++  text: 'rgb(255,255,255)',
++  inverseText: 'rgb(0,0,0)',
++  inactive: 'rgb(153,153,153)',
++  subtle: 'rgb(80,80,80)',
++  suggestion: 'rgb(177,185,249)',
++  remember: 'rgb(177,185,249)',
++  success: 'rgb(78,186,101)',
++  error: 'rgb(255,107,128)',
++  warning: 'rgb(255,193,7)',
++  merged: 'rgb(175,135,255)',
++  claude: 'rgb(215,119,87)',
++  permission: 'rgb(177,185,249)',
++  planMode: 'rgb(72,150,140)',
++  autoAccept: 'rgb(175,135,255)',
++  promptBorder: 'rgb(136,136,136)',
++  bashBorder: 'rgb(253,93,177)',
++  ide: 'rgb(71,130,200)',
++  diffAdded: 'rgb(34,92,43)',
++  diffRemoved: 'rgb(122,41,54)',
++  diffAddedDimmed: 'rgb(71,88,74)',
++  diffRemovedDimmed: 'rgb(105,72,77)',
++  diffAddedWord: 'rgb(56,166,96)',
++  diffRemovedWord: 'rgb(179,89,107)',
++  composerSidebarBackground: 'rgb(38,38,38)',
++}
++
++const DARK_DALTONIZED: Palette = {
++  text: 'rgb(255,255,255)',
++  inverseText: 'rgb(0,0,0)',
++  inactive: 'rgb(153,153,153)',
++  subtle: 'rgb(80,80,80)',
++  suggestion: 'rgb(153,204,255)',
++  remember: 'rgb(153,204,255)',
++  success: 'rgb(51,153,255)',
++  error: 'rgb(255,102,102)',
++  warning: 'rgb(255,204,0)',
++  merged: 'rgb(175,135,255)',
++  claude: 'rgb(255,153,51)',
++  permission: 'rgb(153,204,255)',
++  planMode: 'rgb(102,153,153)',
++  autoAccept: 'rgb(175,135,255)',
++  promptBorder: 'rgb(136,136,136)',
++  bashBorder: 'rgb(51,153,255)',
++  ide: 'rgb(71,130,200)',
++  diffAdded: 'rgb(0,68,102)',
++  diffRemoved: 'rgb(102,0,0)',
++  diffAddedDimmed: 'rgb(62,81,91)',
++  diffRemovedDimmed: 'rgb(62,44,44)',
++  diffAddedWord: 'rgb(0,119,179)',
++  diffRemovedWord: 'rgb(179,0,0)',
++  composerSidebarBackground: 'rgb(38,38,38)',
++}
++
++const LIGHT: Palette = {
++  text: 'rgb(0,0,0)',
++  inverseText: 'rgb(255,255,255)',
++  inactive: 'rgb(102,102,102)',
++  subtle: 'rgb(175,175,175)',
++  suggestion: 'rgb(87,105,247)',
++  remember: 'rgb(0,0,255)',
++  success: 'rgb(44,122,57)',
++  error: 'rgb(171,43,63)',
++  warning: 'rgb(150,108,30)',
++  merged: 'rgb(135,0,255)',
++  claude: 'rgb(215,119,87)',
++  permission: 'rgb(87,105,247)',
++  planMode: 'rgb(0,102,102)',
++  autoAccept: 'rgb(135,0,255)',
++  promptBorder: 'rgb(138,138,138)',
++  bashBorder: 'rgb(255,0,135)',
++  ide: 'rgb(71,130,200)',
++  diffAdded: 'rgb(105,219,124)',
++  diffRemoved: 'rgb(255,168,180)',
++  diffAddedDimmed: 'rgb(199,225,203)',
++  diffRemovedDimmed: 'rgb(253,210,216)',
++  diffAddedWord: 'rgb(47,157,68)',
++  diffRemovedWord: 'rgb(209,69,75)',
++  composerSidebarBackground: 'rgb(245,245,245)',
++}
++
++const LIGHT_DALTONIZED: Palette = {
++  text: 'rgb(0,0,0)',
++  inverseText: 'rgb(255,255,255)',
++  inactive: 'rgb(102,102,102)',
++  subtle: 'rgb(175,175,175)',
++  suggestion: 'rgb(51,102,255)',
++  remember: 'rgb(51,102,255)',
++  success: 'rgb(0,102,153)',
++  error: 'rgb(204,0,0)',
++  warning: 'rgb(255,153,0)',
++  merged: 'rgb(135,0,255)',
++  claude: 'rgb(255,153,51)',
++  permission: 'rgb(51,102,255)',
++  planMode: 'rgb(51,102,102)',
++  autoAccept: 'rgb(135,0,255)',
++  promptBorder: 'rgb(138,138,138)',
++  bashBorder: 'rgb(0,102,204)',
++  ide: 'rgb(71,130,200)',
++  diffAdded: 'rgb(153,204,255)',
++  diffRemoved: 'rgb(255,204,204)',
++  diffAddedDimmed: 'rgb(209,231,253)',
++  diffRemovedDimmed: 'rgb(255,233,233)',
++  diffAddedWord: 'rgb(51,102,204)',
++  diffRemovedWord: 'rgb(153,51,51)',
++  composerSidebarBackground: 'rgb(235,235,235)',
++}
++
++/**
++ * The theme keys a role takes: the public ones, which Claude Code's
++ * `ThemeKey` type lists and `Palette` holds every one of. Claude Code draws a
++ * key it does not know as no color, so a typo of any other key would draw
++ * nothing.
++ */
++const PUBLIC_THEME_KEYS: ReadonlySet<string> = new Set(Object.keys(DARK).filter(key => key !== SIDEBAR_KEY))
++
++/** Claude Code's built-in themes: the side of light each sits on, and its colors unless they are the terminal's. */
++const CLAUDE_CODE_THEMES = new Map<string, { base: Base; palette?: Palette }>([
++  ['dark', { base: 'dark', palette: DARK }],
++  ['dark-daltonized', { base: 'dark', palette: DARK_DALTONIZED }],
++  ['light', { base: 'light', palette: LIGHT }],
++  ['light-daltonized', { base: 'light', palette: LIGHT_DALTONIZED }],
++  ['dark-ansi', { base: 'dark' }],
++  ['light-ansi', { base: 'light' }],
++])
++
++export const UNKNOWN_THEME: ClaudeCodeTheme = { base: null, palette: null }
++
++/**
++ * Claude Code draws the text of a Button, its key, and a link itself, in the
++ * theme's text color, which no role can change: near white on a dark base and
++ * near black on a light one.
++ */
++const ENGINE_TEXT: Record<Base, string> = { dark: 'rgb(255,255,255)', light: 'rgb(0,0,0)' }
++
++/** Under this contrast ratio, a color is lost against the color it draws on. */
++const MIN_CONTRAST = 1.5
++
++/**
++ * The literal colors the panel takes, written as Claude Code reads them:
++ * `#rgb` or `#rrggbb`, and `rgb(r,g,b)` or `ansi256(n)`, with a space allowed
++ * after `(`, each comma, and before `)`. Each number is at most 255.
++ */
++const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
++const RGB_COLOR = /^rgb\( ?(\d{1,3}), ?(\d{1,3}), ?(\d{1,3}) ?\)$/
++const ANSI256_COLOR = /^ansi256\( ?(\d{1,3}) ?\)$/
++
++type Rgb = readonly number[]
++
++const isTable = (value: unknown): value is Record<string, unknown> =>
++  typeof value === 'object' && value !== null && !Array.isArray(value)
++
++const numbersOf = (match: RegExpExecArray | null): number[] | undefined => {
++  const numbers = match?.slice(1).map(Number)
++  return numbers?.every(number => number <= 255) === true ? numbers : undefined
++}
++
++const isLiteral = (value: string) =>
++  HEX_COLOR.test(value) || [RGB_COLOR, ANSI256_COLOR].some(pattern => numbersOf(pattern.exec(value)) !== undefined)
++
++/**
++ * What a Claude Code theme gives the panel: its base, and for a theme whose
++ * colors are not the terminal's, each key's color with a custom theme's own
++ * `overrides` over its base's, as Claude Code applies them.
++ */
++export function claudeCodeTheme(name: unknown, overrides?: unknown): ClaudeCodeTheme {
++  const theme = typeof name === 'string' ? CLAUDE_CODE_THEMES.get(name) : undefined
++  if (theme === undefined) return UNKNOWN_THEME
++  const { base, palette } = theme
++  if (palette === undefined) return { base, palette: null }
++  const own = Object.entries(isTable(overrides) ? overrides : {}).filter(
++    (entry): entry is [string, string] =>
++      Object.hasOwn(palette, entry[0]) &&
++      typeof entry[1] === 'string' &&
++      (isLiteral(entry[1]) || entry[1].startsWith('ansi:')),
++  )
++  return { base, palette: { ...palette, ...Object.fromEntries(own) } }
++}
++
++/**
++ * What a custom theme's file gives the panel. Claude Code builds a custom
++ * theme on `dark` when its `base` names none of its own themes, a misspelled
++ * one included.
++ */
++export const customTheme = (base: unknown, overrides: unknown): ClaudeCodeTheme =>
++  claudeCodeTheme(typeof base === 'string' && CLAUDE_CODE_THEMES.has(base) ? base : 'dark', overrides)
++
++/** The xterm table's color for `ansi256(n)` past the palette's first 16, which a terminal's own palette sets. */
++function xterm(n: number): Rgb | undefined {
++  if (n < 16) return undefined
++  if (n >= 232) return Array<number>(3).fill(8 + 10 * (n - 232))
++  const levels = [0, 95, 135, 175, 215, 255]
++  return [Math.floor((n - 16) / 36), Math.floor((n - 16) / 6) % 6, (n - 16) % 6].map(level => levels[level] ?? 0)
++}
++
++/** A color's red, green and blue, or undefined when the panel cannot know them. */
++function rgbOf(color: string, palette: ClaudeCodeTheme['palette']): Rgb | undefined {
++  const keyed = palette !== null && Object.hasOwn(palette, color) ? palette[color] : undefined
++  if (keyed !== undefined) return rgbOf(keyed, null)
++  const hex = HEX_COLOR.exec(color)?.[1]
++  if (hex !== undefined) {
++    const digits = hex.length === 3 ? [...hex].map(digit => digit + digit) : (hex.match(/../g) ?? [])
++    return digits.map(pair => parseInt(pair, 16))
++  }
++  const ansi256 = numbersOf(ANSI256_COLOR.exec(color))?.[0]
++  return ansi256 === undefined ? numbersOf(RGB_COLOR.exec(color)) : xterm(ansi256)
++}
++
++const luminance = (rgb: Rgb) => {
++  const [r = 0, g = 0, b = 0] = rgb.map(channel => {
++    const value = channel / 255
++    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
++  })
++  return 0.2126 * r + 0.7152 * g + 0.0722 * b
++}
++
++/**
++ * The contrast ratio of two colors as the Web Content Accessibility
++ * Guidelines (WCAG) 2 define it, from 1 for one color to 21 for black on
++ * white, or undefined when the panel cannot know either color.
++ */
++export function contrast(one: string, other: string, palette: ClaudeCodeTheme['palette'] = null): number | undefined {
++  const [first, second] = [rgbOf(one, palette), rgbOf(other, palette)]
++  if (first === undefined || second === undefined) return undefined
++  const [lighter = 0, darker = 0] = [luminance(first), luminance(second)].sort((a, b) => b - a)
++  return (lighter + 0.05) / (darker + 0.05)
++}
++
++/** Whether a color would vanish on a background: the same name, or too little contrast where the panel knows both. */
++function vanishes(color: string | undefined, background: string, palette: ClaudeCodeTheme['palette']): boolean {
++  if (color === undefined) return false
++  const ratio = contrast(color, background, palette)
++  return color === background || (ratio !== undefined && ratio < MIN_CONTRAST)
++}
++
++/** `a`, `a and b`, or `a, b, and c`. */
++function listed(items: readonly string[], conjunction: string): string {
++  const head = items.slice(0, -1)
++  const last = items.at(-1) ?? ''
++  if (head.length === 0) return last
++  return head.length === 1 ? `${head.join('')} ${conjunction} ${last}` : `${head.join(', ')}, ${conjunction} ${last}`
++}
++
++const colorOf = (value: string) => (value === ENGINE_COLOR ? undefined : value)
++
++/** A theme's background on a Claude Code theme: by its base, or `inverseText` where the colors are unknown. */
++function themeBackground(name: string, theme: ClaudeCodeTheme): string {
++  const pair = PANEL_THEMES.get(name)
++  return pair === undefined || theme.base === null || theme.palette === null ? PALETTE_BACKGROUND : pair[theme.base]
++}
++
++/** What the panel draws for a `panel.background` value, or undefined when it takes none. */
++function backgroundFor(value: string, theme: ClaudeCodeTheme): string | undefined {
++  if (PANEL_THEMES.has(value)) return themeBackground(value, theme)
++  return BACKGROUND_ALIASES.get(value) ?? (isLiteral(value) ? value : undefined)
++}
++
++const LITERAL_FORMS = ['rgb(r,g,b)', '#rrggbb', 'ansi256(n)']
++const BACKGROUND_NAMES = listed([...PANEL_THEMES.keys(), ...BACKGROUND_ALIASES.keys(), ...LITERAL_FORMS], 'or')
++const ROLE_VALUES = listed([...LITERAL_FORMS, 'a Claude Code theme color such as subtle', ENGINE_COLOR], 'or')
++
++const written = (value: unknown) => JSON.stringify(value) ?? String(value)
++
++/** The theme `panel.theme` names, or the default when it names none the panel has. */
++function themeNameOf(chosen: unknown, problems: string[]): string {
++  if (typeof chosen === 'string' && PANEL_THEMES.has(chosen)) return chosen
++  if (chosen !== undefined) {
++    const themes = listed([...PANEL_THEMES.keys()], 'or')
++    problems.push(`panel.theme is ${written(chosen)}, which is not ${themes}, so the panel draws ${DEFAULT_THEME}`)
++  }
++  return DEFAULT_THEME
++}
++
++const isRoleValue = (value: string) => isLiteral(value) || PUBLIC_THEME_KEYS.has(value) || value === ENGINE_COLOR
++
++/** The `panel.colors` overrides the panel takes, by role. */
++function overridesOf(colors: unknown, problems: string[]): Map<TextRole, string> {
++  const overrides = new Map<TextRole, string>()
++  if (colors !== undefined && !isTable(colors)) {
++    problems.push(`panel.colors is ${written(colors)}, which is not a table of roles`)
++  }
++  for (const [name, value] of Object.entries(isTable(colors) ? colors : {})) {
++    const role = TEXT_ROLES.find(one => one === name)
++    if (role === undefined) {
++      problems.push(
++        name === 'background'
++          ? 'panel.colors.background is not a role (panel.background sets the background)'
++          : `panel.colors.${name} is not a role (the roles are ${listed(TEXT_ROLES, 'and')})`,
++      )
++    } else if (typeof value === 'string' && isRoleValue(value)) {
++      overrides.set(role, value)
++    } else {
++      const fallback = ROLE_DEFAULTS[role]
++      problems.push(
++        `panel.colors.${role} is ${written(value)}, which is not ${ROLE_VALUES}, so ${role} draws ${fallback}`,
++      )
++    }
++  }
++  return overrides
++}
++
++/** A background the panel may draw: the setting that names it, its name, and its color. */
++type Layer = { setting: string; name: string; color: string }
++
++/**
++ * Resolves the `panel` settings, as `project config get panel` prints them,
++ * into one color per role for a Claude Code theme. Each layer overrides the
++ * one before it: each role's default and the default theme's background,
++ * the theme `panel.theme` picks, then `panel.background` and
++ * `panel.colors.<role>`. A value the panel does not take gives way to the
++ * layer below. So does a color that would vanish on the background: a role's
++ * override gives way to the role's default, and the background gives way
++ * only when a default, or Claude Code's own text, would still vanish on it.
++ * Each refusal adds a problem that says why.
++ */
++export function resolve(theme: ClaudeCodeTheme, settings: unknown): { colors: Colors; problems: string[] } {
++  const problems: string[] = []
++  if (settings !== null && !isTable(settings)) problems.push(`panel is ${written(settings)}, which is not a table`)
++  const { theme: chosen, background, colors } = isTable(settings) ? settings : {}
++  const themeName = themeNameOf(chosen, problems)
++  const themeLayer = (name: string): Layer => ({
++    setting: `panel.theme ${name}`,
++    name,
++    color: themeBackground(name, theme),
++  })
++
++  const layers: Layer[] = []
++  if (background !== undefined) {
++    const color = typeof background === 'string' ? backgroundFor(background, theme) : undefined
++    if (typeof background === 'string' && color !== undefined) {
++      layers.push({ setting: `panel.background ${background}`, name: background, color })
++    } else {
++      problems.push(
++        `panel.background is ${written(background)}, which is not ${BACKGROUND_NAMES}, so the panel draws ${themeName}`,
++      )
++    }
++  }
++  if (themeName !== DEFAULT_THEME) layers.push(themeLayer(themeName))
++  const overrides = overridesOf(colors, problems)
++
++  const { base, palette } = theme
++  const drawOn = (layer: Layer) => {
++    const drawn: Colors = { background: layer.color }
++    const vanished: string[] = []
++    for (const role of TEXT_ROLES) {
++      const fallback = ROLE_DEFAULTS[role]
++      const wanted = overrides.get(role)
++      const isKept = wanted !== undefined && !vanishes(colorOf(wanted), layer.color, palette)
++      if (wanted !== undefined && !isKept) {
++        vanished.push(
++          `panel.colors.${role} ${wanted} would vanish on the panel’s ${layer.color}, so ${role} draws ${fallback}`,
++        )
++      }
++      drawn[role] = colorOf(isKept ? wanted : fallback)
++    }
++    const hidden: string[] = TEXT_ROLES.filter(role => vanishes(drawn[role], layer.color, palette))
++    if (base !== null && vanishes(ENGINE_TEXT[base], layer.color, palette)) hidden.push('Claude Code’s own text')
++    return { drawn, vanished, hidden }
++  }
++
++  const last = themeLayer(DEFAULT_THEME)
++  for (const [index, layer] of layers.entries()) {
++    const { drawn, vanished, hidden } = drawOn(layer)
++    if (hidden.length === 0) return { colors: drawn, problems: [...problems, ...vanished] }
++    const next = layers[index + 1] ?? last
++    problems.push(`${layer.setting} would hide ${listed(hidden, 'and')}, so the panel draws ${next.name}`)
++  }
++  const { drawn, vanished } = drawOn(last)
++  return { colors: drawn, problems: [...problems, ...vanished] }
++}
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index fba75da0..d8bcf5fd 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -1,3 +1,31 @@
++/** Which side of light a Claude Code theme sits on. */
++export type Base = 'dark' | 'light'
++
++/**
++ * What the panel knows of the session's Claude Code theme: the side of light
++ * it sits on, and the color of each theme key when the colors are not the
++ * terminal's. Both are null for a theme the panel cannot read.
++ */
++export type ClaudeCodeTheme = { base: Base | null; palette: Readonly<Record<string, string>> | null }
++
++/** The roles that color the panel's text, each named for what its color means. */
++export type TextRole =
++  | 'text'
++  | 'muted'
++  | 'question'
++  | 'notice'
++  | 'success'
++  | 'warning'
++  | 'error'
++  | 'added'
++  | 'removed'
++  | 'watching'
++  | 'reviewing'
++  | 'branch'
++
++/** One color per role, absent for a role that draws in the engine's text color. */
++export type Colors = { background: string } & { [role in TextRole]?: string }
++
+ /** What a loop does with its pull requests: `watch-threads.sh` watches, `watch-prs.sh` reviews. */
+ export type LoopKind = 'watching' | 'reviewing'
+ 
+@@ -143,10 +171,12 @@ declare module 'claude-code' {
+       panelSending: Record<string, Sending>
+       /** What the release before the rename kept as `panelSending`, which the panel takes over. */
+       bandSending: Record<string, Sending>
+-      /** The panel's background for the session's Claude Code theme, which `panel.background = "auto"` takes. */
+-      panelThemeBackground: string
+-      /** `panel.background` as the panel last read it: `auto`, or the color it draws for the value. */
+-      panelBackground: string
++      /** What the panel knows of the session's Claude Code theme. */
++      panelTheme: ClaudeCodeTheme
++      /** The `panel` settings as the panel last read them, null when no file sets any. */
++      panelSettings: unknown
++      /** The color of each role, resolved from the theme and the settings. */
++      panelColors: Colors
+       /** Whether the panel took the keyboard since the last keystroke in the prompt, so its hint names its own keys. */
+       isPanelFocused: boolean
+     }
+diff --git a/src/projector/config.py b/src/projector/config.py
+index 84b0badf..5b2a01fe 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -45,8 +45,8 @@
+ CONFIG_NAME = ".projector.toml"
+ 
+ # Every key Projector reads, with its type. `project config set` accepts only
+-# these keys and values of these types, and `Config.setting` refuses a file's
+-# value of another type.
++# these keys and those of `TABLES`, with values of their types, and
++# `Config.setting` refuses a file's value of another type.
+ SETTINGS: dict[str, type] = {
+     "projects.dir": str,
+     "instructions.enabled": bool,
+@@ -60,9 +60,20 @@
+     "review.summarize": bool,
+     "fix.resolve_human_threads": bool,
+     "watch.auto_start": bool,
++    "panel.theme": str,
+     "panel.background": str,
+ }
+ 
++# Tables whose keys Projector does not list, written as the table and a
++# placeholder for the key, with the type every value takes. `set` and `unset`
++# accept any lowercase name under the table. The panel owns its role names,
++# so a new role needs no release of the CLI.
++TABLES: dict[str, type] = {
++    "panel.colors.<role>": str,
++}
++
++_TABLE_KEY = re.compile(r"[a-z][a-z0-9_-]*")
++
+ 
+ class ConfigError(ProjectorError):
+     exit_code = 78
+@@ -73,14 +84,24 @@ def same_value(one: Any, other: Any) -> bool:
+ 
+ 
+ def _unknown_key(key: str, reason: str = "") -> UsageError:
+-    return UsageError(f"unknown key {key!r}{reason}; the keys are {', '.join(sorted(SETTINGS))}")
++    return UsageError(f"unknown key {key!r}{reason}; the keys are {', '.join(sorted([*SETTINGS, *TABLES]))}")
+ 
+ 
+-def setting_type(key: str) -> type:
+-    try:
++def _known_type(key: str) -> Optional[type]:
++    if key in SETTINGS:
+         return SETTINGS[key]
+-    except KeyError:
+-        raise _unknown_key(key) from None
++    table, _, name = key.rpartition(".")
++    for pattern, kind in TABLES.items():
++        if pattern.rpartition(".")[0] == table and _TABLE_KEY.fullmatch(name):
++            return kind
++    return None
++
++
++def setting_type(key: str) -> type:
++    kind = _known_type(key)
++    if kind is None:
++        raise _unknown_key(key)
++    return kind
+ 
+ 
+ def parse_value(key: str, text: str) -> Any:
+@@ -305,13 +326,13 @@ def write_value(path: Path, key: str, value: Any) -> Change:
+ def unset_value(path: Path, key: str) -> Change:
+     """Remove `key` from the file at `path`.
+ 
+-    A key outside `SETTINGS` is removed when the file sets it, so a setting
+-    Projector no longer reads can be cleaned up, and refused when the file
+-    does not, so a misspelled key still gets the list of keys.
++    A key Projector does not read is removed when the file sets it, so a
++    setting Projector no longer reads can be cleaned up, and refused when the
++    file does not, so a misspelled key still gets the list of keys.
+     """
+ 
+     change = write_value(path, key, None)
+-    if change.action == "unchanged" and key not in SETTINGS:
++    if change.action == "unchanged" and _known_type(key) is None:
+         raise _unknown_key(key, f", which {path} does not set")
+     return change
+ 
+diff --git a/tests/test_config.py b/tests/test_config.py
+index 9ef4ab4f..4a958fd1 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -13,7 +13,7 @@
+ 
+ from projector import config as config_module
+ from projector.cli import main
+-from projector.config import SETTINGS, ConfigError, config_paths, load, merge, user_config_path
++from projector.config import SETTINGS, TABLES, ConfigError, config_paths, load, merge, user_config_path
+ from projector.core import json_scalar
+ 
+ 
+@@ -535,24 +535,57 @@ def test_a_key_in_an_inline_table_is_refused_untouched(self) -> None:
+             self.assertIn("the file is unchanged", stderr)
+             self.assertEqual(text, self.repo_file.read_text())
+ 
+-    def test_the_panel_background_is_set_and_unset_as_the_panel_reads_it(self) -> None:
+-        def background() -> dict[str, object]:
+-            code, stdout, stderr = self.invoke("config", "get", "panel.background", "--default", "auto", "--json")
+-            self.assertEqual(0, code, stderr)
+-            return json.loads(stdout)
++    def panel(self) -> tuple[int, object]:
++        """The `panel` table as the panel reads it, with the exit status: 1 when no file sets any of it."""
++
++        code, stdout, stderr = self.invoke("config", "get", "panel", "--json")
++        self.assertIn(code, (0, 1), stderr)
++        return code, json.loads(stdout)["value"]
+ 
++    def test_the_panel_theme_and_background_are_set_and_unset_as_the_panel_reads_them(self) -> None:
++        self.assertEqual((1, None), self.panel())
++
++        self.assert_set("panel.theme", "umber", "--user")
+         self.assert_set("panel.background", "rgb(20,20,20)", "--user")
+ 
+-        self.assertEqual('[panel]\nbackground = "rgb(20,20,20)"\n', self.user_file.read_text())
+-        self.assertEqual("rgb(20,20,20)", background()["value"])
+-        self.assertEqual(str(self.user_file), background()["source"])
++        self.assertEqual('[panel]\ntheme = "umber"\nbackground = "rgb(20,20,20)"\n', self.user_file.read_text())
++        self.assertEqual((0, {"theme": "umber", "background": "rgb(20,20,20)"}), self.panel())
+ 
+-        code, _, stderr = self.invoke("config", "unset", "panel.background", "--user")
++        for key in ("panel.theme", "panel.background"):
++            code, _, stderr = self.invoke("config", "unset", key, "--user")
++            self.assertEqual(0, code, stderr)
+ 
+-        self.assertEqual(0, code, stderr)
+         self.assertEqual("[panel]\n", self.user_file.read_text())
+-        self.assertEqual("auto", background()["value"])
+-        self.assertIsNone(background()["source"])
++        self.assertEqual((0, {}), self.panel())
++
++    def test_panel_colors_are_set_and_unset_under_any_role_name(self) -> None:
++        self.assert_set("panel.background", "stone", "--user")
++        self.assert_set("panel.colors.muted", "rgb(170,170,170)", "--user")
++        # The panel owns the role names, so the CLI takes any lowercase name.
++        self.assert_set("panel.colors.new_role", "suggestion", "--user")
++
++        self.assertEqual(
++            '[panel]\nbackground = "stone"\n\n[panel.colors]\nmuted = "rgb(170,170,170)"\nnew_role = "suggestion"\n',
++            self.user_file.read_text(),
++        )
++        self.assertEqual(
++            (0, {"background": "stone", "colors": {"muted": "rgb(170,170,170)", "new_role": "suggestion"}}),
++            self.panel(),
++        )
++
++        for key in ("panel.colors.muted", "panel.colors.new_role"):
++            code, _, stderr = self.invoke("config", "unset", key, "--user")
++            self.assertEqual(0, code, stderr)
++
++        self.assertEqual('[panel]\nbackground = "stone"\n\n[panel.colors]\n', self.user_file.read_text())
++
++        for key in ("panel.colors.Muted", "panel.colors", "panel.colors.muted.dark", "panel.colors.1st", "panel.shades.muted"):
++            code, _, stderr = self.invoke("config", "set", key, "rgb(1,2,3)", "--user")
++
++            self.assertEqual(2, code, key)
++            self.assertIn(f"unknown key {key!r}", stderr)
++            self.assertIn("panel.colors.<role>", stderr)
++        self.assertEqual('[panel]\nbackground = "stone"\n\n[panel.colors]\n', self.user_file.read_text())
+ 
+     def test_user_and_file_scopes_write_their_own_files(self) -> None:
+         parent = self.home / "work" / ".projector.toml"
+@@ -649,7 +682,7 @@ def test_a_symlinked_user_file_stays_a_link(self) -> None:
+ 
+     def test_the_documented_keys_are_the_known_keys(self) -> None:
+         documentation = (Path(__file__).resolve().parents[1] / "docs" / "cli.md").read_text()
+-        rows = re.findall(r"^\| `([a-z_.]+)` \| (boolean|string) \|", documentation, re.MULTILINE)
++        rows = re.findall(r"^\| `([a-z_.]+(?:<[a-z]+>)?)` \| (boolean|string) \|", documentation, re.MULTILINE)
+         names = {bool: "boolean", str: "string"}
+ 
+-        self.assertEqual({key: names[kind] for key, kind in SETTINGS.items()}, dict(rows))
++        self.assertEqual({key: names[kind] for key, kind in {**SETTINGS, **TABLES}.items()}, dict(rows))
