@@ -137,6 +137,8 @@ declare module 'claude-code' {
       panelThreads: { drawer: string; threads: Thread[] } | null
       /** The session's inbox, as the panel last read it. */
       panelInbox: Item[]
+      /** The kinds of item collapsed to one line, from the header's counts. */
+      panelCollapsed: Item['kind'][]
       /** The answers the panel is delivering, by reference. */
       panelSending: Record<string, Sending>
       /** What the release before the rename kept as `panelSending`, which the panel takes over. */
