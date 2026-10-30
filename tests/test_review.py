@@ -3283,7 +3283,8 @@ class HoldTests(ReviewCase):
         self.assertEqual(0, code, err)
         self.assertEqual({}, self.held())
         self.assertEqual([f"ended the hold on {REPO}#1, deleting hold comment {comment}, which listed {self.CHANGE}",
-                          f"the review loop reviews {self.head[:7]} next, and a clean verdict marks it ready; it is a "
+                          f"the session reviewing it reviews {self.head[:7]} next, and a clean verdict marks it ready; "
+                          "it is a "
                           "draft"], out.splitlines())
         self.assertEqual([], self.drafts())
 
@@ -3348,7 +3349,8 @@ class HoldTests(ReviewCase):
                                  "ending the hold never marks the pull request ready")
                 self.assertEqual([f"ended the hold on {REPO}#1, deleting hold comment {comment}, which listed "
                                   f"{self.CHANGE}; {self.OTHER}",
-                                  f"the review loop reviews {self.head[:7]} next, and a clean verdict marks it ready; "
+                                  f"the session reviewing it reviews {self.head[:7]} next, and a clean verdict marks "
+                                  "it ready; "
                                   f"it is {'a draft' if draft else 'not a draft'}"], out.splitlines())
 
     def test_a_bare_drop_deletes_every_hold_comment_by_the_author(self) -> None:
@@ -3785,7 +3787,7 @@ class InterdiffRuleTests(IncrementalCase):
         self.push_feature(self.build(self.reviewed, {"a.css": css(r1=9, r2=9)}))
         self.assertEqual(0, self.setup_review()[0])
 
-        self.refused("no review loop runs this review")
+        self.refused("this review runs in no loop")
 
     def test_an_untrusted_head_is_full(self) -> None:
         self.github.commit_authors = ["operator", "stranger"]

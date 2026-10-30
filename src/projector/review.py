@@ -777,7 +777,7 @@ def write_hold(repo: str, number: int, comment: Optional[int], changes: list[str
 
 def hold_add(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
     """Post the hold, or add `changes` to the newest one. Only once the comment reads back is the pull request
-    drafted: to the review loop, a draft on an unchanged head with no hold open is an author who answered
+    drafted: to the watch daemon, a draft on an unchanged head with no hold open is an author who answered
     without pushing."""
     number = pr["number"]
     if pr.get("state") != "open":
@@ -801,7 +801,7 @@ def hold_add(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
 def hold_drop(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
     """Remove `changes`, which the owner decided will not be built, from every hold comment of the author's
     that lists them, and delete a comment left with none. The hold ends only once no comment is left, on a
-    head no push changed, which asks the review loop to re-review it."""
+    head no push changed, which asks the session reviewing it to re-review it."""
     number = pr["number"]
     if not held:
         raise ReviewError(f"{repo}#{number} has no hold open, so there is no change to drop")
@@ -856,7 +856,7 @@ def hold_lines(result: dict) -> list[str]:
                 f"{count} still listed: " + "; ".join(changes) + f"; {state}"]
     return [f"ended the hold on {where}, deleting hold comment {comment['id']}, which listed "
             + ("; ".join(changes) if changes else "no change"),
-            f"the review loop reviews {head} next, and a clean verdict marks it ready; {state}"]
+            f"the session reviewing it reviews {head} next, and a clean verdict marks it ready; {state}"]
 
 
 # Resolving which review a command means
@@ -1707,7 +1707,7 @@ def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: boo
         if not enabled:
             raise Refused("review.incremental is false")
         if loop is None:
-            raise Refused("no review loop runs this review, so it has no full review of its own to build on")
+            raise Refused("this review runs in no loop, so it has no full review of its own to build on")
         if not state.get("trusted"):
             raise Refused(f"the head {sha[:7]} is untrusted ({state.get('untrusted_because') or 'no reason recorded'})")
         entries = [r for r in read_record(root, loop) if r.get("repo") == repo and r.get("number") == number]
@@ -2223,7 +2223,7 @@ def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
     many `suggestions` stand with that review, as `with_full_review` finds them.
 
     One entry per account, not per model, because a reviewer is a model within an account: a teammate whose
-    loop runs the same model must not hide the verdict a review loop looks for as its own."""
+    session runs the same model must not hide the verdict a reviewing session looks for as its own."""
     newest: dict[tuple[str, str], tuple[dict, dict]] = {}
 
     def order(entry: dict) -> tuple[datetime, int]:

@@ -311,7 +311,7 @@ def cached_release(path: Path, url: str) -> tuple[float, Optional[str]]:
 def record_release(path: Path, url: str, version: Optional[str]) -> bool:
     """Cache `version` as checked now, and say whether the cache could be written."""
 
-    # Parallel commands, such as a review loop's subagents, write this at
+    # Parallel commands, such as a session's reviewer subagents, write this at
     # once, so each writes its own file and renames it into place.
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -655,7 +655,7 @@ def parser() -> argparse.ArgumentParser:
                              "later: default the review set up for this pull request)")
         command.add_argument("--state-dir", type=Path,
                              help="where review state and locks live (default: $XDG_STATE_HOME/projector/reviews)")
-        command.add_argument("--loop", help="the review loop's id, which keys its record of published reviews")
+        command.add_argument("--loop", help="the reviewing session's id, which keys its record of published reviews")
         add_output(command)
     review_setup.add_argument("--checkout", type=Path,
                               help="the source checkout to fetch into (default: the repository containing "
