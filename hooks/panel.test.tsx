@@ -2242,6 +2242,22 @@ test('a dropped RESTORED says so without asking for an answer, and is not sent a
   expect(session.submitted).toHaveLength(1)
 })
 
+test('a dropped outcome reopens its request and asks you to mark it again', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { done: true as const, answeredAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [requested({ answer })], { drop: 'a hook refused it' })
+  await startSession($, clock)
+  await clock.advance(TICK)
+  await clock.settle()
+
+  expect(session.submitted.map(one => one.text)).toEqual(['DONE 3 Test the gutters'])
+  expect(session.toasts).toEqual([
+    'projector: the outcome of "Test the gutters" did not reach its agent (a hook refused it); mark it done or declined again',
+  ])
+  expect(session.store.store.get('3')?.answer).toBeUndefined()
+})
+
 test('an answer from a terminal waits behind a long turn on one claim, renewed without reading the store', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

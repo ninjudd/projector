@@ -665,15 +665,17 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
   )
   if (ran?.exitCode === 0) await replace($, itemOf(ran.stdout, session))
   if (outcome === 'reopen') {
-    // You never see an item's number, so the toast names the question by its
-    // subject. A restore's line is not sent again, and its question stays open.
-    const question = (await read($, items)).find(one => one.ref === ref && one.session === session)
-    const quoted = question === undefined ? undefined : quoteOf(question)
+    // You never see an item's number, so the toast names the item by its
+    // subject. A restore's line is not sent again, and its item stays open.
+    const item = (await read($, items)).find(one => one.ref === ref && one.session === session)
+    const quoted = item === undefined ? undefined : quoteOf(item)
     const why = reason ? ` (${reason})` : ''
     void $.ui.toast(
       text.startsWith('RESTORED ')
-        ? `projector: word that ${quoted ?? 'a question'} is open again did not reach its agent${why}`
-        : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
+        ? `projector: word that ${quoted ?? 'an item'} is open again did not reach its agent${why}`
+        : item?.kind === 'request'
+          ? `projector: the outcome of ${quoted ?? 'a request'} did not reach its agent${why}; mark it done or declined again`
+          : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
     )
   }
 }

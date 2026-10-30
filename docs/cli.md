@@ -1999,9 +1999,10 @@ needs you.
 `answer`, `dismiss`, `snooze`, `done`, and `decline` record your choice, so
 the permission rules `project init` adds ask you before an agent runs one, in
 Claude Code, and leave them to Codex's usual approval. Otherwise an agent
-could answer its own question or mark its own request done. Projector's panel runs them itself, so answering there never asks.
-`restore` takes no choice from you, so an agent runs it without asking, in
-either host, when you say a dismissal was a mistake.
+could answer its own question or mark its own request done. Projector's
+panel runs them itself, so answering there never asks. `restore` takes no
+choice from you, so an agent runs it without asking, in either host, when
+you say a dismissal was a mistake.
 
 Every command refuses any other form of reference, such as `#337.3`,
 `octo/web#12.1`, or `q2`, with exit code 65, and no command lists, delivers,
@@ -2157,8 +2158,9 @@ withdrew 3
 
 `withdraw` takes any kind. In one write, it records the item as dismissed
 and withdrawn and marks it delivered, so nothing goes back to the agent, not
-even a `DISMISSED` line for a question or a `DECLINED` line for a request. Projector's panel drops the item at
-once, and `list --all` shows it as `withdrawn`. `withdraw` refuses what
+even a `DISMISSED` line for a question or a `DECLINED` line for a request.
+Projector's panel drops the item at once, and `list --all` shows it as
+`withdrawn`. `withdraw` refuses what
 `dismiss` refuses: an answer letter, such as `3.a`, and an item already
 answered, dismissed, or withdrawn, with exit code 65, and a number no session
 holds, with exit code 66. In Claude Code, the agent withdraws an item with
