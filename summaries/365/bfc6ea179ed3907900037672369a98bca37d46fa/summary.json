@@ -1,0 +1,139 @@
+{
+ "version": 1,
+ "name": "Merged plans as records",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 365,
+  "title": "Complete a project with its last code, and leave a completed plan as it is",
+  "head": "bfc6ea179ed3907900037672369a98bca37d46fa",
+  "headRef": "worktree-shipped-plans-are-records",
+  "base": "ee724a7e1f8de17dbe59ee0bc660c8a0676d366d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector keeps each project's plan in Git under <code>docs/projects/</code>, and <code>project init</code> writes a block of conventions into every adopting repository's <code>AGENTS.md</code>. That block told agents to \"keep <code>docs/</code> describing the behavior on the current branch\". Because plans live under <code>docs/</code>, agents and the review loop read the rule as covering plans whose work had already merged. Review findings on later changes then asked agents to rewrite those plans, which cost review rounds and erased the record of what was decided.",
+   "Those plans were still <code>in-progress</code> although their code had merged, because their projects waited for a release that Projector never tracks. So this pull request makes two decisions together:",
+   "<ul><li><b>A project closes with its last code.</b> The pull request that carries the last of a project's code runs <code>project done</code>, so the project is <code>completed</code> when that pull request merges, never in a separate pull request. A release, deployment, or rollout after that is tracked outside Projector.</li><li><b>A <code>completed</code> plan is a record.</b> Later work that changes behavior the plan describes updates the living documentation instead, and records its own decision in the plan of the project it belongs to. An unfinished plan stays editable, and so does a plan the pull request itself marks <code>completed</code>.</li></ul>",
+   "The second decision depends on the first: status is a reliable test for a record only when projects reach <code>completed</code> promptly. The change is all prose and two templates, plus the hash that pins the block's new version. It changes no code path."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Plan</b>: a project's <code>readme.md</code> under <code>docs/projects/</code>, with numbered sections that code and other documents cite.</li><li><b>Record</b>: a plan at <code>status: completed</code>, which later work leaves as it is.</li><li><b>Living documentation</b>: the rest of <code>docs/</code>, which always describes the current behavior.</li><li><b>Projector block</b>: the generated section of <code>AGENTS.md</code> between <code>projector:begin</code> and <code>projector:end</code>, written from <code>agents-block.md</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first head defined a record section by section. Its review was clean, with one suggestion, which the next push took.</li><li>The third head keyed the record on <code>completed</code> and closed projects at merge. Its review suggested exempting only plans completed on the pull request's base, which this head does.</li><li>This head's review is clean, with one suggestion: scope \"Never open a separate pull request just to mark a project completed\" to shipped projects, so an abandoned or superseded project can still be closed.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "block",
+   "title": "The generated block closes projects at merge and protects completed plans",
+   "kicker": "The template, this repository's copy of it, and the hash that pins it",
+   "intro": [
+    "The Projector block is the text <code>project init</code> writes into each adopting repository's <code>AGENTS.md</code>. Its template moves to version 17. The sentence about keeping <code>docs/</code> current now names only the living documentation. A new paragraph says that a plan is not living documentation, that <code>project done</code> runs in the pull request that carries a project's last code and never in a separate one, and that a <code>completed</code> plan stays as it is.",
+    "<code>tests/test_instructions.py</code> pins each version's template by hash, so the template cannot change without a version bump. Versions 15 and 16 are pinned too, from this pull request's earlier heads, though they never shipped. This repository's <code>AGENTS.md</code> is regenerated from the template, and <code>project check</code> reports it stale if the two differ."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The <code>AGENTS.md</code> block is byte-identical to the template with <code>{projects_dir}</code> filled in as <code>docs/projects</code>, and the template's SHA-256 is the hash pinned for version 17."
+    },
+    {
+     "kind": "verify",
+     "text": "Running <code>project init</code> on a temporary repository holding <code>main</code>'s version-14 block upgraded it to version 17 and kept the repository's own text above the block."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The source of the block: version bump, the narrowed documentation sentence, and the new paragraph on plans.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>{projects_dir}</code> is filled with the repository's configured projects directory, so the paragraph names the right path in a repository that keeps plans elsewhere.",
+       "line": 21
+      },
+      {
+       "kind": "context",
+       "text": "This sentence has no exception for a project the user ends as abandoned or superseded, which has no pull request that carries its last code. The README's status bullet limits the rule to a project that shipped.",
+       "line": 25
+      }
+     ]
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's copy of the block, regenerated from the template."
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins the version-15, 16, and 17 template text by SHA-256 hash."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The projects README closes at merge and keeps completed plans as records",
+   "kicker": "The full rules for this repository, and two sentences of them for new adopters",
+   "intro": [
+    "<code>docs/projects/README.md</code> is the reference for the project model. The <code>completed</code> status bullet and the paragraph about <code>project done</code> now say to close a project in the pull request that merges its last code, not after a release. A new section, \"Leave a completed plan as it is\", says what later work does instead and lists the two ways a completed plan still changes: the <code>project status</code>, <code>project priority</code>, and <code>project owner</code> commands, and the sweep after a rename.",
+    "<code>project init</code> writes <code>project-readme.md</code> as a new adopter's <code>docs/projects/README.md</code>, so that template gets both rules in two sentences. An existing adopter keeps the README it has, because <code>init</code> only creates the file when it is missing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/README.md",
+     "note": "The status bullet, the <code>project done</code> paragraph, and the new section after \"Write a project plan\"."
+    },
+    {
+     "path": "src/projector/templates/project-readme.md",
+     "note": "Two sentences of the rules for the README that <code>init</code> creates."
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "Each skill that closes a project, edits a plan, or judges a finding follows the rules",
+   "kicker": "The review method, fix-pr, implement, spec, and finish",
+   "intro": [
+    "Every one of these skills now uses <code>status: completed</code> as the test for a record, and the change that merges a project's last code as the point where it closes.",
+    "<ul><li><b>The review method</b> drops a finding that asks a change to rewrite or annotate a plan already <code>completed</code> on the pull request's base, even one that cites the rule that keeps <code>docs/</code> current. A plan the change itself marks <code>completed</code> is not a record yet. When living documentation went stale, the finding asks for that document instead.</li><li><b><code>fix-pr</code></b> declines such a finding with that reason, fixes a finding about an outcome the pull request records, and fixes the living document when one describes the same behavior.</li><li><b><code>implement</code></b> leaves a completed plan as it is and continues with <code>finish</code> in the pull request that carries a project's last code.</li><li><b><code>spec</code></b> asks for acceptance criteria the merged code can meet.</li><li><b><code>finish</code></b> runs <code>project done</code> in that pull request. A criterion that waits on a release no longer holds the project open, and the plan says where that step is tracked.</li></ul>",
+    "These are instructions a model follows, so no test exercises them. Read each paragraph for whether it says the same thing as the README."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The review method and <code>fix-pr</code> both key the record on the pull request's base, and both say that a plan the change itself marks <code>completed</code> is not a record yet."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/review-pr/method.md",
+     "note": "A new rule in § 6, among the rules that decide which verified findings ship."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "A decline rule placed after the numbered verify-and-fix steps."
+    },
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "Leave a completed plan as it is, and continue with <code>finish</code> rather than waiting for a release."
+    },
+    {
+     "path": "skills/spec/SKILL.md",
+     "note": "Acceptance criteria the merged code can meet."
+    },
+    {
+     "path": "skills/finish/SKILL.md",
+     "note": "Run <code>project done</code> in the change that merges the last code, and track any later release outside Projector."
+    }
+   ]
+  }
+ ]
+}
