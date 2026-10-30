@@ -146,18 +146,18 @@ what it did to each:
   approval.
 
   `project review gate` runs the checkout's `review.gate` command, and stays
-  allowed so a review loop runs unattended. An agent that edits `review.gate`
-  and then runs the gate therefore runs that command without a prompt, the
-  same edit-then-run pattern as any allowed test runner. Codex leaves the gate
-  to its usual approval, as the next entry describes. The ask rules match the
-  command text an agent writes, so they keep an agent from running these
-  commands unasked, not from spelling one another way.
+  allowed so a reviewing session runs unattended. An agent that edits
+  `review.gate` and then runs the gate therefore runs that command without a
+  prompt, the same edit-then-run pattern as any allowed test runner. Codex
+  leaves the gate to its usual approval, as the next entry describes. The ask
+  rules match the command text an agent writes, so they keep an agent from
+  running these commands unasked, not from spelling one another way.
 
   When `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that
   directory instead. Without the allow rule, Claude Code asks before each
   Projector command an agent runs, which pushes the agent toward editing
   Projector's files by hand or calling `gh api` itself. Its auto mode can
-  refuse a review loop's clean review of your own pull request as
+  refuse a reviewing session's clean review of your own pull request as
   self-approval, although the review is a `COMMENT` that moves no
   `reviewDecision` and a person still merges. It can refuse the deletion of a
   comment as a write to an external system: the comment that holds your pull
@@ -974,9 +974,9 @@ file whose diff hides some of its lines: a file that is neither new nor
 deleted, whose diff has a hunk, and whose entry in the head is a regular file
 of at most 1 MiB that is not a `.gitattributes` file. Each is a tree entry
 naming the blob the head already has, so the ref gains no file content.
-Publishes that run at the same time, as a review loop's subagents run them,
-each land. A publish whose push loses the race for the ref fetches the ref
-again, rebuilds its commit on the new tip, keeping every other publisher's
+Publishes that run at the same time, as a reviewing session's subagents run
+them, each land. A publish whose push loses the race for the ref fetches the
+ref again, rebuilds its commit on the new tip, keeping every other publisher's
 summaries, and pushes again, up to five pushes in all. It says how many
 times it retried. Any other push failure, such as a refused login, fails at
 once.
@@ -1430,7 +1430,7 @@ the default branch when the site builds.
 ## Review a pull request
 
 `project review` runs the mechanical steps of the `review-pr` skill, so
-a review loop does not rebuild them as helpers of its own:
+a reviewing session does not rebuild them as helpers of its own:
 
 ```sh
 project review setup 66 --model claude-opus-5-5 --loop example-review-claude-opus-5-5
@@ -1510,8 +1510,8 @@ thread whose first comment carries the `projector-finding` marker, reading
 every page, and prints how many are resolved and open and each open thread's
 `path:line`; with `--json` each thread also carries its comments. It counts
 every model's threads alike and takes `--model` like the commands around it,
-so a review loop passes the same flags to each. `--model` and `--loop` also
-pick the review whose lock `census` touches, as the lock paragraph below
+so a reviewing session passes the same flags to each. `--model` and `--loop`
+also pick the review whose lock `census` touches, as the lock paragraph below
 describes. `release` clears the locks of one model's review of the pull
 request.
 
@@ -1638,7 +1638,7 @@ body with the suggestions in one form, which `review suggestions` reads back:
 ```
 
 The `projector-suggestions` line directly before the label counts the list,
-for `status` and the watch loop to read without parsing it. It is a line of
+for `status` and the watch daemon to read without parsing it. It is a line of
 its own because every earlier release reads a review marker that holds a
 field it does not know as no verdict at all. The review's marker keeps the
 shape those releases read. A body that carries a suggestions section of its
@@ -1740,7 +1740,7 @@ it cannot read the pull request. With `--json` it prints one object:
 | `draft` | Whether the pull request is a draft. |
 | `verdict` | The newest verdict on the head: `clean`, `changes-requested`, or `unreviewed`. |
 | `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, and the number of `suggestions` that stand with its review: those the review lists and, for an incremental review, those of the full review it builds on. Each review's count is its `projector-suggestions` line, or its body's list where it has none. It is `null` when the head is `unreviewed`. |
-| `models` | Each account's newest verdict by each model on the head in the same shape, newest first. A review loop finds its own by `login` and `model`. |
+| `models` | Each account's newest verdict by each model on the head in the same shape, newest first. A reviewing session finds its own by `login` and `model`. |
 | `suggestions` | The number of suggestions every entry of `models` brings, each review counted once: the suggestions `suggestions` lists for the head. |
 | `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
 | `held` | Whether the pull request's author has a hold comment open, which keeps the pull request a draft whatever `verdict` says. |
@@ -1972,14 +1972,15 @@ a long gate never looks stalled. `census` touches the lock of the review that
 `--model` names, or of the one model with a review set up here. `census`,
 `interdiff`, and `gate` touch the lock only while it names their loop.
 
-`--loop <id>` names the review loop; each loop keeps its record of published
-reviews under that id, and each entry names its model. The id is up to 128
-letters, digits, `.`, `_`, and `-`, starting with a letter or digit, so any
-session id `project inbox` accepts is a loop id. `publish` adds to the
-record under a lock on the record's folder, so a copy that `project watch`
-makes into the same record at the same moment loses no entry. A command
-without `--loop` runs in the loop that `setup` recorded, and a review set up
-without `--loop` runs in no loop.
+`--loop <id>` names the reviewing session that runs the review, by that
+session's id, and the commands call it the review's loop. Each loop keeps its
+record of published reviews under its id, and each entry names its model. The
+id is up to 128 letters, digits, `.`, `_`, and `-`, starting with a letter or
+digit, so any session id `project inbox` accepts is a loop id. `publish` adds
+to the record under a lock on the record's folder, so a copy that
+`project watch` makes into the same record at the same moment loses no entry.
+A command without `--loop` runs in the loop that `setup` recorded, and a
+review set up without `--loop` runs in no loop.
 
 `project watch` hands a review to another loop by clearing its lock, when the
 review stalls or the session that owns it lapses. So `settle`, `move`, and
