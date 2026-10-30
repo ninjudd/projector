@@ -1,0 +1,920 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 84f4778f..3c26ec32 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -143,7 +143,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 20 -->
++<!-- projector:begin 21 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -239,9 +239,11 @@ what they should do first, such as unlocking the phone.
+ 
+ When the person picks one of a question's options, the answer reaches you
+ as a message that starts `ANSWER`. When they finish a request, its outcome
+-reaches you as their prompt, quoting the request with `Done` or `Declined`
+-and any notes under it, or as a message that starts `DONE` or `DECLINED`.
+-Read the notes even when it is done, because a step can still have failed.
++reaches you as their prompt, quoting the request with `Looks good` or
++`There's an issue`, both of which mean done, and any notes under it, or as
++a message that starts `DONE`. When they decline it, a message that starts
++`DECLINED` arrives. Read the notes even when it is done, and when they say
++`There's an issue`, find out what failed before you go on.
+ A declined request is the person's no, so do not post it again unless they
+ ask. When they reply to a question or a request instead, answer what they
+ asked. Then withdraw the item with the `withdraw` tool if the reply settles
+diff --git a/docs/cli.md b/docs/cli.md
+index 959264aa..13dc1e0b 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -61,7 +61,8 @@ what it did to each:
+   tells an agent to post a request only for work it cannot do itself, such as
+   running a command it is not allowed to run or checking a change on the
+   person's phone, with numbered steps that each say what the person should
+-  see, and to read a done request's notes and not post a declined one again.
++  see, and to read a done request's notes, find out what failed when the
++  person says `There's an issue`, and not post a declined request again.
+   It tells an agent to give a request a start action only when it must
+   prepare something first, to do the slow part, such as a build, before it
+   posts the request so the start is quick, to do the start action only once
+diff --git a/docs/plugins.md b/docs/plugins.md
+index af1da5b0..def1d3e0 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -407,11 +407,16 @@ The items are a list below the pull requests, newest first, each line
+ starting with `-`. An open question's line is drawn in the theme's
+ `permission` color, the one Claude Code gives its own permission prompts,
+ because an agent's question usually asks leave to do something. An open
+-request's line is drawn in the theme's `suggestion` blue. An open notice's
+-line is drawn in the theme's mid gray, `inactive`, apart from the `subtle` of
+-a resolved or snoozed item, so you can tell which items want an answer, which
+-want work, and which want a read. Each line ends with the pull request the
+-item is about, as the panel labels it, and how long ago it was posted. The
++request's line is drawn in a pastel peach, `rgb(255,190,140)`, or in a
++darker orange, `rgb(180,90,40)`, on the `light` and `light-daltonized`
++themes, where the peach would read fainter than a resolved item. Claude
++Code's themes give no key a pastel apart from the question's color, so the
++panel picks the request's color by theme, as it picks its background. An
++open notice's line is drawn in the theme's mid gray, `inactive`, apart from
++the `subtle` of a resolved or snoozed item, so you can tell which items want
++an answer, which want work, and which want a read. Each line ends with the
++pull request the item is about, as the panel labels it, and how long ago it
++was posted. The
+ panel appears when an item arrives or is restored, even after you hid it, and
+ in a terminal the header counts the open questions, the open requests, and
+ the open notices after the pull requests, before its time.
+@@ -543,38 +548,46 @@ stays in the panel until you dismiss it. **dismiss notice** clears the
+ notice once you have read it and closes its drawer, and nothing goes back
+ to the agent.
+ 
+-A request's drawer shows its steps, then **Done** on `1` and **Declined** on
+-`2` in the options' place, then **discuss request** and **snooze request**.
+-There is no **dismiss request**, because declining says the same no. Like an
+-option, **Done** and **Declined** record nothing at once: each puts the quoted
+-request, a blank line, and its word in the prompt, with the cursor below for
+-any notes. Sending the prompt records the outcome, closes the drawer, and
+-carries your notes to the agent, so nothing else goes back. Only that word
+-alone on the first line under the quote counts as the outcome. Anything else
+-there, such as `done?` or a question about which build to test, is a reply:
+-the request stays open, and the reply reaches the agent as your prompt. A
+-done or declined request's drawer marks its outcome, and a declined one offers
++A request's drawer shows its steps, then **Looks good** on `1` and **There's
++an issue** on `2` in the options' place, then **discuss request**,
++**decline request**, and **snooze request**. Like an option, **Looks good**
++and **There's an issue** record nothing at once: each puts the quoted
++request, a blank line, and its words in the prompt, with the cursor below for
++any notes. Both mark the request done, and record which you chose, so the
++notes under **There's an issue** say what went wrong. Sending the prompt
++records the outcome, closes the drawer, and carries your notes to the agent,
++so nothing else goes back. Only a choice's words, or a plain `Done` or
++`Declined`, alone on the first line under the quote count as the outcome.
++Anything else there, such as `done?` or a question about which build to
++test, is a reply: the request stays open, and the reply reaches the agent as
++your prompt. **decline request** takes the place of **dismiss**, and like
++it, declines the request at once; the agent hears `DECLINED`. To give a
++reason, use **discuss request** instead. A done request's drawer marks the
++choice it was resolved with, and a declined one says `Declined` and offers
+ **restore request**.
+ 
+ A request the agent must prepare for, such as installing a build on your
+ phone, has a start action. Its drawer says `Start:` and what the agent will
+-do, and offers **start request** on `8`. Opening the drawer, reading the
+-steps, or leaving it open sends nothing. Press **start request** when you are
+-ready to begin: the panel records the start action its drawer shows, and the
+-agent hears `STARTED` with that action. If the agent revised the start action
+-since the panel drew the drawer, the press records nothing, and the drawer
+-shows the new action for you to read and press again. While the agent works,
+-the drawer says `Starting:`, and the line ends with `starting`. Once the
+-agent is done, they read `Ready:` and `ready`, in green, and you begin. When
+-the agent could not do it, they read `Blocked:` with its reason and
+-`blocked`, in yellow, and **retry request** takes the place of start, for you
+-to press once you have done what the reason says. **Done** and **Declined**
+-work throughout. A request without a start action shows none of this.
+-
+-**dismiss**, **restore**, and **unsnooze** act at once. A dismissed item
+-stays in the list a while, struck through, as the paragraph on resolved
+-items below describes, so you undo a dismissal you did not mean by opening
+-its line again and choosing **restore**.
++do, and offers **Start** first, on `1`, with the two choices after it on `2`
++and `3`. Opening the drawer, reading the steps, or leaving it open sends
++nothing. Press **Start** when you are ready to begin: the panel records
++the start action its drawer shows, and the agent hears `STARTED` with that
++action. If the agent revised the start action since the panel drew the
++drawer, the press records nothing, and the drawer shows the new action for
++you to read and press again. While the agent works, the drawer says
++`Starting:`, and the line ends with `starting`. Once the agent is done, they
++read `Ready:` and `ready`, in green, and you begin. When the agent could not
++do it, they read `Blocked:` with its reason and `blocked`, in yellow, and
++**Retry** takes the place of **Start**, for you to press once you have done
++what the reason says. The two choices and **decline request** work
++throughout, the choices on `1` and `2` while there is no **Start** or
++**Retry** to press. A request without a start action
++shows none of this.
++
++**dismiss**, **decline**, **restore**, and **unsnooze** act at once. A
++dismissed or declined item stays in the list a while, struck through, as the
++paragraph on resolved items below describes, so you undo a dismissal you did
++not mean by opening its line again and choosing **restore**.
+ 
+ **snooze** snoozes nothing at once. A question's options give way
+ to the lengths it offers, and the action lines to a way back:
+@@ -658,10 +671,11 @@ In a terminal, the panel's last line names the chord that takes the
+ keyboard in, and once the panel has it, Esc and Enter.
+ 
+ Enter on a line opens its drawer and moves the ring onto the drawer's first
+-control: a question's first option, otherwise **discuss**. Tab then walks
+-the options and the actions. Enter on the open line closes the drawer and
+-leaves the ring on the line. A click opens and closes a drawer without
+-moving the ring. In the same way, Enter on the **snooze** line moves the
++control: a question's first option, a request's **Start** or **Retry** when
++it has one and **Looks good** otherwise, and **discuss** for any other item.
++Tab then walks the options and the actions. Enter on the open line closes the
++drawer and leaves the ring on the line. A click opens and closes a drawer
++without moving the ring. In the same way, Enter on the **snooze** line moves the
+ ring onto the first length, and Enter on **cancel** moves it back onto the
+ **snooze** line. Enter on a pull request's **dismiss** moves it onto the
+ confirmation, and Enter on `no, keep it` back onto **dismiss**.
+@@ -685,10 +699,11 @@ A drawer's actions follow its options, a line each, with the digit that
+ presses it before the label in the accent color, such as
+ `7: discuss question`. The digits count down from 9, so the options keep
+ `1` to `6` and the item's line `0`. Each label ends with what the action
+-acts on: `question`, `notice`, or `PR`.
++acts on: `question`, `notice`, `request`, or `PR`.
+ 
+ - **7** presses **discuss**.
+-- **8** presses **dismiss**, or **restore** in its place. Dismiss asks to
++- **8** presses **dismiss**, or **decline** on a request, or **restore** in
++  their place. Dismiss asks to
+   be sure, on `8` again to dismiss and `9` to keep the item, so dismissing
+   from the keyboard is `8` `8`.
+ - **9** presses **snooze**, or **unsnooze** in its place, which a pull
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index 35dc6de9..84e2fa4c 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -564,7 +564,8 @@ test('a call of the tell tool becomes `project inbox tell`, text kept as text',
+ test('the request tool asks for work only the person can do, its steps in `detail`, and names what comes back', () => {
+   expect(REQUEST_DESCRIPTION).toContain('Ask the person to do something only they can do')
+   expect(REQUEST_DESCRIPTION).toContain('put the steps they follow in `detail`')
+-  expect(REQUEST_DESCRIPTION).toContain('`DONE 3` or `DECLINED 3`')
++  expect(REQUEST_DESCRIPTION).toContain('or as a message that starts `DONE 3`.')
++  expect(REQUEST_DESCRIPTION).toContain('When they decline it, a message that starts `DECLINED 3` arrives.')
+   expect(REQUEST_DESCRIPTION).toContain('When you need the person to decide something rather than do it, use `ask` instead.')
+ })
+ 
+@@ -584,15 +585,20 @@ test('a call of the request tool becomes `project inbox request`, text kept as t
+   expect(requestArguments({ request: 'R', detail: 7 }, 's1', undefined)).toEqual({ error: '`detail` must be a string' })
+ })
+ 
+-test('Done or Declined on the line under a quoted request is its outcome, and notes may follow', () => {
++test('a choice on the line under a quoted request is its outcome, a typed Done too, and notes may follow', () => {
+   const open = request()
+   const outcomesIn = (text: string) => readPrompt(text, [open]).outcomes
+-  expect(outcomesIn('"Test the gutters"\n\nDone\n')).toEqual([{ request: open, outcome: 'done' }])
+-  expect(outcomesIn('"Test the gutters"\n\nDone\n\n4 didn’t work\nthe rest did')).toEqual([{ request: open, outcome: 'done' }])
+-  expect(outcomesIn('"Test the gutters"\n\n  Declined \n\nNo phone today')).toEqual([{ request: open, outcome: 'declined' }])
+-  expect(readPrompt('"Test the gutters"\n\nDone', [open])).toEqual({
++  expect(outcomesIn('"Test the gutters"\n\nLooks good\n')).toEqual([{ request: open, outcome: 'done', word: 'Looks good' }])
++  expect(outcomesIn('"Test the gutters"\n\nThere\'s an issue\n\nStep 4 didn’t work\nthe rest did')).toEqual([
++    { request: open, outcome: 'done', word: "There's an issue" },
++  ])
++  expect(outcomesIn('"Test the gutters"\n\n  Declined \n\nNo phone today')).toEqual([
++    { request: open, outcome: 'declined', word: 'Declined' },
++  ])
++  expect(outcomesIn('"Test the gutters"\n\nDone\n')).toEqual([{ request: open, outcome: 'done', word: 'Done' }])
++  expect(readPrompt('"Test the gutters"\n\nLooks good', [open])).toEqual({
+     answers: [],
+-    outcomes: [{ request: open, outcome: 'done' }],
++    outcomes: [{ request: open, outcome: 'done', word: 'Looks good' }],
+     replies: [],
+   })
+ })
+@@ -617,14 +623,14 @@ test('a request’s drawer owns its quote whatever follows, and a pick from befo
+   const shared = request({ ref: '4', number: 4, postedAt: NOW - 10_000 })
+   const done: Proposal = { ref: '4', quote: '"Test the gutters"', answer: 'Done' }
+   expect(readPrompt('"Test the gutters"\n\nDone\n\nall good', [open, shared], [done]).outcomes).toEqual([
+-    { request: shared, outcome: 'done' },
++    { request: shared, outcome: 'done', word: 'Done' },
+   ])
+   expect(readPrompt('"Test the gutters"\n\nDeclined', [open, shared], [done]).outcomes).toEqual([
+-    { request: shared, outcome: 'declined' },
++    { request: shared, outcome: 'declined', word: 'Declined' },
+   ])
+   expect(readPrompt('"Test the gutters"\n\nDone', [open, shared])).toEqual({
+     answers: [],
+-    outcomes: [{ request: open, outcome: 'done' }],
++    outcomes: [{ request: open, outcome: 'done', word: 'Done' }],
+     replies: [],
+   })
+   expect(readPrompt('"Test the gutters"\n\nDone', [open, shared], [{ ...done, isStale: true }])).toEqual({
+@@ -639,7 +645,7 @@ test('a quoted request and a quoted question in one prompt each take their own',
+   const open = request()
+   expect(readPrompt('"Decline the finding?"\n\nDecline it\n"Test the gutters"\n\nDone\n\nfine', [asked, open])).toEqual({
+     answers: [{ question: asked, letter: 'a' }],
+-    outcomes: [{ request: open, outcome: 'done' }],
++    outcomes: [{ request: open, outcome: 'done', word: 'Done' }],
+     replies: [],
+   })
+ })
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index e2c9771e..7c0c8a07 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -64,16 +64,32 @@ export const proposalOf = (item: Answerable, answer: string) => `${quoteOf(item)
+ /** One answer a sent prompt gives: the letter of the option it picks. */
+ export type Given = { question: Question; letter: string }
+ 
+-/** The words a request's drawer puts under its quote, and the outcome each records. */
+-export const OUTCOMES = { Done: 'done', Declined: 'declined' } as const
++/**
++ * What a request's drawer offers after any start, in order: the words each
++ * puts under the request's quote, which are also its label, and its key.
++ * Both mark the request done, and say which. Declining is one of the
++ * drawer's actions, since it needs no notes.
++ */
++export const CHOICES = [
++  { word: 'Looks good', key: 'good' },
++  { word: "There's an issue", key: 'issue' },
++] as const
++
++/** The words under a quoted request that resolve it: the drawer's choices, and a plain `Done` or `Declined` typed by hand. */
++const OUTCOME_WORDS: ReadonlyMap<string, Finished['outcome']> = new Map([
++  ...CHOICES.map(choice => [choice.word, 'done'] as const),
++  ['Done', 'done'],
++  ['Declined', 'declined'],
++])
+ 
+-/** One outcome a sent prompt gives a request. */
+-export type Finished = { request: Request; outcome: (typeof OUTCOMES)[keyof typeof OUTCOMES] }
++/** One outcome a sent prompt gives a request: done or declined, and the words that said so. */
++export type Finished = { request: Request; outcome: 'done' | 'declined'; word: string }
+ 
+-/** The outcome a request's quote takes: the word on the first line after it, so notes can follow. */
+-function outcomeIn(said: string | undefined): Finished['outcome'] | undefined {
++/** The outcome a request's quote takes: the words on the first line after it, so notes can follow. */
++function outcomeIn(said: string | undefined): Omit<Finished, 'request'> | undefined {
+   const word = said?.split('\n')[0]?.trim() ?? ''
+-  return Object.hasOwn(OUTCOMES, word) ? OUTCOMES[word as keyof typeof OUTCOMES] : undefined
++  const outcome = OUTCOME_WORDS.get(word)
++  return outcome === undefined ? undefined : { outcome, word }
+ }
+ 
+ /**
+@@ -96,8 +112,9 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
+  * the prompt's end, is one of its options, whatever blank lines and spaces
+  * surround it: what pressing an option puts in the prompt. A quoted open
+  * request takes an outcome only when its quote ends its line and the first
+- * line after it that is not blank is exactly `Done` or `Declined`; the rest
+- * is the person's notes. A quote that a drawer put in the prompt, with that
++ * line after it that is not blank is exactly one of its drawer's choices,
++ * `Looks good` or `There's an issue`, or a plain `Done` or `Declined`; the
++ * rest is the person's notes. A quote that a drawer put in the prompt, with that
+  * answer or alone through discuss, speaks to the item of the drawer that did
+  * so last, `proposed` holding them oldest first: one of its options or
+  * outcomes resolves it, and any other text replies to it. A drawer's pick
+@@ -140,7 +157,7 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
+       return
+     }
+     const outcome = outcomeIn(said)
+-    if (outcome !== undefined) outcomes.push({ request: item, outcome })
++    if (outcome !== undefined) outcomes.push({ request: item, ...outcome })
+   }
+   for (const { end, quote } of quotes) {
+     const after = text.slice(end, quotes.find(next => next.at >= end)?.at)
+@@ -368,8 +385,9 @@ export const REQUEST_DESCRIPTION = described([
+   'the start action. Do the start action only after it arrives, and do exactly what it quotes and nothing more.',
+   'Then mark the request ready with `ready`, or, when you cannot finish, `block` it with what they should do first.',
+   'Keep working on anything the result does not block. The call returns the request’s number, such as 3.',
+-  'When they finish, their outcome arrives later as their prompt, quoting the request with `Done` or `Declined` and any',
+-  'notes under it, or as a message that starts `DONE 3` or `DECLINED 3`. When they restore a request after you heard',
++  'When they finish, their outcome arrives later as their prompt, quoting the request with `Looks good` or',
++  "`There's an issue`, both of which mean done, and any notes under it, or as a message that starts `DONE 3`.",
++  'When they decline it, a message that starts `DECLINED 3` arrives. When they restore a request after you heard',
+   '`DECLINED 3`, `RESTORED 3` arrives, and the request is open again. When they reply in their own words instead, the',
+   'reply arrives as their prompt, quoting the request, and the request stays open.',
+   'When you need the person to decide something rather than do it, use `ask` instead.',
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index b2b90101..3625323b 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -1927,7 +1927,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
+   await ui.unmount()
+ })
+ 
+-test('requests through the tool, and a request’s drawer offers Done and Declined in the options’ place and no dismiss', async ($, on) => {
++test('requests through the tool, and a request’s drawer offers its three choices in the options’ place and no dismiss', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock)
+@@ -1935,7 +1935,7 @@ test('requests through the tool, and a request’s drawer offers Done and Declin
+ 
+   const called = await $.tool.call({ tool: 'mcp__projector__request', request: 'Test the gutters', detail: '1. Open Fyra.' })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE 1 or DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
++    'Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with Looks good or There\'s an issue, both of which mean done, or as a message that starts DONE 1; a decline arrives as a message that starts DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
+   )
+   expect(session.project()).toContain('inbox request --session=s1 --detail=1. Open Fyra. -- Test the gutters')
+   expect(session.notified).toEqual(['Test the gutters'])
+@@ -1944,19 +1944,62 @@ test('requests through the tool, and a request’s drawer offers Done and Declin
+   await clock.settle()
+   const ui = await $.ui.mount(PANEL)
+   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 request  \d+s$/)
+-  expect((await ui.find({ type: 'Text', text: 'Test the gutters' }))?.props.color).toBe('suggestion')
++  expect((await ui.find({ type: 'Text', text: 'Test the gutters' }))?.props.color).toBe('rgb(255,190,140)')
+   await ui.press({ key: 'item:1' })
+   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('1. Open Fyra.')
+   const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
+   expect(outcomes.map(button => [button.key, button.props.hotkey, button.props.plain, button.text])).toEqual([
+-    ['outcome:1.done', '1', true, 'Done'],
+-    ['outcome:1.declined', '2', true, 'Declined'],
++    ['outcome:1.good', '1', true, 'Looks good'],
++    ['outcome:1.issue', '2', true, "There's an issue"],
+   ])
+-  expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss request', 'snooze:1 9 snooze request'])
++  expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss request', 'decline:1 8 decline request', 'snooze:1 9 snooze request'])
+   await ui.unmount()
+ })
+ 
+-test('Done puts the request and Done in the prompt, and sending it with notes records the outcome once', async ($, on) => {
++test('decline request on 8 declines at once, strikes the line through, and offers restore in its place', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [requested()])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'item:3' })
++  expect(await ui.find({ type: 'Button', key: 'outcome:3.declined' })).toBeUndefined()
++  await ui.press({ key: 'decline:3' })
++  await clock.settle()
++  expect(session.project().filter(command => command.startsWith('inbox decline'))).toEqual([
++    'inbox decline 3 --session s1 --json',
++  ])
++  expect(session.filled).toEqual([])
++  const line = await ui.find({ type: 'Text', text: 'Test the gutters' })
++  expect([line?.props.color, line?.props.strikethrough]).toEqual(['subtle', true])
++
++  await ui.press({ key: 'item:3' })
++  expect(await ui.find({ type: 'Text', text: /^Declined/ })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'restore:3' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'decline:3' })).toBeUndefined()
++  await ui.unmount()
++})
++
++test('an open request is peach on a dark theme and a darker orange on a light one, as the theme changes', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  questionWorld(on, clock, [requested()])
++  on('config.list', () => ({ value: [themeRow('light')] }))
++  on('config.set', ($, e) => ({ value: e.value }))
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(PANEL)
++  const lineColor = async () => (await ui.find({ type: 'Text', text: 'Test the gutters' }))?.props.color
++  expect(await lineColor()).toBe('rgb(180,90,40)')
++  await $.config.set({ key: 'theme', value: 'dark', previous: 'light', provider: ENGINE, origin: { kind: 'composer' } })
++  expect(await lineColor()).toBe('rgb(255,190,140)')
++  await $.config.set({ key: 'theme', value: 'light-daltonized', previous: 'dark', provider: ENGINE, origin: { kind: 'composer' } })
++  expect(await lineColor()).toBe('rgb(180,90,40)')
++  await ui.unmount()
++})
++
++test('There’s an issue puts the request and its words in the prompt, and sending it records done with them once', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [requested({ agentId: 'agent-1' })], { agents: [running('running')] })
+@@ -1965,18 +2008,20 @@ test('Done puts the request and Done in the prompt, and sending it with notes re
+   const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:3' })
+   // Choosing an outcome records nothing yet: it fills the prompt, with room for notes under it.
+-  await ui.press({ key: 'outcome:3.done' })
+-  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nDone\n\n'])
++  await ui.press({ key: 'outcome:3.issue' })
++  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nThere\'s an issue\n\n'])
+   expect(session.store.store.get('3')?.answer).toBeUndefined()
+ 
+-  const text = '"Test the gutters"\n\nDone\n\nStep 4 didn’t work.\n'
++  const text = '"Test the gutters"\n\nThere\'s an issue\n\nStep 4 didn’t work.\n'
+   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+   expect(session.submitted).toEqual([
+     { text, context: ['The subagent Fix #7 (agent-1) requested "Test the gutters"; send it the outcome this prompt gives.'] },
+   ])
+-  expect(session.project().filter(command => command.startsWith('inbox done'))).toEqual(['inbox done 3 --session s1 --json'])
+-  expect(session.store.store.get('3')?.answer).toEqual(expect.objectContaining({ done: true }))
++  expect(session.project().filter(command => command.startsWith('inbox done'))).toEqual([
++    "inbox done 3 --text=There's an issue --session s1 --json",
++  ])
++  expect(session.store.store.get('3')?.answer).toEqual(expect.objectContaining({ done: true, text: "There's an issue" }))
+   expect(session.store.store.get('3')?.deliveredAt).toBeDefined()
+   // The prompt carried the outcome and the notes, so the panel sends nothing more.
+   await clock.advance(TICK)
+@@ -1984,10 +2029,11 @@ test('Done puts the request and Done in the prompt, and sending it with notes re
+   expect(session.sent).toEqual([])
+   expect(session.submitted).toHaveLength(1)
+ 
+-  // The done request still opens, Done marked, the rest muted, and nothing left to press.
++  // The done request still opens, the choice it was made with marked, the rest muted, and nothing left to press.
+   await ui.press({ key: 'item:3' })
+   expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
+-  expect((await ui.find({ type: 'Text', text: /^Declined/ }))?.props.color).toBe('subtle')
++  expect((await ui.find({ type: 'Text', text: /^There's an issue/ }))?.props.color).toBeUndefined()
++  expect((await ui.find({ type: 'Text', text: /^Looks good/ }))?.props.color).toBe('subtle')
+   expect((await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))).toEqual([])
+   await ui.unmount()
+ })
+@@ -2013,7 +2059,7 @@ test('a reply under a quoted request leaves it open, and a decline from a termin
+ 
+ const INSTALL = 'Install build c0d62a3b on your iPhone'
+ 
+-test('start on 8 records the start action the drawer shows, and STARTED reaches the agent that posted the request', async ($, on) => {
++test('start, first on 1, records the start action the drawer shows, and STARTED reaches the agent that posted the request', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [requested({ start: INSTALL, agentId: 'agent-1' })], {
+@@ -2025,7 +2071,14 @@ test('start on 8 records the start action the drawer shows, and STARTED reaches
+   await ui.press({ key: 'item:3' })
+   expect(await ui.find({ type: 'Text', text: `Start: ${INSTALL}` })).toBeDefined()
+   const start = await ui.find({ type: 'Button', key: 'start:3' })
+-  expect([start?.props.hotkey, start?.text]).toEqual(['8', 'start request'])
++  expect([start?.props.hotkey, start?.text]).toEqual(['1', 'Start'])
++  // Start comes first, so done and declined follow it on 2 and 3, and the actions offer no start of their own.
++  const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
++  expect(outcomes.map(button => [button.props.hotkey, button.text])).toEqual([
++    ['2', 'Looks good'],
++    ['3', "There's an issue"],
++  ])
++  expect(await actionLinesOf(ui)).toEqual(['discuss:3 7 discuss request', 'decline:3 8 decline request', 'snooze:3 9 snooze request'])
+   // Opening the drawer records nothing and sends nothing.
+   expect(session.project().filter(command => command.startsWith('inbox start'))).toEqual([])
+ 
+@@ -2070,7 +2123,7 @@ test('a press of start on a drawer the agent revised since records nothing and s
+   await ui.unmount()
+ })
+ 
+-test('a blocked request shows its reason and retry on 8, and a ready one says so with nothing to start', async ($, on) => {
++test('a blocked request shows its reason and retry on 1, and a ready one says so with nothing to start', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const started = { action: INSTALL, startedAt: NOW - 5_000, deliveredAt: NOW - 4_000 }
+@@ -2086,9 +2139,9 @@ test('a blocked request shows its reason and retry on 8, and a ready one says so
+   expect(marks.map(mark => mark?.props.color)).toEqual(['warning', 'success'])
+   await ui.press({ key: 'item:3' })
+   expect(await ui.find({ type: 'Text', text: `Blocked: ${blocked.reason}` })).toBeDefined()
+-  const retry = await ui.find({ type: 'Button', key: 'retry:3' })
+-  expect([retry?.props.hotkey, retry?.text]).toEqual(['8', 'retry request'])
+-  await ui.press({ key: 'retry:3' })
++  const retry = await ui.find({ type: 'Button', key: 'start:3' })
++  expect([retry?.props.hotkey, retry?.text]).toEqual(['1', 'Retry'])
++  await ui.press({ key: 'start:3' })
+   await clock.settle()
+   expect(session.project()).toContain(`inbox start 3 --action=${INSTALL} --session s1 --json`)
+   expect(heldRequest(session.store.store.get('3'))?.progress).toBeUndefined()
+@@ -2097,7 +2150,7 @@ test('a blocked request shows its reason and retry on 8, and a ready one says so
+   await ui.press({ key: 'item:4' })
+   expect(await ui.find({ type: 'Text', text: `Ready: ${INSTALL}` })).toBeDefined()
+   expect(await ui.find({ type: 'Button', key: 'start:4' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Button', key: 'outcome:4.done' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'outcome:4.good' })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -2132,7 +2185,7 @@ test('a request without a start action shows no start line, no start, and no mar
+   await ui.press({ key: 'item:3' })
+   expect(await ui.find({ type: 'Text', text: /^(Start|Starting|Ready|Blocked): / })).toBeUndefined()
+   expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Button', key: 'outcome:3.done' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'outcome:3.good' })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -3699,7 +3752,7 @@ test('an open item’s line closes its drawer on 0, and no other line takes 0',
+ /** The open drawer's action lines, in order: each one's key, the letter that presses it, and its label. */
+ async function actionLinesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
+   const actions = (await ui.findAll({ type: 'Button' })).filter(button =>
+-    /^(discuss|dismiss|snooze|unsnooze|restore):/.test(button.key ?? ''),
++    /^(discuss|dismiss|decline|snooze|unsnooze|restore):/.test(button.key ?? ''),
+   )
+   return actions.map(action => `${action.key ?? ''} ${String(action.props.hotkey ?? '')} ${action.text}`)
+ }
+@@ -3906,7 +3959,9 @@ test('Enter on a line moves the ring into the drawer it opens and back onto the
+   mock.env(on, { HOME })
+   const answer = { letter: 'a', text: 'Decline it', answeredAt: NOW - 1_000 }
+   const answered = held({ ref: '3', number: 3, answer, deliveredAt: NOW - 1_000 })
+-  questionWorld(on, clock, [held(), notice(), answered])
++  const starting = requested({ ref: '4', number: 4, start: INSTALL })
++  const plain = requested({ ref: '5', number: 5, subject: 'Sign in to TestFlight' })
++  questionWorld(on, clock, [held(), notice(), answered, starting, plain])
+   const { tried, tab } = keyboardOf(on)
+   await startSession($, clock)
+   const ui = await $.ui.mount(PANEL)
+@@ -3937,11 +3992,20 @@ test('Enter on a line moves the ring into the drawer it opens and back onto the
+   await ui.press({ key: 'close:3' })
+   expect(tried).toEqual(['answer:1.a', 'item:1', 'discuss:2', 'discuss:3'])
+ 
++  // A request's drawer puts the ring on Start while there is one to press, and otherwise on Looks good.
++  await tab($, 'item:4')
++  await ui.press({ key: 'item:4' })
++  await ui.press({ key: 'close:4' })
++  await tab($, 'item:5')
++  await ui.press({ key: 'item:5' })
++  await ui.press({ key: 'close:5' })
++  expect(tried.slice(4)).toEqual(['start:4', 'outcome:5.good'])
++
+   // A pull request's drawer opens under its line, so closing it leaves the ring where it is.
+   await tab($, 'pr:x/y#7')
+   await ui.press({ key: 'pr:x/y#7' })
+   await ui.press({ key: 'pr:x/y#7' })
+-  expect(tried).toEqual(['answer:1.a', 'item:1', 'discuss:2', 'discuss:3', 'discuss:x/y#7'])
++  expect(tried.slice(6)).toEqual(['discuss:x/y#7'])
+   await ui.unmount()
+ })
+ 
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 64f60e66..2b1791d0 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -25,13 +25,13 @@ import {
+   askArguments,
+   BLOCK_DESCRIPTION,
+   BLOCK_SCHEMA,
++  CHOICES,
+   forMainLoop,
+   isShownAt,
+   isSnoozedAt,
+   letterAt,
+   liveAgent,
+   needsDelivery,
+-  OUTCOMES,
+   proposalOf,
+   quoteOf,
+   READY_DESCRIPTION,
+@@ -104,10 +104,17 @@ const QUESTION_COLOR = 'permission'
+ const NOTICE_COLOR = 'inactive'
+ 
+ /**
+- * The theme color of an open request's line: the blue Claude Code gives its
+- * suggestions, apart from a question's and a notice's.
++ * The color of an open request's line by the theme it draws on: a pastel
++ * peach on a dark one, and a darker orange on a light one, where the peach
++ * would read fainter than a resolved item's `subtle`. Claude Code gives no
++ * theme key a pastel apart from a question's `permission`; even `suggestion`
++ * draws the same blue. Any other theme takes `OTHER_REQUEST_COLOR`.
+  */
+-const REQUEST_COLOR = 'suggestion'
++const REQUEST_COLORS: Record<string, string> = {
++  light: 'rgb(180,90,40)',
++  'light-daltonized': 'rgb(180,90,40)',
++}
++const OTHER_REQUEST_COLOR = 'rgb(255,190,140)'
+ 
+ /** The kinds of item, in the order the header counts them. */
+ const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice']
+@@ -125,11 +132,12 @@ const STAGE_COLORS: Record<Stage, string> = { starting: 'subtle', ready: 'succes
+ const stageOf = (request: Request): Stage | undefined =>
+   request.progress?.state ?? (request.started === undefined ? undefined : 'starting')
+ 
+-const KIND_COLORS: Record<Item['kind'], string> = {
++/** The color of each kind of open item's line, with the request's for the theme the panel draws on. */
++const kindColors = (requestColor: string): Record<Item['kind'], string> => ({
+   question: QUESTION_COLOR,
+   notice: NOTICE_COLOR,
+-  request: REQUEST_COLOR,
+-}
++  request: requestColor,
++})
+ 
+ /**
+  * The color of a pull request's branch on its drawer's facts line: the
+@@ -250,6 +258,8 @@ const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
+ const collapsed = atom({ plugin: 'projector', key: 'panelCollapsed' } as const, [])
+ const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
+ const themeBackground = atom({ plugin: 'projector', key: 'panelThemeBackground' } as const, OTHER_BACKGROUND)
++/** The color of an open request's line for the theme, which `paint` sets with the background. */
++const themeRequestColor = atom({ plugin: 'projector', key: 'panelThemeRequestColor' } as const, OTHER_REQUEST_COLOR)
+ const background = atom({ plugin: 'projector', key: 'panelBackground' } as const, AUTO)
+ const isFocused = atom({ plugin: 'projector', key: 'isPanelFocused' } as const, false)
+ /**
+@@ -427,31 +437,34 @@ async function loadThreads($: Engine): Promise<void> {
+ }
+ 
+ /**
+- * The panel's background for a Claude Code theme: by the theme's name, or
+- * for a custom theme, `custom:<slug>`, by the theme its file builds on,
+- * `dark` unless its `base` says otherwise. A custom theme whose file cannot
+- * be read takes `OTHER_BACKGROUND`.
++ * The built-in theme a Claude Code theme draws as: the theme's own name, or
++ * for a custom theme, `custom:<slug>`, the theme its file builds on, `dark`
++ * unless its `base` says otherwise. A custom theme whose file cannot be read
++ * draws as none.
+  */
+-async function backgroundOf($: Engine, theme: unknown): Promise<string> {
+-  if (typeof theme !== 'string') return OTHER_BACKGROUND
+-  if (!theme.startsWith('custom:')) return THEME_BACKGROUNDS[theme] ?? OTHER_BACKGROUND
++async function baseOf($: Engine, theme: unknown): Promise<string | undefined> {
++  if (typeof theme !== 'string') return undefined
++  if (!theme.startsWith('custom:')) return theme
+   const env = await envOf($)
+   const home = env('HOME')
+   const config = env('CLAUDE_CONFIG_DIR') ?? (home === undefined ? undefined : `${home}/.claude`)
+-  if (config === undefined) return OTHER_BACKGROUND
++  if (config === undefined) return undefined
+   try {
+     const path = `${config}/themes/${theme.slice('custom:'.length)}.json`
+     const base = (JSON.parse(await $.fs.read(path)) as { base?: unknown }).base ?? 'dark'
+-    return typeof base === 'string' ? (THEME_BACKGROUNDS[base] ?? OTHER_BACKGROUND) : OTHER_BACKGROUND
++    return typeof base === 'string' ? base : undefined
+   } catch {
+-    return OTHER_BACKGROUND
++    return undefined
+   }
+ }
+ 
+-/** Colors the panel for a theme ahead of the render, which then waits on no read. */
++/** Colors the panel and its requests for a theme ahead of the render, which then waits on no read. */
+ async function paint($: Engine, theme: unknown): Promise<void> {
+-  const color = await backgroundOf($, theme)
+-  await update($, themeBackground, () => color)
++  const base = await baseOf($, theme)
++  const background = (base === undefined ? undefined : THEME_BACKGROUNDS[base]) ?? OTHER_BACKGROUND
++  const request = (base === undefined ? undefined : REQUEST_COLORS[base]) ?? OTHER_REQUEST_COLOR
++  await update($, themeBackground, () => background)
++  await update($, themeRequestColor, () => request)
+ }
+ 
+ /** The `panel.background` values the panel said it does not take, so it says so once for each. */
+@@ -809,7 +822,7 @@ const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
+ async function act(
+   $: Engine,
+   item: Item,
+-  command: 'dismiss' | 'snooze' | 'restore' | 'start',
++  command: 'dismiss' | 'decline' | 'snooze' | 'restore' | 'start',
+   minutes?: number,
+ ): Promise<void> {
+   const { ref, session } = item
+@@ -1140,7 +1153,7 @@ export const register: Register = on => {
+     void $.ui.notify(String(e.request), { title: 'Projector request' }).catch(() => undefined)
+     const hasStart = typeof e.start === 'string' && e.start !== ''
+     return {
+-      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE ${ref} or DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
++      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with Looks good or There's an issue, both of which mean done, or as a message that starts DONE ${ref}; a decline arrives as a message that starts DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
+     }
+   }).catch(() => ({ deny: 'Projector could not record the request; ask the person in the conversation instead' }))
+ 
+@@ -1300,8 +1313,11 @@ export const register: Register = on => {
+     if (entered.drop === undefined) {
+       for (const ref of done) void closeDrawer($, `item:${ref}`).catch(() => undefined)
+       for (const one of answers) void recordFromPrompt($, one.question, ['answer', `${one.question.ref}.${one.letter}`])
+-      for (const one of outcomes) {
+-        void recordFromPrompt($, one.request, [one.outcome === 'done' ? 'done' : 'decline', one.request.ref])
++      // A done records which choice said so, `Looks good` or
++      // `There's an issue`, as its text; a plain `Done` or a decline needs none.
++      for (const { request, outcome, word } of outcomes) {
++        const said = outcome === 'done' && word !== 'Done' ? [`--text=${word}`] : []
++        void recordFromPrompt($, request, [outcome === 'done' ? 'done' : 'decline', request.ref, ...said])
+       }
+     }
+     return entered
+@@ -1438,6 +1454,7 @@ export const register: Register = on => {
+     const edgeColumns = columns + LINE_PADDING
+     const setting = await read($, background)
+     const color = setting === AUTO ? await read($, themeBackground) : setting
++    const colorOf = kindColors(await read($, themeRequestColor))
+     const hint = (await read($, isFocused)) ? FOCUSED_HINT : FOCUS_HINT
+     // The panel's first line is its header, all in `subtle`: `HEADER_NAME` at
+     // its left, and the counts and how long ago the panel reloaded at its
+@@ -1504,7 +1521,7 @@ export const register: Register = on => {
+             </Box>
+           ) : (
+             <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
+-              <Text color={KIND_COLORS[section]}>{`+ ${count}`}</Text>
++              <Text color={colorOf[section]}>{`+ ${count}`}</Text>
+             </Button>
+           ),
+         )
+@@ -1641,11 +1658,6 @@ export const register: Register = on => {
+         ),
+       ]
+     }
+-    // An open request's outcomes take the options' place, on the digits 1 and
+-    // 2: each puts the quoted request and its word in the prompt, with room
+-    // for notes under it, and only sending it records the outcome. A resolved
+-    // request's outcomes are text, the one recorded marked, followed by the
+-    // person's text when they gave one.
+     // An open request with a start action says above its outcomes what start
+     // does, then that the agent is doing it, that it is done, or why it could
+     // not be done, in the color its line's mark takes.
+@@ -1666,6 +1678,22 @@ export const register: Register = on => {
+         </Text>,
+       ]
+     }
++    // What an open request's first line presses: start, until you press it,
++    // or retry once the agent says it was blocked; nothing while the agent
++    // works or once it is ready, nor for a request without a start action.
++    const startOf = (request: Request): 'start' | 'retry' | undefined => {
++      const stage = stageOf(request)
++      if (request.answer !== undefined || request.start === undefined) return undefined
++      return stage === undefined ? 'start' : stage === 'blocked' ? 'retry' : undefined
++    }
++    // An open request's choices take the options' place, start first while
++    // there is one to press, then done and declined, on the digits from 1.
++    // Start records your consent to the start action the line above it
++    // shows, and only that press sends `STARTED`. Done and declined each put
++    // the quoted request and its word in the prompt, with room for notes
++    // under it, and only sending it records the outcome. A resolved request's
++    // outcomes are text, the one recorded marked, followed by the person's
++    // text when they gave one.
+     const drawOutcomes = (request: Request) => {
+       const { ref, answer } = request
+       const recorded = answer === undefined ? undefined : 'done' in answer ? 'done' : 'declined' in answer ? 'declined' : undefined
+@@ -1674,35 +1702,45 @@ export const register: Register = on => {
+         propose(request, word)
+         fill(`${proposalOf(request, word)}\n\n`)
+       }
++      const start = startOf(request)
++      const first = start === undefined ? 1 : 2
++      // The choice a done was recorded with: the one whose words the
++      // outcome's text holds. A done from a terminal or a typed `Done`
++      // matches none, and neither does a decline, so each takes a line of its own.
++      const chosen = recorded === 'done' ? CHOICES.find(choice => choice.word === said) : undefined
++      const notes = said === chosen?.word ? undefined : said
++      const marked = <Text color="success"> ✓</Text>
+ 
+       return [
+         ...drawStart(request),
+         <Text key={`before-outcomes:${ref}`}> </Text>,
+-        ...Object.entries(OUTCOMES).map(([word, outcome], index) =>
++        start !== undefined && (
++          <Button key={`start:${ref}`} plain hotkey="1" onPress={() => void act($, request, 'start')}>
++            {start === 'start' ? 'Start' : 'Retry'}
++          </Button>
++        ),
++        ...CHOICES.map((choice, index) =>
+           answer === undefined ? (
+-            <Button key={`outcome:${ref}.${outcome}`} plain hotkey={String(index + 1)} onPress={() => pick(word)}>
+-              {word}
++            <Button key={`outcome:${ref}.${choice.key}`} plain hotkey={String(first + index)} onPress={() => pick(choice.word)}>
++              {choice.word}
+             </Button>
+           ) : (
+-            <Text key={`outcome:${ref}.${outcome}`} color={outcome === recorded ? undefined : 'subtle'}>
+-              {word}
+-              {outcome === recorded && <Text color="success"> ✓</Text>}
+-              {outcome === recorded && said !== undefined && <Text color="subtle">{` ${said}`}</Text>}
++            <Text key={`outcome:${ref}.${choice.key}`} color={choice === chosen ? undefined : 'subtle'}>
++              {choice.word}
++              {choice === chosen && marked}
++              {choice === chosen && notes !== undefined && <Text color="subtle">{` ${notes}`}</Text>}
+             </Text>
+           ),
+         ),
++        recorded !== undefined && chosen === undefined && (
++          <Text key={`outcome:${ref}.${recorded}`}>
++            {recorded === 'done' ? 'Done' : 'Declined'}
++            {marked}
++            {notes !== undefined && <Text color="subtle">{` ${notes}`}</Text>}
++          </Text>
++        ),
+       ]
+     }
+-    // An open request with a start action offers start on `8`, the digit an
+-    // open request leaves free, until you press it, and retry there once the
+-    // agent says it was blocked. Pressing it records your consent to the start
+-    // action the drawer shows, and only that press sends `STARTED`.
+-    const startLines = (request: Request): Line[] => {
+-      const stage = stageOf(request)
+-      if (request.start === undefined || (stage !== undefined && stage !== 'blocked')) return []
+-      const name = stage === 'blocked' ? 'retry' : 'start'
+-      return [{ name, label: `${name} request`, hotkey: '8', onPress: () => void act($, request, 'start') }]
+-    }
+     const drawItem = (item: Item) => {
+       const { ref, answer } = item
+       const key = `item:${ref}`
+@@ -1712,12 +1750,14 @@ export const register: Register = on => {
+       // through, so it reads as put off rather than dismissed.
+       const isSnoozed = isSnoozedAt(item, time)
+       const isOpened = opened === key
+-      const color = !isOpen || isSnoozed ? 'subtle' : KIND_COLORS[item.kind]
++      const color = !isOpen || isSnoozed ? 'subtle' : colorOf[item.kind]
+       const pull = pullOf(item)
+       // Each action names the kind of item it acts on. A dismissed or snoozed
+       // item's drawer offers to bring it back where it offered to dismiss or
+       // snooze it, on the same digit; a resolved item cannot be snoozed. An
+-      // open request offers no dismiss, since declining it says the same no.
++      // open request offers decline in dismiss's place, since declining it
++      // is how you set it aside, and it declines at once, as dismiss does.
++      const setAside = item.kind === 'request' ? 'decline' : 'dismiss'
+       const restore = (name: string, hotkey: string): Line => ({
+         name,
+         label: `${name} ${item.kind}`,
+@@ -1739,18 +1779,14 @@ export const register: Register = on => {
+         },
+         ...(isOpen
+           ? [
+-              ...(item.kind === 'request'
+-                ? startLines(item)
+-                : [
+-                    {
+-                      name: 'dismiss',
+-                      label: `dismiss ${item.kind}`,
+-                      hotkey: '8',
+-                      onPress: () => {
+-                        void act($, item, 'dismiss')
+-                      },
+-                    },
+-                  ]),
++              {
++                name: setAside,
++                label: `${setAside} ${item.kind}`,
++                hotkey: '8',
++                onPress: () => {
++                  void act($, item, setAside)
++                },
++              },
+               isSnoozed
+                 ? restore('unsnooze', '9')
+                 : {
+@@ -1801,7 +1837,9 @@ export const register: Register = on => {
+         : item.kind === 'question'
+           ? `answer:${ref}.${letterAt(0)}`
+           : item.kind === 'request'
+-            ? `outcome:${ref}.${OUTCOMES.Done}`
++            ? startOf(item) === undefined
++              ? `outcome:${ref}.${CHOICES[0].key}`
++              : `start:${ref}`
+             : `discuss:${ref}`
+       const isSending = !isOpen && item.deliveredAt === undefined
+       const stage = item.kind === 'request' && isOpen ? stageOf(item) : undefined
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 7e5146bb..7253955d 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -179,6 +179,8 @@ declare module 'claude-code' {
+       bandSending: Record<string, Sending>
+       /** The panel's background for the session's Claude Code theme, which `panel.background = "auto"` takes. */
+       panelThemeBackground: string
++      /** The color of an open request's line for the session's Claude Code theme, which `paint` sets with the background. */
++      panelThemeRequestColor: string
+       /** `panel.background` as the panel last read it: `auto`, or the color it draws for the value. */
+       panelBackground: string
+       /** Whether the panel took the keyboard since the last keystroke in the prompt, so its hint names its own keys. */
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index c669a850..0bfedd47 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 20 -->
++<!-- projector:begin 21 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -94,9 +94,11 @@ what they should do first, such as unlocking the phone.
+ 
+ When the person picks one of a question's options, the answer reaches you
+ as a message that starts `ANSWER`. When they finish a request, its outcome
+-reaches you as their prompt, quoting the request with `Done` or `Declined`
+-and any notes under it, or as a message that starts `DONE` or `DECLINED`.
+-Read the notes even when it is done, because a step can still have failed.
++reaches you as their prompt, quoting the request with `Looks good` or
++`There's an issue`, both of which mean done, and any notes under it, or as
++a message that starts `DONE`. When they decline it, a message that starts
++`DECLINED` arrives. Read the notes even when it is done, and when they say
++`There's an issue`, find out what failed before you go on.
+ A declined request is the person's no, so do not post it again unless they
+ ask. When they reply to a question or a request instead, answer what they
+ asked. Then withdraw the item with the `withdraw` tool if the reply settles
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 32aacd83..1eb3f9ef 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -32,6 +32,7 @@
+     18: "26c080d4949f402c9bc966004641e5daa8cbf8ae197d108c8f9e00b98a7e89aa",
+     19: "f087c2db4d63c3e424fed3ac40fcc3b0467000728d1d2f1055a4b3e8840ba69b",
+     20: "15508339c9b61eb3d11d565b239c75898a2fb05f786edb614bfdeb488c4e7110",
++    21: "88a3ad16a92c6294ab2a58b9d09befa3552cc7ebb7574bca7a48d34d0d529492",
+ }
+ 
+ 
