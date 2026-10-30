@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -335,3 +335,62 @@ details, each a first choice under § 7 where it concerns the look.
 - **The `request` tool's result names both routes.** The outcome arrives as
   the person's prompt, quoting the request with `Done` or `Declined`, or as a
   message that starts `DONE` or `DECLINED`, so the agent reads either.
+
+## 9. What layer 2 settled
+
+Layer 2 builds the start action of § 2 on layer 1. Building it settled these
+details, each a first choice under § 7 where it concerns the look.
+
+- **start and retry sit on `8`.** An open request leaves `8` free, since it
+  offers no dismiss, so **start request** takes it, and **retry request**
+  replaces it once the agent says it was blocked. Neither shows while the
+  agent works or once it is ready.
+- **A line above the outcomes says where the start stands.** It reads
+  `Start:`, `Starting:`, or `Ready:` with the start action, or `Blocked:`
+  with the agent's reason. The request's line ends with `starting`,
+  `ready`, or `blocked`, in `subtle`, `success`, and `warning`.
+- **`claim` records which line it took.** A claim carries `line`, `answer`,
+  `restored`, or `started`, so `settle` finishes the `STARTED` it claimed
+  even after an outcome lands, and `message` sends that line. A claim an
+  earlier release made has no `line`, and the item's owed line stands in.
+- **A restored request waits for a new start.** Restoring a declined
+  request removes its `started` and `progress`, because the agent heard
+  `DECLINED` and may have undone what it prepared.
+- **`revise --start ""` removes the start action**, and a revision of any
+  part returns the request to open.
+- **`ready` and `block` take a started request only once.** Both refuse a
+  request that is not started or already ready or blocked, so the agent
+  cannot mark a start it never received.
+- **A failed `STARTED` says so.** Its toast reads `the start of "<request>"
+  did not reach its agent; press start again`, and **start** returns.
+- **The agents block teaches the start action.** Version 20 tells an agent
+  to give a start action only when it must prepare something first, to do it
+  only once `STARTED` arrives and exactly as that message quotes it, and then
+  to mark the request ready or blocked.
+
+## 10. Outcome
+
+The project shipped in two layers: layer 1, in
+[#372](https://github.com/ninjudd/projector/pull/372), with requests, done,
+and decline, and layer 2, on top of it, with the start action. The design is
+§ 2's, with the details §§ 8 and 9 record. The look stays the owner's to
+adjust, as § 7 says.
+
+| Criterion in § 4 | Evidence |
+| --- | --- |
+| `request` numbers and lists a request; a bad subject exits `65` | `RequestTests.test_numbers_a_request_in_the_count_every_kind_uses`, `test_refuses_a_request_that_fails_a_check_and_writes_nothing`, `test_lists_and_shows_a_request_by_its_kind_and_state` |
+| A request without `--start` shows no start, mark, or start line | `panel.test.tsx`: `requests through the tool, …`, `a request without a start action shows no start line, no start, and no mark` |
+| done from the drawer records the outcome once; `done?` replies | `panel.test.tsx`: `Done puts the request and Done in the prompt, …`; `inbox.test.ts`: `anything else under a quoted request replies to it and leaves it open` |
+| `decline --text` sends `DECLINED` with the text; `answer` refuses a request | `RequestTests.test_an_outcome_carries_the_persons_one_line`, `test_a_request_takes_no_answer_and_another_kind_no_outcome` |
+| restore of a declined request sends `RESTORED` | `RequestTests.test_declining_is_a_dismissal_that_restore_reopens` |
+| Opening a drawer sends nothing; start sends `STARTED` and shows `starting` | `panel.test.tsx`: `start on 8 records the start action the drawer shows, …` |
+| A failed `STARTED` removes the start and offers start again | `StartTests.test_a_failed_started_removes_the_start`; `panel.test.tsx`: `a STARTED that cannot be delivered takes the start back, …` |
+| block, then retry | `StartTests.test_retry_after_a_block_records_a_new_start`; `panel.test.tsx`: `a blocked request shows its reason and retry on 8, …` |
+| revise after start returns to open; a stale drawer's press records nothing | `StartTests.test_revising_a_started_request_returns_it_to_open`, `test_start_refuses_a_stale_action_a_second_press_and_a_request_with_none`; `panel.test.tsx`: `a press of start on a drawer the agent revised since …` |
+| `start`, `done`, and `decline` ask; `request`, `ready`, and `block` do not | `tests/test_permissions.py` |
+| An outcome or withdrawal replaces an unclaimed `STARTED`, and follows a claimed one | `StartTests.test_an_outcome_or_withdrawal_replaces_a_started_no_deliverer_claimed`, `test_an_outcome_recorded_while_started_is_claimed_follows_it`, `test_a_withdrawal_while_started_is_claimed_lets_that_line_settle` |
+
+The panel's tick still reads the store only when a file changes, and a
+request adds no process to it, as § 5 planned. `hooks/typecheck.sh` needs
+the declarations an interactive `claude --plugin-dir .` session writes, so it
+did not run while this was built.

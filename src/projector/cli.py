@@ -750,6 +750,8 @@ def add_inbox_parser(subcommands) -> None:
     detail = request.add_mutually_exclusive_group()
     detail.add_argument("--detail", default="", help="the steps the person follows, as Markdown")
     detail.add_argument("--detail-file", type=Path, help="read the steps from this file")
+    request.add_argument("--start", help="what you do once the person presses start, in one line; leave it out when "
+                                         "there is nothing to prepare")
     request.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
     request.add_argument("--agent", help="the posting subagent's id, when a subagent posts")
 
@@ -772,6 +774,19 @@ def add_inbox_parser(subcommands) -> None:
         outcome.add_argument("reference", help="the request's number, such as 3")
         outcome.add_argument("--text", help="what you tell the agent, in one line")
 
+    start = command("start", "record that you pressed start on a request, for the start action you read")
+    start.add_argument("reference", help="the request's number, such as 3")
+    start.add_argument("--action", required=True, help="the start action as you read it, which must match the "
+                                                       "request's")
+
+    ready = command("ready", "record that you did a started request's start action")
+    ready.add_argument("reference", help="the request's number, such as 3")
+
+    block = command("block", "record why you could not do a started request's start action")
+    block.add_argument("reference", help="the request's number, such as 3")
+    block.add_argument("--reason", required=True, help="what the person should do before pressing retry, in one "
+                                                       "line")
+
     withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
     withdraw.add_argument("reference")
 
@@ -779,6 +794,7 @@ def add_inbox_parser(subcommands) -> None:
     revise.add_argument("reference", help="the item's number, such as 3")
     revise.add_argument("--question", help="the new question, in one line of at most 120 characters")
     revise.add_argument("--request", help="the new request, in one line of at most 120 characters")
+    revise.add_argument("--start", help="the request's new start action, in one line; an empty one removes it")
     revise.add_argument("--recommend", help="the new recommended answer, which becomes answer a")
     options = revise.add_mutually_exclusive_group()
     options.add_argument("--option", action="append",
@@ -1342,7 +1358,10 @@ def item_state(item: dict) -> str:
         return f"snoozed until {wake_time(until)}"
     answered = item.get("answer")
     if not answered:
-        return "open"
+        progress = item.get("progress")
+        if progress:
+            return progress["state"]
+        return "started" if item.get("started") else "open"
     if answered.get("dismissed"):
         return "withdrawn" if answered.get("withdrawn") else "declined" if answered.get("declined") else "dismissed"
     if answered.get("done"):
@@ -1362,6 +1381,10 @@ def print_item(item: dict) -> None:
         print(f"\n{item['detail']}\n")
     if item["kind"] == "question":
         print_choices(item)
+    if item.get("start"):
+        print(f"start: {item['start']}")
+    if (item.get("progress") or {}).get("reason"):
+        print(f"blocked: {item['progress']['reason']}")
     print(item_state(item))
 
 
@@ -1387,7 +1410,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         elif command == "tell":
             item = inbox.tell(session, arguments.notice, **posted)
         else:
-            item = inbox.request(session, arguments.request, **posted)
+            item = inbox.request(session, arguments.request, start=arguments.start, **posted)
         print(json_text({"item": item}) if json_output else item["ref"])
     elif command == "list":
         session = inbox_session(arguments, False)
@@ -1416,11 +1439,21 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         record = inbox.done if command == "done" else inbox.decline
         item = record(inbox_session(arguments, False), ref, arguments.text)
         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
+    elif command in ("start", "ready", "block"):
+        session = inbox_session(arguments, False)
+        if command == "start":
+            item = inbox.start(session, ref, arguments.action)
+        elif command == "ready":
+            item = inbox.ready(session, ref)
+        else:
+            item = inbox.block(session, ref, arguments.reason)
+        print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
     elif command == "revise":
         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
         options = [] if arguments.no_options else arguments.option
         item = inbox.revise(inbox_session(arguments, False), ref, question=arguments.question, detail=detail,
-                            recommend=arguments.recommend, options=options, request=arguments.request)
+                            recommend=arguments.recommend, options=options, request=arguments.request,
+                            start=arguments.start)
         print(json_text({"item": item}) if json_output else f"revised {item['ref']}")
     elif command == "snooze":
         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)

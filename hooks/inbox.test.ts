@@ -14,6 +14,7 @@ import {
   readPrompt,
   relayNote,
   replyNote,
+  reportArguments,
   REQUEST_DESCRIPTION,
   requestArguments,
   RESTORE_DESCRIPTION,
@@ -396,7 +397,7 @@ test('a call of the revise tool becomes `project inbox revise` with only what ch
     '--json',
   ])
   expect(reviseArguments({ number: 3 }, 's1')).toEqual({
-    error: 'give what changes: `question`, `request`, `detail`, `recommendation`, or `options`',
+    error: 'give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`',
   })
   expect(reviseArguments({ number: '3', detail: 'x' }, 's1')).toEqual({
     error: '`number` must be the whole number `ask` or `request` returned, such as 3',
@@ -668,4 +669,41 @@ test('a call of the revise tool revises a request with `request`', () => {
     '--json',
   ])
   expect(reviseArguments({ number: 3, request: 7 }, 's1')).toEqual({ error: '`request` must be a string' })
+  expect(reviseArguments({ number: 3, start: '' }, 's1')).toEqual(['inbox', 'revise', '3', '--session', 's1', '--start=', '--json'])
+})
+
+test('the request tool tells the agent to give a start action only when it must prepare, and to wait for STARTED', () => {
+  expect(REQUEST_DESCRIPTION).toContain('Give `start` only when you must do something before they can begin')
+  expect(REQUEST_DESCRIPTION).toContain('Do the start action only after it arrives, and do exactly what it quotes and nothing more.')
+  expect(requestArguments({ request: 'Test the gutters', start: 'Install the build' }, 's1', undefined)).toEqual([
+    'inbox',
+    'request',
+    '--session=s1',
+    '--start=Install the build',
+    '--',
+    'Test the gutters',
+  ])
+  expect(requestArguments({ request: 'R', start: 7 }, 's1', undefined)).toEqual({ error: '`start` must be a string' })
+})
+
+test('a call of the ready or block tool becomes `project inbox ready` or `block`', () => {
+  expect(reportArguments({ number: 3 }, 's1')).toEqual(['inbox', 'ready', '3', '--session', 's1', '--json'])
+  expect(reportArguments({ number: 3, reason: '-Unlock the phone' }, 's1')).toEqual([
+    'inbox',
+    'block',
+    '3',
+    '--reason=-Unlock the phone',
+    '--session',
+    's1',
+    '--json',
+  ])
+  expect(reportArguments({ number: 0 }, 's1')).toEqual({ error: '`number` must be the whole number `request` returned, such as 3' })
+})
+
+test('a request’s start waits for a deliverer until STARTED is delivered, and only while the request is open', () => {
+  const started = { action: 'Install the build', startedAt: NOW }
+  expect(needsDelivery(request({ start: 'Install the build', started }), NOW)).toBe(true)
+  expect(needsDelivery(request({ started: { ...started, deliveredAt: NOW } }), NOW)).toBe(false)
+  expect(needsDelivery(request({ started, claim: { token: 't', renewedAt: NOW, line: 'started' } }), NOW)).toBe(false)
+  expect(needsDelivery(request({ started, answer: { done: true, answeredAt: NOW }, deliveredAt: NOW }), NOW)).toBe(false)
 })

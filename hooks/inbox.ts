@@ -39,14 +39,20 @@ export const wokeBetween = (items: readonly Item[], since: number, time: number)
       item.answer === undefined && item.snoozedUntil !== undefined && since < item.snoozedUntil && item.snoozedUntil <= time,
   )
 
+/** Whether an open request's start waits for `STARTED` to reach its agent. */
+export const isStarting = (request: Request) =>
+  request.answer === undefined && request.started !== undefined && request.started.deliveredAt === undefined
+
 /**
  * Whether a question's or request's line waits for a deliverer: an answer or
- * outcome recorded and undelivered, or word of a restore, and claimed by none
- * that is live.
+ * outcome recorded and undelivered, word of a restore, or a request's start,
+ * and claimed by none that is live.
  */
 export const needsDelivery = (item: Item, time: number): item is Answerable =>
   item.kind !== 'notice' &&
-  (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined)) &&
+  (item.restoredAt !== undefined ||
+    (item.answer !== undefined && item.deliveredAt === undefined) ||
+    (item.kind === 'request' && isStarting(item))) &&
   (item.claim === undefined || time - item.claim.renewedAt >= CLAIM_MS)
 
 /** What the panel puts in the prompt to discuss an item: its subject, in quotes. */
@@ -354,6 +360,11 @@ export const REQUEST_DESCRIPTION = described([
   'or checking a change on their own device: it appears in Projector’s panel above their prompt, and you keep working.',
   'Write the request in one short line of at most 120 characters, and put the steps they follow in `detail`.',
   'Name the pull request it is about in `pr`, as owner/repo#number.',
+  'Give `start` only when you must do something before they can begin, such as installing a build on their phone:',
+  'one line saying what you will do. Leave it out otherwise, and the request goes straight to done or declined.',
+  'With `start`, the person presses start when they are ready, and a message that starts `STARTED 3` arrives quoting',
+  'the start action. Do the start action only after it arrives, and do exactly what it quotes and nothing more.',
+  'Then mark the request ready with `ready`, or, when you cannot finish, `block` it with what they should do first.',
   'Keep working on anything the result does not block. The call returns the request’s number, such as 3.',
   'When they finish, their outcome arrives later as their prompt, quoting the request with `Done` or `Declined` and any',
   'notes under it, or as a message that starts `DONE 3` or `DECLINED 3`. When they restore a request after you heard',
@@ -367,6 +378,11 @@ export const REQUEST_SCHEMA = {
   properties: {
     request: { type: 'string', description: 'What the person should do, in one line of at most 120 characters.' },
     detail: { type: 'string', description: 'The steps they follow, as Markdown.' },
+    start: {
+      type: 'string',
+      description:
+        'What you will do once they press start, in one line, such as installing a build; leave it out when there is nothing to prepare.',
+    },
     pr: { type: 'string', description: 'The pull request the request is about, as owner/repo#number.' },
   },
   required: ['request'],
@@ -379,11 +395,67 @@ export function requestArguments(
   session: string,
   agentId: string | undefined,
 ): string[] | { error: string } {
-  const { request, detail, pr } = input
+  const { request, detail, start, pr } = input
   if (!isText(request)) return { error: '`request` must be a string' }
   if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
+  if (start !== undefined && !isText(start)) return { error: '`start` must be a string' }
   if (pr !== undefined && !isText(pr)) return { error: '`pr` must be a string such as owner/repo#123' }
-  return ['inbox', 'request', `--session=${session}`, ...postedFlags(detail, pr, agentId), '--', request]
+  return [
+    'inbox',
+    'request',
+    `--session=${session}`,
+    ...(start === undefined || start === '' ? [] : [`--start=${start}`]),
+    ...postedFlags(detail, pr, agentId),
+    '--',
+    request,
+  ]
+}
+
+export const READY_DESCRIPTION = described([
+  'Mark a request you posted ready once you have done its start action, after the message that starts `STARTED 3`',
+  'arrived: Projector’s panel tells the person they can begin. Name it by the number `request` returned.',
+  'Nothing comes back to you until they finish it, as a message that starts `DONE 3` or `DECLINED 3`.',
+])
+
+export const READY_SCHEMA = {
+  type: 'object',
+  properties: {
+    number: { type: 'integer', minimum: 1, description: 'The request’s number, as `request` returned it, such as 3.' },
+  },
+  required: ['number'],
+  additionalProperties: false,
+}
+
+export const BLOCK_DESCRIPTION = described([
+  'Say you could not do a started request’s start action, and what the person should do before they press retry,',
+  'such as “The phone is locked. Unlock it and press retry.” Name it by the number `request` returned.',
+  'When they press retry, a new message that starts `STARTED 3` arrives, and you try the start action again.',
+])
+
+export const BLOCK_SCHEMA = {
+  type: 'object',
+  properties: {
+    number: { type: 'integer', minimum: 1, description: 'The request’s number, as `request` returned it, such as 3.' },
+    reason: {
+      type: 'string',
+      description: 'What the person should do before they press retry, in one line of at most 120 characters.',
+    },
+  },
+  required: ['number', 'reason'],
+  additionalProperties: false,
+}
+
+/** The arguments of `project inbox ready` or `block` for one call of its tool, or why the call cannot be one. */
+export function reportArguments(
+  input: Readonly<Record<string, unknown>>,
+  session: string,
+): string[] | { error: string } {
+  const { number, reason } = input
+  if (!isNumber(number)) return { error: '`number` must be the whole number `request` returned, such as 3' }
+  if (reason !== undefined && !isText(reason)) return { error: '`reason` must be a string' }
+  return reason === undefined
+    ? ['inbox', 'ready', String(number), '--session', session, '--json']
+    : ['inbox', 'block', String(number), `--reason=${reason}`, '--session', session, '--json']
 }
 
 export const WITHDRAW_DESCRIPTION = described([
@@ -444,7 +516,8 @@ export const REVISE_DESCRIPTION = described([
   'Revise a question you asked or a request you posted that is still open, keeping its number, when the person’s reply',
   'shows it was unclear or the choice or the work has changed. Name it by the number `ask` or `request` returned, and',
   'give only what changes: for a question, the question, its detail, the recommendation, or the other options, which',
-  '`options` replaces as a whole; for a request, the request or its detail.',
+  '`options` replaces as a whole; for a request, the request, its detail, or its start action, where an empty `start`',
+  'removes it. A revised request returns to open, so a start the person pressed for its old text needs a new press.',
   'Projector’s panel redraws it at once, and a question’s answer still arrives as a message that starts',
   '`ANSWER 3.<letter>` or `DISMISSED 3`, a request’s outcome as one that starts `DONE 3` or `DECLINED 3`.',
 ])
@@ -459,6 +532,7 @@ export const REVISE_SCHEMA = {
     },
     question: { type: 'string', description: 'The new question, in one line of at most 120 characters.' },
     request: { type: 'string', description: 'The new request, in one line of at most 120 characters.' },
+    start: { type: 'string', description: 'The request’s new start action, in one line; an empty string removes it.' },
     recommendation: {
       type: 'string',
       description: 'The new answer you recommend, written in full; it is answer a.',
@@ -488,17 +562,18 @@ export function reviseArguments(
   input: Readonly<Record<string, unknown>>,
   session: string,
 ): string[] | { error: string } {
-  const { number, question, request, recommendation, options, detail } = input
+  const { number, question, request, start, recommendation, options, detail } = input
   if (!isNumber(number)) return { error: '`number` must be the whole number `ask` or `request` returned, such as 3' }
   if (question !== undefined && !isText(question)) return { error: '`question` must be a string' }
   if (request !== undefined && !isText(request)) return { error: '`request` must be a string' }
+  if (start !== undefined && !isText(start)) return { error: '`start` must be a string' }
   if (recommendation !== undefined && !isText(recommendation)) return { error: '`recommendation` must be a string' }
   if (options !== undefined && (!Array.isArray(options) || !options.every(isText))) {
     return { error: '`options` must be a list of strings' }
   }
   if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
-  if ([question, request, recommendation, options, detail].every(value => value === undefined)) {
-    return { error: 'give what changes: `question`, `request`, `detail`, `recommendation`, or `options`' }
+  if ([question, request, start, recommendation, options, detail].every(value => value === undefined)) {
+    return { error: 'give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`' }
   }
   return [
     'inbox',
@@ -508,6 +583,7 @@ export function reviseArguments(
     session,
     ...(question === undefined ? [] : [`--question=${question}`]),
     ...(request === undefined ? [] : [`--request=${request}`]),
+    ...(start === undefined ? [] : [`--start=${start}`]),
     ...(recommendation === undefined ? [] : [`--recommend=${recommendation}`]),
     ...(options === undefined ? [] : options.length === 0 ? ['--no-options'] : options.map(option => `--option=${option}`)),
     ...(detail === undefined ? [] : [`--detail=${detail}`]),

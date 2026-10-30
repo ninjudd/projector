@@ -23,6 +23,8 @@ import {
   ASK_DESCRIPTION,
   ASK_SCHEMA,
   askArguments,
+  BLOCK_DESCRIPTION,
+  BLOCK_SCHEMA,
   forMainLoop,
   isShownAt,
   isSnoozedAt,
@@ -32,9 +34,12 @@ import {
   OUTCOMES,
   proposalOf,
   quoteOf,
+  READY_DESCRIPTION,
+  READY_SCHEMA,
   readPrompt,
   relayNote,
   replyNote,
+  reportArguments,
   REQUEST_DESCRIPTION,
   REQUEST_SCHEMA,
   requestArguments,
@@ -67,6 +72,8 @@ const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null, error: null }
 const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
 const REQUEST_TOOL = 'mcp__projector__request'
+const READY_TOOL = 'mcp__projector__ready'
+const BLOCK_TOOL = 'mcp__projector__block'
 const WITHDRAW_TOOL = 'mcp__projector__withdraw'
 const REVISE_TOOL = 'mcp__projector__revise'
 const RESTORE_TOOL = 'mcp__projector__restore'
@@ -107,6 +114,16 @@ const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice']
 
 /** What the header counts, in its order: the pull requests, then each kind of item. */
 const SECTIONS: readonly Section[] = ['pr', ...ITEM_KINDS]
+
+/** Where a started request stands: the agent is doing its start action, did it, or could not. */
+type Stage = 'starting' | 'ready' | 'blocked'
+
+/** The color of a started request's mark: muted while the agent works, green when you can begin, yellow when you must act first. */
+const STAGE_COLORS: Record<Stage, string> = { starting: 'subtle', ready: 'success', blocked: 'warning' }
+
+/** Where a request stands once you pressed start, or undefined before. */
+const stageOf = (request: Request): Stage | undefined =>
+  request.progress?.state ?? (request.started === undefined ? undefined : 'starting')
 
 const KIND_COLORS: Record<Item['kind'], string> = {
   question: QUESTION_COLOR,
@@ -666,14 +683,17 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
   if (ran?.exitCode === 0) await replace($, itemOf(ran.stdout, session))
   if (outcome === 'reopen') {
     // You never see an item's number, so the toast names the item by its
-    // subject. A restore's line is not sent again, and its item stays open.
+    // subject. A restore's line is not sent again, and its item stays open. A
+    // start that did not reach its agent is taken back, so start returns.
     const item = (await read($, items)).find(one => one.ref === ref && one.session === session)
     const quoted = item === undefined ? undefined : quoteOf(item)
     const why = reason ? ` (${reason})` : ''
     void $.ui.toast(
       text.startsWith('RESTORED ')
         ? `projector: word that ${quoted ?? 'an item'} is open again did not reach its agent${why}`
-        : item?.kind === 'request'
+        : text.startsWith('STARTED ')
+          ? `projector: the start of ${quoted ?? 'a request'} did not reach its agent${why}; press start again`
+          : item?.kind === 'request'
           ? `projector: the outcome of ${quoted ?? 'a request'} did not reach its agent${why}; mark it done or declined again`
           : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
     )
@@ -789,7 +809,7 @@ const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
 async function act(
   $: Engine,
   item: Item,
-  command: 'dismiss' | 'snooze' | 'restore',
+  command: 'dismiss' | 'snooze' | 'restore' | 'start',
   minutes?: number,
 ): Promise<void> {
   const { ref, session } = item
@@ -797,12 +817,15 @@ async function act(
   acting.add(ref)
   try {
     const length = minutes === undefined ? [] : ['--for', String(minutes)]
-    const ran = await project($, ['inbox', command, ref, ...length, '--session', session, '--json'])
+    // Start passes the start action the drawer shows, which is what you
+    // consented to, and the CLI refuses it when the agent has revised it.
+    const action = command === 'start' && item.kind === 'request' ? [`--action=${item.start ?? ''}`] : []
+    const ran = await project($, ['inbox', command, ref, ...length, ...action, '--session', session, '--json'])
     if (ran.exitCode === 0) {
       await replace($, itemOf(ran.stdout, session))
-      if (command !== 'restore') await closeDrawer($, `item:${ref}`)
+      if (command !== 'restore' && command !== 'start') await closeDrawer($, `item:${ref}`)
     } else if (ran.exitCode === 65) {
-      // Resolved elsewhere since the panel read the store: read it again.
+      // Resolved or revised elsewhere since the panel read the store: read it again.
       listed = undefined
     } else {
       void $.ui.toast(`projector: ${errorOf(ran)}`)
@@ -1048,6 +1071,8 @@ export const register: Register = on => {
       { name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA },
       { name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA },
       { name: 'request', description: REQUEST_DESCRIPTION, inputSchema: REQUEST_SCHEMA },
+      { name: 'ready', description: READY_DESCRIPTION, inputSchema: READY_SCHEMA },
+      { name: 'block', description: BLOCK_DESCRIPTION, inputSchema: BLOCK_SCHEMA },
       { name: 'withdraw', description: WITHDRAW_DESCRIPTION, inputSchema: WITHDRAW_SCHEMA },
       { name: 'revise', description: REVISE_DESCRIPTION, inputSchema: REVISE_SCHEMA },
       { name: 'restore', description: RESTORE_DESCRIPTION, inputSchema: RESTORE_SCHEMA },
@@ -1107,6 +1132,28 @@ export const register: Register = on => {
       result: `Requested ${ref}. Keep working on anything the result does not block; its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE ${ref} or DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the request; ask the person in the conversation instead' }))
+
+  // The panel takes the request from the CLI at once, so its line and drawer
+  // say ready or blocked before the next read of the store.
+  for (const [tool, said] of [
+    [READY_TOOL, 'ready'],
+    [BLOCK_TOOL, 'blocked'],
+  ] as const) {
+    on('tool.call', { tool }, async ($, e) => {
+      const session = await $.session.id()
+      const args = reportArguments(said === 'ready' ? { number: e.number } : { number: e.number, reason: e.reason ?? '' }, session)
+      const ran = await runTool($, args, 'tell the person in the conversation instead')
+      if ('deny' in ran) return ran
+      const item = itemOf(ran.stdout, session)
+      await replace($, item)
+      return {
+        result:
+          said === 'ready'
+            ? `Marked ${item.ref} ready. Projector’s panel tells the person they can begin; its outcome arrives as a message that starts DONE ${item.ref} or DECLINED ${item.ref}.`
+            : `Marked ${item.ref} blocked. Projector’s panel shows the person your reason; when they press retry, a new message that starts STARTED ${item.ref} arrives.`,
+      }
+    }).catch(() => ({ deny: `Projector could not mark the request ${said}; tell the person in the conversation instead` }))
+  }
 
   // The panel takes the withdrawn item from the CLI at once, so it leaves the
   // panel before the next read of the store.
@@ -1588,6 +1635,26 @@ export const register: Register = on => {
     // for notes under it, and only sending it records the outcome. A resolved
     // request's outcomes are text, the one recorded marked, followed by the
     // person's text when they gave one.
+    // An open request with a start action says above its outcomes what start
+    // does, then that the agent is doing it, that it is done, or why it could
+    // not be done, in the color its line's mark takes.
+    const drawStart = (request: Request) => {
+      const { ref, start, started, progress } = request
+      if (request.answer !== undefined || start === undefined) return []
+      const stage = stageOf(request)
+      const said =
+        stage === undefined
+          ? `Start: ${start}`
+          : stage === 'blocked'
+            ? `Blocked: ${progress?.reason ?? ''}`
+            : `${stage === 'ready' ? 'Ready' : 'Starting'}: ${started?.action ?? start}`
+      return [
+        <Text key={`before-start:${ref}`}> </Text>,
+        <Text key={`start-line:${ref}`} color={stage === undefined ? undefined : STAGE_COLORS[stage]}>
+          {said}
+        </Text>,
+      ]
+    }
     const drawOutcomes = (request: Request) => {
       const { ref, answer } = request
       const recorded = answer === undefined ? undefined : 'done' in answer ? 'done' : 'declined' in answer ? 'declined' : undefined
@@ -1598,6 +1665,7 @@ export const register: Register = on => {
       }
 
       return [
+        ...drawStart(request),
         <Text key={`before-outcomes:${ref}`}> </Text>,
         ...Object.entries(OUTCOMES).map(([word, outcome], index) =>
           answer === undefined ? (
@@ -1613,6 +1681,16 @@ export const register: Register = on => {
           ),
         ),
       ]
+    }
+    // An open request with a start action offers start on `8`, the digit an
+    // open request leaves free, until you press it, and retry there once the
+    // agent says it was blocked. Pressing it records your consent to the start
+    // action the drawer shows, and only that press sends `STARTED`.
+    const startLines = (request: Request): Line[] => {
+      const stage = stageOf(request)
+      if (request.start === undefined || (stage !== undefined && stage !== 'blocked')) return []
+      const name = stage === 'blocked' ? 'retry' : 'start'
+      return [{ name, label: `${name} request`, hotkey: '8', onPress: () => void act($, request, 'start') }]
     }
     const drawItem = (item: Item) => {
       const { ref, answer } = item
@@ -1651,7 +1729,7 @@ export const register: Register = on => {
         ...(isOpen
           ? [
               ...(item.kind === 'request'
-                ? []
+                ? startLines(item)
                 : [
                     {
                       name: 'dismiss',
@@ -1715,6 +1793,7 @@ export const register: Register = on => {
             ? `outcome:${ref}.${OUTCOMES.Done}`
             : `discuss:${ref}`
       const isSending = !isOpen && item.deliveredAt === undefined
+      const stage = item.kind === 'request' && isOpen ? stageOf(item) : undefined
 
       return (
         <Box key={`line:${ref}`} flexDirection="column">
@@ -1742,6 +1821,13 @@ export const register: Register = on => {
             {isSending && (
               <Box flexShrink={0}>
                 <Text color="subtle">sending</Text>
+              </Box>
+            )}
+            {stage !== undefined && (
+              <Box flexShrink={0}>
+                <Text key={`stage:${ref}`} color={STAGE_COLORS[stage]}>
+                  {stage}
+                </Text>
               </Box>
             )}
             {pull !== '' && (

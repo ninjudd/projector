@@ -115,8 +115,15 @@ export type Notice = Posted & {
  */
 export type Request = Posted & {
   kind: 'request'
+  /** What the agent does once you press start, in one line; absent when there is nothing to prepare. */
+  start?: string
+  /** The start action as it read when you pressed start or retry, and when; `deliveredAt` once `STARTED` reached the agent. */
+  started?: { action: string; startedAt: number; deliveredAt?: number }
+  /** What the agent made of the start: `ready`, or `blocked` with the reason you read before you retry. */
+  progress?: { state: 'ready' | 'blocked'; reason?: string; at: number }
   answer?: Outcome
-  claim?: { token: string; renewedAt: number }
+  /** A deliverer's hold on the line it sends: `line` says which, a `STARTED` or the outcome. */
+  claim?: { token: string; renewedAt: number; line?: 'answer' | 'restored' | 'started' }
   /** When the person restored the request after its agent may have heard `DECLINED`, until `RESTORED` is delivered. */
   restoredAt?: number
 }

@@ -62,6 +62,9 @@ what it did to each:
   running a command it is not allowed to run or checking a change on the
   person's phone, with numbered steps that each say what the person should
   see, and to read a done request's notes and not post a declined one again.
+  It tells an agent to give a request a start action only when it must
+  prepare something first, to do it only once `STARTED` arrives, exactly as
+  that message quotes it, and then to mark the request ready or blocked.
   It tells an agent whose question or request the person replied to, rather
   than resolving it, to answer what they asked and then withdraw the item
   with the `withdraw` tool, revise it with the `revise` tool, or leave it
@@ -98,7 +101,8 @@ what it did to each:
     "Bash(project inbox dismiss *)",
     "Bash(project inbox snooze *)",
     "Bash(project inbox done *)",
-    "Bash(project inbox decline *)"
+    "Bash(project inbox decline *)",
+    "Bash(project inbox start *)"
   ]
   ```
 
@@ -110,18 +114,20 @@ what it did to each:
   `Bash(project site *prepare*)` asks before either flag, as `--prepare x` or
   `--prepare=x`, and before `--no-prepare` too. Those two commands refuse an
   abbreviated option such as `--prep`, so no shorter spelling slips past the
-  rule. `project inbox answer`, `dismiss`, `snooze`, `done`, and `decline`
-  record your answer to an item an agent posted, your outcome for a request,
-  or your choice to dismiss or put it off, so an agent running one could
-  answer its own question or mark its own request done. Projector's panel runs
-  them itself, not through an agent's shell, so answering from the panel never
-  asks. Claude Code checks ask rules before allow rules, so an ask rule
-  prompts for a command that `Bash(project *)` also allows, and a trailing
-  ` *` matches the command with no arguments too. `project` refuses an option
-  before the command, so every command line it runs starts with its command,
-  and that command's ask rule matches wherever the options go:
-  `Bash(project init *)` asks before `project init --root .`. A line such as
-  `project --root . init` matches no ask rule, and `project` refuses it.
+  rule. `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, and
+  `start` record your answer to an item an agent posted, your outcome for a
+  request, your consent to a request's start action, or your choice to
+  dismiss or put it off, so an agent running one could answer its own
+  question, mark its own request done, or consent to its own start action.
+  Projector's panel runs them itself, not through an agent's shell, so
+  answering from the panel never asks. Claude Code checks ask rules before
+  allow rules, so an ask rule prompts for a command that `Bash(project *)`
+  also allows, and a trailing ` *` matches the command with no arguments
+  too. `project` refuses an option before the command, so every command line
+  it runs starts with its command, and that command's ask rule matches
+  wherever the options go: `Bash(project init *)` asks before
+  `project init --root .`. A line such as `project --root . init` matches no
+  ask rule, and `project` refuses it.
 
   `project edit`, and `project create` without `--no-edit`, open your
   `$VISUAL` or `$EDITOR`, and need no ask rule. They open it only at a
@@ -204,7 +210,7 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "request", "restore", "revise", "show", "tell", "watch", "withdraw"]],
+      pattern = ["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore", "revise", "show", "tell", "watch", "withdraw"]],
       decision = "allow",
   )
   prefix_rule(
@@ -220,9 +226,9 @@ what it did to each:
   No rule matches `project init`, `project upgrade`, `project config set` or
   `unset`, `project create` or `project edit`, whose editor an agent could
   drive, `project review gate`, `project site build` or `serve`,
-  `project inbox answer`, `dismiss`, `snooze`, `done`, or `decline`, which
-  record your choice,
-  or a command line that starts with an option, so Codex's usual approval
+  `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, or
+  `start`, which record your choice, or a command line that starts with an
+  option, so Codex's usual approval
   decides them, in its sandbox. A command added to Projector later reaches
   Codex once Projector names it and you run `init` again. To see what the
   rules allow, run
@@ -1996,10 +2002,11 @@ your prompt. The agent then withdraws the question if the reply settles it,
 revises it if the reply shows it was unclear, or leaves it open while it still
 needs you.
 
-`answer`, `dismiss`, `snooze`, `done`, and `decline` record your choice, so
-the permission rules `project init` adds ask you before an agent runs one, in
-Claude Code, and leave them to Codex's usual approval. Otherwise an agent
-could answer its own question or mark its own request done. Projector's
+`answer`, `dismiss`, `snooze`, `done`, `decline`, and `start` record your
+choice, so the permission rules `project init` adds ask you before an agent
+runs one, in Claude Code, and leave them to Codex's usual approval. Otherwise
+an agent could answer its own question, mark its own request done, or press
+start for you. Projector's
 panel runs them itself, so answering there never asks. `restore` takes no
 choice from you, so an agent runs it without asking, in either host, when
 you say a dismissal was a mistake.
@@ -2093,8 +2100,44 @@ takes no answer, so `answer` refuses one with exit code 65, and `done` and
 `decline` refuse any other kind of item, a resolved request, and a `--text` of
 more than one line. `dismiss` declines a request with no text. A decline is a
 dismissal, so `restore` reopens a declined request, and the agent that heard
-`DECLINED` hears `RESTORED`. `list` shows a request as `open`, `done`,
-`declined`, or `withdrawn`.
+`DECLINED` hears `RESTORED`. `list` shows a request as `open`, `started`,
+`ready`, `blocked`, `done`, `declined`, or `withdrawn`.
+
+When the agent must prepare something before you can begin, such as
+installing a build on your phone, it gives the request a start action with
+`--start`. Nothing happens until you say you are ready with `start`, which
+takes the start action as you read it and refuses one that no longer
+matches, so you consent only to what you read. The deliverer then sends the
+agent `STARTED` with that action, and the agent does it and marks the
+request `ready`, or `block`s it with what you should do first. Run `start`
+again to retry a blocked request:
+
+```console
+$ project inbox request "Test the gutters" \
+    --start "Install build c0d62a3b on your iPhone" --session "$SESSION"
+6
+$ project inbox start 6 --action "Install build c0d62a3b on your iPhone"
+started 6
+$ project inbox watch --once --session "$SESSION"
+STARTED 6 Test the gutters → Install build c0d62a3b on your iPhone
+$ project inbox block 6 --session "$SESSION" \
+    --reason "The phone is locked. Unlock it and press retry."
+blocked 6
+```
+
+`start` refuses, with exit code 65, a request with no start action, one
+already started and not blocked, a resolved one, and an `--action` that
+differs from the stored start action. `ready` and `block` refuse a request
+that is not started or that is already ready or blocked, and `block` refuses
+an empty reason or one longer than one line. `revise` takes `--start` to
+change the start action, and an empty `--start ""` removes it. Revising a
+started, ready, or blocked request returns it to open, so a start you
+pressed for the old text never covers the new. A restored request returns to
+open the same way. When you mark a request done or decline it before its
+`STARTED` reaches the agent, the outcome takes its place, and the agent hears
+only the outcome. A `STARTED` already on its way still arrives, and the
+outcome follows it. When `STARTED` cannot be delivered, the start is taken
+back, so you press start again.
 
 To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
 an hour, or for the whole minutes that `--for` gives, up to a day (1440
