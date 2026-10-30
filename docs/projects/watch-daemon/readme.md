@@ -291,8 +291,9 @@ The GraphQL query serves both roles and the panel:
 ```graphql
 repository(owner: $o, name: $r) { visibility
   pullRequest(number: $n) {
-    number title url body state isDraft reviewDecision mergeable
+    number title url body state isDraft reviewDecision mergeable updatedAt
     headRefOid headRefName baseRefName author { login }
+    additions deletions changedFiles
     commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
     comments(last: 100) { nodes { author { login } body } }
     reviews(last: 100) { nodes { author { login } authorAssociation submittedAt body } }
@@ -301,6 +302,11 @@ repository(owner: $o, name: $r) { visibility
       first: comments(first: 1) { nodes { databaseId body } }
       last: comments(last: 1) { nodes { databaseId author { login } body } } } } } }
 ```
+
+`updatedAt`, `additions`, `deletions`, and `changedFiles` serve only the
+panel's row, which shows the pull request's age and its changed lines, as
+`FIELDS` in `hooks/github.ts` reads them today. They cost nothing, because a
+scalar field adds no connection.
 
 The cache holds, under `cache/<owner>/<repo>/`, `pulls/<number>.json` with
 each request's last `ETag` and the last result with its time,
@@ -430,7 +436,9 @@ change its tracked file, and the release after removes them.
 - **Read the cache.** It reads each pull request's status from
   `cache/<owner>/<repo>/pulls/<number>.json` rather than its own GraphQL
   query every 30 seconds, and shows a pull request with no result yet as
-  loading. The query for an open drawer's threads stays.
+  loading. It reads the operator from `daemon.json` in place of the query's
+  `viewer { login }`, to sort the user's own pull requests apart. The query
+  for an open drawer's threads stays.
 - **Name the roles.** A pull request's drawer says `fixing` in the blue that
   `watching` uses today, `reviewing` in `claude` orange, or both.
 - **Dismiss by role.** Dismissing a pull request runs `project watch drop`
@@ -576,7 +584,7 @@ change its tracked file, and the release after removes them.
 | Run `project watch add` from a subagent in Claude Code | The line lands in the top-level session's folder |
 | Put events in a Claude Code session's `events` | The mod submits them as one prompt, and `events` is empty |
 | Run `project watch add` where the session has no deliverer | The output names the `stream` command to start |
-| Open the panel in a session with subscriptions | It lists each pull request with `fixing`, `reviewing`, or both, from the cache, and sends no GraphQL query of its own |
+| Open the panel in a session with subscriptions | It lists each pull request with `fixing`, `reviewing`, or both, and with its age and changed lines, from the cache, and sends no GraphQL query of its own |
 | Run the daemon for an hour on a live repository with `N` quiet pull requests | `gh api rate_limit` shows the GraphQL count growing by about `12N` an hour, and not between full passes |
 
 These tests fail before the change: `tests/test_watch.py`, the subscription,
