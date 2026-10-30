@@ -77,8 +77,9 @@ done and decline, and layer 2 adds the start action.
    `project inbox done` or `decline`, then `claim` and `delivered`, because
    the prompt itself carried the outcome and your notes to the main loop. When
    a subagent posted the request, the hook names it in the prompt's
-   `context`, as it does for a question. A quoted request followed by any
-   other text replies to it and leaves it open, as a reply to a question does.
+   `context` with `relayNote`, as it does for a question. A quoted request
+   followed by any other text replies to it and leaves it open, as a reply to
+   a question does, and `replyNote` names the subagent for a reply.
 8. From a terminal, `project inbox done <number> [--text <line>]` and
    `decline` record the outcome, and the deliverer sends `DONE 5 <request> →
    <text>` or `DECLINED 5 <request> → <text>`, without the arrow and text when
@@ -131,7 +132,7 @@ above in reverse order of that list.
 | `project inbox dismiss <number>` | A request records a decline with no text |
 | `project inbox answer <number>` | Exits `65` for a request, naming `done` and `decline` |
 | `project inbox revise <number> [--request <line>] [--detail <markdown>] [--start <action>]` | Takes a request; `--question`, `--recommend`, and `--option` exit `65` for one. Layer 2 resets a started, ready, or blocked request to open |
-| `show`, `context`, `claim`, `delivered`, `reopen`, `watch` | Take a request. `context` prints `<number> is the request: <subject>` |
+| `show`, `claim`, `delivered`, `reopen`, `watch` | Take a request |
 
 `start`, `done`, and `decline` record what only you may decide, so they join
 `answer`, `dismiss`, and `snooze` among the commands Projector's permission
@@ -166,10 +167,10 @@ A refusal follows `ask`'s rules: exit `65` gives the check that failed.
 | File | Change |
 | --- | --- |
 | `src/projector/inbox.py` | Add `request` to `KINDS`; add `request`, `done`, `decline`, and in layer 2 `start`, `ready`, and `block`. Extend `dismiss`, `revise`, `claim`, `settle`, `message`, `resolution`, `owes_a_line`, and the kind checks |
-| `src/projector/cli.py` | The subcommands and flags in § 2.3, the request's states in `list`, and its `show` and `context` text |
+| `src/projector/cli.py` | The subcommands and flags in § 2.3, the request's states in `list`, and its `show` text |
 | `src/projector/permissions.py` | `start`, `done`, and `decline` among the ask rules; `request`, `ready`, and `block` among the allowed commands |
 | `hooks/types.d.ts` | A `Request` type in `Item` |
-| `hooks/inbox.ts` | `needsDelivery` for a request's owed lines; `readPrompt` reads `Done` and `Declined` under a quoted request; the tools' descriptions and argument builders |
+| `hooks/inbox.ts` | `needsDelivery` for a request's owed lines; `readPrompt` reads `Done` and `Declined` under a quoted request; `relayNote` and `replyNote` word their notes for a request; the tools' descriptions and argument builders |
 | `hooks/register.tsx` | The tools; the request's line, color, and state mark; its drawer's actions; `act` runs `start`; `deliver` and the prompt hook take a request |
 | `tests/test_inbox.py`, `tests/test_permissions.py`, `hooks/inbox.test.ts`, `hooks/panel.test.tsx` | Tests for the criteria in § 4 |
 | `docs/cli.md` | "Use the inbox" describes requests and the new commands |
