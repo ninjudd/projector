@@ -81,7 +81,9 @@ this order.
   the behavior that must hold, the inputs and states that could break it,
   and the test or observation that proves it. A table of what to do and
   what to expect, followed by the tests that fail before the change, works
-  well. A criterion nobody can observe is a hope, not evidence.
+  well. A criterion nobody can observe is a hope, not evidence. Write
+  criteria the merged code can meet, because the project is complete once its
+  code merges; a release that follows is tracked outside Projector.
 - **Cost.** The paths where cost matters, the load they carry, and how the
   change is measured against it, or that cost does not matter here and
   why. A plan silent on cost leaves the implementer and the reviewer to
@@ -116,10 +118,7 @@ is reshaped. Bring the problem and the solution to the top of such a plan in
 the unnumbered lead under the title: the one-sentence summary, a short
 paragraph that states the problem, and a paragraph that states the fix
 whole. Leave the design where its numbered sections already describe it, and
-add a full new section only at the end, with the next number. A section whose
-behavior the default branch already has records what was decided and built,
-so record a changed decision in a new section at the end rather than
-rewriting it there.
+add a full new section only at the end, with the next number.
 
 Follow the writing guide in `../writing.md` when you write the plan. State
 each decision and its reason rather than pointing at where it was discussed

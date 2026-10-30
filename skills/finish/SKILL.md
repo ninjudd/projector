@@ -35,10 +35,14 @@ and link the replacement when one exists. Preserve the history of decisions
 and unanswered questions that still explain the result.
 
 Run `project done <name>` in the implementation change that completes the
-project; it sets the status to `completed`, after which the project needs no
-priority. Do not defer the status update to a follow-up pull request, and do
-not mark an early slice completed when later slices still carry the same
-promised outcome.
+project, which is the change that merges the last of its code into the
+default branch; it sets the status to `completed`, after which the project
+needs no priority. Do not defer the status update to a follow-up pull request
+or until a release, and do not mark an early slice completed when later
+slices still carry the same promised outcome. A release, deployment, or
+rollout after the merge is tracked outside Projector, so a criterion that
+waits on one does not hold the project open: say in the plan where it is
+tracked.
 
 ## Validate the handoff
 

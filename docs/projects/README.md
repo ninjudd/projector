@@ -66,7 +66,9 @@ the frontmatter by hand when you author a new plan without the command.
 - `in-progress`: Implementation has begun and the project is being worked.
   Keep a blocked project here while its blocker is being resolved, and explain
   the blocker in the project plan.
-- `completed`: The project no longer needs work. State whether it shipped, was
+- `completed`: The project no longer needs work. A project ships once the last
+  of its code merges into the default branch, so mark it `completed` in that
+  pull request rather than after a release. State whether it shipped, was
   abandoned, or was superseded in the project plan.
 
 `priority` records when the work should happen:
@@ -112,7 +114,9 @@ For example, the pull request that begins implementation runs
 `project status` to move the project from `ready` to `in-progress`. The pull
 request that completes the final implementation runs `project done`, which
 sets the status to `completed`. A stale status is worse than a missing
-status.
+status. Do not wait for a release before you run `project done`. Projector
+does not track releases, so track them in your release process or issue
+tracker, and let the plan close when its code merges.
 
 The commands load the plan before they write, so they refuse a plan whose
 frontmatter `project check` rejects. A plan with `status: blocked`, for
@@ -138,29 +142,19 @@ Write the smallest plan that makes those clear. Keep the reason for a status
 or priority change in the body rather than adding more field values. Split
 material into a supplemental file when it obscures the main plan.
 
-## Keep a plan as a record once its work merges
+## Leave a completed plan as it is
 
 A plan guides its project while the work is being built, and records what was
-decided and built once that work merges. Update the plan of the project you are
-building in the change that settles each decision. After the work merges into
-the default branch, leave the plan's account of it as it is:
+decided and built once the project is `completed`. Update the plan of the
+project you are building in the change that settles each decision. Once the
+project is `completed`, leave its plan as it is. When later work changes
+behavior a completed plan describes, update the living documentation in
+`docs/` in that change, and record the new decision in the plan of the project
+the later work belongs to, when it has one.
 
-- A `completed` plan is a record from top to bottom.
-- In an unfinished plan, a section is a record once the default branch has the
-  behavior it describes. A plan can stay `in-progress` long after its first
-  sections merge, for example while its work waits for a release, so read the
-  default branch rather than the status to tell which sections are records.
-
-When later work changes behavior that a record describes, update the living
-documentation in `docs/` in that change, and leave the plan alone. When the
-later work belongs to the same project, record the new decision in a numbered
-section appended to the plan, and name the section it supersedes. The earlier
-section keeps what was decided at the time, and the new one says what changed
-and why.
-
-A record still changes in two ways. Its status, priority, and owner change
-through the `project status`, `project priority`, and `project owner` commands,
-and a reference to a renamed project is updated as
+A completed plan still changes in two ways. Its status, priority, and owner
+change through the `project status`, `project priority`, and `project owner`
+commands, and a reference to a renamed project is updated as
 [Rename a project deliberately](#rename-a-project-deliberately) describes.
 
 ## Find projects

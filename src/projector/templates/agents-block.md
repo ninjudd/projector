@@ -1,4 +1,4 @@
-<!-- projector:begin 15 -->
+<!-- projector:begin 16 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -20,12 +20,12 @@ you revise it substantially.
 
 A plan under `{projects_dir}` is not living documentation. Update the plan of
 the project you are building as its decisions settle, in the change that
-settles them. Once work merges into the default branch, the plan's account of
-it records what was decided and built, so leave that account as it is: all of
-a `completed` plan, and each section of an unfinished plan whose behavior the
-default branch already has. When later work changes that behavior, update the
-living documentation instead. When the later work belongs to the same project,
-record the new decision in a section you append to its plan.
+settles them. Mark the project `completed` with `project done` in the change
+that merges the last of its code into the default branch. Do not wait for a
+release: Projector does not track releases, and a project held open for one
+tends to stay open. A `completed` plan records what was decided and built, so
+leave it as it is, and when later work changes behavior it describes, update
+the living documentation instead.
 
 Write GitHub issues and review comments in the same style. Write a pull request
 body as prose that explains why the change exists, because a squash merge makes
