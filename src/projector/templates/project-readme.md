@@ -18,7 +18,11 @@ plan, fix by hand what the error or `project check` names, then go back to the
 commands. Do not create shared queue files, status or priority directories, or
 symlinks, and do not move a project when its status or priority changes.
 Number plan sections and never renumber them after another document or code
-comment cites them.
+comment cites them. Once a project's work merges into the default branch, its
+plan's account of that work records what was decided and built. When later
+work changes that behavior, update the living documentation and leave the
+plan as it is, unless the later work belongs to the same project: then record
+the new decision in a section appended to its plan.
 
 Run `project list` to browse projects, `project search` to search them, and
 `project check` to validate the tree. Every `project` command comes from the

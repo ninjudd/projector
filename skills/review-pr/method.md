@@ -254,6 +254,13 @@ Apply these rules to the verified set, in this order:
   the change's own, and its impact sets its priority.
 - **A rule violation cites its rule** by document and section. Without a
   citation it is a style opinion and is dropped.
+- **A merged plan is a record.** A Projector project's plan records what was
+  decided and built once its work merges: all of a `completed` plan, and each
+  section of an unfinished plan whose behavior the default branch already
+  has. A finding that asks the change to rewrite or annotate that record so
+  it matches the change is dropped, even when it cites a rule that keeps
+  `docs/` current. When living documentation describes the same behavior and
+  the change left it stale, the finding asks for that document instead.
 - **One root cause is one finding.** The same defect at several sites becomes
   one finding that lists every location and anchors at the first. Two
   candidates on the same defect merge, keeping a second framing only when it

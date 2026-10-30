@@ -138,6 +138,30 @@ Write the smallest plan that makes those clear. Keep the reason for a status
 or priority change in the body rather than adding more field values. Split
 material into a supplemental file when it obscures the main plan.
 
+## Keep a plan as a record once its work merges
+
+A plan guides its project while the work is being built, and records what was
+decided and built once that work merges. Update the plan of the project you are
+building in the change that settles each decision. After the work merges into
+the default branch, leave the plan's account of it as it is:
+
+- A `completed` plan is a record from top to bottom.
+- In an unfinished plan, a section is a record once the default branch has the
+  behavior it describes. A plan can stay `in-progress` long after its first
+  sections merge, for example while its work waits for a release, so read the
+  default branch rather than the status to tell which sections are records.
+
+When later work changes behavior that a record describes, update the living
+documentation in `docs/` in that change, and leave the plan alone. When the
+later work belongs to the same project, record the new decision in a numbered
+section appended to the plan, and name the section it supersedes. The earlier
+section keeps what was decided at the time, and the new one says what changed
+and why.
+
+A record still changes in two ways. Its status and priority change through the
+`project` commands, and a reference to a renamed project is updated as
+[Rename a project deliberately](#rename-a-project-deliberately) describes.
+
 ## Find projects
 
 List projects with `project list`, and search them with `project search`:

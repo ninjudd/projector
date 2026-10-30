@@ -116,7 +116,10 @@ is reshaped. Bring the problem and the solution to the top of such a plan in
 the unnumbered lead under the title: the one-sentence summary, a short
 paragraph that states the problem, and a paragraph that states the fix
 whole. Leave the design where its numbered sections already describe it, and
-add a full new section only at the end, with the next number.
+add a full new section only at the end, with the next number. A section whose
+behavior the default branch already has records what was decided and built,
+so record a changed decision in a new section at the end rather than
+rewriting it there.
 
 Follow the writing guide in `../writing.md` when you write the plan. State
 each decision and its reason rather than pointing at where it was discussed

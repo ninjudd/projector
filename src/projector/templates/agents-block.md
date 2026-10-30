@@ -1,4 +1,4 @@
-<!-- projector:begin 14 -->
+<!-- projector:begin 15 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -13,9 +13,19 @@ to find and change projects instead of parsing plan files yourself, and run
 Write new and substantially revised documentation in the Google developer
 documentation style: second person, present tense, active voice, sentence-case
 headings, exact identifiers in code font, and a command or example when it
-communicates more directly than prose. Keep `docs/` describing the behavior on
-the current branch, and update it in the change that alters that behavior. An
-existing document keeps its register until you revise it substantially.
+communicates more directly than prose. Keep the living documentation in
+`docs/` describing the behavior on the current branch, and update it in the
+change that alters that behavior. An existing document keeps its register until
+you revise it substantially.
+
+A plan under `{projects_dir}` is not living documentation. Update the plan of
+the project you are building as its decisions settle, in the change that
+settles them. Once work merges into the default branch, the plan's account of
+it records what was decided and built, so leave that account as it is: all of
+a `completed` plan, and each section of an unfinished plan whose behavior the
+default branch already has. When later work changes that behavior, update the
+living documentation instead. When the later work belongs to the same project,
+record the new decision in a section you append to its plan.
 
 Write GitHub issues and review comments in the same style. Write a pull request
 body as prose that explains why the change exists, because a squash merge makes
