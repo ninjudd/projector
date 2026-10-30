@@ -1,0 +1,210 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 01cb866c..dcfffa02 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -143,7 +143,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 14 -->
++<!-- projector:begin 15 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -158,9 +158,19 @@ to find and change projects instead of parsing plan files yourself, and run
+ Write new and substantially revised documentation in the Google developer
+ documentation style: second person, present tense, active voice, sentence-case
+ headings, exact identifiers in code font, and a command or example when it
+-communicates more directly than prose. Keep `docs/` describing the behavior on
+-the current branch, and update it in the change that alters that behavior. An
+-existing document keeps its register until you revise it substantially.
++communicates more directly than prose. Keep the living documentation in
++`docs/` describing the behavior on the current branch, and update it in the
++change that alters that behavior. An existing document keeps its register until
++you revise it substantially.
++
++A plan under `docs/projects` is not living documentation. Update the plan of
++the project you are building as its decisions settle, in the change that
++settles them. Once work merges into the default branch, the plan's account of
++it records what was decided and built, so leave that account as it is: all of
++a `completed` plan, and each section of an unfinished plan whose behavior the
++default branch already has. When later work changes that behavior, update the
++living documentation instead. When the later work belongs to the same project,
++record the new decision in a section you append to its plan.
+ 
+ Write GitHub issues and review comments in the same style. Write a pull request
+ body as prose that explains why the change exists, because a squash merge makes
+diff --git a/docs/projects/README.md b/docs/projects/README.md
+index 0f24305d..ea7fbf97 100644
+--- a/docs/projects/README.md
++++ b/docs/projects/README.md
+@@ -138,6 +138,31 @@ Write the smallest plan that makes those clear. Keep the reason for a status
+ or priority change in the body rather than adding more field values. Split
+ material into a supplemental file when it obscures the main plan.
+ 
++## Keep a plan as a record once its work merges
++
++A plan guides its project while the work is being built, and records what was
++decided and built once that work merges. Update the plan of the project you are
++building in the change that settles each decision. After the work merges into
++the default branch, leave the plan's account of it as it is:
++
++- A `completed` plan is a record from top to bottom.
++- In an unfinished plan, a section is a record once the default branch has the
++  behavior it describes. A plan can stay `in-progress` long after its first
++  sections merge, for example while its work waits for a release, so read the
++  default branch rather than the status to tell which sections are records.
++
++When later work changes behavior that a record describes, update the living
++documentation in `docs/` in that change, and leave the plan alone. When the
++later work belongs to the same project, record the new decision in a numbered
++section appended to the plan, and name the section it supersedes. The earlier
++section keeps what was decided at the time, and the new one says what changed
++and why.
++
++A record still changes in two ways. Its status, priority, and owner change
++through the `project status`, `project priority`, and `project owner` commands,
++and a reference to a renamed project is updated as
++[Rename a project deliberately](#rename-a-project-deliberately) describes.
++
+ ## Find projects
+ 
+ List projects with `project list`, and search them with `project search`:
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 9f7ce6e2..f43826e5 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -311,6 +311,15 @@ same code:
+ 6. Keep independent fixes in independent commits; batch findings that share one
+    cause.
+ 
++Decline a finding that asks you to rewrite or annotate a Projector plan's
++account of merged work: any part of a `completed` plan, or a section of an
++unfinished plan whose behavior the default branch already has. Such a plan
++records what was decided and built, as `../review-pr/method.md` § 6 says, so
++reply with that reason and leave the plan as it is. When living documentation
++describes the same behavior and the change left it stale, the finding holds
++for that document: fix it there, and say in the reply that the plan stays as
++it is.
++
+ If the correct behavior requires a user decision, ask instead of guessing and
+ go on with unrelated findings. If a finding recurs after a pushed fix, stop
+ and report the recurrence before changing it again.
+diff --git a/skills/implement/SKILL.md b/skills/implement/SKILL.md
+index 53b1c598..16280c0a 100644
+--- a/skills/implement/SKILL.md
++++ b/skills/implement/SKILL.md
+@@ -83,9 +83,14 @@ When the work has a plan, update it in the same change whenever
+ implementation settles a decision, changes scope, reveals a new constraint,
+ or completes an acceptance criterion. Follow the writing guide in
+ `../writing.md` when you write the update, as `spec` does. Append numbered
+-sections rather than renumbering cited sections. Create a nested project
+-only when it has an independently useful lifecycle. Put details that belong
+-to the parent in a supplemental document.
++sections rather than renumbering cited sections. A section whose behavior the
++default branch already has records what was decided and built, so when this
++change revises a decision such a section records, append a section that says
++what changed and names the one it supersedes. When this change alters behavior
++that another project's plan describes, `completed` or not, update the living
++documentation and leave that plan's account of merged work as it is. Create a
++nested project only when it has an independently useful lifecycle. Put
++details that belong to the parent in a supplemental document.
+ 
+ Do not infer a parent's status or priority from a child or vice versa. Do not
+ move project directories, generate a tracked status index, or duplicate either
+diff --git a/skills/review-pr/method.md b/skills/review-pr/method.md
+index c1c4e008..916c2973 100644
+--- a/skills/review-pr/method.md
++++ b/skills/review-pr/method.md
+@@ -254,6 +254,13 @@ Apply these rules to the verified set, in this order:
+   the change's own, and its impact sets its priority.
+ - **A rule violation cites its rule** by document and section. Without a
+   citation it is a style opinion and is dropped.
++- **A merged plan is a record.** A Projector project's plan records what was
++  decided and built once its work merges: all of a `completed` plan, and each
++  section of an unfinished plan whose behavior the default branch already
++  has. A finding that asks the change to rewrite or annotate that record so
++  it matches the change is dropped, even when it cites a rule that keeps
++  `docs/` current. When living documentation describes the same behavior and
++  the change left it stale, the finding asks for that document instead.
+ - **One root cause is one finding.** The same defect at several sites becomes
+   one finding that lists every location and anchors at the first. Two
+   candidates on the same defect merge, keeping a second framing only when it
+diff --git a/skills/spec/SKILL.md b/skills/spec/SKILL.md
+index 65ca2d81..0edb8478 100644
+--- a/skills/spec/SKILL.md
++++ b/skills/spec/SKILL.md
+@@ -116,7 +116,10 @@ is reshaped. Bring the problem and the solution to the top of such a plan in
+ the unnumbered lead under the title: the one-sentence summary, a short
+ paragraph that states the problem, and a paragraph that states the fix
+ whole. Leave the design where its numbered sections already describe it, and
+-add a full new section only at the end, with the next number.
++add a full new section only at the end, with the next number. A section whose
++behavior the default branch already has records what was decided and built,
++so record a changed decision in a new section at the end rather than
++rewriting it there.
+ 
+ Follow the writing guide in `../writing.md` when you write the plan. State
+ each decision and its reason rather than pointing at where it was discussed
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 8d0a2836..ebdfe977 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 14 -->
++<!-- projector:begin 15 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -13,9 +13,19 @@ to find and change projects instead of parsing plan files yourself, and run
+ Write new and substantially revised documentation in the Google developer
+ documentation style: second person, present tense, active voice, sentence-case
+ headings, exact identifiers in code font, and a command or example when it
+-communicates more directly than prose. Keep `docs/` describing the behavior on
+-the current branch, and update it in the change that alters that behavior. An
+-existing document keeps its register until you revise it substantially.
++communicates more directly than prose. Keep the living documentation in
++`docs/` describing the behavior on the current branch, and update it in the
++change that alters that behavior. An existing document keeps its register until
++you revise it substantially.
++
++A plan under `{projects_dir}` is not living documentation. Update the plan of
++the project you are building as its decisions settle, in the change that
++settles them. Once work merges into the default branch, the plan's account of
++it records what was decided and built, so leave that account as it is: all of
++a `completed` plan, and each section of an unfinished plan whose behavior the
++default branch already has. When later work changes that behavior, update the
++living documentation instead. When the later work belongs to the same project,
++record the new decision in a section you append to its plan.
+ 
+ Write GitHub issues and review comments in the same style. Write a pull request
+ body as prose that explains why the change exists, because a squash merge makes
+diff --git a/src/projector/templates/project-readme.md b/src/projector/templates/project-readme.md
+index b903bb5f..6c5f0c57 100644
+--- a/src/projector/templates/project-readme.md
++++ b/src/projector/templates/project-readme.md
+@@ -18,7 +18,11 @@ plan, fix by hand what the error or `project check` names, then go back to the
+ commands. Do not create shared queue files, status or priority directories, or
+ symlinks, and do not move a project when its status or priority changes.
+ Number plan sections and never renumber them after another document or code
+-comment cites them.
++comment cites them. Once a project's work merges into the default branch, its
++plan's account of that work records what was decided and built. When later
++work changes that behavior, update the living documentation and leave the
++plan as it is, unless the later work belongs to the same project: then record
++the new decision in a section appended to its plan.
+ 
+ Run `project list` to browse projects, `project search` to search them, and
+ `project check` to validate the tree. Every `project` command comes from the
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index ea835492..1f2e9cd5 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -26,6 +26,7 @@
+     12: "63875baaa115d20fb8662ce521fdebf9bc7a10e84a4d0ea53698fd935d9b06f8",
+     13: "d0a5ecaad619d65f4bf6f445cc85be91dddcdf13e2f776fdcefe0a2f26390150",
+     14: "bca95d2b5719bb51c440f0b57164b8d1f93250d1125fed4c10ce642822a485cc",
++    15: "a9536c8a7a967be5e79960a696693673cffb3fee2ee725107899b972019fc587",
+ }
+ 
+ 
