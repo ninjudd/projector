@@ -1350,6 +1350,30 @@ class OwnerTests(WatchCase):
         self.assertEqual(([], []), (self.take("A"), self.take("B")))
         self.assertEqual({f"acme/app#1 review {MODEL}": "A"}, self.owners())
 
+    def test_a_pass_that_outlasts_a_minute_is_no_sleep_so_a_review_still_stalls(self) -> None:
+        self.github.pull_request(1)
+        self.subscribe_live("A", f"acme/app#1 review {MODEL} operator")
+        self.daemon.tick()
+        lock = self.lock("A")
+        self.daemon.tick()
+        self.take("A")
+
+        # Every call to GitHub takes 61 seconds, so every pass outlasts SLEPT, as a busy daemon's passes do.
+        github = self.github
+
+        def slow(args: list[str]) -> watch.GhResult:
+            self.advance(61)
+            return github(args)
+
+        # The review stalls at 30 minutes, and the pass that finds it ends a few calls later.
+        self.daemon.gh = slow
+        start = self.clock.mono()
+        while self.clock.mono() - start < 2400 and not self.cleared:
+            self.advance(1)
+            self.assertTrue(self.daemon.tick())
+
+        self.assertEqual([lock.path], [found.path for found in self.cleared])
+
     def test_after_a_move_the_new_owner_hears_the_authors_answer(self) -> None:
         self.github.pull_request(1, draft=True, verdicts=[projector_verdict(SHA_A)], threads=[finding_thread()])
         self.subscribe_live("A", f"acme/app#1 review {MODEL} operator")

@@ -933,3 +933,7 @@ Building the daemon settled these choices, which the design above left open.
 - **The record copy.** `copy_published` returns 0 when the former owner has no
   record, and sorts the merged record by `published_at`, because an
   incremental review reads the last entry as the newest.
+- **A long pass is no sleep.** The daemon measures the gap that reads as the
+  machine sleeping from the end of its last turn, not its start. A pass that
+  runs past a minute, as a pass over a few dozen pull requests does, then
+  forgives no lock and keeps no closed session live.

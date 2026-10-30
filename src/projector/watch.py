@@ -699,23 +699,26 @@ class Daemon:
             return True
 
     def tick(self) -> bool:
-        """One turn of the loop, once a second: answer whether the daemon keeps running."""
+        """One turn of the loop, once a second: answer whether the daemon keeps running. The gap that reads as
+        the machine sleeping runs from the end of the last turn, so a pass that outlasts `SLEPT` is no sleep."""
         now = self.mono()
         if self.last_tick is not None and now - self.last_tick > SLEPT:
             self.forgive(now)
-        self.last_tick = now
-        if self.stop_requested():
-            self.log("stopping: the stop file names this daemon")
-            return False
-        self.scan(now)
-        if self.live:
-            self.last_live = now
-        elif now - self.last_live >= IDLE:
-            self.log("stopping: no session has been live for 5 minutes")
-            return False
-        if self.wanted or now >= self.next_pass:
-            self.run_pass()
-        return True
+        try:
+            if self.stop_requested():
+                self.log("stopping: the stop file names this daemon")
+                return False
+            self.scan(now)
+            if self.live:
+                self.last_live = now
+            elif now - self.last_live >= IDLE:
+                self.log("stopping: no session has been live for 5 minutes")
+                return False
+            if self.wanted or now >= self.next_pass:
+                self.run_pass()
+            return True
+        finally:
+            self.last_tick = self.mono()
 
     def forgive(self, now: float) -> None:
         """Count every live session as seen, and every lock as changed, now: a gap in the loop is the machine
