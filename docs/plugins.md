@@ -625,10 +625,11 @@ marks the answer given with `✓`, listing an answer typed in a terminal with
 `project inbox answer --text` after the options.
 
 While a dismissed or snoozed item is still listed, click its line to open
-its drawer again. There, **restore question** or **restore notice** takes
-the place of **dismiss** for a dismissed item, which has no **snooze**
-line, since a resolved item cannot be snoozed. **unsnooze question** or
-**unsnooze notice** takes the place of **snooze** for a snoozed one. Either
+its drawer again. There, **restore question**, **restore notice**, or
+**restore request** takes the place of **dismiss** for a dismissed item,
+which has no **snooze** line, since a resolved item cannot be snoozed.
+**unsnooze question**, **unsnooze notice**, or **unsnooze request** takes the
+place of **snooze** for a snoozed one. Either
 runs `project inbox restore`, and the item is open again at once, in its
 place in the list, with its drawer still open and **dismiss** and
 **snooze** back in their places. A dismissed question whose `DISMISSED`
@@ -701,9 +702,10 @@ presses it before the label in the accent color, such as
 acts on: `question`, `notice`, `request`, or `PR`.
 
 - **7** presses **discuss**.
-- **8** presses **dismiss**, or **restore** in its place. Dismiss asks to
-  be sure, on `8` again to dismiss and `9` to keep the item, so dismissing
-  from the keyboard is `8` `8`.
+- **8** presses **dismiss**, or **restore** in its place. An item's
+  **dismiss** acts at once. A pull request's asks to be sure, on `8` again
+  to dismiss and `9` to keep it, so dismissing one from the keyboard is `8`
+  `8`.
 - **9** presses **snooze**, or **unsnooze** in its place, which a pull
   request's drawer does not offer. While snooze asks how long, the lengths
   take `1` to `4` in the options' place and `9` cancels.

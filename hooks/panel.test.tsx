@@ -1933,7 +1933,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
   await ui.unmount()
 })
 
-test('requests through the tool, and a request’s drawer offers the agent’s options in the options’ place and no dismiss', async ($, on) => {
+test('requests through the tool, and a request’s drawer offers the agent’s options in the options’ place, then discuss, dismiss, and snooze', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
