@@ -114,9 +114,9 @@ COMMANDS = "every `project` command but the few that reach outside Projector's o
 # justification Codex shows for it.
 CODEX_ALLOW = (
     (["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary",
-                  "version"]],
-     "Runs a Projector command that works on plans, loops, or pull request summaries, or prints its version or "
-     "help."),
+                  "version", "watch"]],
+     "Runs a Projector command that works on plans, loops, watches, or pull request summaries, or prints its "
+     "version or help."),
     (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
     (["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore",
                            "revise", "show", "tell", "watch", "withdraw"]],
