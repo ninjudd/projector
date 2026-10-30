@@ -1,0 +1,185 @@
+{
+ "version": 1,
+ "name": "Watch daemon",
+ "project": "watch-daemon",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 386,
+  "title": "Watch subscribed pull requests from one on-demand daemon",
+  "head": "80c2cbff2b407172be1fe3f5f236fe17af2c4859",
+  "headRef": "watch-daemon",
+  "base": "8b83bc6f7bc2d1340ca12d1cc3a86d7195712b61",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector drives a pull request to a clean review with two loops, each a watcher script that an agent session keeps running: the watch loop reports review findings to the session that wrote the pull request, and the review loop reports new heads to the session that reviews it. Both poll GitHub's GraphQL API on every pass whether or not anything changed, so a busy account runs out of its 5,000 points an hour, and somebody has to start each loop by hand.",
+   "This pull request is the first layer of the plan in <code>docs/projects/watch-daemon/readme.md</code>. It adds one daemon per machine, <code>project watch serve</code>, that every <code>project watch</code> command starts when none runs and that exits 5 minutes after the last session goes quiet. A session <b>subscribes</b> to a pull request in the <code>fix</code> or <code>review</code> role. Each pass, the daemon asks GitHub one conditional REST question per pull request, which is free when the answer is <code>304 Not Modified</code>, and runs GraphQL only for a pull request that changed, plus a full query every 10 minutes. It picks one <b>owner</b> session per pull request and role and appends what that session should do to the session's <code>events</code> file.",
+   "A review can move from one session to another, so <code>project review</code> changes too: its commands touch the review's lock as they run, the daemon treats a lock untouched for 30 minutes as a stalled review, and <code>settle</code>, <code>move</code>, and <code>publish</code> refuse once the lock names another session. The skills that subscribe sessions, the panel that reads the cache, and the removal of the old loops come in the layers above."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Session</b>: one agent conversation and its subagents, named by <code>--session</code>, <code>PROJECTOR_SESSION</code>, or Claude Code's <code>CLAUDE_CODE_SESSION_ID</code>.</li><li><b>Subscription</b>: one line in a session's <code>subscriptions</code> file, such as <code>acme/app#12 fix</code> or <code>acme/app review &lt;model&gt; &lt;login&gt;</code>.</li><li><b>Live</b>: renewed within the last 5 minutes, by Projector's mod or <code>project watch stream</code>.</li><li><b>Owner</b>: the one live session that hears events for a pull request and role.</li><li><b>Review lock</b>: <code>&lt;sha&gt;.lock</code> in the review state directory, held from <code>setup</code> to <code>publish</code>. It names the loop, which is now the session id.</li><li><b>Stalled</b>: a lock no review command touched for <code>watch.review_stall</code> seconds.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review found one defect: a pass longer than a minute counted as a machine sleep, so with about 30 subscriptions no review ever stalled. This head fixes it, and the review of this head is clean.</li><li>The rebase onto main changed only <code>cli.py</code>'s import line among the reviewed commits.</li><li>The gate passes, and a live run in a scratch state directory started, raced, restarted, replaced, and idled out the daemon as the plan says.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "One daemon watches every subscribed pull request",
+   "kicker": "src/projector/watch.py: sessions, owners, passes, the cache, and events",
+   "intro": [
+    "The daemon is one loop that wakes once a second. Each turn it checks for a stop request, notes which sessions renewed, exits after 5 idle minutes, and runs a pass every <code>watch.interval</code> seconds, or at once when a session subscribes to something it has no result for.",
+    "<ol><li><b>Gather and adopt.</b> It reads every live session's lines. A repository subscription adopts each open pull request the operator wrote or that requests the operator by login.</li><li><b>Ask.</b> For each pull request it sends <code>gh api -i</code> with <code>If-None-Match</code> for the pull request, its reviews page, and, when a session fixes it, the base branch.</li><li><b>Query.</b> A <code>200</code>, a failure, an unsettled <code>mergeable</code>, or a full pass due runs the GraphQL query and writes the cache.</li><li><b>Choose owners.</b> A pull request's line beats a repository's, the newest line wins, and a <code>fix auto</code> line from a push never outranks an older one. A <code>review</code> role moves only between reviews.</li><li><b>Announce.</b> Each owner gets new events and reminders, each ending with the action to take.</li></ol>",
+    "The daemon keeps two clocks: wall time for what it records, and a monotonic clock for liveness and stalls. A gap of more than a minute from the end of one turn to the start of the next counts as the machine sleeping, and the daemon then counts every live session as seen and every lock as touched. A long pass is not such a gap."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A crash leaves nothing to clean up: the operating system drops the lock on <code>daemon.mutex</code> when the process ends, and the next command starts a new daemon."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "The whole daemon: subscription lines, delivery, push parsing, the pass, owners, events, and starting and stopping the process.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 721,
+       "text": "<code>tick</code> records <code>last_tick</code> after the turn's work, so only the time between turns counts as a sleep. A fake <code>gh</code> whose every GraphQL query takes 61 seconds now still stalls an untouched lock at 30 minutes, as <code>test_a_pass_that_outlasts_a_minute_is_no_sleep_so_a_review_still_stalls</code> also shows."
+      },
+      {
+       "kind": "verify",
+       "line": 1584,
+       "text": "Checked live: a <code>9.9.9</code> command left an <code>unknown</code> daemon running, and replaced a daemon whose <code>daemon.json</code> said <code>0.1.0</code> in 0.8 seconds. <code>unknown</code> never replaced either."
+      },
+      {
+       "kind": "verify",
+       "line": 1222,
+       "text": "A lock naming the owner keeps the role with the owner until it stalls. The owner tests show the move waiting for a review in flight, a stalled lock moving to the waiting session, and a stalled lock with no other candidate coming back as <code>NEW HEAD</code>."
+      },
+      {
+       "kind": "context",
+       "line": 1075,
+       "text": "A failed or rate-limited query carries the last result forward. The ETags are saved only after a query succeeds, so the query runs again on the next pass rather than in a tight loop. Waiting for the quota reset is deferred by the plan's § 7."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "handover",
+   "title": "A review moves between sessions only between reviews",
+   "kicker": "src/projector/review.py: the lock touch, the fence, and the locked record",
+   "intro": [
+    "A review's state and lock belong to the machine and the model, so a review that changed hands midway would leave the new owner locked out and let the old reviewer publish over it. These changes let the daemon tell a slow review from a dead one, and stop a reviewer that wakes after a hand-over.",
+    "<ul><li><b>The touch.</b> <code>setup</code>, <code>census</code>, <code>settle</code>, <code>move</code>, <code>interdiff</code>, and <code>publish</code> update the lock's modification time, and <code>gate</code> does every 60 seconds while it runs.</li><li><b>The fence.</b> <code>settle</code>, <code>move</code>, and <code>publish</code> refuse when the lock names another loop, or is gone from a loop's review, and say it was handed over. <code>publish</code> checks again before each write.</li><li><b>The record.</b> <code>publish</code> and <code>copy_published</code> write a loop's <code>published.json</code> under a file lock, so the daemon's copy into the new owner's record loses no entry, and the new owner's <code>--rereview</code> passes the collision check.</li></ul>"
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Nothing touches the lock while a reviewer waits on a GraphQL reset or a refused publish, or reads code between commands, so 30 such minutes read as a stall. That is the open question on waiting reviewers."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "Adds <code>ReviewLock</code>, <code>check_lock</code>, <code>fence</code>, <code>review_locks</code>, <code>clear_lock</code>, and <code>copy_published</code>, and calls them from each command.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>review_mutex</code> locks the pull request's folder, whose <code>.lock</code> matches none of the <code>*.lock</code> globs that find head locks, checked against <code>Paths.locks</code>, <code>review_locks</code>, and <code>prune</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "commands",
+   "title": "The project watch commands and their settings",
+   "kicker": "cli.py, config.py, and permissions.py",
+   "intro": [
+    "<code>project watch</code> adds <code>add</code>, <code>remove</code>, <code>drop</code>, <code>restore</code>, <code>list</code>, <code>take</code>, <code>renew</code>, <code>stream</code>, <code>status</code>, <code>serve</code>, and <code>stop</code>. Every command but <code>serve</code> and <code>stop</code> starts the daemon when none runs, and replaces one whose version is strictly older. <code>add --from-output</code> reads <code>git push</code> or <code>gh pr create</code> output and subscribes the session to <code>fix auto</code> on each pull request it shows.",
+    "Four whole-number settings join <code>watch.auto_start</code>: <code>watch.interval</code> (60, at least 30), <code>watch.full_every</code> (600), <code>watch.renotify</code> (900), and <code>watch.review_stall</code> (1800). The daemon reads them from the user's own configuration only. Codex's allow rule gains <code>watch</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "The <code>watch</code> parser and <code>run_watch</code>, and <code>census</code>, <code>settle</code>, <code>interdiff</code>, and <code>gate</code> now pass the loop so they reach the lock.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Piped <code>git push</code> output for <code>watch-daemon</code> added <code>ninjudd/projector#386 fix auto</code> in a scratch state directory, and a branch with no open pull request added nothing."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds the whole-number type and its minimums, and refuses a TOML <code>true</code> where a number belongs."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Codex runs <code>project watch</code> without asking."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests drive the daemon with a fake gh and hand clocks",
+   "kicker": "tests/test_watch.py, tests/test_review.py, tests/test_config.py",
+   "intro": [
+    "<code>tests/test_watch.py</code> runs the daemon's pass against a fake <code>gh</code> that prints status lines and honors <code>If-None-Match</code>, with wall and monotonic clocks the test moves by hand, so a lapse, a sleep, a stall, and a full pass need no waiting. It also starts a real detached daemon and kills it. <code>HandOverTests</code> in <code>tests/test_review.py</code> covers the lock touch, the fence, and the locked record against the review module's fake GitHub."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The full suite passes on Python 3.12: 1,268 tests, 1 skipped."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_watch.py"
+    },
+    {
+     "path": "tests/test_review.py"
+    },
+    {
+     "path": "tests/test_config.py",
+     "note": "The documented settings may be whole numbers."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The reference and the plan",
+   "kicker": "docs/cli.md and the watch-daemon plan",
+   "intro": [
+    "<code>docs/cli.md</code> gains a <b>Watch pull requests</b> section, the four settings, and the lock and fence behavior of <code>project review</code>. The plan moves to <code>in-progress</code>, corrects § 2.1 and § 2.5 where the build found the design wrong, adds § 9.1, the choices the build settled, and records in § 8 that the daemon's query costs 2 points, which § 4 and § 5 already count."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/projects/watch-daemon/readme.md",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "§ 8 records that the daemon's query costs 2 points, and § 9.1 that a long pass is no sleep. Rollout step 1, measuring the § 2.6 inferences, is not recorded yet."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
