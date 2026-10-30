@@ -62,9 +62,12 @@ drawer. To say what you don't understand, you still use **discuss**.
    `request`, as every action's does. A resolved item's drawer has no such
    line.
 2. You press **I don't understand**, by its digit, a click, or Enter. The
-   panel runs `project inbox unclear <number>` and closes the drawer. The
-   item's line ends with `unclear`, in `warning`, and its drawer no longer
-   offers **I don't understand**.
+   panel runs `project inbox unclear <number>` with the subject and detail
+   the drawer shows, and closes the drawer. The item's line ends with
+   `unclear`, in `warning`, and its drawer no longer offers **I don't
+   understand**. If the agent revised the subject or detail since the panel
+   drew the drawer, `unclear` records nothing, as start records nothing for
+   a revised start action, and the drawer stays open on the new text.
 3. The panel's deliverer claims the line the item owes and sends
    `UNCLEAR 5 <subject>` to the subagent that posted the item while it
    runs, or otherwise submits it to the main loop as a prompt. When the
@@ -118,7 +121,7 @@ ahead of a request's `started`, `ready`, or `blocked`.
 
 | Command | Change |
 | --- | --- |
-| `project inbox unclear <number>` | New. Records `unclear` on an open item of any kind. Exits `65` for a resolved item, and for an item already marked unclear that its agent has not revised since |
+| `project inbox unclear <number> [--subject <line>] [--detail <markdown>]` | New. Records `unclear` on an open item of any kind. `--subject` and `--detail` give the text the person read, and `unclear` exits `65` when either differs from the stored text, as `start` does when its `--action` differs from the stored start action. Also exits `65` for a resolved item, and for an item already marked unclear that its agent has not revised since |
 | `project inbox revise <number> [--notice <line>] [--detail <markdown>]` | Takes a notice, with its new subject in `--notice`, checked as `tell` checks one; `--question`, `--request`, `--start`, `--recommend`, `--option`, and `--no-options` exit `65` for a notice. Revising any item removes its `unclear` and drops a claim on that line |
 | `project inbox ask`, `request`, `revise` | `--option` takes at most four: a question's other answers, or a request's options. A fifth exits `65` |
 | `claim`, `delivered`, `reopen`, `watch` | Take a notice that owes the `unclear` line |
@@ -145,12 +148,12 @@ Projector's permission rules make an agent ask before it runs them.
 
 | File | Change |
 | --- | --- |
-| `src/projector/inbox.py` | `MAX_OPTIONS = 4`, the cap that `check` applies to a question's other answers and `check_request_options` to a request's options; a new `unclear`; `owed_line`, `claimed_line`, `message`, `claim`, `settle`, `clear_for_outcome`, and `revise` handle the `unclear` line and notices |
-| `src/projector/cli.py` | The `unclear` subcommand, `revise --notice`, the `--option` help of `ask`, `request`, and `revise`, and the `unclear` state in `item_state` |
+| `src/projector/inbox.py` | `MAX_OPTIONS = 4`, the cap that `check` applies to a question's other answers and `check_request_options` to a request's options; a new `unclear`, which compares the subject and detail it is given with the stored ones; `owed_line`, `claimed_line`, `message`, `claim`, `settle`, `clear_for_outcome`, and `revise` handle the `unclear` line and notices |
+| `src/projector/cli.py` | The `unclear` subcommand with `--subject` and `--detail`, `revise --notice`, the `--option` help of `ask`, `request`, and `revise`, and the `unclear` state in `item_state` |
 | `src/projector/permissions.py` | `Bash(project inbox unclear *)` in `ASK`, and `unclear` in `ASKED` |
 | `hooks/types.d.ts` | `unclear?: { at: number; deliveredAt?: number }` on `Posted` |
 | `hooks/inbox.ts` | `needsDelivery` takes a notice that owes the `unclear` line; `forMainLoop` words its note for an `UNCLEAR` line; the tools' descriptions and schemas, with `maxItems: 4` on the `options` of `ask`, `request`, and `revise`; `reviseArguments` passes `--notice` |
-| `hooks/register.tsx` | The drawer's line on `6`, drawn without a digit when a choice holds `6`; `act` runs `unclear`; the line's `unclear` mark; `deliver` takes any kind of item; `settle`'s toast for a failed `UNCLEAR` |
+| `hooks/register.tsx` | The drawer's line on `6`, drawn without a digit when a choice holds `6`; `act` runs `unclear` with the subject and detail its drawer shows, as it passes `start` the start action; the line's `unclear` mark; `deliver` takes any kind of item; `settle`'s toast for a failed `UNCLEAR` |
 | `src/projector/templates/agents-block.md` | Teaches `UNCLEAR` beside `ANSWER`, `DONE`, and `DECLINED`. Bump the block's version from 22 to 23, pin version 23's hash in `tests/test_instructions.py` beside 22's, and run `project init` so this repository's `AGENTS.md` and `CLAUDE.md` take the new block |
 | `docs/cli.md` | "Use the inbox" describes `unclear`, `revise --notice`, and the cap of four, for a question's other answers and for a request's options, where it says five or a sixth. Its paragraph on `revise` also drops the claim that `revise` refuses `--option` for a request |
 | `docs/plugins.md` | "Read your inbox in Projector's panel" and "Use the panel from the keyboard" describe the action and the mark, and say that a question's choices and a request's, after any **Start** or **Retry**, end at `5`, where they say the options keep `1` to `6` |
@@ -173,7 +176,10 @@ Projector's permission rules make an agent ask before it runs them.
 - **A revision clears the mark.** The revision answers the `UNCLEAR`, so
   the mark lasts exactly as long as you wait for it. A press on the old
   text never carries over to the new text, as a press of start never covers
-  a revised start action.
+  a revised start action. A revision after the press clears the mark, and
+  a press on a drawer drawn before the revision passes the old subject and
+  detail, which `unclear` refuses. Those are the parts that an explanation
+  revises.
 - **Notices become revisable.** Withdrawing and telling again gives the
   explanation a new number and a new place in the list, so the panel shows
   the confusing notice vanish and an unrelated-looking one arrive. Revising
@@ -204,6 +210,7 @@ Projector's permission rules make an agent ask before it runs them.
 | `revise 5 --notice "<new line>"` after the press | The notice keeps number 5 and its place, shows the new text without the mark, and offers `6` again |
 | A failed `UNCLEAR` delivery | `unclear` is removed, a toast says why, and `6` returns |
 | `project inbox unclear 5` twice before a revision, or once on a resolved item | Each exits `65` and records nothing |
+| Press `6` on a drawer drawn before `revise` changed the item's subject or detail | `unclear` exits `65` and records nothing, and the drawer stays open on the new text, offering `6` |
 | Dismiss or answer an item whose `UNCLEAR` no deliverer claimed | No `UNCLEAR` is sent; the agent hears only the dismissal or the answer |
 | Answer an item while its `UNCLEAR` is claimed | The agent hears `UNCLEAR`, then the answer |
 | `project inbox ask` with five `--option` flags | Exits `65`, naming the cap of four other options |
