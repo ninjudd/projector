@@ -311,12 +311,14 @@ same code:
 6. Keep independent fixes in independent commits; batch findings that share one
    cause.
 
-Decline a finding that asks you to rewrite or annotate a Projector plan at
-`status: completed`. A completed plan records what was decided and built, as
-`../review-pr/method.md` § 6 says, so reply with that reason and leave the
-plan as it is. When living documentation describes the same behavior and the
-change left it stale, the finding holds for that document: fix it there, and
-say in the reply that the plan stays as it is.
+Decline a finding that asks you to rewrite or annotate a Projector plan that
+is already at `status: completed` on the pull request's base. A completed plan
+records what was decided and built, as `../review-pr/method.md` § 6 says, so
+reply with that reason and leave the plan as it is. When living documentation
+describes the same behavior and the change left it stale, the finding holds
+for that document: fix it there, and say in the reply that the plan stays as
+it is. A plan this pull request marks `completed` is not a record yet, so fix
+a finding about the outcome it records as you would any other.
 
 If the correct behavior requires a user decision, ask instead of guessing and
 go on with unrelated findings. If a finding recurs after a pushed fix, stop
