@@ -1,0 +1,99 @@
+{
+ "version": 1,
+ "name": "Pull request watch daemon",
+ "project": "watch-daemon",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 347,
+  "title": "Spec one on-demand daemon that watches pull requests",
+  "head": "ed9562eaa6ea40123725cedeeed9a174f044ea57",
+  "headRef": "spec-pr-loop",
+  "base": "5f100cc85e69fe19a5616f27ca833d4e4defd0ec",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector drives a pull request to a clean review with two background loops today. The <b>watch loop</b> runs in the session that opened a pull request and fixes the review findings that arrive on it. The <b>review loop</b> runs once per repository and reviews every new head of the operator's pull requests. Each loop runs a bash watcher script inside a conversation, and each queries GitHub's GraphQL API for every pull request on every pass, whether or not anything changed.",
+   "That design has three costs. The polling spends a GraphQL quota of 5,000 points an hour that every session and machine on the account shares, about 2,000 points an hour at 10 pull requests. Someone has to start each loop by hand. And nothing keeps two review loops on one model from reviewing every head twice.",
+   "This pull request adds a plan, not code. One daemon per machine, <code>project watch serve</code>, starts when any <code>project watch</code> command needs it and exits once no session is live. A session subscribes to a pull request in the <code>fix</code> role when it pushes one, and in the <code>review</code> role when it reviews one. The daemon asks GitHub a conditional REST question per pull request, which is free when nothing changed, runs GraphQL only for a pull request that changed, and gives each event to one owning session per pull request and role. In Claude Code, Projector's mod delivers the events as prompts. Both loop skills go away, and a new <code>review-repo</code> skill reviews a repository's pull requests on request.",
+   "The plan is at <code>ready</code> with priority <code>now</code>, so it claims that nothing blocking implementation is left open."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Operator</b>: the GitHub account <code>gh</code> is signed in as.</li><li><b>Session</b>: one agent conversation with its subagents, named by <code>CLAUDE_CODE_SESSION_ID</code> in Claude Code.</li><li><b>Subscription</b>: a line in a session's <code>subscriptions</code> file naming a pull request or repository and a role, <code>fix</code> or <code>review</code>.</li><li><b>Owner</b>: the one live session that receives a pull request's events in a role.</li><li><b>Conditional request</b>: a REST request that sends the resource's last <code>ETag</code>, so GitHub answers <code>304</code> when nothing changed.</li><li><b>Start comment and lock</b>: what <code>project review setup</code> leaves on GitHub and on disk while a review runs.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>Earlier heads of this pull request held a different plan, a per-session loop with a review lease, which four reviews worked through. This head replaces it.</p><p>The first review of the daemon plan opened four findings:</p><ul class=\"tight\"><li>A review that a dead or moved reviewer left in flight blocks its head for up to a day, through the review lock and a still-live start comment.</li><li>After an ownership move, the collision check refuses the new owner's re-review of an unmoved head.</li><li>The shared GraphQL query lacks four fields the panel shows.</li><li>The pull request body still describes the replaced plan, and its Testing command fails.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The watch-daemon plan",
+   "kicker": "One new plan: a machine-wide daemon, session subscriptions, and per-role owners",
+   "intro": [
+    "The plan follows the repository's plan layout: the problem in § 1, the design in § 2, then the reasons, acceptance criteria, cost, rollout, open questions, and the measurements behind its claims. § 2.1 covers the daemon's life cycle, § 2.2 and § 2.3 sessions and what subscribes them, § 2.4 one pass, § 2.5 ownership, § 2.6 the requests and the query, § 2.7 the events, § 2.8 delivery, and § 2.11 the panel.",
+    "Read § 2.5 and § 2.7 most closely. They decide how review work moves between sessions. The review commands keep their state, lock, and start comment per machine and model, not per session, and a session's id becomes the review's loop id."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/watch-daemon/readme.md",
+     "note": "The new plan for one on-demand daemon that watches pull requests for every session on a machine.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 6,
+       "text": "The pull request body still describes <code>docs/projects/pr-loop/readme.md</code>, and its Testing command <code>project show pr-loop</code> exits 66 at this head."
+      },
+      {
+       "kind": "context",
+       "line": 73,
+       "text": "The daemon starts on demand: any command that can take <code>daemon.mutex</code> knows none is running and starts one detached."
+      },
+      {
+       "kind": "verify",
+       "line": 105,
+       "text": "<code>--session</code> then <code>PROJECTOR_SESSION</code> matches <code>project inbox</code>, and <code>CLAUDE_CODE_SESSION_ID</code> in a subagent's Bash command equals its main loop's id."
+      },
+      {
+       "kind": "flag",
+       "line": 246,
+       "text": "<code>--replace</code> replaces only a start comment. The former owner's <code>&lt;sha&gt;.lock</code> refuses the new owner's <code>setup</code> for up to a day, and its live start comment keeps <code>NEW HEAD</code> from standing for as long."
+      },
+      {
+       "kind": "flag",
+       "line": 289,
+       "text": "The panel shows <code>updatedAt</code>, <code>additions</code>, <code>deletions</code>, and <code>changedFiles</code>, which this query lacks, so the panel cannot read its rows from the cache."
+      },
+      {
+       "kind": "context",
+       "line": 339,
+       "text": "Standing events repeat every <code>watch.renotify</code> seconds, so a batch lost in delivery comes back."
+      },
+      {
+       "kind": "flag",
+       "line": 498,
+       "text": "The new owner's record lacks the former owner's verdicts, so its <code>--rereview</code> on <code>RESPONDED</code> is refused with the branch that asks the user."
+      },
+      {
+       "kind": "context",
+       "line": 633,
+       "text": "The 210-point estimate covers polling only. Reviewers and fixers spend GraphQL of their own."
+      },
+      {
+       "kind": "context",
+       "line": 661,
+       "text": "Every open question is deferred, which is what <code>ready</code> requires."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
