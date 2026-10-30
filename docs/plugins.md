@@ -214,12 +214,13 @@ run `npm ci` in `site/`, before the first check, as
 worktree that has no declarations or no `tsc` of its own uses the main
 checkout's.
 
-### See your loops' pull requests in Projector's panel
+### See your session's pull requests in Projector's panel
 
-In Claude Code, the plugin also ships a hooks module in `hooks/` that lists
-the open pull requests your loops track in the panel above the prompt, one
-line each. Run `/projector` to show or hide the panel. It also appears when the
-session starts a loop's watcher for the first time.
+In Claude Code, the plugin also ships a mod, the hooks module in `hooks/`,
+which lists the open pull requests your session fixes or reviews in the
+panel above the prompt, one line each. Run `/projector` to show or hide the
+panel. It also appears when the session subscribes to a pull request it had
+not subscribed to before.
 
 ```text
   /projector                                              2 pull requests  12s   [-]
@@ -242,14 +243,15 @@ and last the number of unresolved review threads before a `*` in yellow,
 such as `2*`. The ` · ` between two notes keeps the default text color. The
 line ends with how long ago the pull request last changed, in the column
 where the inbox's items end with their ages. Only the title shortens on a
-narrow terminal.
+narrow terminal. A pull request that the watch daemon has not queried yet
+reads `loading…` in place of its title, with no state, author, or age, until
+the daemon's first result for it arrives.
 
 Your own pull requests come first, then everyone else's, each author's
 together and the authors in order of login, with no line between the groups.
-The panel tells which are yours by the account `gh` is signed in as, which it
-asks for in the same query as the pull requests. A pull request that both a
-`start-watch-loop` watcher, `watch-threads.sh`, and a `start-review-loop`
-watcher, `watch-prs.sh`, track is listed once.
+The panel tells which are yours by the operator, the account `gh` is signed
+in as, which it reads from the daemon's `daemon.json`. A pull request that
+the session both fixes and reviews is listed once.
 
 In a terminal, the panel draws on a background of its own, so a line that
 moves as the panel scrolls is plainly the panel's. It is inset one column
@@ -298,20 +300,16 @@ Claude Desktop, VS Code, and the mobile app do not set the panel's text in a
 terminal's columns, so they draw no background, no header, and no hint, and
 there the panel starts with its first row.
 
-When a poll cannot reach GitHub, the panel keeps showing the pull requests
-GitHub gave last, and the header's time shows how old they are. It shows
-GitHub's error only when it has none of them to show.
-
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
-one column past the number, under `draft` or `ready`. It says whether your
-loops are watching the pull request, in the terminal palette's blue, or
-reviewing it, in Claude's orange, then its branch, in the palette's cyan,
-its size, and its checks. The size reads as a diff stat: the insertions,
-such as `+84`, in green and the deletions, such as `−12`, in red. The
-checks' state takes a color of its own, and the rest, ` in 5 files` and
-each `·` included, keeps the default text color. Below that come two
-actions, a line each, on the digits `7` and `8`, as
+one column past the number, under `draft` or `ready`. It names the session's
+roles on the pull request: `fixing` in the terminal palette's blue,
+`reviewing` in Claude's orange, or `fixing and reviewing`. Then come its
+branch, in the palette's cyan, its size, and its checks. The size reads as a
+diff stat: the insertions, such as `+84`, in green and the deletions, such
+as `−12`, in red. The checks' state takes a color of its own, and the rest,
+` in 5 files` and each `·` included, keeps the default text color. Below
+that come two actions, a line each, on the digits `7` and `8`, as
 [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
 describes, and then the links:
 
@@ -321,10 +319,10 @@ describes, and then the links:
 - **dismiss PR** asks to be sure first, because a dismissed pull request
   leaves the panel at once. It replaces the action lines with
   `8: yes, dismiss PR` and `9: no, keep it`, so a stray `8` only asks.
-  Press `8` again to keep the pull request out of every loop of this
-  session that tracks it, and the panel drops its line and says which
-  loops stopped, such as `stopped watching and reviewing acme/app#258`.
-  `9`, closing the drawer, or opening another keeps it.
+  Press `8` again to keep the pull request out of every role the session
+  holds on it, and the panel drops its line and says which roles stopped,
+  such as `stopped fixing and reviewing acme/app#258`. `9`, closing the
+  drawer, or opening another keeps it.
 - **open in github** opens the pull request on GitHub.
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
@@ -342,15 +340,15 @@ Each link has a line of its own, because a terminal that does not draw
 hyperlinks shows a link's URL after its text, and a line shared with
 another link would cut the URL off.
 
-**dismiss** runs `project loop drop` once for each tracked file that lists
-the pull request, which appends a `!owner/repo#number` line that both
-watchers honor, so the loops stop acting on it. When the command fails, the
-panel shows its error and keeps the line. To bring a dismissed pull request
-back, run `project loop restore` with the same reference and tracked file,
-as [Change a loop's tracked file](cli.md#change-a-loops-tracked-file)
-describes. A drawer closes whenever its pull request leaves the panel,
-dismissed here, dropped from a terminal, or merged, so the line comes back
-with its drawer closed.
+**dismiss** runs `project watch drop` once for each role the session holds
+on the pull request, as `--role fix` or `--role review`. Each writes a `!`
+line to the session's subscriptions, so the daemon tells this session
+nothing more about the pull request in that role. When the command fails,
+the panel shows its error and keeps the line. To bring a dismissed pull
+request back, run `project watch restore` with the same reference and role,
+such as `project watch restore acme/app#258 --role fix`. A drawer closes
+whenever its pull request leaves the panel, dismissed here, dropped from a
+terminal, or merged, so the line comes back with its drawer closed.
 
 On the main screen, which Claude Code uses under tmux and when
 `CLAUDE_CODE_NO_FLICKER=0` is set, use the panel from the keyboard, as
@@ -358,24 +356,74 @@ On the main screen, which Claude Code uses under tmux and when
 describes. The **open in github**, **open in projector**, and thread links take
 no press there; the terminal opens them the way it opens any other link.
 
-The panel lists only this session's loops. It finds a loop by the
-`--tracked` file its watcher reads, and learns that file when the session
-runs the watcher. A loop another session runs stays out of this session's
-panel. When the panel cannot tell which file a watcher's `--tracked` argument
-names, such as a path built from a variable the session does not set, it
-says so once and leaves that loop out.
+The panel lists only this session's subscriptions. The CLI keeps them in
+`sessions/<session>/subscriptions` under the daemon's folder,
+`$XDG_STATE_HOME/projector/watch/`, which is
+`~/.local/state/projector/watch/` by default. A session subscribes to fix a
+pull request when it pushes to it or opens it, and to review one when it
+runs `review-pr` on it. When the session reviews a whole repository with
+`review-repo`, the panel also lists each open pull request the daemon
+adopted for that subscription: one you wrote, or one that requests your
+review. The daemon names them in the session's `state.json`. Another
+session's subscriptions stay out of this session's panel.
 
-The panel reloads when one of the session's watchers reports a change and
-when a turn ends, and every 30 seconds otherwise, only while it is shown.
-Each reload asks GitHub for every pull request in one `gh api graphql` call
-and reads `panel.background` with `project config get`. That call costs one
-point of the account's hourly GraphQL quota for each 50 or so pull
-requests, because it asks only whether each thread is resolved. An open
-drawer's threads cost a point of their own, because GitHub charges for each
-thread's first comment. So the panel asks for them in a second call, for
-that one pull request, when the drawer opens and on each reload while it
-stays open. It skips the call when the pull request has no unresolved
-thread. The skills never depend on the panel, and Codex has no equivalent.
+The panel reads each pull request's line from the daemon's cache,
+`cache/<owner>/<repo>/pulls/<number>.json`, which the daemon rewrites each
+time it queries the pull request. So the list costs no GraphQL query of its
+own. While the panel is shown, it reads the session's subscriptions and the
+cache every 5 seconds, so a change shows within a few seconds of the
+daemon's query. Every 30 seconds it also reads `panel.background` with
+`project config get`. An open drawer's threads cost a point of the
+account's hourly GraphQL quota, because GitHub charges for each thread's
+first comment. So the panel asks for them in a `gh api graphql` call of
+their own, for that one pull request, when the drawer opens and every 30
+seconds while it stays open. It skips the call when the pull request has no
+unresolved thread. The skills never depend on the panel, and Codex has no
+equivalent.
+
+A session that started a `watch-threads.sh` or `watch-prs.sh` watcher under
+an earlier release keeps it until the session ends, and the panel lists the
+pull requests in that watcher's `--tracked` file
+meanwhile: `watch-threads.sh`'s as `fixing`, and `watch-prs.sh`'s as
+`reviewing`. For such a pull request that the daemon has no result for, the
+panel asks GitHub itself, in one `gh api graphql` call every 30 seconds.
+When that call cannot reach GitHub, the panel keeps showing what GitHub gave
+last, and shows GitHub's error only when it has no pull request to show.
+Dismissing such a pull request also runs `project loop drop` on the tracked
+file. When the panel cannot tell which file a watcher's `--tracked` argument
+names, such as a path built from a variable the session does not set, it
+says so once and leaves that watcher out.
+
+#### Get the daemon's events as prompts
+
+In Claude Code, the mod keeps the session's subscriptions alive and brings
+the daemon's events into the conversation, so no watcher runs in it:
+
+- **At the session's start**, the mod runs
+  `project watch renew --deliverer mod --session <id>`, which marks the
+  session live and starts the daemon when none runs.
+- **Every 5 seconds**, it checks the session's `events` file. When the file
+  holds events, the mod runs `project watch take --json`, which empties the
+  file, and submits the events as one prompt. The prompt waits until the
+  session is idle, as an inbox answer for the main loop does. Events that
+  arrive while a prompt waits go together in the next one. When no event
+  comes for a minute, the mod runs `renew` again, because the daemon lets a
+  session lapse after 5 minutes without a renewal. When the session moves to
+  a new id, as `/clear` moves it, the mod renews the new id at the next
+  check, so a skill that subscribes the session there finds the mod
+  delivering its events.
+- **After a Bash command that runs `git push`, `gh pr create`, or a
+  `gh stack` command**, the mod passes the command's output to
+  `project watch add --from-output -`. The CLI subscribes the session to fix
+  each pull request that the output shows it opened or pushed to, and adds
+  nothing when `watch.auto_start` is `false`. The command's result does not
+  wait for it.
+
+Each event line names what to do, such as
+`CONFLICT acme/app#12 conflicts with main — run fix-pr on acme/app#12 in subagent fix-12`,
+so a session that loaded no skill can act on it. On a host without the mod,
+such as Codex, or in a Claude Code session with mods off,
+`project watch stream` renews the session and prints its events instead.
 
 #### Choose the panel's color
 

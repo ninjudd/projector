@@ -1,5 +1,5 @@
 import type { Checks, PullRequest, Thread } from './types'
-import { keyOf, type TrackedPr } from './parse'
+import { isRecord, keyOf, type TrackedPr } from './parse'
 
 /** Where one pull request's node sits in the response. */
 type Slot = { pr: TrackedPr; repoAlias: string; prAlias: string }
@@ -75,9 +75,6 @@ function queryOf(prs: readonly TrackedPr[], fields: string): Query {
   return { text: repos.join(' '), slots }
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
 const firstLine = (text: string) => text.trim().split('\n')[0] ?? ''
 
 function messageOf(body: unknown): string | undefined {
@@ -145,6 +142,29 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
     summaryUrl: summary?.[1] ?? null,
   }
 }
+
+/**
+ * Reads the daemon's cache file for a pull request,
+ * `{"repository": {"pullRequest": {...}}, ...}`, where `pullRequest` holds
+ * every field `FIELDS` asks for. Null when the file holds no pull request.
+ */
+export function parseCache(pr: TrackedPr, text: string): PullRequest | null {
+  let cached: unknown
+  try {
+    cached = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const repository = isRecord(cached) ? cached.repository : undefined
+  const node = isRecord(repository) ? repository.pullRequest : undefined
+  return isRecord(node) ? toPullRequest(pr, node) : null
+}
+
+/** A pull request the session subscribes to that the daemon has no result for yet. */
+export const loadingOf = (pr: TrackedPr): PullRequest => ({
+  ...toPullRequest(pr, {}),
+  isLoading: true,
+})
 
 type Result = { exitCode: number; stdout: string; stderr: string }
 

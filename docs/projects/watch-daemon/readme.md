@@ -644,7 +644,9 @@ change its tracked file, and the release after removes them.
   with them the tracked files a conversation chose, `--exit-when-closed` and
   `DONE`, because a subscription ends with its pull request, and `BRANCH`,
   because a push subscribes the session. `MOVED` replaces the lease's
-  `ROLE`. The panel's own polling goes. Every caller moves: `implement`,
+  `ROLE`. The panel's own polling goes, except for the pull requests of a
+  watcher started before the upgrade, which the daemon does not cache
+  (§ 9.3). Every caller moves: `implement`,
   `fix-pr`, `review-pr`, `spec`, the agent instructions template, the panel,
   the docs, the homepage, and the tests that read the old files.
 - **The name `review-repo`.** It pairs with `review-pr`: one reviews a pull
@@ -979,3 +981,36 @@ Building the daemon settled these choices, which the design above left open.
   asked that session to fix it.
 - **A guard.** `tests/test_packaging.py` fails when any file under `skills/`
   names a removed loop skill, `project loop`, or `--tracked`.
+
+### 9.3 The panel and the mod
+
+- **An earlier watcher's pull requests.** The daemon caches only subscribed
+  pull requests, so the panel still fetches the pull requests of an earlier
+  watcher's tracked file, and only those, with its 30-second GraphQL query.
+  A session with only subscriptions sends no query for its list.
+- **How often it reads.** While the panel is shown, it reads the
+  subscriptions and the cache on every 5-second tick. The fallback query,
+  the drawer's threads, and `panel.background` stay on the 30-second poll.
+- **Showing the panel.** It appears when the session gains a subscription it
+  lacked, as a new watcher showed it before. The mod keeps the set it has
+  seen in its `panelSubscribed` state.
+- **Batches.** While a submitted batch still waits for the session, the mod
+  takes no more events, and those that arrive meanwhile go as one prompt
+  afterwards. The prompt is the event lines alone.
+- **Push detection.** The mod splits a command with its existing tokenizer,
+  skipping variable assignments, `env`, `command`, `exec`, `nohup`, `time`,
+  and git's global options such as `-C <dir>`. It does not look inside
+  `bash -c '…'`. It sends the call's standard output and standard error to
+  `project watch add --from-output -` on standard input through
+  `$.process.run`, and does not wait for it.
+- **A loading row.** A pull request with no cache file yet shows no state,
+  author, or age, and its drawer names only its roles.
+- **Reading the subscriptions as the daemon does.** The panel parses the
+  `subscriptions` file with the daemon's `LINE` grammar and compares models
+  by `review.identity`. It keeps an adopted pull request only while one of
+  the session's repository lines reviews it with a model that no `!` line
+  names, so a dismissed pull request leaves at once rather than after the
+  daemon's next pass rewrites `adopted`.
+- **A new session id.** The mod records which session id it last renewed.
+  When the engine moves the session to a new id, as `/clear` does, the mod
+  renews the new id at the next tick.
