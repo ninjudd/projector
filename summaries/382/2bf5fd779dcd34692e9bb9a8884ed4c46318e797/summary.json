@@ -1,0 +1,216 @@
+{
+ "version": 1,
+ "name": "I don't understand action",
+ "project": "inbox/unclear",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 382,
+  "title": "Let the person say they don't understand an inbox item",
+  "head": "2bf5fd779dcd34692e9bb9a8884ed4c46318e797",
+  "headRef": "implement-inbox-unclear",
+  "base": "af1952d2ac34c7f85b4570fe19a8939d7053f224",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox holds items that agents post for you: a <b>question</b> to answer, a <b>notice</b> to read, and a <b>request</b> for work only you can do. Projector's panel, above the Claude Code prompt, lists them, and each item's <b>drawer</b> shows its detail and the actions you can take on it. An agent writes an item from inside its own work, so an item can be clear to the agent and opaque to you. Until now the only way to say so was <b>discuss</b>, which costs a typed sentence, and for a notice it led nowhere: a notice could not be revised, and a reply about a subagent's notice never reached that subagent.",
+   "This pull request adds <b>I don't understand</b> on <code>6</code> in every open item's drawer. One press runs <code>project inbox unclear</code>, which records an <code>unclear</code> field on the item. The panel's deliverer then sends <code>UNCLEAR &lt;number&gt; &lt;subject&gt;</code> to the agent that posted the item, and the agent revises the item in place, which clears the mark. Notices become revisable with <code>revise --notice</code>. To keep <code>6</code> free in every drawer, a question takes at most four options besides its recommendation, and a request at most four options.",
+   "It carries out the <code>inbox/unclear</code> plan and marks it <code>completed</code>. The review found one gap: a sentence in <code>docs/cli.md</code> still says <code>claim</code> refuses every notice."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Line</b>: a message the inbox owes an item's agent, such as <code>ANSWER</code>, <code>RESTORED</code>, <code>STARTED</code>, or now <code>UNCLEAR</code>.</li><li><b>Claim</b>: a deliverer's hold on the line it is sending, so two deliverers never send it twice. <code>delivered</code> or <code>reopen</code> settles it.</li><li><b>Open line</b>: a line an item owes while it stays open. <code>STARTED</code> was the only one; <code>UNCLEAR</code> joins it in <code>OPEN_LINES</code>.</li><li><b>Stale-text guard</b>: the press passes the text the drawer showed, and the CLI refuses it with exit code 65 when the agent revised the item since.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review at 2bf5fd7",
+    "html": "<ul class=\"tight\"><li>Changes requested: one P2 thread on <code>docs/cli.md</code>, whose notice paragraph still says <code>claim</code> refuses every notice.</li><li>The full gate passes, including <code>hooks/typecheck.sh</code>, which the pull request body says could not run.</li><li>#381 edits the same drawer actions and <code>docs/plugins.md</code> paragraphs, so the second to merge resolves a conflict.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "store",
+   "title": "The store and the CLI",
+   "kicker": "The new unclear field, the line it owes, and the commands that record, deliver, and clear it",
+   "intro": [
+    "The inbox store keeps each item as a JSON file. An item now has an optional <code>unclear</code> field, <code>{ at }</code>, plus <code>deliveredAt</code> once <code>UNCLEAR</code> reaches the agent. While that field is undelivered, the item owes its agent the <code>unclear</code> line.",
+    "The change treats <code>unclear</code> exactly like a request's <code>started</code>, the one other line an item owes while it stays open. Both are now named in <code>OPEN_LINES</code>, so <code>claim</code>, <code>settle</code>, and <code>clear_for_outcome</code> handle them with one rule. A claimed open line keeps its claim when an answer or dismissal lands, because it may already wait in the session's queue. An unclaimed one is dropped, since you no longer need the explanation.",
+    "<code>revise</code> now takes a notice, with <code>--notice</code> for its subject, and every revision clears <code>unclear</code>. <code>MAX_OPTIONS</code> drops from five to four. <code>answer</code> now clears through <code>clear_for_outcome</code> like the other outcomes, so a claimed <code>UNCLEAR</code> reaches the agent before the answer."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "In a scratch store: <code>unclear</code> exits 65 on a changed subject or detail, a second press, and a resolved item; <code>watch --once</code> sends <code>UNCLEAR</code> once; <code>revise --notice</code> clears the mark; an answer while <code>UNCLEAR</code> is claimed is sent after it settles."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Adds <code>OPEN_LINES</code>, the <code>unclear</code> command, notice revision, and the cap of four.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>OPEN_LINES</code> replaces each place that tested for <code>started</code> alone. Read <code>claim</code>, <code>settle</code>, and <code>clear_for_outcome</code> with both lines in mind.",
+       "line": 44
+      },
+      {
+       "kind": "context",
+       "text": "A claimed open line keeps its claim through an outcome; an unclaimed <code>unclear</code> is dropped.",
+       "line": 514
+      },
+      {
+       "kind": "verify",
+       "text": "The stale-text guard: a subject or detail that differs from the stored one exits 65 and records nothing, reproduced in a scratch store.",
+       "line": 653
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "The <code>unclear</code> subcommand, <code>revise --notice</code>, the four-option help text, and <code>unclear</code> in <code>list</code>, ahead of a request's stage.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "An open item marked unclear lists as <code>unclear</code> before any request stage.",
+       "line": 1373
+      }
+     ]
+    },
+    {
+     "path": "tests/test_inbox.py",
+     "note": "<code>UnclearTests</code> and the new cap's refusals."
+    }
+   ]
+  },
+  {
+   "id": "permissions",
+   "title": "Permissions and agent instructions",
+   "kicker": "unclear asks before an agent runs it, and agents learn what UNCLEAR asks of them",
+   "intro": [
+    "<code>unclear</code> records something only you may say, so it joins <code>answer</code>, <code>dismiss</code>, <code>snooze</code>, <code>done</code>, <code>decline</code>, and <code>start</code> among the commands Projector's permission rules make an agent ask before running. Without the rule, an agent allowed <code>Bash(project *)</code> could mark its own item unclear. Codex's rules leave it to Codex's usual approval. The rule reaches your settings once you run <code>project init</code> again.",
+    "The agents block that <code>project init</code> writes into <code>AGENTS.md</code> moves to version 23 and tells agents to revise an item when <code>UNCLEAR</code> arrives."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The <code>AGENTS.md</code> block matches the template with <code>{projects_dir}</code> set to <code>docs/projects</code>, and version 23's pinned hash matches the template."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "The ask rule, and <code>unclear</code> in every list of commands that record your choice.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>DECISIONS</code> in <code>tests/test_permissions.py</code> pins ask for Claude Code and no Codex rule.",
+       "line": 99
+      }
+     ]
+    },
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Version 23, with a sentence on <code>UNCLEAR</code>."
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's copy of the version 23 block."
+    },
+    {
+     "path": "tests/test_permissions.py"
+    },
+    {
+     "path": "tests/test_instructions.py"
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "The panel and the tools",
+   "kicker": "The drawer's new action, the unclear mark, delivery of any kind of item, and the tool schemas",
+   "intro": [
+    "Projector's panel is a Claude Code plugin under <code>hooks/</code>. Each open item's drawer now lists <b>I don't understand this &lt;kind&gt;</b> on <code>6</code>, above discuss on <code>7</code>, dismiss on <code>8</code>, and snooze on <code>9</code>. The press passes the subject and detail the drawer shows, and a refusal for stale text leaves the drawer open on a fresh read of the store.",
+    "The deliverer used to skip notices, because a notice owed nothing. It now delivers a notice's <code>UNCLEAR</code>, to the subagent that posted the item while it runs, or else to the main loop with a note naming the subagent. An item stored before the cap can hold a choice on <code>6</code>, and its drawer draws the action without a digit.",
+    "The <code>ask</code>, <code>request</code>, and <code>revise</code> tools cap <code>options</code> at four, and <code>revise</code> takes a <code>notice</code> field."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The full gate passes at this head: <code>claude plugin test .</code> (191 pass), <code>claude plugin validate .</code>, and <code>hooks/typecheck.sh</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The drawer line, the mark, <code>act</code> passing the text it shows, and <code>deliver</code> for any kind.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The press passes the subject and detail the drawer drew; exit 65 re-reads the store and leaves the drawer open.",
+       "line": 845
+      },
+      {
+       "kind": "context",
+       "text": "The digits a question's or request's choices use, Start or Retry included; at six the action takes no digit.",
+       "line": 1799
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "<code>needsDelivery</code> takes a notice that owes <code>UNCLEAR</code>; tool descriptions and schemas.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A notice's only owed line is <code>UNCLEAR</code>; every other line still skips notices.",
+       "line": 56
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "<code>unclear</code> on every item, and <code>claim</code> moved up to every item, since a notice can be claimed now."
+    },
+    {
+     "path": "hooks/inbox.test.ts"
+    },
+    {
+     "path": "hooks/panel.test.tsx"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI and panel docs, and the plan marked completed",
+   "intro": [
+    "<code>docs/cli.md</code> describes <code>unclear</code>, <code>revise --notice</code>, and the cap of four. <code>docs/plugins.md</code> describes the action, the mark, and the keyboard digits. The plan appends § 8, the details the build settled, and § 9, the outcome with a test for each acceptance criterion, and is marked <code>completed</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The new <code>unclear</code> paragraph and the revised <code>revise</code> paragraph.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "Open review finding: line 2076 still says <code>claim</code> refuses every notice, but <code>claim</code> now takes a notice that owes <code>UNCLEAR</code>, and the <code>claim</code>, <code>delivered</code>, and <code>reopen</code> rows do not mention it.",
+       "line": 2238
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "The drawer's new action, the mark, and the digits from <code>1</code> to <code>5</code>."
+    },
+    {
+     "path": "docs/projects/inbox/unclear/readme.md",
+     "note": "§ 8 and § 9 appended, and the status set to <code>completed</code>."
+    }
+   ]
+  }
+ ]
+}

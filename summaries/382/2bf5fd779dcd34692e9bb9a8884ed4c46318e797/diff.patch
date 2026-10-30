@@ -1,0 +1,2543 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index f64f46d7..34c382a6 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -143,7 +143,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 22 -->
++<!-- projector:begin 23 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -240,8 +240,8 @@ do exactly what that message quotes and nothing more, and mark the request
+ ready with the `ready` tool, or blocked with the `block` tool and what they
+ should do first, such as unlocking the phone.
+ 
+-When the person picks one of a question's options, the answer reaches you
+-as a message that starts `ANSWER`. When they finish a request, its outcome
++When the person picks one of a question's options, the answer reaches you as
++a message that starts `ANSWER`. When they finish a request, its outcome
+ reaches you as their prompt, quoting the request with the option they chose
+ and any notes under it, or as a message that starts `DONE` and names the
+ option. When they decline it, a message that starts `DECLINED` arrives. Read
+@@ -251,12 +251,15 @@ post it again unless they ask. When they reply to a question or a request
+ instead, answer what they asked. Then withdraw the item with the `withdraw`
+ tool if the reply settles it, revise it with the `revise` tool if the reply
+ shows it was unclear or the choice or the work has changed, or leave it open
+-while it still needs them. Each time the person writes to you, also look
++while it still needs them. When a message that starts `UNCLEAR` arrives, the
++person did not understand that item, so revise it with the `revise` tool to
++explain it more simply or to add the context they lack, keeping its number,
++rather than posting it again. Each time the person writes to you, also look
+ over the other items you posted that are still open, and withdraw any that
+ no longer need them, such as news that has gone stale. When the person says
+ they dismissed or declined an item by mistake, restore it with the `restore`
+ tool or `project inbox restore` rather than posting it again. Name an item
+ to the tools by the number `ask`, `tell`, or `request` returned. The panel
+-never shows that number, so in what you write to the person, name an item
+-by what it asks, tells, or requests.
++never shows that number, so in what you write to the person, name an item by
++what it asks, tells, or requests.
+ <!-- projector:end -->
+diff --git a/docs/cli.md b/docs/cli.md
+index 09cbd4a6..4aa2ab5e 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -106,7 +106,8 @@ what it did to each:
+     "Bash(project inbox snooze *)",
+     "Bash(project inbox done *)",
+     "Bash(project inbox decline *)",
+-    "Bash(project inbox start *)"
++    "Bash(project inbox start *)",
++    "Bash(project inbox unclear *)"
+   ]
+   ```
+ 
+@@ -118,11 +119,13 @@ what it did to each:
+   `Bash(project site *prepare*)` asks before either flag, as `--prepare x` or
+   `--prepare=x`, and before `--no-prepare` too. Those two commands refuse an
+   abbreviated option such as `--prep`, so no shorter spelling slips past the
+-  rule. `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, and
+-  `start` record your answer to an item an agent posted, your outcome for a
+-  request, your consent to a request's start action, or your choice to
+-  dismiss or put it off, so an agent running one could answer its own
+-  question, mark its own request done, or consent to its own start action.
++  rule. `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`,
++  `start`, and `unclear` record your answer to an item an agent posted, your
++  outcome for a request, your consent to a request's start action, your word
++  that you don't understand an item, or your choice to dismiss or put it
++  off, so an agent running one could answer its own question, mark its own
++  request done, consent to its own start action, or mark its own item
++  unclear.
+   Projector's panel runs them itself, not through an agent's shell, so
+   answering from the panel never asks. Claude Code checks ask rules before
+   allow rules, so an ask rule prompts for a command that `Bash(project *)`
+@@ -230,8 +233,8 @@ what it did to each:
+   No rule matches `project init`, `project upgrade`, `project config set` or
+   `unset`, `project create` or `project edit`, whose editor an agent could
+   drive, `project review gate`, `project site build` or `serve`,
+-  `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, or
+-  `start`, which record your choice, or a command line that starts with an
++  `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,
++  or `unclear`, which record your choice, or a command line that starts with an
+   option, so Codex's usual approval
+   decides them, in its sandbox. A command added to Projector later reaches
+   Codex once Projector names it and you run `init` again. To see what the
+@@ -1952,7 +1955,7 @@ Projector's panel never shows the number, so in what you write to the person,
+ name an item by what it asks or tells. `ask` refuses, with exit code 65, a
+ question longer than one line or 120 characters, a question that holds a tab,
+ a missing recommendation, a recommendation or option longer than one line,
+-more than five other options, or an option that repeats the recommendation or
++more than four other options, or an option that repeats the recommendation or
+ another option. Put what you need to decide in `--detail`, or `--detail-file`.
+ 
+ Every command names the posting session with `--session`, or reads
+@@ -2006,11 +2009,12 @@ your prompt. The agent then withdraws the question if the reply settles it,
+ revises it if the reply shows it was unclear, or leaves it open while it still
+ needs you.
+ 
+-`answer`, `dismiss`, `snooze`, `done`, `decline`, and `start` record your
+-choice, so the permission rules `project init` adds ask you before an agent
+-runs one, in Claude Code, and leave them to Codex's usual approval. Otherwise
+-an agent could answer its own question, mark its own request done, or press
+-start for you. Projector's
++`answer`, `dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear`
++record your choice, so the permission rules `project init` adds ask you
++before an agent runs one, in Claude Code, and leave them to Codex's usual
++approval. Otherwise an agent could answer its own question, mark its own
++request done, press start for you, or say for you that you don't
++understand its item. Projector's
+ panel runs them itself, so answering there never asks. `restore` takes no
+ choice from you, so an agent runs it without asking, in either host, when
+ you say a dismissal was a mistake.
+@@ -2078,7 +2082,7 @@ An agent asks you to do something only you can do with `request`, such as
+ running a command it may not run, signing in to a service, or checking a
+ change on your own device. A request takes one line, the steps you follow as
+ `--detail` or `--detail-file`, the same `--pr` and `--agent` as a question,
+-and the next number in the session's count. Each `--option`, up to five,
++and the next number in the session's count. Each `--option`, up to four,
+ names a choice you pick from when you finish, and each marks the request
+ done; a request without one offers a single `Done`:
+ 
+@@ -2090,7 +2094,7 @@ $ project inbox request "Test the gutters on your phone" \
+ ```
+ 
+ `request` refuses an empty option, one of more than one line, one offered
+-twice, a sixth, and `Declined`, which declines a request. `revise` replaces a
++twice, a fifth, and `Declined`, which declines a request. `revise` replaces a
+ request's options with `--option`, and `--no-options` removes them.
+ 
+ Once you have done the work, run `project inbox done 5`, or
+@@ -2111,8 +2115,8 @@ takes no answer, so `answer` refuses one with exit code 65, and `done` and
+ `decline` refuse any other kind of item, a resolved request, and a `--text` of
+ more than one line. `dismiss` declines a request with no text. A decline is a
+ dismissal, so `restore` reopens a declined request, and the agent that heard
+-`DECLINED` hears `RESTORED`. `list` shows a request as `open`, `started`,
+-`ready`, `blocked`, `done`, `declined`, or `withdrawn`.
++`DECLINED` hears `RESTORED`. `list` shows a request as `open`, `unclear`,
++`started`, `ready`, `blocked`, `done`, `declined`, or `withdrawn`.
+ 
+ When the agent must prepare something before you can begin, such as
+ installing a build on your phone, it gives the request a start action with
+@@ -2220,6 +2224,31 @@ answered, dismissed, or withdrawn, with exit code 65, and a number no session
+ holds, with exit code 66. In Claude Code, the agent withdraws an item with
+ Projector's `withdraw` tool rather than from the shell.
+ 
++When you don't understand an open item, say so with `unclear`, and the agent
++that posted it revises the item to explain it more simply or to add the
++context you lack:
++
++```console
++$ project inbox unclear 4
++unclear 4
++$ project inbox list --session "$SESSION"
++4	notice	unclear	Force-pushed #337 to drop a stray debug file
++```
++
++`unclear` takes an open item of any kind. The deliverer sends the agent a
++line that starts `UNCLEAR 4` with the item's line, and `list` shows the item
++as `unclear` until the agent revises it. The revision clears the mark, so you
++can say it again of the new text. `--subject` and `--detail` give the text
++you read, and `unclear` refuses, with exit code 65, a line or detail that
++differs from the item's, because the agent revised it after you read it. It
++also refuses an item already marked unclear and one already answered,
++dismissed, or withdrawn. An answer, outcome, or dismissal recorded before
++the `UNCLEAR` line goes out takes its place, so the agent hears only that.
++When the line cannot be delivered, the mark is taken back, so you say it
++again. Projector's panel runs `unclear` when you press **I don't
++understand** in an item's drawer. To say what confuses you, reply to the
++item in your own words instead.
++
+ When your reply shows that an open question was unclear, or that the choice
+ has changed, the agent rewrites the question in place with `revise`. Only the
+ parts it names change:
+@@ -2239,16 +2268,18 @@ recommendation. `--detail`, or `--detail-file`, replaces the detail, and
+ `--detail ""` clears it. The question keeps its number, the pull request it is
+ about, when it was posted, the subagent that asked, and any snooze, so its
+ answer reaches the same agent as before. A request is revised the same way,
+-with `--request` in place of `--question` and with `--detail`, and `revise`
+-refuses `--question`, `--recommend`, and `--option` for a request and
+-`--request` for a question. Only a question or a request can be revised:
+-`revise` refuses a notice with exit code 65. It also refuses, with exit code
+-65, a revision that fails a check `ask` makes, such as a line of 121
+-characters or a sixth option, a revision with nothing to change, an answer
+-letter such as `3.a`, and a question already answered, dismissed, or
+-withdrawn, and it changes nothing when it refuses. A number no session holds
+-exits 66. In Claude Code, the agent revises a question with Projector's
+-`revise` tool, and the panel redraws it at once.
++with `--request` in place of `--question`, and a notice with `--notice`.
++Each kind takes `--detail`, and any revision clears the item's `unclear`
++mark. `revise` refuses, with exit code 65, a flag that another kind takes:
++`--question`, `--recommend`, or `--notice` for a request, `--request`,
++`--start`, or `--notice` for a question, and anything but `--notice` and
++`--detail` for a notice. It also refuses, with exit code 65, a revision that
++fails a check its posting made, such as a line of 121 characters or a fifth
++option, a revision with nothing to change, an answer letter such as `3.a`,
++and an item already answered, dismissed, or withdrawn, and it changes
++nothing when it refuses. A number no session holds exits 66. In Claude
++Code, the agent revises an item with Projector's `revise` tool, and the
++panel redraws it at once.
+ 
+ ## Change a loop's tracked file
+ 
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 00071284..8422dcb0 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -394,13 +394,14 @@ When an item it posted no longer needs you, such as a question your reply
+ settled, the agent takes it back with the `withdraw` tool,
+ `mcp__projector__withdraw`, by the number `ask`, `tell`, or `request`
+ returned. The panel never shows that number, so the agent names an item to
+-you by what it asks, tells, or requests. When your reply shows that a
+-question or a request was unclear, the agent rewrites it in place with the
+-`revise` tool, `mcp__projector__revise`. When you tell it you dismissed,
+-declined, or snoozed an item by mistake, the agent brings the item back under
+-its number with the `restore` tool, `mcp__projector__restore`, rather than
+-asking again. An agent that runs `project inbox ask`, `tell`, `request`,
+-`withdraw`, `revise`, or `restore` from the shell reaches the same inbox, as
++you by what it asks, tells, or requests. When your reply shows that an item
++was unclear, or you press **I don't understand** on it, the agent rewrites
++it in place with the `revise` tool, `mcp__projector__revise`, keeping its
++number. When you tell it you dismissed, declined, or snoozed an item by
++mistake, the agent brings the item back under its number with the `restore`
++tool, `mcp__projector__restore`, rather than asking again. An agent that
++runs `project inbox ask`, `tell`, `request`, `withdraw`, `revise`, or
++`restore` from the shell reaches the same inbox, as
+ [Use the inbox](cli.md#use-the-inbox) describes.
+ 
+ The items are a list below the pull requests, newest first, each line
+@@ -468,6 +469,7 @@ the item's first letter:
+       (recommended)
+       2: Add a budget of two retries per host, and keep the total cap
+ 
++      6: I don't understand this question
+       7: discuss question
+       8: dismiss question
+       9: snooze question
+@@ -528,8 +530,11 @@ the options, after a blank line. Each line's key is drawn in Claude Code's
+ accent color and the rest of the line in the default text color, which
+ Claude Code's own `: ` after the key always takes, so under the pointer or
+ the focus ring the line inverts as the key and one block after it. A
+-question's drawer has three actions:
++question's drawer has four actions:
+ 
++- **I don't understand this question** tells the agent that you don't
++  follow the question, in one press, as the paragraph after this list
++  describes.
+ - **discuss question** puts the quoted question in the prompt, followed
+   by a blank line, and leaves the drawer open, so the options and detail
+   stay in view while you type. Type your reply under the quote, or on the
+@@ -537,21 +542,39 @@ question's drawer has three actions:
+   answers nothing.
+ - **dismiss question** sets the question aside without an answer and
+   closes the drawer.
+-- **snooze question** asks how long to put the question off, as the next
+-  paragraph but one describes.
+-
+-A notice's drawer shows its detail, then the same three actions:
+-**discuss notice**, **dismiss notice**, and **snooze notice**. **discuss
+-notice** puts the quoted notice in the prompt. A prompt you send that quotes
+-a notice answers nothing, but it closes the notice's drawer; the notice
+-stays in the panel until you dismiss it. **dismiss notice** clears the
+-notice once you have read it and closes its drawer, and nothing goes back
+-to the agent.
++- **snooze question** asks how long to put the question off, as the
++  paragraph on **snooze** below describes.
++
++**I don't understand** is in the drawer of every open item, above
++**discuss**, until you press it. One press runs `project inbox unclear`
++with the subject and detail the drawer shows, and closes the drawer. The
++item's line then ends with `unclear`, in yellow, and the agent that posted
++the item hears `UNCLEAR` with its subject: a subagent that is still running
++receives it directly, and otherwise the main loop receives it as a prompt,
++with the name of the subagent that posted the item. The agent revises the
++item to explain it more simply or to add the context you lack. The item
++keeps its place in the list, its line drops `unclear`, and its drawer offers
++**I don't understand** again for the new text. If the agent revised the item
++since the panel drew the drawer, the press records nothing, and the drawer
++shows the new text for you to read and press again. When `UNCLEAR` cannot
++reach the agent, the panel takes the mark back and says why, so you can
++press again. An answer, outcome, or dismissal you give before the panel
++sends `UNCLEAR` takes its place, so the agent hears only that. To say what
++you don't understand, use **discuss** instead.
++
++A notice's drawer shows its detail, then the same four actions: **I don't
++understand this notice**, **discuss notice**, **dismiss notice**, and
++**snooze notice**. **discuss notice** puts the quoted notice in the prompt.
++A prompt you send that quotes a notice answers nothing, but it closes the
++notice's drawer; the notice stays in the panel until you dismiss it.
++**dismiss notice** clears the notice once you have read it and closes its
++drawer, and nothing goes back to the agent.
+ 
+ A request's drawer shows its steps, then the options its agent gave, on `1`
+-and on, in the options' place, then **discuss request**, **decline request**,
+-and **snooze request**. A test's options might be **Looks good** and **Some
+-feedback**, and a request posted without options offers a single **Done**.
++and on, in the options' place, then **I don't understand this request**,
++**discuss request**, **decline request**, and **snooze request**. A test's
++options might be **Looks good** and **Some feedback**, and a request posted
++without options offers a single **Done**.
+ Like a question's option, each records nothing at once: it puts the quoted
+ request, a blank line, and its words in the prompt, with the cursor below for
+ any notes. Every option marks the request done, and records which you chose.
+@@ -582,7 +605,9 @@ do it, they read `Blocked:` with its reason and `blocked`, in yellow, and
+ **Retry** takes the place of **Start**, for you to press once you have done
+ what the reason says. The options and **decline request** work throughout,
+ the options from `1` while there is no **Start** or **Retry** to press. A
+-request without a start action shows none of this.
++request you pressed **I don't understand** on reads `unclear` before
++`starting`, `ready`, or `blocked`, so its line still says whether you can
++begin. A request without a start action shows none of this.
+ 
+ **dismiss**, **decline**, **restore**, and **unsnooze** act at once. A
+ dismissed or declined item stays in the list a while, struck through, as the
+@@ -673,6 +698,8 @@ keyboard in, and once the panel has it, Esc and Enter.
+ Enter on a line opens its drawer and moves the ring onto the drawer's first
+ control: a question's first option, a request's **Start** or **Retry** when
+ it has one and its first option otherwise, and **discuss** for any other item.
++For a notice, the ring skips **I don't understand** above **discuss**, so a
++second Enter only fills the prompt and sends the agent nothing.
+ Tab then walks the options and the actions. Enter on the open line closes the
+ drawer and leaves the ring on the line. A click opens and closes a drawer
+ without moving the ring. In the same way, Enter on the **snooze** line moves the
+@@ -680,11 +707,11 @@ ring onto the first length, and Enter on **cancel** moves it back onto the
+ **snooze** line. Enter on a pull request's **dismiss** moves it onto the
+ confirmation, and Enter on `no, keep it` back onto **dismiss**.
+ 
+-An open question's options read `1:` to `6:`, the digit in the accent
+-color. Press a digit while the panel has the keyboard, or type it first into
+-an empty prompt while the option is wholly in view in the panel, as you
+-answer Claude Code's own surveys, and the panel puts that option in your
+-prompt as a click does. A digit only fills the prompt,
++An open question's options read `1:` and on, up to `5:`, the digit in the
++accent color. Press a digit while the panel has the keyboard, or type it
++first into an empty prompt while the option is wholly in view in the panel,
++as you answer Claude Code's own surveys, and the panel puts that option in
++your prompt as a click does. A digit only fills the prompt,
+ so nothing reaches the agent until you send. A resolved question's options
+ have no digits.
+ 
+@@ -697,10 +724,13 @@ request's drawer has no `0`, since its number closes it.
+ 
+ A drawer's actions follow its options, a line each, with the digit that
+ presses it before the label in the accent color, such as
+-`7: discuss question`. The digits count down from 9, so the options keep
+-`1` to `6` and the item's line `0`. Each label ends with what the action
+-acts on: `question`, `notice`, `request`, or `PR`.
++`7: discuss question`. The digits count down from 9, so a question's choices
++and a request's, after any **Start** or **Retry**, end at `5`, and the
++item's line keeps `0`. Each label ends with what the action acts on:
++`question`, `notice`, `request`, or `PR`.
+ 
++- **6** presses **I don't understand**, which an open item's drawer offers
++  until you press it.
+ - **7** presses **discuss**.
+ - **8** presses **dismiss**, or **decline** on a request, or **restore** in
+   their place. Dismiss asks to
+@@ -714,6 +744,11 @@ An action's digit works the two ways an option's does: while the panel has
+ the keyboard, or first into an empty prompt while its line is wholly in
+ view in the panel.
+ 
++An item an older Projector stored can hold a choice on `6`: a question with
++six choices, or a request with **Start** or **Retry** on `1` and five
++options. Its drawer keeps each choice on its digit and draws **I don't
++understand** without one, so you press it with a click or Enter.
++
+ ## Install for Codex
+ 
+ Add the same repository as a Codex marketplace and install the plugin:
+diff --git a/docs/projects/inbox/unclear/readme.md b/docs/projects/inbox/unclear/readme.md
+index 62af72e7..d0e6ba03 100644
+--- a/docs/projects/inbox/unclear/readme.md
++++ b/docs/projects/inbox/unclear/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: ready
++status: completed
+ priority: now
+ ---
+ 
+@@ -248,3 +248,65 @@ the new agents block into their instructions. Until they do,
+   and closing the drawer on the press are a first choice. Owner: ninjudd,
+   who adjusts the panel in daily use, as the [inbox](../readme.md) plan's
+   § 7 records for questions and notices.
++
++## 8. What the implementation settled
++
++Building § 2 settled these details. Each one about the look is a first
++choice under § 7.
++
++- **`started` and `unclear` are one kind of line.** `OPEN_LINES` in
++  `src/projector/inbox.py` names the lines an open item owes without being
++  resolved. `claim`, `settle`, and `clear_for_outcome` treat both alike, and
++  `settle` marks the field of the line's own name delivered, or removes it
++  when the delivery failed.
++- **An answer keeps a claimed `UNCLEAR`.** `answer` clears what it replaces
++  through `clear_for_outcome`, as `done` and the dismissals do, so a claimed
++  `UNCLEAR` on a question reaches its agent before the answer.
++- **A restore takes back `unclear`.** The dismissal settled the person's
++  word, as it settles a request's start, so a restored item waits for a new
++  press.
++- **A stored item over the cap must shrink to be revised.** `revise` checks
++  a question's options on every revision, so an agent that revises a
++  question stored with five other options must give four or fewer. A
++  request's options are checked only when `revise` replaces them.
++- **The mark sits before a request's stage.** An open request that is both
++  unclear and started shows `unclear`, then `starting`, `ready`, or
++  `blocked`, because the stage still says whether you can begin.
++- **Enter on a notice's line puts the ring on discuss.** The ring skips
++  **I don't understand** above it, so pressing Enter twice fills the prompt
++  and never sends `UNCLEAR` by accident.
++- **Every item can carry a claim.** `hooks/types.d.ts` declares `claim` on
++  `Posted`, with `unclear` among its lines, since a notice can now be
++  claimed. The `restore` tool's result for a notice names `UNCLEAR` too.
++
++## 9. Outcome
++
++The project shipped in one pull request, as § 6 planned, with the design
++of § 2 and the details § 8 records. The look stays the owner's to adjust,
++as § 7 says. In the table, `UnclearTests` and the other Python classes are in
++`tests/test_inbox.py`.
++
++| Criterion in § 4 | Evidence |
++| --- | --- |
++| Each open kind's drawer offers `6`; a resolved one does not | `panel.test.tsx`: `a drawer’s actions follow its options a line each, on 6 to 9, named for what they act on` |
++| A running subagent's notice: `unclear`, one `UNCLEAR`, the mark, no action | `panel.test.tsx`: `I don’t understand on a running subagent’s notice records it, sends UNCLEAR once, and marks the line until a revise` |
++| A finished subagent's item reaches the main loop with the note | `panel.test.tsx`: `I don’t understand on an item whose subagent finished reaches the main loop, naming the subagent, and marks it beside its stage`; `inbox.test.ts`: `the main loop is told which subagent posted an item it receives UNCLEAR for` |
++| `revise --notice` keeps the number, drops the mark, and offers `6` again | `ReviseTests.test_revises_a_notice_with_its_own_flags_and_keeps_its_number`, `UnclearTests.test_watch_sends_unclear_once_and_the_mark_stands_until_a_revision`, and the panel test of the running subagent's notice |
++| A failed delivery takes the mark back with a toast | `UnclearTests.test_a_failed_unclear_removes_it`; `panel.test.tsx`: `an UNCLEAR that cannot be delivered takes the mark back, says so, and offers I don’t understand again` |
++| A second press, a resolved item, and a stale drawer record nothing | `UnclearTests.test_refuses_text_the_agent_revised_a_second_press_and_a_resolved_item`; `panel.test.tsx`: `a press of I don’t understand on a drawer the agent revised since records nothing and shows the new text` |
++| An answer or dismissal replaces an unclaimed `UNCLEAR`, and follows a claimed one | `UnclearTests.test_an_answer_or_dismissal_replaces_an_unclear_no_deliverer_claimed`, `test_an_answer_or_outcome_recorded_while_unclear_is_claimed_follows_it`, `test_a_dismissal_while_a_notices_unclear_is_claimed_lets_that_line_settle` |
++| Five options exit `65` for `ask`, `request`, and `revise` | `AskTests.test_refuses_a_question_that_fails_a_check_and_writes_nothing`, `ReviseTests.test_refuses_a_revision_that_fails_a_check_and_changes_nothing`, `RequestTests.test_records_the_options_the_agent_gives_and_refuses_ones_that_fail_a_check`, `test_revise_replaces_or_drops_a_requests_options`; `inbox.test.ts`: `ask, request, and revise take at most four options, leaving 6 for I don’t understand` |
++| A stored six-choice question, or a request with Start and five options, keeps its digits and offers the action without one | `panel.test.tsx`: `a question stored with six choices, or a request with Start and five options, keeps them on 1 to 6 and offers I don’t understand without a digit` |
++| An agent's `project inbox unclear` asks | The `unclear` row of `DECISIONS` in `tests/test_permissions.py` |
++| `watch --once` prints `UNCLEAR` and marks it delivered | `UnclearTests.test_watch_sends_unclear_once_and_the_mark_stands_until_a_revision` |
++
++As § 5 planned, the panel's idle tick does no new work. `needsDelivery`
++reads one more field in memory, and a press runs one CLI process, as a
++dismissal does. The `started` handling in `claim`, `settle`, and
++`clear_for_outcome` now covers `unclear` through `OPEN_LINES`, so the store
++holds no second copy of it. `hooks/typecheck.sh` needs the declarations
++that an interactive `claude --plugin-dir .` session writes. No checkout this
++change was built in had them, so the hooks were type-checked instead against
++the declarations Claude Code 2.1.277 published. The head and its base gave
++the same 75 errors, all from those older declarations, so the change adds
++none they can see.
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index a313e15c..e2d2dcda 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
+ 
+ import {
+   ASK_DESCRIPTION,
++  ASK_SCHEMA,
+   askArguments,
+   forMainLoop,
+   isShownAt,
+@@ -16,11 +17,13 @@ import {
+   replyNote,
+   reportArguments,
+   REQUEST_DESCRIPTION,
++  REQUEST_SCHEMA,
+   requestArguments,
+   RESTORE_DESCRIPTION,
+   RESTORE_SCHEMA,
+   restoreArguments,
+   REVISE_DESCRIPTION,
++  REVISE_SCHEMA,
+   reviseArguments,
+   signatureOf,
+   span,
+@@ -397,10 +400,10 @@ test('a call of the revise tool becomes `project inbox revise` with only what ch
+     '--json',
+   ])
+   expect(reviseArguments({ number: 3 }, 's1')).toEqual({
+-    error: 'give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`',
++    error: 'give what changes: `question`, `notice`, `request`, `start`, `detail`, `recommendation`, or `options`',
+   })
+   expect(reviseArguments({ number: '3', detail: 'x' }, 's1')).toEqual({
+-    error: '`number` must be the whole number `ask` or `request` returned, such as 3',
++    error: '`number` must be the whole number `ask`, `tell`, or `request` returned, such as 3',
+   })
+   expect(reviseArguments({ number: 3, options: 'no' }, 's1')).toEqual({ error: '`options` must be a list of strings' })
+   expect(reviseArguments({ number: 3, question: 7 }, 's1')).toEqual({ error: '`question` must be a string' })
+@@ -736,3 +739,82 @@ test('a request’s start waits for a deliverer until STARTED is delivered, and
+   expect(needsDelivery(request({ started, claim: { token: 't', renewedAt: NOW, line: 'started' } }), NOW)).toBe(false)
+   expect(needsDelivery(request({ started, answer: { done: true, answeredAt: NOW }, deliveredAt: NOW }), NOW)).toBe(false)
+ })
++
++test('a call of the revise tool revises a notice with `notice`, text kept as text', () => {
++  expect(reviseArguments({ number: 2, notice: '-Force-pushed #7 to drop a debug token', detail: 'Rotated.' }, 's1')).toEqual([
++    'inbox',
++    'revise',
++    '2',
++    '--session',
++    's1',
++    '--notice=-Force-pushed #7 to drop a debug token',
++    '--detail=Rotated.',
++    '--json',
++  ])
++  expect(reviseArguments({ number: 2, notice: 7 }, 's1')).toEqual({ error: '`notice` must be a string' })
++})
++
++test('the revise tool takes a notice, and says a revision clears the person’s I don’t understand', () => {
++  expect(REVISE_DESCRIPTION).toContain('Revise a question, notice, or request you posted that is still open, keeping its number')
++  expect(REVISE_DESCRIPTION).toContain('or a message that starts `UNCLEAR 3` shows it was unclear')
++  expect(REVISE_DESCRIPTION).toContain('Name it by the number `ask`, `tell`, or `request` returned')
++  expect(REVISE_DESCRIPTION).toContain('for a notice, the notice or its detail;')
++  expect(REVISE_DESCRIPTION).toContain('A revision clears the person’s I don’t understand')
++  expect(REVISE_SCHEMA.properties.notice).toEqual({
++    type: 'string',
++    description: 'The new notice, in one line of at most 120 characters.',
++  })
++  expect(REVISE_SCHEMA.properties.number.description).toBe('The item’s number, as `ask`, `tell`, or `request` returned it, such as 3.')
++})
++
++test('ask, request, and revise take at most four options, leaving 6 for I don’t understand', () => {
++  for (const schema of [ASK_SCHEMA, REQUEST_SCHEMA, REVISE_SCHEMA]) {
++    expect(schema.properties.options.maxItems).toBe(4)
++    expect(schema.properties.options.description).toMatch(/\b[Uu]p to four\b/)
++    expect(schema.properties.options.description).not.toContain('five')
++  }
++})
++
++test('ask, tell, and request tell the agent that UNCLEAR asks it to revise the item, keeping its number', () => {
++  for (const [description, kind] of [
++    [ASK_DESCRIPTION, 'question'],
++    [TELL_DESCRIPTION, 'notice'],
++    [REQUEST_DESCRIPTION, 'request'],
++  ] as const) {
++    expect(description).toContain(
++      `When the person presses I don’t understand, a message that starts \`UNCLEAR 3\` arrives: revise the ${kind} to explain it more simply or to add the context they lack, keeping its number.`,
++    )
++  }
++  expect(TELL_DESCRIPTION).toContain('The call returns the notice’s number, such as 3.')
++  expect(TELL_DESCRIPTION).toContain('Nothing else comes back to you')
++})
++
++test('word that you don’t understand an open item of any kind waits for a deliverer until UNCLEAR is delivered', () => {
++  const unclear = { at: NOW - 1_000 }
++  for (const item of [question({ unclear }), notice({ unclear }), request({ unclear })]) {
++    expect(needsDelivery(item, NOW)).toBe(true)
++    expect(needsDelivery({ ...item, claim: { token: 't', renewedAt: NOW - 5_000, line: 'unclear' } }, NOW)).toBe(false)
++    expect(needsDelivery({ ...item, claim: { token: 't', renewedAt: NOW - 60_000, line: 'unclear' } }, NOW)).toBe(true)
++    expect(needsDelivery({ ...item, unclear: { ...unclear, deliveredAt: NOW } }, NOW)).toBe(false)
++  }
++  // A dismissed notice owes nothing, even marked unclear; a resolved question owes only its answer.
++  const dismissed = { dismissed: true as const, answeredAt: NOW }
++  expect(needsDelivery(notice({ unclear, answer: dismissed, deliveredAt: NOW }), NOW)).toBe(false)
++  expect(needsDelivery(question({ unclear, answer: dismissed, deliveredAt: NOW }), NOW)).toBe(false)
++  expect(needsDelivery(notice(), NOW)).toBe(false)
++})
++
++test('the main loop is told which subagent posted an item it receives UNCLEAR for', () => {
++  const note = (who: string) =>
++    `\n\nThe subagent ${who} posted this, and the message could not reach it; send it this message, or revise the item yourself.`
++  expect(forMainLoop('UNCLEAR 2 Force-pushed #7', notice({ agentId: 'agent-1' }), [agent('completed')])).toBe(
++    `UNCLEAR 2 Force-pushed #7${note('Fix #7 (agent-1)')}`,
++  )
++  expect(forMainLoop('UNCLEAR 1 Decline the finding?', question({ agentId: 'gone' }), [])).toBe(
++    `UNCLEAR 1 Decline the finding?${note('gone')}`,
++  )
++  expect(forMainLoop('UNCLEAR 3 Test the gutters', request({ agentId: 'agent-1' }), [])).toBe(
++    `UNCLEAR 3 Test the gutters${note('agent-1')}`,
++  )
++  expect(forMainLoop('UNCLEAR 2 Force-pushed #7', notice(), [])).toBe('UNCLEAR 2 Force-pushed #7')
++})
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index 539298ed..884c6943 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -43,16 +43,22 @@ export const wokeBetween = (items: readonly Item[], since: number, time: number)
+ export const isStarting = (request: Request) =>
+   request.answer === undefined && request.started !== undefined && request.started.deliveredAt === undefined
+ 
++/** Whether an open item waits for `UNCLEAR`, word that you don't understand it, to reach its agent. */
++const isUnclearOwed = (item: Item) =>
++  item.answer === undefined && item.unclear !== undefined && item.unclear.deliveredAt === undefined
++
+ /**
+- * Whether a question's or request's line waits for a deliverer: an answer or
+- * outcome recorded and undelivered, word of a restore, or a request's start,
+- * and claimed by none that is live.
++ * Whether an item's line waits for a deliverer: a question's answer or a
++ * request's outcome recorded and undelivered, word of a restore, a request's
++ * start, or word that you don't understand an open item of any kind, and
++ * claimed by none that is live.
+  */
+-export const needsDelivery = (item: Item, time: number): item is Answerable =>
+-  item.kind !== 'notice' &&
+-  (item.restoredAt !== undefined ||
+-    (item.answer !== undefined && item.deliveredAt === undefined) ||
+-    (item.kind === 'request' && isStarting(item))) &&
++export const needsDelivery = (item: Item, time: number): boolean =>
++  (isUnclearOwed(item) ||
++    (item.kind !== 'notice' &&
++      (item.restoredAt !== undefined ||
++        (item.answer !== undefined && item.deliveredAt === undefined) ||
++        (item.kind === 'request' && isStarting(item))))) &&
+   (item.claim === undefined || time - item.claim.renewedAt >= CLAIM_MS)
+ 
+ /** What the panel puts in the prompt to discuss an item: its subject, in quotes. */
+@@ -191,7 +197,7 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
+ }
+ 
+ /** Names the subagent that posted an item, by its description and id when the session still lists it. */
+-function whoAsked(item: Answerable, agents: readonly AgentInfo[]): string {
++function whoAsked(item: Item, agents: readonly AgentInfo[]): string {
+   const agent = agents.find(one => one.id === item.agentId)
+   return agent === undefined ? (item.agentId ?? '') : `${agent.description} (${agent.id})`
+ }
+@@ -211,14 +217,20 @@ export const replyNote = (item: Answerable, agents: readonly AgentInfo[]) =>
+   `The subagent ${whoAsked(item, agents)} ${wording(item).posted} ${quoteOf(item)}; send it the reply this prompt gives, which leaves the ${wording(item).noun} open.`
+ 
+ /** The subagent that posted an item, while it can still read a message; undefined sends the line to the main loop. */
+-export function liveAgent(item: Answerable, agents: readonly AgentInfo[]): string | undefined {
++export function liveAgent(item: Item, agents: readonly AgentInfo[]): string | undefined {
+   const agent = agents.find(one => one.id === item.agentId)
+   return agent !== undefined && LIVE.has(agent.status) ? agent.id : undefined
+ }
+ 
+-/** What the main loop receives: the answer or outcome, and the subagent to relay it to when one posted the item. */
+-export function forMainLoop(text: string, item: Answerable, agents: readonly AgentInfo[]): string {
++/**
++ * What the main loop receives: the line an item owes, and the subagent to
++ * relay it to when one posted the item. A notice owes no line but `UNCLEAR`.
++ */
++export function forMainLoop(text: string, item: Item, agents: readonly AgentInfo[]): string {
+   if (item.agentId === undefined) return text
++  if (text.startsWith('UNCLEAR ') || item.kind === 'notice') {
++    return `${text}\n\nThe subagent ${whoAsked(item, agents)} posted this, and the message could not reach it; send it this message, or revise the item yourself.`
++  }
+   const { posted, result } = wording(item)
+   return `${text}\n\nThe subagent ${whoAsked(item, agents)} ${posted} this, and the ${result} could not reach it; send it this ${result}, or act on it yourself.`
+ }
+@@ -265,6 +277,10 @@ const UNSEEN_NUMBER =
+ /** A tool's description: its own lines, then the sentence every inbox tool ends with about an item's number. */
+ const described = (lines: readonly string[]) => [...lines, UNSEEN_NUMBER].join(' ')
+ 
++/** What `ask`, `tell`, and `request` each say about I don't understand, for the kind of item it posts. */
++const unclearArrives = (kind: Item['kind']) =>
++  `When the person presses I don’t understand, a message that starts \`UNCLEAR 3\` arrives: revise the ${kind} to explain it more simply or to add the context they lack, keeping its number.`
++
+ export const ASK_DESCRIPTION = described([
+   'Ask the person a question without stopping: it appears in Projector’s panel above their prompt, and you keep working.',
+   'Ask in one short line of at most 120 characters, and put what they need to decide in `detail`.',
+@@ -273,6 +289,7 @@ export const ASK_DESCRIPTION = described([
+   'Keep working on anything the answer does not block. The call returns the question’s number, such as 3.',
+   'When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
+   'When they restore a question after you heard `DISMISSED 3`, `RESTORED 3` arrives, and the question is open again.',
++  unclearArrives('question'),
+   'When they reply in their own words instead, the reply arrives as their prompt, quoting the question, and the question stays open:',
+   'answer what they asked, then withdraw the question if the reply settles it, revise it if it was unclear or the choice has changed,',
+   'or leave it open while it still needs them.',
+@@ -287,8 +304,8 @@ export const ASK_SCHEMA = {
+     options: {
+       type: 'array',
+       items: { type: 'string' },
+-      maxItems: 5,
+-      description: 'Up to five other answers, each written in full, lettered b, c, and on in this order.',
++      maxItems: 4,
++      description: 'Up to four other answers, each written in full, lettered b, c, and on in this order.',
+     },
+     detail: {
+       type: 'string',
+@@ -334,8 +351,9 @@ export const TELL_DESCRIPTION = described([
+   'Tell the person something without stopping: it appears in Projector’s panel above their prompt until they dismiss it.',
+   'Use it for the answer to a question they asked you, or for something you did that they should know about.',
+   'Write one short line of at most 120 characters, and put the rest in `detail`.',
+-  'Name the pull request it is about in `pr`, as owner/repo#number.',
+-  'Nothing comes back to you; when you need the person to decide something, use `ask` instead,',
++  'Name the pull request it is about in `pr`, as owner/repo#number. The call returns the notice’s number, such as 3.',
++  unclearArrives('notice'),
++  'Nothing else comes back to you; when you need the person to decide something, use `ask` instead,',
+   'and when they need to do something only they can do, use `request`.',
+ ])
+ 
+@@ -386,6 +404,7 @@ export const REQUEST_DESCRIPTION = described([
+   'any notes under it, or as a message that starts `DONE 3` and names the option. When they decline it, a message that starts `DECLINED 3` arrives. When they restore a request after you heard',
+   '`DECLINED 3`, `RESTORED 3` arrives, and the request is open again. When they reply in their own words instead, the',
+   'reply arrives as their prompt, quoting the request, and the request stays open.',
++  unclearArrives('request'),
+   'When you need the person to decide something rather than do it, use `ask` instead.',
+ ])
+ 
+@@ -397,9 +416,9 @@ export const REQUEST_SCHEMA = {
+     options: {
+       type: 'array',
+       items: { type: 'string' },
+-      maxItems: 5,
++      maxItems: 4,
+       description:
+-        'Up to five choices they pick from when they finish, each marking the request done, such as `Looks good` and `Some feedback` for a test; leave it out to offer a single `Done`.',
++        'Up to four choices they pick from when they finish, each marking the request done, such as `Looks good` and `Some feedback` for a test; leave it out to offer a single `Done`.',
+     },
+     start: {
+       type: 'string',
+@@ -538,11 +557,13 @@ export const RESTORE_SCHEMA = ITEM_SCHEMA
+ export const restoreArguments = itemArguments('restore')
+ 
+ export const REVISE_DESCRIPTION = described([
+-  'Revise a question you asked or a request you posted that is still open, keeping its number, when the person’s reply',
+-  'shows it was unclear or the choice or the work has changed. Name it by the number `ask` or `request` returned, and',
+-  'give only what changes: for a question, the question, its detail, the recommendation, or the other options, which',
+-  '`options` replaces as a whole; for a request, the request, its detail, its options, which `options` replaces as a',
++  'Revise a question, notice, or request you posted that is still open, keeping its number, when the person’s reply',
++  'or a message that starts `UNCLEAR 3` shows it was unclear, or the choice or the work has changed. Name it by the',
++  'number `ask`, `tell`, or `request` returned, and give only what changes: for a question, the question, its detail,',
++  'the recommendation, or the other options, which `options` replaces as a whole; for a notice, the notice or its',
++  'detail; for a request, the request, its detail, its options, which `options` replaces as a',
+   'whole and an empty list removes, or its start action, where an empty `start` removes it. A revised request returns to open, so a start the person pressed for its old text needs a new press.',
++  'A revision clears the person’s I don’t understand, so they can press it again if the new text still leaves them lost.',
+   'Projector’s panel redraws it at once, and a question’s answer still arrives as a message that starts',
+   '`ANSWER 3.<letter>` or `DISMISSED 3`, a request’s outcome as one that starts `DONE 3` or `DECLINED 3`.',
+ ])
+@@ -553,9 +574,10 @@ export const REVISE_SCHEMA = {
+     number: {
+       type: 'integer',
+       minimum: 1,
+-      description: 'The item’s number, as `ask` or `request` returned it, such as 3.',
++      description: 'The item’s number, as `ask`, `tell`, or `request` returned it, such as 3.',
+     },
+     question: { type: 'string', description: 'The new question, in one line of at most 120 characters.' },
++    notice: { type: 'string', description: 'The new notice, in one line of at most 120 characters.' },
+     request: { type: 'string', description: 'The new request, in one line of at most 120 characters.' },
+     start: { type: 'string', description: 'The request’s new start action, in one line; an empty string removes it.' },
+     recommendation: {
+@@ -565,9 +587,9 @@ export const REVISE_SCHEMA = {
+     options: {
+       type: 'array',
+       items: { type: 'string' },
+-      maxItems: 5,
++      maxItems: 4,
+       description:
+-        'For a question, every other answer, up to five, each written in full and lettered b, c, and on in this order; an empty list leaves only the recommendation. For a request, every option, up to five, in order; an empty list removes them, so the request offers a single Done.',
++        'For a question, every other answer, up to four, each written in full and lettered b, c, and on in this order; an empty list leaves only the recommendation. For a request, every option, up to four, in order; an empty list removes them, so the request offers a single Done.',
+     },
+     detail: {
+       type: 'string',
+@@ -587,9 +609,12 @@ export function reviseArguments(
+   input: Readonly<Record<string, unknown>>,
+   session: string,
+ ): string[] | { error: string } {
+-  const { number, question, request, start, recommendation, options, detail } = input
+-  if (!isNumber(number)) return { error: '`number` must be the whole number `ask` or `request` returned, such as 3' }
++  const { number, question, notice, request, start, recommendation, options, detail } = input
++  if (!isNumber(number)) {
++    return { error: '`number` must be the whole number `ask`, `tell`, or `request` returned, such as 3' }
++  }
+   if (question !== undefined && !isText(question)) return { error: '`question` must be a string' }
++  if (notice !== undefined && !isText(notice)) return { error: '`notice` must be a string' }
+   if (request !== undefined && !isText(request)) return { error: '`request` must be a string' }
+   if (start !== undefined && !isText(start)) return { error: '`start` must be a string' }
+   if (recommendation !== undefined && !isText(recommendation)) return { error: '`recommendation` must be a string' }
+@@ -597,8 +622,10 @@ export function reviseArguments(
+     return { error: '`options` must be a list of strings' }
+   }
+   if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
+-  if ([question, request, start, recommendation, options, detail].every(value => value === undefined)) {
+-    return { error: 'give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`' }
++  if ([question, notice, request, start, recommendation, options, detail].every(value => value === undefined)) {
++    return {
++      error: 'give what changes: `question`, `notice`, `request`, `start`, `detail`, `recommendation`, or `options`',
++    }
+   }
+   return [
+     'inbox',
+@@ -607,6 +634,7 @@ export function reviseArguments(
+     '--session',
+     session,
+     ...(question === undefined ? [] : [`--question=${question}`]),
++    ...(notice === undefined ? [] : [`--notice=${notice}`]),
+     ...(request === undefined ? [] : [`--request=${request}`]),
+     ...(start === undefined ? [] : [`--start=${start}`]),
+     ...(recommendation === undefined ? [] : [`--recommend=${recommendation}`]),
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 0827fdc2..112baaf6 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -1349,8 +1349,16 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+   /** Whether an open request's start waits for its `STARTED` line, as the CLI owes it. */
+   const owesStart = (item: Held): item is HeldRequest =>
+     item.kind === 'request' && item.answer === undefined && item.started !== undefined && item.started.deliveredAt === undefined
+-  const textOf = (item: HeldQuestion | HeldRequest) => {
++  /** Whether an open item of any kind waits for its `UNCLEAR` line, as the CLI owes it. */
++  const owesUnclear = (item: Held) =>
++    item.answer === undefined && item.unclear !== undefined && item.unclear.deliveredAt === undefined
++  /** An item without `unclear` and without a claim on its `UNCLEAR` line, as a revision leaves it. */
++  const unmarked = <T extends Held>(item: T): T =>
++    without(item, 'unclear', ...(item.claim?.line === 'unclear' ? ['claim'] : []))
++  const textOf = (item: Held) => {
+     const { answer, ref, subject } = item
++    // A notice owes no line but `UNCLEAR`.
++    if (item.claim?.line === 'unclear' || item.kind === 'notice') return `UNCLEAR ${ref} ${subject}`
+     if (item.kind === 'request' && item.claim?.line === 'started') {
+       return `STARTED ${ref} ${subject} → ${item.started?.action ?? ''}`
+     }
+@@ -1451,8 +1459,10 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       }
+       return printed(put(restored))
+     }
+-    // Dismissing or answering an item drops word of a restore not yet claimed, as the CLI does.
+-    const awake = without(item, 'snoozedUntil', 'snoozedAt', 'restoredAt', 'claim')
++    // Dismissing or answering an item drops word of a restore not yet claimed, as the CLI does, and word that you
++    // don't understand it unless a deliverer holds that word.
++    const isUnclearClaimed = item.claim?.line === 'unclear'
++    const awake = without(item, 'snoozedUntil', 'snoozedAt', 'restoredAt', ...(isUnclearClaimed ? [] : ['claim', 'unclear']))
+     const isUnsaid = 'restoredAt' in item && !('claim' in item)
+     if (command === 'dismiss') {
+       const answer = { dismissed: true as const, answeredAt: time }
+@@ -1499,11 +1509,59 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       const minutes = Number(flag(args, 'for') ?? 60)
+       return printed(put({ ...item, snoozedAt: time, snoozedUntil: time + minutes * 60_000 }))
+     }
++    if (command === 'unclear') {
++      if (item.answer !== undefined) return failed(65, `${ref} is already resolved`)
++      if (item.unclear !== undefined) return failed(65, `${ref} is already marked unclear; its agent has yet to revise it`)
++      if (flag(args, 'subject') !== item.subject || flag(args, 'detail') !== item.detail) {
++        return failed(65, `${ref} was revised since you read it; read it and press I don't understand again`)
++      }
++      return printed(put({ ...item, unclear: { at: time } }))
++    }
++    // An item owes its answer, outcome, `RESTORED`, or `STARTED` before its `UNCLEAR`, and a notice owes only `UNCLEAR`.
++    if (command === 'claim') {
++      const isOwed =
++        item.kind !== 'notice' && (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined))
++      const renew = flag(args, 'renew')
++      if (!isOwed && !owesStart(item) && !owesUnclear(item) && renew === undefined) return failed(65, 'nothing to deliver')
++      if (renew !== undefined) {
++        if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
++        put({ ...item, claim: { ...item.claim, renewedAt: time } })
++        return ran('')
++      }
++      if (item.claim !== undefined && time - item.claim.renewedAt < 60_000) return failed(65, 'already claimed')
++      const line =
++        item.kind === 'notice' || !isOwed
++          ? owesStart(item)
++            ? 'started'
++            : 'unclear'
++          : item.restoredAt !== undefined && item.answer === undefined
++            ? 'restored'
++            : 'answer'
++      const claimed = { ...item, claim: { token: `token-${writes}`, renewedAt: time, line } } as Held
++      return printed(put(claimed), { token: claimed.claim?.token, text: textOf(claimed) })
++    }
++    // Word that you don't understand an item is marked delivered, or taken back when it failed.
++    if ((command === 'delivered' || command === 'reopen') && item.claim?.line === 'unclear') {
++      if (item.claim.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
++      const settled = without(item, 'claim')
++      return printed(
++        put(
++          command === 'delivered' && item.unclear !== undefined
++            ? { ...settled, unclear: { ...item.unclear, deliveredAt: time } }
++            : without(settled, 'unclear'),
++        ),
++      )
++    }
++    if (command === 'revise' && item.kind === 'notice') {
++      return printed(
++        put({ ...unmarked(item), subject: flag(args, 'notice') ?? item.subject, detail: flag(args, 'detail') ?? item.detail }),
++      )
++    }
+     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
+     if (command === 'revise' && item.kind === 'request') {
+       // A revised request returns to open, as the CLI resets it.
+       const start = flag(args, 'start') ?? item.start
+-      const revised = without(item, 'started', 'progress', 'start')
++      const revised = without(unmarked(item), 'started', 'progress', 'start')
+       return printed(
+         put({
+           ...revised,
+@@ -1522,7 +1580,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       const kept = args.includes('--no-options') ? [] : options.length > 0 ? options : others
+       return printed(
+         put({
+-          ...item,
++          ...unmarked(item),
+           subject: flag(args, 'question') ?? item.subject,
+           detail: flag(args, 'detail') ?? item.detail,
+           choices: [flag(args, 'recommend') ?? recommended, ...kept],
+@@ -1534,20 +1592,6 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       const text = flag(args, 'text') ?? item.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''
+       return printed(put({ ...(awake as HeldQuestion), answer: { letter, text, answeredAt: time } }))
+     }
+-    if (command === 'claim') {
+-      const isOwed = item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined)
+-      if (!isOwed && !owesStart(item) && flag(args, 'renew') === undefined) return failed(65, 'nothing to deliver')
+-      const renew = flag(args, 'renew')
+-      if (renew !== undefined) {
+-        if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
+-        put({ ...item, claim: { token: renew, renewedAt: time } })
+-        return ran('')
+-      }
+-      if (item.claim !== undefined && time - item.claim.renewedAt < 60_000) return failed(65, 'already claimed')
+-      const line = isOwed ? (item.restoredAt !== undefined && item.answer === undefined ? 'restored' : 'answer') : 'started'
+-      const claimed = { ...item, claim: { token: `token-${writes}`, renewedAt: time, line } } as HeldQuestion | HeldRequest
+-      return printed(put(claimed), { token: claimed.claim?.token, text: textOf(claimed) })
+-    }
+     if (command === 'delivered' || command === 'reopen') {
+       if (item.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
+       // A start's line marks the start delivered, or takes it back when it failed.
+@@ -1643,6 +1687,10 @@ async function startSession($: Engine, clock: Clock, isShown = true) {
+ const running = (status: AgentInfo['status']): AgentInfo =>
+   ({ id: 'agent-1', description: 'Fix #7', type: 'general-purpose', status }) as AgentInfo
+ 
++/** What a tool's result tells the agent to do when `UNCLEAR` arrives for the item it posted or revised. */
++const unclearSaid = (kind: Held['kind'], ref: string) =>
++  `When a message that starts UNCLEAR ${ref} arrives, the person does not understand the ${kind}: revise it to explain it more simply or to add the context they lack.`
++
+ test('asks through the tool, and the panel lists the question below the pull requests', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -1657,7 +1705,7 @@ test('asks through the tool, and the panel lists the question below the pull req
+     pr: 'x/y#7',
+   })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Asked 1. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER 1 or DISMISSED 1. Projector’s panel never shows this number, so name the question to the person by what it asks.',
++    `Asked 1. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER 1 or DISMISSED 1. ${unclearSaid('question', '1')} Projector’s panel never shows this number, so name the question to the person by what it asks.`,
+   )
+   expect(session.registered).toEqual([
+     expect.objectContaining({ name: 'ask', isDeferred: false }),
+@@ -1946,7 +1994,7 @@ test('requests through the tool, and a request’s drawer offers the agent’s o
+     options: ['Looks good', 'Some feedback'],
+   })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE 1; a decline arrives as a message that starts DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
++    `Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE 1; a decline arrives as a message that starts DECLINED 1. ${unclearSaid('request', '1')} Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
+   )
+   expect(session.project()).toContain(
+     'inbox request --session=s1 --option=Looks good --option=Some feedback --detail=1. Open Fyra. -- Test the gutters',
+@@ -1965,7 +2013,12 @@ test('requests through the tool, and a request’s drawer offers the agent’s o
+     ['outcome:1.a', '1', true, 'Looks good'],
+     ['outcome:1.b', '2', true, "Some feedback"],
+   ])
+-  expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss request', 'decline:1 8 decline request', 'snooze:1 9 snooze request'])
++  expect(await actionLinesOf(ui)).toEqual([
++    "unclear:1 6 I don't understand this request",
++    'discuss:1 7 discuss request',
++    'decline:1 8 decline request',
++    'snooze:1 9 snooze request',
++  ])
+   await ui.unmount()
+ })
+ 
+@@ -2129,7 +2182,12 @@ test('start, first on 1, records the start action the drawer shows, and STARTED
+     ['2', 'Looks good'],
+     ['3', "Some feedback"],
+   ])
+-  expect(await actionLinesOf(ui)).toEqual(['discuss:3 7 discuss request', 'decline:3 8 decline request', 'snooze:3 9 snooze request'])
++  expect(await actionLinesOf(ui)).toEqual([
++    "unclear:3 6 I don't understand this request",
++    'discuss:3 7 discuss request',
++    'decline:3 8 decline request',
++    'snooze:3 9 snooze request',
++  ])
+   // Opening the drawer records nothing and sends nothing.
+   expect(session.project().filter(command => command.startsWith('inbox start'))).toEqual([])
+ 
+@@ -2253,7 +2311,7 @@ test('the request, revise, and restore results say STARTED comes first for a req
+   expect(session.project()).toContain(`inbox request --session=s1 --start=${INSTALL} -- Test the gutters`)
+   const revised = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, detail: '1. Open Fyra.' })
+   expect(String(revised.text ?? revised.result)).toBe(
+-    `Revised 1. Projector’s panel shows the new text, and the request is open again. ${first} Its outcome arrives as a message that starts DONE 1 or DECLINED 1.`,
++    `Revised 1. Projector’s panel shows the new text, and the request is open again. ${first} Its outcome arrives as a message that starts DONE 1 or DECLINED 1. ${unclearSaid('request', '1')}`,
+   )
+   session.store.write({ ...requested({ ref: '1', number: 1, start: INSTALL }), answer: { dismissed: true, declined: true, answeredAt: NOW } })
+   const restored = await $.tool.call({ tool: 'mcp__projector__restore', number: 1 })
+@@ -2282,6 +2340,154 @@ test('the ready and block tools mark a started request, and the panel shows it a
+   await ui.unmount()
+ })
+ 
++/** The keys of the panel's item lines, in the order the list draws them. */
++async function itemOrderOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
++  return (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('item:'))
++}
++
++test('I don’t understand on a running subagent’s notice records it, sends UNCLEAR once, and marks the line until a revise', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held(), notice({ agentId: 'agent-1' })], { agents: [running('running')] })
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++  expect(await itemOrderOf(ui)).toEqual(['item:2', 'item:1'])
++
++  await ui.press({ key: 'item:2' })
++  const action = await ui.find({ type: 'Button', key: 'unclear:2' })
++  expect([action?.props.hotkey, action?.props.plain, action?.text]).toEqual(['6', true, "I don't understand this notice"])
++  await ui.press({ key: 'unclear:2' })
++  await clock.advance(1)
++  await clock.settle()
++  // The panel passes the subject and detail its drawer showed, and closes the drawer.
++  expect(session.project().filter(command => command.startsWith('inbox unclear'))).toEqual([
++    `inbox unclear 2 --subject=${FORCE_PUSHED} --detail=The file held a debug token. --session s1 --json`,
++  ])
++  expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
++  // The subagent hears UNCLEAR, and the line is marked delivered.
++  expect(session.sent).toEqual([{ to: 'agent-1', text: `UNCLEAR 2 ${FORCE_PUSHED}` }])
++  expect(session.submitted).toEqual([])
++  expect(session.store.store.get('2')?.unclear).toEqual({ at: NOW + 1, deliveredAt: expect.any(Number) })
++
++  // The line ends with `unclear` in the warning color, and its drawer no longer offers the action.
++  expect((await ui.find({ type: 'Text', text: 'unclear' }))?.props.color).toBe('warning')
++  await ui.press({ key: 'item:2' })
++  expect(await actionLinesOf(ui)).toEqual([
++    'discuss:2 7 discuss notice',
++    'dismiss:2 8 dismiss notice',
++    'snooze:2 9 snooze notice',
++  ])
++  await ui.press({ key: 'close:2' })
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(session.sent).toHaveLength(1)
++
++  // The agent revises the notice: it keeps its number and its place, shows the new text without the mark, and
++  // offers I don't understand again.
++  const reworded = 'Force-pushed #7 to drop a file that held a debug token'
++  const revised = await $.tool.call({ tool: 'mcp__projector__revise', number: 2, notice: reworded })
++  expect(String(revised.text ?? revised.result)).toBe(
++    `Revised 2. Projector’s panel shows the new text until the person dismisses it. ${unclearSaid('notice', '2')}`,
++  )
++  expect(session.project()).toContain(`inbox revise 2 --session s1 --notice=${reworded} --json`)
++  expect(await ui.find({ type: 'Text', text: reworded })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: 'unclear' })).toBeUndefined()
++  expect(await itemOrderOf(ui)).toEqual(['item:2', 'item:1'])
++  await ui.press({ key: 'item:2' })
++  expect((await ui.find({ type: 'Button', key: 'unclear:2' }))?.props.hotkey).toBe('6')
++  await ui.unmount()
++})
++
++test('I don’t understand on an item whose subagent finished reaches the main loop, naming the subagent, and marks it beside its stage', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const started = { action: INSTALL, startedAt: NOW - 5_000, deliveredAt: NOW - 4_000 }
++  const ready = requested({ agentId: 'agent-1', start: INSTALL, started, progress: { state: 'ready', at: NOW - 1_000 } })
++  const session = questionWorld(on, clock, [ready], { agents: [running('completed')] })
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++
++  await ui.press({ key: 'item:3' })
++  await ui.press({ key: 'unclear:3' })
++  await clock.advance(1)
++  await clock.settle()
++  expect(session.sent).toEqual([])
++  expect(session.submitted).toEqual([
++    {
++      text: 'UNCLEAR 3 Test the gutters\n\nThe subagent Fix #7 (agent-1) posted this, and the message could not reach it; send it this message, or revise the item yourself.',
++      context: [],
++    },
++  ])
++  expect(session.store.store.get('3')?.unclear?.deliveredAt).toBeDefined()
++
++  // The line reads `unclear` and then the request's stage, each in its own color.
++  const marks = (await ui.findAll({ type: 'Text' })).filter(text => text.text === 'unclear' || text.text === 'ready')
++  expect(marks.map(mark => [mark.text, mark.props.color])).toEqual([
++    ['unclear', 'warning'],
++    ['ready', 'success'],
++  ])
++  await ui.unmount()
++})
++
++test('an UNCLEAR that cannot be delivered takes the mark back, says so, and offers I don’t understand again', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [held()], { drop: 'a hook refused it' })
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++
++  await ui.press({ key: 'item:1' })
++  await ui.press({ key: 'unclear:1' })
++  await clock.advance(1)
++  await clock.settle()
++  expect(session.submitted.map(one => one.text)).toEqual(['UNCLEAR 1 Decline the finding?'])
++  expect(session.toasts).toEqual([
++    'projector: word that you don\'t understand "Decline the finding?" did not reach its agent (a hook refused it); press I don\'t understand again',
++  ])
++  expect(session.store.store.get('1')).toEqual(held())
++  expect(await ui.find({ type: 'Text', text: 'unclear' })).toBeUndefined()
++  await ui.press({ key: 'item:1' })
++  expect((await ui.find({ type: 'Button', key: 'unclear:1' }))?.props.hotkey).toBe('6')
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(session.submitted).toHaveLength(1)
++  await ui.unmount()
++})
++
++test('a press of I don’t understand on a drawer the agent revised since records nothing and shows the new text', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [notice()])
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++
++  await ui.press({ key: 'item:2' })
++  // The agent revises the notice's detail from its shell, which the panel reads only on a later tick.
++  const detail = 'The file held a debug token, which is now rotated.'
++  session.store.write(notice({ detail }))
++  await ui.press({ key: 'unclear:2' })
++  await clock.advance(1)
++  await clock.settle()
++  expect(session.project()).toContain(
++    `inbox unclear 2 --subject=${FORCE_PUSHED} --detail=The file held a debug token. --session s1 --json`,
++  )
++  expect(session.store.store.get('2')).toEqual(notice({ detail }))
++  // The drawer stays open on the new text, still offering the action.
++  expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe(detail)
++  expect((await ui.find({ type: 'Button', key: 'unclear:2' }))?.props.hotkey).toBe('6')
++  expect(await ui.find({ type: 'Text', text: 'unclear' })).toBeUndefined()
++  expect(session.sent).toEqual([])
++  expect(session.submitted).toEqual([])
++
++  // Pressed again, it records what you read now.
++  await ui.press({ key: 'unclear:2' })
++  await clock.advance(1)
++  await clock.settle()
++  expect(session.project()).toContain(`inbox unclear 2 --subject=${FORCE_PUSHED} --detail=${detail} --session s1 --json`)
++  expect(session.submitted.map(one => one.text)).toEqual([`UNCLEAR 2 ${FORCE_PUSHED}`])
++  await ui.unmount()
++})
++
+ test('a question another shares the text of takes only the answer its own drawer put in the prompt', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -2747,7 +2953,7 @@ test('a subagent tells through the tool, and the panel lists the notice in gray'
+ 
+   const called = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, pr: 'x/y#7', agentId: 'agent-1' })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Posted 1. It waits in Projector’s panel until the person dismisses it; nothing comes back to you. Projector’s panel never shows this number, so name the notice to the person by what it tells.',
++    `Posted 1. It waits in Projector’s panel until the person dismisses it. ${unclearSaid('notice', '1')} Nothing else comes back to you. Projector’s panel never shows this number, so name the notice to the person by what it tells.`,
+   )
+   expect(session.project()).toContain(`inbox tell --session=s1 --pr=x/y#7 --agent=agent-1 -- ${FORCE_PUSHED}`)
+   expect(session.notified).toEqual([FORCE_PUSHED])
+@@ -2838,6 +3044,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+     expect((await ui.find({ type: 'Button', key: `${name}:2` }))?.props.plain).toBe(true)
+   }
+   expect(await actionLinesOf(ui)).toEqual([
++    "unclear:2 6 I don't understand this notice",
+     'discuss:2 7 discuss notice',
+     'dismiss:2 8 dismiss notice',
+     'snooze:2 9 snooze notice',
+@@ -3117,7 +3324,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
+   const options = ['Add a budget of two per host', 'Ask the reviewer']
+   const called = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, options, detail: 'The cap is three.' })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Revised 1. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER 1 or DISMISSED 1.',
++    `Revised 1. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER 1 or DISMISSED 1. ${unclearSaid('question', '1')}`,
+   )
+   expect(session.project()).toContain(
+     'inbox revise 1 --session s1 --option=Add a budget of two per host --option=Ask the reviewer --detail=The cap is three. --json',
+@@ -3298,7 +3505,9 @@ test('the revise tool refuses what the CLI refuses, asks an old CLI to upgrade,
+   expect(unknown.deny ?? unknown.text).toBe('no item 9')
+ 
+   const empty = await $.tool.call({ tool: 'mcp__projector__revise', number: 1 })
+-  expect(empty.deny ?? empty.text).toBe('give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`')
++  expect(empty.deny ?? empty.text).toBe(
++    'give what changes: `question`, `notice`, `request`, `start`, `detail`, `recommendation`, or `options`',
++  )
+ 
+   session.store.failing.locks = 1
+   const busy = await $.tool.call(revise)
+@@ -3489,7 +3698,7 @@ test('an item whose snooze ends while the panel is hidden is drawn the moment th
+ 
+ /** The keys of an item's drawer actions, in the order its row draws them. */
+ async function actionsOf(ui: Pick<Mounted, 'findAll'>, ref: string): Promise<string[]> {
+-  const pattern = new RegExp(`^(discuss|dismiss|snooze|unsnooze|restore):${ref}$`)
++  const pattern = new RegExp(`^(unclear|discuss|dismiss|snooze|unsnooze|restore):${ref}$`)
+   return (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => pattern.test(key))
+ }
+ 
+@@ -3502,7 +3711,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
+   const line = () => ui.find({ type: 'Text', text: 'Decline the finding?' })
+ 
+   await ui.press({ key: 'item:1' })
+-  expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
++  expect(await actionsOf(ui, '1')).toEqual(['unclear:1', 'discuss:1', 'dismiss:1', 'snooze:1'])
+   await ui.press({ key: 'dismiss:1' })
+   await clock.settle()
+   // The drawer closes, and the line stays, muted in the subtle color and struck through.
+@@ -3523,7 +3732,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
+   // The drawer stays open on the question, open again, with dismiss back in its place.
+   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
+   expect(await ui.find({ key: 'answer:1.a' })).toBeDefined()
+-  expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
++  expect(await actionsOf(ui, '1')).toEqual(['unclear:1', 'discuss:1', 'dismiss:1', 'snooze:1'])
+   const restored = await line()
+   expect([restored?.props.color, restored?.props.strikethrough]).toEqual(['permission', false])
+   expect(session.store.store.get('1')).toEqual(held())
+@@ -3581,12 +3790,12 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
+ 
+   // Its line opens the drawer again, where unsnooze takes snooze's place.
+   await ui.press({ key: 'item:2' })
+-  expect(await actionsOf(ui, '2')).toEqual(['discuss:2', 'dismiss:2', 'unsnooze:2'])
++  expect(await actionsOf(ui, '2')).toEqual(['unclear:2', 'discuss:2', 'dismiss:2', 'unsnooze:2'])
+   await ui.press({ key: 'unsnooze:2' })
+   await clock.settle()
+   expect(session.project()).toContain('inbox restore 2 --session s1 --json')
+   expect(await ui.find({ key: 'detail:2' })).toBeDefined()
+-  expect(await actionsOf(ui, '2')).toEqual(['discuss:2', 'dismiss:2', 'snooze:2'])
++  expect(await actionsOf(ui, '2')).toEqual(['unclear:2', 'discuss:2', 'dismiss:2', 'snooze:2'])
+   expect((await line())?.props.color).toBe('inactive')
+   expect(session.store.store.get('2')).toEqual(notice())
+ 
+@@ -3638,7 +3847,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
+   // A notice comes back too, and nothing goes to the agent.
+   const told = await $.tool.call({ tool: 'mcp__projector__restore', number: 2 })
+   expect(String(told.text ?? told.result)).toBe(
+-    'Restored 2. It is back in Projector’s panel until the person dismisses it; nothing comes back to you.',
++    `Restored 2. It is back in Projector’s panel until the person dismisses it. ${unclearSaid('notice', '2')} Nothing else comes back to you.`,
+   )
+   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
+   await clock.advance(TICK)
+@@ -3724,11 +3933,11 @@ test('the restore tool refuses what the CLI refuses, asks an old CLI to upgrade,
+   expect(session.store.store.get('2')).toEqual(notice())
+ })
+ 
+-test('an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open', async ($, on) => {
++test('an open question’s options are Buttons on the digits 1 to 5, only while its drawer is open, and 6 says you don’t understand', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  // The recommendation and five more options, the most the ask tool takes.
+-  const choices = ['Decline it', 'Add a budget', 'Cap per host', 'Ask the reviewer', 'Wait a day', 'Split the change']
++  // The recommendation and four more options, the most the ask tool takes.
++  const choices = ['Decline it', 'Add a budget', 'Cap per host', 'Ask the reviewer', 'Split the change']
+   const session = questionWorld(on, clock, [held({ choices }), notice()])
+   await startSession($, clock)
+   const ui = await $.ui.mount(PANEL)
+@@ -3737,7 +3946,7 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while
+   // A closed drawer leaves the digits to the prompt, and a notice's drawer takes only `0`, on its line, and its actions'.
+   expect(await digits()).toEqual([])
+   await ui.press({ key: 'item:2' })
+-  expect(await digits()).toEqual(['close:2', 'discuss:2', 'dismiss:2', 'snooze:2'])
++  expect(await digits()).toEqual(['close:2', 'unclear:2', 'discuss:2', 'dismiss:2', 'snooze:2'])
+   await ui.press({ key: 'close:2' })
+ 
+   await ui.press({ key: 'item:1' })
+@@ -3747,14 +3956,14 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while
+     ['answer:1.c', '3'],
+     ['answer:1.d', '4'],
+     ['answer:1.e', '5'],
+-    ['answer:1.f', '6'],
+   ])
+-  // Pressing the sixth, by its digit or Enter, fills the prompt as clicking its number did, and sending it answers.
+-  await ui.press({ key: 'answer:1.f' })
++  expect((await ui.find({ type: 'Button', key: 'unclear:1' }))?.props.hotkey).toBe('6')
++  // Pressing the fifth, by its digit or Enter, fills the prompt as clicking its number did, and sending it answers.
++  await ui.press({ key: 'answer:1.e' })
+   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nSplit the change\n'])
+   await $.prompt.submit({ text: '"Decline the finding?"\n\nSplit the change\n', wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+-  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'f', text: 'Split the change' }))
++  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'e', text: 'Split the change' }))
+ 
+   // The answered question's drawer lists its options with no digits; only its line and discuss take one.
+   await ui.press({ key: 'item:1' })
+@@ -3763,6 +3972,55 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while
+   await ui.unmount()
+ })
+ 
++test('a question stored with six choices, or a request with Start and five options, keeps them on 1 to 6 and offers I don’t understand without a digit', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const choices = ['Decline it', 'Add a budget', 'Cap per host', 'Ask the reviewer', 'Wait a day', 'Split the change']
++  const options = ['Looks good', 'Some feedback', 'Crashed', 'Wrong build', 'Could not sign in']
++  const session = questionWorld(on, clock, [held({ choices }), requested({ start: INSTALL, choices: options })])
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++  const lines = async () =>
++    (await ui.findAll({ type: 'Button' })).map(button => `${button.key ?? ''} ${String(button.props.hotkey ?? '')}`)
++
++  await ui.press({ key: 'item:1' })
++  expect(await lines()).toEqual([
++    'close:1 0',
++    'answer:1.a 1',
++    'answer:1.b 2',
++    'answer:1.c 3',
++    'answer:1.d 4',
++    'answer:1.e 5',
++    'answer:1.f 6',
++    'unclear:1 ',
++    'discuss:1 7',
++    'dismiss:1 8',
++    'snooze:1 9',
++  ])
++  await ui.press({ key: 'close:1' })
++
++  await ui.press({ key: 'item:3' })
++  expect(await lines()).toEqual([
++    'close:3 0',
++    'start:3 1',
++    'outcome:3.a 2',
++    'outcome:3.b 3',
++    'outcome:3.c 4',
++    'outcome:3.d 5',
++    'outcome:3.e 6',
++    'unclear:3 ',
++    'discuss:3 7',
++    'decline:3 8',
++    'snooze:3 9',
++  ])
++  // A click or Enter still presses it.
++  await ui.press({ key: 'unclear:3' })
++  await clock.settle()
++  expect(session.project()).toContain('inbox unclear 3 --subject=Test the gutters --detail=1. Open Fyra. --session s1 --json')
++  expect(session.store.store.get('3')?.unclear).toBeDefined()
++  await ui.unmount()
++})
++
+ test('an open item’s line closes its drawer on 0, and no other line takes 0', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -3803,7 +4061,7 @@ test('an open item’s line closes its drawer on 0, and no other line takes 0',
+ /** The open drawer's action lines, in order: each one's key, the letter that presses it, and its label. */
+ async function actionLinesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
+   const actions = (await ui.findAll({ type: 'Button' })).filter(button =>
+-    /^(discuss|dismiss|decline|snooze|unsnooze|restore):/.test(button.key ?? ''),
++    /^(unclear|discuss|dismiss|decline|snooze|unsnooze|restore):/.test(button.key ?? ''),
+   )
+   return actions.map(action => `${action.key ?? ''} ${String(action.props.hotkey ?? '')} ${action.text}`)
+ }
+@@ -3830,27 +4088,36 @@ async function drawerRowsOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
+   )
+ }
+ 
+-test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named for what they act on', async ($, on) => {
++test('a drawer’s actions follow its options a line each, on 6 to 9, named for what they act on', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  questionWorld(on, clock, [held(), notice()])
++  const declined = { dismissed: true as const, declined: true as const, answeredAt: NOW - 1_000 }
++  questionWorld(on, clock, [
++    held(),
++    notice(),
++    requested(),
++    requested({ ref: '4', number: 4, subject: 'Sign in', answer: declined, deliveredAt: NOW - 1_000 }),
++  ])
+   await startSession($, clock)
+   const ui = await $.ui.mount(PANEL)
+ 
+   // No line of the list takes a key; only an open drawer's lines do.
+   expect((await ui.findAll({ type: 'Button' })).filter(button => button.props.hotkey !== undefined)).toEqual([])
+ 
+-  // A question's options and actions are one list: the options on 1 to 6, then the actions on 7, 8 and 9.
++  // A question's options and actions are one list: the options from 1, then the actions on 6 to 9, I don't
++  // understand first, above discuss.
+   await ui.press({ key: 'item:1' })
+   expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual([
+     'close:1',
+     'answer:1.a',
+     'answer:1.b',
++    'unclear:1',
+     'discuss:1',
+     'dismiss:1',
+     'snooze:1',
+   ])
+   expect(await actionLinesOf(ui)).toEqual([
++    "unclear:1 6 I don't understand this question",
+     'discuss:1 7 discuss question',
+     'dismiss:1 8 dismiss question',
+     'snooze:1 9 snooze question',
+@@ -3866,6 +4133,7 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named
+     'answer:1.a',
+     'answer:1.b',
+     'text: ',
++    'unclear:1',
+     'discuss:1',
+     'dismiss:1',
+     'snooze:1',
+@@ -3890,12 +4158,13 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named
+   await clock.settle()
+   await ui.press({ key: 'item:1' })
+   expect(await actionLinesOf(ui)).toEqual([
++    "unclear:1 6 I don't understand this question",
+     'discuss:1 7 discuss question',
+     'dismiss:1 8 dismiss question',
+     'unsnooze:1 9 unsnooze question',
+   ])
+ 
+-  // Dismissed, restore takes dismiss's place, and a resolved item has nothing to snooze.
++  // Dismissed, restore takes dismiss's place, and a resolved item has nothing to snooze and nothing to explain.
+   await ui.press({ key: 'dismiss:1' })
+   await clock.settle()
+   await ui.press({ key: 'item:1' })
+@@ -3915,14 +4184,28 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named
+   // A notice's actions name a notice.
+   await ui.press({ key: 'item:2' })
+   expect(await actionLinesOf(ui)).toEqual([
++    "unclear:2 6 I don't understand this notice",
+     'discuss:2 7 discuss notice',
+     'dismiss:2 8 dismiss notice',
+     'snooze:2 9 snooze notice',
+   ])
+-  expect(await drawerRowsOf(ui)).toEqual(['text: ', 'detail:2', 'text: ', 'discuss:2', 'dismiss:2', 'snooze:2'])
++  expect(await drawerRowsOf(ui)).toEqual(['text: ', 'detail:2', 'text: ', 'unclear:2', 'discuss:2', 'dismiss:2', 'snooze:2'])
+   expect(await drawerIndentOf(ui, '2')).toEqual([3, 3])
+   await ui.press({ key: 'close:2' })
+ 
++  // A request's actions name a request, and a declined one, being resolved, offers no I don't understand.
++  await ui.press({ key: 'item:3' })
++  expect(await actionLinesOf(ui)).toEqual([
++    "unclear:3 6 I don't understand this request",
++    'discuss:3 7 discuss request',
++    'decline:3 8 decline request',
++    'snooze:3 9 snooze request',
++  ])
++  await ui.press({ key: 'close:3' })
++  await ui.press({ key: 'item:4' })
++  expect(await actionLinesOf(ui)).toEqual(['discuss:4 7 discuss request', 'restore:4 8 restore request'])
++  await ui.press({ key: 'close:4' })
++
+   // A pull request's drawer has its actions above its links, the links with no letters.
+   await ui.press({ key: 'pr:x/y#7' })
+   expect(await actionLinesOf(ui)).toEqual(['discuss:x/y#7 7 discuss PR', 'dismiss:x/y#7 8 dismiss PR'])
+@@ -4100,6 +4383,7 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length
+   await ui.press({ key: 'cancel:1' })
+   expect((await optionsOf(ui)).map(option => option.key)).toEqual(['answer:1.a', 'answer:1.b'])
+   expect(await actionLinesOf(ui)).toEqual([
++    "unclear:1 6 I don't understand this question",
+     'discuss:1 7 discuss question',
+     'dismiss:1 8 dismiss question',
+     'snooze:1 9 snooze question',
+@@ -4107,7 +4391,12 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length
+   await ui.press({ key: 'close:1' })
+ 
+   // A notice shows the same lines, and snoozes nothing yet.
+-  const actions = ['discuss:2 7 discuss notice', 'dismiss:2 8 dismiss notice', 'snooze:2 9 snooze notice']
++  const actions = [
++    "unclear:2 6 I don't understand this notice",
++    'discuss:2 7 discuss notice',
++    'dismiss:2 8 dismiss notice',
++    'snooze:2 9 snooze notice',
++  ]
+   await ui.press({ key: 'item:2' })
+   await ui.press({ key: 'snooze:2' })
+   expect(await lines('2')).toEqual(lengths('2'))
+@@ -4228,7 +4517,7 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
+     (await ui.findAll({ type: 'Button' }))
+       .map(button => button.key ?? '')
+       .filter(key => key.endsWith(':1') && !key.startsWith('close:') && !key.startsWith('answer:'))
+-  const actions = ['discuss:1', 'dismiss:1', 'snooze:1']
++  const actions = ['unclear:1', 'discuss:1', 'dismiss:1', 'snooze:1']
+ 
+   // A terminal dismisses the question while its drawer asks how long to snooze; restoring it from a terminal opens
+   // its drawer on its actions, not on the snooze it was asking about.
+@@ -4249,7 +4538,7 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
+   session.store.run(['project', 'inbox', 'snooze', '1', '--session', SESSION])
+   await clock.advance(TICK)
+   await clock.settle()
+-  expect(await lines()).toEqual(['discuss:1', 'dismiss:1', 'unsnooze:1'])
++  expect(await lines()).toEqual(['unclear:1', 'discuss:1', 'dismiss:1', 'unsnooze:1'])
+   await ui.press({ key: 'unsnooze:1' })
+   await clock.settle()
+   expect(await lines()).toEqual(actions)
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 8430496f..7166a0d4 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -697,7 +697,9 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
+   if (outcome === 'reopen') {
+     // You never see an item's number, so the toast names the item by its
+     // subject. A restore's line is not sent again, and its item stays open. A
+-    // start that did not reach its agent is taken back, so start returns.
++    // start that did not reach its agent is taken back, so start returns, and
++    // so is word that you don't understand an item, so I don't understand
++    // returns.
+     const item = (await read($, items)).find(one => one.ref === ref && one.session === session)
+     const quoted = item === undefined ? undefined : quoteOf(item)
+     const why = reason ? ` (${reason})` : ''
+@@ -706,6 +708,8 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
+         ? `projector: word that ${quoted ?? 'an item'} is open again did not reach its agent${why}`
+         : text.startsWith('STARTED ')
+           ? `projector: the start of ${quoted ?? 'a request'} did not reach its agent${why}; press start again`
++          : text.startsWith('UNCLEAR ')
++          ? `projector: word that you don't understand ${quoted ?? 'an item'} did not reach its agent${why}; press I don't understand again`
+           : item?.kind === 'request'
+           ? `projector: the outcome of ${quoted ?? 'a request'} did not reach its agent${why}; mark it done or declined again`
+           : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
+@@ -714,12 +718,12 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
+ }
+ 
+ /**
+- * Claims a recorded answer or outcome and delivers it: to the subagent that
+- * posted the item while it can still read a message, otherwise to the main
+- * loop as a prompt of its own, which waits for the session to be idle.
++ * Claims the line an item owes its agent and delivers it: to the subagent
++ * that posted the item while it can still read a message, otherwise to the
++ * main loop as a prompt of its own, which waits for the session to be idle.
+  */
+-async function deliver($: Engine, question: Answerable): Promise<void> {
+-  const { ref, session } = question
++async function deliver($: Engine, item: Item): Promise<void> {
++  const { ref, session } = item
+   delivering.add(ref)
+   try {
+     const ran = await project($, ['inbox', 'claim', ref, '--session', session, '--json'])
+@@ -728,15 +732,15 @@ async function deliver($: Engine, question: Answerable): Promise<void> {
+     const claimed = JSON.parse(ran.stdout) as { token: string; text: string }
+     await replace($, itemOf(ran.stdout, session))
+ 
+-    const agents = question.agentId === undefined ? [] : await $.agent.list().catch(() => [])
+-    const agentId = liveAgent(question, agents)
++    const agents = item.agentId === undefined ? [] : await $.agent.list().catch(() => [])
++    const agentId = liveAgent(item, agents)
+     if (agentId !== undefined) {
+       await track($, { ref, session, token: claimed.token, route: 'send', text: claimed.text })
+       const sent = await $.session.send({ to: { agentId }, text: claimed.text }).catch(() => undefined)
+       if (sent?.isDelivered === true) return await settle($, ref, 'delivered')
+     }
+ 
+-    const text = forMainLoop(claimed.text, question, agents)
++    const text = forMainLoop(claimed.text, item, agents)
+     await track($, { ref, session, token: claimed.token, route: 'submit', text })
+     const submitted = await $.prompt.submit({ text }).catch((error: unknown) => ({ drop: messageOf(error) }))
+     await settle($, ref, submitted.drop === undefined ? 'delivered' : 'reopen', submitted.drop)
+@@ -813,16 +817,19 @@ async function checkInbox($: Engine): Promise<void> {
+ const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
+ 
+ /**
+- * Dismisses, snoozes for `minutes`, or restores an item from the panel; a
+- * second press finds it changed and does nothing. Dismissing or snoozing
+- * closes the item's drawer, and the item stays listed, muted, for 30 seconds,
+- * so its line opens the drawer again to restore it. Restoring keeps the
+- * drawer open on the item, open again.
++ * Dismisses, snoozes for `minutes`, or restores an item from the panel, or
++ * records that you don't understand it; a second press finds it changed and
++ * does nothing. Dismissing, snoozing, or saying you don't understand closes
++ * the item's drawer, and a dismissed or snoozed item stays listed, muted, for
++ * 30 seconds, so its line opens the drawer again to restore it. Restoring
++ * keeps the drawer open on the item, open again. A press the CLI refuses
++ * because the item changed since the panel drew it leaves the drawer open, to
++ * show the item as it is now.
+  */
+ async function act(
+   $: Engine,
+   item: Item,
+-  command: 'dismiss' | 'decline' | 'snooze' | 'restore' | 'start',
++  command: 'dismiss' | 'decline' | 'snooze' | 'restore' | 'start' | 'unclear',
+   minutes?: number,
+ ): Promise<void> {
+   const { ref, session } = item
+@@ -831,9 +838,12 @@ async function act(
+   try {
+     const length = minutes === undefined ? [] : ['--for', String(minutes)]
+     // Start passes the start action the drawer shows, which is what you
+-    // consented to, and the CLI refuses it when the agent has revised it.
++    // consented to, and I don't understand passes the subject and detail it
++    // shows, which are what you read. The CLI refuses either when the agent
++    // has revised what it passes.
+     const action = command === 'start' && item.kind === 'request' ? [`--action=${item.start ?? ''}`] : []
+-    const ran = await project($, ['inbox', command, ref, ...length, ...action, '--session', session, '--json'])
++    const asShown = command === 'unclear' ? [`--subject=${item.subject}`, `--detail=${item.detail}`] : []
++    const ran = await project($, ['inbox', command, ref, ...length, ...action, ...asShown, '--session', session, '--json'])
+     if (ran.exitCode === 0) {
+       await replace($, itemOf(ran.stdout, session))
+       if (command !== 'restore' && command !== 'start') await closeDrawer($, `item:${ref}`)
+@@ -1058,6 +1068,10 @@ const startsFirst = (hasStart: boolean, ref: string) =>
+     ? ` Once the person presses start, a message that starts STARTED ${ref} arrives first, quoting the start action; do exactly that, then mark the request ready or blocked.`
+     : ''
+ 
++/** What a tool's result says about `UNCLEAR`, which arrives when the person presses I don't understand on the item. */
++const whenUnclear = (kind: Item['kind'], ref: string) =>
++  ` When a message that starts UNCLEAR ${ref} arrives, the person does not understand the ${kind}: revise it to explain it more simply or to add the context they lack.`
++
+ /**
+  * Runs the `project inbox` command one of the tools makes: what it printed,
+  * or why the tool call is refused. `instead` says where the agent turns when
+@@ -1130,7 +1144,7 @@ export const register: Register = on => {
+     const ref = posted.stdout.trim()
+     void $.ui.notify(String(e.question), { title: 'Projector question' }).catch(() => undefined)
+     return {
+-      result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. Projector’s panel never shows this number, so name the question to the person by what it asks.`,
++      result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.${whenUnclear('question', ref)} Projector’s panel never shows this number, so name the question to the person by what it asks.`,
+     }
+   }).catch(() => ({ deny: 'Projector could not record the question; ask it in the conversation instead' }))
+ 
+@@ -1141,7 +1155,7 @@ export const register: Register = on => {
+     const ref = posted.stdout.trim()
+     void $.ui.notify(String(e.notice), { title: 'Projector notice' }).catch(() => undefined)
+     return {
+-      result: `Posted ${ref}. It waits in Projector’s panel until the person dismisses it; nothing comes back to you. Projector’s panel never shows this number, so name the notice to the person by what it tells.`,
++      result: `Posted ${ref}. It waits in Projector’s panel until the person dismisses it.${whenUnclear('notice', ref)} Nothing else comes back to you. Projector’s panel never shows this number, so name the notice to the person by what it tells.`,
+     }
+   }).catch(() => ({ deny: 'Projector could not record the notice; tell the person in the conversation instead' }))
+ 
+@@ -1153,7 +1167,7 @@ export const register: Register = on => {
+     void $.ui.notify(String(e.request), { title: 'Projector request' }).catch(() => undefined)
+     const hasStart = typeof e.start === 'string' && e.start !== ''
+     return {
+-      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE ${ref}; a decline arrives as a message that starts DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
++      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE ${ref}; a decline arrives as a message that starts DECLINED ${ref}.${whenUnclear('request', ref)} Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
+     }
+   }).catch(() => ({ deny: 'Projector could not record the request; ask the person in the conversation instead' }))
+ 
+@@ -1194,10 +1208,11 @@ export const register: Register = on => {
+     deny: 'Projector could not withdraw the item; tell the person in the conversation that it no longer needs them',
+   }))
+ 
+-  // The panel takes the revised question from the CLI at once, so it redraws
+-  // before the next read of the store. An answer a drawer put in the prompt
+-  // was chosen from the old text, so it turns stale: sent, it answers no
+-  // question, this one or another that shares the old text.
++  // The panel takes the revised item from the CLI at once, so it redraws, its
++  // `unclear` mark gone, before the next read of the store. An answer a
++  // drawer put in the prompt was chosen from the old text, so it turns stale:
++  // sent, it answers no question, this one or another that shares the old
++  // text.
+   on('tool.call', { tool: REVISE_TOOL }, async ($, e) => {
+     const session = await $.session.id()
+     const ran = await runTool($, reviseArguments(e, session), 'ask the revised question in the conversation instead')
+@@ -1209,8 +1224,10 @@ export const register: Register = on => {
+     return {
+       result:
+         item.kind === 'request'
+-          ? `Revised ${ref}. Projector’s panel shows the new text, and the request is open again.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
+-          : `Revised ${ref}. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
++          ? `Revised ${ref}. Projector’s panel shows the new text, and the request is open again.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.${whenUnclear('request', ref)}`
++          : item.kind === 'notice'
++            ? `Revised ${ref}. Projector’s panel shows the new text until the person dismisses it.${whenUnclear('notice', ref)}`
++            : `Revised ${ref}. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.${whenUnclear('question', ref)}`,
+     }
+   }).catch(() => ({
+     deny: 'Projector could not revise the item; post the revised text in the conversation instead',
+@@ -1231,7 +1248,7 @@ export const register: Register = on => {
+     return {
+       result:
+         item.kind === 'notice'
+-          ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it; nothing comes back to you.`
++          ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it.${whenUnclear('notice', ref)} Nothing else comes back to you.`
+           : item.kind === 'request'
+             ? `Restored ${ref}. It is open in Projector’s panel again. An agent that already heard DECLINED ${ref} hears RESTORED ${ref} first.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
+             : `Restored ${ref}. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
+@@ -1608,18 +1625,20 @@ export const register: Register = on => {
+     //
+     // A drawer's actions follow its options, a line each: a plain Button on
+     // its digit, as `7: discuss question`. The digits count down from 9, so
+-    // the options keep 1 to 6 and the item's line 0: `7` discusses, `8` sets
+-    // the line aside or brings it back, and `9` puts it off or ends the
+-    // snooze. A digit presses its line as an option's digit presses it. What
+-    // a drawer asks in its actions' place draws the same way.
+-    type Line = { name: string; label: string; hotkey: string; onPress: () => void }
++    // the options keep 1 to 5 and the item's line 0: `6` says you don't
++    // understand the item, `7` discusses, `8` sets the line aside or brings
++    // it back, and `9` puts it off or ends the snooze. A digit presses its
++    // line as an option's digit presses it, and a line without one takes a
++    // click or Enter. What a drawer asks in its actions' place draws the same
++    // way.
++    type Line = { name: string; label: string; hotkey: string | undefined; onPress: () => void }
+     const drawLines = (id: string, lines: readonly Line[]) =>
+       lines.map(({ name, label, hotkey, onPress }) => (
+         <Button key={`${name}:${id}`} plain hotkey={hotkey} onPress={onPress}>
+           {label}
+         </Button>
+       ))
+-    // An open question's options are plain Buttons on the digits 1 to 6,
++    // An open question's options are plain Buttons on the digits from 1,
+     // which the engine draws before them, as `1: Decline it`. A digit presses
+     // its option from the panel, or typed first into an empty prompt, as a
+     // survey's does; either only fills the prompt, so a stray one sends
+@@ -1772,7 +1791,32 @@ export const register: Register = on => {
+           void act($, item, 'restore')
+         },
+       })
++      // An open item offers I don't understand above discuss until you press
++      // it, and again once its agent revises the item. A question's choices
++      // and a request's, after any Start or Retry, end at `5`, leaving it `6`.
++      // An item stored before that cap can hold a choice on `6`, so there it
++      // takes no digit.
++      const choiceDigits =
++        item.kind === 'question'
++          ? item.choices.length
++          : item.kind === 'request'
++            ? (startOf(item) === undefined ? 0 : 1) + choicesOf(item).length
++            : 0
++      const unclear: Line[] =
++        isOpen && item.unclear === undefined
++          ? [
++              {
++                name: 'unclear',
++                label: `I don't understand this ${item.kind}`,
++                hotkey: choiceDigits < 6 ? '6' : undefined,
++                onPress: () => {
++                  void act($, item, 'unclear')
++                },
++              },
++            ]
++          : []
+       const actions: Line[] = [
++        ...unclear,
+         {
+           name: 'discuss',
+           label: `discuss ${item.kind}`,
+@@ -1836,6 +1880,8 @@ export const register: Register = on => {
+       // puts the line back lower in the list. The engine keeps the ring by
+       // position, and the open line's key is one the list never draws, so a
+       // move onto the line in the list waits for the panel to draw the list.
++      // A notice's drawer puts the ring on discuss, below I don't understand,
++      // so a second Enter only fills the prompt and sends its agent nothing.
+       const line = isOpened ? `close:${ref}` : key
+       const first = !isOpen
+         ? `discuss:${ref}`
+@@ -1847,6 +1893,7 @@ export const register: Register = on => {
+               : `start:${ref}`
+             : `discuss:${ref}`
+       const isSending = !isOpen && item.deliveredAt === undefined
++      const isUnclear = isOpen && item.unclear !== undefined
+       const stage = item.kind === 'request' && isOpen ? stageOf(item) : undefined
+ 
+       return (
+@@ -1877,6 +1924,16 @@ export const register: Register = on => {
+                 <Text color="subtle">sending</Text>
+               </Box>
+             )}
++            {/* An item you don't understand reads `unclear` until its agent
++                revises it. A request's stage follows, since it still says
++                whether you can begin. */}
++            {isUnclear && (
++              <Box flexShrink={0}>
++                <Text key={`unclear-mark:${ref}`} color="warning">
++                  unclear
++                </Text>
++              </Box>
++            )}
+             {stage !== undefined && (
+               <Box flexShrink={0}>
+                 <Text key={`stage:${ref}`} color={STAGE_COLORS[stage]}>
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index d9b268ba..4073e32a 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -88,6 +88,13 @@ export type Posted = {
+   snoozedUntil?: number
+   /** When the item was last snoozed, in milliseconds; absent when it is not snoozed. */
+   snoozedAt?: number
++  /** When you pressed I don't understand, until the agent revises the item; `deliveredAt` once `UNCLEAR` reached the agent. */
++  unclear?: { at: number; deliveredAt?: number }
++  /**
++   * A deliverer's hold on the line the item owes its agent: `line` says
++   * which, the answer or outcome, `RESTORED`, `STARTED`, or `UNCLEAR`.
++   */
++  claim?: { token: string; renewedAt: number; line?: 'answer' | 'restored' | 'started' | 'unclear' }
+   deliveredAt?: number
+   session: string
+ }
+@@ -98,12 +105,11 @@ export type Question = Posted & {
+   /** The answers in letter order, the recommendation first; the letter after the last is a typed answer. */
+   choices: string[]
+   answer?: Answer
+-  claim?: { token: string; renewedAt: number }
+   /** When the person restored the question after its agent may have heard `DISMISSED`, until `RESTORED` is delivered. */
+   restoredAt?: number
+ }
+ 
+-/** A notice, which you read and dismiss, and which sends nothing back; dismissing it delivers it. */
++/** A notice, which you read and dismiss, and which sends back nothing but `UNCLEAR`; dismissing it delivers it. */
+ export type Notice = Posted & {
+   kind: 'notice'
+   answer?: Dismissal
+@@ -124,8 +130,6 @@ export type Request = Posted & {
+   /** What the agent made of the start: `ready`, or `blocked` with the reason you read before you retry. */
+   progress?: { state: 'ready' | 'blocked'; reason?: string; at: number }
+   answer?: Outcome
+-  /** A deliverer's hold on the line it sends: `line` says which, a `STARTED` or the outcome. */
+-  claim?: { token: string; renewedAt: number; line?: 'answer' | 'restored' | 'started' }
+   /** When the person restored the request after its agent may have heard `DECLINED`, until `RESTORED` is delivered. */
+   restoredAt?: number
+ }
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index cc17b4f9..25d305ee 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -729,7 +729,7 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     ask = command("ask", "check, number, and record a question, and print its number, such as 3")
+     ask.add_argument("question", help="the question, in one line of at most 120 characters")
+     ask.add_argument("--recommend", required=True, help="the answer you recommend, which becomes answer a")
+-    ask.add_argument("--option", action="append", default=[], help="another answer; repeat for each, up to five")
++    ask.add_argument("--option", action="append", default=[], help="another answer; repeat for each, up to four")
+     detail = ask.add_mutually_exclusive_group()
+     detail.add_argument("--detail", default="", help="what the person needs to decide, as Markdown")
+     detail.add_argument("--detail-file", type=Path, help="read the detail from this file")
+@@ -752,7 +752,7 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     detail.add_argument("--detail-file", type=Path, help="read the steps from this file")
+     request.add_argument("--option", action="append", default=[],
+                          help="what the person can choose when they finish, each marking the request done; repeat "
+-                              "for each, up to five")
++                              "for each, up to four")
+     request.add_argument("--start", help="what you do once the person presses start, in one line; leave it out when "
+                                          "there is nothing to prepare")
+     request.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
+@@ -790,18 +790,25 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     block.add_argument("--reason", required=True, help="what the person should do before pressing retry, in one "
+                                                        "line")
+ 
++    unclear = command("unclear", "record that you don't understand an open item, as you read it, for its agent to "
++                                 "revise")
++    unclear.add_argument("reference", help="the item's number, such as 3")
++    unclear.add_argument("--subject", help="the item's line as you read it, which must match the item's")
++    unclear.add_argument("--detail", help="the item's detail as you read it, which must match the item's")
++
+     withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
+     withdraw.add_argument("reference")
+ 
+-    revise = command("revise", "replace an open question's or request's text, keeping its number")
++    revise = command("revise", "replace an open item's text, keeping its number")
+     revise.add_argument("reference", help="the item's number, such as 3")
+     revise.add_argument("--question", help="the new question, in one line of at most 120 characters")
+     revise.add_argument("--request", help="the new request, in one line of at most 120 characters")
++    revise.add_argument("--notice", help="the new notice, in one line of at most 120 characters")
+     revise.add_argument("--start", help="the request's new start action, in one line; an empty one removes it")
+     revise.add_argument("--recommend", help="the new recommended answer, which becomes answer a")
+     options = revise.add_mutually_exclusive_group()
+     options.add_argument("--option", action="append",
+-                         help="another answer; repeat for each, up to five, to replace every option but a question's "
++                         help="another answer; repeat for each, up to four, to replace every option but a question's "
+                               "answer a, or every option of a request")
+     options.add_argument("--no-options", action="store_true",
+                          help="drop every option but a question's answer a, or every option of a request")
+@@ -1363,6 +1370,8 @@ def item_state(item: dict) -> str:
+         return f"snoozed until {wake_time(until)}"
+     answered = item.get("answer")
+     if not answered:
++        if item.get("unclear"):
++            return "unclear"
+         progress = item.get("progress")
+         if progress:
+             return progress["state"]
+@@ -1447,10 +1456,12 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+         record = inbox.done if command == "done" else inbox.decline
+         item = record(inbox_session(arguments, False), ref, arguments.text)
+         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
+-    elif command in ("start", "ready", "block"):
++    elif command in ("start", "ready", "block", "unclear"):
+         session = inbox_session(arguments, False)
+         if command == "start":
+             item = inbox.start(session, ref, arguments.action)
++        elif command == "unclear":
++            item = inbox.unclear(session, ref, arguments.subject, arguments.detail)
+         elif command == "ready":
+             item = inbox.ready(session, ref)
+         else:
+@@ -1461,7 +1472,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+         options = [] if arguments.no_options else arguments.option
+         item = inbox.revise(inbox_session(arguments, False), ref, question=arguments.question, detail=detail,
+                             recommend=arguments.recommend, options=options, request=arguments.request,
+-                            start=arguments.start)
++                            start=arguments.start, notice=arguments.notice)
+         print(json_text({"item": item}) if json_output else f"revised {item['ref']}")
+     elif command == "snooze":
+         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
+diff --git a/src/projector/inbox.py b/src/projector/inbox.py
+index fdf854e1..8ae64938 100644
+--- a/src/projector/inbox.py
++++ b/src/projector/inbox.py
+@@ -4,10 +4,10 @@
+ agent; a notice, which the person reads and dismisses and which sends nothing back; or a request,
+ work only the person can do, which they mark done or decline and whose outcome goes back to the
+ agent. A request can carry a start action, what the agent does once the person presses start,
+-and the agent then marks it ready or blocked. The agent that posted an open item can withdraw it,
+-which dismisses it and sends nothing back, and can revise an open question's or request's text in
+-place. An item the person dismissed, declined, or snoozed can be restored, which reopens it in
+-place. Each session numbers its items 1, 2, 3, and on, in one count across every kind. Its items
++and the agent then marks it ready or blocked. The person can say they don't understand an open
++item of any kind, which goes back to the agent as `UNCLEAR`. The agent that posted an open item
++can withdraw it, which dismisses it and sends nothing back, and can revise its text in place. An
++item the person dismissed, declined, or snoozed can be restored, which reopens it in place. Each session numbers its items 1, 2, 3, and on, in one count across every kind. Its items
+ are JSON files in their own directory, one per item and named by its number, with `count.json`
+ holding the last number given. Every write happens under the
+ directory's lock, an operating-system lock on its `.lock` file, and lands by renaming a temporary
+@@ -31,13 +31,17 @@
+ from .core import ProjectorError
+ 
+ MAX_SUBJECT = 120
+-MAX_OPTIONS = 5
++MAX_OPTIONS = 4
+ SNOOZE_MINUTES = 60
+ MAX_SNOOZE_MINUTES = 24 * 60
+ KINDS = ("question", "notice", "request")
+ KEEP_DELIVERED = 100
+ CLAIM_EXPIRES_MS = 60_000
+ LOCK_WAIT_SECONDS = 5.0
++# The lines an open item owes its agent while it stays open, each recorded in the item's field of
++# the same name. A claimed one may already wait in the session's queue as a prompt that nothing
++# can recall, so it keeps its claim when an answer, outcome, or dismissal lands.
++OPEN_LINES = ("started", "unclear")
+ 
+ SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+ PULL = re.compile(r"^(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>[1-9][0-9]*)$")
+@@ -281,8 +285,9 @@ def check_start(action: str) -> None:
+ 
+ 
+ def check_request_options(options: list[str]) -> None:
+-    """The checks a request's options pass: at most `MAX_OPTIONS`, so they keep the digits a start
+-    leaves, each one line and offered once, and none `Declined`, which declines a request."""
++    """The checks a request's options pass: at most `MAX_OPTIONS`, so they end at the panel's `5`
++    after a start on `1`, each one line and offered once, and none `Declined`, which declines a
++    request."""
+     if len(options) > MAX_OPTIONS:
+         raise InboxError(f"{len(options)} options; offer a request at most {MAX_OPTIONS}")
+     for index, option in enumerate(options):
+@@ -405,15 +410,17 @@ def resolution(item: dict) -> str:
+ 
+ def owed_line(item: dict) -> Optional[str]:
+     """The line an item owes its agent next, if any: `answer` for an answer, outcome, or dismissal
+-    not yet delivered, `restored` for word that a dismissal it may have heard of was undone, or
+-    `started` for an open request's start not yet delivered."""
++    not yet delivered, `restored` for word that a dismissal it may have heard of was undone,
++    `started` for an open request's start not yet delivered, or `unclear` for word not yet
++    delivered that the person does not understand an open item."""
+     if item.get("answer") and not item.get("deliveredAt"):
+         return "answer"
+     if item.get("restoredAt"):
+         return "restored"
+-    started = item.get("started")
+-    if not item.get("answer") and started and not started.get("deliveredAt"):
+-        return "started"
++    for line in OPEN_LINES:
++        recorded = item.get(line)
++        if not item.get("answer") and recorded and not recorded.get("deliveredAt"):
++            return line
+     return None
+ 
+ 
+@@ -425,13 +432,16 @@ def claimed_line(item: dict) -> Optional[str]:
+ 
+ 
+ def message(question: dict) -> str:
+-    """The line that tells the agent what became of its question or request, as `watch` prints it
+-    and the panel sends it: its answer or outcome, its dismissal, that a dismissal it may have
+-    heard of was undone, or that the person pressed start, quoting the start action they pressed it
+-    for. A request's outcome ends with the person's text when they gave one."""
++    """The line that tells the agent what became of its item, as `watch` prints it and the panel
++    sends it: its answer or outcome, its dismissal, that a dismissal it may have heard of was
++    undone, that the person pressed start, quoting the start action they pressed it for, or that
++    the person does not understand it. A request's outcome ends with the person's text when they
++    gave one."""
+     line = claimed_line(question) or owed_line(question)
+     if line == "started":
+         return f"STARTED {question['ref']} {question['subject']} → {question['started']['action']}"
++    if line == "unclear":
++        return f"UNCLEAR {question['ref']} {question['subject']}"
+     if question.get("restoredAt"):
+         return f"RESTORED {question['ref']} {question['subject']}"
+     answered = question["answer"]
+@@ -480,11 +490,10 @@ def record(question: dict) -> None:
+             chosen = question["choices"][ord(letter) - ord("a")]
+         else:
+             raise InboxError(f"{question['ref']} has no answer {letter}; its letters run a to {last}")
+-        question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
+         # The answer tells the agent the question was open, so it replaces word of a restore that
+         # has not reached the agent, and any claim to deliver that word.
+-        for key in ("snoozedUntil", "snoozedAt", "restoredAt", "claim"):
+-            question.pop(key, None)
++        clear_for_outcome(question)
++        question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
+ 
+     return update(session, ref, record, is_open)
+ 
+@@ -499,19 +508,19 @@ def outcome_text(text: Optional[str]) -> dict:
+ def clear_for_outcome(item: dict) -> tuple[bool, bool]:
+     """Clear what an answer, outcome, or dismissal replaces, and say whether word of a restore was
+     owed and whether a claim was dropped. It clears a snooze, word of a restore, the claim to deliver
+-    either, and a request's start that no deliverer has claimed. A claimed `STARTED` may already wait
+-    in the session's queue as a prompt that nothing can recall, so it keeps its claim, and the new
+-    line is owed once `settle` finishes it."""
+-    starting = claimed_line(item) == "started"
++    either, a request's start that no deliverer has claimed, and the person's word that they do not
++    understand the item, which they no longer need answered. A claimed `STARTED` or `UNCLEAR` keeps
++    its claim, as `OPEN_LINES` says, and the new line is owed once `settle` finishes it."""
++    pending = claimed_line(item) if claimed_line(item) in OPEN_LINES else None
+     item.pop("snoozedUntil", None)
+     item.pop("snoozedAt", None)
+     restored = item.pop("restoredAt", None) is not None
+-    if starting:
+-        return restored, False
+-    claimed = item.pop("claim", None) is not None
++    claimed = pending is None and item.pop("claim", None) is not None
+     started = item.get("started")
+-    if started and not started.get("deliveredAt"):
++    if pending != "started" and started and not started.get("deliveredAt"):
+         del item["started"]
++    if pending != "unclear":
++        item.pop("unclear", None)
+     return restored, claimed
+ 
+ 
+@@ -572,28 +581,40 @@ def reset_start(item: dict) -> None:
+     item.pop("progress", None)
+ 
+ 
++def clear_unclear(item: dict) -> None:
++    """Take back the person's word that they do not understand an item, and the claim to deliver
++    it, once a revision answers it, so only a new press says it of the new text."""
++    if claimed_line(item) == "unclear":
++        del item["claim"]
++    item.pop("unclear", None)
++
++
+ def revise(session: Optional[str], ref: str, *, question: Optional[str] = None, detail: Optional[str] = None,
+            recommend: Optional[str] = None, options: Optional[list[str]] = None,
+-           request: Optional[str] = None, start: Optional[str] = None) -> dict:
+-    """Replace an open question's or request's text in place, keeping its number, its place in the
+-    list, and its snooze. Each part left as None keeps its text; `options` replaces every option but
+-    the recommendation. A question takes `question`, `recommend`, and `options`, a request takes
+-    `request`, `start`, where an empty `start` removes it, and `options`, which replaces all its
+-    options, an empty list removing them, and both take `detail`. The revised item passes the
+-    checks its posting made. A revised request returns to open, so a press of start made for its old
+-    text never covers the new."""
+-    if all(part is None for part in (question, detail, recommend, options, request, start)):
+-        raise InboxError("give the new text with --question, --request, --start, --detail, --recommend, or "
+-                         "--option")
++           request: Optional[str] = None, start: Optional[str] = None, notice: Optional[str] = None) -> dict:
++    """Replace an open item's text in place, keeping its number, its place in the list, and its
++    snooze. Each part left as None keeps its text. A question takes `question`, `recommend`, and
++    `options`, which replaces every option but the recommendation; a request takes `request`,
++    `start`, where an empty `start` removes it, and `options`, which replaces all its options, an
++    empty list removing them; a notice takes `notice`; and each takes `detail`. The revised item
++    passes the checks its posting made. A revision answers the person's word that they do not
++    understand the item, so it clears that word. A revised request returns to open, so a press of
++    start made for its old text never covers the new."""
++    if all(part is None for part in (question, detail, recommend, options, request, start, notice)):
++        raise InboxError("give the new text with --question, --request, --notice, --start, --detail, --recommend, "
++                         "or --option")
+ 
+     def record(item: dict) -> None:
+-        if is_notice(item):
+-            raise InboxError(f"{item['ref']} is a notice, and only a question or a request can be revised; "
+-                             "withdraw it and tell again")
+         if item.get("answer"):
+             raise InboxError(f"{item['ref']} is already {resolution(item)}")
+-        if is_request(item):
+-            if question is not None or recommend is not None:
++        if is_notice(item):
++            if any(part is not None for part in (question, recommend, options, request, start)):
++                raise InboxError(f"{item['ref']} is a notice; revise its text with --notice and --detail")
++            subject = item["subject"] if notice is None else notice
++            check_subject("notice", subject, item.get("pr"))
++            item["subject"] = subject.strip()
++        elif is_request(item):
++            if question is not None or recommend is not None or notice is not None:
+                 raise InboxError(f"{item['ref']} is a request; revise its text with --request, --start, --option, "
+                                  "and --detail")
+             subject = item["subject"] if request is None else request
+@@ -607,25 +628,44 @@ def record(item: dict) -> None:
+                 else:
+                     item.pop("choices", None)
+             item["subject"] = subject.strip()
+-            if detail is not None:
+-                item["detail"] = detail.strip()
+             if start is not None and start.strip():
+                 item["start"] = start.strip()
+             elif start is not None:
+                 item.pop("start", None)
+             reset_start(item)
+-            return
+-        if request is not None or start is not None:
+-            raise InboxError(f"{item['ref']} is a question; revise its text with --question")
+-        subject = item["subject"] if question is None else question
+-        first, *others = item["choices"]
+-        chosen = first if recommend is None else recommend
+-        rest = others if options is None else options
+-        check(subject, chosen, rest, item.get("pr"))
+-        item["subject"] = subject.strip()
+-        item["choices"] = [chosen.strip(), *(option.strip() for option in rest)]
++        else:
++            if request is not None or start is not None or notice is not None:
++                raise InboxError(f"{item['ref']} is a question; revise its text with --question")
++            subject = item["subject"] if question is None else question
++            first, *others = item["choices"]
++            chosen = first if recommend is None else recommend
++            rest = others if options is None else options
++            check(subject, chosen, rest, item.get("pr"))
++            item["subject"] = subject.strip()
++            item["choices"] = [chosen.strip(), *(option.strip() for option in rest)]
+         if detail is not None:
+             item["detail"] = detail.strip()
++        clear_unclear(item)
++
++    return update(session, ref, record, is_open)
++
++
++def unclear(session: Optional[str], ref: str, subject: Optional[str] = None, detail: Optional[str] = None) -> dict:
++    """Record that the person does not understand an open item, for its deliverer to tell the agent
++    with `UNCLEAR`. `subject` and `detail`, when given, are the text the person read: a drawer drawn
++    before the agent revised the item shows the old text, so a press whose text differs from the
++    stored text records nothing, as `start` refuses a stale start action. The word stands until a
++    revision answers it, so a second press before then records nothing either."""
++    def record(item: dict) -> None:
++        if item.get("answer"):
++            raise InboxError(f"{item['ref']} is already {resolution(item)}")
++        if item.get("unclear"):
++            raise InboxError(f"{item['ref']} is already marked unclear; its agent revises it next")
++        if subject is not None and subject.strip() != item["subject"]:
++            raise InboxError(f"{item['ref']} now reads {item['subject']!r}; read it and press again")
++        if detail is not None and detail.strip() != item.get("detail", ""):
++            raise InboxError(f"{item['ref']}'s detail has changed; read it and press again")
++        item["unclear"] = {"at": now_ms()}
+ 
+     return update(session, ref, record, is_open)
+ 
+@@ -670,8 +710,10 @@ def record(item: dict) -> None:
+         for key in ("answer", "deliveredAt", "claim"):
+             item.pop(key, None)
+         # The agent heard the request declined and may have undone what it prepared, so a restored
+-        # request waits for a new press of start.
++        # request waits for a new press of start. Likewise a word that the person did not
++        # understand the item was settled by the dismissal, so only a new press says it again.
+         reset_start(item)
++        item.pop("unclear", None)
+ 
+     return update(session, ref, record, is_restorable)
+ 
+@@ -742,12 +784,12 @@ def live_claim(question: dict) -> Optional[dict]:
+ 
+ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict:
+     """Claim the line an item owes for delivery, recording which line it is, or renew a claim by its
+-    token; returns the item. A claimed `STARTED` renews even once the request is resolved, since
+-    its line still waits in the session's queue."""
++    token; returns the item. A claimed `STARTED` or `UNCLEAR` renews even once the item is resolved,
++    since its line still waits in the session's queue."""
+     def take(question: dict) -> None:
+-        refuse_notice(question, "has nothing to deliver")
+         line = owed_line(question)
+-        if line is None and not (renew is not None and claimed_line(question) == "started"):
++        if line is None and not (renew is not None and claimed_line(question) in OPEN_LINES):
++            refuse_notice(question, "has nothing to deliver")
+             if question.get("deliveredAt"):
+                 raise InboxError(f"{answer_ref(question)} is already delivered")
+             raise InboxError(f"{question['ref']} has no answer to deliver")
+@@ -765,22 +807,23 @@ def take(question: dict) -> None:
+ 
+ def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dict:
+     """Mark a claimed line delivered, or undo what it reported when its delivery failed: a question
+-    reopens, and a request's start is removed, so the person presses start again. A claimed
++    reopens, a request's start is removed, so the person presses start again, and so is word that
++    the person does not understand an item, so they press I don't understand again. A claimed
+     `RESTORED` line is done either way: the panel does not retry it, and the item's answer or next
+-    dismissal still reaches the agent. An outcome recorded while a `STARTED` was claimed is owed
+-    once that line settles."""
++    dismissal still reaches the agent. An outcome recorded while a `STARTED` or `UNCLEAR` was
++    claimed is owed once that line settles."""
+     def finish(question: dict) -> None:
+         line = claimed_line(question)
+-        if line != "started" and question.get("deliveredAt"):
++        if line not in OPEN_LINES and question.get("deliveredAt"):
+             raise InboxError(f"{answer_ref(question)} is already delivered")
+         if (question.get("claim") or {}).get("token") != token:
+             raise InboxError(f"{question['ref']} is not claimed with that token")
+         del question["claim"]
+-        if line == "started":
++        if line in OPEN_LINES:
+             if delivered:
+-                question["started"]["deliveredAt"] = now_ms()
++                question[line]["deliveredAt"] = now_ms()
+             else:
+-                question.pop("started")
++                question.pop(line)
+             return
+         if question.pop("restoredAt", None) is not None:
+             return
+@@ -802,7 +845,8 @@ def prune(folder: Path) -> None:
+ 
+ def owes_a_line(item: dict) -> bool:
+     """Whether the item's agent is owed a line: an answer, outcome, or dismissal not yet delivered,
+-    word that a dismissal it may have heard of was undone, or a request's start."""
++    word that a dismissal it may have heard of was undone, a request's start, or word that the
++    person does not understand the item."""
+     return owed_line(item) is not None
+ 
+ 
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 501dc50d..5cf583be 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -24,13 +24,14 @@
+ `project site build` and `serve` run the shell command `--prepare` names, or
+ the checkout's own `site.prepare` once `--allow-prepare` allows it. Ask rules
+ also cover what only the person may record: `project inbox answer`,
+-`dismiss`, `snooze`, `done`, `decline`, and `start` record the person's answer
+-to an item an agent posted, their outcome for a request, their consent to a
+-request's start action, or their choice to dismiss or put it off, so an agent
+-running one could answer its own question, mark its own request done, or
+-consent to its own start action. Projector's panel runs those commands itself,
+-not through an agent's shell, so the person answering from the panel is never
+-asked. `project inbox restore` needs no ask rule: it reopens an item the
++`dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear` record the
++person's answer to an item an agent posted, their outcome for a request, their
++consent to a request's start action, their word that they don't understand an
++item, or their choice to dismiss or put it off, so an agent running one could
++answer its own question, mark its own request done, consent to its own start
++action, or mark its own item unclear. Projector's panel runs those commands
++itself, not through an agent's shell, so the person answering from the panel is
++never asked. `project inbox restore` needs no ask rule: it reopens an item the
+ person dismissed or snoozed, which takes no choice from them, and an agent
+ runs it when the person says a dismissal was a mistake. The rules go in the
+ person's own settings, so they hold in every
+@@ -76,8 +77,8 @@
+ types into, so the rules also leave out every command that can run another
+ program: `create` and `edit`, whose editor an agent could drive,
+ `review gate`, and `site build` and `serve`. They leave out `inbox answer`,
+-`dismiss`, `snooze`, `done`, `decline`, and `start` too. A new command reaches
+-Codex once it is added here and `init` rewrites the file.
++`dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear` too. A new
++command reaches Codex once it is added here and `init` rewrites the file.
+ """
+ 
+ from __future__ import annotations
+@@ -94,7 +95,8 @@
+ ASK = ("Bash(project init *)", "Bash(project upgrade *)", "Bash(project config set *)",
+        "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
+        "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project inbox done *)",
+-       "Bash(project inbox decline *)", "Bash(project inbox start *)")
++       "Bash(project inbox decline *)", "Bash(project inbox start *)",
++       "Bash(project inbox unclear *)")
+ # The narrower rules Projector wrote before `Bash(project *)` covered them,
+ # which `init` removes from `permissions.allow`.
+ SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
+@@ -105,7 +107,7 @@
+ 
+ ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
+          "`--prepare` or `--allow-prepare`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
+-         "`decline`, and `start`")
++         "`decline`, `start`, and `unclear`")
+ COMMANDS = "every `project` command but the few that reach outside Projector's own state"
+ 
+ # Each pattern Codex may run without asking, and outside its sandbox, with the
+@@ -136,8 +138,8 @@
+     "# Codex's usual approval decides every command these rules leave out: `project init`, `project upgrade`,\n"
+     "# `project config set` and `unset`, `project create` and `project edit`, which can open an editor,\n"
+     "# `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
+-    "# the command line names, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, and `start`,\n"
+-    "# which record the person's choice, and a command line that starts with an option.\n"
++    "# the command line names, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
++    "# and `unclear`, which record the person's choice, and a command line that starts with an option.\n"
+     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
+               f'    justification = "{justification}",\n)\n'
+               for pattern, justification in CODEX_ALLOW)
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 4b80f55c..92f571fd 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 22 -->
++<!-- projector:begin 23 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -95,8 +95,8 @@ do exactly what that message quotes and nothing more, and mark the request
+ ready with the `ready` tool, or blocked with the `block` tool and what they
+ should do first, such as unlocking the phone.
+ 
+-When the person picks one of a question's options, the answer reaches you
+-as a message that starts `ANSWER`. When they finish a request, its outcome
++When the person picks one of a question's options, the answer reaches you as
++a message that starts `ANSWER`. When they finish a request, its outcome
+ reaches you as their prompt, quoting the request with the option they chose
+ and any notes under it, or as a message that starts `DONE` and names the
+ option. When they decline it, a message that starts `DECLINED` arrives. Read
+@@ -106,12 +106,15 @@ post it again unless they ask. When they reply to a question or a request
+ instead, answer what they asked. Then withdraw the item with the `withdraw`
+ tool if the reply settles it, revise it with the `revise` tool if the reply
+ shows it was unclear or the choice or the work has changed, or leave it open
+-while it still needs them. Each time the person writes to you, also look
++while it still needs them. When a message that starts `UNCLEAR` arrives, the
++person did not understand that item, so revise it with the `revise` tool to
++explain it more simply or to add the context they lack, keeping its number,
++rather than posting it again. Each time the person writes to you, also look
+ over the other items you posted that are still open, and withdraw any that
+ no longer need them, such as news that has gone stale. When the person says
+ they dismissed or declined an item by mistake, restore it with the `restore`
+ tool or `project inbox restore` rather than posting it again. Name an item
+ to the tools by the number `ask`, `tell`, or `request` returned. The panel
+-never shows that number, so in what you write to the person, name an item
+-by what it asks, tells, or requests.
++never shows that number, so in what you write to the person, name an item by
++what it asks, tells, or requests.
+ <!-- projector:end -->
+diff --git a/tests/test_inbox.py b/tests/test_inbox.py
+index b2e45d5f..03ca4131 100644
+--- a/tests/test_inbox.py
++++ b/tests/test_inbox.py
+@@ -267,7 +267,7 @@ def test_refuses_a_question_that_fails_a_check_and_writes_nothing(self) -> None:
+                      ["Empty?", "--recommend", " "],
+                      ["Two-line answer?", "--recommend", "line one\nline two"],
+                      ["Two-line option?", "--recommend", "x", "--option", "line one\rline two"],
+-                     ["Many?", "--recommend", "a", *[f"--option={n}" for n in "bcdef"], "--option=g"],
++                     ["Many?", "--recommend", "a", *[f"--option={n}" for n in "bcde"], "--option=f"],
+                      ["Repeat?", "--recommend", "Same", "--option", "Same"],
+                      ["Twice?", "--recommend", "a", "--option", "Other", "--option", " Other "],
+                      ["Bad pull?", "--recommend", "x", "--pr", "app#12"]):
+@@ -276,8 +276,8 @@ def test_refuses_a_question_that_fails_a_check_and_writes_nothing(self) -> None:
+                 self.assertEqual(65, code, err)
+         self.assertFalse((self.folder() / "count.json").exists())
+ 
+-    def test_accepts_five_other_options_and_a_question_of_120_characters(self) -> None:
+-        self.assertEqual("1", self.ask("x" * 120, "--recommend", "a", *[f"--option={n}" for n in "bcdef"]))
++    def test_accepts_four_other_options_and_a_question_of_120_characters(self) -> None:
++        self.assertEqual("1", self.ask("x" * 120, "--recommend", "a", *[f"--option={n}" for n in "bcde"]))
+ 
+     def test_needs_a_session_and_takes_it_from_the_environment(self) -> None:
+         code, _, err = self.run_cli("ask", "Who?", "--recommend", "x")
+@@ -709,13 +709,14 @@ def test_prints_the_revised_question_as_json(self) -> None:
+         self.assertEqual(0, code, err)
+         self.assertEqual(self.item(1), json.loads(out)["item"])
+ 
+-    def test_refuses_a_resolved_question_a_notice_and_an_unknown_number_and_changes_nothing(self) -> None:
++    def test_refuses_a_resolved_item_and_an_unknown_number_and_changes_nothing(self) -> None:
+         self.ask("Rebase?", "--recommend", "Yes")
+         self.run_cli("answer", "1.a", "--session", "s1")
++        self.run_cli("dismiss", "2", "--session", "s1")
+         self.run_cli("withdraw", "3", "--session", "s1")
+         items = [self.item(ref) for ref in (1, 2, 3)]
+-        for ref, said in (("1", "1 is already answered, as 1.a"), ("3", "3 is already withdrawn"),
+-                          ("2", "2 is a notice, and only a question or a request can be revised")):
++        for ref, said in (("1", "1 is already answered, as 1.a"), ("2", "2 is already dismissed"),
++                          ("3", "3 is already withdrawn")):
+             with self.subTest(ref=ref):
+                 code, out, err = self.run_cli("revise", ref, "--detail", "x", "--session", "s1")
+                 self.assertEqual((65, ""), (code, out))
+@@ -735,7 +736,7 @@ def test_refuses_a_revision_that_fails_a_check_and_changes_nothing(self) -> None
+                      ["--option", "Decline it"],
+                      ["--option", " "],
+                      ["--option", "x", "--option", " x "],
+-                     [arg for n in "abcdef" for arg in ("--option", n)]):
++                     [arg for n in "abcde" for arg in ("--option", n)]):
+             with self.subTest(args=args[:2]):
+                 code, out, _ = self.revise(*args)
+                 self.assertEqual((65, ""), (code, out))
+@@ -745,10 +746,29 @@ def test_refuses_a_revision_that_fails_a_check_and_changes_nothing(self) -> None
+         self.assertEqual(2, stop.exception.code)
+         self.assertEqual(before, self.item(1))
+ 
+-    def test_accepts_five_other_options_and_a_question_of_120_characters(self) -> None:
+-        options = [arg for n in "bcdef" for arg in ("--option", n)]
++    def test_accepts_four_other_options_and_a_question_of_120_characters(self) -> None:
++        options = [arg for n in "bcde" for arg in ("--option", n)]
+         self.assertEqual(0, self.revise("--question", "x" * 120, *options)[0])
+-        self.assertEqual(6, len(self.item(1)["choices"]))
++        self.assertEqual(5, len(self.item(1)["choices"]))
++
++    def test_revises_a_notice_with_its_own_flags_and_keeps_its_number(self) -> None:
++        before = self.item(2)
++        self.assertEqual((0, "revised 2\n", ""),
++                         self.run_cli("revise", "2", "--notice", " Force-pushed #12 to drop a stray file ",
++                                      "--detail", "The file was a local build log.", "--session", "s1"))
++        after = self.item(2)
++        self.assertEqual(("Force-pushed #12 to drop a stray file", "The file was a local build log."),
++                         (after["subject"], after["detail"]))
++        for key in ("ref", "number", "kind", "pr", "postedAt"):
++            with self.subTest(key=key):
++                self.assertEqual(before[key], after[key])
++        for args in (["--question", "x"], ["--recommend", "x"], ["--option", "x"], ["--no-options"],
++                     ["--request", "x"], ["--start", "x"], ["--notice", "x" * 121], ["--notice", " "]):
++            with self.subTest(args=args[0]):
++                code, out, err = self.run_cli("revise", "2", *args, "--session", "s1")
++                self.assertEqual((65, ""), (code, out), err)
++        self.assertIn("revise its text with --question", self.revise("--notice", "x")[2])
++        self.assertEqual(after, self.item(2))
+ 
+     def test_two_revisions_at_once_both_land(self) -> None:
+         self.assertEqual(["done", "done"],
+@@ -1126,7 +1146,7 @@ def test_records_the_options_the_agent_gives_and_refuses_ones_that_fail_a_check(
+         self.request("Sign in")
+         self.assertNotIn("choices", self.item(3))
+         count = (self.folder() / "count.json").read_text()
+-        for options in (["Declined"], ["A", "A"], [" "], ["Two\nlines"], ["A", "B", "C", "D", "E", "F"]):
++        for options in (["Declined"], ["A", "A"], [" "], ["Two\nlines"], ["A", "B", "C", "D", "E"]):
+             with self.subTest(options=options):
+                 args = [arg for option in options for arg in ("--option", option)]
+                 code, _, err = self.run_cli("request", "Run it", *args, "--session", "s1")
+@@ -1140,6 +1160,11 @@ def test_revise_replaces_or_drops_a_requests_options(self) -> None:
+         self.assertEqual(["Signed in", "Could not"], self.item(2)["choices"])
+         self.assertEqual(0, self.run_cli("revise", "2", "--no-options", "--session", "s1")[0])
+         self.assertNotIn("choices", self.item(2))
++        code, _, err = self.run_cli("revise", "2", *[arg for n in "ABCDE" for arg in ("--option", n)],
++                                    "--session", "s1")
++        self.assertEqual(65, code)
++        self.assertIn("offer a request at most 4", err)
++        self.assertNotIn("choices", self.item(2))
+ 
+     def test_lists_and_shows_a_request_by_its_kind_and_state(self) -> None:
+         self.request("Test the gutters", "--detail", "1. Open Fyra.")
+@@ -1293,5 +1318,120 @@ def test_a_restored_request_waits_for_a_new_start(self) -> None:
+         self.assertEqual("RESTORED 1 Test the gutters\n", self.watch())
+ 
+ 
++class UnclearTests(InboxCase):
++    NOTICE = "Force-pushed #12"
++    DETAIL = "It drops a stray file."
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.run_cli("tell", self.NOTICE, "--detail", self.DETAIL, "--agent", "agent-7", "--session", "s1")
++        self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget")
++        self.run_cli("request", "Test the gutters", "--session", "s1")
++
++    def cli(self, *args: str) -> tuple[int, str, str]:
++        return self.run_cli(*args, "--session", "s1")
++
++    def press(self, ref: str = "1", *args: str) -> tuple[int, str, str]:
++        return self.cli("unclear", ref, *args)
++
++    def watch(self) -> str:
++        return self.cli("watch", "--once")[1]
++
++    def claim(self, ref: str = "1") -> str:
++        code, out, err = self.cli("claim", ref, "--json")
++        self.assertEqual(0, code, err)
++        return json.loads(out)["token"]
++
++    def test_records_unclear_on_an_open_item_of_any_kind(self) -> None:
++        for ref in ("1", "2", "3"):
++            with self.subTest(ref=ref):
++                self.assertEqual((0, f"unclear {ref}\n", ""), self.press(ref))
++                self.assertEqual(["at"], list(self.item(ref)["unclear"]))
++                self.assertEqual("unclear", cli.item_state(self.item(ref)))
++        code, out, err = self.press("1", "--json")
++        self.assertEqual(65, code, err)
++        self.cli("revise", "1", "--detail", "It drops a stray build log.")
++        code, out, err = self.press("1", "--json")
++        self.assertEqual(0, code, err)
++        self.assertEqual(self.item(1), json.loads(out)["item"])
++
++    def test_watch_sends_unclear_once_and_the_mark_stands_until_a_revision(self) -> None:
++        self.press()
++        self.assertEqual(f"UNCLEAR 1 {self.NOTICE}\n", self.watch())
++        self.assertEqual("", self.watch())
++        self.assertIn("deliveredAt", self.item(1)["unclear"])
++        self.assertEqual(f"1\tnotice\tunclear\t{self.NOTICE}", self.cli("list")[1].splitlines()[0])
++        self.assertEqual(65, self.press()[0])
++        self.cli("revise", "1", "--notice", "Force-pushed #12 to drop a stray build log")
++        self.assertNotIn("unclear", self.item(1))
++        self.assertEqual("1\tnotice\topen\tForce-pushed #12 to drop a stray build log",
++                         self.cli("list")[1].splitlines()[0])
++
++    def test_refuses_text_the_agent_revised_a_second_press_and_a_resolved_item(self) -> None:
++        for args, said in ((["--subject", "Force-pushed #11"], f"now reads {self.NOTICE!r}"),
++                           (["--subject", self.NOTICE, "--detail", "Old detail."], "detail has changed")):
++            with self.subTest(said=said):
++                code, out, err = self.press("1", *args)
++                self.assertEqual((65, ""), (code, out))
++                self.assertIn(said, err)
++                self.assertNotIn("unclear", self.item(1))
++        self.assertEqual(0, self.press("1", "--subject", self.NOTICE, "--detail", self.DETAIL)[0])
++        self.assertIn("already marked unclear", self.press()[2])
++        self.cli("answer", "2.a")
++        self.assertIn("already answered", self.press("2")[2])
++        self.assertNotIn("unclear", self.item(2))
++        self.assertEqual(66, self.press("4")[0])
++
++    def test_a_revision_takes_back_unclear_and_its_claim(self) -> None:
++        self.press()
++        token = self.claim()
++        self.cli("revise", "1", "--notice", "Force-pushed #12 to drop a stray build log")
++        self.assertTrue({"unclear", "claim"}.isdisjoint(self.item(1)))
++        self.assertEqual(65, self.cli("delivered", "1", "--claim", token)[0])
++        self.assertEqual(0, self.press("1", "--subject", "Force-pushed #12 to drop a stray build log")[0])
++        self.assertEqual("UNCLEAR 1 Force-pushed #12 to drop a stray build log\n", self.watch())
++
++    def test_a_failed_unclear_removes_it(self) -> None:
++        self.press()
++        self.assertEqual(0, self.cli("reopen", "1", "--claim", self.claim())[0])
++        self.assertTrue({"unclear", "claim"}.isdisjoint(self.item(1)))
++        self.assertEqual("open", cli.item_state(self.item(1)))
++        self.assertEqual(0, self.press()[0])
++
++    def test_an_answer_or_dismissal_replaces_an_unclear_no_deliverer_claimed(self) -> None:
++        self.press("2")
++        self.cli("answer", "2.b")
++        self.assertNotIn("unclear", self.item(2))
++        self.assertEqual("ANSWER 2.b Decline it? → Add a budget\n", self.watch())
++        self.press("1")
++        self.cli("dismiss", "1")
++        self.assertNotIn("unclear", self.item(1))
++        self.assertEqual("", self.watch())
++
++    def test_an_answer_or_outcome_recorded_while_unclear_is_claimed_follows_it(self) -> None:
++        for ref, args, line in (("2", ["answer", "2.a"], "ANSWER 2.a Decline it? → Decline it\n"),
++                                ("3", ["done", "3"], "DONE 3 Test the gutters\n")):
++            with self.subTest(command=args[0]):
++                self.press(ref)
++                token = self.claim(ref)
++                self.cli(*args)
++                self.assertEqual("", self.watch())
++                self.assertEqual(0, self.cli("claim", ref, "--renew", token)[0])
++                self.assertEqual(0, self.cli("delivered", ref, "--claim", token)[0])
++                self.assertIn("deliveredAt", self.item(ref)["unclear"])
++                self.assertEqual(line, self.watch())
++
++    def test_a_dismissal_while_a_notices_unclear_is_claimed_lets_that_line_settle(self) -> None:
++        self.press()
++        token = self.claim()
++        self.cli("dismiss", "1")
++        self.assertEqual(0, self.cli("claim", "1", "--renew", token)[0])
++        self.assertEqual(0, self.cli("delivered", "1", "--claim", token)[0])
++        self.assertEqual("", self.watch())
++        self.cli("restore", "1")
++        self.assertNotIn("unclear", self.item(1))
++        self.assertEqual(0, self.press()[0])
++
++
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 9e72a0f0..2cd8a50d 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -34,6 +34,7 @@
+     20: "15508339c9b61eb3d11d565b239c75898a2fb05f786edb614bfdeb488c4e7110",
+     21: "88a3ad16a92c6294ab2a58b9d09befa3552cc7ebb7574bca7a48d34d0d529492",
+     22: "b6613877cd18365eb5ad4f0f5f18ffd9cd4f4fc7972faa6611d72d66c1ac5000",
++    23: "4e47752eec7802c1853e2ec50f151150c5442f0ac3be75dd127ab6b5398e3a52",
+ }
+ 
+ 
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index e0b48026..be21e64e 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -35,6 +35,7 @@
+     ("project inbox withdraw 3 --session s1", "allow", "allow"),
+     ("project inbox restore 3 --session s1", "allow", "allow"),
+     ("project inbox revise 3 --question 'Merge it now?' --session s1", "allow", "allow"),
++    ("project inbox revise 3 --notice 'Pushed the fix to the branch' --session s1", "allow", "allow"),
+     ("project inbox watch --session s1", "allow", "allow"),
+     ("project inbox claim 3 --session s1", "allow", "allow"),
+     ("project inbox answer 3.a --session s1", "ask", "none"),
+@@ -46,6 +47,7 @@
+     ("project inbox done 3 --text 'All good'", "ask", "none"),
+     ("project inbox decline 3 --session s1", "ask", "none"),
+     ("project inbox start 3 --action 'Install the build' --session s1", "ask", "none"),
++    ("project inbox unclear 3 --subject 'Pushed the fix' --detail '' --session s1", "ask", "none"),
+     ("project inbox ready 3 --session s1", "allow", "allow"),
+     ("project inbox block 3 --reason 'Unlock the phone' --session s1", "allow", "allow"),
+     ("project list --json", "allow", "allow"),
+@@ -96,7 +98,8 @@
+ # What the Codex rules leave to Codex's usual approval: each command with the
+ # subcommands left out, or None where the whole command is.
+ CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None,
+-                  "config": {"set", "unset"}, "inbox": {"answer", "decline", "dismiss", "done", "snooze", "start"}, "review": {"gate"},
++                  "config": {"set", "unset"}, "inbox": {"answer", "decline", "dismiss", "done", "snooze", "start", "unclear"},
++                  "review": {"gate"},
+                   "site": {"build", "serve"}}
+ 
+ # Some of the variables Claude Code lets an allow rule match past. Its list is
