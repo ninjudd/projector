@@ -1,0 +1,141 @@
+{
+ "version": 1,
+ "name": "Collapsible panel sections",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 367,
+  "title": "Collapse the panel's pull requests from the header's count",
+  "head": "bf593c295551da0f8a76eb4bf81707d490e763f4",
+  "headRef": "collapse-pull-requests",
+  "base": "ee724a7e1f8de17dbe59ee0bc660c8a0676d366d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel sits above the Claude Code prompt. Its first line, the header, reads <code>/projector</code> on the left and, on the right, counts such as <code>2 pull requests · 1 question · 3 notices</code> and how long ago the panel reloaded. Below the header come the pull requests the session's review and watch loops track, one row each, and then the inbox items: questions an agent asked and notices it posted.",
+   "Pull request #358 made the question and notice counts into buttons. Pressing one collapses that kind of item to a single line, such as <code>- 2 questions</code>, so a burst of notices cannot push the questions out of view. A long list of pull requests can push the items out of view the same way, but its count stayed plain text.",
+   "This pull request makes the <code>N pull requests</code> count a button too. Pressing it replaces the rows, and any open pull request drawer, with one line such as <code>- 2 pull requests</code> where the rows were, in the rows' default color. Pressing that line, or the count again, brings the rows back. The pull requests, the questions, and the notices collapse independently, and the choice persists across panel reloads.",
+   "The code now treats the three counts as one list of a new <code>Section</code> type, which is <code>'pr'</code> or a kind of item, so the header's buttons and the collapsed lines are drawn from one place."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Section</b>: something the header counts and can collapse, the pull requests (<code>'pr'</code>) or a kind of item (<code>'question'</code> or <code>'notice'</code>).</li><li><b><code>panelCollapsed</code></b>: the stored list of collapsed sections, kept in the plugin's state so it outlives a reload.</li><li><b>Drawer</b>: the details a row or item opens under itself when pressed.</li><li><b>Expander</b>: the one line, such as <code>- 2 pull requests</code>, that stands in for a collapsed section and expands it when pressed.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One review, of <code>bf593c2</code>: clean, no findings.</li><li>The full gate passed, including <code>hooks/typecheck.sh</code>, which the author could not run.</li><li>Open question: with the pull request count now a button ahead of the rows, ctrl+x tab may land on a count rather than the first row, which <code>docs/plugins.md</code> does not say.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "type",
+   "title": "The Section type",
+   "kicker": "One name for everything the header can collapse",
+   "intro": [
+    "Before this change, the stored list of collapsed things held only kinds of item. Now it can also hold <code>'pr'</code>, so the type of that list widens to a new <code>Section</code> union."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds <code>Section</code> and widens <code>panelCollapsed</code> to <code>Section[]</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>hooks/typecheck.sh</code> enforces both: a probe assigning <code>'bogus'</code> to a <code>Section</code> failed it, and so did a probe writing <code>'bogus'</code> to the collapsed atom in <code>fold</code>.",
+       "line": 106
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "Drawing the header and collapsing the rows",
+   "kicker": "The render handler builds the counts, the buttons, and the collapsed lines from one list",
+   "intro": [
+    "The panel is drawn by one <code>ui.render</code> handler in <code>hooks/register.tsx</code>. It used to compute the pull request count separately from the item counts, put it in the header's plain text, and draw buttons only for the item counts.",
+    "Now <code>sectionCounts</code> lists all three counts in header order. The header draws every non-empty count as a <code>Button</code> whose press calls <code>fold</code>, and a new <code>expander</code> draws a collapsed section's one-line stand-in. The pull requests' expander goes where their rows were, and the item kinds' expanders stay at the top of the items, as before."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A section counts as collapsed only while the header shows a count for it. With no pull requests there is no count, so the rows cannot be hidden with nothing left to expand them from."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Replaces the item-only <code>kindCounts</code> with <code>sectionCounts</code>, makes the pull request count a <code>Button</code>, and hides the rows while <code>pr</code> is collapsed.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>fold</code> filters the stored list to <code>SECTIONS</code> before toggling, so an unknown value from another module version drops out. The #358 module filters to item kinds and ignores a stored <code>pr</code>.",
+       "line": 1276
+      },
+      {
+       "kind": "context",
+       "text": "A header that counts anything is now a row of pieces, so a header with only pull requests is no longer a single <code>Text</code>. Only a header with no counts at all stays one <code>Text</code>.",
+       "line": 1355
+      },
+      {
+       "kind": "verify",
+       "text": "A collapsed pull request's open drawer stays open in the <code>drawer</code> atom and reappears on expand. Its hotkeys belong to Buttons that are not drawn while collapsed, so they cannot act on the hidden drawer.",
+       "line": 1788
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "A new test for the pull request count, and old header checks read through headerOf",
+   "intro": [
+    "The new test presses <code>count:pr</code> and checks the collapsed line, its default color, that the header keeps counting, that the pull requests collapse apart from the questions and survive a poll, and that both the line and the count expand them.",
+    "Several older tests matched the header as one <code>Text</code>. Since a header that counts pull requests is now several pieces, they read it through the existing <code>headerOf</code> helper, which joins the pieces."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>claude plugin test .</code> passes at this head: 152 pass, 0 fail."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Adds the collapse test and moves header assertions to <code>headerOf</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The user guide and the inbox plan describe the new behavior",
+   "intro": [
+    "<code>docs/plugins.md</code> now says any count in the header collapses what it counts, where each collapsed line appears, and that the three collapse independently. The <code>inbox</code> plan, already <code>completed</code>, gains § 27 recording the change, its reasons, and the tests that cover it."
+   ],
+   "checks": [
+    {
+     "kind": "flag",
+     "text": "The keyboard section of <code>docs/plugins.md</code> still says ctrl+x tab lands \"onto its first line\" and does not mention Enter on a count. With the pull request count now a button ahead of the rows, the ring may land on a count first on any panel that lists a pull request. Not reproduced; the test harness does not model focus order."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Rewrites the paragraph on collapsing counts to cover the pull requests."
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Appends § 27, after § 26, without renumbering."
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,396 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 5462f7ed..ae0423f4 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -419,12 +419,14 @@ the pull requests, before its time.
+                                                      ctrl+x tab to focus
+ ```
+ 
+-Click a count of questions or notices in the header to collapse that kind
+-to one line at the top of the items, such as `- 2 questions`, drawn in the
+-kind's color, so a burst of notices does not push the questions out of view.
+-Click the line, or the count again, to expand it. Questions and notices
+-collapse apart from each other, and a collapsed kind stays collapsed, new
+-items included, until you expand it. While a collapsed kind has nothing
++Click a count in the header to collapse what it counts to one line, so a
++long list of pull requests or a burst of notices does not push the questions
++out of view. Collapsed pull requests become a line such as `- 3 pull
++requests` in their place. A collapsed kind of item becomes a line such as
++`- 2 questions` at the top of the items, drawn in the kind's color. Click the
++line, or the count again, to expand it. The pull requests, the questions,
++and the notices collapse apart from each other, and each stays collapsed,
++new ones included, until you expand it. While a collapsed kind has nothing
+ open, the header has no count for it, so its muted items show in the list.
+ 
+ Click anywhere on an item to open its drawer, and click it again to close
+diff --git a/docs/projects/inbox/readme.md b/docs/projects/inbox/readme.md
+index fb565b81..5265ce9f 100644
+--- a/docs/projects/inbox/readme.md
++++ b/docs/projects/inbox/readme.md
+@@ -2261,3 +2261,38 @@ collapse either kind to one line from the counts the header already shows.
+ | --- | --- |
+ | A notice count collapses notices to `- 1 notice` in `inactive` at the top while the header keeps counting; questions collapse apart, their line first; the line and the count each expand; a kind with nothing open shows its items, and a new item collapses again | `a count in the header collapses its kind to one line at the top of the items, and the line expands it` in `hooks/panel.test.tsx` |
+ | The header reads the same, its age ending at the panel's edge, with its counts as Buttons | `asks through the tool, and the panel lists the question below the pull requests` |
++
++## 27. Collapse the pull requests from the header's count
++
++Several pull requests can push the items below them out of view as surely
++as a burst of notices can. The header counts the pull requests as it counts
++each kind of item, so that count collapses them the same way.
++
++### 27.1 What changes
++
++- **The count is a button.** In a terminal, the header's `2 pull requests`
++  is a plain Button, in `subtle`, as the item counts are. The header stays
++  one `Text` only when it counts nothing.
++- **Collapsed pull requests are one line.** Their rows, drawers included,
++  leave the panel, and a line such as `- 2 pull requests`, in the rows'
++  default color, takes their place above the items. Pressing the line, or
++  the count again, expands them.
++- **The panel remembers it.** `panelCollapsed` holds `pr` beside the kinds
++  of item, so the pull requests stay collapsed across reloads until you
++  expand them.
++
++### 27.2 Why this design
++
++- **One mechanism for every count.** The pull requests, the questions, and
++  the notices are a `Section` each, and the header's counts and the
++  collapsed lines are drawn from one list of them, so the three behave
++  alike.
++- **In their place, not at the top of the items.** The pull requests come
++  before the items, so their line stays where their rows were.
++
++### 27.3 Evidence
++
++| Behavior | Test |
++| --- | --- |
++| The pull requests' count collapses them to `- 1 pull request` in the default color while the header keeps counting; they collapse apart from the questions and stay collapsed across a reload; the line and the count each expand | `the pull requests’ count in the header collapses them to one line in their place, and the line expands them` in `hooks/panel.test.tsx` |
++| A header that counts only pull requests reads as before, in `subtle`, its age ending at the panel's edge | `draws one line per open pull request of the session’s own loops` and `the header’s age, a pull request’s age, and the key hint end in one column` |
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 9fa0ac53..c9a98068 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -253,13 +253,19 @@ test('draws one line per open pull request of the session’s own loops', async
+   // panel reloaded as the rows say their ages: in the short form, `0s` for a reload just now as for an item posted
+   // just now. The two sit two spaces apart, so the time ends in the rows' age column, at the edge of the panel's
+   // lines. All of it is `subtle`, and no rule runs through it.
+-  const header = await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  0s$/ })
+-  expect(header?.text).toBe(`/projector${'2 pull requests  0s'.padStart(EDGE - '/projector'.length)}`)
+-  expect(header?.props.color).toBe('subtle')
++  // The count is a button of its own, so the header is three pieces.
++  const header = await headerOf(ui)
++  expect(header).toBe(`/projector${'2 pull requests  0s'.padStart(EDGE - '/projector'.length)}`)
++  const texts = await ui.findAll({ type: 'Text' })
++  expect(texts.slice(0, 3).map(found => found.text)).toEqual([
++    `/projector${' '.repeat(EDGE - '/projector'.length - '2 pull requests  0s'.length)}`,
++    '2 pull requests',
++    '  0s',
++  ])
++  expect(texts.slice(0, 3).map(found => found.props.color)).toEqual(['subtle', 'subtle', 'subtle'])
+   expect(await ui.find({ type: 'Text', text: /─|updated|ago|just now/ })).toBeUndefined()
+   // The rows start on the line under the header, with no blank line between.
+-  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+-  expect(texts.slice(0, 3)).toEqual([header?.text, 'ready', ''])
++  expect(texts.slice(3, 5).map(found => found.text)).toEqual(['ready', ''])
+   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
+   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
+@@ -411,7 +417,7 @@ test('the header’s age, a pull request’s age, and the key hint end in one co
+   type Drawn = { type: string; props: Record<string, unknown>; children: (Drawn | string)[] }
+   const inset = (await ui.findAll({ type: 'Box' }))[0]?.props ?? {}
+   const panel = (await ui.find({ key: 'panel' })) as Drawn | undefined
+-  const [header, rows, hint] = (panel?.children ?? []) as Drawn[]
++  const [, rows, hint] = (panel?.children ?? []) as Drawn[]
+   expect(rows?.props).toMatchObject({ flexDirection: 'column', paddingLeft: 1, paddingRight: 1 })
+   const width = (value: unknown) => (typeof value === 'number' ? value : NaN)
+   const textOf = (element: Drawn | undefined) => (element?.children ?? []).join('')
+@@ -419,8 +425,8 @@ test('the header’s age, a pull request’s age, and the key hint end in one co
+   const end = width(inset.paddingLeft) + width(panel?.props.width) - width(panel?.props.paddingRight)
+   const rowsEnd = end - width(rows?.props.paddingRight)
+   expect(rowsEnd - start - width(rows?.props.paddingLeft)).toBe(COLUMNS)
+-  expect(textOf(header)).toMatch(/^\/projector +1 pull request  \d+s$/)
+-  expect(start + textOf(header).length).toBe(rowsEnd)
++  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
++  expect(start + (await headerOf(ui)).length).toBe(rowsEnd)
+   expect(start + textOf(hint).length).toBe(rowsEnd)
+   // A row fills the rows' width, its title giving way, so its age ends at their edge.
+   expect(await ui.find({ type: 'Text', text: '45s' })).toBeDefined()
+@@ -855,7 +861,7 @@ test('lists your pull requests first, then everyone else’s by author, naming t
+   const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
+   expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+   // The header counts everyone's pull requests the panel lists, the session's own and others'.
+-  expect(await ui.find({ type: 'Text', text: /^\/projector +5 pull requests  \d+s$/ })).toBeDefined()
++  expect(await headerOf(ui)).toMatch(/^\/projector +5 pull requests  \d+s$/)
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+   expect(texts.filter(text => text === ' ')).toEqual([])
+ 
+@@ -897,7 +903,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
+   await clock.settle()
+ 
+   const ui = await $.ui.mount(PANEL)
+-  expect(await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  \d+s$/ })).toBeDefined()
++  expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests  \d+s$/)
+   await ui.press({ key: 'pr:x/y#7' })
+   // The drawer's actions are lines of their own, as an item's are.
+   expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
+@@ -917,7 +923,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
+   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+   // The header stops counting the dismissed pull request.
+-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
++  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
+   await ui.unmount()
+ })
+ 
+@@ -1030,7 +1036,7 @@ test('lists a pull request both loops track once, as watched and reviewed, and c
+ 
+   const ui = await $.ui.mount(PANEL)
+   // The header counts its one line once, in the singular.
+-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
++  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
+   await ui.press({ key: 'pr:o/r#1' })
+   expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
+   // Each loop takes its own color, and the `and` between them the default color.
+@@ -1738,7 +1744,7 @@ test('an idle session with no questions runs no inbox command', async ($, on) =>
+   // Listing the store's directory starts no process; only a reload of the shown panel reads its setting.
+   expect(session.project().filter(command => !command.startsWith('config get'))).toEqual([])
+   const ui = await $.ui.mount(PANEL)
+-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
++  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
+   await ui.unmount()
+ })
+ 
+@@ -2518,6 +2524,43 @@ test('a count in the header collapses its kind to one line at the top of the ite
+   await ui.unmount()
+ })
+ 
++test('the pull requests’ count in the header collapses them to one line in their place, and the line expands them', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  questionWorld(on, clock, [held()])
++  await startSession($, clock)
++  const ui = await $.ui.mount(PANEL)
++  /** The panel's lines, a pull request or an item by its key and a collapsed section by what it reads. */
++  const lines = async () =>
++    (await ui.findAll({ type: 'Button' }))
++      .filter(button => /^(pr|item|expand):/.test(button.key ?? ''))
++      .map(button => (button.key?.startsWith('expand:') === true ? button.text : (button.key ?? '')))
++
++  expect(await lines()).toEqual(['pr:x/y#7', 'item:1'])
++
++  // The pull requests collapse to one line in the rows' default color, and the header keeps counting them.
++  await ui.press({ key: 'count:pr' })
++  expect(await lines()).toEqual(['- 1 pull request', 'item:1'])
++  expect((await ui.find({ type: 'Text', text: '- 1 pull request' }))?.props.color).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
++  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
++
++  // They collapse apart from the items, and stay collapsed when the panel reloads.
++  await ui.press({ key: 'count:question' })
++  expect(await lines()).toEqual(['- 1 pull request', '- 1 question'])
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(await lines()).toEqual(['- 1 pull request', '- 1 question'])
++
++  // The line expands them, and so does the count again.
++  await ui.press({ key: 'expand:pr' })
++  expect(await lines()).toEqual(['pr:x/y#7', '- 1 question'])
++  await ui.press({ key: 'count:pr' })
++  await ui.press({ key: 'count:pr' })
++  expect(await lines()).toEqual(['pr:x/y#7', '- 1 question'])
++  await ui.unmount()
++})
++
+ test('the panel lists its items newest first, and a revised question keeps its place', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -2776,7 +2819,7 @@ test('snooze hides either kind for an hour, then brings a hidden panel back', as
+   expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
+   // Each stays listed for 30 seconds, out of the header's counts, and then leaves the panel.
+   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
+-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
++  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
+   await clock.advance(30_000 + TICK)
+   await clock.settle()
+   expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 1b698031..a3fc8d9e 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -9,6 +9,7 @@ import type {
+   PullRequest,
+   Question,
+   Row,
++  Section,
+   SeenLoop,
+   Sending,
+   Snapshot,
+@@ -91,7 +92,15 @@ const NOTICE_COLOR = 'inactive'
+ /** The kinds of item, in the order the header counts them. */
+ const ITEM_KINDS: readonly Item['kind'][] = ['question', 'notice']
+ 
+-const KIND_COLORS: Record<Item['kind'], string> = { question: QUESTION_COLOR, notice: NOTICE_COLOR }
++/** What the header counts, in its order: the pull requests, then each kind of item. */
++const SECTIONS: readonly Section[] = ['pr', ...ITEM_KINDS]
++
++/** The color of a collapsed section's line: the rows' default for pull requests, and each kind's own. */
++const SECTION_COLORS: Record<Section, string | undefined> = {
++  pr: undefined,
++  question: QUESTION_COLOR,
++  notice: NOTICE_COLOR,
++}
+ 
+ /**
+  * The color of a pull request's branch on its drawer's facts line: the
+@@ -1243,27 +1252,32 @@ export const register: Register = on => {
+     const shownThreads = await read($, drawerThreads)
+     const asking = await read($, asked)
+     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
+-    // Each kind's count in the header is a button that collapses its items to
+-    // one line at the top of the list, and the line expands them again. A
+-    // kind stays collapsed until it is expanded, but while it has nothing
+-    // open the header has no count to expand it from, so its items show.
+-    const kindCounts = ITEM_KINDS.map(kind => {
+-      const open = shownItems.filter(
+-        item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time),
+-      ).length
+-      return { kind, count: countOf(open, kind) }
+-    })
++    // Each count in the header is a button that collapses its pull requests
++    // or its kind of item to one line at the top of their place in the list,
++    // and the line expands them again. A section stays collapsed until it is
++    // expanded, but while it has nothing open the header has no count to
++    // expand it from, so a kind's muted items show.
++    const sectionCounts: { section: Section; count: string | undefined }[] = [
++      { section: 'pr', count: countOf(shown.rows.length, 'pull request') },
++      ...ITEM_KINDS.map(kind => {
++        const open = shownItems.filter(
++          item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time),
++        ).length
++        return { section: kind, count: countOf(open, kind) }
++      }),
++    ]
+     const folded = await read($, collapsed)
+-    const isCollapsed = (kind: Item['kind']) =>
+-      Array.isArray(folded) && folded.includes(kind) && kindCounts.some(one => one.kind === kind && one.count !== undefined)
+-    const fold = (kind: Item['kind']) => {
++    const isCollapsed = (section: Section) =>
++      Array.isArray(folded) &&
++      folded.includes(section) &&
++      sectionCounts.some(one => one.section === section && one.count !== undefined)
++    const fold = (section: Section) => {
+       update($, collapsed, was => {
+-        const kinds = Array.isArray(was) ? was.filter(one => ITEM_KINDS.includes(one)) : []
+-        return isCollapsed(kind) ? kinds.filter(one => one !== kind) : [...kinds, kind]
++        const sections = Array.isArray(was) ? was.filter(one => SECTIONS.includes(one)) : []
++        return isCollapsed(section) ? sections.filter(one => one !== section) : [...sections, section]
+       }).catch(() => undefined)
+     }
+-    const prCount = countOf(shown.rows.length, 'pull request')
+-    const counts = [prCount, ...kindCounts.map(one => one.count)]
++    const counts = sectionCounts.map(one => one.count)
+     const label = labeler(shown.rows.map(row => row.pr))
+     const reference = referencer(shown.rows.map(row => row.pr))
+     const labelWidth = Math.max(0, ...shown.rows.map(row => label(row.pr).length))
+@@ -1327,26 +1341,38 @@ export const register: Register = on => {
+     // other surface draws a panel.
+     const status = [tally, reloaded].filter(part => part !== '').join('  ')
+     const gap = ' '.repeat(Math.max(1, edgeColumns - HEADER_NAME.length - status.length))
+-    // Each count of a kind of item is a Button of its own, which collapses or
+-    // expands that kind, so a header that counts items is a row of pieces.
+-    const itemCounts = kindCounts.flatMap(({ kind, count }) => (count === undefined ? [] : [{ kind, count }]))
++    // Each count is a Button of its own, which collapses or expands its
++    // section, so a header that counts anything is a row of pieces.
++    const shownCounts = sectionCounts.flatMap(({ section, count }) =>
++      count === undefined ? [] : [{ section, count }],
++    )
+     const header =
+-      itemCounts.length === 0 ? (
++      shownCounts.length === 0 ? (
+         <Text key="header" color="subtle">
+           {`${HEADER_NAME}${gap}${status}`}
+         </Text>
+       ) : (
+         <Box key="header" flexDirection="row">
+-          <Text color="subtle">{`${HEADER_NAME}${gap}${prCount === undefined ? '' : `${prCount} · `}`}</Text>
+-          {itemCounts.flatMap(({ kind, count }, at) => [
+-            ...(at === 0 ? [] : [<Text key={`between:${kind}`} color="subtle">{' · '}</Text>]),
+-            <Button key={`count:${kind}`} plain onPress={() => fold(kind)}>
++          <Text color="subtle">{`${HEADER_NAME}${gap}`}</Text>
++          {shownCounts.flatMap(({ section, count }, at) => [
++            ...(at === 0 ? [] : [<Text key={`between:${section}`} color="subtle">{' · '}</Text>]),
++            <Button key={`count:${section}`} plain onPress={() => fold(section)}>
+               <Text color="subtle">{count}</Text>
+             </Button>,
+           ])}
+           {reloaded !== '' && <Text color="subtle">{`  ${reloaded}`}</Text>}
+         </Box>
+       )
++    // A collapsed section's line, its count in the section's color, which
++    // expands it again.
++    const expander = (section: Section) =>
++      shownCounts
++        .filter(one => one.section === section && isCollapsed(section))
++        .map(({ count }) => (
++          <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
++            <Text color={SECTION_COLORS[section]}>{`- ${count}`}</Text>
++          </Button>
++        ))
+     const panel = (lines: RenderChildren, isHeaded = true) =>
+       isTerminal ? (
+         <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>
+@@ -1756,8 +1782,10 @@ export const register: Register = on => {
+     const focused = shownItems.find(item => opened === `item:${item.ref}`)
+     if (focused !== undefined) return panel(drawItem(focused), false)
+ 
++    // Collapsed pull requests give way to one line in their place.
+     return panel([
+-      ...byAuthor(shown.rows, shown.viewer).map(drawRow),
++      ...expander('pr'),
++      ...(isCollapsed('pr') ? [] : byAuthor(shown.rows, shown.viewer).map(drawRow)),
+       failure !== undefined && (
+         <Text key="failure" color="error">
+           {failure}
+@@ -1766,15 +1794,8 @@ export const register: Register = on => {
+       shownItems.length > 0 && (shown.rows.length > 0 || failure !== undefined) && (
+         <Text key="before-items"> </Text>
+       ),
+-      // A collapsed kind's items give way to one line at the top of the list,
+-      // its count in the kind's color, which expands them again.
+-      ...itemCounts
+-        .filter(({ kind }) => isCollapsed(kind))
+-        .map(({ kind, count }) => (
+-          <Button key={`expand:${kind}`} plain onPress={() => fold(kind)}>
+-            <Text color={KIND_COLORS[kind]}>{`- ${count}`}</Text>
+-          </Button>
+-        )),
++      // A collapsed kind's items give way to one line at the top of the list.
++      ...ITEM_KINDS.flatMap(expander),
+       ...[...shownItems]
+         .filter(item => !isCollapsed(item.kind))
+         .sort((a, b) => b.postedAt - a.postedAt)
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index fba75da0..36a0821b 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -102,6 +102,9 @@ export type Notice = Posted & {
+ 
+ export type Item = Question | Notice
+ 
++/** What the panel's header counts, and can collapse to one line: the pull requests, or a kind of item. */
++export type Section = 'pr' | Item['kind']
++
+ /**
+  * An answer the panel claimed and is delivering: the claim's token, the route
+  * it took, and the text sent, so a later copy of the module keeps renewing
+@@ -137,8 +140,8 @@ declare module 'claude-code' {
+       panelThreads: { drawer: string; threads: Thread[] } | null
+       /** The session's inbox, as the panel last read it. */
+       panelInbox: Item[]
+-      /** The kinds of item collapsed to one line, from the header's counts. */
+-      panelCollapsed: Item['kind'][]
++      /** The pull requests and the kinds of item collapsed to one line, from the header's counts. */
++      panelCollapsed: Section[]
+       /** The answers the panel is delivering, by reference. */
+       panelSending: Record<string, Sending>
+       /** What the release before the rename kept as `panelSending`, which the panel takes over. */
