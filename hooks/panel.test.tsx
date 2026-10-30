@@ -77,6 +77,9 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       reviewDecision: 'CHANGES_REQUESTED',
       reviewThreads: { nodes: [{ isResolved: false }] },
     }),
+    p12: pr(12, 'Change failing its checks', {
+      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+    }),
     p11: pr(11, 'Approved change', {
       reviewDecision: 'APPROVED',
       reviewThreads: { nodes: [{ isResolved: false }, { isResolved: false }, { isResolved: false }] },
@@ -2497,20 +2500,20 @@ test('a count in the header collapses its kind to one line at the top of the ite
 
   // The notices collapse to one line in their color, and the header keeps counting them.
   await ui.press({ key: 'count:notice' })
-  expect(await lines()).toEqual(['- 1 notice', 'item:3', 'item:1'])
-  expect((await ui.find({ type: 'Text', text: '- 1 notice' }))?.props.color).toBe('inactive')
+  expect(await lines()).toEqual(['+ 1 notice', 'item:3', 'item:1'])
+  expect((await ui.find({ type: 'Text', text: '+ 1 notice' }))?.props.color).toBe('inactive')
   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/)
 
   // The questions collapse apart from the notices, their line first.
   await ui.press({ key: 'count:question' })
-  expect(await lines()).toEqual(['- 2 questions', '- 1 notice'])
+  expect(await lines()).toEqual(['+ 2 questions', '+ 1 notice'])
 
   // The line expands its kind, and so does the count again.
   await ui.press({ key: 'expand:question' })
-  expect(await lines()).toEqual(['- 1 notice', 'item:3', 'item:1'])
+  expect(await lines()).toEqual(['+ 1 notice', 'item:3', 'item:1'])
   await ui.press({ key: 'count:question' })
   await ui.press({ key: 'count:question' })
-  expect(await lines()).toEqual(['- 1 notice', 'item:3', 'item:1'])
+  expect(await lines()).toEqual(['+ 1 notice', 'item:3', 'item:1'])
 
   // A kind with nothing open has no count to expand it from, so its items show; a new one collapses again.
   session.store.run(['project', 'inbox', 'dismiss', '2', '--session', SESSION])
@@ -2520,7 +2523,7 @@ test('a count in the header collapses its kind to one line at the top of the ite
   session.store.write(notice({ ref: '4', number: 4, subject: 'Merged #6', postedAt: clock.now() }))
   await clock.advance(TICK)
   await clock.settle()
-  expect(await lines()).toEqual(['- 1 notice', 'item:3', 'item:1'])
+  expect(await lines()).toEqual(['+ 1 notice', 'item:3', 'item:1'])
   await ui.unmount()
 })
 
@@ -2538,26 +2541,51 @@ test('the pull requests’ count in the header collapses them to one line in the
 
   expect(await lines()).toEqual(['pr:x/y#7', 'item:1'])
 
-  // The pull requests collapse to one line in the rows' default color, and the header keeps counting them.
+  // The pull requests collapse to one line, bulleted `+`, that lists them, and the header keeps counting them.
   await ui.press({ key: 'count:pr' })
-  expect(await lines()).toEqual(['- 1 pull request', 'item:1'])
-  expect((await ui.find({ type: 'Text', text: '- 1 pull request' }))?.props.color).toBeUndefined()
+  expect(await lines()).toEqual(['+ #7', 'item:1'])
+  expect(partsOf(await ui.find({ type: 'Text', text: '+ #7' }))).toEqual(['+ ', ['#7', 'error']])
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
 
   // They collapse apart from the items, and stay collapsed when the panel reloads.
   await ui.press({ key: 'count:question' })
-  expect(await lines()).toEqual(['- 1 pull request', '- 1 question'])
+  expect(await lines()).toEqual(['+ #7', '+ 1 question'])
   await clock.advance(TICK)
   await clock.settle()
-  expect(await lines()).toEqual(['- 1 pull request', '- 1 question'])
+  expect(await lines()).toEqual(['+ #7', '+ 1 question'])
 
   // The line expands them, and so does the count again.
   await ui.press({ key: 'expand:pr' })
-  expect(await lines()).toEqual(['pr:x/y#7', '- 1 question'])
+  expect(await lines()).toEqual(['pr:x/y#7', '+ 1 question'])
   await ui.press({ key: 'count:pr' })
   await ui.press({ key: 'count:pr' })
-  expect(await lines()).toEqual(['pr:x/y#7', '- 1 question'])
+  expect(await lines()).toEqual(['pr:x/y#7', '+ 1 question'])
+  await ui.unmount()
+})
+
+test('collapsed pull requests list their labels in the rows’ order, each in its status’s color', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#10\no/r#12\n' })
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+  const ui = await $.ui.mount(PANEL)
+
+  await ui.press({ key: 'count:pr' })
+  // Ready is green and a draft yellow, as their rows' states are; a conflict, a change request, or failing checks is red.
+  expect(partsOf(await ui.find({ type: 'Text', text: '+ #1 #2 #10 #12' }))).toEqual([
+    '+ ',
+    ['#1', 'success'],
+    ' ',
+    ['#2', 'warning'],
+    ' ',
+    ['#10', 'error'],
+    ' ',
+    ['#12', 'error'],
+  ])
+  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
   await ui.unmount()
 })
 

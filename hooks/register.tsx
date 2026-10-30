@@ -95,12 +95,7 @@ const ITEM_KINDS: readonly Item['kind'][] = ['question', 'notice']
 /** What the header counts, in its order: the pull requests, then each kind of item. */
 const SECTIONS: readonly Section[] = ['pr', ...ITEM_KINDS]
 
-/** The color of a collapsed section's line: the rows' default for pull requests, and each kind's own. */
-const SECTION_COLORS: Record<Section, string | undefined> = {
-  pr: undefined,
-  question: QUESTION_COLOR,
-  notice: NOTICE_COLOR,
-}
+const KIND_COLORS: Record<Item['kind'], string> = { question: QUESTION_COLOR, notice: NOTICE_COLOR }
 
 /**
  * The color of a pull request's branch on its drawer's facts line: the
@@ -939,6 +934,16 @@ function notesOf(pr: PullRequest): Note[] {
   return notes
 }
 
+/**
+ * A pull request's color on the line its collapsed rows give way to: red
+ * when a note or its checks hold it back, else its state's, as its row draws
+ * `draft` or `ready`.
+ */
+function statusColor(pr: PullRequest): Note['color'] {
+  if (pr.isConflicting || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.checks === 'failing') return 'error'
+  return pr.isDraft ? 'warning' : 'success'
+}
+
 /** How much of a thread's first line its drawer line shows. */
 const EXCERPT_LENGTH = 60
 
@@ -1363,14 +1368,28 @@ export const register: Register = on => {
           {reloaded !== '' && <Text color="subtle">{`  ${reloaded}`}</Text>}
         </Box>
       )
-    // A collapsed section's line, its count in the section's color, which
-    // expands it again.
+    // A collapsed section's line, which expands it again, so it is bulleted
+    // `+` where an item is bulleted `-`. Collapsed pull requests list their
+    // labels in the rows' order, each in its status's color; a collapsed kind
+    // of item reads as its count, in the kind's color.
     const expander = (section: Section) =>
       shownCounts
         .filter(one => one.section === section && isCollapsed(section))
         .map(({ count }) => (
           <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
-            <Text color={SECTION_COLORS[section]}>{`- ${count}`}</Text>
+            {section === 'pr' ? (
+              <Text>
+                {'+ '}
+                {byAuthor(shown.rows, shown.viewer).flatMap(({ pr }, at) => [
+                  ...(at === 0 ? [] : [' ']),
+                  <Text key={keyOf(pr)} color={statusColor(pr)}>
+                    {label(pr)}
+                  </Text>,
+                ])}
+              </Text>
+            ) : (
+              <Text color={KIND_COLORS[section]}>{`+ ${count}`}</Text>
+            )}
           </Button>
         ))
     const panel = (lines: RenderChildren, isHeaded = true) =>

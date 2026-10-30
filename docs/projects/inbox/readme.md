@@ -2296,3 +2296,37 @@ each kind of item, so that count collapses them the same way.
 | --- | --- |
 | The pull requests' count collapses them to `- 1 pull request` in the default color while the header keeps counting; they collapse apart from the questions and stay collapsed across a reload; the line and the count each expand | `the pull requests’ count in the header collapses them to one line in their place, and the line expands them` in `hooks/panel.test.tsx` |
 | A header that counts only pull requests reads as before, in `subtle`, its age ending at the panel's edge | `draws one line per open pull request of the session’s own loops` and `the header’s age, a pull request’s age, and the key hint end in one column` |
+
+## 28. List collapsed pull requests by number and status
+
+A count such as `9 pull requests` says how many are folded away but not
+which, or whether any needs you. A collapsed line that names each one, in
+its status's color, says both without expanding the rows.
+
+### 28.1 What changes
+
+- **Collapsed pull requests list their labels.** The line names each pull
+  request by its row's label, such as `#12`, or `repo#12` when the panel
+  shows several repositories, in the rows' order and a space apart.
+- **Each label takes its status's color.** A conflict, a change request,
+  or failing checks make it `error`, the color of the row's notes for them.
+  Otherwise a draft is `warning` and a ready pull request `success`, as the
+  row draws `draft` and `ready`.
+- **A collapsed line is bulleted `+`.** Every collapsed section's line
+  starts with `+` rather than the `-` that bullets an item, so it reads as
+  something that expands. A collapsed kind of item still reads as its
+  count, as `+ 2 questions`.
+
+### 28.2 Why this design
+
+- **One color for each pull request.** A row shows its state and each note
+  apart; a single label has room for one color, so what holds the pull
+  request back outranks its state.
+
+### 28.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| Collapsed pull requests read `+ #1 #2 #10 #12`, ready in `success`, a draft in `warning`, and a conflict with a change request and failing checks each in `error` | `collapsed pull requests list their labels in the rows’ order, each in its status’s color` in `hooks/panel.test.tsx` |
+| A collapsed conflicting pull request reads `+ #7` in `error`, and the line still expands the rows | `the pull requests’ count in the header collapses them to one line in their place, and the line expands them` |
+| A collapsed kind of item reads `+ 1 notice` in its kind's color | `a count in the header collapses its kind to one line at the top of the items, and the line expands it` |
