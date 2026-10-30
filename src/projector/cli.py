@@ -729,7 +729,7 @@ def add_inbox_parser(subcommands) -> None:
     ask = command("ask", "check, number, and record a question, and print its number, such as 3")
     ask.add_argument("question", help="the question, in one line of at most 120 characters")
     ask.add_argument("--recommend", required=True, help="the answer you recommend, which becomes answer a")
-    ask.add_argument("--option", action="append", default=[], help="another answer; repeat for each, up to five")
+    ask.add_argument("--option", action="append", default=[], help="another answer; repeat for each, up to four")
     detail = ask.add_mutually_exclusive_group()
     detail.add_argument("--detail", default="", help="what the person needs to decide, as Markdown")
     detail.add_argument("--detail-file", type=Path, help="read the detail from this file")
@@ -752,7 +752,7 @@ def add_inbox_parser(subcommands) -> None:
     detail.add_argument("--detail-file", type=Path, help="read the steps from this file")
     request.add_argument("--option", action="append", default=[],
                          help="what the person can choose when they finish, each marking the request done; repeat "
-                              "for each, up to five")
+                              "for each, up to four")
     request.add_argument("--start", help="what you do once the person presses start, in one line; leave it out when "
                                          "there is nothing to prepare")
     request.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
@@ -790,18 +790,25 @@ def add_inbox_parser(subcommands) -> None:
     block.add_argument("--reason", required=True, help="what the person should do before pressing retry, in one "
                                                        "line")
 
+    unclear = command("unclear", "record that you don't understand an open item, as you read it, for its agent to "
+                                 "revise")
+    unclear.add_argument("reference", help="the item's number, such as 3")
+    unclear.add_argument("--subject", help="the item's line as you read it, which must match the item's")
+    unclear.add_argument("--detail", help="the item's detail as you read it, which must match the item's")
+
     withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
     withdraw.add_argument("reference")
 
-    revise = command("revise", "replace an open question's or request's text, keeping its number")
+    revise = command("revise", "replace an open item's text, keeping its number")
     revise.add_argument("reference", help="the item's number, such as 3")
     revise.add_argument("--question", help="the new question, in one line of at most 120 characters")
     revise.add_argument("--request", help="the new request, in one line of at most 120 characters")
+    revise.add_argument("--notice", help="the new notice, in one line of at most 120 characters")
     revise.add_argument("--start", help="the request's new start action, in one line; an empty one removes it")
     revise.add_argument("--recommend", help="the new recommended answer, which becomes answer a")
     options = revise.add_mutually_exclusive_group()
     options.add_argument("--option", action="append",
-                         help="another answer; repeat for each, up to five, to replace every option but a question's "
+                         help="another answer; repeat for each, up to four, to replace every option but a question's "
                               "answer a, or every option of a request")
     options.add_argument("--no-options", action="store_true",
                          help="drop every option but a question's answer a, or every option of a request")
@@ -1363,6 +1370,8 @@ def item_state(item: dict) -> str:
         return f"snoozed until {wake_time(until)}"
     answered = item.get("answer")
     if not answered:
+        if item.get("unclear"):
+            return "unclear"
         progress = item.get("progress")
         if progress:
             return progress["state"]
@@ -1447,10 +1456,12 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         record = inbox.done if command == "done" else inbox.decline
         item = record(inbox_session(arguments, False), ref, arguments.text)
         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
-    elif command in ("start", "ready", "block"):
+    elif command in ("start", "ready", "block", "unclear"):
         session = inbox_session(arguments, False)
         if command == "start":
             item = inbox.start(session, ref, arguments.action)
+        elif command == "unclear":
+            item = inbox.unclear(session, ref, arguments.subject, arguments.detail)
         elif command == "ready":
             item = inbox.ready(session, ref)
         else:
@@ -1461,7 +1472,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         options = [] if arguments.no_options else arguments.option
         item = inbox.revise(inbox_session(arguments, False), ref, question=arguments.question, detail=detail,
                             recommend=arguments.recommend, options=options, request=arguments.request,
-                            start=arguments.start)
+                            start=arguments.start, notice=arguments.notice)
         print(json_text({"item": item}) if json_output else f"revised {item['ref']}")
     elif command == "snooze":
         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)

@@ -4,10 +4,10 @@ An item is a question, which the person answers or dismisses and whose answer go
 agent; a notice, which the person reads and dismisses and which sends nothing back; or a request,
 work only the person can do, which they mark done or decline and whose outcome goes back to the
 agent. A request can carry a start action, what the agent does once the person presses start,
-and the agent then marks it ready or blocked. The agent that posted an open item can withdraw it,
-which dismisses it and sends nothing back, and can revise an open question's or request's text in
-place. An item the person dismissed, declined, or snoozed can be restored, which reopens it in
-place. Each session numbers its items 1, 2, 3, and on, in one count across every kind. Its items
+and the agent then marks it ready or blocked. The person can say they don't understand an open
+item of any kind, which goes back to the agent as `UNCLEAR`. The agent that posted an open item
+can withdraw it, which dismisses it and sends nothing back, and can revise its text in place. An
+item the person dismissed, declined, or snoozed can be restored, which reopens it in place. Each session numbers its items 1, 2, 3, and on, in one count across every kind. Its items
 are JSON files in their own directory, one per item and named by its number, with `count.json`
 holding the last number given. Every write happens under the
 directory's lock, an operating-system lock on its `.lock` file, and lands by renaming a temporary
@@ -31,13 +31,17 @@ from urllib.parse import quote
 from .core import ProjectorError
 
 MAX_SUBJECT = 120
-MAX_OPTIONS = 5
+MAX_OPTIONS = 4
 SNOOZE_MINUTES = 60
 MAX_SNOOZE_MINUTES = 24 * 60
 KINDS = ("question", "notice", "request")
 KEEP_DELIVERED = 100
 CLAIM_EXPIRES_MS = 60_000
 LOCK_WAIT_SECONDS = 5.0
+# The lines an open item owes its agent while it stays open, each recorded in the item's field of
+# the same name. A claimed one may already wait in the session's queue as a prompt that nothing
+# can recall, so it keeps its claim when an answer, outcome, or dismissal lands.
+OPEN_LINES = ("started", "unclear")
 
 SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 PULL = re.compile(r"^(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>[1-9][0-9]*)$")
@@ -281,8 +285,9 @@ def check_start(action: str) -> None:
 
 
 def check_request_options(options: list[str]) -> None:
-    """The checks a request's options pass: at most `MAX_OPTIONS`, so they keep the digits a start
-    leaves, each one line and offered once, and none `Declined`, which declines a request."""
+    """The checks a request's options pass: at most `MAX_OPTIONS`, so they end at the panel's `5`
+    after a start on `1`, each one line and offered once, and none `Declined`, which declines a
+    request."""
     if len(options) > MAX_OPTIONS:
         raise InboxError(f"{len(options)} options; offer a request at most {MAX_OPTIONS}")
     for index, option in enumerate(options):
@@ -405,15 +410,17 @@ def resolution(item: dict) -> str:
 
 def owed_line(item: dict) -> Optional[str]:
     """The line an item owes its agent next, if any: `answer` for an answer, outcome, or dismissal
-    not yet delivered, `restored` for word that a dismissal it may have heard of was undone, or
-    `started` for an open request's start not yet delivered."""
+    not yet delivered, `restored` for word that a dismissal it may have heard of was undone,
+    `started` for an open request's start not yet delivered, or `unclear` for word not yet
+    delivered that the person does not understand an open item."""
     if item.get("answer") and not item.get("deliveredAt"):
         return "answer"
     if item.get("restoredAt"):
         return "restored"
-    started = item.get("started")
-    if not item.get("answer") and started and not started.get("deliveredAt"):
-        return "started"
+    for line in OPEN_LINES:
+        recorded = item.get(line)
+        if not item.get("answer") and recorded and not recorded.get("deliveredAt"):
+            return line
     return None
 
 
@@ -425,13 +432,16 @@ def claimed_line(item: dict) -> Optional[str]:
 
 
 def message(question: dict) -> str:
-    """The line that tells the agent what became of its question or request, as `watch` prints it
-    and the panel sends it: its answer or outcome, its dismissal, that a dismissal it may have
-    heard of was undone, or that the person pressed start, quoting the start action they pressed it
-    for. A request's outcome ends with the person's text when they gave one."""
+    """The line that tells the agent what became of its item, as `watch` prints it and the panel
+    sends it: its answer or outcome, its dismissal, that a dismissal it may have heard of was
+    undone, that the person pressed start, quoting the start action they pressed it for, or that
+    the person does not understand it. A request's outcome ends with the person's text when they
+    gave one."""
     line = claimed_line(question) or owed_line(question)
     if line == "started":
         return f"STARTED {question['ref']} {question['subject']} → {question['started']['action']}"
+    if line == "unclear":
+        return f"UNCLEAR {question['ref']} {question['subject']}"
     if question.get("restoredAt"):
         return f"RESTORED {question['ref']} {question['subject']}"
     answered = question["answer"]
@@ -480,11 +490,10 @@ def answer(session: Optional[str], ref: str, letter: Optional[str], text: Option
             chosen = question["choices"][ord(letter) - ord("a")]
         else:
             raise InboxError(f"{question['ref']} has no answer {letter}; its letters run a to {last}")
-        question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
         # The answer tells the agent the question was open, so it replaces word of a restore that
         # has not reached the agent, and any claim to deliver that word.
-        for key in ("snoozedUntil", "snoozedAt", "restoredAt", "claim"):
-            question.pop(key, None)
+        clear_for_outcome(question)
+        question["answer"] = {"letter": letter, "text": chosen, "answeredAt": now_ms()}
 
     return update(session, ref, record, is_open)
 
@@ -499,19 +508,19 @@ def outcome_text(text: Optional[str]) -> dict:
 def clear_for_outcome(item: dict) -> tuple[bool, bool]:
     """Clear what an answer, outcome, or dismissal replaces, and say whether word of a restore was
     owed and whether a claim was dropped. It clears a snooze, word of a restore, the claim to deliver
-    either, and a request's start that no deliverer has claimed. A claimed `STARTED` may already wait
-    in the session's queue as a prompt that nothing can recall, so it keeps its claim, and the new
-    line is owed once `settle` finishes it."""
-    starting = claimed_line(item) == "started"
+    either, a request's start that no deliverer has claimed, and the person's word that they do not
+    understand the item, which they no longer need answered. A claimed `STARTED` or `UNCLEAR` keeps
+    its claim, as `OPEN_LINES` says, and the new line is owed once `settle` finishes it."""
+    pending = claimed_line(item) if claimed_line(item) in OPEN_LINES else None
     item.pop("snoozedUntil", None)
     item.pop("snoozedAt", None)
     restored = item.pop("restoredAt", None) is not None
-    if starting:
-        return restored, False
-    claimed = item.pop("claim", None) is not None
+    claimed = pending is None and item.pop("claim", None) is not None
     started = item.get("started")
-    if started and not started.get("deliveredAt"):
+    if pending != "started" and started and not started.get("deliveredAt"):
         del item["started"]
+    if pending != "unclear":
+        item.pop("unclear", None)
     return restored, claimed
 
 
@@ -572,28 +581,40 @@ def reset_start(item: dict) -> None:
     item.pop("progress", None)
 
 
+def clear_unclear(item: dict) -> None:
+    """Take back the person's word that they do not understand an item, and the claim to deliver
+    it, once a revision answers it, so only a new press says it of the new text."""
+    if claimed_line(item) == "unclear":
+        del item["claim"]
+    item.pop("unclear", None)
+
+
 def revise(session: Optional[str], ref: str, *, question: Optional[str] = None, detail: Optional[str] = None,
            recommend: Optional[str] = None, options: Optional[list[str]] = None,
-           request: Optional[str] = None, start: Optional[str] = None) -> dict:
-    """Replace an open question's or request's text in place, keeping its number, its place in the
-    list, and its snooze. Each part left as None keeps its text; `options` replaces every option but
-    the recommendation. A question takes `question`, `recommend`, and `options`, a request takes
-    `request`, `start`, where an empty `start` removes it, and `options`, which replaces all its
-    options, an empty list removing them, and both take `detail`. The revised item passes the
-    checks its posting made. A revised request returns to open, so a press of start made for its old
-    text never covers the new."""
-    if all(part is None for part in (question, detail, recommend, options, request, start)):
-        raise InboxError("give the new text with --question, --request, --start, --detail, --recommend, or "
-                         "--option")
+           request: Optional[str] = None, start: Optional[str] = None, notice: Optional[str] = None) -> dict:
+    """Replace an open item's text in place, keeping its number, its place in the list, and its
+    snooze. Each part left as None keeps its text. A question takes `question`, `recommend`, and
+    `options`, which replaces every option but the recommendation; a request takes `request`,
+    `start`, where an empty `start` removes it, and `options`, which replaces all its options, an
+    empty list removing them; a notice takes `notice`; and each takes `detail`. The revised item
+    passes the checks its posting made. A revision answers the person's word that they do not
+    understand the item, so it clears that word. A revised request returns to open, so a press of
+    start made for its old text never covers the new."""
+    if all(part is None for part in (question, detail, recommend, options, request, start, notice)):
+        raise InboxError("give the new text with --question, --request, --notice, --start, --detail, --recommend, "
+                         "or --option")
 
     def record(item: dict) -> None:
-        if is_notice(item):
-            raise InboxError(f"{item['ref']} is a notice, and only a question or a request can be revised; "
-                             "withdraw it and tell again")
         if item.get("answer"):
             raise InboxError(f"{item['ref']} is already {resolution(item)}")
-        if is_request(item):
-            if question is not None or recommend is not None:
+        if is_notice(item):
+            if any(part is not None for part in (question, recommend, options, request, start)):
+                raise InboxError(f"{item['ref']} is a notice; revise its text with --notice and --detail")
+            subject = item["subject"] if notice is None else notice
+            check_subject("notice", subject, item.get("pr"))
+            item["subject"] = subject.strip()
+        elif is_request(item):
+            if question is not None or recommend is not None or notice is not None:
                 raise InboxError(f"{item['ref']} is a request; revise its text with --request, --start, --option, "
                                  "and --detail")
             subject = item["subject"] if request is None else request
@@ -607,25 +628,44 @@ def revise(session: Optional[str], ref: str, *, question: Optional[str] = None, 
                 else:
                     item.pop("choices", None)
             item["subject"] = subject.strip()
-            if detail is not None:
-                item["detail"] = detail.strip()
             if start is not None and start.strip():
                 item["start"] = start.strip()
             elif start is not None:
                 item.pop("start", None)
             reset_start(item)
-            return
-        if request is not None or start is not None:
-            raise InboxError(f"{item['ref']} is a question; revise its text with --question")
-        subject = item["subject"] if question is None else question
-        first, *others = item["choices"]
-        chosen = first if recommend is None else recommend
-        rest = others if options is None else options
-        check(subject, chosen, rest, item.get("pr"))
-        item["subject"] = subject.strip()
-        item["choices"] = [chosen.strip(), *(option.strip() for option in rest)]
+        else:
+            if request is not None or start is not None or notice is not None:
+                raise InboxError(f"{item['ref']} is a question; revise its text with --question")
+            subject = item["subject"] if question is None else question
+            first, *others = item["choices"]
+            chosen = first if recommend is None else recommend
+            rest = others if options is None else options
+            check(subject, chosen, rest, item.get("pr"))
+            item["subject"] = subject.strip()
+            item["choices"] = [chosen.strip(), *(option.strip() for option in rest)]
         if detail is not None:
             item["detail"] = detail.strip()
+        clear_unclear(item)
+
+    return update(session, ref, record, is_open)
+
+
+def unclear(session: Optional[str], ref: str, subject: Optional[str] = None, detail: Optional[str] = None) -> dict:
+    """Record that the person does not understand an open item, for its deliverer to tell the agent
+    with `UNCLEAR`. `subject` and `detail`, when given, are the text the person read: a drawer drawn
+    before the agent revised the item shows the old text, so a press whose text differs from the
+    stored text records nothing, as `start` refuses a stale start action. The word stands until a
+    revision answers it, so a second press before then records nothing either."""
+    def record(item: dict) -> None:
+        if item.get("answer"):
+            raise InboxError(f"{item['ref']} is already {resolution(item)}")
+        if item.get("unclear"):
+            raise InboxError(f"{item['ref']} is already marked unclear; its agent revises it next")
+        if subject is not None and subject.strip() != item["subject"]:
+            raise InboxError(f"{item['ref']} now reads {item['subject']!r}; read it and press again")
+        if detail is not None and detail.strip() != item.get("detail", ""):
+            raise InboxError(f"{item['ref']}'s detail has changed; read it and press again")
+        item["unclear"] = {"at": now_ms()}
 
     return update(session, ref, record, is_open)
 
@@ -670,8 +710,10 @@ def restore(session: Optional[str], ref: str) -> dict:
         for key in ("answer", "deliveredAt", "claim"):
             item.pop(key, None)
         # The agent heard the request declined and may have undone what it prepared, so a restored
-        # request waits for a new press of start.
+        # request waits for a new press of start. Likewise a word that the person did not
+        # understand the item was settled by the dismissal, so only a new press says it again.
         reset_start(item)
+        item.pop("unclear", None)
 
     return update(session, ref, record, is_restorable)
 
@@ -742,12 +784,12 @@ def live_claim(question: dict) -> Optional[dict]:
 
 def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict:
     """Claim the line an item owes for delivery, recording which line it is, or renew a claim by its
-    token; returns the item. A claimed `STARTED` renews even once the request is resolved, since
-    its line still waits in the session's queue."""
+    token; returns the item. A claimed `STARTED` or `UNCLEAR` renews even once the item is resolved,
+    since its line still waits in the session's queue."""
     def take(question: dict) -> None:
-        refuse_notice(question, "has nothing to deliver")
         line = owed_line(question)
-        if line is None and not (renew is not None and claimed_line(question) == "started"):
+        if line is None and not (renew is not None and claimed_line(question) in OPEN_LINES):
+            refuse_notice(question, "has nothing to deliver")
             if question.get("deliveredAt"):
                 raise InboxError(f"{answer_ref(question)} is already delivered")
             raise InboxError(f"{question['ref']} has no answer to deliver")
@@ -765,22 +807,23 @@ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict
 
 def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dict:
     """Mark a claimed line delivered, or undo what it reported when its delivery failed: a question
-    reopens, and a request's start is removed, so the person presses start again. A claimed
+    reopens, a request's start is removed, so the person presses start again, and so is word that
+    the person does not understand an item, so they press I don't understand again. A claimed
     `RESTORED` line is done either way: the panel does not retry it, and the item's answer or next
-    dismissal still reaches the agent. An outcome recorded while a `STARTED` was claimed is owed
-    once that line settles."""
+    dismissal still reaches the agent. An outcome recorded while a `STARTED` or `UNCLEAR` was
+    claimed is owed once that line settles."""
     def finish(question: dict) -> None:
         line = claimed_line(question)
-        if line != "started" and question.get("deliveredAt"):
+        if line not in OPEN_LINES and question.get("deliveredAt"):
             raise InboxError(f"{answer_ref(question)} is already delivered")
         if (question.get("claim") or {}).get("token") != token:
             raise InboxError(f"{question['ref']} is not claimed with that token")
         del question["claim"]
-        if line == "started":
+        if line in OPEN_LINES:
             if delivered:
-                question["started"]["deliveredAt"] = now_ms()
+                question[line]["deliveredAt"] = now_ms()
             else:
-                question.pop("started")
+                question.pop(line)
             return
         if question.pop("restoredAt", None) is not None:
             return
@@ -802,7 +845,8 @@ def prune(folder: Path) -> None:
 
 def owes_a_line(item: dict) -> bool:
     """Whether the item's agent is owed a line: an answer, outcome, or dismissal not yet delivered,
-    word that a dismissal it may have heard of was undone, or a request's start."""
+    word that a dismissal it may have heard of was undone, a request's start, or word that the
+    person does not understand the item."""
     return owed_line(item) is not None
 
 

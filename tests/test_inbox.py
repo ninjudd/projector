@@ -267,7 +267,7 @@ class AskTests(InboxCase):
                      ["Empty?", "--recommend", " "],
                      ["Two-line answer?", "--recommend", "line one\nline two"],
                      ["Two-line option?", "--recommend", "x", "--option", "line one\rline two"],
-                     ["Many?", "--recommend", "a", *[f"--option={n}" for n in "bcdef"], "--option=g"],
+                     ["Many?", "--recommend", "a", *[f"--option={n}" for n in "bcde"], "--option=f"],
                      ["Repeat?", "--recommend", "Same", "--option", "Same"],
                      ["Twice?", "--recommend", "a", "--option", "Other", "--option", " Other "],
                      ["Bad pull?", "--recommend", "x", "--pr", "app#12"]):
@@ -276,8 +276,8 @@ class AskTests(InboxCase):
                 self.assertEqual(65, code, err)
         self.assertFalse((self.folder() / "count.json").exists())
 
-    def test_accepts_five_other_options_and_a_question_of_120_characters(self) -> None:
-        self.assertEqual("1", self.ask("x" * 120, "--recommend", "a", *[f"--option={n}" for n in "bcdef"]))
+    def test_accepts_four_other_options_and_a_question_of_120_characters(self) -> None:
+        self.assertEqual("1", self.ask("x" * 120, "--recommend", "a", *[f"--option={n}" for n in "bcde"]))
 
     def test_needs_a_session_and_takes_it_from_the_environment(self) -> None:
         code, _, err = self.run_cli("ask", "Who?", "--recommend", "x")
@@ -709,13 +709,14 @@ class ReviseTests(InboxCase):
         self.assertEqual(0, code, err)
         self.assertEqual(self.item(1), json.loads(out)["item"])
 
-    def test_refuses_a_resolved_question_a_notice_and_an_unknown_number_and_changes_nothing(self) -> None:
+    def test_refuses_a_resolved_item_and_an_unknown_number_and_changes_nothing(self) -> None:
         self.ask("Rebase?", "--recommend", "Yes")
         self.run_cli("answer", "1.a", "--session", "s1")
+        self.run_cli("dismiss", "2", "--session", "s1")
         self.run_cli("withdraw", "3", "--session", "s1")
         items = [self.item(ref) for ref in (1, 2, 3)]
-        for ref, said in (("1", "1 is already answered, as 1.a"), ("3", "3 is already withdrawn"),
-                          ("2", "2 is a notice, and only a question or a request can be revised")):
+        for ref, said in (("1", "1 is already answered, as 1.a"), ("2", "2 is already dismissed"),
+                          ("3", "3 is already withdrawn")):
             with self.subTest(ref=ref):
                 code, out, err = self.run_cli("revise", ref, "--detail", "x", "--session", "s1")
                 self.assertEqual((65, ""), (code, out))
@@ -735,7 +736,7 @@ class ReviseTests(InboxCase):
                      ["--option", "Decline it"],
                      ["--option", " "],
                      ["--option", "x", "--option", " x "],
-                     [arg for n in "abcdef" for arg in ("--option", n)]):
+                     [arg for n in "abcde" for arg in ("--option", n)]):
             with self.subTest(args=args[:2]):
                 code, out, _ = self.revise(*args)
                 self.assertEqual((65, ""), (code, out))
@@ -745,10 +746,29 @@ class ReviseTests(InboxCase):
         self.assertEqual(2, stop.exception.code)
         self.assertEqual(before, self.item(1))
 
-    def test_accepts_five_other_options_and_a_question_of_120_characters(self) -> None:
-        options = [arg for n in "bcdef" for arg in ("--option", n)]
+    def test_accepts_four_other_options_and_a_question_of_120_characters(self) -> None:
+        options = [arg for n in "bcde" for arg in ("--option", n)]
         self.assertEqual(0, self.revise("--question", "x" * 120, *options)[0])
-        self.assertEqual(6, len(self.item(1)["choices"]))
+        self.assertEqual(5, len(self.item(1)["choices"]))
+
+    def test_revises_a_notice_with_its_own_flags_and_keeps_its_number(self) -> None:
+        before = self.item(2)
+        self.assertEqual((0, "revised 2\n", ""),
+                         self.run_cli("revise", "2", "--notice", " Force-pushed #12 to drop a stray file ",
+                                      "--detail", "The file was a local build log.", "--session", "s1"))
+        after = self.item(2)
+        self.assertEqual(("Force-pushed #12 to drop a stray file", "The file was a local build log."),
+                         (after["subject"], after["detail"]))
+        for key in ("ref", "number", "kind", "pr", "postedAt"):
+            with self.subTest(key=key):
+                self.assertEqual(before[key], after[key])
+        for args in (["--question", "x"], ["--recommend", "x"], ["--option", "x"], ["--no-options"],
+                     ["--request", "x"], ["--start", "x"], ["--notice", "x" * 121], ["--notice", " "]):
+            with self.subTest(args=args[0]):
+                code, out, err = self.run_cli("revise", "2", *args, "--session", "s1")
+                self.assertEqual((65, ""), (code, out), err)
+        self.assertIn("revise its text with --question", self.revise("--notice", "x")[2])
+        self.assertEqual(after, self.item(2))
 
     def test_two_revisions_at_once_both_land(self) -> None:
         self.assertEqual(["done", "done"],
@@ -1126,7 +1146,7 @@ class RequestTests(InboxCase):
         self.request("Sign in")
         self.assertNotIn("choices", self.item(3))
         count = (self.folder() / "count.json").read_text()
-        for options in (["Declined"], ["A", "A"], [" "], ["Two\nlines"], ["A", "B", "C", "D", "E", "F"]):
+        for options in (["Declined"], ["A", "A"], [" "], ["Two\nlines"], ["A", "B", "C", "D", "E"]):
             with self.subTest(options=options):
                 args = [arg for option in options for arg in ("--option", option)]
                 code, _, err = self.run_cli("request", "Run it", *args, "--session", "s1")
@@ -1291,6 +1311,121 @@ class StartTests(InboxCase):
         self.assertEqual("open", self.status())
         self.assertTrue({"started", "progress"}.isdisjoint(self.item(1)))
         self.assertEqual("RESTORED 1 Test the gutters\n", self.watch())
+
+
+class UnclearTests(InboxCase):
+    NOTICE = "Force-pushed #12"
+    DETAIL = "It drops a stray file."
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.run_cli("tell", self.NOTICE, "--detail", self.DETAIL, "--agent", "agent-7", "--session", "s1")
+        self.ask("Decline it?", "--recommend", "Decline it", "--option", "Add a budget")
+        self.run_cli("request", "Test the gutters", "--session", "s1")
+
+    def cli(self, *args: str) -> tuple[int, str, str]:
+        return self.run_cli(*args, "--session", "s1")
+
+    def press(self, ref: str = "1", *args: str) -> tuple[int, str, str]:
+        return self.cli("unclear", ref, *args)
+
+    def watch(self) -> str:
+        return self.cli("watch", "--once")[1]
+
+    def claim(self, ref: str = "1") -> str:
+        code, out, err = self.cli("claim", ref, "--json")
+        self.assertEqual(0, code, err)
+        return json.loads(out)["token"]
+
+    def test_records_unclear_on_an_open_item_of_any_kind(self) -> None:
+        for ref in ("1", "2", "3"):
+            with self.subTest(ref=ref):
+                self.assertEqual((0, f"unclear {ref}\n", ""), self.press(ref))
+                self.assertEqual(["at"], list(self.item(ref)["unclear"]))
+                self.assertEqual("unclear", cli.item_state(self.item(ref)))
+        code, out, err = self.press("1", "--json")
+        self.assertEqual(65, code, err)
+        self.cli("revise", "1", "--detail", "It drops a stray build log.")
+        code, out, err = self.press("1", "--json")
+        self.assertEqual(0, code, err)
+        self.assertEqual(self.item(1), json.loads(out)["item"])
+
+    def test_watch_sends_unclear_once_and_the_mark_stands_until_a_revision(self) -> None:
+        self.press()
+        self.assertEqual(f"UNCLEAR 1 {self.NOTICE}\n", self.watch())
+        self.assertEqual("", self.watch())
+        self.assertIn("deliveredAt", self.item(1)["unclear"])
+        self.assertEqual(f"1\tnotice\tunclear\t{self.NOTICE}", self.cli("list")[1].splitlines()[0])
+        self.assertEqual(65, self.press()[0])
+        self.cli("revise", "1", "--notice", "Force-pushed #12 to drop a stray build log")
+        self.assertNotIn("unclear", self.item(1))
+        self.assertEqual("1\tnotice\topen\tForce-pushed #12 to drop a stray build log",
+                         self.cli("list")[1].splitlines()[0])
+
+    def test_refuses_text_the_agent_revised_a_second_press_and_a_resolved_item(self) -> None:
+        for args, said in ((["--subject", "Force-pushed #11"], f"now reads {self.NOTICE!r}"),
+                           (["--subject", self.NOTICE, "--detail", "Old detail."], "detail has changed")):
+            with self.subTest(said=said):
+                code, out, err = self.press("1", *args)
+                self.assertEqual((65, ""), (code, out))
+                self.assertIn(said, err)
+                self.assertNotIn("unclear", self.item(1))
+        self.assertEqual(0, self.press("1", "--subject", self.NOTICE, "--detail", self.DETAIL)[0])
+        self.assertIn("already marked unclear", self.press()[2])
+        self.cli("answer", "2.a")
+        self.assertIn("already answered", self.press("2")[2])
+        self.assertNotIn("unclear", self.item(2))
+        self.assertEqual(66, self.press("4")[0])
+
+    def test_a_revision_takes_back_unclear_and_its_claim(self) -> None:
+        self.press()
+        token = self.claim()
+        self.cli("revise", "1", "--notice", "Force-pushed #12 to drop a stray build log")
+        self.assertTrue({"unclear", "claim"}.isdisjoint(self.item(1)))
+        self.assertEqual(65, self.cli("delivered", "1", "--claim", token)[0])
+        self.assertEqual(0, self.press("1", "--subject", "Force-pushed #12 to drop a stray build log")[0])
+        self.assertEqual("UNCLEAR 1 Force-pushed #12 to drop a stray build log\n", self.watch())
+
+    def test_a_failed_unclear_removes_it(self) -> None:
+        self.press()
+        self.assertEqual(0, self.cli("reopen", "1", "--claim", self.claim())[0])
+        self.assertTrue({"unclear", "claim"}.isdisjoint(self.item(1)))
+        self.assertEqual("open", cli.item_state(self.item(1)))
+        self.assertEqual(0, self.press()[0])
+
+    def test_an_answer_or_dismissal_replaces_an_unclear_no_deliverer_claimed(self) -> None:
+        self.press("2")
+        self.cli("answer", "2.b")
+        self.assertNotIn("unclear", self.item(2))
+        self.assertEqual("ANSWER 2.b Decline it? → Add a budget\n", self.watch())
+        self.press("1")
+        self.cli("dismiss", "1")
+        self.assertNotIn("unclear", self.item(1))
+        self.assertEqual("", self.watch())
+
+    def test_an_answer_or_outcome_recorded_while_unclear_is_claimed_follows_it(self) -> None:
+        for ref, args, line in (("2", ["answer", "2.a"], "ANSWER 2.a Decline it? → Decline it\n"),
+                                ("3", ["done", "3"], "DONE 3 Test the gutters\n")):
+            with self.subTest(command=args[0]):
+                self.press(ref)
+                token = self.claim(ref)
+                self.cli(*args)
+                self.assertEqual("", self.watch())
+                self.assertEqual(0, self.cli("claim", ref, "--renew", token)[0])
+                self.assertEqual(0, self.cli("delivered", ref, "--claim", token)[0])
+                self.assertIn("deliveredAt", self.item(ref)["unclear"])
+                self.assertEqual(line, self.watch())
+
+    def test_a_dismissal_while_a_notices_unclear_is_claimed_lets_that_line_settle(self) -> None:
+        self.press()
+        token = self.claim()
+        self.cli("dismiss", "1")
+        self.assertEqual(0, self.cli("claim", "1", "--renew", token)[0])
+        self.assertEqual(0, self.cli("delivered", "1", "--claim", token)[0])
+        self.assertEqual("", self.watch())
+        self.cli("restore", "1")
+        self.assertNotIn("unclear", self.item(1))
+        self.assertEqual(0, self.press()[0])
 
 
 if __name__ == "__main__":
