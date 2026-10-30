@@ -1,0 +1,64 @@
+---
+name: finish
+description: Verify a Projector project's acceptance criteria, record its outcome, and mark it done in the completing change. Use when implementation appears complete or the user ends a project as shipped, abandoned, or superseded.
+---
+
+# Finish
+
+Close the project only when its durable plan and the repository agree about
+the outcome.
+
+## Prove the outcome
+
+1. Read the repository instructions and `project show <name> --json`.
+2. Enumerate every acceptance criterion and identify the strongest available
+   evidence for it: tests, runtime behavior, generated artifacts, or current
+   external state.
+3. Prove the three things the review loop checks, whether or not a criterion
+   names them. Correctness: the tests or observations that pin each promised
+   behavior exist and pass. Performance: the measurement the plan named was
+   taken and is recorded, or the plan said cost does not matter and the
+   change added no work to a hot path. Reuse: logic the plan said to build
+   once exists once, nothing the change replaced is still present or
+   referenced, and no stub, dead branch, or compatibility wrapper remains.
+4. Run the repository's complete validation gate. Treat missing or indirect
+   evidence as incomplete rather than assuming intent proves delivery.
+5. Inspect nested projects. Their independent statuses do not automatically
+   block the parent, but unresolved work that belongs to the parent's promised
+   outcome does.
+
+## Record completion
+
+Update the plan with the actual outcome and any important deviation from the
+design. State whether the project shipped, was abandoned, or was superseded,
+and link the replacement when one exists. Preserve the history of decisions
+and unanswered questions that still explain the result.
+
+Run `project done <name>` in the implementation change that completes the
+project, which is the change that merges the last of its code into the
+default branch; it sets the status to `completed`, after which the project
+needs no priority. Do not defer the status update to a follow-up pull request
+or until a release, and do not mark an early slice completed when later
+slices still carry the same promised outcome. A release, deployment, or
+rollout after the merge is tracked outside Projector, so a criterion that
+waits on one does not hold the project open: say in the plan where it is
+tracked.
+
+## Validate the handoff
+
+Run:
+
+```sh
+project show <name>
+project check
+git diff --check
+```
+
+Resolve any warning `project check` prints; `project init` refreshes a stale
+Projector section in `AGENTS.md` without touching the repository's own text.
+
+Confirm that the plan names the outcome, every acceptance criterion has
+evidence or an explicit non-delivery disposition, the code the change
+replaced is gone, and no separate closeout change remains. Follow the
+repository's handoff rules, and `implement`'s **Hand the work over** where
+they are silent, and never merge unless the user explicitly owns that action.
