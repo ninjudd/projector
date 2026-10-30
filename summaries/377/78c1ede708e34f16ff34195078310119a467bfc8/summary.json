@@ -1,0 +1,82 @@
+{
+ "version": 1,
+ "name": "Inbox request drawer",
+ "project": "inbox/requests",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 377,
+  "title": "Color requests peach and put start first in their drawer",
+  "head": "78c1ede708e34f16ff34195078310119a467bfc8",
+  "headRef": "request-drawer",
+  "base": "5f100cc85e69fe19a5616f27ca833d4e4defd0ec",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel sits above the Claude Code prompt and lists your pull requests and your inbox. The inbox holds three kinds of item that agents post: a <b>question</b> wants an answer, a <b>notice</b> wants a read, and a <b>request</b> asks you to do something only you can do, such as testing a build on your phone. Each open item's line has its own color, so you can tell the kinds apart at a glance. Opening an item shows its <b>drawer</b> under it, with numbered buttons you press by digit, by click, or by Enter.",
+   "This pull request fixes two problems with requests. First, a request's line used Claude Code's <code>suggestion</code> theme color, which every built-in theme draws in the same blue as a question's <code>permission</code>, so requests and questions looked alike. The request line is now a literal pastel peach, <code>rgb(255,190,140)</code>. Second, a request with a <b>start action</b> (something the agent prepares before you begin, such as installing the build) offered <b>start</b> on <code>8</code>, below <b>Done</b> and <b>Declined</b>. Start now comes first, on <code>1</code>, with <b>done</b> and <b>declined</b> after it.",
+   "The review found one open problem: the peach is hard to read on Claude Code's light themes. The flag on <code>hooks/register.tsx</code> gives the measurements."
+  ],
+  "cards": [
+   {
+    "id": "digits",
+    "title": "A request drawer's buttons",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Request</th><th>Before</th><th>After</th></tr></thead><tbody><tr><td>Start action, not yet pressed</td><td><code>1</code> Done, <code>2</code> Declined, <code>8</code> start request</td><td><code>1</code> start, <code>2</code> done, <code>3</code> declined</td></tr><tr><td>Start action, agent blocked</td><td><code>1</code> Done, <code>2</code> Declined, <code>8</code> retry request</td><td><code>1</code> retry, <code>2</code> done, <code>3</code> declined</td></tr><tr><td>No start action, or starting or ready</td><td><code>1</code> Done, <code>2</code> Declined</td><td><code>1</code> done, <code>2</code> declined</td></tr></tbody></table></div><p class=\"note\">Every open request also keeps <code>7</code> discuss and <code>9</code> snooze.</p>"
+   },
+   {
+    "id": "contrast",
+    "title": "Line contrast on the panel's background",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Theme</th><th>Request (peach)</th><th>Question</th><th>Resolved (<code>subtle</code>)</th></tr></thead><tbody><tr><td><code>dark</code></td><td>11.40</td><td>9.81</td><td>2.28</td></tr><tr><td><code>dark-daltonized</code></td><td>11.40</td><td>10.91</td><td>2.28</td></tr><tr><td><code>light</code></td><td class=\"r\">1.42</td><td>3.86</td><td>1.92</td></tr><tr><td><code>light-daltonized</code></td><td class=\"r\">1.42</td><td>4.11</td><td>1.92</td></tr></tbody></table></div><p class=\"note\">WCAG contrast ratios against the panel's background, <code>rgb(20,20,20)</code> on the dark themes and <code>rgb(240,240,240)</code> on the light ones. Theme colors come from Claude Code 2.1.314.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "panel",
+   "title": "The request line's color and the drawer's order",
+   "kicker": "What the panel draws for an open request",
+   "intro": [
+    "<code>REQUEST_COLOR</code> is the color of an open request's line, and of the collapsed <code>+ N requests</code> line. It changes from the theme key <code>suggestion</code> to a literal <code>rgb(255,190,140)</code>, which Claude Code draws the same in every theme.",
+    "In the drawer, a new <code>startOf</code> helper decides whether the first button is <b>start</b>, <b>retry</b>, or absent. It returns <b>start</b> before you press it, <b>retry</b> once the agent reports it was blocked, and nothing while the agent works, once it is ready, or for a request without a start action. <code>drawOutcomes</code> draws that button on <code>1</code> and numbers <b>done</b> and <b>declined</b> after it. The old <code>startLines</code>, which put start among the actions on <code>8</code>, is gone.",
+    "Pressing start still goes through <code>act</code>, which passes the start action the drawer shows as <code>--action</code>. The CLI refuses that with exit 65 when the agent has revised the action since, and the panel then reads the store again so the drawer shows the new one."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Enter on a request's line moves the focus ring onto <code>start:&lt;ref&gt;</code>, or onto <code>outcome:&lt;ref&gt;.done</code> without a start action. A probe test run with <code>claude plugin test .</code> confirmed both; no test in the pull request covers it."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The request color, the new <code>startOf</code>, the reordered <code>drawOutcomes</code>, and the drawer's first focus target.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 111,
+       "text": "On the <code>light</code> and <code>light-daltonized</code> themes, this peach has a contrast ratio of 1.42:1 against the panel's <code>rgb(240,240,240)</code>. That is fainter than the 1.92:1 of <code>subtle</code>, the muted color of a resolved item, so an open request reads as more muted than items that need nothing. The review asks for a darker color on the light themes, chosen by theme as <code>THEME_BACKGROUNDS</code> chooses the background."
+      },
+      {
+       "kind": "verify",
+       "text": "<code>act</code> is unchanged, so start and retry still pass the shown action and re-read the store on exit 65. The test of a press on a revised drawer still passes."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Updates the request tests for the peach color, the lowercase labels, and start and retry on <code>1</code> with done and declined on <code>2</code> and <code>3</code>."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Describes the peach line and the new drawer order.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The keyboard section still says Enter moves the ring onto a question's first option, otherwise <b>discuss</b>. For a request it goes onto start, retry, or done. That sentence was already incomplete for requests before this pull request."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
