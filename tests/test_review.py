@@ -544,6 +544,53 @@ class GateTests(ReviewCase):
         self.assertEqual((self.GATE, 3, state["sha"]), (record["command"], record["exit_code"], record["sha"]))
         self.assertIn("exited 3", err)
 
+    # A time long past that a gate command sets the lock back to with `touch -r`, so `[ lock -nt reference ]`
+    # holds only once gate touched the lock.
+    PAST = 1_000_000_000
+
+    def reference(self) -> Path:
+        path = Path(tempfile.mkdtemp()) / "reference"
+        path.write_text("")
+        os.utime(path, (self.PAST, self.PAST))
+        return path
+
+    def test_touches_the_lock_as_it_starts_and_as_it_ends(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        lock, reference = self.lock(self.head), self.reference()
+        os.utime(lock, (self.PAST, self.PAST))
+        self.configure(f'[ "{lock}" -nt "{reference}" ] && echo started > "$1/gate.started"; '
+                       f'touch -r "{reference}" "{lock}"')
+
+        code, _, err = self.later("gate", "--loop", "l1")
+
+        self.assertEqual(0, code, err)
+        self.assertTrue((Path(self.read_state()["worktree"]) / "gate.started").exists(), "touched as it starts")
+        self.assertGreater(lock.stat().st_mtime, self.PAST, "touched as it ends")
+
+    def test_a_long_gate_keeps_its_lock_fresh_while_its_command_runs(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        lock, reference = self.lock(self.head), self.reference()
+        self.configure(f'for round in 1 2 3; do touch -r "{reference}" "{lock}"; sleep 0.5; '
+                       f'if [ "{lock}" -nt "{reference}" ]; then echo $round >> "$1/gate.rounds"; fi; done')
+
+        with mock.patch.object(review, "TOUCH_EVERY", 0.05):
+            code, _, err = self.later("gate", "--loop", "l1")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual("1\n2\n3\n", (Path(self.read_state()["worktree"]) / "gate.rounds").read_text())
+
+    def test_a_gate_in_another_loop_touches_no_lock(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        lock = self.lock(self.head)
+        os.utime(lock, (self.PAST, self.PAST))
+        self.configure("sleep 0.3")
+
+        with mock.patch.object(review, "TOUCH_EVERY", 0.05):
+            code, _, err = self.later("gate", "--loop", "l2")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(self.PAST, lock.stat().st_mtime)
+
     def test_a_passing_gate_exits_zero_and_is_recorded(self) -> None:
         self.assertEqual(0, self.setup_review()[0])
         self.configure("true")
@@ -1542,6 +1589,33 @@ class HandOverTests(PublishCase):
         self.assertEqual(0, self.later("move", "--loop", "l1")[0])
 
         self.assert_touched(self.lock(second))
+
+    def test_interdiff_touches_the_lock_of_its_own_loops_review(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        lock = self.lock(self.head)
+        self.age(lock)
+
+        other = self.later("interdiff", "--loop", "l2")
+        untouched = lock.stat().st_mtime
+        own = self.later("interdiff", "--loop", "l1")
+
+        self.assertEqual((1, 1), (other[0], own[0]), "with no full review to build on, interdiff refuses")
+        self.assertLess(untouched, time.time() - 600, "interdiff in another loop keeps no other loop's review alive")
+        self.assert_touched(lock)
+
+    def test_a_session_id_of_any_length_the_inbox_takes_is_a_loop_id(self) -> None:
+        session = "s" + "0123456789" * 9 + "abcdefghi"
+        too_long = "s" * 129
+
+        set_up = self.setup_review("--loop", session)
+        published = self.publish("clean", loop=session)
+        refused = self.setup_review("--loop", too_long)
+
+        self.assertEqual(100, len(session))
+        self.assertEqual((0, 0), (set_up[0], published[0]), set_up[2] + published[2])
+        self.assertEqual([901], [entry["review_id"] for entry in json.loads(self.record(session).read_text())])
+        self.assertEqual(1, refused[0])
+        self.assertIn("up to 128 letters, digits", refused[2])
 
     def test_publish_touches_the_lock_before_it_submits(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])

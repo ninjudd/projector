@@ -1372,6 +1372,7 @@ def run_review(arguments: argparse.Namespace) -> int:
             return 0
         if command == "interdiff":
             state = review.read_state(paths)
+            review.touch_head(paths, state, loop)
             enabled = incremental_enabled(Path(state["checkout"]))
             result = review.incremental_rules(root, state, loop if loop is not None else state.get("loop"), enabled)
             if arguments.json_output:
@@ -1417,7 +1418,7 @@ def run_review(arguments: argparse.Namespace) -> int:
             except ProjectorError:
                 configured = None
             result = review.gate(paths, configured if isinstance(configured, str) else None,
-                                 output_to_stderr=arguments.json_output)
+                                 output_to_stderr=arguments.json_output, loop=loop)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:

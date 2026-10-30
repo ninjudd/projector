@@ -25,11 +25,11 @@ model's earlier heads of the pull request, `finish` removes the last, and `prune
 them reached, such as the `worktrees/<owner>/<repo>/<pr>/<short-sha>` folders made before each model kept
 its own.
 
-`setup`, `census`, `settle`, `move`, and `publish` touch the head's lock as they run, so its modification
-time is the review's last sign of progress, which the watch daemon reads to find a stalled review. The
-daemon hands a stalled or lapsed review to another loop by clearing its lock, so `settle`, `move`, and
-`publish` refuse once the lock no longer names their loop, and `publish` checks again before it writes the
-state and releases the lock.
+`setup`, `census`, `settle`, `move`, `gate`, and `publish` touch the head's lock as they run, and so does
+`project review interdiff` through `touch_head`, so the lock's modification time is the review's last sign
+of progress, which the watch daemon reads to find a stalled review. The daemon hands a stalled or lapsed
+review to another loop by clearing its lock, so `settle`, `move`, and `publish` refuse once the lock no
+longer names their loop, and `publish` checks again before it writes the state and releases the lock.
 """
 
 from __future__ import annotations
@@ -46,10 +46,10 @@ from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from .core import ProjectorError, distribution_version
-from .inbox import locked, write_json
+from .inbox import SESSION, locked, write_json
 from .summary import repo_slug
 
 FINDING_MARKER = "projector-finding"
@@ -64,7 +64,8 @@ MARK = "📽️"
 SHORT = 12
 SHORT_SHA = re.compile(r"^[0-9a-f]{12}$")
 STALE_AFTER = timedelta(days=1)
-LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# Seconds between a running gate's touches of its lock, well inside the stall the watch daemon allows.
+TOUCH_EVERY = 60
 # A trailing bracketed variant of a model ID, such as the context window in `claude-opus-5-5[1m]`.
 VARIANT = re.compile(r"\[[^\[\]]*\]$")
 
@@ -394,6 +395,14 @@ def touch(lock: Path) -> None:
         os.utime(lock)
 
 
+def touch_head(paths: Paths, state: dict, loop: Optional[str]) -> None:
+    """Touch the lock on the state's head while it names `loop`, or the state's loop when `loop` is None, as a
+    command that refuses nothing over the lock does, so it keeps no other loop's review alive."""
+    lock = read_lock(paths.lock(state["sha"]))
+    if lock is not None and lock.loop == (loop if loop is not None else state.get("loop")):
+        touch(lock.path)
+
+
 def review_mutex(folder: Path) -> AbstractContextManager[None]:
     """The inbox's lock on the pull request's folder, held to check a model's review lock before a write and to
     clear one. It sits above the models' folders, where a `.lock` would match the `*.lock` that finds heads."""
@@ -479,7 +488,7 @@ def copy_published(source_loop: str, target_loop: str, repo: str, number: int,
     return len(copied)
 
 
-def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False) -> dict:
+def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False, loop: Optional[str] = None) -> dict:
     """Run the repository's `review.gate` command in the review's scratch worktree.
 
     The command runs the head's code, so it runs only on a head the state file
@@ -491,8 +500,12 @@ def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False) -
     standard error instead when `output_to_stderr` is set, so a caller printing
     JSON keeps standard output for that alone. Its exit status, with the
     command and when it ran, is recorded in the state file and returned.
+    A gate can run for many minutes, so it touches the head's lock as it
+    starts, every `TOUCH_EVERY` seconds while the command runs, and as it
+    ends, as `touch_head` does for `loop`.
     """
     state = read_state(paths)
+    touch_head(paths, state, loop)
     if not state.get("trusted"):
         raise ReviewError(f"the head {state['sha'][:7]} of {state['repo']}#{paths.number} is untrusted "
                           f"({state.get('untrusted_because') or 'no reason recorded'}), so its code does not "
@@ -503,13 +516,29 @@ def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False) -
     worktree = Path(state["worktree"])
     environ = dict(os.environ, PROJECTOR_WORKTREE=str(worktree), PROJECTOR_BASE=state["base"])
     ran_at = now()
-    result = subprocess.run(["sh", "-c", command, "sh", str(worktree), state["base"]],
-                            cwd=worktree, env=environ, stdout=2 if output_to_stderr else None)
-    record = {"command": command, "exit_code": result.returncode, "sha": state["sha"],
-              "ran_at": ran_at.isoformat()}
+    process = subprocess.Popen(["sh", "-c", command, "sh", str(worktree), state["base"]],
+                               cwd=worktree, env=environ, stdout=2 if output_to_stderr else None)
+    exit_code = wait_touching(process, lambda: touch_head(paths, state, loop))
+    record = {"command": command, "exit_code": exit_code, "sha": state["sha"], "ran_at": ran_at.isoformat()}
     state["gate"] = record
     write_state(paths, state)
+    touch_head(paths, state, loop)
     return record
+
+
+def wait_touching(process: subprocess.Popen, touching: Callable[[], None]) -> int:
+    """Wait for `process`, calling `touching` every `TOUCH_EVERY` seconds while it runs, and kill it when the wait
+    is interrupted, as `subprocess.run` does."""
+    try:
+        while True:
+            try:
+                return process.wait(timeout=TOUCH_EVERY)
+            except subprocess.TimeoutExpired:
+                touching()
+    except BaseException:
+        process.kill()
+        process.wait()
+        raise
 
 
 # The pull request
@@ -833,8 +862,10 @@ def hold_lines(result: dict) -> list[str]:
 # Resolving which review a command means
 
 def valid_loop(loop: Optional[str]) -> Optional[str]:
-    if loop is not None and not LOOP_ID.match(loop):
-        raise ReviewError(f"--loop {loop!r} is not a usable id; use letters, digits, '.', '_' and '-'")
+    """`loop`, refused unless it is a session id, since the watch daemon passes a session's id as the loop."""
+    if loop is not None and not SESSION.match(loop):
+        raise ReviewError(f"--loop {loop!r} is not a usable id; use up to 128 letters, digits, '.', '_' and '-', "
+                          "starting with a letter or digit")
     return loop
 
 
@@ -1369,20 +1400,17 @@ THREADS_QUERY = """query($o:String!,$r:String!,$n:Int!,$after:String){ repositor
 
 
 def touch_review(root: Path, repo: str, number: int, model: Optional[str], loop: Optional[str]) -> None:
-    """Touch the head's lock of this machine's review of the pull request by `model`, or by the one model with a
-    review set up here when `model` is None, while the lock names `loop`, or the review's own loop when `loop` is
-    None. Several models set up and no `model`, or no review at all, touch nothing, since census needs none."""
+    """`touch_head` for this machine's review of the pull request by `model`, or by the one model with a review set
+    up here when `model` is None. Several models set up and no `model`, or no review at all, touch nothing, since
+    census needs none."""
     try:
         found = find_model(root, repo, number, model)
         paths = Paths(root, repo, number, found) if found else None
         state = stored_state(paths) if paths else None
     except (ReviewError, ValueError):
         return
-    if state is None:
-        return
-    lock = read_lock(paths.lock(state["sha"]))
-    if lock is not None and lock.loop == (loop if loop is not None else state.get("loop")):
-        touch(lock.path)
+    if paths is not None and state is not None:
+        touch_head(paths, state, loop)
 
 
 def census(repo: str, number: int, root: Optional[Path] = None, model: Optional[str] = None,

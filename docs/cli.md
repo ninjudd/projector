@@ -1953,13 +1953,17 @@ it is published, recording the host, the loop, and when it was taken, so a
 second instance of the same model for the same head exits. A refused `setup`
 releases it, a lock older than a day is stale, and `release` clears the locks
 of one model's review left by a session that stopped. `setup`, `census`,
-`settle`, `move`, and `publish` touch the lock as they run, so its
-modification time shows when the review last made progress. `census` touches
-the lock of the review that `--model` names, or of the one model with a
-review set up here, and only while the lock names its loop.
+`settle`, `move`, `interdiff`, `gate`, and `publish` touch the lock as they
+run, so its modification time shows when the review last made progress.
+`gate` also touches it once a minute while the repository's command runs, so
+a long gate never looks stalled. `census` touches the lock of the review that
+`--model` names, or of the one model with a review set up here. `census`,
+`interdiff`, and `gate` touch the lock only while it names their loop.
 
 `--loop <id>` names the review loop; each loop keeps its record of published
-reviews under that id, and each entry names its model. `publish` adds to the
+reviews under that id, and each entry names its model. The id is up to 128
+letters, digits, `.`, `_`, and `-`, starting with a letter or digit, so any
+session id `project inbox` accepts is a loop id. `publish` adds to the
 record under a lock on the record's folder, so a copy that `project watch`
 makes into the same record at the same moment loses no entry. A command
 without `--loop` runs in the loop that `setup` recorded, and a review set up
