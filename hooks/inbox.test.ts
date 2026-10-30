@@ -14,6 +14,8 @@ import {
   readPrompt,
   relayNote,
   replyNote,
+  REQUEST_DESCRIPTION,
+  requestArguments,
   RESTORE_DESCRIPTION,
   RESTORE_SCHEMA,
   restoreArguments,
@@ -31,7 +33,7 @@ import {
   wokeBetween,
   type Proposal,
 } from './inbox'
-import type { Item, Notice, Question } from './types'
+import type { Item, Notice, Question, Request } from './types'
 
 const NOW = Date.UTC(2026, 9, 12, 12, 0)
 
@@ -56,6 +58,18 @@ const notice = (fields: Partial<Notice> = {}): Notice => ({
   kind: 'notice',
   subject: 'Force-pushed #7 to drop a stray file',
   detail: '',
+  session: 's1',
+  ...fields,
+})
+
+const request = (fields: Partial<Request> = {}): Request => ({
+  ref: '3',
+  number: 3,
+  pr: null,
+  postedAt: NOW - 20_000,
+  kind: 'request',
+  subject: 'Test the gutters',
+  detail: '1. Open Fyra.',
   session: 's1',
   ...fields,
 })
@@ -91,7 +105,7 @@ test('the ask tool tells the agent that a pick arrives by number and a reply as 
 
 test('the restore tool is for a dismissal the person calls a mistake, never a question asked again', () => {
   expect(RESTORE_DESCRIPTION).toContain(
-    'Use it only when the person says a dismissal was a mistake or asks for the item back, never on your own judgement, and never ask a dismissed question again as a new one.',
+    'Use it only when the person says a dismissal was a mistake or asks for the item back, never on your own judgement, and never post a dismissed item again as a new one.',
   )
   expect(RESTORE_SCHEMA).toEqual(WITHDRAW_SCHEMA)
 })
@@ -100,12 +114,13 @@ test('every inbox tool tells the agent to name an item to the person by its text
   for (const description of [
     ASK_DESCRIPTION,
     TELL_DESCRIPTION,
+    REQUEST_DESCRIPTION,
     WITHDRAW_DESCRIPTION,
     REVISE_DESCRIPTION,
     RESTORE_DESCRIPTION,
   ]) {
     expect(description).toMatch(
-      / The panel never shows an item’s number, so name the item to the person by what it asks or tells, never by its number\.$/,
+      / The panel never shows an item’s number, so name the item to the person by what it asks, tells, or requests, never by its number\.$/,
     )
   }
 })
@@ -159,7 +174,7 @@ test('anything after a quoted question but one of its options replies to it with
     expect(repliesIn(text, open)).toEqual(open.filter(one => text.includes(quoteOf(one))))
   }
   const text = '"Decline the finding?"\n\nDecline it\n"Rebase first?"\n\nwhy rebase?'
-  expect(readPrompt(text, open)).toEqual({ answers: [{ question: open[0], letter: 'a' }], replies: [open[1]] })
+  expect(readPrompt(text, open)).toEqual({ answers: [{ question: open[0], letter: 'a' }], outcomes: [], replies: [open[1]] })
   // A notice or a resolved question takes no reply.
   const answered = question({ answer: { letter: 'a', text: 'Decline it', answeredAt: NOW } })
   expect(repliesIn(`"${notice().subject}"\n\nThanks`, [notice()])).toEqual([])
@@ -211,30 +226,35 @@ test('a quote two questions share speaks to one of them: an answer replies to ne
   // You pick No in the second question's drawer: it answers the second, and says nothing to the first.
   expect(readPrompt('"Merge it?"\n\nNo\n', both, [merge('2', 'No')])).toEqual({
     answers: [{ question: second, letter: 'b' }],
+    outcomes: [],
     replies: [],
   })
-  expect(readPrompt('"Merge it?"\n\nNo\n', both)).toEqual({ answers: [{ question: first, letter: 'b' }], replies: [] })
+  expect(readPrompt('"Merge it?"\n\nNo\n', both)).toEqual({ answers: [{ question: first, letter: 'b' }], outcomes: [], replies: [] })
   // A reply goes to the question whose drawer put the quote there, by discuss or by a pick you added to, else the oldest.
-  expect(readPrompt('"Merge it?"\n\nwhy now?', both, [merge('2', '')])).toEqual({ answers: [], replies: [second] })
-  expect(readPrompt('"Merge it?"\n\nNo, not yet', both, [merge('2', 'No')])).toEqual({ answers: [], replies: [second] })
-  expect(readPrompt('"Merge it?"\n\nwhy now?', both)).toEqual({ answers: [], replies: [first] })
+  expect(readPrompt('"Merge it?"\n\nwhy now?', both, [merge('2', '')])).toEqual({ answers: [], outcomes: [], replies: [second] })
+  expect(readPrompt('"Merge it?"\n\nNo, not yet', both, [merge('2', 'No')])).toEqual({ answers: [], outcomes: [], replies: [second] })
+  expect(readPrompt('"Merge it?"\n\nwhy now?', both)).toEqual({ answers: [], outcomes: [], replies: [first] })
   // An option typed under discuss answers the question you discussed.
   expect(readPrompt('"Merge it?"\n\nYes', both, [merge('2', '')])).toEqual({
     answers: [{ question: second, letter: 'a' }],
+    outcomes: [],
     replies: [],
   })
   // The drawer you acted in last wins: a pick in the second, then a discuss in the first.
   expect(readPrompt('"Merge it?"\n\nYes', both, [merge('2', 'Yes'), merge('1', '')])).toEqual({
     answers: [{ question: first, letter: 'a' }],
+    outcomes: [],
     replies: [],
   })
   expect(readPrompt('"Merge it?"\n\nYes', both, [merge('1', ''), merge('2', 'Yes')])).toEqual({
     answers: [{ question: second, letter: 'a' }],
+    outcomes: [],
     replies: [],
   })
   // Quoted twice, each quote speaks to its own question.
   expect(readPrompt('"Merge it?"\n\nYes\n"Merge it?"\n\nwhy now?', both)).toEqual({
     answers: [{ question: first, letter: 'a' }],
+    outcomes: [],
     replies: [second],
   })
 })
@@ -245,18 +265,20 @@ test('a pick made before its question was revised answers no question, and repli
   const stale = [pick('2', 'Decline it', { isStale: true })]
   const decline = '"Decline the finding?"\n\nDecline it\n'
   // The older question shares the text and offers the option, and still does not take the pick.
-  expect(readPrompt(decline, [older, revised], stale)).toEqual({ answers: [], replies: [revised] })
+  expect(readPrompt(decline, [older, revised], stale)).toEqual({ answers: [], outcomes: [], replies: [revised] })
   // Revised to new words, the question is still the one the pick replies to.
   const reworded = question({ ref: '2', number: 2, subject: 'Decline the retry finding?' })
-  expect(readPrompt(decline, [older, reworded], stale)).toEqual({ answers: [], replies: [reworded] })
+  expect(readPrompt(decline, [older, reworded], stale)).toEqual({ answers: [], outcomes: [], replies: [reworded] })
   // Text the stale pick does not hold answers as before.
   expect(readPrompt('"Decline the finding?"\n\nAdd a budget\n', [older, revised], stale)).toEqual({
     answers: [{ question: older, letter: 'b' }],
+    outcomes: [],
     replies: [],
   })
   // A pick from the revised question's new drawer answers it.
   expect(readPrompt(decline, [older, revised], [pick('2', 'Decline it')])).toEqual({
     answers: [{ question: revised, letter: 'a' }],
+    outcomes: [],
     replies: [],
   })
 })
@@ -267,17 +289,19 @@ test('an option typed under a quote discussed before its question was revised an
   const reworded = question({ ref: '2', number: 2, subject: 'Decline the retry finding?' })
   const discussed = [pick('2', '', { isStale: true })]
   const decline = '"Decline the finding?"\n\nDecline it\n'
-  expect(readPrompt(decline, [older, revised], discussed)).toEqual({ answers: [], replies: [revised] })
-  expect(readPrompt(decline, [older, reworded], discussed)).toEqual({ answers: [], replies: [reworded] })
+  expect(readPrompt(decline, [older, revised], discussed)).toEqual({ answers: [], outcomes: [], replies: [revised] })
+  expect(readPrompt(decline, [older, reworded], discussed)).toEqual({ answers: [], outcomes: [], replies: [reworded] })
   // A pick you then make in the older question's drawer still answers it.
   const both = [...discussed, pick('1', 'Decline it')]
   expect(readPrompt(`"Decline the finding?"\n\nwhy?\n${decline}`, [older, revised], both)).toEqual({
     answers: [{ question: older, letter: 'a' }],
+    outcomes: [],
     replies: [revised],
   })
   // Discussed again in the revised drawer, the quote answers the revised question.
   expect(readPrompt(decline, [older, revised], [pick('2', '')])).toEqual({
     answers: [{ question: revised, letter: 'a' }],
+    outcomes: [],
     replies: [],
   })
 })
@@ -291,12 +315,13 @@ test('a quote a drawer put in the prompt for a question resolved before you send
   const picks = [drawer('Yes', true), drawer('Yes', false), drawer('', true), drawer('', false)]
   for (const resolved of [[dismissed], [withdrawn], []]) {
     for (const proposal of picks) {
-      expect(readPrompt('"Merge it?"\n\nYes\n', [open, ...resolved], [proposal])).toEqual({ answers: [], replies: [] })
+      expect(readPrompt('"Merge it?"\n\nYes\n', [open, ...resolved], [proposal])).toEqual({ answers: [], outcomes: [], replies: [] })
     }
   }
   // A quote no drawer put there still answers the open question.
   expect(readPrompt('"Merge it?"\n\nYes\n', [open, dismissed])).toEqual({
     answers: [{ question: open, letter: 'a' }],
+    outcomes: [],
     replies: [],
   })
 })
@@ -328,7 +353,7 @@ test('a withdrawn item leaves the panel at once', () => {
 
 test('a call of the withdraw tool becomes `project inbox withdraw`, and only a whole number names an item', () => {
   expect(withdrawArguments({ number: 3 }, 's1')).toEqual(['inbox', 'withdraw', '3', '--session', 's1', '--json'])
-  const refusal = { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
+  const refusal = { error: '`number` must be the whole number `ask`, `tell`, or `request` returned, such as 3' }
   for (const number of [undefined, '3', 0, -1, 1.5, Number.NaN]) {
     expect(withdrawArguments({ number }, 's1')).toEqual(refusal)
   }
@@ -336,7 +361,7 @@ test('a call of the withdraw tool becomes `project inbox withdraw`, and only a w
 
 test('a call of the restore tool becomes `project inbox restore`, and only a whole number names an item', () => {
   expect(restoreArguments({ number: 3 }, 's1')).toEqual(['inbox', 'restore', '3', '--session', 's1', '--json'])
-  const refusal = { error: '`number` must be the whole number `ask` or `tell` returned, such as 3' }
+  const refusal = { error: '`number` must be the whole number `ask`, `tell`, or `request` returned, such as 3' }
   for (const number of [undefined, '3', 0, -1, 1.5, Number.NaN]) {
     expect(restoreArguments({ number }, 's1')).toEqual(refusal)
   }
@@ -371,10 +396,10 @@ test('a call of the revise tool becomes `project inbox revise` with only what ch
     '--json',
   ])
   expect(reviseArguments({ number: 3 }, 's1')).toEqual({
-    error: 'give what changes: `question`, `detail`, `recommendation`, or `options`',
+    error: 'give what changes: `question`, `request`, `detail`, `recommendation`, or `options`',
   })
   expect(reviseArguments({ number: '3', detail: 'x' }, 's1')).toEqual({
-    error: '`number` must be the whole number `ask` returned, such as 3',
+    error: '`number` must be the whole number `ask` or `request` returned, such as 3',
   })
   expect(reviseArguments({ number: 3, options: 'no' }, 's1')).toEqual({ error: '`options` must be a list of strings' })
   expect(reviseArguments({ number: 3, question: 7 }, 's1')).toEqual({ error: '`question` must be a string' })
@@ -492,10 +517,14 @@ test('a snoozed item stays in the panel for 30 seconds after it is snoozed, then
   expect(isSnoozedAt(snoozed, NOW + 3_600_000)).toBe(false)
 })
 
-test('only a question’s answer waits for a deliverer', () => {
+test('only a question’s answer and a request’s outcome wait for a deliverer', () => {
   const dismissed = { dismissed: true as const, answeredAt: NOW }
   expect(needsDelivery(question({ answer: dismissed }), NOW)).toBe(true)
   expect(needsDelivery(notice({ answer: dismissed }), NOW)).toBe(false)
+  expect(needsDelivery(request({ answer: { done: true, answeredAt: NOW } }), NOW)).toBe(true)
+  expect(needsDelivery(request({ answer: { done: true, answeredAt: NOW }, deliveredAt: NOW }), NOW)).toBe(false)
+  expect(needsDelivery(request({ restoredAt: NOW }), NOW)).toBe(true)
+  expect(needsDelivery(request(), NOW)).toBe(false)
 })
 
 test('a sent prompt answers snoozed questions and never a notice', () => {
@@ -529,4 +558,114 @@ test('a call of the tell tool becomes `project inbox tell`, text kept as text', 
   expect(tellArguments({ notice: 'N', pr: 7 }, 's1', undefined)).toEqual({
     error: '`pr` must be a string such as owner/repo#123',
   })
+})
+
+test('the request tool asks for work only the person can do, its steps in `detail`, and names what comes back', () => {
+  expect(REQUEST_DESCRIPTION).toContain('Ask the person to do something only they can do')
+  expect(REQUEST_DESCRIPTION).toContain('put the steps they follow in `detail`')
+  expect(REQUEST_DESCRIPTION).toContain('`DONE 3` or `DECLINED 3`')
+  expect(REQUEST_DESCRIPTION).toContain('When you need the person to decide something rather than do it, use `ask` instead.')
+})
+
+test('a call of the request tool becomes `project inbox request`, text kept as text', () => {
+  expect(requestArguments({ request: '-Test the gutters', detail: '1. Open Fyra.', pr: 'o/r#7' }, 's1', 'agent-1')).toEqual([
+    'inbox',
+    'request',
+    '--session=s1',
+    '--detail=1. Open Fyra.',
+    '--pr=o/r#7',
+    '--agent=agent-1',
+    '--',
+    '-Test the gutters',
+  ])
+  expect(requestArguments({ request: 'Sign in' }, 's1', undefined)).toEqual(['inbox', 'request', '--session=s1', '--', 'Sign in'])
+  expect(requestArguments({ detail: 'Why' }, 's1', undefined)).toEqual({ error: '`request` must be a string' })
+  expect(requestArguments({ request: 'R', detail: 7 }, 's1', undefined)).toEqual({ error: '`detail` must be a string' })
+})
+
+test('Done or Declined on the line under a quoted request is its outcome, and notes may follow', () => {
+  const open = request()
+  const outcomesIn = (text: string) => readPrompt(text, [open]).outcomes
+  expect(outcomesIn('"Test the gutters"\n\nDone\n')).toEqual([{ request: open, outcome: 'done' }])
+  expect(outcomesIn('"Test the gutters"\n\nDone\n\n4 didn’t work\nthe rest did')).toEqual([{ request: open, outcome: 'done' }])
+  expect(outcomesIn('"Test the gutters"\n\n  Declined \n\nNo phone today')).toEqual([{ request: open, outcome: 'declined' }])
+  expect(readPrompt('"Test the gutters"\n\nDone', [open])).toEqual({
+    answers: [],
+    outcomes: [{ request: open, outcome: 'done' }],
+    replies: [],
+  })
+})
+
+test('anything else under a quoted request replies to it and leaves it open', () => {
+  const open = request()
+  for (const text of [
+    '"Test the gutters"\n\ndone?',
+    '"Test the gutters"\n\nDone, mostly',
+    '"Test the gutters"\n\nWhich build?',
+    '"Test the gutters" Done',
+    '"Test the gutters"\n\n',
+  ]) {
+    expect(readPrompt(text, [open])).toEqual({ answers: [], outcomes: [], replies: [open] })
+  }
+  const done = request({ answer: { done: true, answeredAt: NOW } })
+  expect(readPrompt('"Test the gutters"\n\nDone', [done])).toEqual({ answers: [], outcomes: [], replies: [] })
+})
+
+test('a request’s drawer owns its quote whatever follows, and a pick from before a revise only replies', () => {
+  const open = request()
+  const shared = request({ ref: '4', number: 4, postedAt: NOW - 10_000 })
+  const done: Proposal = { ref: '4', quote: '"Test the gutters"', answer: 'Done' }
+  expect(readPrompt('"Test the gutters"\n\nDone\n\nall good', [open, shared], [done]).outcomes).toEqual([
+    { request: shared, outcome: 'done' },
+  ])
+  expect(readPrompt('"Test the gutters"\n\nDeclined', [open, shared], [done]).outcomes).toEqual([
+    { request: shared, outcome: 'declined' },
+  ])
+  expect(readPrompt('"Test the gutters"\n\nDone', [open, shared])).toEqual({
+    answers: [],
+    outcomes: [{ request: open, outcome: 'done' }],
+    replies: [],
+  })
+  expect(readPrompt('"Test the gutters"\n\nDone', [open, shared], [{ ...done, isStale: true }])).toEqual({
+    answers: [],
+    outcomes: [],
+    replies: [shared],
+  })
+})
+
+test('a quoted request and a quoted question in one prompt each take their own', () => {
+  const asked = question()
+  const open = request()
+  expect(readPrompt('"Decline the finding?"\n\nDecline it\n"Test the gutters"\n\nDone\n\nfine', [asked, open])).toEqual({
+    answers: [{ question: asked, letter: 'a' }],
+    outcomes: [{ request: open, outcome: 'done' }],
+    replies: [],
+  })
+})
+
+test('the notes beside a subagent’s request name it and say an outcome goes back', () => {
+  const posted = request({ agentId: 'agent-1' })
+  expect(relayNote(posted, [agent('completed')])).toBe(
+    'The subagent Fix #7 (agent-1) requested "Test the gutters"; send it the outcome this prompt gives.',
+  )
+  expect(replyNote(posted, [])).toBe(
+    'The subagent agent-1 requested "Test the gutters"; send it the reply this prompt gives, which leaves the request open.',
+  )
+  expect(forMainLoop('DONE 3 Test the gutters', posted, [])).toBe(
+    'DONE 3 Test the gutters\n\nThe subagent agent-1 requested this, and the outcome could not reach it; send it this outcome, or act on it yourself.',
+  )
+})
+
+test('a call of the revise tool revises a request with `request`', () => {
+  expect(reviseArguments({ number: 3, request: 'Test the new gutters', detail: '1. Open the build.' }, 's1')).toEqual([
+    'inbox',
+    'revise',
+    '3',
+    '--session',
+    's1',
+    '--request=Test the new gutters',
+    '--detail=1. Open the build.',
+    '--json',
+  ])
+  expect(reviseArguments({ number: 3, request: 7 }, 's1')).toEqual({ error: '`request` must be a string' })
 })

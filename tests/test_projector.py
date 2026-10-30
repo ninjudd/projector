@@ -1511,7 +1511,7 @@ class ReviewRulesTests(RepositoryTestCase):
             "only the narrower rules": (lambda: write({"allow": narrower}), "Bash(project *)"),
             "ask rules missing": (lambda: write({"allow": list(permissions.ALLOW)}), "Bash(project init *)"),
             "one ask rule missing": (lambda: write(granted()["permissions"] | {"ask": list(permissions.ASK[:-1])}),
-                                     "Bash(project inbox snooze *)"),
+                                     permissions.ASK[-1]),
             "settings absent": (self.settings().unlink, "Bash(project *)"),
         }
         for name, (arrange, missing) in cases.items():

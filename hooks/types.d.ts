@@ -61,6 +61,15 @@ export type Dismissal = { dismissed: true; withdrawn?: true; answeredAt: number 
 /** How an item was resolved: dismissed, or a question answered with a lettered choice or typed text. */
 export type Answer = { letter: string; text: string; answeredAt: number } | Dismissal
 
+/**
+ * How a request was resolved: done, declined, or withdrawn, with the person's
+ * one line of `text` when they gave one. A decline is a dismissal.
+ */
+export type Outcome =
+  | { done: true; text?: string; answeredAt: number }
+  | { dismissed: true; declined: true; text?: string; answeredAt: number }
+  | Dismissal
+
 /** What every item has, as `project inbox list --json` gives it, with the session whose store holds it. */
 export type Posted = {
   /** The item's number in its session, as a string such as `"3"`: what the CLI prints and takes. */
@@ -70,7 +79,7 @@ export type Posted = {
   pr: string | null
   /** When the agent posted it, in milliseconds. */
   postedAt: number
-  /** The question or the notice, in one line. */
+  /** The question, the notice, or the request, in one line. */
   subject: string
   detail: string
   /** The subagent that posted it. */
@@ -100,7 +109,22 @@ export type Notice = Posted & {
   answer?: Dismissal
 }
 
-export type Item = Question | Notice
+/**
+ * A request for work only you can do, whose `detail` holds its steps; its
+ * outcome, done or declined, goes back to the agent that posted it.
+ */
+export type Request = Posted & {
+  kind: 'request'
+  answer?: Outcome
+  claim?: { token: string; renewedAt: number }
+  /** When the person restored the request after its agent may have heard `DECLINED`, until `RESTORED` is delivered. */
+  restoredAt?: number
+}
+
+export type Item = Question | Notice | Request
+
+/** An item whose answer or outcome goes back to the agent that posted it. */
+export type Answerable = Question | Request
 
 /** What the panel's header counts, and can collapse to one line: the pull requests, or a kind of item. */
 export type Section = 'pr' | Item['kind']

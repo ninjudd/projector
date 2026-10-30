@@ -715,7 +715,7 @@ class ReviseTests(InboxCase):
         self.run_cli("withdraw", "3", "--session", "s1")
         items = [self.item(ref) for ref in (1, 2, 3)]
         for ref, said in (("1", "1 is already answered, as 1.a"), ("3", "3 is already withdrawn"),
-                          ("2", "2 is a notice, and only a question can be revised")):
+                          ("2", "2 is a notice, and only a question or a request can be revised")):
             with self.subTest(ref=ref):
                 code, out, err = self.run_cli("revise", ref, "--detail", "x", "--session", "s1")
                 self.assertEqual((65, ""), (code, out))
@@ -1004,6 +1004,131 @@ class RestoreTests(InboxCase):
         holder.stdin.close()
         self.assertEqual(0, holder.wait())
         self.assertEqual(0, self.restore()[0])
+
+
+class RequestTests(InboxCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.ask("Decline it?", "--recommend", "Decline it")
+
+    def request(self, subject: str = "Test the gutters", *args: str) -> str:
+        code, out, err = self.run_cli("request", subject, "--session", "s1", *args)
+        self.assertEqual(0, code, err)
+        return out.strip()
+
+    def watch(self) -> str:
+        return self.run_cli("watch", "--once", "--session", "s1")[1]
+
+    def test_numbers_a_request_in_the_count_every_kind_uses(self) -> None:
+        steps = self.scratch / "steps.md"
+        steps.write_text("1. Open Fyra.\n2. Hold a track.\n")
+        self.assertEqual("2", self.request("Test the gutters", "--detail-file", str(steps), "--agent", "agent-7",
+                                           "--pr", "acme/app#12"))
+        request = self.item(2)
+        self.assertEqual(("request", "Test the gutters", "1. Open Fyra.\n2. Hold a track.", "agent-7", "acme/app#12"),
+                         (request["kind"], request["subject"], request["detail"], request["agentId"], request["pr"]))
+        self.assertNotIn("choices", request)
+        self.assertEqual("3", self.ask("Rebase?", "--recommend", "Yes"))
+
+    def test_refuses_a_request_that_fails_a_check_and_writes_nothing(self) -> None:
+        count = (self.folder() / "count.json").read_text()
+        for args in (["Two\nlines"], ["x" * 121], [" "], ["Bad pull", "--pr", "12"]):
+            with self.subTest(args=args[0][:12]):
+                code, _, err = self.run_cli("request", *args, "--session", "s1")
+                self.assertEqual(65, code, err)
+                self.assertIn("request", err)
+        self.assertEqual(count, (self.folder() / "count.json").read_text())
+
+    def test_done_delivers_its_outcome_once(self) -> None:
+        self.request()
+        self.assertEqual((0, "done 2\n", ""), self.run_cli("done", "2", "--session", "s1"))
+        self.assertEqual({"done": True}, {key: value for key, value in self.item(2)["answer"].items()
+                                          if key != "answeredAt"})
+        self.assertEqual("DONE 2 Test the gutters\n", self.watch())
+        self.assertEqual("", self.watch())
+        code, _, err = self.run_cli("done", "2", "--session", "s1")
+        self.assertEqual(65, code)
+        self.assertIn("already done", err)
+
+    def test_an_outcome_carries_the_persons_one_line(self) -> None:
+        self.request()
+        self.request("Sign in to TestFlight")
+        self.assertEqual(0, self.run_cli("done", "2", "--text", " 4 didn't work ", "--session", "s1")[0])
+        self.assertEqual(0, self.run_cli("decline", "3", "--text", "No phone today", "--session", "s1")[0])
+        self.assertEqual("DONE 2 Test the gutters → 4 didn't work\nDECLINED 3 Sign in to TestFlight → No phone today\n",
+                         self.watch())
+        self.request("Run the migration")
+        code, _, err = self.run_cli("done", "4", "--text", "two\nlines", "--session", "s1")
+        self.assertEqual((65, "open"), (code, cli.item_state(self.item(4))))
+        self.assertIn("one line", err)
+
+    def test_declining_is_a_dismissal_that_restore_reopens(self) -> None:
+        self.request()
+        self.assertEqual((0, "declined 2\n", ""), self.run_cli("decline", "2", "--session", "s1"))
+        answered = self.item(2)["answer"]
+        self.assertEqual((True, True), (answered["dismissed"], answered["declined"]))
+        self.assertNotIn("text", answered)
+        self.assertEqual("DECLINED 2 Test the gutters\n", self.watch())
+        self.assertEqual(0, self.run_cli("restore", "2", "--session", "s1")[0])
+        self.assertEqual("open", cli.item_state(self.item(2)))
+        self.assertEqual("RESTORED 2 Test the gutters\n", self.watch())
+
+    def test_dismissing_a_request_declines_it(self) -> None:
+        self.request()
+        self.assertEqual(0, self.run_cli("dismiss", "2", "--session", "s1")[0])
+        self.assertTrue(self.item(2)["answer"]["declined"])
+        self.assertEqual("DECLINED 2 Test the gutters\n", self.watch())
+
+    def test_a_withdrawn_request_sends_nothing(self) -> None:
+        self.request()
+        self.assertEqual(0, self.run_cli("withdraw", "2", "--session", "s1")[0])
+        self.assertNotIn("declined", self.item(2)["answer"])
+        self.assertEqual("", self.watch())
+
+    def test_a_request_takes_no_answer_and_another_kind_no_outcome(self) -> None:
+        self.request()
+        code, _, err = self.run_cli("answer", "2.a", "--session", "s1")
+        self.assertEqual(65, code)
+        self.assertIn("project inbox done", err)
+        self.assertIn("project inbox decline", err)
+        self.run_cli("tell", "Pushed", "--session", "s1")
+        for args in (["done", "1"], ["decline", "1"], ["done", "3"], ["decline", "3"]):
+            with self.subTest(args=args):
+                code, _, err = self.run_cli(*args, "--session", "s1")
+                self.assertEqual(65, code)
+                self.assertIn("only a request", err)
+
+    def test_restore_refuses_a_request_that_was_done(self) -> None:
+        self.request()
+        self.run_cli("done", "2", "--session", "s1")
+        code, _, err = self.run_cli("restore", "2", "--session", "s1")
+        self.assertEqual(65, code)
+        self.assertIn("already done", err)
+
+    def test_revises_a_request_with_its_own_flags(self) -> None:
+        self.request("Test the gutters", "--detail", "1. Open Fyra.")
+        self.assertEqual(0, self.run_cli("revise", "2", "--request", "Test the new gutters", "--session", "s1")[0])
+        self.assertEqual(("Test the new gutters", "1. Open Fyra."), (self.item(2)["subject"], self.item(2)["detail"]))
+        self.assertEqual(0, self.run_cli("revise", "2", "--detail", "1. Open the new build.", "--session", "s1")[0])
+        self.assertEqual("1. Open the new build.", self.item(2)["detail"])
+        for args in (["--question", "Why?"], ["--recommend", "Yes"], ["--option", "No"], ["--request", "x" * 121]):
+            with self.subTest(args=args[0]):
+                code, _, err = self.run_cli("revise", "2", *args, "--session", "s1")
+                self.assertEqual(65, code, err)
+        code, _, err = self.run_cli("revise", "1", "--request", "Do it", "--session", "s1")
+        self.assertEqual(65, code)
+        self.assertIn("--question", err)
+
+    def test_lists_and_shows_a_request_by_its_kind_and_state(self) -> None:
+        self.request("Test the gutters", "--detail", "1. Open Fyra.")
+        self.request("Sign in")
+        self.request("Run the migration")
+        self.run_cli("done", "3", "--session", "s1")
+        self.run_cli("decline", "4", "--session", "s1")
+        self.assertEqual("2 Test the gutters\n\n1. Open Fyra.\n\nopen\n", self.run_cli("show", "2")[1])
+        self.assertEqual(["1\tquestion\topen\tDecline it?", "2\trequest\topen\tTest the gutters",
+                          "3\trequest\tdone\tSign in", "4\trequest\tdeclined\tRun the migration"],
+                         self.run_cli("list", "--session", "s1")[1].splitlines())
 
 
 if __name__ == "__main__":

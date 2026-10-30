@@ -1,7 +1,7 @@
 import type { AgentInfo, ConfigRow, FsEntry, On, PromptEditInput, PromptEditResult } from 'claude-code'
 import { expect, mock, test, type Engine, type Mounted } from 'claude-code/testing'
 
-import type { Notice, Question } from './types'
+import type { Notice, Question, Request } from './types'
 
 const HOME = '/home/ada'
 const REVIEW = `${HOME}/loops/review/tracked`
@@ -1263,7 +1263,8 @@ const TICK = 5_000
 
 type HeldQuestion = Omit<Question, 'session'>
 type HeldNotice = Omit<Notice, 'session'>
-type Held = HeldQuestion | HeldNotice
+type HeldRequest = Omit<Request, 'session'>
+type Held = HeldQuestion | HeldNotice | HeldRequest
 type Clock = ReturnType<typeof mock.clock>
 
 const HOUR = 3_600_000
@@ -1291,12 +1292,23 @@ const notice = (fields: Partial<HeldNotice> = {}): HeldNotice => ({
   ...fields,
 })
 
+const requested = (fields: Partial<HeldRequest> = {}): HeldRequest => ({
+  ref: '3',
+  kind: 'request',
+  number: 3,
+  pr: null,
+  postedAt: NOW - 30_000,
+  subject: 'Test the gutters',
+  detail: '1. Open Fyra.',
+  ...fields,
+})
+
 /** An item with the named fields cleared. */
 const without = <T extends Held>(item: T, ...keys: string[]): T =>
   Object.fromEntries(Object.entries(item).filter(([key]) => !keys.includes(key))) as T
 
-/** A question with its answer and claim cleared, as `reopen` leaves it. */
-const reopened = (question: HeldQuestion): HeldQuestion => without(question, 'answer', 'claim')
+/** A question or request with its answer and claim cleared, as `reopen` leaves it. */
+const reopened = <T extends HeldQuestion | HeldRequest>(item: T): T => without(item, 'answer', 'claim')
 
 /** `project inbox`, answered from items held in memory the way the CLI keeps them. */
 function questionStore(clock: Clock, seed: readonly Held[]) {
@@ -1330,12 +1342,16 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     const at = args.indexOf(`--${name}`)
     return at === -1 ? undefined : args[at + 1]
   }
-  const textOf = (question: HeldQuestion) =>
-    question.restoredAt !== undefined
-      ? `RESTORED ${question.ref} ${question.subject}`
-      : question.answer !== undefined && 'letter' in question.answer
-        ? `ANSWER ${question.ref}.${question.answer.letter} ${question.subject} → ${question.answer.text}`
-        : `DISMISSED ${question.ref} ${question.subject}`
+  const textOf = (item: HeldQuestion | HeldRequest) => {
+    const { answer, ref, subject } = item
+    if (item.restoredAt !== undefined) return `RESTORED ${ref} ${subject}`
+    if (answer !== undefined && 'letter' in answer) return `ANSWER ${ref}.${answer.letter} ${subject} → ${answer.text}`
+    if (answer !== undefined && ('done' in answer || 'declined' in answer)) {
+      const said = answer.text === undefined ? '' : ` → ${answer.text}`
+      return `${'done' in answer ? 'DONE' : 'DECLINED'} ${ref} ${subject}${said}`
+    }
+    return `DISMISSED ${ref} ${subject}`
+  }
 
   const run = (argv: string[]): Outcome | Promise<Outcome> => {
     const [, group, command = '', ...args] = argv
@@ -1363,11 +1379,11 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         })
         .then(() => listed)
     }
-    if (['ask', 'tell', 'withdraw', 'revise', 'restore'].includes(command)) {
+    if (['ask', 'tell', 'request', 'withdraw', 'revise', 'restore'].includes(command)) {
       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
     }
-    if (command === 'ask' || command === 'tell') {
+    if (command === 'ask' || command === 'tell' || command === 'request') {
       posted += 1
       const ref = String(posted)
       const agentId = flag(args, 'agent')
@@ -1384,7 +1400,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       put(
         command === 'ask'
           ? { ...common, kind: 'question', choices: [flag(args, 'recommend') ?? '', ...options] }
-          : { ...common, kind: 'notice' },
+          : { ...common, kind: command === 'tell' ? 'notice' : 'request' },
       )
       return ran(`${ref}\n`)
     }
@@ -1397,7 +1413,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       failing.locks -= 1
       return failed(75, BUSY)
     }
-    if (item.answer !== undefined && ['answer', 'dismiss', 'withdraw', 'revise', 'snooze'].includes(command)) {
+    if (item.answer !== undefined && ['answer', 'dismiss', 'done', 'decline', 'withdraw', 'revise', 'snooze'].includes(command)) {
       return failed(65, `${ref} is already answered`)
     }
     if (command === 'restore') {
@@ -1412,7 +1428,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       }
       if (!('dismissed' in item.answer)) return failed(65, `${ref} is already answered`)
       const restored = without(item, 'answer', 'deliveredAt', 'claim')
-      if (restored.kind === 'question' && (item.deliveredAt !== undefined || 'claim' in item)) {
+      if (restored.kind !== 'notice' && (item.deliveredAt !== undefined || 'claim' in item)) {
         return printed(put({ ...restored, restoredAt: time }))
       }
       return printed(put(restored))
@@ -1423,7 +1439,19 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     if (command === 'dismiss') {
       const answer = { dismissed: true as const, answeredAt: time }
       const isDelivered = awake.kind === 'notice' || isUnsaid
-      return printed(put(isDelivered ? { ...awake, answer, deliveredAt: time } : { ...awake, answer }))
+      const declined = awake.kind === 'request' ? { declined: true as const } : {}
+      const recorded = { ...awake, answer: { ...answer, ...declined } } as Held
+      return printed(put(isDelivered ? { ...recorded, deliveredAt: time } : recorded))
+    }
+    if (command === 'done' || command === 'decline') {
+      if (awake.kind !== 'request') return failed(65, `${ref} is a ${awake.kind}, and only a request can be marked ${command}`)
+      const said = flag(args, 'text')
+      const text = said === undefined ? {} : { text: said }
+      const answer =
+        command === 'done'
+          ? { done: true as const, ...text, answeredAt: time }
+          : { dismissed: true as const, declined: true as const, ...text, answeredAt: time }
+      return printed(put({ ...awake, answer }))
     }
     if (command === 'withdraw') {
       const answer = { dismissed: true as const, withdrawn: true as const, answeredAt: time }
@@ -1434,7 +1462,15 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       return printed(put({ ...item, snoozedAt: time, snoozedUntil: time + minutes * 60_000 }))
     }
     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
-    if (command === 'revise') {
+    if (command === 'revise' && item.kind === 'request') {
+      return printed(
+        put({ ...item, subject: flag(args, 'request') ?? item.subject, detail: flag(args, 'detail') ?? item.detail }),
+      )
+    }
+    if (command === 'answer' && item.kind === 'request') {
+      return failed(65, `${ref} is a request, which takes no answer; record its outcome with \`project inbox done\``)
+    }
+    if (command === 'revise' && item.kind === 'question') {
       const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
       const [recommended = '', ...others] = item.choices
       const kept = args.includes('--no-options') ? [] : options.length > 0 ? options : others
@@ -1447,7 +1483,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         }),
       )
     }
-    if (command === 'answer') {
+    if (command === 'answer' && item.kind === 'question') {
       const letter = written.slice(written.lastIndexOf('.') + 1)
       const text = flag(args, 'text') ?? item.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''
       return printed(put({ ...(awake as HeldQuestion), answer: { letter, text, answeredAt: time } }))
@@ -1569,6 +1605,7 @@ test('asks through the tool, and the panel lists the question below the pull req
   expect(session.registered).toEqual([
     expect.objectContaining({ name: 'ask', isDeferred: false }),
     expect.objectContaining({ name: 'tell', isDeferred: false }),
+    expect.objectContaining({ name: 'request', isDeferred: false }),
     expect.objectContaining({ name: 'withdraw', isDeferred: false }),
     expect.objectContaining({ name: 'revise', isDeferred: false }),
     expect.objectContaining({ name: 'restore', isDeferred: false }),
@@ -1835,6 +1872,90 @@ test('an option puts the question and its answer in the prompt, and sending it a
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
   await ui.unmount()
+})
+
+test('requests through the tool, and a request’s drawer offers Done and Declined in the options’ place and no dismiss', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock)
+  await startSession($, clock)
+
+  const called = await $.tool.call({ tool: 'mcp__projector__request', request: 'Test the gutters', detail: '1. Open Fyra.' })
+  expect(String(called.text ?? called.result)).toBe(
+    'Requested 1. Keep working on anything the result does not block; its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE 1 or DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
+  )
+  expect(session.project()).toContain('inbox request --session=s1 --detail=1. Open Fyra. -- Test the gutters')
+  expect(session.notified).toEqual(['Test the gutters'])
+
+  await clock.advance(1)
+  await clock.settle()
+  const ui = await $.ui.mount(PANEL)
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 request  \d+s$/)
+  expect((await ui.find({ type: 'Text', text: 'Test the gutters' }))?.props.color).toBe('suggestion')
+  await ui.press({ key: 'item:1' })
+  expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('1. Open Fyra.')
+  const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
+  expect(outcomes.map(button => [button.key, button.props.hotkey, button.props.plain, button.text])).toEqual([
+    ['outcome:1.done', '1', true, 'Done'],
+    ['outcome:1.declined', '2', true, 'Declined'],
+  ])
+  expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss request', 'snooze:1 9 snooze request'])
+  await ui.unmount()
+})
+
+test('Done puts the request and Done in the prompt, and sending it with notes records the outcome once', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [requested({ agentId: 'agent-1' })], { agents: [running('running')] })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:3' })
+  // Choosing an outcome records nothing yet: it fills the prompt, with room for notes under it.
+  await ui.press({ key: 'outcome:3.done' })
+  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nDone\n\n'])
+  expect(session.store.store.get('3')?.answer).toBeUndefined()
+
+  const text = '"Test the gutters"\n\nDone\n\nStep 4 didn’t work.\n'
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.submitted).toEqual([
+    { text, context: ['The subagent Fix #7 (agent-1) requested "Test the gutters"; send it the outcome this prompt gives.'] },
+  ])
+  expect(session.project().filter(command => command.startsWith('inbox done'))).toEqual(['inbox done 3 --session s1 --json'])
+  expect(session.store.store.get('3')?.answer).toEqual(expect.objectContaining({ done: true }))
+  expect(session.store.store.get('3')?.deliveredAt).toBeDefined()
+  // The prompt carried the outcome and the notes, so the panel sends nothing more.
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.sent).toEqual([])
+  expect(session.submitted).toHaveLength(1)
+
+  // The done request still opens, Done marked, the rest muted, and nothing left to press.
+  await ui.press({ key: 'item:3' })
+  expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /^Declined/ }))?.props.color).toBe('subtle')
+  expect((await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))).toEqual([])
+  await ui.unmount()
+})
+
+test('a reply under a quoted request leaves it open, and a decline from a terminal reaches the agent as DECLINED', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [requested()])
+  await startSession($, clock)
+
+  await $.prompt.submit({ text: '"Test the gutters"\n\nWhich build?', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.store.store.get('3')?.answer).toBeUndefined()
+  expect(session.project().filter(command => /^inbox (done|decline)/.test(command))).toEqual([])
+
+  const answer = { dismissed: true as const, declined: true as const, text: 'No phone today', answeredAt: NOW }
+  session.store.write({ ...requested(), answer })
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.submitted.at(-1)?.text).toBe('DECLINED 3 Test the gutters → No phone today')
+  expect(session.store.store.get('3')?.deliveredAt).toBeDefined()
 })
 
 test('a question another shares the text of takes only the answer its own drawer put in the prompt', async ($, on) => {
@@ -2837,7 +2958,7 @@ test('the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, 
   expect(unknown.deny ?? unknown.text).toBe('no item 9')
 
   const empty = await $.tool.call({ tool: 'mcp__projector__revise', number: 1 })
-  expect(empty.deny ?? empty.text).toBe('give what changes: `question`, `detail`, `recommendation`, or `options`')
+  expect(empty.deny ?? empty.text).toBe('give what changes: `question`, `request`, `detail`, `recommendation`, or `options`')
 
   session.store.failing.locks = 1
   const busy = await $.tool.call(revise)

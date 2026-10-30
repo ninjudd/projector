@@ -76,9 +76,9 @@ where it lives. Claude invokes a skill as `/projector:<skill>` and Codex as
 work together.
 
 In Claude Code, the plugin also shows Projector's panel above the prompt.
-It lists your loops' pull requests and your inbox: the questions and
-notices that agents post with the `ask` and `tell` tools or with
-`project inbox`. See
+It lists your loops' pull requests and your inbox: the questions, notices,
+and requests that agents post with the `ask`, `tell`, and `request` tools or
+with `project inbox`. See
 [Read your inbox in Projector's panel](docs/plugins.md#read-your-inbox-in-projectors-panel)
 and [Use the inbox](docs/cli.md#use-the-inbox).
 

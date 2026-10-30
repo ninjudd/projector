@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -309,3 +309,29 @@ path.
   `blocked` marks, and the wording of the drawer's start action are a first
   choice. Owner: ninjudd, who adjusts the panel in daily use, as § 7 of the
   [inbox](../readme.md) plan records for questions and notices.
+
+## 8. What layer 1 settled
+
+Layer 1 builds § 2 without the start action. Building it settled these
+details, each a first choice under § 7 where it concerns the look.
+
+- **Done and Declined take the options' place.** A request's drawer draws
+  **Done** on `1` and **Declined** on `2` where a question draws its
+  options, and fills the prompt the way an option does, so both kinds of
+  item answer from the same digits. The actions below them are **discuss
+  request** on `7` and **snooze request** on `9`; `8` stays empty while the
+  request is open and offers **restore request** once it is declined.
+- **The line's color is `suggestion`.** An open request's line takes the
+  theme's `suggestion` blue, apart from a question's `permission` and a
+  notice's `inactive`. The header counts requests between questions and
+  notices.
+- **`dismiss` on a request records a decline.** `project inbox dismiss`
+  prints `dismissed 5` for a request, as it does for any item, and records
+  the same decline `project inbox decline 5` does, so the agent hears
+  `DECLINED`.
+- **The relay notes say `requested`.** A subagent's request gets
+  `The subagent … requested "<request>"; send it the outcome this prompt
+  gives.`, where a question's note says `asked` and `answer`.
+- **The `request` tool's result names both routes.** The outcome arrives as
+  the person's prompt, quoting the request with `Done` or `Declined`, or as a
+  message that starts `DONE` or `DECLINED`, so the agent reads either.
