@@ -1,0 +1,234 @@
+{
+ "version": 1,
+ "name": "Inbox requests",
+ "project": "inbox/requests",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 373,
+  "title": "Let a request carry a start action the person presses start for",
+  "head": "87a22f24f0fd095f2a83f2bfe0d608439505ff4d",
+  "headRef": "inbox-requests-start",
+  "base": "d1f75b75e256ba164276777ba970ac23c40368a8",
+  "baseRef": "inbox-requests",
+  "basePr": 372
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox lets an agent post items to the person through the panel above the Claude Code prompt. Layer 1 (#372) added a <b>request</b>, work only the person can do, which they mark <b>done</b> or <b>decline</b>. This layer, layer 2 of the plan <code>docs/projects/inbox/requests</code>, adds a <b>start action</b>: one line saying what the agent does before the person can begin, such as installing a build on their phone.",
+   "<ol><li><b>The agent posts a request with a start action</b>, through <code>project inbox request --start</code> or the <code>request</code> tool's <code>start</code>.</li><li><b>The person presses start</b> on <code>8</code> in the request's drawer. The panel runs <code>project inbox start &lt;n&gt; --action &lt;the action the drawer shows&gt;</code>, which refuses with exit 65 when the agent has revised the action since, so the press consents to exactly what was read.</li><li><b>The deliverer sends <code>STARTED &lt;n&gt; &lt;request&gt; → &lt;action&gt;</code></b> through the same <code>claim</code> and <code>settle</code> path that delivers answers.</li><li><b>The agent does the action</b> and marks the request <code>ready</code>, or <code>blocked</code> with a reason, through new <code>ready</code> and <code>block</code> tools. A blocked request offers <b>retry</b>, which records a new start.</li></ol>",
+   "<code>start</code> joins the permission ask rules so an agent can't consent for the person, the agents block moves to version 20, and the plan is marked <code>completed</code>. The first review found two problems, and the second commit fixes both: <code>hooks/typecheck.sh</code> failed on four type errors in the new tests, and the request, revise, and restore tool results didn't say that <code>STARTED</code> arrives first, as the plan's § 2.4 requires."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>start action</b>: the request's <code>start</code> field, one line the person reads before pressing start.</li><li><b>started</b>: <code>{ action, startedAt, deliveredAt? }</code>, the action as it read at the press, and when <code>STARTED</code> reached the agent.</li><li><b>progress</b>: <code>{ state, reason?, at }</code>, the agent's <code>ready</code> or <code>blocked</code>.</li><li><b>owed line</b>: the next message an item owes its agent, <code>answer</code>, <code>restored</code>, or <code>started</code>.</li><li><b>claim</b>: a deliverer's hold on an owed line, which now records which line it took.</li></ul>"
+   },
+   {
+    "id": "states",
+    "title": "How an outcome meets a pending STARTED",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>STARTED is</th><th>done or decline</th><th>withdraw</th></tr></thead><tbody><tr><td>Not yet claimed</td><td class=\"r\">Replaces it: only the outcome is sent</td><td class=\"r\">Replaces it: nothing is sent</td></tr><tr><td>Claimed, on its way</td><td class=\"r\">STARTED arrives, then the outcome</td><td class=\"r\">STARTED arrives, then nothing</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "store",
+   "title": "The start in the inbox store and the CLI",
+   "kicker": "Three new commands, and a claim that remembers which line it took",
+   "intro": [
+    "A request now stores <code>start</code>, <code>started</code>, and <code>progress</code>. <code>start</code> records the person's press, refusing an action that differs from the stored one; <code>ready</code> and <code>block</code> record the agent's progress and refuse a request that isn't started.",
+    "A <code>STARTED</code> is a second line a request can owe while it stays open, beside <code>restoredAt</code>. <code>owed_line</code> picks the next one, and <code>claim</code> records it on the claim as <code>line</code>, so <code>settle</code> finishes the right line even when an outcome lands between the claim and the settle."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Reproduced in a scratch store at this head: a stale <code>--action</code> exits 65 and records nothing; <code>start</code> exits 65 on a request without a start action, a question, a notice, a resolved request, and a second press; <code>ready</code> and <code>block</code> exit 65 before a start; retry after a block takes the same <code>--action</code> guard."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "The start's lifecycle: <code>start</code>, <code>report</code> for ready and blocked, <code>reset_start</code> on revise and restore, and the claim's recorded <code>line</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 387,
+       "text": "The order matters: an undelivered answer first, then word of a restore, then an open request's undelivered start."
+      },
+      {
+       "kind": "verify",
+       "line": 486,
+       "text": "A claimed <code>STARTED</code> keeps its claim when an outcome or withdrawal lands; an unclaimed one is removed. Reproduced both: a decline during a claimed STARTED is delivered after it settles, and a withdrawal sends nothing."
+      },
+      {
+       "kind": "context",
+       "line": 547,
+       "text": "Any revision of a request, even of its detail alone, returns it to open and drops a claim on its <code>STARTED</code>; a deliverer holding that claim then fails its settle on the token."
+      },
+      {
+       "kind": "verify",
+       "line": 665,
+       "text": "The consent guard. Both sides are stripped, and a mismatch exits 65 without writing."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "The <code>--start</code>, <code>start</code>, <code>ready</code>, and <code>block</code> flags and subcommands, and <code>list</code>'s <code>started</code>, <code>ready</code>, and <code>blocked</code> states."
+    },
+    {
+     "path": "tests/test_inbox.py",
+     "note": "<code>StartTests</code> walk the CLI lifecycle and the claim ordering."
+    }
+   ]
+  },
+  {
+   "id": "permissions",
+   "title": "Only the person presses start",
+   "kicker": "start joins the ask rules; ready and block run freely",
+   "intro": [
+    "An agent that could run <code>project inbox start</code> could consent to its own start action, so <code>start</code> joins <code>answer</code>, <code>dismiss</code>, <code>snooze</code>, <code>done</code>, and <code>decline</code> among Claude Code's ask rules and stays out of Codex's allowed list. The panel runs it itself, so a press in the panel never asks. People take the new rule by running <code>project init</code> again."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>project review rules</code> at this head reports <code>Bash(project inbox start *)</code> among the ask rules, and the Codex rules leave <code>start</code> out."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds the ask rule and the Codex allow list's <code>ready</code> and <code>block</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 97,
+       "text": "The new ask rule."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Pins the decisions for <code>start</code>, <code>ready</code>, and <code>block</code>."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "The drawer, the deliverer, and the tools",
+   "kicker": "start on 8, a stage mark on the line, and the ready and block tools",
+   "intro": [
+    "The drawer of a request with a start action shows <code>Start:</code> and the action, and offers <b>start request</b> on <code>8</code>, a digit an open request leaves free. A press passes the action the drawer shows. On exit 65 the panel drops its listing so the next check reads the store and redraws the new action. The line then ends with <code>starting</code>, <code>ready</code>, or <code>blocked</code>, and a blocked request offers <b>retry request</b> on the same key.",
+    "The deliverer treats an undelivered start like any owed line. When a <code>STARTED</code> cannot be delivered, <code>reopen</code> removes the start and a toast asks the person to press start again."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The tools, the drawer's start line and button, the stage mark, and <code>act</code>'s <code>--action</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 822,
+       "text": "The press carries the action the drawer rendered, which is what makes a stale drawer's press refusable."
+      },
+      {
+       "kind": "verify",
+       "line": 1043,
+       "text": "<code>startsFirst</code> adds the <code>STARTED</code> sentence to the <code>request</code>, <code>revise</code>, and <code>restore</code> results only for a request with a start action. A scratch panel test calling all three tools passes at this head after failing at the first head."
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "<code>needsDelivery</code> counts an undelivered start, and the tools' descriptions, schemas, and argument builders take <code>start</code>, <code>ready</code>, and <code>block</code>."
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds <code>start</code>, <code>started</code>, <code>progress</code>, and the claim's <code>line</code> to <code>Request</code>."
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "Argument builders and <code>needsDelivery</code> for a start."
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "The fake CLI learns starts, and new tests cover the drawer, the stale press, retry, a dropped <code>STARTED</code>, and the tools.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1307,
+       "text": "<code>heldRequest</code> narrows the store's item before a test reads <code>started</code> or <code>progress</code>; <code>hooks/typecheck.sh</code> exits 0 at this head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "instructions",
+   "title": "What every agent reads",
+   "kicker": "Agents block version 20 teaches the start action",
+   "intro": [
+    "The generated block in every repository's agent instructions now tells an agent to give a start action only when it must prepare something first, to act only once <code>STARTED</code> arrives and exactly as it quotes, and to mark the request ready or blocked."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The block in <code>AGENTS.md</code> matches the template byte for byte with <code>{projects_dir}</code> as <code>docs/projects</code>, version 20's hash is pinned, and no template line exceeds 79 columns."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The new sentences on the start action.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 84,
+       "text": "The added guidance starts here."
+      }
+     ]
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's copy of the block, regenerated."
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins version 20's hash."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI and panel docs, and the plan marked completed",
+   "intro": [
+    "<code>docs/cli.md</code> and <code>docs/plugins.md</code> describe the start action, the new commands and tools, and the ask rule. The plan appends § 9, what building layer 2 settled, and § 10, the outcome with a test named for each acceptance criterion, and moves to <code>completed</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/inbox/requests/readme.md",
+     "note": "Status <code>completed</code>, § 9, and § 10.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 396,
+       "text": "§ 10 now says the review loop's type check found four errors that a later commit fixes. A suggestion asks it to say the script passes, since a squash merge leaves no later commit."
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The start walkthrough, refusals, and the ask rule."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "The drawer's start, retry, and stage marks, and the <code>ready</code> and <code>block</code> tools."
+    }
+   ]
+  }
+ ]
+}
