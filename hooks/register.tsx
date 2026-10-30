@@ -1687,13 +1687,13 @@ export const register: Register = on => {
       return stage === undefined ? 'start' : stage === 'blocked' ? 'retry' : undefined
     }
     // An open request's choices take the options' place, start first while
-    // there is one to press, then done and declined, on the digits from 1.
-    // Start records your consent to the start action the line above it
-    // shows, and only that press sends `STARTED`. Done and declined each put
-    // the quoted request and its word in the prompt, with room for notes
-    // under it, and only sending it records the outcome. A resolved request's
-    // outcomes are text, the one recorded marked, followed by the person's
-    // text when they gave one.
+    // there is one to press, then the options its agent gave, on the digits
+    // from 1; declining is one of the drawer's actions. Start records your
+    // consent to the start action the line above it shows, and only that
+    // press sends `STARTED`. Each option puts the quoted request and its
+    // words in the prompt, with room for notes under it, and only sending it
+    // records the outcome. A resolved request's options are text, the one
+    // recorded marked, followed by the person's text when they gave one.
     const drawOutcomes = (request: Request) => {
       const { ref, answer } = request
       const recorded = answer === undefined ? undefined : 'done' in answer ? 'done' : 'declined' in answer ? 'declined' : undefined
@@ -1705,11 +1705,14 @@ export const register: Register = on => {
       const start = startOf(request)
       const first = start === undefined ? 1 : 2
       // The option a done was recorded with: the one whose words the
-      // outcome's text holds, or `Done` when it holds none. A done from a
-      // terminal with other text matches none, and neither does a decline, so
-      // each takes a line of its own.
+      // outcome's text holds, or else a `Done` option, with the text as its
+      // notes. A done whose text matches no option on a request offering no
+      // `Done`, and a decline, each take a line of their own.
       const choices = choicesOf(request)
-      const chosen = recorded === 'done' ? choices.find(choice => choice === (said ?? 'Done')) : undefined
+      const chosen =
+        recorded === 'done'
+          ? (choices.find(choice => choice === said) ?? choices.find(choice => choice === 'Done'))
+          : undefined
       const notes = said === chosen ? undefined : said
       const marked = <Text color="success"> ✓</Text>
 

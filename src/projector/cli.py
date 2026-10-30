@@ -801,7 +801,8 @@ def add_inbox_parser(subcommands) -> None:
     revise.add_argument("--recommend", help="the new recommended answer, which becomes answer a")
     options = revise.add_mutually_exclusive_group()
     options.add_argument("--option", action="append",
-                         help="another answer; repeat for each, up to five, to replace every option but answer a")
+                         help="another answer; repeat for each, up to five, to replace every option but a question's "
+                              "answer a, or every option of a request")
     options.add_argument("--no-options", action="store_true",
                          help="drop every option but a question's answer a, or every option of a request")
     detail = revise.add_mutually_exclusive_group()

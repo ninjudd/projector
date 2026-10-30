@@ -1969,6 +1969,21 @@ test('requests through the tool, and a request’s drawer offers the agent’s o
   await ui.unmount()
 })
 
+test('a done with text from a terminal marks a request’s Done option and shows the text beside it, on one line', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { done: true as const, text: "Step 4 didn't work", answeredAt: NOW - 1_000 }
+  questionWorld(on, clock, [requested({ choices: undefined, answer, deliveredAt: NOW - 1_000 })])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:3' })
+  expect((await ui.findAll({ type: 'Text', text: /^Done/ })).map(found => found.text)).toEqual([
+    "Done ✓ Step 4 didn't work",
+  ])
+  await ui.unmount()
+})
+
 test('a request posted without options offers a single Done, which records done with no text', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

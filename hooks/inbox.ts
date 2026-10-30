@@ -567,7 +567,7 @@ export const REVISE_SCHEMA = {
       items: { type: 'string' },
       maxItems: 5,
       description:
-        'Every other answer, up to five, each written in full and lettered b, c, and on in this order; an empty list leaves only the recommendation.',
+        'For a question, every other answer, up to five, each written in full and lettered b, c, and on in this order; an empty list leaves only the recommendation. For a request, every option, up to five, in order; an empty list removes them, so the request offers a single Done.',
     },
     detail: {
       type: 'string',
