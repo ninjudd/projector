@@ -168,6 +168,12 @@ beside `ask` and `tell`, with `isDeferred: false`.
   retry.
 - **`revise`** takes `request` and `start` for a request, beside `detail`.
   **`withdraw`** and **`restore`** take a request unchanged.
+- **`revise`** and **`restore`** name the messages a request's agent
+  expects. Today their results tell the agent to expect `ANSWER` or
+  `DISMISSED` for any item that isn't a notice. For a request they name
+  `DONE` and `DECLINED`, `STARTED` first when there is a start action, and
+  for `restore`, `RESTORED` first for an agent that already heard
+  `DECLINED`.
 - **`ask`** and **`tell`** add one sentence to their descriptions: when the
   person needs to do something, use `request`.
 
