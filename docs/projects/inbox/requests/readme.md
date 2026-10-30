@@ -364,9 +364,13 @@ details, each a first choice under § 7 where it concerns the look.
 - **A failed `STARTED` says so.** Its toast reads `the start of "<request>"
   did not reach its agent; press start again`, and **start** returns.
 - **The agents block teaches the start action.** Version 20 tells an agent
-  to give a start action only when it must prepare something first, to do it
-  only once `STARTED` arrives and exactly as that message quotes it, and then
-  to mark the request ready or blocked.
+  to give a start action only when it must prepare something first, and to
+  do the slow part, such as building the app, before it posts the request,
+  so the start action only installs and launches it and the person is not
+  left waiting once they press start. It tells the agent to do the start
+  action only once `STARTED` arrives and exactly as that message quotes it,
+  and then to mark the request ready or blocked. The `request` tool's
+  description says the same.
 
 ## 10. Outcome
 
