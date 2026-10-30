@@ -79,11 +79,14 @@ done and decline, and layer 2 adds the start action.
    line that isn't blank is exactly `Done` or `Declined` as that outcome. The
    rest of the text, up to the next quote, is your notes. The hook runs
    `project inbox done` or `decline`, then `claim` and `delivered`, because
-   the prompt itself carried the outcome and your notes to the main loop. When
-   a subagent posted the request, the hook names it in the prompt's
-   `context` with `relayNote`, as it does for a question. A quoted request
-   followed by any other text replies to it and leaves it open, as a reply to
-   a question does, and `replyNote` names the subagent for a reply.
+   the prompt itself carried the outcome and your notes to the main loop.
+   When a claimed `STARTED` is still being delivered, `claim` refuses the
+   outcome, and the hook leaves its line to the deliverer, which sends `DONE`
+   or `DECLINED` after `STARTED`. When a subagent posted the request, the
+   hook names it in the prompt's `context` with `relayNote`, as it does for a
+   question. A quoted request followed by any other text replies to it and
+   leaves it open, as a reply to a question does, and `replyNote` names the
+   subagent for a reply.
 8. From a terminal, `project inbox done <number> [--text <line>]` and
    `decline` record the outcome, and the deliverer sends `DONE 5 <request> →
    <text>` or `DECLINED 5 <request> → <text>`, without the arrow and text when
@@ -115,9 +118,13 @@ notices, with these fields.
 
 A request owes its agent a line when it has an undelivered `answer`, a
 `restoredAt`, or a `started` without `deliveredAt`. `claim` takes the first
-of those, and `settle` marks it delivered or undoes it: a failed `STARTED`
-removes `started`. Recording `done` or `decline` removes a `started` that
-was not yet delivered, and its claim, because the outcome replaces it.
+of those and records which line it took, and `settle` marks that line
+delivered or undoes it: a failed `STARTED` removes `started`. Recording
+`done`, `decline`, or `withdraw` removes a `started` that no deliverer has
+claimed, because the outcome replaces it, so a request the agent withdrew
+owes no line at all. A claimed `STARTED` may already wait in the session's
+queue as a prompt that nothing can recall, so it keeps its claim, and the
+outcome's line is owed once `settle` finishes the `STARTED`.
 
 `project inbox list` prints a request's state as `open`, `started`,
 `ready`, `blocked`, `done`, `declined`, or `withdrawn`, from the fields
@@ -247,7 +254,8 @@ A refusal follows `ask`'s rules: exit `65` gives the check that failed.
 | Layer 2: `start` on a request with no start action, or twice before ready | Exits `65` |
 | Layer 2: `revise 5 --start "Install build d41f…"`, then **start** on a drawer that still shows the old action | `start` exits `65` and records nothing; the drawer shows the new action, and no `STARTED` is sent |
 | An agent's `project inbox start`, `done`, or `decline` | Prompts for permission under Projector's rules; `request`, `ready`, and `block` do not |
-| Press **done** before a pending `STARTED` is delivered | The agent hears the outcome only |
+| Press **done**, or `withdraw` the request, while a `STARTED` waits that no deliverer has claimed | The `STARTED` is removed; the agent hears the outcome only, and nothing after a withdrawal |
+| Press **done** while a claimed `STARTED` is being delivered | The agent hears `STARTED`, then the outcome |
 
 Tests in `tests/test_inbox.py` and `hooks/inbox.test.ts` cover each row in
 temporary stores, and `tests/test_permissions.py` covers the rules. They fail
