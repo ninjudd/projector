@@ -1036,6 +1036,16 @@ function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
 }
 
 /**
+ * What a tool's result says first about a request with a start action: that
+ * `STARTED` arrives once the person presses start, and what to do then.
+ * Empty for a request without one.
+ */
+const startsFirst = (hasStart: boolean, ref: string) =>
+  hasStart
+    ? ` Once the person presses start, a message that starts STARTED ${ref} arrives first, quoting the start action; do exactly that, then mark the request ready or blocked.`
+    : ''
+
+/**
  * Runs the `project inbox` command one of the tools makes: what it printed,
  * or why the tool call is refused. `instead` says where the agent turns when
  * the command does not finish.
@@ -1128,8 +1138,9 @@ export const register: Register = on => {
     if ('deny' in posted) return posted
     const ref = posted.stdout.trim()
     void $.ui.notify(String(e.request), { title: 'Projector request' }).catch(() => undefined)
+    const hasStart = typeof e.start === 'string' && e.start !== ''
     return {
-      result: `Requested ${ref}. Keep working on anything the result does not block; its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE ${ref} or DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
+      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE ${ref} or DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the request; ask the person in the conversation instead' }))
 
@@ -1185,7 +1196,7 @@ export const register: Register = on => {
     return {
       result:
         item.kind === 'request'
-          ? `Revised ${ref}. Projector’s panel shows the new text, and its outcome still arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
+          ? `Revised ${ref}. Projector’s panel shows the new text, and the request is open again.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
           : `Revised ${ref}. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
     }
   }).catch(() => ({
@@ -1209,7 +1220,7 @@ export const register: Register = on => {
         item.kind === 'notice'
           ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it; nothing comes back to you.`
           : item.kind === 'request'
-            ? `Restored ${ref}. It is open in Projector’s panel again, and its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}. An agent that already heard DECLINED ${ref} hears RESTORED ${ref} first.`
+            ? `Restored ${ref}. It is open in Projector’s panel again. An agent that already heard DECLINED ${ref} hears RESTORED ${ref} first.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
             : `Restored ${ref}. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
     }
   }).catch(() => ({

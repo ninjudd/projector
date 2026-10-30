@@ -392,5 +392,7 @@ adjust, as § 7 says.
 
 The panel's tick still reads the store only when a file changes, and a
 request adds no process to it, as § 5 planned. `hooks/typecheck.sh` needs
-the declarations an interactive `claude --plugin-dir .` session writes, so it
-did not run while this was built.
+the declarations an interactive `claude --plugin-dir .` session writes, which
+the checkouts this was built in lacked. The review loop's run of it on layer
+2's first head found four type errors in `hooks/panel.test.tsx`, which the
+next commit fixes; run the script again where the declarations exist.

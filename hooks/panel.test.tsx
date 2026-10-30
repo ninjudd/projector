@@ -1303,6 +1303,9 @@ const requested = (fields: Partial<HeldRequest> = {}): HeldRequest => ({
   ...fields,
 })
 
+/** A held item when it is a request, so a test reads a request's own fields. */
+const heldRequest = (item: Held | undefined): HeldRequest | undefined => (item?.kind === 'request' ? item : undefined)
+
 /** An item with the named fields cleared. */
 const without = <T extends Held>(item: T, ...keys: string[]): T =>
   Object.fromEntries(Object.entries(item).filter(([key]) => !keys.includes(key))) as T
@@ -1403,10 +1406,13 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         ...(agentId === undefined ? {} : { agentId }),
       }
       const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
+      const start = flag(args, 'start')
       put(
         command === 'ask'
           ? { ...common, kind: 'question', choices: [flag(args, 'recommend') ?? '', ...options] }
-          : { ...common, kind: command === 'tell' ? 'notice' : 'request' },
+          : command === 'tell'
+            ? { ...common, kind: 'notice' }
+            : { ...common, kind: 'request', ...(start === undefined ? {} : { start }) },
       )
       return ran(`${ref}\n`)
     }
@@ -1464,7 +1470,9 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       }
       const reason = flag(args, 'reason')
       const progress =
-        command === 'ready' ? { state: 'ready' as const, at: time } : { state: 'blocked' as const, reason, at: time }
+        command === 'ready'
+          ? { state: 'ready' as const, at: time }
+          : { state: 'blocked' as const, ...(reason === undefined ? {} : { reason }), at: time }
       return printed(put({ ...item, progress }))
     }
     if (command === 'done' || command === 'decline') {
@@ -1487,8 +1495,16 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     }
     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
     if (command === 'revise' && item.kind === 'request') {
+      // A revised request returns to open, as the CLI resets it.
+      const start = flag(args, 'start') ?? item.start
+      const revised = without(item, 'started', 'progress', 'start')
       return printed(
-        put({ ...item, subject: flag(args, 'request') ?? item.subject, detail: flag(args, 'detail') ?? item.detail }),
+        put({
+          ...revised,
+          subject: flag(args, 'request') ?? item.subject,
+          detail: flag(args, 'detail') ?? item.detail,
+          ...(start === undefined || start === '' ? {} : { start }),
+        }),
       )
     }
     if (command === 'answer' && item.kind === 'request') {
@@ -1529,7 +1545,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     if (command === 'delivered' || command === 'reopen') {
       if (item.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
       // A start's line marks the start delivered, or takes it back when it failed.
-      if (item.kind === 'request' && item.claim.line === 'started') {
+      if (item.kind === 'request' && item.claim?.line === 'started') {
         const settled = without(item, 'claim')
         return printed(
           put(
@@ -1919,7 +1935,7 @@ test('requests through the tool, and a request’s drawer offers Done and Declin
 
   const called = await $.tool.call({ tool: 'mcp__projector__request', request: 'Test the gutters', detail: '1. Open Fyra.' })
   expect(String(called.text ?? called.result)).toBe(
-    'Requested 1. Keep working on anything the result does not block; its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE 1 or DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
+    'Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE 1 or DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
   )
   expect(session.project()).toContain('inbox request --session=s1 --detail=1. Open Fyra. -- Test the gutters')
   expect(session.notified).toEqual(['Test the gutters'])
@@ -2045,7 +2061,7 @@ test('a press of start on a drawer the agent revised since records nothing and s
   session.store.write(requested({ start: 'Install build d41f on your iPhone' }))
   await ui.press({ key: 'start:3' })
   await clock.settle()
-  expect(session.store.store.get('3')?.started).toBeUndefined()
+  expect(heldRequest(session.store.store.get('3'))?.started).toBeUndefined()
   await clock.advance(TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: 'Start: Install build d41f on your iPhone' })).toBeDefined()
@@ -2075,7 +2091,7 @@ test('a blocked request shows its reason and retry on 8, and a ready one says so
   await ui.press({ key: 'retry:3' })
   await clock.settle()
   expect(session.project()).toContain(`inbox start 3 --action=${INSTALL} --session s1 --json`)
-  expect(session.store.store.get('3')?.progress).toBeUndefined()
+  expect(heldRequest(session.store.store.get('3'))?.progress).toBeUndefined()
 
   await ui.press({ key: 'close:3' })
   await ui.press({ key: 'item:4' })
@@ -2098,7 +2114,7 @@ test('a STARTED that cannot be delivered takes the start back, says so, and offe
   expect(session.toasts).toEqual([
     'projector: the start of "Test the gutters" did not reach its agent (a hook refused it); press start again',
   ])
-  expect(session.store.store.get('3')?.started).toBeUndefined()
+  expect(heldRequest(session.store.store.get('3'))?.started).toBeUndefined()
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:3' })
   expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeDefined()
@@ -2118,6 +2134,29 @@ test('a request without a start action shows no start line, no start, and no mar
   expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'outcome:3.done' })).toBeDefined()
   await ui.unmount()
+})
+
+test('the request, revise, and restore results say STARTED comes first for a request with a start action', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock)
+  await startSession($, clock)
+  const first =
+    'Once the person presses start, a message that starts STARTED 1 arrives first, quoting the start action; do exactly that, then mark the request ready or blocked.'
+
+  const posted = await $.tool.call({ tool: 'mcp__projector__request', request: 'Test the gutters', start: INSTALL })
+  expect(String(posted.text ?? posted.result)).toContain(first)
+  expect(session.project()).toContain(`inbox request --session=s1 --start=${INSTALL} -- Test the gutters`)
+  const revised = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, detail: '1. Open Fyra.' })
+  expect(String(revised.text ?? revised.result)).toBe(
+    `Revised 1. Projector’s panel shows the new text, and the request is open again. ${first} Its outcome arrives as a message that starts DONE 1 or DECLINED 1.`,
+  )
+  session.store.write({ ...requested({ ref: '1', number: 1, start: INSTALL }), answer: { dismissed: true, declined: true, answeredAt: NOW } })
+  const restored = await $.tool.call({ tool: 'mcp__projector__restore', number: 1 })
+  expect(String(restored.text ?? restored.result)).toContain(first)
+
+  const plain = await $.tool.call({ tool: 'mcp__projector__request', request: 'Sign in' })
+  expect(String(plain.text ?? plain.result)).not.toContain('STARTED')
 })
 
 test('the ready and block tools mark a started request, and the panel shows it at once', async ($, on) => {
