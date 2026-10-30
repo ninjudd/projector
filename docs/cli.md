@@ -2042,10 +2042,10 @@ such as Projector's panel in Claude Code, uses the steps `watch` takes:
 
 | Command | What it does |
 | --- | --- |
-| `claim <number>` | Claims an answer, or word of a restore, for delivery and prints a token and the text to send; exits 65 when it is already claimed or delivered |
+| `claim <number>` | Claims an answer, word of a restore, or an `UNCLEAR` line for delivery and prints a token and the text to send; exits 65 when it is already claimed or delivered |
 | `claim <number> --renew <token>` | Keeps that claim live while its delivery is pending |
-| `delivered <number> --claim <token>` | Marks the claimed answer delivered |
-| `reopen <number> --claim <token>` | Clears the answer when its delivery failed, so the question is open again |
+| `delivered <number> --claim <token>` | Marks the claimed answer or `UNCLEAR` line delivered |
+| `reopen <number> --claim <token>` | Clears the answer when its delivery failed, so the question is open again, or, for an `UNCLEAR` line, takes back the item's `unclear` mark, so you say it again |
 
 A claimed `RESTORED` line is done after either `delivered` or `reopen`: no
 deliverer sends it again, and the question stays open. A restore, or an
@@ -2073,10 +2073,12 @@ $ project inbox tell "Force-pushed #337 to drop a stray debug file" \
 
 `tell` refuses, with exit code 65, an empty notice, a notice longer than one
 line or 120 characters, a notice that holds a tab, and a `--pr` that is not
-`owner/repo#number`. A notice has no options, so `answer` and `claim` refuse
-one with exit code 65. Once you have read it, run `project inbox dismiss 4`.
-Nothing goes back to the agent, so the dismissal also marks the notice
-delivered, and `list` shows it, as `dismissed`, only with `--all`.
+`owner/repo#number`. A notice has no options, so `answer` refuses one with
+exit code 65. So does `claim`, unless the notice owes an `UNCLEAR` line, as
+`unclear` below describes. Once you have read it, run
+`project inbox dismiss 4`. Nothing goes back to the agent, so the dismissal
+also marks the notice delivered, and `list` shows it, as `dismissed`, only
+with `--all`.
 
 An agent asks you to do something only you can do with `request`, such as
 running a command it may not run, signing in to a service, or checking a
