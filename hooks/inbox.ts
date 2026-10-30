@@ -64,16 +64,32 @@ export const proposalOf = (item: Answerable, answer: string) => `${quoteOf(item)
 /** One answer a sent prompt gives: the letter of the option it picks. */
 export type Given = { question: Question; letter: string }
 
-/** The words a request's drawer puts under its quote, and the outcome each records. */
-export const OUTCOMES = { Done: 'done', Declined: 'declined' } as const
+/**
+ * What a request's drawer offers after any start, in order: the words each
+ * puts under the request's quote, which are also its label, and its key.
+ * Both mark the request done, and say which. Declining is one of the
+ * drawer's actions, since it needs no notes.
+ */
+export const CHOICES = [
+  { word: 'Looks good', key: 'good' },
+  { word: "There's an issue", key: 'issue' },
+] as const
 
-/** One outcome a sent prompt gives a request. */
-export type Finished = { request: Request; outcome: (typeof OUTCOMES)[keyof typeof OUTCOMES] }
+/** The words under a quoted request that resolve it: the drawer's choices, and a plain `Done` or `Declined` typed by hand. */
+const OUTCOME_WORDS: ReadonlyMap<string, Finished['outcome']> = new Map([
+  ...CHOICES.map(choice => [choice.word, 'done'] as const),
+  ['Done', 'done'],
+  ['Declined', 'declined'],
+])
 
-/** The outcome a request's quote takes: the word on the first line after it, so notes can follow. */
-function outcomeIn(said: string | undefined): Finished['outcome'] | undefined {
+/** One outcome a sent prompt gives a request: done or declined, and the words that said so. */
+export type Finished = { request: Request; outcome: 'done' | 'declined'; word: string }
+
+/** The outcome a request's quote takes: the words on the first line after it, so notes can follow. */
+function outcomeIn(said: string | undefined): Omit<Finished, 'request'> | undefined {
   const word = said?.split('\n')[0]?.trim() ?? ''
-  return Object.hasOwn(OUTCOMES, word) ? OUTCOMES[word as keyof typeof OUTCOMES] : undefined
+  const outcome = OUTCOME_WORDS.get(word)
+  return outcome === undefined ? undefined : { outcome, word }
 }
 
 /**
@@ -96,8 +112,9 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
  * the prompt's end, is one of its options, whatever blank lines and spaces
  * surround it: what pressing an option puts in the prompt. A quoted open
  * request takes an outcome only when its quote ends its line and the first
- * line after it that is not blank is exactly `Done` or `Declined`; the rest
- * is the person's notes. A quote that a drawer put in the prompt, with that
+ * line after it that is not blank is exactly one of its drawer's choices,
+ * `Looks good` or `There's an issue`, or a plain `Done` or `Declined`; the
+ * rest is the person's notes. A quote that a drawer put in the prompt, with that
  * answer or alone through discuss, speaks to the item of the drawer that did
  * so last, `proposed` holding them oldest first: one of its options or
  * outcomes resolves it, and any other text replies to it. A drawer's pick
@@ -140,7 +157,7 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
       return
     }
     const outcome = outcomeIn(said)
-    if (outcome !== undefined) outcomes.push({ request: item, outcome })
+    if (outcome !== undefined) outcomes.push({ request: item, ...outcome })
   }
   for (const { end, quote } of quotes) {
     const after = text.slice(end, quotes.find(next => next.at >= end)?.at)
@@ -368,8 +385,9 @@ export const REQUEST_DESCRIPTION = described([
   'the start action. Do the start action only after it arrives, and do exactly what it quotes and nothing more.',
   'Then mark the request ready with `ready`, or, when you cannot finish, `block` it with what they should do first.',
   'Keep working on anything the result does not block. The call returns the request’s number, such as 3.',
-  'When they finish, their outcome arrives later as their prompt, quoting the request with `Done` or `Declined` and any',
-  'notes under it, or as a message that starts `DONE 3` or `DECLINED 3`. When they restore a request after you heard',
+  'When they finish, their outcome arrives later as their prompt, quoting the request with `Looks good` or',
+  "`There's an issue`, both of which mean done, and any notes under it, or as a message that starts `DONE 3`.",
+  'When they decline it, a message that starts `DECLINED 3` arrives. When they restore a request after you heard',
   '`DECLINED 3`, `RESTORED 3` arrives, and the request is open again. When they reply in their own words instead, the',
   'reply arrives as their prompt, quoting the request, and the request stays open.',
   'When you need the person to decide something rather than do it, use `ask` instead.',

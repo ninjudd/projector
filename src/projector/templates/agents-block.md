@@ -1,4 +1,4 @@
-<!-- projector:begin 20 -->
+<!-- projector:begin 21 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -94,9 +94,11 @@ what they should do first, such as unlocking the phone.
 
 When the person picks one of a question's options, the answer reaches you
 as a message that starts `ANSWER`. When they finish a request, its outcome
-reaches you as their prompt, quoting the request with `Done` or `Declined`
-and any notes under it, or as a message that starts `DONE` or `DECLINED`.
-Read the notes even when it is done, because a step can still have failed.
+reaches you as their prompt, quoting the request with `Looks good` or
+`There's an issue`, both of which mean done, and any notes under it, or as
+a message that starts `DONE`. When they decline it, a message that starts
+`DECLINED` arrives. Read the notes even when it is done, and when they say
+`There's an issue`, find out what failed before you go on.
 A declined request is the person's no, so do not post it again unless they
 ask. When they reply to a question or a request instead, answer what they
 asked. Then withdraw the item with the `withdraw` tool if the reply settles

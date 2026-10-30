@@ -564,7 +564,8 @@ test('a call of the tell tool becomes `project inbox tell`, text kept as text', 
 test('the request tool asks for work only the person can do, its steps in `detail`, and names what comes back', () => {
   expect(REQUEST_DESCRIPTION).toContain('Ask the person to do something only they can do')
   expect(REQUEST_DESCRIPTION).toContain('put the steps they follow in `detail`')
-  expect(REQUEST_DESCRIPTION).toContain('`DONE 3` or `DECLINED 3`')
+  expect(REQUEST_DESCRIPTION).toContain('or as a message that starts `DONE 3`.')
+  expect(REQUEST_DESCRIPTION).toContain('When they decline it, a message that starts `DECLINED 3` arrives.')
   expect(REQUEST_DESCRIPTION).toContain('When you need the person to decide something rather than do it, use `ask` instead.')
 })
 
@@ -584,15 +585,20 @@ test('a call of the request tool becomes `project inbox request`, text kept as t
   expect(requestArguments({ request: 'R', detail: 7 }, 's1', undefined)).toEqual({ error: '`detail` must be a string' })
 })
 
-test('Done or Declined on the line under a quoted request is its outcome, and notes may follow', () => {
+test('a choice on the line under a quoted request is its outcome, a typed Done too, and notes may follow', () => {
   const open = request()
   const outcomesIn = (text: string) => readPrompt(text, [open]).outcomes
-  expect(outcomesIn('"Test the gutters"\n\nDone\n')).toEqual([{ request: open, outcome: 'done' }])
-  expect(outcomesIn('"Test the gutters"\n\nDone\n\n4 didn’t work\nthe rest did')).toEqual([{ request: open, outcome: 'done' }])
-  expect(outcomesIn('"Test the gutters"\n\n  Declined \n\nNo phone today')).toEqual([{ request: open, outcome: 'declined' }])
-  expect(readPrompt('"Test the gutters"\n\nDone', [open])).toEqual({
+  expect(outcomesIn('"Test the gutters"\n\nLooks good\n')).toEqual([{ request: open, outcome: 'done', word: 'Looks good' }])
+  expect(outcomesIn('"Test the gutters"\n\nThere\'s an issue\n\nStep 4 didn’t work\nthe rest did')).toEqual([
+    { request: open, outcome: 'done', word: "There's an issue" },
+  ])
+  expect(outcomesIn('"Test the gutters"\n\n  Declined \n\nNo phone today')).toEqual([
+    { request: open, outcome: 'declined', word: 'Declined' },
+  ])
+  expect(outcomesIn('"Test the gutters"\n\nDone\n')).toEqual([{ request: open, outcome: 'done', word: 'Done' }])
+  expect(readPrompt('"Test the gutters"\n\nLooks good', [open])).toEqual({
     answers: [],
-    outcomes: [{ request: open, outcome: 'done' }],
+    outcomes: [{ request: open, outcome: 'done', word: 'Looks good' }],
     replies: [],
   })
 })
@@ -617,14 +623,14 @@ test('a request’s drawer owns its quote whatever follows, and a pick from befo
   const shared = request({ ref: '4', number: 4, postedAt: NOW - 10_000 })
   const done: Proposal = { ref: '4', quote: '"Test the gutters"', answer: 'Done' }
   expect(readPrompt('"Test the gutters"\n\nDone\n\nall good', [open, shared], [done]).outcomes).toEqual([
-    { request: shared, outcome: 'done' },
+    { request: shared, outcome: 'done', word: 'Done' },
   ])
   expect(readPrompt('"Test the gutters"\n\nDeclined', [open, shared], [done]).outcomes).toEqual([
-    { request: shared, outcome: 'declined' },
+    { request: shared, outcome: 'declined', word: 'Declined' },
   ])
   expect(readPrompt('"Test the gutters"\n\nDone', [open, shared])).toEqual({
     answers: [],
-    outcomes: [{ request: open, outcome: 'done' }],
+    outcomes: [{ request: open, outcome: 'done', word: 'Done' }],
     replies: [],
   })
   expect(readPrompt('"Test the gutters"\n\nDone', [open, shared], [{ ...done, isStale: true }])).toEqual({
@@ -639,7 +645,7 @@ test('a quoted request and a quoted question in one prompt each take their own',
   const open = request()
   expect(readPrompt('"Decline the finding?"\n\nDecline it\n"Test the gutters"\n\nDone\n\nfine', [asked, open])).toEqual({
     answers: [{ question: asked, letter: 'a' }],
-    outcomes: [{ request: open, outcome: 'done' }],
+    outcomes: [{ request: open, outcome: 'done', word: 'Done' }],
     replies: [],
   })
 })

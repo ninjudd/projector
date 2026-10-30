@@ -61,7 +61,8 @@ what it did to each:
   tells an agent to post a request only for work it cannot do itself, such as
   running a command it is not allowed to run or checking a change on the
   person's phone, with numbered steps that each say what the person should
-  see, and to read a done request's notes and not post a declined one again.
+  see, and to read a done request's notes, find out what failed when the
+  person says `There's an issue`, and not post a declined request again.
   It tells an agent to give a request a start action only when it must
   prepare something first, to do the slow part, such as a build, before it
   posts the request so the start is quick, to do the start action only once

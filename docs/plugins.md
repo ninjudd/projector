@@ -407,11 +407,16 @@ The items are a list below the pull requests, newest first, each line
 starting with `-`. An open question's line is drawn in the theme's
 `permission` color, the one Claude Code gives its own permission prompts,
 because an agent's question usually asks leave to do something. An open
-request's line is drawn in the theme's `suggestion` blue. An open notice's
-line is drawn in the theme's mid gray, `inactive`, apart from the `subtle` of
-a resolved or snoozed item, so you can tell which items want an answer, which
-want work, and which want a read. Each line ends with the pull request the
-item is about, as the panel labels it, and how long ago it was posted. The
+request's line is drawn in a pastel peach, `rgb(255,190,140)`, or in a
+darker orange, `rgb(180,90,40)`, on the `light` and `light-daltonized`
+themes, where the peach would read fainter than a resolved item. Claude
+Code's themes give no key a pastel apart from the question's color, so the
+panel picks the request's color by theme, as it picks its background. An
+open notice's line is drawn in the theme's mid gray, `inactive`, apart from
+the `subtle` of a resolved or snoozed item, so you can tell which items want
+an answer, which want work, and which want a read. Each line ends with the
+pull request the item is about, as the panel labels it, and how long ago it
+was posted. The
 panel appears when an item arrives or is restored, even after you hid it, and
 in a terminal the header counts the open questions, the open requests, and
 the open notices after the pull requests, before its time.
@@ -543,38 +548,46 @@ stays in the panel until you dismiss it. **dismiss notice** clears the
 notice once you have read it and closes its drawer, and nothing goes back
 to the agent.
 
-A request's drawer shows its steps, then **Done** on `1` and **Declined** on
-`2` in the options' place, then **discuss request** and **snooze request**.
-There is no **dismiss request**, because declining says the same no. Like an
-option, **Done** and **Declined** record nothing at once: each puts the quoted
-request, a blank line, and its word in the prompt, with the cursor below for
-any notes. Sending the prompt records the outcome, closes the drawer, and
-carries your notes to the agent, so nothing else goes back. Only that word
-alone on the first line under the quote counts as the outcome. Anything else
-there, such as `done?` or a question about which build to test, is a reply:
-the request stays open, and the reply reaches the agent as your prompt. A
-done or declined request's drawer marks its outcome, and a declined one offers
+A request's drawer shows its steps, then **Looks good** on `1` and **There's
+an issue** on `2` in the options' place, then **discuss request**,
+**decline request**, and **snooze request**. Like an option, **Looks good**
+and **There's an issue** record nothing at once: each puts the quoted
+request, a blank line, and its words in the prompt, with the cursor below for
+any notes. Both mark the request done, and record which you chose, so the
+notes under **There's an issue** say what went wrong. Sending the prompt
+records the outcome, closes the drawer, and carries your notes to the agent,
+so nothing else goes back. Only a choice's words, or a plain `Done` or
+`Declined`, alone on the first line under the quote count as the outcome.
+Anything else there, such as `done?` or a question about which build to
+test, is a reply: the request stays open, and the reply reaches the agent as
+your prompt. **decline request** takes the place of **dismiss**, and like
+it, declines the request at once; the agent hears `DECLINED`. To give a
+reason, use **discuss request** instead. A done request's drawer marks the
+choice it was resolved with, and a declined one says `Declined` and offers
 **restore request**.
 
 A request the agent must prepare for, such as installing a build on your
 phone, has a start action. Its drawer says `Start:` and what the agent will
-do, and offers **start request** on `8`. Opening the drawer, reading the
-steps, or leaving it open sends nothing. Press **start request** when you are
-ready to begin: the panel records the start action its drawer shows, and the
-agent hears `STARTED` with that action. If the agent revised the start action
-since the panel drew the drawer, the press records nothing, and the drawer
-shows the new action for you to read and press again. While the agent works,
-the drawer says `Starting:`, and the line ends with `starting`. Once the
-agent is done, they read `Ready:` and `ready`, in green, and you begin. When
-the agent could not do it, they read `Blocked:` with its reason and
-`blocked`, in yellow, and **retry request** takes the place of start, for you
-to press once you have done what the reason says. **Done** and **Declined**
-work throughout. A request without a start action shows none of this.
+do, and offers **Start** first, on `1`, with the two choices after it on `2`
+and `3`. Opening the drawer, reading the steps, or leaving it open sends
+nothing. Press **Start** when you are ready to begin: the panel records
+the start action its drawer shows, and the agent hears `STARTED` with that
+action. If the agent revised the start action since the panel drew the
+drawer, the press records nothing, and the drawer shows the new action for
+you to read and press again. While the agent works, the drawer says
+`Starting:`, and the line ends with `starting`. Once the agent is done, they
+read `Ready:` and `ready`, in green, and you begin. When the agent could not
+do it, they read `Blocked:` with its reason and `blocked`, in yellow, and
+**Retry** takes the place of **Start**, for you to press once you have done
+what the reason says. The two choices and **decline request** work
+throughout, the choices on `1` and `2` while there is no **Start** or
+**Retry** to press. A request without a start action
+shows none of this.
 
-**dismiss**, **restore**, and **unsnooze** act at once. A dismissed item
-stays in the list a while, struck through, as the paragraph on resolved
-items below describes, so you undo a dismissal you did not mean by opening
-its line again and choosing **restore**.
+**dismiss**, **decline**, **restore**, and **unsnooze** act at once. A
+dismissed or declined item stays in the list a while, struck through, as the
+paragraph on resolved items below describes, so you undo a dismissal you did
+not mean by opening its line again and choosing **restore**.
 
 **snooze** snoozes nothing at once. A question's options give way
 to the lengths it offers, and the action lines to a way back:
@@ -658,10 +671,11 @@ In a terminal, the panel's last line names the chord that takes the
 keyboard in, and once the panel has it, Esc and Enter.
 
 Enter on a line opens its drawer and moves the ring onto the drawer's first
-control: a question's first option, otherwise **discuss**. Tab then walks
-the options and the actions. Enter on the open line closes the drawer and
-leaves the ring on the line. A click opens and closes a drawer without
-moving the ring. In the same way, Enter on the **snooze** line moves the
+control: a question's first option, a request's **Start** or **Retry** when
+it has one and **Looks good** otherwise, and **discuss** for any other item.
+Tab then walks the options and the actions. Enter on the open line closes the
+drawer and leaves the ring on the line. A click opens and closes a drawer
+without moving the ring. In the same way, Enter on the **snooze** line moves the
 ring onto the first length, and Enter on **cancel** moves it back onto the
 **snooze** line. Enter on a pull request's **dismiss** moves it onto the
 confirmation, and Enter on `no, keep it` back onto **dismiss**.
@@ -685,10 +699,11 @@ A drawer's actions follow its options, a line each, with the digit that
 presses it before the label in the accent color, such as
 `7: discuss question`. The digits count down from 9, so the options keep
 `1` to `6` and the item's line `0`. Each label ends with what the action
-acts on: `question`, `notice`, or `PR`.
+acts on: `question`, `notice`, `request`, or `PR`.
 
 - **7** presses **discuss**.
-- **8** presses **dismiss**, or **restore** in its place. Dismiss asks to
+- **8** presses **dismiss**, or **decline** on a request, or **restore** in
+  their place. Dismiss asks to
   be sure, on `8` again to dismiss and `9` to keep the item, so dismissing
   from the keyboard is `8` `8`.
 - **9** presses **snooze**, or **unsnooze** in its place, which a pull

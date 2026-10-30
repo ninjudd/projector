@@ -25,13 +25,13 @@ import {
   askArguments,
   BLOCK_DESCRIPTION,
   BLOCK_SCHEMA,
+  CHOICES,
   forMainLoop,
   isShownAt,
   isSnoozedAt,
   letterAt,
   liveAgent,
   needsDelivery,
-  OUTCOMES,
   proposalOf,
   quoteOf,
   READY_DESCRIPTION,
@@ -104,10 +104,17 @@ const QUESTION_COLOR = 'permission'
 const NOTICE_COLOR = 'inactive'
 
 /**
- * The theme color of an open request's line: the blue Claude Code gives its
- * suggestions, apart from a question's and a notice's.
+ * The color of an open request's line by the theme it draws on: a pastel
+ * peach on a dark one, and a darker orange on a light one, where the peach
+ * would read fainter than a resolved item's `subtle`. Claude Code gives no
+ * theme key a pastel apart from a question's `permission`; even `suggestion`
+ * draws the same blue. Any other theme takes `OTHER_REQUEST_COLOR`.
  */
-const REQUEST_COLOR = 'suggestion'
+const REQUEST_COLORS: Record<string, string> = {
+  light: 'rgb(180,90,40)',
+  'light-daltonized': 'rgb(180,90,40)',
+}
+const OTHER_REQUEST_COLOR = 'rgb(255,190,140)'
 
 /** The kinds of item, in the order the header counts them. */
 const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice']
@@ -125,11 +132,12 @@ const STAGE_COLORS: Record<Stage, string> = { starting: 'subtle', ready: 'succes
 const stageOf = (request: Request): Stage | undefined =>
   request.progress?.state ?? (request.started === undefined ? undefined : 'starting')
 
-const KIND_COLORS: Record<Item['kind'], string> = {
+/** The color of each kind of open item's line, with the request's for the theme the panel draws on. */
+const kindColors = (requestColor: string): Record<Item['kind'], string> => ({
   question: QUESTION_COLOR,
   notice: NOTICE_COLOR,
-  request: REQUEST_COLOR,
-}
+  request: requestColor,
+})
 
 /**
  * The color of a pull request's branch on its drawer's facts line: the
@@ -250,6 +258,8 @@ const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
 const collapsed = atom({ plugin: 'projector', key: 'panelCollapsed' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
 const themeBackground = atom({ plugin: 'projector', key: 'panelThemeBackground' } as const, OTHER_BACKGROUND)
+/** The color of an open request's line for the theme, which `paint` sets with the background. */
+const themeRequestColor = atom({ plugin: 'projector', key: 'panelThemeRequestColor' } as const, OTHER_REQUEST_COLOR)
 const background = atom({ plugin: 'projector', key: 'panelBackground' } as const, AUTO)
 const isFocused = atom({ plugin: 'projector', key: 'isPanelFocused' } as const, false)
 /**
@@ -427,31 +437,34 @@ async function loadThreads($: Engine): Promise<void> {
 }
 
 /**
- * The panel's background for a Claude Code theme: by the theme's name, or
- * for a custom theme, `custom:<slug>`, by the theme its file builds on,
- * `dark` unless its `base` says otherwise. A custom theme whose file cannot
- * be read takes `OTHER_BACKGROUND`.
+ * The built-in theme a Claude Code theme draws as: the theme's own name, or
+ * for a custom theme, `custom:<slug>`, the theme its file builds on, `dark`
+ * unless its `base` says otherwise. A custom theme whose file cannot be read
+ * draws as none.
  */
-async function backgroundOf($: Engine, theme: unknown): Promise<string> {
-  if (typeof theme !== 'string') return OTHER_BACKGROUND
-  if (!theme.startsWith('custom:')) return THEME_BACKGROUNDS[theme] ?? OTHER_BACKGROUND
+async function baseOf($: Engine, theme: unknown): Promise<string | undefined> {
+  if (typeof theme !== 'string') return undefined
+  if (!theme.startsWith('custom:')) return theme
   const env = await envOf($)
   const home = env('HOME')
   const config = env('CLAUDE_CONFIG_DIR') ?? (home === undefined ? undefined : `${home}/.claude`)
-  if (config === undefined) return OTHER_BACKGROUND
+  if (config === undefined) return undefined
   try {
     const path = `${config}/themes/${theme.slice('custom:'.length)}.json`
     const base = (JSON.parse(await $.fs.read(path)) as { base?: unknown }).base ?? 'dark'
-    return typeof base === 'string' ? (THEME_BACKGROUNDS[base] ?? OTHER_BACKGROUND) : OTHER_BACKGROUND
+    return typeof base === 'string' ? base : undefined
   } catch {
-    return OTHER_BACKGROUND
+    return undefined
   }
 }
 
-/** Colors the panel for a theme ahead of the render, which then waits on no read. */
+/** Colors the panel and its requests for a theme ahead of the render, which then waits on no read. */
 async function paint($: Engine, theme: unknown): Promise<void> {
-  const color = await backgroundOf($, theme)
-  await update($, themeBackground, () => color)
+  const base = await baseOf($, theme)
+  const background = (base === undefined ? undefined : THEME_BACKGROUNDS[base]) ?? OTHER_BACKGROUND
+  const request = (base === undefined ? undefined : REQUEST_COLORS[base]) ?? OTHER_REQUEST_COLOR
+  await update($, themeBackground, () => background)
+  await update($, themeRequestColor, () => request)
 }
 
 /** The `panel.background` values the panel said it does not take, so it says so once for each. */
@@ -809,7 +822,7 @@ const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
 async function act(
   $: Engine,
   item: Item,
-  command: 'dismiss' | 'snooze' | 'restore' | 'start',
+  command: 'dismiss' | 'decline' | 'snooze' | 'restore' | 'start',
   minutes?: number,
 ): Promise<void> {
   const { ref, session } = item
@@ -1140,7 +1153,7 @@ export const register: Register = on => {
     void $.ui.notify(String(e.request), { title: 'Projector request' }).catch(() => undefined)
     const hasStart = typeof e.start === 'string' && e.start !== ''
     return {
-      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE ${ref} or DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
+      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with Looks good or There's an issue, both of which mean done, or as a message that starts DONE ${ref}; a decline arrives as a message that starts DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the request; ask the person in the conversation instead' }))
 
@@ -1300,8 +1313,11 @@ export const register: Register = on => {
     if (entered.drop === undefined) {
       for (const ref of done) void closeDrawer($, `item:${ref}`).catch(() => undefined)
       for (const one of answers) void recordFromPrompt($, one.question, ['answer', `${one.question.ref}.${one.letter}`])
-      for (const one of outcomes) {
-        void recordFromPrompt($, one.request, [one.outcome === 'done' ? 'done' : 'decline', one.request.ref])
+      // A done records which choice said so, `Looks good` or
+      // `There's an issue`, as its text; a plain `Done` or a decline needs none.
+      for (const { request, outcome, word } of outcomes) {
+        const said = outcome === 'done' && word !== 'Done' ? [`--text=${word}`] : []
+        void recordFromPrompt($, request, [outcome === 'done' ? 'done' : 'decline', request.ref, ...said])
       }
     }
     return entered
@@ -1438,6 +1454,7 @@ export const register: Register = on => {
     const edgeColumns = columns + LINE_PADDING
     const setting = await read($, background)
     const color = setting === AUTO ? await read($, themeBackground) : setting
+    const colorOf = kindColors(await read($, themeRequestColor))
     const hint = (await read($, isFocused)) ? FOCUSED_HINT : FOCUS_HINT
     // The panel's first line is its header, all in `subtle`: `HEADER_NAME` at
     // its left, and the counts and how long ago the panel reloaded at its
@@ -1504,7 +1521,7 @@ export const register: Register = on => {
             </Box>
           ) : (
             <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
-              <Text color={KIND_COLORS[section]}>{`+ ${count}`}</Text>
+              <Text color={colorOf[section]}>{`+ ${count}`}</Text>
             </Button>
           ),
         )
@@ -1641,11 +1658,6 @@ export const register: Register = on => {
         ),
       ]
     }
-    // An open request's outcomes take the options' place, on the digits 1 and
-    // 2: each puts the quoted request and its word in the prompt, with room
-    // for notes under it, and only sending it records the outcome. A resolved
-    // request's outcomes are text, the one recorded marked, followed by the
-    // person's text when they gave one.
     // An open request with a start action says above its outcomes what start
     // does, then that the agent is doing it, that it is done, or why it could
     // not be done, in the color its line's mark takes.
@@ -1666,6 +1678,22 @@ export const register: Register = on => {
         </Text>,
       ]
     }
+    // What an open request's first line presses: start, until you press it,
+    // or retry once the agent says it was blocked; nothing while the agent
+    // works or once it is ready, nor for a request without a start action.
+    const startOf = (request: Request): 'start' | 'retry' | undefined => {
+      const stage = stageOf(request)
+      if (request.answer !== undefined || request.start === undefined) return undefined
+      return stage === undefined ? 'start' : stage === 'blocked' ? 'retry' : undefined
+    }
+    // An open request's choices take the options' place, start first while
+    // there is one to press, then done and declined, on the digits from 1.
+    // Start records your consent to the start action the line above it
+    // shows, and only that press sends `STARTED`. Done and declined each put
+    // the quoted request and its word in the prompt, with room for notes
+    // under it, and only sending it records the outcome. A resolved request's
+    // outcomes are text, the one recorded marked, followed by the person's
+    // text when they gave one.
     const drawOutcomes = (request: Request) => {
       const { ref, answer } = request
       const recorded = answer === undefined ? undefined : 'done' in answer ? 'done' : 'declined' in answer ? 'declined' : undefined
@@ -1674,34 +1702,44 @@ export const register: Register = on => {
         propose(request, word)
         fill(`${proposalOf(request, word)}\n\n`)
       }
+      const start = startOf(request)
+      const first = start === undefined ? 1 : 2
+      // The choice a done was recorded with: the one whose words the
+      // outcome's text holds. A done from a terminal or a typed `Done`
+      // matches none, and neither does a decline, so each takes a line of its own.
+      const chosen = recorded === 'done' ? CHOICES.find(choice => choice.word === said) : undefined
+      const notes = said === chosen?.word ? undefined : said
+      const marked = <Text color="success"> ✓</Text>
 
       return [
         ...drawStart(request),
         <Text key={`before-outcomes:${ref}`}> </Text>,
-        ...Object.entries(OUTCOMES).map(([word, outcome], index) =>
+        start !== undefined && (
+          <Button key={`start:${ref}`} plain hotkey="1" onPress={() => void act($, request, 'start')}>
+            {start === 'start' ? 'Start' : 'Retry'}
+          </Button>
+        ),
+        ...CHOICES.map((choice, index) =>
           answer === undefined ? (
-            <Button key={`outcome:${ref}.${outcome}`} plain hotkey={String(index + 1)} onPress={() => pick(word)}>
-              {word}
+            <Button key={`outcome:${ref}.${choice.key}`} plain hotkey={String(first + index)} onPress={() => pick(choice.word)}>
+              {choice.word}
             </Button>
           ) : (
-            <Text key={`outcome:${ref}.${outcome}`} color={outcome === recorded ? undefined : 'subtle'}>
-              {word}
-              {outcome === recorded && <Text color="success"> ✓</Text>}
-              {outcome === recorded && said !== undefined && <Text color="subtle">{` ${said}`}</Text>}
+            <Text key={`outcome:${ref}.${choice.key}`} color={choice === chosen ? undefined : 'subtle'}>
+              {choice.word}
+              {choice === chosen && marked}
+              {choice === chosen && notes !== undefined && <Text color="subtle">{` ${notes}`}</Text>}
             </Text>
           ),
         ),
+        recorded !== undefined && chosen === undefined && (
+          <Text key={`outcome:${ref}.${recorded}`}>
+            {recorded === 'done' ? 'Done' : 'Declined'}
+            {marked}
+            {notes !== undefined && <Text color="subtle">{` ${notes}`}</Text>}
+          </Text>
+        ),
       ]
-    }
-    // An open request with a start action offers start on `8`, the digit an
-    // open request leaves free, until you press it, and retry there once the
-    // agent says it was blocked. Pressing it records your consent to the start
-    // action the drawer shows, and only that press sends `STARTED`.
-    const startLines = (request: Request): Line[] => {
-      const stage = stageOf(request)
-      if (request.start === undefined || (stage !== undefined && stage !== 'blocked')) return []
-      const name = stage === 'blocked' ? 'retry' : 'start'
-      return [{ name, label: `${name} request`, hotkey: '8', onPress: () => void act($, request, 'start') }]
     }
     const drawItem = (item: Item) => {
       const { ref, answer } = item
@@ -1712,12 +1750,14 @@ export const register: Register = on => {
       // through, so it reads as put off rather than dismissed.
       const isSnoozed = isSnoozedAt(item, time)
       const isOpened = opened === key
-      const color = !isOpen || isSnoozed ? 'subtle' : KIND_COLORS[item.kind]
+      const color = !isOpen || isSnoozed ? 'subtle' : colorOf[item.kind]
       const pull = pullOf(item)
       // Each action names the kind of item it acts on. A dismissed or snoozed
       // item's drawer offers to bring it back where it offered to dismiss or
       // snooze it, on the same digit; a resolved item cannot be snoozed. An
-      // open request offers no dismiss, since declining it says the same no.
+      // open request offers decline in dismiss's place, since declining it
+      // is how you set it aside, and it declines at once, as dismiss does.
+      const setAside = item.kind === 'request' ? 'decline' : 'dismiss'
       const restore = (name: string, hotkey: string): Line => ({
         name,
         label: `${name} ${item.kind}`,
@@ -1739,18 +1779,14 @@ export const register: Register = on => {
         },
         ...(isOpen
           ? [
-              ...(item.kind === 'request'
-                ? startLines(item)
-                : [
-                    {
-                      name: 'dismiss',
-                      label: `dismiss ${item.kind}`,
-                      hotkey: '8',
-                      onPress: () => {
-                        void act($, item, 'dismiss')
-                      },
-                    },
-                  ]),
+              {
+                name: setAside,
+                label: `${setAside} ${item.kind}`,
+                hotkey: '8',
+                onPress: () => {
+                  void act($, item, setAside)
+                },
+              },
               isSnoozed
                 ? restore('unsnooze', '9')
                 : {
@@ -1801,7 +1837,9 @@ export const register: Register = on => {
         : item.kind === 'question'
           ? `answer:${ref}.${letterAt(0)}`
           : item.kind === 'request'
-            ? `outcome:${ref}.${OUTCOMES.Done}`
+            ? startOf(item) === undefined
+              ? `outcome:${ref}.${CHOICES[0].key}`
+              : `start:${ref}`
             : `discuss:${ref}`
       const isSending = !isOpen && item.deliveredAt === undefined
       const stage = item.kind === 'request' && isOpen ? stageOf(item) : undefined
