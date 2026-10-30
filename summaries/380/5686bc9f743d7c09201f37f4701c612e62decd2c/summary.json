@@ -1,0 +1,93 @@
+{
+ "version": 1,
+ "name": "Inbox I don't understand action",
+ "project": "inbox/unclear",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 380,
+  "title": "Spec an I don't understand action for every inbox item",
+  "head": "5686bc9f743d7c09201f37f4701c612e62decd2c",
+  "headRef": "inbox-unclear",
+  "base": "37420c53f25e7185ea59614837ad6adb82fbb8c7",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox holds the questions, notices, and requests that agents post for you. Projector's panel, above the Claude Code prompt, lists them, and each item's drawer shows its detail and the actions you can take, each on a digit key. When an item is written in the agent's shorthand, the only way to say you don't follow is <b>discuss</b>, which makes you type a sentence. For a notice, even that fails: a notice cannot be revised, and a reply to a subagent's notice never reaches that subagent.",
+   "This pull request adds a plan, <code>inbox/unclear</code>, at status <code>ready</code> and priority <code>now</code>. It specifies an <b>I don't understand</b> action on <code>6</code> in every open item's drawer. One press runs a new person-only command, <code>project inbox unclear</code>, which records <code>unclear</code> on the item. The panel then delivers <code>UNCLEAR &lt;number&gt; &lt;subject&gt;</code> to the posting agent, by the same claim-and-settle path that <code>STARTED</code> uses, and the agent revises the item in place. Notices become revisable, and a question's other options are capped at four so that <code>6</code> stays free. No code changes in this pull request.",
+   "The plan was written before #379 merged, and #379 lets a request carry up to five options of its own. The review's two open findings both come from that: on main, a request with a start action and five options already uses <code>6</code>, and the agents block version the plan bumps to, 22, already shipped in #379."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Drawer</b>: the panel area that opens under an inbox item, with its detail, choices, and actions.</li><li><b>Line owed</b>: a message such as <code>ANSWER</code>, <code>DISMISSED</code>, or <code>STARTED</code> that the store records as waiting for delivery to the posting agent.</li><li><b>Claim</b>: a deliverer's lease on the line an item owes, so that only one deliverer sends it.</li><li><b>Agents block</b>: the versioned instructions that <code>project init</code> writes into a repository's <code>AGENTS.md</code> and <code>CLAUDE.md</code>.</li></ul>"
+   },
+   {
+    "id": "digits",
+    "title": "Drawer digits on main",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Digit</th><th>Question</th><th>Request</th><th>Notice</th></tr></thead><tbody><tr><td>1 to 6</td><td>Up to six choices</td><td>Start on 1 when there is one, then up to five options</td><td>Free</td></tr><tr><td>7</td><td colspan=\"3\">discuss</td></tr><tr><td>8</td><td colspan=\"3\">dismiss, or decline for a request</td></tr><tr><td>9</td><td colspan=\"3\">snooze or unsnooze</td></tr><tr><td>0</td><td colspan=\"3\">close the drawer</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The I don't understand plan",
+   "kicker": "A new nested plan under the completed inbox project",
+   "intro": [
+    "The plan is the only file. Its sections follow the repository's plan layout: the problem, the solution with its flow, store, CLI, tools, and files, the reasons for the design, acceptance criteria, cost, rollout, and open questions.",
+    "Read it against main, not against the merge base. Main now includes #379, which changed how a request's drawer numbers its options and took agents block version 22."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>project show inbox/unclear --json</code> and <code>project check</code> accept the plan at this head, its frontmatter matches what <code>project create</code> writes, and the parent <code>inbox</code> and <code>inbox/requests</code> plans are unchanged."
+    },
+    {
+     "kind": "context",
+     "text": "The only open question, the look of the action and its mark, has an owner and is deferred, so it does not block the <code>ready</code> status."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/inbox/unclear/readme.md",
+     "note": "The whole plan: an I don't understand action on 6 that sends UNCLEAR to the posting agent and makes notices revisable.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 44,
+       "text": "Open review finding: on main, a request with a start action and five options shows its fifth option on <code>6</code>, because #379 numbers options from <code>2</code> after Start. The plan caps only a question's options and gives no fallback for a stored request that uses <code>6</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 26,
+       "text": "On main, <code>revise</code> refuses a notice with \"withdraw it and tell again\", and <code>claim</code> refuses every notice, as this section and § 2.3 say."
+      },
+      {
+       "kind": "verify",
+       "line": 106,
+       "text": "<code>owed_line</code>, <code>claimed_line</code>, <code>claim</code>, <code>settle</code>, and <code>clear_for_outcome</code> exist on main, and a claimed <code>STARTED</code> keeps its claim through an outcome, which is the behavior this section extends to <code>unclear</code>."
+      },
+      {
+       "kind": "context",
+       "line": 125,
+       "text": "On main, <code>ASK</code> and <code>ASKED</code> in <code>permissions.py</code> list the person-only inbox commands. The module docstring, the <code>CODEX_RULES</code> comment, and two passages in <code>docs/cli.md</code> list them too, and the plan's files table does not name those."
+      },
+      {
+       "kind": "flag",
+       "line": 151,
+       "text": "Open review finding: agents block version 22 already shipped on main in #379, so the block needs version 23."
+      },
+      {
+       "kind": "context",
+       "line": 171,
+       "text": "The <code>start</code> command guards against a stale drawer with <code>--action</code>. <code>unclear</code> takes no such guard, so a press that races a revision could mark the new text unclear. The <code>revise</code> tool redraws the item as soon as the CLI returns, so the window is narrow."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
