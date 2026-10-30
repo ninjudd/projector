@@ -1,18 +1,18 @@
 """The items an agent puts in the person's inbox, kept per session under Projector's state directory.
 
 An item is a question, which the person answers or dismisses and whose answer goes back to the
-agent; a notice, which the person reads and dismisses and which sends nothing back; or a request,
-work only the person can do, which they mark done or decline and whose outcome goes back to the
-agent. A request can carry a start action, what the agent does once the person presses start,
-and the agent then marks it ready or blocked. The person can say they don't understand an open
-item of any kind, which goes back to the agent as `UNCLEAR`. The agent that posted an open item
-can withdraw it, which dismisses it and sends nothing back, and can revise its text in place. An
-item the person dismissed, declined, or snoozed can be restored, which reopens it in place. Each session numbers its items 1, 2, 3, and on, in one count across every kind. Its items
-are JSON files in their own directory, one per item and named by its number, with `count.json`
-holding the last number given. Every write happens under the
-directory's lock, an operating-system lock on its `.lock` file, and lands by renaming a temporary
-file into place, so two writers never lose each other's change and a reader never sees half a
-file.
+agent; a notice, which the person reads and dismisses and which sends back nothing but
+`UNCLEAR`; or a request, work only the person can do, which they mark done or decline and whose
+outcome goes back to the agent. A request can carry a start action, what the agent does once the
+person presses start, and the agent then marks it ready or blocked. The person can say they don't
+understand an open item of any kind, which goes back to the agent as `UNCLEAR`. The agent that
+posted an open item can withdraw it, which dismisses it and sends nothing back, and can revise its
+text in place. An item the person dismissed, declined, or snoozed can be restored, which reopens
+it in place. Each session numbers its items 1, 2, 3, and on, in one count across every kind. Its
+items are JSON files in their own directory, one per item and named by its number, with
+`count.json` holding the last number given. Every write happens under the directory's lock, an
+operating-system lock on its `.lock` file, and lands by renaming a temporary file into place, so
+two writers never lose each other's change and a reader never sees half a file.
 """
 
 from __future__ import annotations
