@@ -1981,7 +1981,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
   await ui.unmount()
 })
 
-test('requests through the tool, and a request’s drawer offers the agent’s options in the options’ place and no dismiss', async ($, on) => {
+test('requests through the tool, and a request’s drawer offers the agent’s options in the options’ place, then discuss, dismiss, and snooze', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
@@ -2016,7 +2016,7 @@ test('requests through the tool, and a request’s drawer offers the agent’s o
   expect(await actionLinesOf(ui)).toEqual([
     "unclear:1 6 I don't understand this request",
     'discuss:1 7 discuss request',
-    'decline:1 8 decline request',
+    'dismiss:1 8 dismiss request',
     'snooze:1 9 snooze request',
   ])
   await ui.unmount()
@@ -2060,7 +2060,7 @@ test('a request posted without options offers a single Done, which records done 
   await ui.unmount()
 })
 
-test('decline request on 8 declines at once, strikes the line through, and offers restore in its place', async ($, on) => {
+test('dismiss request on 8 declines it at once, strikes the line through, and offers restore in its place', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [requested()])
@@ -2068,20 +2068,22 @@ test('decline request on 8 declines at once, strikes the line through, and offer
 
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:3' })
-  expect(await ui.find({ type: 'Button', key: 'outcome:3.declined' })).toBeUndefined()
-  await ui.press({ key: 'decline:3' })
+  expect((await ui.find({ type: 'Button', key: 'dismiss:3' }))?.text).toBe('dismiss request')
+  await ui.press({ key: 'dismiss:3' })
   await clock.settle()
-  expect(session.project().filter(command => command.startsWith('inbox decline'))).toEqual([
-    'inbox decline 3 --session s1 --json',
+  expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([
+    'inbox dismiss 3 --session s1 --json',
   ])
   expect(session.filled).toEqual([])
+  // Dismissing a request records it declined, so its agent hears DECLINED.
+  expect(session.store.store.get('3')?.answer).toEqual(expect.objectContaining({ dismissed: true, declined: true }))
   const line = await ui.find({ type: 'Text', text: 'Test the gutters' })
   expect([line?.props.color, line?.props.strikethrough]).toEqual(['subtle', true])
 
   await ui.press({ key: 'item:3' })
   expect(await ui.find({ type: 'Text', text: /^Declined/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'restore:3' })).toBeDefined()
-  expect(await ui.find({ type: 'Button', key: 'decline:3' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'dismiss:3' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -2185,7 +2187,7 @@ test('start, first on 1, records the start action the drawer shows, and STARTED 
   expect(await actionLinesOf(ui)).toEqual([
     "unclear:3 6 I don't understand this request",
     'discuss:3 7 discuss request',
-    'decline:3 8 decline request',
+    'dismiss:3 8 dismiss request',
     'snooze:3 9 snooze request',
   ])
   // Opening the drawer records nothing and sends nothing.
@@ -4010,7 +4012,7 @@ test('a question stored with six choices, or a request with Start and five optio
     'outcome:3.e 6',
     'unclear:3 ',
     'discuss:3 7',
-    'decline:3 8',
+    'dismiss:3 8',
     'snooze:3 9',
   ])
   // A click or Enter still presses it.
@@ -4061,7 +4063,7 @@ test('an open item’s line closes its drawer on 0, and no other line takes 0', 
 /** The open drawer's action lines, in order: each one's key, the letter that presses it, and its label. */
 async function actionLinesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
   const actions = (await ui.findAll({ type: 'Button' })).filter(button =>
-    /^(unclear|discuss|dismiss|decline|snooze|unsnooze|restore):/.test(button.key ?? ''),
+    /^(unclear|discuss|dismiss|snooze|unsnooze|restore):/.test(button.key ?? ''),
   )
   return actions.map(action => `${action.key ?? ''} ${String(action.props.hotkey ?? '')} ${action.text}`)
 }
@@ -4198,7 +4200,7 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for 
   expect(await actionLinesOf(ui)).toEqual([
     "unclear:3 6 I don't understand this request",
     'discuss:3 7 discuss request',
-    'decline:3 8 decline request',
+    'dismiss:3 8 dismiss request',
     'snooze:3 9 snooze request',
   ])
   await ui.press({ key: 'close:3' })

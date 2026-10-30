@@ -829,7 +829,7 @@ const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
 async function act(
   $: Engine,
   item: Item,
-  command: 'dismiss' | 'decline' | 'snooze' | 'restore' | 'start' | 'unclear',
+  command: 'dismiss' | 'snooze' | 'restore' | 'start' | 'unclear',
   minutes?: number,
 ): Promise<void> {
   const { ref, session } = item
@@ -1778,10 +1778,8 @@ export const register: Register = on => {
       const pull = pullOf(item)
       // Each action names the kind of item it acts on. A dismissed or snoozed
       // item's drawer offers to bring it back where it offered to dismiss or
-      // snooze it, on the same digit; a resolved item cannot be snoozed. An
-      // open request offers decline in dismiss's place, since declining it
-      // is how you set it aside, and it declines at once, as dismiss does.
-      const setAside = item.kind === 'request' ? 'decline' : 'dismiss'
+      // snooze it, on the same digit; a resolved item cannot be snoozed.
+      // Dismissing a request declines it, so its agent hears `DECLINED`.
       const restore = (name: string, hotkey: string): Line => ({
         name,
         label: `${name} ${item.kind}`,
@@ -1829,11 +1827,11 @@ export const register: Register = on => {
         ...(isOpen
           ? [
               {
-                name: setAside,
-                label: `${setAside} ${item.kind}`,
+                name: 'dismiss',
+                label: `dismiss ${item.kind}`,
                 hotkey: '8',
                 onPress: () => {
-                  void act($, item, setAside)
+                  void act($, item, 'dismiss')
                 },
               },
               isSnoozed
