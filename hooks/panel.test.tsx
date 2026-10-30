@@ -253,13 +253,19 @@ test('draws one line per open pull request of the session’s own loops', async 
   // panel reloaded as the rows say their ages: in the short form, `0s` for a reload just now as for an item posted
   // just now. The two sit two spaces apart, so the time ends in the rows' age column, at the edge of the panel's
   // lines. All of it is `subtle`, and no rule runs through it.
-  const header = await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  0s$/ })
-  expect(header?.text).toBe(`/projector${'2 pull requests  0s'.padStart(EDGE - '/projector'.length)}`)
-  expect(header?.props.color).toBe('subtle')
+  // The count is a button of its own, so the header is three pieces.
+  const header = await headerOf(ui)
+  expect(header).toBe(`/projector${'2 pull requests  0s'.padStart(EDGE - '/projector'.length)}`)
+  const texts = await ui.findAll({ type: 'Text' })
+  expect(texts.slice(0, 3).map(found => found.text)).toEqual([
+    `/projector${' '.repeat(EDGE - '/projector'.length - '2 pull requests  0s'.length)}`,
+    '2 pull requests',
+    '  0s',
+  ])
+  expect(texts.slice(0, 3).map(found => found.props.color)).toEqual(['subtle', 'subtle', 'subtle'])
   expect(await ui.find({ type: 'Text', text: /─|updated|ago|just now/ })).toBeUndefined()
   // The rows start on the line under the header, with no blank line between.
-  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts.slice(0, 3)).toEqual([header?.text, 'ready', ''])
+  expect(texts.slice(3, 5).map(found => found.text)).toEqual(['ready', ''])
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
@@ -411,7 +417,7 @@ test('the header’s age, a pull request’s age, and the key hint end in one co
   type Drawn = { type: string; props: Record<string, unknown>; children: (Drawn | string)[] }
   const inset = (await ui.findAll({ type: 'Box' }))[0]?.props ?? {}
   const panel = (await ui.find({ key: 'panel' })) as Drawn | undefined
-  const [header, rows, hint] = (panel?.children ?? []) as Drawn[]
+  const [, rows, hint] = (panel?.children ?? []) as Drawn[]
   expect(rows?.props).toMatchObject({ flexDirection: 'column', paddingLeft: 1, paddingRight: 1 })
   const width = (value: unknown) => (typeof value === 'number' ? value : NaN)
   const textOf = (element: Drawn | undefined) => (element?.children ?? []).join('')
@@ -419,8 +425,8 @@ test('the header’s age, a pull request’s age, and the key hint end in one co
   const end = width(inset.paddingLeft) + width(panel?.props.width) - width(panel?.props.paddingRight)
   const rowsEnd = end - width(rows?.props.paddingRight)
   expect(rowsEnd - start - width(rows?.props.paddingLeft)).toBe(COLUMNS)
-  expect(textOf(header)).toMatch(/^\/projector +1 pull request  \d+s$/)
-  expect(start + textOf(header).length).toBe(rowsEnd)
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
+  expect(start + (await headerOf(ui)).length).toBe(rowsEnd)
   expect(start + textOf(hint).length).toBe(rowsEnd)
   // A row fills the rows' width, its title giving way, so its age ends at their edge.
   expect(await ui.find({ type: 'Text', text: '45s' })).toBeDefined()
@@ -855,7 +861,7 @@ test('lists your pull requests first, then everyone else’s by author, naming t
   const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
   expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
   // The header counts everyone's pull requests the panel lists, the session's own and others'.
-  expect(await ui.find({ type: 'Text', text: /^\/projector +5 pull requests  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +5 pull requests  \d+s$/)
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts.filter(text => text === ' ')).toEqual([])
 
@@ -897,7 +903,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
   await clock.settle()
 
   const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests  \d+s$/)
   await ui.press({ key: 'pr:x/y#7' })
   // The drawer's actions are lines of their own, as an item's are.
   expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
@@ -917,7 +923,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   // The header stops counting the dismissed pull request.
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
   await ui.unmount()
 })
 
@@ -1030,7 +1036,7 @@ test('lists a pull request both loops track once, as watched and reviewed, and c
 
   const ui = await $.ui.mount(PANEL)
   // The header counts its one line once, in the singular.
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
   await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
   // Each loop takes its own color, and the `and` between them the default color.
@@ -1738,7 +1744,7 @@ test('an idle session with no questions runs no inbox command', async ($, on) =>
   // Listing the store's directory starts no process; only a reload of the shown panel reads its setting.
   expect(session.project().filter(command => !command.startsWith('config get'))).toEqual([])
   const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
   await ui.unmount()
 })
 
@@ -2518,6 +2524,43 @@ test('a count in the header collapses its kind to one line at the top of the ite
   await ui.unmount()
 })
 
+test('the pull requests’ count in the header collapses them to one line in their place, and the line expands them', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  questionWorld(on, clock, [held()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  /** The panel's lines, a pull request or an item by its key and a collapsed section by what it reads. */
+  const lines = async () =>
+    (await ui.findAll({ type: 'Button' }))
+      .filter(button => /^(pr|item|expand):/.test(button.key ?? ''))
+      .map(button => (button.key?.startsWith('expand:') === true ? button.text : (button.key ?? '')))
+
+  expect(await lines()).toEqual(['pr:x/y#7', 'item:1'])
+
+  // The pull requests collapse to one line in the rows' default color, and the header keeps counting them.
+  await ui.press({ key: 'count:pr' })
+  expect(await lines()).toEqual(['- 1 pull request', 'item:1'])
+  expect((await ui.find({ type: 'Text', text: '- 1 pull request' }))?.props.color).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
+
+  // They collapse apart from the items, and stay collapsed when the panel reloads.
+  await ui.press({ key: 'count:question' })
+  expect(await lines()).toEqual(['- 1 pull request', '- 1 question'])
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await lines()).toEqual(['- 1 pull request', '- 1 question'])
+
+  // The line expands them, and so does the count again.
+  await ui.press({ key: 'expand:pr' })
+  expect(await lines()).toEqual(['pr:x/y#7', '- 1 question'])
+  await ui.press({ key: 'count:pr' })
+  await ui.press({ key: 'count:pr' })
+  expect(await lines()).toEqual(['pr:x/y#7', '- 1 question'])
+  await ui.unmount()
+})
+
 test('the panel lists its items newest first, and a revised question keeps its place', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -2776,7 +2819,7 @@ test('snooze hides either kind for an hour, then brings a hidden panel back', as
   expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
   // Each stays listed for 30 seconds, out of the header's counts, and then leaves the panel.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
   await clock.advance(30_000 + TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()

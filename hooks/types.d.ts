@@ -102,6 +102,9 @@ export type Notice = Posted & {
 
 export type Item = Question | Notice
 
+/** What the panel's header counts, and can collapse to one line: the pull requests, or a kind of item. */
+export type Section = 'pr' | Item['kind']
+
 /**
  * An answer the panel claimed and is delivering: the claim's token, the route
  * it took, and the text sent, so a later copy of the module keeps renewing
@@ -137,8 +140,8 @@ declare module 'claude-code' {
       panelThreads: { drawer: string; threads: Thread[] } | null
       /** The session's inbox, as the panel last read it. */
       panelInbox: Item[]
-      /** The kinds of item collapsed to one line, from the header's counts. */
-      panelCollapsed: Item['kind'][]
+      /** The pull requests and the kinds of item collapsed to one line, from the header's counts. */
+      panelCollapsed: Section[]
       /** The answers the panel is delivering, by reference. */
       panelSending: Record<string, Sending>
       /** What the release before the rename kept as `panelSending`, which the panel takes over. */
