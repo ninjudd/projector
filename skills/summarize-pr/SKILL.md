@@ -295,15 +295,15 @@ head's `.gitattributes` gives the changed files, as `attributes.json`, and
 the head's version of each changed file whose diff hides some of its lines,
 under `head/`, so a reader can expand the lines around each hunk. It fetches
 the head first when the checkout lacks it. Publishes that run at the same
-time, as a review loop's subagents run them, each land. A publish whose push
-loses the race for the ref fetches the ref again, rebuilds its commit on the
-new tip, and pushes again, up to five pushes in all. `publish` fetches the
-diff from the compare API, which serves pull requests past the 300-file limit
-of `gh pr diff`, so pass `--diff` only when `publish` reports that GitHub
-could not serve the diff. The file is then the local `git diff` from step 3,
-since the compare call there fails with `publish`'s. It must be the diff from
-the summary's `pr.base` to its `pr.head`, because every later deploy serves
-the stored diff as it is. Because the diff is
+time, as a reviewing session's subagents run them, each land. A publish whose
+push loses the race for the ref fetches the ref again, rebuilds its commit on
+the new tip, and pushes again, up to five pushes in all. `publish` fetches
+the diff from the compare API, which serves pull requests past the 300-file
+limit of `gh pr diff`, so pass `--diff` only when `publish` reports that
+GitHub could not serve the diff. The file is then the local `git diff` from
+step 3, since the compare call there fails with `publish`'s. It must be the
+diff from the summary's `pr.base` to its `pr.head`, because every later
+deploy serves the stored diff as it is. Because the diff is
 stored, the site deploy asks GitHub for no diff: it checks each summary against
 its stored diff and writes each page's data beside it, and the page loads
 that data when it opens. The deploy reports and skips any summary that still

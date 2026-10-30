@@ -125,9 +125,9 @@ Open pull requests; never merge them. The user owns the merge checkpoint.
 Keep tests and documentation with the code they verify.
 
 Open your own pull request as a draft, and draft every layer of a stack you
-open. A review loop marks a pull request ready on a clean head, so the draft
-says the work has not been signed off yet and the ready transition says it
-has — a self-review landing before the work reaches human eyes.
+open. A review marks a pull request ready when its head reviews clean, so the
+draft says the work has not been signed off yet and the ready transition says
+it has — a self-review landing before the work reaches human eyes.
 
 Never mark your own draft ready yourself; a clean review is what clears it.
 The tempting move is undrafting once the reason you drafted is resolved — a
