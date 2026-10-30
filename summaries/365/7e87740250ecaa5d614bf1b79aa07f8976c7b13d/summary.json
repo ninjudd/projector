@@ -1,0 +1,132 @@
+{
+ "version": 1,
+ "name": "Merged plans as records",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 365,
+  "title": "Leave a plan's account of merged work as it is",
+  "head": "7e87740250ecaa5d614bf1b79aa07f8976c7b13d",
+  "headRef": "worktree-shipped-plans-are-records",
+  "base": "ee724a7e1f8de17dbe59ee0bc660c8a0676d366d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector keeps each project's plan in Git under <code>docs/projects/</code>, and <code>project init</code> writes a block of conventions into every adopting repository's <code>AGENTS.md</code>. That block told agents to \"keep <code>docs/</code> describing the behavior on the current branch\". Because plans live under <code>docs/</code>, agents and the review loop read the rule as covering plans whose work had already merged. Review findings on later changes then asked agents to rewrite those plans, which cost review rounds and erased the record of what was decided.",
+   "This pull request says when a plan stops being a guide and becomes a record, and tells every agent that edits a plan or judges a finding about one to leave the record alone:",
+   "<ul><li><b>A record</b> is all of a <code>completed</code> plan, and each section of an unfinished plan whose behavior the default branch already has. Status alone cannot tell you which sections are records, because a plan can stay <code>in-progress</code> long after its first sections merge.</li><li><b>Later work</b> that changes recorded behavior updates the living documentation instead. When that work belongs to the same project, it appends a numbered section that names the section it supersedes.</li><li><b>A record still changes</b> through the <code>project</code> commands for status and priority, and when a renamed project's references are swept.</li></ul>",
+   "The change is all prose and one template, plus the hash that pins the template's new version. It changes no code path."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Plan</b>: a project's <code>readme.md</code> under <code>docs/projects/</code>, with numbered sections that code and other documents cite.</li><li><b>Record</b>: the part of a plan that describes work already merged into the default branch.</li><li><b>Living documentation</b>: the rest of <code>docs/</code>, which always describes the current behavior.</li><li><b>Projector block</b>: the generated section of <code>AGENTS.md</code> between <code>projector:begin</code> and <code>projector:end</code>, written from <code>agents-block.md</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The Projector review of <code>7e87740</code> is clean, with one suggestion: name <code>project owner</code> among the ways a record still changes. The review also asks whether <code>finish</code> should say to record a deviation in an appended section.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "block",
+   "title": "The generated block draws the line between plans and documentation",
+   "kicker": "The template, this repository's copy of it, and the hash that pins it",
+   "intro": [
+    "The Projector block is the text <code>project init</code> writes into each adopting repository's <code>AGENTS.md</code>. Its template moves to version 15. The old sentence about keeping <code>docs/</code> current now names the living documentation, and a new paragraph says that a plan is not living documentation and when its account of merged work becomes a record.",
+    "<code>tests/test_instructions.py</code> pins each version's template by hash, so the template cannot change without a version bump. This repository's own <code>AGENTS.md</code> is regenerated from the template, and <code>project check</code> would report it stale if the two differed."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The <code>AGENTS.md</code> block is byte-identical to the template with <code>{projects_dir}</code> filled in as <code>docs/projects</code>, and the full test suite passes with the new hash."
+    },
+    {
+     "kind": "verify",
+     "text": "Running <code>project init</code> on a temporary repository holding the version-14 block upgraded it to version 15 and kept the repository's own text above the block."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The source of the block: version bump, the narrowed documentation sentence, and the new paragraph on plans.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>{projects_dir}</code> is filled with the repository's configured projects directory, so the paragraph names the right path in a repository that keeps plans elsewhere.",
+       "line": 21
+      }
+     ]
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's copy of the block, regenerated from the template."
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins the version-15 template text by its SHA-256 hash."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The projects README says when a plan becomes a record",
+   "kicker": "The full rule for this repository, and one sentence of it for new adopters",
+   "intro": [
+    "<code>docs/projects/README.md</code> is the reference for the project model. A new section, \"Keep a plan as a record once its work merges\", gives the rule in full: which parts of a plan are records, what later work does instead of editing them, and the two ways a record still changes.",
+    "<code>project init</code> writes <code>project-readme.md</code> as a new adopter's <code>docs/projects/README.md</code>, so that template gets the rule in one sentence. An existing adopter keeps the README it has, because <code>init</code> only creates the file when it is missing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/README.md",
+     "note": "The new section placed after \"Write a project plan\".",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "This list of the ways a record still changes leaves out <code>project owner</code>, which the README's frontmatter section uses to set the owner. The review lists that as a suggestion.",
+       "line": 161
+      }
+     ]
+    },
+    {
+     "path": "src/projector/templates/project-readme.md",
+     "note": "One sentence of the rule for the README that <code>init</code> creates."
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "Each skill that edits a plan or judges a finding follows the rule",
+   "kicker": "The review method, fix-pr, implement, and spec",
+   "intro": [
+    "The rule matters where an agent decides whether to edit a plan. Each of these skills now uses the same test for a record: a <code>completed</code> plan, or a section whose behavior the default branch already has.",
+    "<ul><li><b>The review method</b> drops a finding that asks a change to rewrite or annotate a record, even one that cites the rule that keeps <code>docs/</code> current. When living documentation went stale, the finding asks for that document instead.</li><li><b><code>fix-pr</code></b> declines such a finding with that reason, and fixes the living document when one describes the same behavior.</li><li><b><code>implement</code> and <code>spec</code></b> append a section that names the one it supersedes, rather than rewriting a merged section, and leave other projects' records alone.</li></ul>",
+    "These are instructions a model follows, so no test exercises them. Read each paragraph for whether it says the same thing as the README."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/method.md",
+     "note": "A new rule in § 6, among the rules that decide which verified findings ship."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "A decline rule placed after the numbered verify-and-fix steps."
+    },
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "How to revise a merged decision of the plan being built, and how to treat other projects' plans."
+    },
+    {
+     "path": "skills/spec/SKILL.md",
+     "note": "Record a changed decision in a new section at the end."
+    }
+   ]
+  }
+ ]
+}
