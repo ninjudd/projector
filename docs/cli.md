@@ -54,21 +54,21 @@ what it did to each:
   `gh stack` is unavailable, and keep every layer on the current head of the
   one below so the stack can merge as a unit. Its last part applies only
   where the Projector plugin is installed: build every change with the
-  `implement` skill, so a watch loop starts on its pull request, open every
-  pull request as a draft until a clean review marks it ready, and, where the
-  `ask`, `tell`, and `request` tools are available, post anything the person
-  must not miss to the inbox as well as saying it in the conversation. It
-  tells an agent to post a request only for work it cannot do itself, such as
-  running a command it is not allowed to run or checking a change on the
-  person's phone, with numbered steps that each say what the person should
-  see, and options that fit the work, such as `Looks good` and
+  `implement` skill, whose hand-over subscribes the session to fix its pull
+  request, open every pull request as a draft until a clean review marks it
+  ready, and, where the `ask`, `tell`, and `request` tools are available, post
+  anything the person must not miss to the inbox as well as saying it in the
+  conversation. It tells an agent to post a request only for work it cannot do
+  itself, such as running a command it is not allowed to run or checking a
+  change on the person's phone, with numbered steps that each say what the
+  person should see, and options that fit the work, such as `Looks good` and
   `Some feedback` for a test. It tells an agent to act on the option a person
-  chose and the notes under it, and not to post a declined request again.
-  It tells an agent to give a request a start action only when it must
-  prepare something first, to do the slow part, such as a build, before it
-  posts the request so the start is quick, to do the start action only once
-  `STARTED` arrives, exactly as that message quotes it, and then to mark the
-  request ready or blocked.
+  chose and the notes under it, and not to post a declined request again. It
+  tells an agent to give a request a start action only when it must prepare
+  something first, to do the slow part, such as a build, before it posts the
+  request so the start is quick, to do the start action only once `STARTED`
+  arrives, exactly as that message quotes it, and then to mark the request
+  ready or blocked.
   It tells an agent whose question or request the person replied to, rather
   than resolving it, to answer what they asked and then withdraw the item
   with the `withdraw` tool, revise it with the `revise` tool, or leave it
@@ -1811,14 +1811,15 @@ Held in draft while the following changes are implemented:
   the comment back and confirms that the marker is its last line. Only then
   does it mark a pull request that is not a draft as one, with
   `gh pr ready --undo`, and confirm it. The comment comes first because, to
-  the review loop, a pull request that turns draft on an unchanged head with
-  no hold open is an author who answered without pushing. It refuses a pull
-  request that is not open.
+  the watch daemon, a pull request that turns draft on an unchanged head with
+  no hold open is an author who answered without pushing, so it asks the
+  reviewing session to re-review that head. It refuses a pull request that is
+  not open.
 - `--drop TEXT` removes each change you name from every one of your hold
   comments that lists it. It refuses a change no hold comment lists, and
   names the ones they do. It deletes a comment left with no change. Once no
-  hold comment is left, the hold ends on a head no push changed, so the
-  review loop re-reviews that head.
+  hold comment is left, the hold ends on a head no push changed, so the watch
+  daemon asks the reviewing session to re-review that head.
 - `--drop` with no change ends the hold: it deletes every hold comment you
   have open on the pull request and leaves the draft state as it is. Run it
   once the push that carries every listed change succeeds. Ending the hold
@@ -1936,11 +1937,11 @@ whole check and for each file. It writes nothing, takes no pull request, and
 runs from any directory. It exits 0 when every file has the rules. It exits 1
 when a file lacks them or cannot be read, says on stderr what is missing, and
 asks for `project init` at a terminal, because `init` adds the rules only for a
-person. A review loop runs `rules` once before its first review, so it can warn
-you before a publish is refused rather than after. A file that lacks the rules
-means the host's automatic approval can refuse a publish, not that it will:
-the repository's own settings, or settings your organization manages, can still
-allow the commands.
+person. The `review-repo` skill runs `rules` once before its first review, so it
+can warn you before a publish is refused rather than after. A file that lacks
+the rules means the host's automatic approval can refuse a publish, not that it
+will: the repository's own settings, or settings your organization manages, can
+still allow the commands.
 
 No command takes a SHA: each comes from GitHub or the state file. `setup` works
 from the checkout containing the working directory, or `--checkout`, and
