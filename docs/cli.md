@@ -106,7 +106,8 @@ what it did to each:
     "Bash(project inbox snooze *)",
     "Bash(project inbox done *)",
     "Bash(project inbox decline *)",
-    "Bash(project inbox start *)"
+    "Bash(project inbox start *)",
+    "Bash(project inbox unclear *)"
   ]
   ```
 
@@ -118,11 +119,13 @@ what it did to each:
   `Bash(project site *prepare*)` asks before either flag, as `--prepare x` or
   `--prepare=x`, and before `--no-prepare` too. Those two commands refuse an
   abbreviated option such as `--prep`, so no shorter spelling slips past the
-  rule. `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, and
-  `start` record your answer to an item an agent posted, your outcome for a
-  request, your consent to a request's start action, or your choice to
-  dismiss or put it off, so an agent running one could answer its own
-  question, mark its own request done, or consent to its own start action.
+  rule. `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`,
+  `start`, and `unclear` record your answer to an item an agent posted, your
+  outcome for a request, your consent to a request's start action, your word
+  that you don't understand an item, or your choice to dismiss or put it
+  off, so an agent running one could answer its own question, mark its own
+  request done, consent to its own start action, or mark its own item
+  unclear.
   Projector's panel runs them itself, not through an agent's shell, so
   answering from the panel never asks. Claude Code checks ask rules before
   allow rules, so an ask rule prompts for a command that `Bash(project *)`
@@ -230,8 +233,8 @@ what it did to each:
   No rule matches `project init`, `project upgrade`, `project config set` or
   `unset`, `project create` or `project edit`, whose editor an agent could
   drive, `project review gate`, `project site build` or `serve`,
-  `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, or
-  `start`, which record your choice, or a command line that starts with an
+  `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,
+  or `unclear`, which record your choice, or a command line that starts with an
   option, so Codex's usual approval
   decides them, in its sandbox. A command added to Projector later reaches
   Codex once Projector names it and you run `init` again. To see what the
@@ -1952,7 +1955,7 @@ Projector's panel never shows the number, so in what you write to the person,
 name an item by what it asks or tells. `ask` refuses, with exit code 65, a
 question longer than one line or 120 characters, a question that holds a tab,
 a missing recommendation, a recommendation or option longer than one line,
-more than five other options, or an option that repeats the recommendation or
+more than four other options, or an option that repeats the recommendation or
 another option. Put what you need to decide in `--detail`, or `--detail-file`.
 
 Every command names the posting session with `--session`, or reads
@@ -2006,11 +2009,12 @@ your prompt. The agent then withdraws the question if the reply settles it,
 revises it if the reply shows it was unclear, or leaves it open while it still
 needs you.
 
-`answer`, `dismiss`, `snooze`, `done`, `decline`, and `start` record your
-choice, so the permission rules `project init` adds ask you before an agent
-runs one, in Claude Code, and leave them to Codex's usual approval. Otherwise
-an agent could answer its own question, mark its own request done, or press
-start for you. Projector's
+`answer`, `dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear`
+record your choice, so the permission rules `project init` adds ask you
+before an agent runs one, in Claude Code, and leave them to Codex's usual
+approval. Otherwise an agent could answer its own question, mark its own
+request done, press start for you, or say for you that you don't
+understand its item. Projector's
 panel runs them itself, so answering there never asks. `restore` takes no
 choice from you, so an agent runs it without asking, in either host, when
 you say a dismissal was a mistake.
@@ -2038,10 +2042,10 @@ such as Projector's panel in Claude Code, uses the steps `watch` takes:
 
 | Command | What it does |
 | --- | --- |
-| `claim <number>` | Claims an answer, or word of a restore, for delivery and prints a token and the text to send; exits 65 when it is already claimed or delivered |
+| `claim <number>` | Claims an answer, word of a restore, or an `UNCLEAR` line for delivery and prints a token and the text to send; exits 65 when it is already claimed or delivered |
 | `claim <number> --renew <token>` | Keeps that claim live while its delivery is pending |
-| `delivered <number> --claim <token>` | Marks the claimed answer delivered |
-| `reopen <number> --claim <token>` | Clears the answer when its delivery failed, so the question is open again |
+| `delivered <number> --claim <token>` | Marks the claimed answer or `UNCLEAR` line delivered |
+| `reopen <number> --claim <token>` | Clears the answer when its delivery failed, so the question is open again, or, for an `UNCLEAR` line, takes back the item's `unclear` mark, so you say it again |
 
 A claimed `RESTORED` line is done after either `delivered` or `reopen`: no
 deliverer sends it again, and the question stays open. A restore, or an
@@ -2069,16 +2073,18 @@ $ project inbox tell "Force-pushed #337 to drop a stray debug file" \
 
 `tell` refuses, with exit code 65, an empty notice, a notice longer than one
 line or 120 characters, a notice that holds a tab, and a `--pr` that is not
-`owner/repo#number`. A notice has no options, so `answer` and `claim` refuse
-one with exit code 65. Once you have read it, run `project inbox dismiss 4`.
-Nothing goes back to the agent, so the dismissal also marks the notice
-delivered, and `list` shows it, as `dismissed`, only with `--all`.
+`owner/repo#number`. A notice has no options, so `answer` refuses one with
+exit code 65. So does `claim`, unless the notice owes an `UNCLEAR` line, as
+`unclear` below describes. Once you have read it, run
+`project inbox dismiss 4`. Nothing goes back to the agent, so the dismissal
+also marks the notice delivered, and `list` shows it, as `dismissed`, only
+with `--all`.
 
 An agent asks you to do something only you can do with `request`, such as
 running a command it may not run, signing in to a service, or checking a
 change on your own device. A request takes one line, the steps you follow as
 `--detail` or `--detail-file`, the same `--pr` and `--agent` as a question,
-and the next number in the session's count. Each `--option`, up to five,
+and the next number in the session's count. Each `--option`, up to four,
 names a choice you pick from when you finish, and each marks the request
 done; a request without one offers a single `Done`:
 
@@ -2090,7 +2096,7 @@ $ project inbox request "Test the gutters on your phone" \
 ```
 
 `request` refuses an empty option, one of more than one line, one offered
-twice, a sixth, and `Declined`, which declines a request. `revise` replaces a
+twice, a fifth, and `Declined`, which declines a request. `revise` replaces a
 request's options with `--option`, and `--no-options` removes them.
 
 Once you have done the work, run `project inbox done 5`, or
@@ -2111,8 +2117,8 @@ takes no answer, so `answer` refuses one with exit code 65, and `done` and
 `decline` refuse any other kind of item, a resolved request, and a `--text` of
 more than one line. `dismiss` declines a request with no text. A decline is a
 dismissal, so `restore` reopens a declined request, and the agent that heard
-`DECLINED` hears `RESTORED`. `list` shows a request as `open`, `started`,
-`ready`, `blocked`, `done`, `declined`, or `withdrawn`.
+`DECLINED` hears `RESTORED`. `list` shows a request as `open`, `unclear`,
+`started`, `ready`, `blocked`, `done`, `declined`, or `withdrawn`.
 
 When the agent must prepare something before you can begin, such as
 installing a build on your phone, it gives the request a start action with
@@ -2220,6 +2226,31 @@ answered, dismissed, or withdrawn, with exit code 65, and a number no session
 holds, with exit code 66. In Claude Code, the agent withdraws an item with
 Projector's `withdraw` tool rather than from the shell.
 
+When you don't understand an open item, say so with `unclear`, and the agent
+that posted it revises the item to explain it more simply or to add the
+context you lack:
+
+```console
+$ project inbox unclear 4
+unclear 4
+$ project inbox list --session "$SESSION"
+4	notice	unclear	Force-pushed #337 to drop a stray debug file
+```
+
+`unclear` takes an open item of any kind. The deliverer sends the agent a
+line that starts `UNCLEAR 4` with the item's line, and `list` shows the item
+as `unclear` until the agent revises it. The revision clears the mark, so you
+can say it again of the new text. `--subject` and `--detail` give the text
+you read, and `unclear` refuses, with exit code 65, a line or detail that
+differs from the item's, because the agent revised it after you read it. It
+also refuses an item already marked unclear and one already answered,
+dismissed, or withdrawn. An answer, outcome, or dismissal recorded before
+the `UNCLEAR` line goes out takes its place, so the agent hears only that.
+When the line cannot be delivered, the mark is taken back, so you say it
+again. Projector's panel runs `unclear` when you press **I don't
+understand** in an item's drawer. To say what confuses you, reply to the
+item in your own words instead.
+
 When your reply shows that an open question was unclear, or that the choice
 has changed, the agent rewrites the question in place with `revise`. Only the
 parts it names change:
@@ -2239,16 +2270,18 @@ recommendation. `--detail`, or `--detail-file`, replaces the detail, and
 `--detail ""` clears it. The question keeps its number, the pull request it is
 about, when it was posted, the subagent that asked, and any snooze, so its
 answer reaches the same agent as before. A request is revised the same way,
-with `--request` in place of `--question` and with `--detail`, and `revise`
-refuses `--question`, `--recommend`, and `--option` for a request and
-`--request` for a question. Only a question or a request can be revised:
-`revise` refuses a notice with exit code 65. It also refuses, with exit code
-65, a revision that fails a check `ask` makes, such as a line of 121
-characters or a sixth option, a revision with nothing to change, an answer
-letter such as `3.a`, and a question already answered, dismissed, or
-withdrawn, and it changes nothing when it refuses. A number no session holds
-exits 66. In Claude Code, the agent revises a question with Projector's
-`revise` tool, and the panel redraws it at once.
+with `--request` in place of `--question`, and a notice with `--notice`.
+Each kind takes `--detail`, and any revision clears the item's `unclear`
+mark. `revise` refuses, with exit code 65, a flag that another kind takes:
+`--question`, `--recommend`, or `--notice` for a request, `--request`,
+`--start`, or `--notice` for a question, and anything but `--notice` and
+`--detail` for a notice. It also refuses, with exit code 65, a revision that
+fails a check its posting made, such as a line of 121 characters or a fifth
+option, a revision with nothing to change, an answer letter such as `3.a`,
+and an item already answered, dismissed, or withdrawn, and it changes
+nothing when it refuses. A number no session holds exits 66. In Claude
+Code, the agent revises an item with Projector's `revise` tool, and the
+panel redraws it at once.
 
 ## Change a loop's tracked file
 

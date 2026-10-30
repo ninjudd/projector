@@ -43,16 +43,22 @@ export const wokeBetween = (items: readonly Item[], since: number, time: number)
 export const isStarting = (request: Request) =>
   request.answer === undefined && request.started !== undefined && request.started.deliveredAt === undefined
 
+/** Whether an open item waits for `UNCLEAR`, word that you don't understand it, to reach its agent. */
+const isUnclearOwed = (item: Item) =>
+  item.answer === undefined && item.unclear !== undefined && item.unclear.deliveredAt === undefined
+
 /**
- * Whether a question's or request's line waits for a deliverer: an answer or
- * outcome recorded and undelivered, word of a restore, or a request's start,
- * and claimed by none that is live.
+ * Whether an item's line waits for a deliverer: a question's answer or a
+ * request's outcome recorded and undelivered, word of a restore, a request's
+ * start, or word that you don't understand an open item of any kind, and
+ * claimed by none that is live.
  */
-export const needsDelivery = (item: Item, time: number): item is Answerable =>
-  item.kind !== 'notice' &&
-  (item.restoredAt !== undefined ||
-    (item.answer !== undefined && item.deliveredAt === undefined) ||
-    (item.kind === 'request' && isStarting(item))) &&
+export const needsDelivery = (item: Item, time: number): boolean =>
+  (isUnclearOwed(item) ||
+    (item.kind !== 'notice' &&
+      (item.restoredAt !== undefined ||
+        (item.answer !== undefined && item.deliveredAt === undefined) ||
+        (item.kind === 'request' && isStarting(item))))) &&
   (item.claim === undefined || time - item.claim.renewedAt >= CLAIM_MS)
 
 /** What the panel puts in the prompt to discuss an item: its subject, in quotes. */
@@ -191,7 +197,7 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
 }
 
 /** Names the subagent that posted an item, by its description and id when the session still lists it. */
-function whoAsked(item: Answerable, agents: readonly AgentInfo[]): string {
+function whoAsked(item: Item, agents: readonly AgentInfo[]): string {
   const agent = agents.find(one => one.id === item.agentId)
   return agent === undefined ? (item.agentId ?? '') : `${agent.description} (${agent.id})`
 }
@@ -211,14 +217,20 @@ export const replyNote = (item: Answerable, agents: readonly AgentInfo[]) =>
   `The subagent ${whoAsked(item, agents)} ${wording(item).posted} ${quoteOf(item)}; send it the reply this prompt gives, which leaves the ${wording(item).noun} open.`
 
 /** The subagent that posted an item, while it can still read a message; undefined sends the line to the main loop. */
-export function liveAgent(item: Answerable, agents: readonly AgentInfo[]): string | undefined {
+export function liveAgent(item: Item, agents: readonly AgentInfo[]): string | undefined {
   const agent = agents.find(one => one.id === item.agentId)
   return agent !== undefined && LIVE.has(agent.status) ? agent.id : undefined
 }
 
-/** What the main loop receives: the answer or outcome, and the subagent to relay it to when one posted the item. */
-export function forMainLoop(text: string, item: Answerable, agents: readonly AgentInfo[]): string {
+/**
+ * What the main loop receives: the line an item owes, and the subagent to
+ * relay it to when one posted the item. A notice owes no line but `UNCLEAR`.
+ */
+export function forMainLoop(text: string, item: Item, agents: readonly AgentInfo[]): string {
   if (item.agentId === undefined) return text
+  if (text.startsWith('UNCLEAR ') || item.kind === 'notice') {
+    return `${text}\n\nThe subagent ${whoAsked(item, agents)} posted this, and the message could not reach it; send it this message, or revise the item yourself.`
+  }
   const { posted, result } = wording(item)
   return `${text}\n\nThe subagent ${whoAsked(item, agents)} ${posted} this, and the ${result} could not reach it; send it this ${result}, or act on it yourself.`
 }
@@ -265,6 +277,10 @@ const UNSEEN_NUMBER =
 /** A tool's description: its own lines, then the sentence every inbox tool ends with about an item's number. */
 const described = (lines: readonly string[]) => [...lines, UNSEEN_NUMBER].join(' ')
 
+/** What `ask`, `tell`, and `request` each say about I don't understand, for the kind of item it posts. */
+const unclearArrives = (kind: Item['kind']) =>
+  `When the person presses I don’t understand, a message that starts \`UNCLEAR 3\` arrives: revise the ${kind} to explain it more simply or to add the context they lack, keeping its number.`
+
 export const ASK_DESCRIPTION = described([
   'Ask the person a question without stopping: it appears in Projector’s panel above their prompt, and you keep working.',
   'Ask in one short line of at most 120 characters, and put what they need to decide in `detail`.',
@@ -273,6 +289,7 @@ export const ASK_DESCRIPTION = described([
   'Keep working on anything the answer does not block. The call returns the question’s number, such as 3.',
   'When the person picks an option, a message that starts `ANSWER 3.<letter>` arrives later, or `DISMISSED 3` when they dismiss it.',
   'When they restore a question after you heard `DISMISSED 3`, `RESTORED 3` arrives, and the question is open again.',
+  unclearArrives('question'),
   'When they reply in their own words instead, the reply arrives as their prompt, quoting the question, and the question stays open:',
   'answer what they asked, then withdraw the question if the reply settles it, revise it if it was unclear or the choice has changed,',
   'or leave it open while it still needs them.',
@@ -287,8 +304,8 @@ export const ASK_SCHEMA = {
     options: {
       type: 'array',
       items: { type: 'string' },
-      maxItems: 5,
-      description: 'Up to five other answers, each written in full, lettered b, c, and on in this order.',
+      maxItems: 4,
+      description: 'Up to four other answers, each written in full, lettered b, c, and on in this order.',
     },
     detail: {
       type: 'string',
@@ -334,8 +351,9 @@ export const TELL_DESCRIPTION = described([
   'Tell the person something without stopping: it appears in Projector’s panel above their prompt until they dismiss it.',
   'Use it for the answer to a question they asked you, or for something you did that they should know about.',
   'Write one short line of at most 120 characters, and put the rest in `detail`.',
-  'Name the pull request it is about in `pr`, as owner/repo#number.',
-  'Nothing comes back to you; when you need the person to decide something, use `ask` instead,',
+  'Name the pull request it is about in `pr`, as owner/repo#number. The call returns the notice’s number, such as 3.',
+  unclearArrives('notice'),
+  'Nothing else comes back to you; when you need the person to decide something, use `ask` instead,',
   'and when they need to do something only they can do, use `request`.',
 ])
 
@@ -386,6 +404,7 @@ export const REQUEST_DESCRIPTION = described([
   'any notes under it, or as a message that starts `DONE 3` and names the option. When they decline it, a message that starts `DECLINED 3` arrives. When they restore a request after you heard',
   '`DECLINED 3`, `RESTORED 3` arrives, and the request is open again. When they reply in their own words instead, the',
   'reply arrives as their prompt, quoting the request, and the request stays open.',
+  unclearArrives('request'),
   'When you need the person to decide something rather than do it, use `ask` instead.',
 ])
 
@@ -397,9 +416,9 @@ export const REQUEST_SCHEMA = {
     options: {
       type: 'array',
       items: { type: 'string' },
-      maxItems: 5,
+      maxItems: 4,
       description:
-        'Up to five choices they pick from when they finish, each marking the request done, such as `Looks good` and `Some feedback` for a test; leave it out to offer a single `Done`.',
+        'Up to four choices they pick from when they finish, each marking the request done, such as `Looks good` and `Some feedback` for a test; leave it out to offer a single `Done`.',
     },
     start: {
       type: 'string',
@@ -538,11 +557,13 @@ export const RESTORE_SCHEMA = ITEM_SCHEMA
 export const restoreArguments = itemArguments('restore')
 
 export const REVISE_DESCRIPTION = described([
-  'Revise a question you asked or a request you posted that is still open, keeping its number, when the person’s reply',
-  'shows it was unclear or the choice or the work has changed. Name it by the number `ask` or `request` returned, and',
-  'give only what changes: for a question, the question, its detail, the recommendation, or the other options, which',
-  '`options` replaces as a whole; for a request, the request, its detail, its options, which `options` replaces as a',
+  'Revise a question, notice, or request you posted that is still open, keeping its number, when the person’s reply',
+  'or a message that starts `UNCLEAR 3` shows it was unclear, or the choice or the work has changed. Name it by the',
+  'number `ask`, `tell`, or `request` returned, and give only what changes: for a question, the question, its detail,',
+  'the recommendation, or the other options, which `options` replaces as a whole; for a notice, the notice or its',
+  'detail; for a request, the request, its detail, its options, which `options` replaces as a',
   'whole and an empty list removes, or its start action, where an empty `start` removes it. A revised request returns to open, so a start the person pressed for its old text needs a new press.',
+  'A revision clears the person’s I don’t understand, so they can press it again if the new text still leaves them lost.',
   'Projector’s panel redraws it at once, and a question’s answer still arrives as a message that starts',
   '`ANSWER 3.<letter>` or `DISMISSED 3`, a request’s outcome as one that starts `DONE 3` or `DECLINED 3`.',
 ])
@@ -553,9 +574,10 @@ export const REVISE_SCHEMA = {
     number: {
       type: 'integer',
       minimum: 1,
-      description: 'The item’s number, as `ask` or `request` returned it, such as 3.',
+      description: 'The item’s number, as `ask`, `tell`, or `request` returned it, such as 3.',
     },
     question: { type: 'string', description: 'The new question, in one line of at most 120 characters.' },
+    notice: { type: 'string', description: 'The new notice, in one line of at most 120 characters.' },
     request: { type: 'string', description: 'The new request, in one line of at most 120 characters.' },
     start: { type: 'string', description: 'The request’s new start action, in one line; an empty string removes it.' },
     recommendation: {
@@ -565,9 +587,9 @@ export const REVISE_SCHEMA = {
     options: {
       type: 'array',
       items: { type: 'string' },
-      maxItems: 5,
+      maxItems: 4,
       description:
-        'For a question, every other answer, up to five, each written in full and lettered b, c, and on in this order; an empty list leaves only the recommendation. For a request, every option, up to five, in order; an empty list removes them, so the request offers a single Done.',
+        'For a question, every other answer, up to four, each written in full and lettered b, c, and on in this order; an empty list leaves only the recommendation. For a request, every option, up to four, in order; an empty list removes them, so the request offers a single Done.',
     },
     detail: {
       type: 'string',
@@ -587,9 +609,12 @@ export function reviseArguments(
   input: Readonly<Record<string, unknown>>,
   session: string,
 ): string[] | { error: string } {
-  const { number, question, request, start, recommendation, options, detail } = input
-  if (!isNumber(number)) return { error: '`number` must be the whole number `ask` or `request` returned, such as 3' }
+  const { number, question, notice, request, start, recommendation, options, detail } = input
+  if (!isNumber(number)) {
+    return { error: '`number` must be the whole number `ask`, `tell`, or `request` returned, such as 3' }
+  }
   if (question !== undefined && !isText(question)) return { error: '`question` must be a string' }
+  if (notice !== undefined && !isText(notice)) return { error: '`notice` must be a string' }
   if (request !== undefined && !isText(request)) return { error: '`request` must be a string' }
   if (start !== undefined && !isText(start)) return { error: '`start` must be a string' }
   if (recommendation !== undefined && !isText(recommendation)) return { error: '`recommendation` must be a string' }
@@ -597,8 +622,10 @@ export function reviseArguments(
     return { error: '`options` must be a list of strings' }
   }
   if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
-  if ([question, request, start, recommendation, options, detail].every(value => value === undefined)) {
-    return { error: 'give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`' }
+  if ([question, notice, request, start, recommendation, options, detail].every(value => value === undefined)) {
+    return {
+      error: 'give what changes: `question`, `notice`, `request`, `start`, `detail`, `recommendation`, or `options`',
+    }
   }
   return [
     'inbox',
@@ -607,6 +634,7 @@ export function reviseArguments(
     '--session',
     session,
     ...(question === undefined ? [] : [`--question=${question}`]),
+    ...(notice === undefined ? [] : [`--notice=${notice}`]),
     ...(request === undefined ? [] : [`--request=${request}`]),
     ...(start === undefined ? [] : [`--start=${start}`]),
     ...(recommendation === undefined ? [] : [`--recommend=${recommendation}`]),

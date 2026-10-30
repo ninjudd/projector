@@ -1,4 +1,4 @@
-<!-- projector:begin 22 -->
+<!-- projector:begin 23 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -95,8 +95,8 @@ do exactly what that message quotes and nothing more, and mark the request
 ready with the `ready` tool, or blocked with the `block` tool and what they
 should do first, such as unlocking the phone.
 
-When the person picks one of a question's options, the answer reaches you
-as a message that starts `ANSWER`. When they finish a request, its outcome
+When the person picks one of a question's options, the answer reaches you as
+a message that starts `ANSWER`. When they finish a request, its outcome
 reaches you as their prompt, quoting the request with the option they chose
 and any notes under it, or as a message that starts `DONE` and names the
 option. When they decline it, a message that starts `DECLINED` arrives. Read
@@ -106,12 +106,15 @@ post it again unless they ask. When they reply to a question or a request
 instead, answer what they asked. Then withdraw the item with the `withdraw`
 tool if the reply settles it, revise it with the `revise` tool if the reply
 shows it was unclear or the choice or the work has changed, or leave it open
-while it still needs them. Each time the person writes to you, also look
+while it still needs them. When a message that starts `UNCLEAR` arrives, the
+person did not understand that item, so revise it with the `revise` tool to
+explain it more simply or to add the context they lack, keeping its number,
+rather than posting it again. Each time the person writes to you, also look
 over the other items you posted that are still open, and withdraw any that
 no longer need them, such as news that has gone stale. When the person says
 they dismissed or declined an item by mistake, restore it with the `restore`
 tool or `project inbox restore` rather than posting it again. Name an item
 to the tools by the number `ask`, `tell`, or `request` returned. The panel
-never shows that number, so in what you write to the person, name an item
-by what it asks, tells, or requests.
+never shows that number, so in what you write to the person, name an item by
+what it asks, tells, or requests.
 <!-- projector:end -->
