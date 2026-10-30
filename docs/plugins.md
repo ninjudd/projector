@@ -421,13 +421,18 @@ the pull requests, before its time.
 
 Click a count in the header to collapse what it counts to one line, so a
 long list of pull requests or a burst of notices does not push the questions
-out of view. Collapsed pull requests become a line such as `- 3 pull
-requests` in their place. A collapsed kind of item becomes a line such as
-`- 2 questions` at the top of the items, drawn in the kind's color. Click the
-line, or the count again, to expand it. The pull requests, the questions,
-and the notices collapse apart from each other, and each stays collapsed,
-new ones included, until you expand it. While a collapsed kind has nothing
-open, the header has no count for it, so its muted items show in the list.
+out of view. A collapsed line starts with `+`, where an item's starts with
+`-`, to say it expands. Collapsed pull requests become a line such as
+`+ #12 #14 #15` in their place, listing each in the rows' order and coloring
+it by status: red when a conflict, a change request, or failing checks hold
+it back, and otherwise yellow for a draft and green for a pull request that
+is ready. Click a pull request's number to expand them with its drawer
+open. A collapsed kind of item becomes a line such as `+ 2 questions` at
+the top of the items, drawn in the kind's color. Click the line, or the
+count again, to expand it. The pull requests, the questions, and the notices
+collapse apart from each other, and each stays collapsed, new ones included,
+until you expand it. While a collapsed kind has nothing open, the header has
+no count for it, so its muted items show in the list.
 
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press Enter on it from the keyboard instead. While
