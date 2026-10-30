@@ -1,0 +1,968 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 3c26ec32..f64f46d7 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -143,7 +143,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 21 -->
++<!-- projector:begin 22 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -226,35 +226,37 @@ do the work yourself whenever you can. Write the request as what they should
+ do, and put the steps in its detail as a numbered list, each step with what
+ they should see, so their notes can name the step that failed. Post one
+ request for the whole hand-off rather than a question and a notice for its
+-parts, and keep working on anything it does not block. Give the request a
+-start action only when you must prepare something before they can begin,
+-such as installing a build on their phone, and leave it out otherwise. Do
+-the slow part before you post the request, such as building the app, so the
+-start action only installs and launches it and they are not left waiting
+-once they press start. They press start when they are ready, and a message
+-that starts `STARTED` arrives quoting the start action. Do the start action
+-only then, do exactly what that message quotes and nothing more, and mark the
+-request ready with the `ready` tool, or blocked with the `block` tool and
+-what they should do first, such as unlocking the phone.
++parts, and keep working on anything it does not block. Give the request the
++options they choose from when they finish, each a short answer that fits the
++work, such as `Looks good` and `Some feedback` for a test; each marks it
++done, and they can always decline it instead. Give the request a start
++action only when you must prepare something before they can begin, such as
++installing a build on their phone, and leave it out otherwise. Do the slow
++part before you post the request, such as building the app, so the start
++action only installs and launches it and they are not left waiting once they
++press start. They press start when they are ready, and a message that starts
++`STARTED` arrives quoting the start action. Do the start action only then,
++do exactly what that message quotes and nothing more, and mark the request
++ready with the `ready` tool, or blocked with the `block` tool and what they
++should do first, such as unlocking the phone.
+ 
+ When the person picks one of a question's options, the answer reaches you
+ as a message that starts `ANSWER`. When they finish a request, its outcome
+-reaches you as their prompt, quoting the request with `Looks good` or
+-`There's an issue`, both of which mean done, and any notes under it, or as
+-a message that starts `DONE`. When they decline it, a message that starts
+-`DECLINED` arrives. Read the notes even when it is done, and when they say
+-`There's an issue`, find out what failed before you go on.
+-A declined request is the person's no, so do not post it again unless they
+-ask. When they reply to a question or a request instead, answer what they
+-asked. Then withdraw the item with the `withdraw` tool if the reply settles
+-it, revise it with the `revise` tool if the reply shows it was unclear or
+-the choice or the work has changed, or leave it open while it still needs
+-them. Each time the person writes to you, also look over the other items you
+-posted that are still open, and withdraw any that no longer need them, such
+-as news that has gone stale. When the person says they dismissed or declined
+-an item by mistake, restore it with the `restore` tool or
+-`project inbox restore` rather than posting it again. Name an item to the
+-tools by the number `ask`, `tell`, or `request` returned. The panel never
+-shows that number, so in what you write to the person, name an item by what
+-it asks, tells, or requests.
++reaches you as their prompt, quoting the request with the option they chose
++and any notes under it, or as a message that starts `DONE` and names the
++option. When they decline it, a message that starts `DECLINED` arrives. Read
++the option and the notes, and act on what they say before you go on, even
++when the request is done. A declined request is the person's no, so do not
++post it again unless they ask. When they reply to a question or a request
++instead, answer what they asked. Then withdraw the item with the `withdraw`
++tool if the reply settles it, revise it with the `revise` tool if the reply
++shows it was unclear or the choice or the work has changed, or leave it open
++while it still needs them. Each time the person writes to you, also look
++over the other items you posted that are still open, and withdraw any that
++no longer need them, such as news that has gone stale. When the person says
++they dismissed or declined an item by mistake, restore it with the `restore`
++tool or `project inbox restore` rather than posting it again. Name an item
++to the tools by the number `ask`, `tell`, or `request` returned. The panel
++never shows that number, so in what you write to the person, name an item
++by what it asks, tells, or requests.
+ <!-- projector:end -->
+diff --git a/docs/cli.md b/docs/cli.md
+index 13dc1e0b..09cbd4a6 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -61,8 +61,9 @@ what it did to each:
+   tells an agent to post a request only for work it cannot do itself, such as
+   running a command it is not allowed to run or checking a change on the
+   person's phone, with numbered steps that each say what the person should
+-  see, and to read a done request's notes, find out what failed when the
+-  person says `There's an issue`, and not post a declined request again.
++  see, and options that fit the work, such as `Looks good` and
++  `Some feedback` for a test. It tells an agent to act on the option a person
++  chose and the notes under it, and not to post a declined request again.
+   It tells an agent to give a request a start action only when it must
+   prepare something first, to do the slow part, such as a build, before it
+   posts the request so the start is quick, to do the start action only once
+@@ -2077,14 +2078,21 @@ An agent asks you to do something only you can do with `request`, such as
+ running a command it may not run, signing in to a service, or checking a
+ change on your own device. A request takes one line, the steps you follow as
+ `--detail` or `--detail-file`, the same `--pr` and `--agent` as a question,
+-and the next number in the session's count:
++and the next number in the session's count. Each `--option`, up to five,
++names a choice you pick from when you finish, and each marks the request
++done; a request without one offers a single `Done`:
+ 
+ ```console
+ $ project inbox request "Test the gutters on your phone" \
++    --option "Looks good" --option "Some feedback" \
+     --detail "1. Open Fyra. 2. Hold a track." --session "$SESSION"
+ 5
+ ```
+ 
++`request` refuses an empty option, one of more than one line, one offered
++twice, a sixth, and `Declined`, which declines a request. `revise` replaces a
++request's options with `--option`, and `--no-options` removes them.
++
+ Once you have done the work, run `project inbox done 5`, or
+ `project inbox decline 5` when you will not do it. Either takes `--text`
+ with one line for the agent. The deliverer sends the agent `DONE 5` or
+diff --git a/docs/plugins.md b/docs/plugins.md
+index def1d3e0..00071284 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -548,16 +548,17 @@ stays in the panel until you dismiss it. **dismiss notice** clears the
+ notice once you have read it and closes its drawer, and nothing goes back
+ to the agent.
+ 
+-A request's drawer shows its steps, then **Looks good** on `1` and **There's
+-an issue** on `2` in the options' place, then **discuss request**,
+-**decline request**, and **snooze request**. Like an option, **Looks good**
+-and **There's an issue** record nothing at once: each puts the quoted
++A request's drawer shows its steps, then the options its agent gave, on `1`
++and on, in the options' place, then **discuss request**, **decline request**,
++and **snooze request**. A test's options might be **Looks good** and **Some
++feedback**, and a request posted without options offers a single **Done**.
++Like a question's option, each records nothing at once: it puts the quoted
+ request, a blank line, and its words in the prompt, with the cursor below for
+-any notes. Both mark the request done, and record which you chose, so the
+-notes under **There's an issue** say what went wrong. Sending the prompt
+-records the outcome, closes the drawer, and carries your notes to the agent,
+-so nothing else goes back. Only a choice's words, or a plain `Done` or
+-`Declined`, alone on the first line under the quote count as the outcome.
++any notes. Every option marks the request done, and records which you chose.
++Sending the prompt records the outcome, closes the drawer, and carries your
++notes to the agent, so nothing else goes back. Only one of the request's
++options, or a plain `Done` or `Declined`, alone on the first line under the
++quote counts as the outcome.
+ Anything else there, such as `done?` or a question about which build to
+ test, is a reply: the request stays open, and the reply reaches the agent as
+ your prompt. **decline request** takes the place of **dismiss**, and like
+@@ -568,8 +569,8 @@ choice it was resolved with, and a declined one says `Declined` and offers
+ 
+ A request the agent must prepare for, such as installing a build on your
+ phone, has a start action. Its drawer says `Start:` and what the agent will
+-do, and offers **Start** first, on `1`, with the two choices after it on `2`
+-and `3`. Opening the drawer, reading the steps, or leaving it open sends
++do, and offers **Start** first, on `1`, with the request's options after it
++from `2`. Opening the drawer, reading the steps, or leaving it open sends
+ nothing. Press **Start** when you are ready to begin: the panel records
+ the start action its drawer shows, and the agent hears `STARTED` with that
+ action. If the agent revised the start action since the panel drew the
+@@ -579,10 +580,9 @@ you to read and press again. While the agent works, the drawer says
+ read `Ready:` and `ready`, in green, and you begin. When the agent could not
+ do it, they read `Blocked:` with its reason and `blocked`, in yellow, and
+ **Retry** takes the place of **Start**, for you to press once you have done
+-what the reason says. The two choices and **decline request** work
+-throughout, the choices on `1` and `2` while there is no **Start** or
+-**Retry** to press. A request without a start action
+-shows none of this.
++what the reason says. The options and **decline request** work throughout,
++the options from `1` while there is no **Start** or **Retry** to press. A
++request without a start action shows none of this.
+ 
+ **dismiss**, **decline**, **restore**, and **unsnooze** act at once. A
+ dismissed or declined item stays in the list a while, struck through, as the
+@@ -672,7 +672,7 @@ keyboard in, and once the panel has it, Esc and Enter.
+ 
+ Enter on a line opens its drawer and moves the ring onto the drawer's first
+ control: a question's first option, a request's **Start** or **Retry** when
+-it has one and **Looks good** otherwise, and **discuss** for any other item.
++it has one and its first option otherwise, and **discuss** for any other item.
+ Tab then walks the options and the actions. Enter on the open line closes the
+ drawer and leaves the ring on the line. A click opens and closes a drawer
+ without moving the ring. In the same way, Enter on the **snooze** line moves the
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index 84e2fa4c..a313e15c 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -564,7 +564,7 @@ test('a call of the tell tool becomes `project inbox tell`, text kept as text',
+ test('the request tool asks for work only the person can do, its steps in `detail`, and names what comes back', () => {
+   expect(REQUEST_DESCRIPTION).toContain('Ask the person to do something only they can do')
+   expect(REQUEST_DESCRIPTION).toContain('put the steps they follow in `detail`')
+-  expect(REQUEST_DESCRIPTION).toContain('or as a message that starts `DONE 3`.')
++  expect(REQUEST_DESCRIPTION).toContain('or as a message that starts `DONE 3` and names the option.')
+   expect(REQUEST_DESCRIPTION).toContain('When they decline it, a message that starts `DECLINED 3` arrives.')
+   expect(REQUEST_DESCRIPTION).toContain('When you need the person to decide something rather than do it, use `ask` instead.')
+ })
+@@ -581,16 +581,28 @@ test('a call of the request tool becomes `project inbox request`, text kept as t
+     '-Test the gutters',
+   ])
+   expect(requestArguments({ request: 'Sign in' }, 's1', undefined)).toEqual(['inbox', 'request', '--session=s1', '--', 'Sign in'])
++  expect(requestArguments({ request: 'Test it', options: ['Looks good', '-Some feedback'] }, 's1', undefined)).toEqual([
++    'inbox',
++    'request',
++    '--session=s1',
++    '--option=Looks good',
++    '--option=-Some feedback',
++    '--',
++    'Test it',
++  ])
++  expect(requestArguments({ request: 'R', options: 'Looks good' }, 's1', undefined)).toEqual({
++    error: '`options` must be a list of strings',
++  })
+   expect(requestArguments({ detail: 'Why' }, 's1', undefined)).toEqual({ error: '`request` must be a string' })
+   expect(requestArguments({ request: 'R', detail: 7 }, 's1', undefined)).toEqual({ error: '`detail` must be a string' })
+ })
+ 
+ test('a choice on the line under a quoted request is its outcome, a typed Done too, and notes may follow', () => {
+-  const open = request()
++  const open = request({ choices: ['Looks good', 'Some feedback'] })
+   const outcomesIn = (text: string) => readPrompt(text, [open]).outcomes
+   expect(outcomesIn('"Test the gutters"\n\nLooks good\n')).toEqual([{ request: open, outcome: 'done', word: 'Looks good' }])
+-  expect(outcomesIn('"Test the gutters"\n\nThere\'s an issue\n\nStep 4 didn’t work\nthe rest did')).toEqual([
+-    { request: open, outcome: 'done', word: "There's an issue" },
++  expect(outcomesIn('"Test the gutters"\n\nSome feedback\n\nStep 4 didn’t work\nthe rest did')).toEqual([
++    { request: open, outcome: 'done', word: "Some feedback" },
+   ])
+   expect(outcomesIn('"Test the gutters"\n\n  Declined \n\nNo phone today')).toEqual([
+     { request: open, outcome: 'declined', word: 'Declined' },
+@@ -603,6 +615,17 @@ test('a choice on the line under a quoted request is its outcome, a typed Done t
+   })
+ })
+ 
++test('a request takes only its own options, and one without options takes Done', () => {
++  const tested = request({ choices: ['Signed in', 'Could not sign in'] })
++  expect(readPrompt('"Test the gutters"\n\nSigned in', [tested]).outcomes).toEqual([
++    { request: tested, outcome: 'done', word: 'Signed in' },
++  ])
++  expect(readPrompt('"Test the gutters"\n\nLooks good', [tested]).replies).toEqual([tested])
++  const plain = request()
++  expect(readPrompt('"Test the gutters"\n\nDone', [plain]).outcomes).toEqual([{ request: plain, outcome: 'done', word: 'Done' }])
++  expect(readPrompt('"Test the gutters"\n\nLooks good', [plain]).replies).toEqual([plain])
++})
++
+ test('anything else under a quoted request replies to it and leaves it open', () => {
+   const open = request()
+   for (const text of [
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index 7c0c8a07..539298ed 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -65,31 +65,25 @@ export const proposalOf = (item: Answerable, answer: string) => `${quoteOf(item)
+ export type Given = { question: Question; letter: string }
+ 
+ /**
+- * What a request's drawer offers after any start, in order: the words each
+- * puts under the request's quote, which are also its label, and its key.
+- * Both mark the request done, and say which. Declining is one of the
+- * drawer's actions, since it needs no notes.
++ * What a request's drawer offers after any start, in order: the options its
++ * agent gave, or a single `Done` when it gave none. Each puts its words under
++ * the request's quote and marks the request done, saying which. Declining is
++ * one of the drawer's actions, since it needs no notes.
+  */
+-export const CHOICES = [
+-  { word: 'Looks good', key: 'good' },
+-  { word: "There's an issue", key: 'issue' },
+-] as const
+-
+-/** The words under a quoted request that resolve it: the drawer's choices, and a plain `Done` or `Declined` typed by hand. */
+-const OUTCOME_WORDS: ReadonlyMap<string, Finished['outcome']> = new Map([
+-  ...CHOICES.map(choice => [choice.word, 'done'] as const),
+-  ['Done', 'done'],
+-  ['Declined', 'declined'],
+-])
++export const choicesOf = (request: Request): readonly string[] => request.choices ?? ['Done']
+ 
+ /** One outcome a sent prompt gives a request: done or declined, and the words that said so. */
+ export type Finished = { request: Request; outcome: 'done' | 'declined'; word: string }
+ 
+-/** The outcome a request's quote takes: the words on the first line after it, so notes can follow. */
+-function outcomeIn(said: string | undefined): Omit<Finished, 'request'> | undefined {
++/**
++ * The outcome a request's quote takes: the words on the first line after it,
++ * so notes can follow. One of the request's options, or a plain `Done`, marks
++ * it done, and a plain `Declined` declines it.
++ */
++function outcomeIn(request: Request, said: string | undefined): Omit<Finished, 'request'> | undefined {
+   const word = said?.split('\n')[0]?.trim() ?? ''
+-  const outcome = OUTCOME_WORDS.get(word)
+-  return outcome === undefined ? undefined : { outcome, word }
++  if (word === 'Declined') return { outcome: 'declined', word }
++  return word === 'Done' || choicesOf(request).includes(word) ? { outcome: 'done', word } : undefined
+ }
+ 
+ /**
+@@ -112,12 +106,12 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
+  * the prompt's end, is one of its options, whatever blank lines and spaces
+  * surround it: what pressing an option puts in the prompt. A quoted open
+  * request takes an outcome only when its quote ends its line and the first
+- * line after it that is not blank is exactly one of its drawer's choices,
+- * `Looks good` or `There's an issue`, or a plain `Done` or `Declined`; the
+- * rest is the person's notes. A quote that a drawer put in the prompt, with that
+- * answer or alone through discuss, speaks to the item of the drawer that did
+- * so last, `proposed` holding them oldest first: one of its options or
+- * outcomes resolves it, and any other text replies to it. A drawer's pick
++ * line after it that is not blank is exactly one of its options, a plain
++ * `Done`, or a plain `Declined`; the rest is the person's notes. A quote that
++ * a drawer put in the prompt, with that answer or alone through discuss,
++ * speaks to the item of the drawer that did so last, `proposed` holding them
++ * oldest first: one of its options resolves it, and any other text replies to
++ * it. A drawer's pick
+  * from before its item was revised only replies, and one whose item was
+  * resolved before the prompt was sent does nothing, so a drawer's pick never
+  * falls through to another item with the same words.
+@@ -149,14 +143,14 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
+   // Whether the text after an item's quote resolves it: one of a question's
+   // options, or a request's outcome.
+   const takes = (item: Answerable, said: string | undefined) =>
+-    item.kind === 'question' ? said !== undefined && item.choices.includes(said) : outcomeIn(said) !== undefined
++    item.kind === 'question' ? said !== undefined && item.choices.includes(said) : outcomeIn(item, said) !== undefined
+   const resolve = (item: Answerable, said: string) => {
+     answered.add(item.ref)
+     if (item.kind === 'question') {
+       answers.push({ question: item, letter: letterAt(item.choices.indexOf(said)) })
+       return
+     }
+-    const outcome = outcomeIn(said)
++    const outcome = outcomeIn(item, said)
+     if (outcome !== undefined) outcomes.push({ request: item, ...outcome })
+   }
+   for (const { end, quote } of quotes) {
+@@ -377,6 +371,9 @@ export const REQUEST_DESCRIPTION = described([
+   'or checking a change on their own device: it appears in Projector’s panel above their prompt, and you keep working.',
+   'Write the request in one short line of at most 120 characters, and put the steps they follow in `detail`.',
+   'Name the pull request it is about in `pr`, as owner/repo#number.',
++  'Give the choices they pick from when they finish in `options`, each a short answer that fits the work: for a test,',
++  '`Looks good` and `Some feedback`. Each one marks the request done and tells you which they chose, and they can add',
++  'notes under it. Leave `options` out to offer a single `Done`. They can always decline the request instead.',
+   'Give `start` only when you must do something before they can begin, such as installing a build on their phone:',
+   'one line saying what you will do. Leave it out otherwise, and the request goes straight to done or declined.',
+   'Do the slow part before you post the request, such as building the app, so the start action only installs and',
+@@ -385,9 +382,8 @@ export const REQUEST_DESCRIPTION = described([
+   'the start action. Do the start action only after it arrives, and do exactly what it quotes and nothing more.',
+   'Then mark the request ready with `ready`, or, when you cannot finish, `block` it with what they should do first.',
+   'Keep working on anything the result does not block. The call returns the request’s number, such as 3.',
+-  'When they finish, their outcome arrives later as their prompt, quoting the request with `Looks good` or',
+-  "`There's an issue`, both of which mean done, and any notes under it, or as a message that starts `DONE 3`.",
+-  'When they decline it, a message that starts `DECLINED 3` arrives. When they restore a request after you heard',
++  'When they finish, their outcome arrives later as their prompt, quoting the request with the option they chose and',
++  'any notes under it, or as a message that starts `DONE 3` and names the option. When they decline it, a message that starts `DECLINED 3` arrives. When they restore a request after you heard',
+   '`DECLINED 3`, `RESTORED 3` arrives, and the request is open again. When they reply in their own words instead, the',
+   'reply arrives as their prompt, quoting the request, and the request stays open.',
+   'When you need the person to decide something rather than do it, use `ask` instead.',
+@@ -398,6 +394,13 @@ export const REQUEST_SCHEMA = {
+   properties: {
+     request: { type: 'string', description: 'What the person should do, in one line of at most 120 characters.' },
+     detail: { type: 'string', description: 'The steps they follow, as Markdown.' },
++    options: {
++      type: 'array',
++      items: { type: 'string' },
++      maxItems: 5,
++      description:
++        'Up to five choices they pick from when they finish, each marking the request done, such as `Looks good` and `Some feedback` for a test; leave it out to offer a single `Done`.',
++    },
+     start: {
+       type: 'string',
+       description:
+@@ -415,15 +418,17 @@ export function requestArguments(
+   session: string,
+   agentId: string | undefined,
+ ): string[] | { error: string } {
+-  const { request, detail, start, pr } = input
++  const { request, detail, start, pr, options = [] } = input
+   if (!isText(request)) return { error: '`request` must be a string' }
+   if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
+   if (start !== undefined && !isText(start)) return { error: '`start` must be a string' }
+   if (pr !== undefined && !isText(pr)) return { error: '`pr` must be a string such as owner/repo#123' }
++  if (!Array.isArray(options) || !options.every(isText)) return { error: '`options` must be a list of strings' }
+   return [
+     'inbox',
+     'request',
+     `--session=${session}`,
++    ...options.map(option => `--option=${option}`),
+     ...(start === undefined || start === '' ? [] : [`--start=${start}`]),
+     ...postedFlags(detail, pr, agentId),
+     '--',
+@@ -536,8 +541,8 @@ export const REVISE_DESCRIPTION = described([
+   'Revise a question you asked or a request you posted that is still open, keeping its number, when the person’s reply',
+   'shows it was unclear or the choice or the work has changed. Name it by the number `ask` or `request` returned, and',
+   'give only what changes: for a question, the question, its detail, the recommendation, or the other options, which',
+-  '`options` replaces as a whole; for a request, the request, its detail, or its start action, where an empty `start`',
+-  'removes it. A revised request returns to open, so a start the person pressed for its old text needs a new press.',
++  '`options` replaces as a whole; for a request, the request, its detail, its options, which `options` replaces as a',
++  'whole and an empty list removes, or its start action, where an empty `start` removes it. A revised request returns to open, so a start the person pressed for its old text needs a new press.',
+   'Projector’s panel redraws it at once, and a question’s answer still arrives as a message that starts',
+   '`ANSWER 3.<letter>` or `DISMISSED 3`, a request’s outcome as one that starts `DONE 3` or `DECLINED 3`.',
+ ])
+@@ -562,7 +567,7 @@ export const REVISE_SCHEMA = {
+       items: { type: 'string' },
+       maxItems: 5,
+       description:
+-        'Every other answer, up to five, each written in full and lettered b, c, and on in this order; an empty list leaves only the recommendation.',
++        'For a question, every other answer, up to five, each written in full and lettered b, c, and on in this order; an empty list leaves only the recommendation. For a request, every option, up to five, in order; an empty list removes them, so the request offers a single Done.',
+     },
+     detail: {
+       type: 'string',
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 3625323b..0827fdc2 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -1300,6 +1300,7 @@ const requested = (fields: Partial<HeldRequest> = {}): HeldRequest => ({
+   postedAt: NOW - 30_000,
+   subject: 'Test the gutters',
+   detail: '1. Open Fyra.',
++  choices: ['Looks good', 'Some feedback'],
+   ...fields,
+ })
+ 
+@@ -1412,7 +1413,12 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+           ? { ...common, kind: 'question', choices: [flag(args, 'recommend') ?? '', ...options] }
+           : command === 'tell'
+             ? { ...common, kind: 'notice' }
+-            : { ...common, kind: 'request', ...(start === undefined ? {} : { start }) },
++            : {
++                ...common,
++                kind: 'request',
++                ...(start === undefined ? {} : { start }),
++                ...(options.length === 0 ? {} : { choices: options }),
++              },
+       )
+       return ran(`${ref}\n`)
+     }
+@@ -1927,17 +1933,24 @@ test('an option puts the question and its answer in the prompt, and sending it a
+   await ui.unmount()
+ })
+ 
+-test('requests through the tool, and a request’s drawer offers its three choices in the options’ place and no dismiss', async ($, on) => {
++test('requests through the tool, and a request’s drawer offers the agent’s options in the options’ place and no dismiss', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock)
+   await startSession($, clock)
+ 
+-  const called = await $.tool.call({ tool: 'mcp__projector__request', request: 'Test the gutters', detail: '1. Open Fyra.' })
++  const called = await $.tool.call({
++    tool: 'mcp__projector__request',
++    request: 'Test the gutters',
++    detail: '1. Open Fyra.',
++    options: ['Looks good', 'Some feedback'],
++  })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with Looks good or There\'s an issue, both of which mean done, or as a message that starts DONE 1; a decline arrives as a message that starts DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
++    'Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE 1; a decline arrives as a message that starts DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
++  )
++  expect(session.project()).toContain(
++    'inbox request --session=s1 --option=Looks good --option=Some feedback --detail=1. Open Fyra. -- Test the gutters',
+   )
+-  expect(session.project()).toContain('inbox request --session=s1 --detail=1. Open Fyra. -- Test the gutters')
+   expect(session.notified).toEqual(['Test the gutters'])
+ 
+   await clock.advance(1)
+@@ -1949,13 +1962,51 @@ test('requests through the tool, and a request’s drawer offers its three choic
+   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('1. Open Fyra.')
+   const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
+   expect(outcomes.map(button => [button.key, button.props.hotkey, button.props.plain, button.text])).toEqual([
+-    ['outcome:1.good', '1', true, 'Looks good'],
+-    ['outcome:1.issue', '2', true, "There's an issue"],
++    ['outcome:1.a', '1', true, 'Looks good'],
++    ['outcome:1.b', '2', true, "Some feedback"],
+   ])
+   expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss request', 'decline:1 8 decline request', 'snooze:1 9 snooze request'])
+   await ui.unmount()
+ })
+ 
++test('a done with text from a terminal marks a request’s Done option and shows the text beside it, on one line', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const answer = { done: true as const, text: "Step 4 didn't work", answeredAt: NOW - 1_000 }
++  questionWorld(on, clock, [requested({ choices: undefined, answer, deliveredAt: NOW - 1_000 })])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'item:3' })
++  expect((await ui.findAll({ type: 'Text', text: /^Done/ })).map(found => found.text)).toEqual([
++    "Done ✓ Step 4 didn't work",
++  ])
++  await ui.unmount()
++})
++
++test('a request posted without options offers a single Done, which records done with no text', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [requested({ choices: undefined })])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'item:3' })
++  const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
++  expect(outcomes.map(button => [button.key, button.props.hotkey, button.text])).toEqual([['outcome:3.a', '1', 'Done']])
++  await ui.press({ key: 'outcome:3.a' })
++  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nDone\n\n'])
++  await $.prompt.submit({ text: '"Test the gutters"\n\nDone\n', wait: false, origin: { kind: 'composer' } })
++  await clock.settle()
++  expect(session.project().filter(command => command.startsWith('inbox done'))).toEqual(['inbox done 3 --session s1 --json'])
++
++  // The resolved drawer marks that Done, and draws no second Done line.
++  await ui.press({ key: 'item:3' })
++  expect((await ui.findAll({ type: 'Text', text: /^Done/ })).length).toBe(1)
++  expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
++  await ui.unmount()
++})
++
+ test('decline request on 8 declines at once, strikes the line through, and offers restore in its place', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -1999,7 +2050,7 @@ test('an open request is peach on a dark theme and a darker orange on a light on
+   await ui.unmount()
+ })
+ 
+-test('There’s an issue puts the request and its words in the prompt, and sending it records done with them once', async ($, on) => {
++test('Some feedback puts the request and its words in the prompt, and sending it records done with them once', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [requested({ agentId: 'agent-1' })], { agents: [running('running')] })
+@@ -2008,20 +2059,20 @@ test('There’s an issue puts the request and its words in the prompt, and sendi
+   const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:3' })
+   // Choosing an outcome records nothing yet: it fills the prompt, with room for notes under it.
+-  await ui.press({ key: 'outcome:3.issue' })
+-  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nThere\'s an issue\n\n'])
++  await ui.press({ key: 'outcome:3.b' })
++  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nSome feedback\n\n'])
+   expect(session.store.store.get('3')?.answer).toBeUndefined()
+ 
+-  const text = '"Test the gutters"\n\nThere\'s an issue\n\nStep 4 didn’t work.\n'
++  const text = '"Test the gutters"\n\nSome feedback\n\nStep 4 didn’t work.\n'
+   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+   await clock.settle()
+   expect(session.submitted).toEqual([
+     { text, context: ['The subagent Fix #7 (agent-1) requested "Test the gutters"; send it the outcome this prompt gives.'] },
+   ])
+   expect(session.project().filter(command => command.startsWith('inbox done'))).toEqual([
+-    "inbox done 3 --text=There's an issue --session s1 --json",
++    "inbox done 3 --text=Some feedback --session s1 --json",
+   ])
+-  expect(session.store.store.get('3')?.answer).toEqual(expect.objectContaining({ done: true, text: "There's an issue" }))
++  expect(session.store.store.get('3')?.answer).toEqual(expect.objectContaining({ done: true, text: "Some feedback" }))
+   expect(session.store.store.get('3')?.deliveredAt).toBeDefined()
+   // The prompt carried the outcome and the notes, so the panel sends nothing more.
+   await clock.advance(TICK)
+@@ -2032,7 +2083,7 @@ test('There’s an issue puts the request and its words in the prompt, and sendi
+   // The done request still opens, the choice it was made with marked, the rest muted, and nothing left to press.
+   await ui.press({ key: 'item:3' })
+   expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
+-  expect((await ui.find({ type: 'Text', text: /^There's an issue/ }))?.props.color).toBeUndefined()
++  expect((await ui.find({ type: 'Text', text: /^Some feedback/ }))?.props.color).toBeUndefined()
+   expect((await ui.find({ type: 'Text', text: /^Looks good/ }))?.props.color).toBe('subtle')
+   expect((await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))).toEqual([])
+   await ui.unmount()
+@@ -2076,7 +2127,7 @@ test('start, first on 1, records the start action the drawer shows, and STARTED
+   const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
+   expect(outcomes.map(button => [button.props.hotkey, button.text])).toEqual([
+     ['2', 'Looks good'],
+-    ['3', "There's an issue"],
++    ['3', "Some feedback"],
+   ])
+   expect(await actionLinesOf(ui)).toEqual(['discuss:3 7 discuss request', 'decline:3 8 decline request', 'snooze:3 9 snooze request'])
+   // Opening the drawer records nothing and sends nothing.
+@@ -2150,7 +2201,7 @@ test('a blocked request shows its reason and retry on 1, and a ready one says so
+   await ui.press({ key: 'item:4' })
+   expect(await ui.find({ type: 'Text', text: `Ready: ${INSTALL}` })).toBeDefined()
+   expect(await ui.find({ type: 'Button', key: 'start:4' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Button', key: 'outcome:4.good' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'outcome:4.a' })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -2185,7 +2236,7 @@ test('a request without a start action shows no start line, no start, and no mar
+   await ui.press({ key: 'item:3' })
+   expect(await ui.find({ type: 'Text', text: /^(Start|Starting|Ready|Blocked): / })).toBeUndefined()
+   expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Button', key: 'outcome:3.good' })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'outcome:3.a' })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+@@ -3999,7 +4050,7 @@ test('Enter on a line moves the ring into the drawer it opens and back onto the
+   await tab($, 'item:5')
+   await ui.press({ key: 'item:5' })
+   await ui.press({ key: 'close:5' })
+-  expect(tried.slice(4)).toEqual(['start:4', 'outcome:5.good'])
++  expect(tried.slice(4)).toEqual(['start:4', 'outcome:5.a'])
+ 
+   // A pull request's drawer opens under its line, so closing it leaves the ring where it is.
+   await tab($, 'pr:x/y#7')
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 2b1791d0..8430496f 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -25,7 +25,7 @@ import {
+   askArguments,
+   BLOCK_DESCRIPTION,
+   BLOCK_SCHEMA,
+-  CHOICES,
++  choicesOf,
+   forMainLoop,
+   isShownAt,
+   isSnoozedAt,
+@@ -1153,7 +1153,7 @@ export const register: Register = on => {
+     void $.ui.notify(String(e.request), { title: 'Projector request' }).catch(() => undefined)
+     const hasStart = typeof e.start === 'string' && e.start !== ''
+     return {
+-      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with Looks good or There's an issue, both of which mean done, or as a message that starts DONE ${ref}; a decline arrives as a message that starts DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
++      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE ${ref}; a decline arrives as a message that starts DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
+     }
+   }).catch(() => ({ deny: 'Projector could not record the request; ask the person in the conversation instead' }))
+ 
+@@ -1313,8 +1313,8 @@ export const register: Register = on => {
+     if (entered.drop === undefined) {
+       for (const ref of done) void closeDrawer($, `item:${ref}`).catch(() => undefined)
+       for (const one of answers) void recordFromPrompt($, one.question, ['answer', `${one.question.ref}.${one.letter}`])
+-      // A done records which choice said so, `Looks good` or
+-      // `There's an issue`, as its text; a plain `Done` or a decline needs none.
++      // A done records which of the request's options said so as its text; a
++      // plain `Done` or a decline needs none.
+       for (const { request, outcome, word } of outcomes) {
+         const said = outcome === 'done' && word !== 'Done' ? [`--text=${word}`] : []
+         void recordFromPrompt($, request, [outcome === 'done' ? 'done' : 'decline', request.ref, ...said])
+@@ -1687,13 +1687,13 @@ export const register: Register = on => {
+       return stage === undefined ? 'start' : stage === 'blocked' ? 'retry' : undefined
+     }
+     // An open request's choices take the options' place, start first while
+-    // there is one to press, then done and declined, on the digits from 1.
+-    // Start records your consent to the start action the line above it
+-    // shows, and only that press sends `STARTED`. Done and declined each put
+-    // the quoted request and its word in the prompt, with room for notes
+-    // under it, and only sending it records the outcome. A resolved request's
+-    // outcomes are text, the one recorded marked, followed by the person's
+-    // text when they gave one.
++    // there is one to press, then the options its agent gave, on the digits
++    // from 1; declining is one of the drawer's actions. Start records your
++    // consent to the start action the line above it shows, and only that
++    // press sends `STARTED`. Each option puts the quoted request and its
++    // words in the prompt, with room for notes under it, and only sending it
++    // records the outcome. A resolved request's options are text, the one
++    // recorded marked, followed by the person's text when they gave one.
+     const drawOutcomes = (request: Request) => {
+       const { ref, answer } = request
+       const recorded = answer === undefined ? undefined : 'done' in answer ? 'done' : 'declined' in answer ? 'declined' : undefined
+@@ -1704,11 +1704,16 @@ export const register: Register = on => {
+       }
+       const start = startOf(request)
+       const first = start === undefined ? 1 : 2
+-      // The choice a done was recorded with: the one whose words the
+-      // outcome's text holds. A done from a terminal or a typed `Done`
+-      // matches none, and neither does a decline, so each takes a line of its own.
+-      const chosen = recorded === 'done' ? CHOICES.find(choice => choice.word === said) : undefined
+-      const notes = said === chosen?.word ? undefined : said
++      // The option a done was recorded with: the one whose words the
++      // outcome's text holds, or else a `Done` option, with the text as its
++      // notes. A done whose text matches no option on a request offering no
++      // `Done`, and a decline, each take a line of their own.
++      const choices = choicesOf(request)
++      const chosen =
++        recorded === 'done'
++          ? (choices.find(choice => choice === said) ?? choices.find(choice => choice === 'Done'))
++          : undefined
++      const notes = said === chosen ? undefined : said
+       const marked = <Text color="success"> ✓</Text>
+ 
+       return [
+@@ -1719,14 +1724,14 @@ export const register: Register = on => {
+             {start === 'start' ? 'Start' : 'Retry'}
+           </Button>
+         ),
+-        ...CHOICES.map((choice, index) =>
++        ...choices.map((choice, index) =>
+           answer === undefined ? (
+-            <Button key={`outcome:${ref}.${choice.key}`} plain hotkey={String(first + index)} onPress={() => pick(choice.word)}>
+-              {choice.word}
++            <Button key={`outcome:${ref}.${letterAt(index)}`} plain hotkey={String(first + index)} onPress={() => pick(choice)}>
++              {choice}
+             </Button>
+           ) : (
+-            <Text key={`outcome:${ref}.${choice.key}`} color={choice === chosen ? undefined : 'subtle'}>
+-              {choice.word}
++            <Text key={`outcome:${ref}.${letterAt(index)}`} color={choice === chosen ? undefined : 'subtle'}>
++              {choice}
+               {choice === chosen && marked}
+               {choice === chosen && notes !== undefined && <Text color="subtle">{` ${notes}`}</Text>}
+             </Text>
+@@ -1838,7 +1843,7 @@ export const register: Register = on => {
+           ? `answer:${ref}.${letterAt(0)}`
+           : item.kind === 'request'
+             ? startOf(item) === undefined
+-              ? `outcome:${ref}.${CHOICES[0].key}`
++              ? `outcome:${ref}.${letterAt(0)}`
+               : `start:${ref}`
+             : `discuss:${ref}`
+       const isSending = !isOpen && item.deliveredAt === undefined
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 7253955d..d9b268ba 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -117,6 +117,8 @@ export type Request = Posted & {
+   kind: 'request'
+   /** What the agent does once you press start, in one line; absent when there is nothing to prepare. */
+   start?: string
++  /** The options the agent offers you when you finish, each marking the request done; absent offers a single `Done`. */
++  choices?: string[]
+   /** The start action as it read when you pressed start or retry, and when; `deliveredAt` once `STARTED` reached the agent. */
+   started?: { action: string; startedAt: number; deliveredAt?: number }
+   /** What the agent made of the start: `ready`, or `blocked` with the reason you read before you retry. */
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 7c780ff0..cc17b4f9 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -750,6 +750,9 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     detail = request.add_mutually_exclusive_group()
+     detail.add_argument("--detail", default="", help="the steps the person follows, as Markdown")
+     detail.add_argument("--detail-file", type=Path, help="read the steps from this file")
++    request.add_argument("--option", action="append", default=[],
++                         help="what the person can choose when they finish, each marking the request done; repeat "
++                              "for each, up to five")
+     request.add_argument("--start", help="what you do once the person presses start, in one line; leave it out when "
+                                          "there is nothing to prepare")
+     request.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
+@@ -798,8 +801,10 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     revise.add_argument("--recommend", help="the new recommended answer, which becomes answer a")
+     options = revise.add_mutually_exclusive_group()
+     options.add_argument("--option", action="append",
+-                         help="another answer; repeat for each, up to five, to replace every option but answer a")
+-    options.add_argument("--no-options", action="store_true", help="drop every option but answer a")
++                         help="another answer; repeat for each, up to five, to replace every option but a question's "
++                              "answer a, or every option of a request")
++    options.add_argument("--no-options", action="store_true",
++                         help="drop every option but a question's answer a, or every option of a request")
+     detail = revise.add_mutually_exclusive_group()
+     detail.add_argument("--detail", help="the new detail, as Markdown; an empty one clears it")
+     detail.add_argument("--detail-file", type=Path, help="read the new detail from this file")
+@@ -1381,6 +1386,8 @@ def print_item(item: dict) -> None:
+         print(f"\n{item['detail']}\n")
+     if item["kind"] == "question":
+         print_choices(item)
++    for option in item["choices"] if item["kind"] == "request" and item.get("choices") else []:
++        print(f"- {option}")
+     if item.get("start"):
+         print(f"start: {item['start']}")
+     if (item.get("progress") or {}).get("reason"):
+@@ -1410,7 +1417,8 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+         elif command == "tell":
+             item = inbox.tell(session, arguments.notice, **posted)
+         else:
+-            item = inbox.request(session, arguments.request, start=arguments.start, **posted)
++            item = inbox.request(session, arguments.request, start=arguments.start, options=arguments.option,
++                                 **posted)
+         print(json_text({"item": item}) if json_output else item["ref"])
+     elif command == "list":
+         session = inbox_session(arguments, False)
+diff --git a/src/projector/inbox.py b/src/projector/inbox.py
+index ee88d069..fdf854e1 100644
+--- a/src/projector/inbox.py
++++ b/src/projector/inbox.py
+@@ -280,14 +280,33 @@ def check_start(action: str) -> None:
+     check_subject("start action", action, None)
+ 
+ 
++def check_request_options(options: list[str]) -> None:
++    """The checks a request's options pass: at most `MAX_OPTIONS`, so they keep the digits a start
++    leaves, each one line and offered once, and none `Declined`, which declines a request."""
++    if len(options) > MAX_OPTIONS:
++        raise InboxError(f"{len(options)} options; offer a request at most {MAX_OPTIONS}")
++    for index, option in enumerate(options):
++        if not option.strip():
++            raise InboxError("an --option is empty")
++        if not is_one_line(option):
++            raise InboxError(f"the option {option!r} must be one line; put the rest in --detail")
++        if option.strip() == "Declined":
++            raise InboxError("`Declined` declines a request, so it cannot be one of its options")
++        if option.strip() in (other.strip() for other in options[:index]):
++            raise InboxError(f"the option {option.strip()!r} is offered twice")
++
++
+ def request(session: str, subject: str, *, detail: str = "", pr: Optional[str] = None,
+-            agent: Optional[str] = None, start: Optional[str] = None) -> dict:
+-    """Check, number, and record a request, whose detail holds its steps and whose `start`, when it
+-    has one, is what the agent does once the person presses start; returns it."""
++            agent: Optional[str] = None, start: Optional[str] = None, options: Optional[list[str]] = None) -> dict:
++    """Check, number, and record a request, whose detail holds its steps, whose `start`, when it
++    has one, is what the agent does once the person presses start, and whose `options`, when it
++    gives them, are what the person chooses between when they finish; returns it."""
+     check_subject("request", subject, pr)
+     if start is not None:
+         check_start(start)
+-    return post(session, "request", subject, detail=detail, pr=pr, agent=agent, start=start)
++    check_request_options(options or [])
++    choices = [option.strip() for option in options] if options else None
++    return post(session, "request", subject, detail=detail, pr=pr, agent=agent, start=start, choices=choices)
+ 
+ 
+ # Finding an item
+@@ -559,9 +578,10 @@ def revise(session: Optional[str], ref: str, *, question: Optional[str] = None,
+     """Replace an open question's or request's text in place, keeping its number, its place in the
+     list, and its snooze. Each part left as None keeps its text; `options` replaces every option but
+     the recommendation. A question takes `question`, `recommend`, and `options`, a request takes
+-    `request` and `start`, where an empty `start` removes it, and both take `detail`. The revised
+-    item passes the checks its posting made. A revised request returns to open, so a press of start
+-    made for its old text never covers the new."""
++    `request`, `start`, where an empty `start` removes it, and `options`, which replaces all its
++    options, an empty list removing them, and both take `detail`. The revised item passes the
++    checks its posting made. A revised request returns to open, so a press of start made for its old
++    text never covers the new."""
+     if all(part is None for part in (question, detail, recommend, options, request, start)):
+         raise InboxError("give the new text with --question, --request, --start, --detail, --recommend, or "
+                          "--option")
+@@ -573,13 +593,19 @@ def record(item: dict) -> None:
+         if item.get("answer"):
+             raise InboxError(f"{item['ref']} is already {resolution(item)}")
+         if is_request(item):
+-            if question is not None or recommend is not None or options is not None:
+-                raise InboxError(f"{item['ref']} is a request; revise its text with --request, --start, and "
+-                                 "--detail")
++            if question is not None or recommend is not None:
++                raise InboxError(f"{item['ref']} is a request; revise its text with --request, --start, --option, "
++                                 "and --detail")
+             subject = item["subject"] if request is None else request
+             check_subject("request", subject, item.get("pr"))
+             if start:
+                 check_start(start)
++            if options is not None:
++                check_request_options(options)
++                if options:
++                    item["choices"] = [option.strip() for option in options]
++                else:
++                    item.pop("choices", None)
+             item["subject"] = subject.strip()
+             if detail is not None:
+                 item["detail"] = detail.strip()
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 0bfedd47..4b80f55c 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 21 -->
++<!-- projector:begin 22 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -81,35 +81,37 @@ do the work yourself whenever you can. Write the request as what they should
+ do, and put the steps in its detail as a numbered list, each step with what
+ they should see, so their notes can name the step that failed. Post one
+ request for the whole hand-off rather than a question and a notice for its
+-parts, and keep working on anything it does not block. Give the request a
+-start action only when you must prepare something before they can begin,
+-such as installing a build on their phone, and leave it out otherwise. Do
+-the slow part before you post the request, such as building the app, so the
+-start action only installs and launches it and they are not left waiting
+-once they press start. They press start when they are ready, and a message
+-that starts `STARTED` arrives quoting the start action. Do the start action
+-only then, do exactly what that message quotes and nothing more, and mark the
+-request ready with the `ready` tool, or blocked with the `block` tool and
+-what they should do first, such as unlocking the phone.
++parts, and keep working on anything it does not block. Give the request the
++options they choose from when they finish, each a short answer that fits the
++work, such as `Looks good` and `Some feedback` for a test; each marks it
++done, and they can always decline it instead. Give the request a start
++action only when you must prepare something before they can begin, such as
++installing a build on their phone, and leave it out otherwise. Do the slow
++part before you post the request, such as building the app, so the start
++action only installs and launches it and they are not left waiting once they
++press start. They press start when they are ready, and a message that starts
++`STARTED` arrives quoting the start action. Do the start action only then,
++do exactly what that message quotes and nothing more, and mark the request
++ready with the `ready` tool, or blocked with the `block` tool and what they
++should do first, such as unlocking the phone.
+ 
+ When the person picks one of a question's options, the answer reaches you
+ as a message that starts `ANSWER`. When they finish a request, its outcome
+-reaches you as their prompt, quoting the request with `Looks good` or
+-`There's an issue`, both of which mean done, and any notes under it, or as
+-a message that starts `DONE`. When they decline it, a message that starts
+-`DECLINED` arrives. Read the notes even when it is done, and when they say
+-`There's an issue`, find out what failed before you go on.
+-A declined request is the person's no, so do not post it again unless they
+-ask. When they reply to a question or a request instead, answer what they
+-asked. Then withdraw the item with the `withdraw` tool if the reply settles
+-it, revise it with the `revise` tool if the reply shows it was unclear or
+-the choice or the work has changed, or leave it open while it still needs
+-them. Each time the person writes to you, also look over the other items you
+-posted that are still open, and withdraw any that no longer need them, such
+-as news that has gone stale. When the person says they dismissed or declined
+-an item by mistake, restore it with the `restore` tool or
+-`project inbox restore` rather than posting it again. Name an item to the
+-tools by the number `ask`, `tell`, or `request` returned. The panel never
+-shows that number, so in what you write to the person, name an item by what
+-it asks, tells, or requests.
++reaches you as their prompt, quoting the request with the option they chose
++and any notes under it, or as a message that starts `DONE` and names the
++option. When they decline it, a message that starts `DECLINED` arrives. Read
++the option and the notes, and act on what they say before you go on, even
++when the request is done. A declined request is the person's no, so do not
++post it again unless they ask. When they reply to a question or a request
++instead, answer what they asked. Then withdraw the item with the `withdraw`
++tool if the reply settles it, revise it with the `revise` tool if the reply
++shows it was unclear or the choice or the work has changed, or leave it open
++while it still needs them. Each time the person writes to you, also look
++over the other items you posted that are still open, and withdraw any that
++no longer need them, such as news that has gone stale. When the person says
++they dismissed or declined an item by mistake, restore it with the `restore`
++tool or `project inbox restore` rather than posting it again. Name an item
++to the tools by the number `ask`, `tell`, or `request` returned. The panel
++never shows that number, so in what you write to the person, name an item
++by what it asks, tells, or requests.
+ <!-- projector:end -->
+diff --git a/tests/test_inbox.py b/tests/test_inbox.py
+index e14e3193..b2e45d5f 100644
+--- a/tests/test_inbox.py
++++ b/tests/test_inbox.py
+@@ -1111,7 +1111,7 @@ def test_revises_a_request_with_its_own_flags(self) -> None:
+         self.assertEqual(("Test the new gutters", "1. Open Fyra."), (self.item(2)["subject"], self.item(2)["detail"]))
+         self.assertEqual(0, self.run_cli("revise", "2", "--detail", "1. Open the new build.", "--session", "s1")[0])
+         self.assertEqual("1. Open the new build.", self.item(2)["detail"])
+-        for args in (["--question", "Why?"], ["--recommend", "Yes"], ["--option", "No"], ["--request", "x" * 121]):
++        for args in (["--question", "Why?"], ["--recommend", "Yes"], ["--option", "Declined"], ["--request", "x" * 121]):
+             with self.subTest(args=args[0]):
+                 code, _, err = self.run_cli("revise", "2", *args, "--session", "s1")
+                 self.assertEqual(65, code, err)
+@@ -1119,6 +1119,28 @@ def test_revises_a_request_with_its_own_flags(self) -> None:
+         self.assertEqual(65, code)
+         self.assertIn("--question", err)
+ 
++    def test_records_the_options_the_agent_gives_and_refuses_ones_that_fail_a_check(self) -> None:
++        self.request("Test the gutters", "--option", " Looks good ", "--option", "Some feedback")
++        self.assertEqual(["Looks good", "Some feedback"], self.item(2)["choices"])
++        self.assertEqual("2 Test the gutters\n- Looks good\n- Some feedback\nopen\n", self.run_cli("show", "2")[1])
++        self.request("Sign in")
++        self.assertNotIn("choices", self.item(3))
++        count = (self.folder() / "count.json").read_text()
++        for options in (["Declined"], ["A", "A"], [" "], ["Two\nlines"], ["A", "B", "C", "D", "E", "F"]):
++            with self.subTest(options=options):
++                args = [arg for option in options for arg in ("--option", option)]
++                code, _, err = self.run_cli("request", "Run it", *args, "--session", "s1")
++                self.assertEqual(65, code, err)
++        self.assertEqual(count, (self.folder() / "count.json").read_text())
++
++    def test_revise_replaces_or_drops_a_requests_options(self) -> None:
++        self.request("Test the gutters", "--option", "Looks good")
++        self.assertEqual(0, self.run_cli("revise", "2", "--option", "Signed in", "--option", "Could not",
++                                         "--session", "s1")[0])
++        self.assertEqual(["Signed in", "Could not"], self.item(2)["choices"])
++        self.assertEqual(0, self.run_cli("revise", "2", "--no-options", "--session", "s1")[0])
++        self.assertNotIn("choices", self.item(2))
++
+     def test_lists_and_shows_a_request_by_its_kind_and_state(self) -> None:
+         self.request("Test the gutters", "--detail", "1. Open Fyra.")
+         self.request("Sign in")
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 1eb3f9ef..9e72a0f0 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -33,6 +33,7 @@
+     19: "f087c2db4d63c3e424fed3ac40fcc3b0467000728d1d2f1055a4b3e8840ba69b",
+     20: "15508339c9b61eb3d11d565b239c75898a2fb05f786edb614bfdeb488c4e7110",
+     21: "88a3ad16a92c6294ab2a58b9d09befa3552cc7ebb7574bca7a48d34d0d529492",
++    22: "b6613877cd18365eb5ad4f0f5f18ffd9cd4f4fc7972faa6611d72d66c1ac5000",
+ }
+ 
+ 
