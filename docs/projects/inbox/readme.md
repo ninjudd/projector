@@ -2261,3 +2261,38 @@ collapse either kind to one line from the counts the header already shows.
 | --- | --- |
 | A notice count collapses notices to `- 1 notice` in `inactive` at the top while the header keeps counting; questions collapse apart, their line first; the line and the count each expand; a kind with nothing open shows its items, and a new item collapses again | `a count in the header collapses its kind to one line at the top of the items, and the line expands it` in `hooks/panel.test.tsx` |
 | The header reads the same, its age ending at the panel's edge, with its counts as Buttons | `asks through the tool, and the panel lists the question below the pull requests` |
+
+## 27. Collapse the pull requests from the header's count
+
+Several pull requests can push the items below them out of view as surely
+as a burst of notices can. The header counts the pull requests as it counts
+each kind of item, so that count collapses them the same way.
+
+### 27.1 What changes
+
+- **The count is a button.** In a terminal, the header's `2 pull requests`
+  is a plain Button, in `subtle`, as the item counts are. The header stays
+  one `Text` only when it counts nothing.
+- **Collapsed pull requests are one line.** Their rows, drawers included,
+  leave the panel, and a line such as `- 2 pull requests`, in the rows'
+  default color, takes their place above the items. Pressing the line, or
+  the count again, expands them.
+- **The panel remembers it.** `panelCollapsed` holds `pr` beside the kinds
+  of item, so the pull requests stay collapsed across reloads until you
+  expand them.
+
+### 27.2 Why this design
+
+- **One mechanism for every count.** The pull requests, the questions, and
+  the notices are a `Section` each, and the header's counts and the
+  collapsed lines are drawn from one list of them, so the three behave
+  alike.
+- **In their place, not at the top of the items.** The pull requests come
+  before the items, so their line stays where their rows were.
+
+### 27.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| The pull requests' count collapses them to `- 1 pull request` in the default color while the header keeps counting; they collapse apart from the questions and stay collapsed across a reload; the line and the count each expand | `the pull requests’ count in the header collapses them to one line in their place, and the line expands them` in `hooks/panel.test.tsx` |
+| A header that counts only pull requests reads as before, in `subtle`, its age ending at the panel's edge | `draws one line per open pull request of the session’s own loops` and `the header’s age, a pull request’s age, and the key hint end in one column` |

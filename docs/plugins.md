@@ -419,12 +419,14 @@ the pull requests, before its time.
                                                      ctrl+x tab to focus
 ```
 
-Click a count of questions or notices in the header to collapse that kind
-to one line at the top of the items, such as `- 2 questions`, drawn in the
-kind's color, so a burst of notices does not push the questions out of view.
-Click the line, or the count again, to expand it. Questions and notices
-collapse apart from each other, and a collapsed kind stays collapsed, new
-items included, until you expand it. While a collapsed kind has nothing
+Click a count in the header to collapse what it counts to one line, so a
+long list of pull requests or a burst of notices does not push the questions
+out of view. Collapsed pull requests become a line such as `- 3 pull
+requests` in their place. A collapsed kind of item becomes a line such as
+`- 2 questions` at the top of the items, drawn in the kind's color. Click the
+line, or the count again, to expand it. The pull requests, the questions,
+and the notices collapse apart from each other, and each stays collapsed,
+new ones included, until you expand it. While a collapsed kind has nothing
 open, the header has no count for it, so its muted items show in the list.
 
 Click anywhere on an item to open its drawer, and click it again to close
