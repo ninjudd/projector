@@ -1,0 +1,99 @@
+{
+ "version": 1,
+ "name": "Collapsed pull request labels",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 369,
+  "title": "List collapsed pull requests by number and status, each opening its drawer",
+  "head": "929def7999be9bfb712443ee1e50e503b7f08249",
+  "headRef": "collapsed-pr-numbers",
+  "base": "1de281d7f8d720be90df901cadeb35ed98f637e2",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel sits above the Claude Code prompt. It lists the pull requests that the session's review and watch loops track, one row each, and below them the inbox's questions and notices. The header counts each kind, as in <code>3 pull requests · 1 question</code>, and clicking a count collapses that kind to one line. Before this change, collapsed pull requests read as <code>- 3 pull requests</code>, which said how many were hidden but not which ones, or whether any needed you.",
+   "This change makes the collapsed line name each pull request and show its status. Collapsed pull requests read as <code>+ #12 #14 #15</code>, in the rows' order and with the rows' labels. Each label is red when a conflict, a change request, or failing checks hold the pull request back. Otherwise it is yellow for a draft and green for a ready pull request. Pressing a label expands the rows with that pull request's drawer open, the panel's detail view under a row. Every collapsed line, for questions and notices too, now starts with <code>+</code> instead of <code>-</code>, so it reads as something that expands.",
+   "The PR knowingly leaves the label list unwrapped, so a long list can run past a narrow terminal's edge."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The review of <code>929def7</code> found the code and tests correct, and the full gate passed.</li><li>One finding is open: the change appends § 28 to the <code>inbox</code> plan, which is <code>completed</code>. The repository's <code>CLAUDE.md</code> and <code>docs/projects/README.md</code> say to leave a completed plan as it is.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Label</b>: a pull request's name in the panel, <code>#12</code>, or <code>repo#12</code> when the panel shows several repositories.</li><li><b>Drawer</b>: the lines under a row that open when you press it, with the pull request's facts and actions.</li><li><b>Ring</b>: the keyboard focus ring that moves between the panel's buttons.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "panel",
+   "title": "The collapsed line names and colors each pull request",
+   "kicker": "How the panel draws collapsed pull requests and what pressing a label does",
+   "intro": [
+    "When you collapse the pull requests, the panel draws one row of buttons in their place. The first button is <code>+</code>, which expands the rows as before. A button for each pull request follows, with the same label and order as the rows, so the line reads like a compact copy of the list.",
+    "Each label takes one color from <code>statusColor</code>. A blocker wins over the draft state, because a single label has room for one color: a conflict, a change request, or failing checks make it <code>error</code>. Otherwise a draft is <code>warning</code> and a ready pull request <code>success</code>, the colors the row uses for <code>draft</code> and <code>ready</code>.",
+    "Pressing a label runs <code>expandOnto</code>. It removes the pull requests from the collapsed sections, opens that pull request's drawer, and closes any other. Unlike a row's press, it never toggles a drawer shut, because you pressed the label to see that pull request."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds <code>statusColor</code>, draws the collapsed pull request line as a row of buttons, and bullets every collapsed line with <code>+</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 942,
+       "text": "The colors match what the row and drawer draw: <code>notesOf</code> colors a conflict and a change request <code>error</code>, the drawer colors <code>checks failing</code> <code>error</code>, and the row draws <code>draft</code> in <code>warning</code> and <code>ready</code> in <code>success</code>. The new test checks all four colors."
+      },
+      {
+       "kind": "verify",
+       "line": 1376,
+       "text": "<code>expandOnto</code> clears a pending dismiss question with <code>ask(key, null)</code> and moves the keyboard ring onto the drawer's <code>discuss</code> button, as a row's press does. The new test covers a drawer left open on another pull request and on the same one."
+      },
+      {
+       "kind": "context",
+       "line": 1395,
+       "text": "The line draws from <code>byAuthor(shown.rows, shown.viewer)</code> and the same <code>label</code> the rows use, so its order and labels match the expanded list. No other element uses the <code>open:</code> or <code>before:</code> keys."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Adds a pull request with failing checks to the fixtures, a test of the labels' order, colors, and presses, and updates the existing collapse tests for the <code>+</code> bullet."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The user guide's description, and a new section in a completed plan",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the new collapsed line, its colors, and what a click on a label does. The change also appends § 28 to the <code>inbox</code> plan to record the decision. That plan is <code>completed</code>, and the repository's rules say to leave a completed plan as it is, so the review's open finding asks to remove § 28."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Rewrites the paragraph on collapsing so it describes the <code>+</code> bullet, the colored labels, and clicking a label."
+    },
+    {
+     "path": "docs/projects/inbox/readme.md",
+     "note": "Appends § 28, which records the collapsed line's design and the tests that cover it.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 2300,
+       "text": "Open finding: the <code>inbox</code> plan is <code>completed</code>, and <code>CLAUDE.md</code> and <code>docs/projects/README.md</code> say to leave a completed plan as it is and update the living documentation instead. <code>docs/plugins.md</code> already describes the behavior, so remove § 28."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
