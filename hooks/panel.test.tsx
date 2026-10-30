@@ -1349,8 +1349,16 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
   /** Whether an open request's start waits for its `STARTED` line, as the CLI owes it. */
   const owesStart = (item: Held): item is HeldRequest =>
     item.kind === 'request' && item.answer === undefined && item.started !== undefined && item.started.deliveredAt === undefined
-  const textOf = (item: HeldQuestion | HeldRequest) => {
+  /** Whether an open item of any kind waits for its `UNCLEAR` line, as the CLI owes it. */
+  const owesUnclear = (item: Held) =>
+    item.answer === undefined && item.unclear !== undefined && item.unclear.deliveredAt === undefined
+  /** An item without `unclear` and without a claim on its `UNCLEAR` line, as a revision leaves it. */
+  const unmarked = <T extends Held>(item: T): T =>
+    without(item, 'unclear', ...(item.claim?.line === 'unclear' ? ['claim'] : []))
+  const textOf = (item: Held) => {
     const { answer, ref, subject } = item
+    // A notice owes no line but `UNCLEAR`.
+    if (item.claim?.line === 'unclear' || item.kind === 'notice') return `UNCLEAR ${ref} ${subject}`
     if (item.kind === 'request' && item.claim?.line === 'started') {
       return `STARTED ${ref} ${subject} → ${item.started?.action ?? ''}`
     }
@@ -1451,8 +1459,10 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       }
       return printed(put(restored))
     }
-    // Dismissing or answering an item drops word of a restore not yet claimed, as the CLI does.
-    const awake = without(item, 'snoozedUntil', 'snoozedAt', 'restoredAt', 'claim')
+    // Dismissing or answering an item drops word of a restore not yet claimed, as the CLI does, and word that you
+    // don't understand it unless a deliverer holds that word.
+    const isUnclearClaimed = item.claim?.line === 'unclear'
+    const awake = without(item, 'snoozedUntil', 'snoozedAt', 'restoredAt', ...(isUnclearClaimed ? [] : ['claim', 'unclear']))
     const isUnsaid = 'restoredAt' in item && !('claim' in item)
     if (command === 'dismiss') {
       const answer = { dismissed: true as const, answeredAt: time }
@@ -1499,11 +1509,59 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       const minutes = Number(flag(args, 'for') ?? 60)
       return printed(put({ ...item, snoozedAt: time, snoozedUntil: time + minutes * 60_000 }))
     }
+    if (command === 'unclear') {
+      if (item.answer !== undefined) return failed(65, `${ref} is already resolved`)
+      if (item.unclear !== undefined) return failed(65, `${ref} is already marked unclear; its agent has yet to revise it`)
+      if (flag(args, 'subject') !== item.subject || flag(args, 'detail') !== item.detail) {
+        return failed(65, `${ref} was revised since you read it; read it and press I don't understand again`)
+      }
+      return printed(put({ ...item, unclear: { at: time } }))
+    }
+    // An item owes its answer, outcome, `RESTORED`, or `STARTED` before its `UNCLEAR`, and a notice owes only `UNCLEAR`.
+    if (command === 'claim') {
+      const isOwed =
+        item.kind !== 'notice' && (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined))
+      const renew = flag(args, 'renew')
+      if (!isOwed && !owesStart(item) && !owesUnclear(item) && renew === undefined) return failed(65, 'nothing to deliver')
+      if (renew !== undefined) {
+        if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
+        put({ ...item, claim: { ...item.claim, renewedAt: time } })
+        return ran('')
+      }
+      if (item.claim !== undefined && time - item.claim.renewedAt < 60_000) return failed(65, 'already claimed')
+      const line =
+        item.kind === 'notice' || !isOwed
+          ? owesStart(item)
+            ? 'started'
+            : 'unclear'
+          : item.restoredAt !== undefined && item.answer === undefined
+            ? 'restored'
+            : 'answer'
+      const claimed = { ...item, claim: { token: `token-${writes}`, renewedAt: time, line } } as Held
+      return printed(put(claimed), { token: claimed.claim?.token, text: textOf(claimed) })
+    }
+    // Word that you don't understand an item is marked delivered, or taken back when it failed.
+    if ((command === 'delivered' || command === 'reopen') && item.claim?.line === 'unclear') {
+      if (item.claim.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
+      const settled = without(item, 'claim')
+      return printed(
+        put(
+          command === 'delivered' && item.unclear !== undefined
+            ? { ...settled, unclear: { ...item.unclear, deliveredAt: time } }
+            : without(settled, 'unclear'),
+        ),
+      )
+    }
+    if (command === 'revise' && item.kind === 'notice') {
+      return printed(
+        put({ ...unmarked(item), subject: flag(args, 'notice') ?? item.subject, detail: flag(args, 'detail') ?? item.detail }),
+      )
+    }
     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
     if (command === 'revise' && item.kind === 'request') {
       // A revised request returns to open, as the CLI resets it.
       const start = flag(args, 'start') ?? item.start
-      const revised = without(item, 'started', 'progress', 'start')
+      const revised = without(unmarked(item), 'started', 'progress', 'start')
       return printed(
         put({
           ...revised,
@@ -1522,7 +1580,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       const kept = args.includes('--no-options') ? [] : options.length > 0 ? options : others
       return printed(
         put({
-          ...item,
+          ...unmarked(item),
           subject: flag(args, 'question') ?? item.subject,
           detail: flag(args, 'detail') ?? item.detail,
           choices: [flag(args, 'recommend') ?? recommended, ...kept],
@@ -1533,20 +1591,6 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       const letter = written.slice(written.lastIndexOf('.') + 1)
       const text = flag(args, 'text') ?? item.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''
       return printed(put({ ...(awake as HeldQuestion), answer: { letter, text, answeredAt: time } }))
-    }
-    if (command === 'claim') {
-      const isOwed = item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined)
-      if (!isOwed && !owesStart(item) && flag(args, 'renew') === undefined) return failed(65, 'nothing to deliver')
-      const renew = flag(args, 'renew')
-      if (renew !== undefined) {
-        if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
-        put({ ...item, claim: { token: renew, renewedAt: time } })
-        return ran('')
-      }
-      if (item.claim !== undefined && time - item.claim.renewedAt < 60_000) return failed(65, 'already claimed')
-      const line = isOwed ? (item.restoredAt !== undefined && item.answer === undefined ? 'restored' : 'answer') : 'started'
-      const claimed = { ...item, claim: { token: `token-${writes}`, renewedAt: time, line } } as HeldQuestion | HeldRequest
-      return printed(put(claimed), { token: claimed.claim?.token, text: textOf(claimed) })
     }
     if (command === 'delivered' || command === 'reopen') {
       if (item.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
@@ -1643,6 +1687,10 @@ async function startSession($: Engine, clock: Clock, isShown = true) {
 const running = (status: AgentInfo['status']): AgentInfo =>
   ({ id: 'agent-1', description: 'Fix #7', type: 'general-purpose', status }) as AgentInfo
 
+/** What a tool's result tells the agent to do when `UNCLEAR` arrives for the item it posted or revised. */
+const unclearSaid = (kind: Held['kind'], ref: string) =>
+  `When a message that starts UNCLEAR ${ref} arrives, the person does not understand the ${kind}: revise it to explain it more simply or to add the context they lack.`
+
 test('asks through the tool, and the panel lists the question below the pull requests', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -1657,7 +1705,7 @@ test('asks through the tool, and the panel lists the question below the pull req
     pr: 'x/y#7',
   })
   expect(String(called.text ?? called.result)).toBe(
-    'Asked 1. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER 1 or DISMISSED 1. Projector’s panel never shows this number, so name the question to the person by what it asks.',
+    `Asked 1. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER 1 or DISMISSED 1. ${unclearSaid('question', '1')} Projector’s panel never shows this number, so name the question to the person by what it asks.`,
   )
   expect(session.registered).toEqual([
     expect.objectContaining({ name: 'ask', isDeferred: false }),
@@ -1946,7 +1994,7 @@ test('requests through the tool, and a request’s drawer offers the agent’s o
     options: ['Looks good', 'Some feedback'],
   })
   expect(String(called.text ?? called.result)).toBe(
-    'Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE 1; a decline arrives as a message that starts DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
+    `Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE 1; a decline arrives as a message that starts DECLINED 1. ${unclearSaid('request', '1')} Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
   )
   expect(session.project()).toContain(
     'inbox request --session=s1 --option=Looks good --option=Some feedback --detail=1. Open Fyra. -- Test the gutters',
@@ -1965,7 +2013,12 @@ test('requests through the tool, and a request’s drawer offers the agent’s o
     ['outcome:1.a', '1', true, 'Looks good'],
     ['outcome:1.b', '2', true, "Some feedback"],
   ])
-  expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss request', 'decline:1 8 decline request', 'snooze:1 9 snooze request'])
+  expect(await actionLinesOf(ui)).toEqual([
+    "unclear:1 6 I don't understand this request",
+    'discuss:1 7 discuss request',
+    'decline:1 8 decline request',
+    'snooze:1 9 snooze request',
+  ])
   await ui.unmount()
 })
 
@@ -2129,7 +2182,12 @@ test('start, first on 1, records the start action the drawer shows, and STARTED 
     ['2', 'Looks good'],
     ['3', "Some feedback"],
   ])
-  expect(await actionLinesOf(ui)).toEqual(['discuss:3 7 discuss request', 'decline:3 8 decline request', 'snooze:3 9 snooze request'])
+  expect(await actionLinesOf(ui)).toEqual([
+    "unclear:3 6 I don't understand this request",
+    'discuss:3 7 discuss request',
+    'decline:3 8 decline request',
+    'snooze:3 9 snooze request',
+  ])
   // Opening the drawer records nothing and sends nothing.
   expect(session.project().filter(command => command.startsWith('inbox start'))).toEqual([])
 
@@ -2253,7 +2311,7 @@ test('the request, revise, and restore results say STARTED comes first for a req
   expect(session.project()).toContain(`inbox request --session=s1 --start=${INSTALL} -- Test the gutters`)
   const revised = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, detail: '1. Open Fyra.' })
   expect(String(revised.text ?? revised.result)).toBe(
-    `Revised 1. Projector’s panel shows the new text, and the request is open again. ${first} Its outcome arrives as a message that starts DONE 1 or DECLINED 1.`,
+    `Revised 1. Projector’s panel shows the new text, and the request is open again. ${first} Its outcome arrives as a message that starts DONE 1 or DECLINED 1. ${unclearSaid('request', '1')}`,
   )
   session.store.write({ ...requested({ ref: '1', number: 1, start: INSTALL }), answer: { dismissed: true, declined: true, answeredAt: NOW } })
   const restored = await $.tool.call({ tool: 'mcp__projector__restore', number: 1 })
@@ -2279,6 +2337,154 @@ test('the ready and block tools mark a started request, and the panel shows it a
   expect((await ui.find({ type: 'Text', text: 'blocked' }))?.props.color).toBe('warning')
   const refused = await $.tool.call({ tool: 'mcp__projector__ready', number: 3 })
   expect(refused.deny ?? refused.text).toBe('3 is not started')
+  await ui.unmount()
+})
+
+/** The keys of the panel's item lines, in the order the list draws them. */
+async function itemOrderOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
+  return (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('item:'))
+}
+
+test('I don’t understand on a running subagent’s notice records it, sends UNCLEAR once, and marks the line until a revise', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held(), notice({ agentId: 'agent-1' })], { agents: [running('running')] })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  expect(await itemOrderOf(ui)).toEqual(['item:2', 'item:1'])
+
+  await ui.press({ key: 'item:2' })
+  const action = await ui.find({ type: 'Button', key: 'unclear:2' })
+  expect([action?.props.hotkey, action?.props.plain, action?.text]).toEqual(['6', true, "I don't understand this notice"])
+  await ui.press({ key: 'unclear:2' })
+  await clock.advance(1)
+  await clock.settle()
+  // The panel passes the subject and detail its drawer showed, and closes the drawer.
+  expect(session.project().filter(command => command.startsWith('inbox unclear'))).toEqual([
+    `inbox unclear 2 --subject=${FORCE_PUSHED} --detail=The file held a debug token. --session s1 --json`,
+  ])
+  expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
+  // The subagent hears UNCLEAR, and the line is marked delivered.
+  expect(session.sent).toEqual([{ to: 'agent-1', text: `UNCLEAR 2 ${FORCE_PUSHED}` }])
+  expect(session.submitted).toEqual([])
+  expect(session.store.store.get('2')?.unclear).toEqual({ at: NOW + 1, deliveredAt: expect.any(Number) })
+
+  // The line ends with `unclear` in the warning color, and its drawer no longer offers the action.
+  expect((await ui.find({ type: 'Text', text: 'unclear' }))?.props.color).toBe('warning')
+  await ui.press({ key: 'item:2' })
+  expect(await actionLinesOf(ui)).toEqual([
+    'discuss:2 7 discuss notice',
+    'dismiss:2 8 dismiss notice',
+    'snooze:2 9 snooze notice',
+  ])
+  await ui.press({ key: 'close:2' })
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.sent).toHaveLength(1)
+
+  // The agent revises the notice: it keeps its number and its place, shows the new text without the mark, and
+  // offers I don't understand again.
+  const reworded = 'Force-pushed #7 to drop a file that held a debug token'
+  const revised = await $.tool.call({ tool: 'mcp__projector__revise', number: 2, notice: reworded })
+  expect(String(revised.text ?? revised.result)).toBe(
+    `Revised 2. Projector’s panel shows the new text until the person dismisses it. ${unclearSaid('notice', '2')}`,
+  )
+  expect(session.project()).toContain(`inbox revise 2 --session s1 --notice=${reworded} --json`)
+  expect(await ui.find({ type: 'Text', text: reworded })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'unclear' })).toBeUndefined()
+  expect(await itemOrderOf(ui)).toEqual(['item:2', 'item:1'])
+  await ui.press({ key: 'item:2' })
+  expect((await ui.find({ type: 'Button', key: 'unclear:2' }))?.props.hotkey).toBe('6')
+  await ui.unmount()
+})
+
+test('I don’t understand on an item whose subagent finished reaches the main loop, naming the subagent, and marks it beside its stage', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const started = { action: INSTALL, startedAt: NOW - 5_000, deliveredAt: NOW - 4_000 }
+  const ready = requested({ agentId: 'agent-1', start: INSTALL, started, progress: { state: 'ready', at: NOW - 1_000 } })
+  const session = questionWorld(on, clock, [ready], { agents: [running('completed')] })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+
+  await ui.press({ key: 'item:3' })
+  await ui.press({ key: 'unclear:3' })
+  await clock.advance(1)
+  await clock.settle()
+  expect(session.sent).toEqual([])
+  expect(session.submitted).toEqual([
+    {
+      text: 'UNCLEAR 3 Test the gutters\n\nThe subagent Fix #7 (agent-1) posted this, and the message could not reach it; send it this message, or revise the item yourself.',
+      context: [],
+    },
+  ])
+  expect(session.store.store.get('3')?.unclear?.deliveredAt).toBeDefined()
+
+  // The line reads `unclear` and then the request's stage, each in its own color.
+  const marks = (await ui.findAll({ type: 'Text' })).filter(text => text.text === 'unclear' || text.text === 'ready')
+  expect(marks.map(mark => [mark.text, mark.props.color])).toEqual([
+    ['unclear', 'warning'],
+    ['ready', 'success'],
+  ])
+  await ui.unmount()
+})
+
+test('an UNCLEAR that cannot be delivered takes the mark back, says so, and offers I don’t understand again', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [held()], { drop: 'a hook refused it' })
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+
+  await ui.press({ key: 'item:1' })
+  await ui.press({ key: 'unclear:1' })
+  await clock.advance(1)
+  await clock.settle()
+  expect(session.submitted.map(one => one.text)).toEqual(['UNCLEAR 1 Decline the finding?'])
+  expect(session.toasts).toEqual([
+    'projector: word that you don\'t understand "Decline the finding?" did not reach its agent (a hook refused it); press I don\'t understand again',
+  ])
+  expect(session.store.store.get('1')).toEqual(held())
+  expect(await ui.find({ type: 'Text', text: 'unclear' })).toBeUndefined()
+  await ui.press({ key: 'item:1' })
+  expect((await ui.find({ type: 'Button', key: 'unclear:1' }))?.props.hotkey).toBe('6')
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.submitted).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('a press of I don’t understand on a drawer the agent revised since records nothing and shows the new text', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [notice()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+
+  await ui.press({ key: 'item:2' })
+  // The agent revises the notice's detail from its shell, which the panel reads only on a later tick.
+  const detail = 'The file held a debug token, which is now rotated.'
+  session.store.write(notice({ detail }))
+  await ui.press({ key: 'unclear:2' })
+  await clock.advance(1)
+  await clock.settle()
+  expect(session.project()).toContain(
+    `inbox unclear 2 --subject=${FORCE_PUSHED} --detail=The file held a debug token. --session s1 --json`,
+  )
+  expect(session.store.store.get('2')).toEqual(notice({ detail }))
+  // The drawer stays open on the new text, still offering the action.
+  expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe(detail)
+  expect((await ui.find({ type: 'Button', key: 'unclear:2' }))?.props.hotkey).toBe('6')
+  expect(await ui.find({ type: 'Text', text: 'unclear' })).toBeUndefined()
+  expect(session.sent).toEqual([])
+  expect(session.submitted).toEqual([])
+
+  // Pressed again, it records what you read now.
+  await ui.press({ key: 'unclear:2' })
+  await clock.advance(1)
+  await clock.settle()
+  expect(session.project()).toContain(`inbox unclear 2 --subject=${FORCE_PUSHED} --detail=${detail} --session s1 --json`)
+  expect(session.submitted.map(one => one.text)).toEqual([`UNCLEAR 2 ${FORCE_PUSHED}`])
   await ui.unmount()
 })
 
@@ -2747,7 +2953,7 @@ test('a subagent tells through the tool, and the panel lists the notice in gray'
 
   const called = await $.tool.call({ tool: 'mcp__projector__tell', notice: FORCE_PUSHED, pr: 'x/y#7', agentId: 'agent-1' })
   expect(String(called.text ?? called.result)).toBe(
-    'Posted 1. It waits in Projector’s panel until the person dismisses it; nothing comes back to you. Projector’s panel never shows this number, so name the notice to the person by what it tells.',
+    `Posted 1. It waits in Projector’s panel until the person dismisses it. ${unclearSaid('notice', '1')} Nothing else comes back to you. Projector’s panel never shows this number, so name the notice to the person by what it tells.`,
   )
   expect(session.project()).toContain(`inbox tell --session=s1 --pr=x/y#7 --agent=agent-1 -- ${FORCE_PUSHED}`)
   expect(session.notified).toEqual([FORCE_PUSHED])
@@ -2838,6 +3044,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
     expect((await ui.find({ type: 'Button', key: `${name}:2` }))?.props.plain).toBe(true)
   }
   expect(await actionLinesOf(ui)).toEqual([
+    "unclear:2 6 I don't understand this notice",
     'discuss:2 7 discuss notice',
     'dismiss:2 8 dismiss notice',
     'snooze:2 9 snooze notice',
@@ -3117,7 +3324,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
   const options = ['Add a budget of two per host', 'Ask the reviewer']
   const called = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, options, detail: 'The cap is three.' })
   expect(String(called.text ?? called.result)).toBe(
-    'Revised 1. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER 1 or DISMISSED 1.',
+    `Revised 1. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER 1 or DISMISSED 1. ${unclearSaid('question', '1')}`,
   )
   expect(session.project()).toContain(
     'inbox revise 1 --session s1 --option=Add a budget of two per host --option=Ask the reviewer --detail=The cap is three. --json',
@@ -3298,7 +3505,9 @@ test('the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, 
   expect(unknown.deny ?? unknown.text).toBe('no item 9')
 
   const empty = await $.tool.call({ tool: 'mcp__projector__revise', number: 1 })
-  expect(empty.deny ?? empty.text).toBe('give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`')
+  expect(empty.deny ?? empty.text).toBe(
+    'give what changes: `question`, `notice`, `request`, `start`, `detail`, `recommendation`, or `options`',
+  )
 
   session.store.failing.locks = 1
   const busy = await $.tool.call(revise)
@@ -3489,7 +3698,7 @@ test('an item whose snooze ends while the panel is hidden is drawn the moment th
 
 /** The keys of an item's drawer actions, in the order its row draws them. */
 async function actionsOf(ui: Pick<Mounted, 'findAll'>, ref: string): Promise<string[]> {
-  const pattern = new RegExp(`^(discuss|dismiss|snooze|unsnooze|restore):${ref}$`)
+  const pattern = new RegExp(`^(unclear|discuss|dismiss|snooze|unsnooze|restore):${ref}$`)
   return (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => pattern.test(key))
 }
 
@@ -3502,7 +3711,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
   const line = () => ui.find({ type: 'Text', text: 'Decline the finding?' })
 
   await ui.press({ key: 'item:1' })
-  expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
+  expect(await actionsOf(ui, '1')).toEqual(['unclear:1', 'discuss:1', 'dismiss:1', 'snooze:1'])
   await ui.press({ key: 'dismiss:1' })
   await clock.settle()
   // The drawer closes, and the line stays, muted in the subtle color and struck through.
@@ -3523,7 +3732,7 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
   // The drawer stays open on the question, open again, with dismiss back in its place.
   expect(await ui.find({ key: 'detail:1' })).toBeDefined()
   expect(await ui.find({ key: 'answer:1.a' })).toBeDefined()
-  expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
+  expect(await actionsOf(ui, '1')).toEqual(['unclear:1', 'discuss:1', 'dismiss:1', 'snooze:1'])
   const restored = await line()
   expect([restored?.props.color, restored?.props.strikethrough]).toEqual(['permission', false])
   expect(session.store.store.get('1')).toEqual(held())
@@ -3581,12 +3790,12 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
 
   // Its line opens the drawer again, where unsnooze takes snooze's place.
   await ui.press({ key: 'item:2' })
-  expect(await actionsOf(ui, '2')).toEqual(['discuss:2', 'dismiss:2', 'unsnooze:2'])
+  expect(await actionsOf(ui, '2')).toEqual(['unclear:2', 'discuss:2', 'dismiss:2', 'unsnooze:2'])
   await ui.press({ key: 'unsnooze:2' })
   await clock.settle()
   expect(session.project()).toContain('inbox restore 2 --session s1 --json')
   expect(await ui.find({ key: 'detail:2' })).toBeDefined()
-  expect(await actionsOf(ui, '2')).toEqual(['discuss:2', 'dismiss:2', 'snooze:2'])
+  expect(await actionsOf(ui, '2')).toEqual(['unclear:2', 'discuss:2', 'dismiss:2', 'snooze:2'])
   expect((await line())?.props.color).toBe('inactive')
   expect(session.store.store.get('2')).toEqual(notice())
 
@@ -3638,7 +3847,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
   // A notice comes back too, and nothing goes to the agent.
   const told = await $.tool.call({ tool: 'mcp__projector__restore', number: 2 })
   expect(String(told.text ?? told.result)).toBe(
-    'Restored 2. It is back in Projector’s panel until the person dismisses it; nothing comes back to you.',
+    `Restored 2. It is back in Projector’s panel until the person dismisses it. ${unclearSaid('notice', '2')} Nothing else comes back to you.`,
   )
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
   await clock.advance(TICK)
@@ -3724,11 +3933,11 @@ test('the restore tool refuses what the CLI refuses, asks an old CLI to upgrade,
   expect(session.store.store.get('2')).toEqual(notice())
 })
 
-test('an open question’s options are Buttons on the digits 1 to 6, only while its drawer is open', async ($, on) => {
+test('an open question’s options are Buttons on the digits 1 to 5, only while its drawer is open, and 6 says you don’t understand', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  // The recommendation and five more options, the most the ask tool takes.
-  const choices = ['Decline it', 'Add a budget', 'Cap per host', 'Ask the reviewer', 'Wait a day', 'Split the change']
+  // The recommendation and four more options, the most the ask tool takes.
+  const choices = ['Decline it', 'Add a budget', 'Cap per host', 'Ask the reviewer', 'Split the change']
   const session = questionWorld(on, clock, [held({ choices }), notice()])
   await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
@@ -3737,7 +3946,7 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while 
   // A closed drawer leaves the digits to the prompt, and a notice's drawer takes only `0`, on its line, and its actions'.
   expect(await digits()).toEqual([])
   await ui.press({ key: 'item:2' })
-  expect(await digits()).toEqual(['close:2', 'discuss:2', 'dismiss:2', 'snooze:2'])
+  expect(await digits()).toEqual(['close:2', 'unclear:2', 'discuss:2', 'dismiss:2', 'snooze:2'])
   await ui.press({ key: 'close:2' })
 
   await ui.press({ key: 'item:1' })
@@ -3747,19 +3956,68 @@ test('an open question’s options are Buttons on the digits 1 to 6, only while 
     ['answer:1.c', '3'],
     ['answer:1.d', '4'],
     ['answer:1.e', '5'],
-    ['answer:1.f', '6'],
   ])
-  // Pressing the sixth, by its digit or Enter, fills the prompt as clicking its number did, and sending it answers.
-  await ui.press({ key: 'answer:1.f' })
+  expect((await ui.find({ type: 'Button', key: 'unclear:1' }))?.props.hotkey).toBe('6')
+  // Pressing the fifth, by its digit or Enter, fills the prompt as clicking its number did, and sending it answers.
+  await ui.press({ key: 'answer:1.e' })
   expect(session.filled).toEqual(['insert:"Decline the finding?"\n\nSplit the change\n'])
   await $.prompt.submit({ text: '"Decline the finding?"\n\nSplit the change\n', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
-  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'f', text: 'Split the change' }))
+  expect(session.store.store.get('1')?.answer).toEqual(expect.objectContaining({ letter: 'e', text: 'Split the change' }))
 
   // The answered question's drawer lists its options with no digits; only its line and discuss take one.
   await ui.press({ key: 'item:1' })
   expect(await ui.find({ type: 'Text', text: /^Split the change ✓$/ })).toBeDefined()
   expect(await digits()).toEqual(['close:1', 'discuss:1'])
+  await ui.unmount()
+})
+
+test('a question stored with six choices, or a request with Start and five options, keeps them on 1 to 6 and offers I don’t understand without a digit', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const choices = ['Decline it', 'Add a budget', 'Cap per host', 'Ask the reviewer', 'Wait a day', 'Split the change']
+  const options = ['Looks good', 'Some feedback', 'Crashed', 'Wrong build', 'Could not sign in']
+  const session = questionWorld(on, clock, [held({ choices }), requested({ start: INSTALL, choices: options })])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  const lines = async () =>
+    (await ui.findAll({ type: 'Button' })).map(button => `${button.key ?? ''} ${String(button.props.hotkey ?? '')}`)
+
+  await ui.press({ key: 'item:1' })
+  expect(await lines()).toEqual([
+    'close:1 0',
+    'answer:1.a 1',
+    'answer:1.b 2',
+    'answer:1.c 3',
+    'answer:1.d 4',
+    'answer:1.e 5',
+    'answer:1.f 6',
+    'unclear:1 ',
+    'discuss:1 7',
+    'dismiss:1 8',
+    'snooze:1 9',
+  ])
+  await ui.press({ key: 'close:1' })
+
+  await ui.press({ key: 'item:3' })
+  expect(await lines()).toEqual([
+    'close:3 0',
+    'start:3 1',
+    'outcome:3.a 2',
+    'outcome:3.b 3',
+    'outcome:3.c 4',
+    'outcome:3.d 5',
+    'outcome:3.e 6',
+    'unclear:3 ',
+    'discuss:3 7',
+    'decline:3 8',
+    'snooze:3 9',
+  ])
+  // A click or Enter still presses it.
+  await ui.press({ key: 'unclear:3' })
+  await clock.settle()
+  expect(session.project()).toContain('inbox unclear 3 --subject=Test the gutters --detail=1. Open Fyra. --session s1 --json')
+  expect(session.store.store.get('3')?.unclear).toBeDefined()
   await ui.unmount()
 })
 
@@ -3803,7 +4061,7 @@ test('an open item’s line closes its drawer on 0, and no other line takes 0', 
 /** The open drawer's action lines, in order: each one's key, the letter that presses it, and its label. */
 async function actionLinesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
   const actions = (await ui.findAll({ type: 'Button' })).filter(button =>
-    /^(discuss|dismiss|decline|snooze|unsnooze|restore):/.test(button.key ?? ''),
+    /^(unclear|discuss|dismiss|decline|snooze|unsnooze|restore):/.test(button.key ?? ''),
   )
   return actions.map(action => `${action.key ?? ''} ${String(action.props.hotkey ?? '')} ${action.text}`)
 }
@@ -3830,27 +4088,36 @@ async function drawerRowsOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
   )
 }
 
-test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named for what they act on', async ($, on) => {
+test('a drawer’s actions follow its options a line each, on 6 to 9, named for what they act on', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  questionWorld(on, clock, [held(), notice()])
+  const declined = { dismissed: true as const, declined: true as const, answeredAt: NOW - 1_000 }
+  questionWorld(on, clock, [
+    held(),
+    notice(),
+    requested(),
+    requested({ ref: '4', number: 4, subject: 'Sign in', answer: declined, deliveredAt: NOW - 1_000 }),
+  ])
   await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
 
   // No line of the list takes a key; only an open drawer's lines do.
   expect((await ui.findAll({ type: 'Button' })).filter(button => button.props.hotkey !== undefined)).toEqual([])
 
-  // A question's options and actions are one list: the options on 1 to 6, then the actions on 7, 8 and 9.
+  // A question's options and actions are one list: the options from 1, then the actions on 6 to 9, I don't
+  // understand first, above discuss.
   await ui.press({ key: 'item:1' })
   expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual([
     'close:1',
     'answer:1.a',
     'answer:1.b',
+    'unclear:1',
     'discuss:1',
     'dismiss:1',
     'snooze:1',
   ])
   expect(await actionLinesOf(ui)).toEqual([
+    "unclear:1 6 I don't understand this question",
     'discuss:1 7 discuss question',
     'dismiss:1 8 dismiss question',
     'snooze:1 9 snooze question',
@@ -3866,6 +4133,7 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named 
     'answer:1.a',
     'answer:1.b',
     'text: ',
+    'unclear:1',
     'discuss:1',
     'dismiss:1',
     'snooze:1',
@@ -3890,12 +4158,13 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named 
   await clock.settle()
   await ui.press({ key: 'item:1' })
   expect(await actionLinesOf(ui)).toEqual([
+    "unclear:1 6 I don't understand this question",
     'discuss:1 7 discuss question',
     'dismiss:1 8 dismiss question',
     'unsnooze:1 9 unsnooze question',
   ])
 
-  // Dismissed, restore takes dismiss's place, and a resolved item has nothing to snooze.
+  // Dismissed, restore takes dismiss's place, and a resolved item has nothing to snooze and nothing to explain.
   await ui.press({ key: 'dismiss:1' })
   await clock.settle()
   await ui.press({ key: 'item:1' })
@@ -3915,13 +4184,27 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named 
   // A notice's actions name a notice.
   await ui.press({ key: 'item:2' })
   expect(await actionLinesOf(ui)).toEqual([
+    "unclear:2 6 I don't understand this notice",
     'discuss:2 7 discuss notice',
     'dismiss:2 8 dismiss notice',
     'snooze:2 9 snooze notice',
   ])
-  expect(await drawerRowsOf(ui)).toEqual(['text: ', 'detail:2', 'text: ', 'discuss:2', 'dismiss:2', 'snooze:2'])
+  expect(await drawerRowsOf(ui)).toEqual(['text: ', 'detail:2', 'text: ', 'unclear:2', 'discuss:2', 'dismiss:2', 'snooze:2'])
   expect(await drawerIndentOf(ui, '2')).toEqual([3, 3])
   await ui.press({ key: 'close:2' })
+
+  // A request's actions name a request, and a declined one, being resolved, offers no I don't understand.
+  await ui.press({ key: 'item:3' })
+  expect(await actionLinesOf(ui)).toEqual([
+    "unclear:3 6 I don't understand this request",
+    'discuss:3 7 discuss request',
+    'decline:3 8 decline request',
+    'snooze:3 9 snooze request',
+  ])
+  await ui.press({ key: 'close:3' })
+  await ui.press({ key: 'item:4' })
+  expect(await actionLinesOf(ui)).toEqual(['discuss:4 7 discuss request', 'restore:4 8 restore request'])
+  await ui.press({ key: 'close:4' })
 
   // A pull request's drawer has its actions above its links, the links with no letters.
   await ui.press({ key: 'pr:x/y#7' })
@@ -4100,6 +4383,7 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length 
   await ui.press({ key: 'cancel:1' })
   expect((await optionsOf(ui)).map(option => option.key)).toEqual(['answer:1.a', 'answer:1.b'])
   expect(await actionLinesOf(ui)).toEqual([
+    "unclear:1 6 I don't understand this question",
     'discuss:1 7 discuss question',
     'dismiss:1 8 dismiss question',
     'snooze:1 9 snooze question',
@@ -4107,7 +4391,12 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length 
   await ui.press({ key: 'close:1' })
 
   // A notice shows the same lines, and snoozes nothing yet.
-  const actions = ['discuss:2 7 discuss notice', 'dismiss:2 8 dismiss notice', 'snooze:2 9 snooze notice']
+  const actions = [
+    "unclear:2 6 I don't understand this notice",
+    'discuss:2 7 discuss notice',
+    'dismiss:2 8 dismiss notice',
+    'snooze:2 9 snooze notice',
+  ]
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'snooze:2' })
   expect(await lines('2')).toEqual(lengths('2'))
@@ -4228,7 +4517,7 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
     (await ui.findAll({ type: 'Button' }))
       .map(button => button.key ?? '')
       .filter(key => key.endsWith(':1') && !key.startsWith('close:') && !key.startsWith('answer:'))
-  const actions = ['discuss:1', 'dismiss:1', 'snooze:1']
+  const actions = ['unclear:1', 'discuss:1', 'dismiss:1', 'snooze:1']
 
   // A terminal dismisses the question while its drawer asks how long to snooze; restoring it from a terminal opens
   // its drawer on its actions, not on the snooze it was asking about.
@@ -4249,7 +4538,7 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
   session.store.run(['project', 'inbox', 'snooze', '1', '--session', SESSION])
   await clock.advance(TICK)
   await clock.settle()
-  expect(await lines()).toEqual(['discuss:1', 'dismiss:1', 'unsnooze:1'])
+  expect(await lines()).toEqual(['unclear:1', 'discuss:1', 'dismiss:1', 'unsnooze:1'])
   await ui.press({ key: 'unsnooze:1' })
   await clock.settle()
   expect(await lines()).toEqual(actions)

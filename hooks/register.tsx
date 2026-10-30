@@ -697,7 +697,9 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
   if (outcome === 'reopen') {
     // You never see an item's number, so the toast names the item by its
     // subject. A restore's line is not sent again, and its item stays open. A
-    // start that did not reach its agent is taken back, so start returns.
+    // start that did not reach its agent is taken back, so start returns, and
+    // so is word that you don't understand an item, so I don't understand
+    // returns.
     const item = (await read($, items)).find(one => one.ref === ref && one.session === session)
     const quoted = item === undefined ? undefined : quoteOf(item)
     const why = reason ? ` (${reason})` : ''
@@ -706,6 +708,8 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
         ? `projector: word that ${quoted ?? 'an item'} is open again did not reach its agent${why}`
         : text.startsWith('STARTED ')
           ? `projector: the start of ${quoted ?? 'a request'} did not reach its agent${why}; press start again`
+          : text.startsWith('UNCLEAR ')
+          ? `projector: word that you don't understand ${quoted ?? 'an item'} did not reach its agent${why}; press I don't understand again`
           : item?.kind === 'request'
           ? `projector: the outcome of ${quoted ?? 'a request'} did not reach its agent${why}; mark it done or declined again`
           : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
@@ -714,12 +718,12 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
 }
 
 /**
- * Claims a recorded answer or outcome and delivers it: to the subagent that
- * posted the item while it can still read a message, otherwise to the main
- * loop as a prompt of its own, which waits for the session to be idle.
+ * Claims the line an item owes its agent and delivers it: to the subagent
+ * that posted the item while it can still read a message, otherwise to the
+ * main loop as a prompt of its own, which waits for the session to be idle.
  */
-async function deliver($: Engine, question: Answerable): Promise<void> {
-  const { ref, session } = question
+async function deliver($: Engine, item: Item): Promise<void> {
+  const { ref, session } = item
   delivering.add(ref)
   try {
     const ran = await project($, ['inbox', 'claim', ref, '--session', session, '--json'])
@@ -728,15 +732,15 @@ async function deliver($: Engine, question: Answerable): Promise<void> {
     const claimed = JSON.parse(ran.stdout) as { token: string; text: string }
     await replace($, itemOf(ran.stdout, session))
 
-    const agents = question.agentId === undefined ? [] : await $.agent.list().catch(() => [])
-    const agentId = liveAgent(question, agents)
+    const agents = item.agentId === undefined ? [] : await $.agent.list().catch(() => [])
+    const agentId = liveAgent(item, agents)
     if (agentId !== undefined) {
       await track($, { ref, session, token: claimed.token, route: 'send', text: claimed.text })
       const sent = await $.session.send({ to: { agentId }, text: claimed.text }).catch(() => undefined)
       if (sent?.isDelivered === true) return await settle($, ref, 'delivered')
     }
 
-    const text = forMainLoop(claimed.text, question, agents)
+    const text = forMainLoop(claimed.text, item, agents)
     await track($, { ref, session, token: claimed.token, route: 'submit', text })
     const submitted = await $.prompt.submit({ text }).catch((error: unknown) => ({ drop: messageOf(error) }))
     await settle($, ref, submitted.drop === undefined ? 'delivered' : 'reopen', submitted.drop)
@@ -813,16 +817,19 @@ async function checkInbox($: Engine): Promise<void> {
 const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
 
 /**
- * Dismisses, snoozes for `minutes`, or restores an item from the panel; a
- * second press finds it changed and does nothing. Dismissing or snoozing
- * closes the item's drawer, and the item stays listed, muted, for 30 seconds,
- * so its line opens the drawer again to restore it. Restoring keeps the
- * drawer open on the item, open again.
+ * Dismisses, snoozes for `minutes`, or restores an item from the panel, or
+ * records that you don't understand it; a second press finds it changed and
+ * does nothing. Dismissing, snoozing, or saying you don't understand closes
+ * the item's drawer, and a dismissed or snoozed item stays listed, muted, for
+ * 30 seconds, so its line opens the drawer again to restore it. Restoring
+ * keeps the drawer open on the item, open again. A press the CLI refuses
+ * because the item changed since the panel drew it leaves the drawer open, to
+ * show the item as it is now.
  */
 async function act(
   $: Engine,
   item: Item,
-  command: 'dismiss' | 'decline' | 'snooze' | 'restore' | 'start',
+  command: 'dismiss' | 'decline' | 'snooze' | 'restore' | 'start' | 'unclear',
   minutes?: number,
 ): Promise<void> {
   const { ref, session } = item
@@ -831,9 +838,12 @@ async function act(
   try {
     const length = minutes === undefined ? [] : ['--for', String(minutes)]
     // Start passes the start action the drawer shows, which is what you
-    // consented to, and the CLI refuses it when the agent has revised it.
+    // consented to, and I don't understand passes the subject and detail it
+    // shows, which are what you read. The CLI refuses either when the agent
+    // has revised what it passes.
     const action = command === 'start' && item.kind === 'request' ? [`--action=${item.start ?? ''}`] : []
-    const ran = await project($, ['inbox', command, ref, ...length, ...action, '--session', session, '--json'])
+    const asShown = command === 'unclear' ? [`--subject=${item.subject}`, `--detail=${item.detail}`] : []
+    const ran = await project($, ['inbox', command, ref, ...length, ...action, ...asShown, '--session', session, '--json'])
     if (ran.exitCode === 0) {
       await replace($, itemOf(ran.stdout, session))
       if (command !== 'restore' && command !== 'start') await closeDrawer($, `item:${ref}`)
@@ -1058,6 +1068,10 @@ const startsFirst = (hasStart: boolean, ref: string) =>
     ? ` Once the person presses start, a message that starts STARTED ${ref} arrives first, quoting the start action; do exactly that, then mark the request ready or blocked.`
     : ''
 
+/** What a tool's result says about `UNCLEAR`, which arrives when the person presses I don't understand on the item. */
+const whenUnclear = (kind: Item['kind'], ref: string) =>
+  ` When a message that starts UNCLEAR ${ref} arrives, the person does not understand the ${kind}: revise it to explain it more simply or to add the context they lack.`
+
 /**
  * Runs the `project inbox` command one of the tools makes: what it printed,
  * or why the tool call is refused. `instead` says where the agent turns when
@@ -1130,7 +1144,7 @@ export const register: Register = on => {
     const ref = posted.stdout.trim()
     void $.ui.notify(String(e.question), { title: 'Projector question' }).catch(() => undefined)
     return {
-      result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. Projector’s panel never shows this number, so name the question to the person by what it asks.`,
+      result: `Asked ${ref}. Keep working on anything the answer does not block; it arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.${whenUnclear('question', ref)} Projector’s panel never shows this number, so name the question to the person by what it asks.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the question; ask it in the conversation instead' }))
 
@@ -1141,7 +1155,7 @@ export const register: Register = on => {
     const ref = posted.stdout.trim()
     void $.ui.notify(String(e.notice), { title: 'Projector notice' }).catch(() => undefined)
     return {
-      result: `Posted ${ref}. It waits in Projector’s panel until the person dismisses it; nothing comes back to you. Projector’s panel never shows this number, so name the notice to the person by what it tells.`,
+      result: `Posted ${ref}. It waits in Projector’s panel until the person dismisses it.${whenUnclear('notice', ref)} Nothing else comes back to you. Projector’s panel never shows this number, so name the notice to the person by what it tells.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the notice; tell the person in the conversation instead' }))
 
@@ -1153,7 +1167,7 @@ export const register: Register = on => {
     void $.ui.notify(String(e.request), { title: 'Projector request' }).catch(() => undefined)
     const hasStart = typeof e.start === 'string' && e.start !== ''
     return {
-      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE ${ref}; a decline arrives as a message that starts DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
+      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE ${ref}; a decline arrives as a message that starts DECLINED ${ref}.${whenUnclear('request', ref)} Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the request; ask the person in the conversation instead' }))
 
@@ -1194,10 +1208,11 @@ export const register: Register = on => {
     deny: 'Projector could not withdraw the item; tell the person in the conversation that it no longer needs them',
   }))
 
-  // The panel takes the revised question from the CLI at once, so it redraws
-  // before the next read of the store. An answer a drawer put in the prompt
-  // was chosen from the old text, so it turns stale: sent, it answers no
-  // question, this one or another that shares the old text.
+  // The panel takes the revised item from the CLI at once, so it redraws, its
+  // `unclear` mark gone, before the next read of the store. An answer a
+  // drawer put in the prompt was chosen from the old text, so it turns stale:
+  // sent, it answers no question, this one or another that shares the old
+  // text.
   on('tool.call', { tool: REVISE_TOOL }, async ($, e) => {
     const session = await $.session.id()
     const ran = await runTool($, reviseArguments(e, session), 'ask the revised question in the conversation instead')
@@ -1209,8 +1224,10 @@ export const register: Register = on => {
     return {
       result:
         item.kind === 'request'
-          ? `Revised ${ref}. Projector’s panel shows the new text, and the request is open again.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
-          : `Revised ${ref}. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
+          ? `Revised ${ref}. Projector’s panel shows the new text, and the request is open again.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.${whenUnclear('request', ref)}`
+          : item.kind === 'notice'
+            ? `Revised ${ref}. Projector’s panel shows the new text until the person dismisses it.${whenUnclear('notice', ref)}`
+            : `Revised ${ref}. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.${whenUnclear('question', ref)}`,
     }
   }).catch(() => ({
     deny: 'Projector could not revise the item; post the revised text in the conversation instead',
@@ -1231,7 +1248,7 @@ export const register: Register = on => {
     return {
       result:
         item.kind === 'notice'
-          ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it; nothing comes back to you.`
+          ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it.${whenUnclear('notice', ref)} Nothing else comes back to you.`
           : item.kind === 'request'
             ? `Restored ${ref}. It is open in Projector’s panel again. An agent that already heard DECLINED ${ref} hears RESTORED ${ref} first.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
             : `Restored ${ref}. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
@@ -1608,18 +1625,20 @@ export const register: Register = on => {
     //
     // A drawer's actions follow its options, a line each: a plain Button on
     // its digit, as `7: discuss question`. The digits count down from 9, so
-    // the options keep 1 to 6 and the item's line 0: `7` discusses, `8` sets
-    // the line aside or brings it back, and `9` puts it off or ends the
-    // snooze. A digit presses its line as an option's digit presses it. What
-    // a drawer asks in its actions' place draws the same way.
-    type Line = { name: string; label: string; hotkey: string; onPress: () => void }
+    // the options keep 1 to 5 and the item's line 0: `6` says you don't
+    // understand the item, `7` discusses, `8` sets the line aside or brings
+    // it back, and `9` puts it off or ends the snooze. A digit presses its
+    // line as an option's digit presses it, and a line without one takes a
+    // click or Enter. What a drawer asks in its actions' place draws the same
+    // way.
+    type Line = { name: string; label: string; hotkey: string | undefined; onPress: () => void }
     const drawLines = (id: string, lines: readonly Line[]) =>
       lines.map(({ name, label, hotkey, onPress }) => (
         <Button key={`${name}:${id}`} plain hotkey={hotkey} onPress={onPress}>
           {label}
         </Button>
       ))
-    // An open question's options are plain Buttons on the digits 1 to 6,
+    // An open question's options are plain Buttons on the digits from 1,
     // which the engine draws before them, as `1: Decline it`. A digit presses
     // its option from the panel, or typed first into an empty prompt, as a
     // survey's does; either only fills the prompt, so a stray one sends
@@ -1772,7 +1791,32 @@ export const register: Register = on => {
           void act($, item, 'restore')
         },
       })
+      // An open item offers I don't understand above discuss until you press
+      // it, and again once its agent revises the item. A question's choices
+      // and a request's, after any Start or Retry, end at `5`, leaving it `6`.
+      // An item stored before that cap can hold a choice on `6`, so there it
+      // takes no digit.
+      const choiceDigits =
+        item.kind === 'question'
+          ? item.choices.length
+          : item.kind === 'request'
+            ? (startOf(item) === undefined ? 0 : 1) + choicesOf(item).length
+            : 0
+      const unclear: Line[] =
+        isOpen && item.unclear === undefined
+          ? [
+              {
+                name: 'unclear',
+                label: `I don't understand this ${item.kind}`,
+                hotkey: choiceDigits < 6 ? '6' : undefined,
+                onPress: () => {
+                  void act($, item, 'unclear')
+                },
+              },
+            ]
+          : []
       const actions: Line[] = [
+        ...unclear,
         {
           name: 'discuss',
           label: `discuss ${item.kind}`,
@@ -1836,6 +1880,8 @@ export const register: Register = on => {
       // puts the line back lower in the list. The engine keeps the ring by
       // position, and the open line's key is one the list never draws, so a
       // move onto the line in the list waits for the panel to draw the list.
+      // A notice's drawer puts the ring on discuss, below I don't understand,
+      // so a second Enter only fills the prompt and sends its agent nothing.
       const line = isOpened ? `close:${ref}` : key
       const first = !isOpen
         ? `discuss:${ref}`
@@ -1847,6 +1893,7 @@ export const register: Register = on => {
               : `start:${ref}`
             : `discuss:${ref}`
       const isSending = !isOpen && item.deliveredAt === undefined
+      const isUnclear = isOpen && item.unclear !== undefined
       const stage = item.kind === 'request' && isOpen ? stageOf(item) : undefined
 
       return (
@@ -1875,6 +1922,16 @@ export const register: Register = on => {
             {isSending && (
               <Box flexShrink={0}>
                 <Text color="subtle">sending</Text>
+              </Box>
+            )}
+            {/* An item you don't understand reads `unclear` until its agent
+                revises it. A request's stage follows, since it still says
+                whether you can begin. */}
+            {isUnclear && (
+              <Box flexShrink={0}>
+                <Text key={`unclear-mark:${ref}`} color="warning">
+                  unclear
+                </Text>
               </Box>
             )}
             {stage !== undefined && (
