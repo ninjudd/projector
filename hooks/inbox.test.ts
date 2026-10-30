@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
 
 import {
   ASK_DESCRIPTION,
+  ASK_SCHEMA,
   askArguments,
   forMainLoop,
   isShownAt,
@@ -16,11 +17,13 @@ import {
   replyNote,
   reportArguments,
   REQUEST_DESCRIPTION,
+  REQUEST_SCHEMA,
   requestArguments,
   RESTORE_DESCRIPTION,
   RESTORE_SCHEMA,
   restoreArguments,
   REVISE_DESCRIPTION,
+  REVISE_SCHEMA,
   reviseArguments,
   signatureOf,
   span,
@@ -397,10 +400,10 @@ test('a call of the revise tool becomes `project inbox revise` with only what ch
     '--json',
   ])
   expect(reviseArguments({ number: 3 }, 's1')).toEqual({
-    error: 'give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`',
+    error: 'give what changes: `question`, `notice`, `request`, `start`, `detail`, `recommendation`, or `options`',
   })
   expect(reviseArguments({ number: '3', detail: 'x' }, 's1')).toEqual({
-    error: '`number` must be the whole number `ask` or `request` returned, such as 3',
+    error: '`number` must be the whole number `ask`, `tell`, or `request` returned, such as 3',
   })
   expect(reviseArguments({ number: 3, options: 'no' }, 's1')).toEqual({ error: '`options` must be a list of strings' })
   expect(reviseArguments({ number: 3, question: 7 }, 's1')).toEqual({ error: '`question` must be a string' })
@@ -735,4 +738,83 @@ test('a request’s start waits for a deliverer until STARTED is delivered, and 
   expect(needsDelivery(request({ started: { ...started, deliveredAt: NOW } }), NOW)).toBe(false)
   expect(needsDelivery(request({ started, claim: { token: 't', renewedAt: NOW, line: 'started' } }), NOW)).toBe(false)
   expect(needsDelivery(request({ started, answer: { done: true, answeredAt: NOW }, deliveredAt: NOW }), NOW)).toBe(false)
+})
+
+test('a call of the revise tool revises a notice with `notice`, text kept as text', () => {
+  expect(reviseArguments({ number: 2, notice: '-Force-pushed #7 to drop a debug token', detail: 'Rotated.' }, 's1')).toEqual([
+    'inbox',
+    'revise',
+    '2',
+    '--session',
+    's1',
+    '--notice=-Force-pushed #7 to drop a debug token',
+    '--detail=Rotated.',
+    '--json',
+  ])
+  expect(reviseArguments({ number: 2, notice: 7 }, 's1')).toEqual({ error: '`notice` must be a string' })
+})
+
+test('the revise tool takes a notice, and says a revision clears the person’s I don’t understand', () => {
+  expect(REVISE_DESCRIPTION).toContain('Revise a question, notice, or request you posted that is still open, keeping its number')
+  expect(REVISE_DESCRIPTION).toContain('or a message that starts `UNCLEAR 3` shows it was unclear')
+  expect(REVISE_DESCRIPTION).toContain('Name it by the number `ask`, `tell`, or `request` returned')
+  expect(REVISE_DESCRIPTION).toContain('for a notice, the notice or its detail;')
+  expect(REVISE_DESCRIPTION).toContain('A revision clears the person’s I don’t understand')
+  expect(REVISE_SCHEMA.properties.notice).toEqual({
+    type: 'string',
+    description: 'The new notice, in one line of at most 120 characters.',
+  })
+  expect(REVISE_SCHEMA.properties.number.description).toBe('The item’s number, as `ask`, `tell`, or `request` returned it, such as 3.')
+})
+
+test('ask, request, and revise take at most four options, leaving 6 for I don’t understand', () => {
+  for (const schema of [ASK_SCHEMA, REQUEST_SCHEMA, REVISE_SCHEMA]) {
+    expect(schema.properties.options.maxItems).toBe(4)
+    expect(schema.properties.options.description).toMatch(/\b[Uu]p to four\b/)
+    expect(schema.properties.options.description).not.toContain('five')
+  }
+})
+
+test('ask, tell, and request tell the agent that UNCLEAR asks it to revise the item, keeping its number', () => {
+  for (const [description, kind] of [
+    [ASK_DESCRIPTION, 'question'],
+    [TELL_DESCRIPTION, 'notice'],
+    [REQUEST_DESCRIPTION, 'request'],
+  ] as const) {
+    expect(description).toContain(
+      `When the person presses I don’t understand, a message that starts \`UNCLEAR 3\` arrives: revise the ${kind} to explain it more simply or to add the context they lack, keeping its number.`,
+    )
+  }
+  expect(TELL_DESCRIPTION).toContain('The call returns the notice’s number, such as 3.')
+  expect(TELL_DESCRIPTION).toContain('Nothing else comes back to you')
+})
+
+test('word that you don’t understand an open item of any kind waits for a deliverer until UNCLEAR is delivered', () => {
+  const unclear = { at: NOW - 1_000 }
+  for (const item of [question({ unclear }), notice({ unclear }), request({ unclear })]) {
+    expect(needsDelivery(item, NOW)).toBe(true)
+    expect(needsDelivery({ ...item, claim: { token: 't', renewedAt: NOW - 5_000, line: 'unclear' } }, NOW)).toBe(false)
+    expect(needsDelivery({ ...item, claim: { token: 't', renewedAt: NOW - 60_000, line: 'unclear' } }, NOW)).toBe(true)
+    expect(needsDelivery({ ...item, unclear: { ...unclear, deliveredAt: NOW } }, NOW)).toBe(false)
+  }
+  // A dismissed notice owes nothing, even marked unclear; a resolved question owes only its answer.
+  const dismissed = { dismissed: true as const, answeredAt: NOW }
+  expect(needsDelivery(notice({ unclear, answer: dismissed, deliveredAt: NOW }), NOW)).toBe(false)
+  expect(needsDelivery(question({ unclear, answer: dismissed, deliveredAt: NOW }), NOW)).toBe(false)
+  expect(needsDelivery(notice(), NOW)).toBe(false)
+})
+
+test('the main loop is told which subagent posted an item it receives UNCLEAR for', () => {
+  const note = (who: string) =>
+    `\n\nThe subagent ${who} posted this, and the message could not reach it; send it this message, or revise the item yourself.`
+  expect(forMainLoop('UNCLEAR 2 Force-pushed #7', notice({ agentId: 'agent-1' }), [agent('completed')])).toBe(
+    `UNCLEAR 2 Force-pushed #7${note('Fix #7 (agent-1)')}`,
+  )
+  expect(forMainLoop('UNCLEAR 1 Decline the finding?', question({ agentId: 'gone' }), [])).toBe(
+    `UNCLEAR 1 Decline the finding?${note('gone')}`,
+  )
+  expect(forMainLoop('UNCLEAR 3 Test the gutters', request({ agentId: 'agent-1' }), [])).toBe(
+    `UNCLEAR 3 Test the gutters${note('agent-1')}`,
+  )
+  expect(forMainLoop('UNCLEAR 2 Force-pushed #7', notice(), [])).toBe('UNCLEAR 2 Force-pushed #7')
 })

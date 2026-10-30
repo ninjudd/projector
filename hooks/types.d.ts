@@ -88,6 +88,13 @@ export type Posted = {
   snoozedUntil?: number
   /** When the item was last snoozed, in milliseconds; absent when it is not snoozed. */
   snoozedAt?: number
+  /** When you pressed I don't understand, until the agent revises the item; `deliveredAt` once `UNCLEAR` reached the agent. */
+  unclear?: { at: number; deliveredAt?: number }
+  /**
+   * A deliverer's hold on the line the item owes its agent: `line` says
+   * which, the answer or outcome, `RESTORED`, `STARTED`, or `UNCLEAR`.
+   */
+  claim?: { token: string; renewedAt: number; line?: 'answer' | 'restored' | 'started' | 'unclear' }
   deliveredAt?: number
   session: string
 }
@@ -98,12 +105,11 @@ export type Question = Posted & {
   /** The answers in letter order, the recommendation first; the letter after the last is a typed answer. */
   choices: string[]
   answer?: Answer
-  claim?: { token: string; renewedAt: number }
   /** When the person restored the question after its agent may have heard `DISMISSED`, until `RESTORED` is delivered. */
   restoredAt?: number
 }
 
-/** A notice, which you read and dismiss, and which sends nothing back; dismissing it delivers it. */
+/** A notice, which you read and dismiss, and which sends back nothing but `UNCLEAR`; dismissing it delivers it. */
 export type Notice = Posted & {
   kind: 'notice'
   answer?: Dismissal
@@ -124,8 +130,6 @@ export type Request = Posted & {
   /** What the agent made of the start: `ready`, or `blocked` with the reason you read before you retry. */
   progress?: { state: 'ready' | 'blocked'; reason?: string; at: number }
   answer?: Outcome
-  /** A deliverer's hold on the line it sends: `line` says which, a `STARTED` or the outcome. */
-  claim?: { token: string; renewedAt: number; line?: 'answer' | 'restored' | 'started' }
   /** When the person restored the request after its agent may have heard `DECLINED`, until `RESTORED` is delivered. */
   restoredAt?: number
 }

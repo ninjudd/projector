@@ -394,13 +394,14 @@ When an item it posted no longer needs you, such as a question your reply
 settled, the agent takes it back with the `withdraw` tool,
 `mcp__projector__withdraw`, by the number `ask`, `tell`, or `request`
 returned. The panel never shows that number, so the agent names an item to
-you by what it asks, tells, or requests. When your reply shows that a
-question or a request was unclear, the agent rewrites it in place with the
-`revise` tool, `mcp__projector__revise`. When you tell it you dismissed,
-declined, or snoozed an item by mistake, the agent brings the item back under
-its number with the `restore` tool, `mcp__projector__restore`, rather than
-asking again. An agent that runs `project inbox ask`, `tell`, `request`,
-`withdraw`, `revise`, or `restore` from the shell reaches the same inbox, as
+you by what it asks, tells, or requests. When your reply shows that an item
+was unclear, or you press **I don't understand** on it, the agent rewrites
+it in place with the `revise` tool, `mcp__projector__revise`, keeping its
+number. When you tell it you dismissed, declined, or snoozed an item by
+mistake, the agent brings the item back under its number with the `restore`
+tool, `mcp__projector__restore`, rather than asking again. An agent that
+runs `project inbox ask`, `tell`, `request`, `withdraw`, `revise`, or
+`restore` from the shell reaches the same inbox, as
 [Use the inbox](cli.md#use-the-inbox) describes.
 
 The items are a list below the pull requests, newest first, each line
@@ -468,6 +469,7 @@ the item's first letter:
       (recommended)
       2: Add a budget of two retries per host, and keep the total cap
 
+      6: I don't understand this question
       7: discuss question
       8: dismiss question
       9: snooze question
@@ -528,8 +530,11 @@ the options, after a blank line. Each line's key is drawn in Claude Code's
 accent color and the rest of the line in the default text color, which
 Claude Code's own `: ` after the key always takes, so under the pointer or
 the focus ring the line inverts as the key and one block after it. A
-question's drawer has three actions:
+question's drawer has four actions:
 
+- **I don't understand this question** tells the agent that you don't
+  follow the question, in one press, as the paragraph after this list
+  describes.
 - **discuss question** puts the quoted question in the prompt, followed
   by a blank line, and leaves the drawer open, so the options and detail
   stay in view while you type. Type your reply under the quote, or on the
@@ -537,21 +542,39 @@ question's drawer has three actions:
   answers nothing.
 - **dismiss question** sets the question aside without an answer and
   closes the drawer.
-- **snooze question** asks how long to put the question off, as the next
-  paragraph but one describes.
+- **snooze question** asks how long to put the question off, as the
+  paragraph on **snooze** below describes.
 
-A notice's drawer shows its detail, then the same three actions:
-**discuss notice**, **dismiss notice**, and **snooze notice**. **discuss
-notice** puts the quoted notice in the prompt. A prompt you send that quotes
-a notice answers nothing, but it closes the notice's drawer; the notice
-stays in the panel until you dismiss it. **dismiss notice** clears the
-notice once you have read it and closes its drawer, and nothing goes back
-to the agent.
+**I don't understand** is in the drawer of every open item, above
+**discuss**, until you press it. One press runs `project inbox unclear`
+with the subject and detail the drawer shows, and closes the drawer. The
+item's line then ends with `unclear`, in yellow, and the agent that posted
+the item hears `UNCLEAR` with its subject: a subagent that is still running
+receives it directly, and otherwise the main loop receives it as a prompt,
+with the name of the subagent that posted the item. The agent revises the
+item to explain it more simply or to add the context you lack. The item
+keeps its place in the list, its line drops `unclear`, and its drawer offers
+**I don't understand** again for the new text. If the agent revised the item
+since the panel drew the drawer, the press records nothing, and the drawer
+shows the new text for you to read and press again. When `UNCLEAR` cannot
+reach the agent, the panel takes the mark back and says why, so you can
+press again. An answer, outcome, or dismissal you give before the panel
+sends `UNCLEAR` takes its place, so the agent hears only that. To say what
+you don't understand, use **discuss** instead.
+
+A notice's drawer shows its detail, then the same four actions: **I don't
+understand this notice**, **discuss notice**, **dismiss notice**, and
+**snooze notice**. **discuss notice** puts the quoted notice in the prompt.
+A prompt you send that quotes a notice answers nothing, but it closes the
+notice's drawer; the notice stays in the panel until you dismiss it.
+**dismiss notice** clears the notice once you have read it and closes its
+drawer, and nothing goes back to the agent.
 
 A request's drawer shows its steps, then the options its agent gave, on `1`
-and on, in the options' place, then **discuss request**, **decline request**,
-and **snooze request**. A test's options might be **Looks good** and **Some
-feedback**, and a request posted without options offers a single **Done**.
+and on, in the options' place, then **I don't understand this request**,
+**discuss request**, **decline request**, and **snooze request**. A test's
+options might be **Looks good** and **Some feedback**, and a request posted
+without options offers a single **Done**.
 Like a question's option, each records nothing at once: it puts the quoted
 request, a blank line, and its words in the prompt, with the cursor below for
 any notes. Every option marks the request done, and records which you chose.
@@ -582,7 +605,9 @@ do it, they read `Blocked:` with its reason and `blocked`, in yellow, and
 **Retry** takes the place of **Start**, for you to press once you have done
 what the reason says. The options and **decline request** work throughout,
 the options from `1` while there is no **Start** or **Retry** to press. A
-request without a start action shows none of this.
+request you pressed **I don't understand** on reads `unclear` before
+`starting`, `ready`, or `blocked`, so its line still says whether you can
+begin. A request without a start action shows none of this.
 
 **dismiss**, **decline**, **restore**, and **unsnooze** act at once. A
 dismissed or declined item stays in the list a while, struck through, as the
@@ -673,6 +698,8 @@ keyboard in, and once the panel has it, Esc and Enter.
 Enter on a line opens its drawer and moves the ring onto the drawer's first
 control: a question's first option, a request's **Start** or **Retry** when
 it has one and its first option otherwise, and **discuss** for any other item.
+For a notice, the ring skips **I don't understand** above **discuss**, so a
+second Enter only fills the prompt and sends the agent nothing.
 Tab then walks the options and the actions. Enter on the open line closes the
 drawer and leaves the ring on the line. A click opens and closes a drawer
 without moving the ring. In the same way, Enter on the **snooze** line moves the
@@ -680,11 +707,11 @@ ring onto the first length, and Enter on **cancel** moves it back onto the
 **snooze** line. Enter on a pull request's **dismiss** moves it onto the
 confirmation, and Enter on `no, keep it` back onto **dismiss**.
 
-An open question's options read `1:` to `6:`, the digit in the accent
-color. Press a digit while the panel has the keyboard, or type it first into
-an empty prompt while the option is wholly in view in the panel, as you
-answer Claude Code's own surveys, and the panel puts that option in your
-prompt as a click does. A digit only fills the prompt,
+An open question's options read `1:` and on, up to `5:`, the digit in the
+accent color. Press a digit while the panel has the keyboard, or type it
+first into an empty prompt while the option is wholly in view in the panel,
+as you answer Claude Code's own surveys, and the panel puts that option in
+your prompt as a click does. A digit only fills the prompt,
 so nothing reaches the agent until you send. A resolved question's options
 have no digits.
 
@@ -697,10 +724,13 @@ request's drawer has no `0`, since its number closes it.
 
 A drawer's actions follow its options, a line each, with the digit that
 presses it before the label in the accent color, such as
-`7: discuss question`. The digits count down from 9, so the options keep
-`1` to `6` and the item's line `0`. Each label ends with what the action
-acts on: `question`, `notice`, `request`, or `PR`.
+`7: discuss question`. The digits count down from 9, so a question's choices
+and a request's, after any **Start** or **Retry**, end at `5`, and the
+item's line keeps `0`. Each label ends with what the action acts on:
+`question`, `notice`, `request`, or `PR`.
 
+- **6** presses **I don't understand**, which an open item's drawer offers
+  until you press it.
 - **7** presses **discuss**.
 - **8** presses **dismiss**, or **decline** on a request, or **restore** in
   their place. Dismiss asks to
@@ -713,6 +743,11 @@ acts on: `question`, `notice`, `request`, or `PR`.
 An action's digit works the two ways an option's does: while the panel has
 the keyboard, or first into an empty prompt while its line is wholly in
 view in the panel.
+
+An item an older Projector stored can hold a choice on `6`: a question with
+six choices, or a request with **Start** or **Retry** on `1` and five
+options. Its drawer keeps each choice on its digit and draws **I don't
+understand** without one, so you press it with a click or Enter.
 
 ## Install for Codex
 
