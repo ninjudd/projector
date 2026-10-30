@@ -1,0 +1,169 @@
+{
+ "version": 1,
+ "name": "Request options",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 379,
+  "title": "Let the agent choose a request's options",
+  "head": "247cc83a31f6fa82c461eac13a58731bc077cbbd",
+  "headRef": "request-feedback",
+  "base": "37420c53f25e7185ea59614837ad6adb82fbb8c7",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox lets an agent post a <b>request</b>: work only the person can do, such as testing a build on their phone. The request appears in the panel above the prompt, and its drawer lists what the person can choose when they finish. Until now every request offered the same two choices, <b>Looks good</b> and <b>There's an issue</b>. Those fit a test, but read too strong for ordinary feedback and make no sense for a sign-in or a migration.",
+   "This change lets the agent that posts a request choose its options, the way it already chooses a question's options. The agent gives up to five with <code>project inbox request --option</code> or the <code>request</code> tool's <code>options</code>. The CLI stores them on the request as <code>choices</code>, and the drawer shows them in order. Each option puts the quoted request and its words in the prompt. Sending that prompt marks the request done and records the option as the outcome's text, so the agent learns which one the person picked. A request posted without options, including one posted by 0.8.5, offers a single <b>Done</b>. Declining stays one of the drawer's actions, so <code>Declined</code> cannot be an option.",
+   "The review found one defect: a request without options that someone marks done with text, such as from the terminal, shows <b>Done</b> twice in its resolved drawer. The flag on <code>hooks/register.tsx</code> shows where."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Request</b>: an inbox item asking the person to do something; it ends done or declined.</li><li><b>Options</b> (<code>choices</code> in the store): the answers the drawer offers when the person finishes. Each marks the request done.</li><li><b>Start action</b>: something the agent prepares once the person presses <b>Start</b>; when a request has one, <b>Start</b> takes <code>1</code> and the options follow from <code>2</code>.</li><li><b>Stale pick</b>: an option the drawer put in the prompt before the agent revised the request; sending it only replies.</li></ul>"
+   },
+   {
+    "id": "where",
+    "title": "Where an outcome reaches the agent",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Route</th><th>What the agent reads</th></tr></thead><tbody><tr><td>The person sends the drawer's prompt</td><td class=\"r\">The quoted request, the option, and any notes</td></tr><tr><td>A deliverer sends the outcome line</td><td class=\"r\"><code>DONE 3 &lt;request&gt; → &lt;option&gt;</code></td></tr><tr><td>The person declines</td><td class=\"r\"><code>DECLINED 3 &lt;request&gt;</code></td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "store",
+   "title": "The CLI stores and checks a request's options",
+   "kicker": "project inbox request and revise take options, and the store keeps them as choices",
+   "intro": [
+    "The CLI is where options are checked, so the panel and the tools only pass them through. <code>request</code> takes up to five <code>--option</code> values. It trims each one and refuses an empty option, one of more than one line, a duplicate, a sixth, and <code>Declined</code>, which the panel reads as declining. <code>revise</code> replaces a request's options with <code>--option</code>, and <code>--no-options</code> removes them. A request with no options has no <code>choices</code> field at all, which is how a 0.8.5 request looks too."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Adds <code>check_request_options</code> and stores the options on post and revise.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 283,
+       "text": "Ran each refusal in a scratch store: six options, <code>A</code> and <code> A</code>, an empty option, a two-line option, and <code> Declined </code> all exit 65 without using up a number."
+      },
+      {
+       "kind": "context",
+       "line": 606,
+       "text": "A revise of only the options still resets the request to open, dropping a pressed start, as every revise of a request does."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds <code>request --option</code>, passes it through, and lists a request's options in <code>show</code>."
+    },
+    {
+     "path": "tests/test_inbox.py",
+     "note": "Covers the stored options, each refusal, and revise replacing or dropping them."
+    }
+   ]
+  },
+  {
+   "id": "tools",
+   "title": "The tools pass options and read outcomes",
+   "kicker": "The request and revise tools take options, and a sent prompt resolves a request by its own options",
+   "intro": [
+    "The <code>request</code> tool gains an <code>options</code> list that becomes <code>--option</code> flags, and the <code>revise</code> tool's existing <code>options</code> now applies to requests too, an empty list passing <code>--no-options</code>.",
+    "When the person sends a prompt that quotes a request, <code>readPrompt</code> looks at the first line under the quote. One of that request's options, or a plain <code>Done</code>, marks it done; a plain <code>Declined</code> declines it. Anything else is a reply, which leaves the request open. A request without options takes only <code>Done</code>, so <code>Looks good</code> under a 0.8.5 request now replies rather than resolving it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Replaces the fixed <code>CHOICES</code> with <code>choicesOf</code>, reads outcomes per request, and documents the new tool fields.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 83,
+       "text": "<code>Done</code> marks a request done even when the agent gave other options; the agent then hears <code>DONE</code> with no option named."
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Declares the optional <code>choices</code> on a stored request."
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "Covers the tool's arguments and a request taking only its own options."
+    }
+   ]
+  },
+  {
+   "id": "drawer",
+   "title": "The drawer offers the agent's options",
+   "kicker": "Buttons for each option after Start or Retry, and the resolved drawer marks the one chosen",
+   "intro": [
+    "An open request's drawer shows <b>Start</b> or <b>Retry</b> on <code>1</code> when the request has a start action, then its options on the next digits. Five options and a start fill <code>1</code> to <code>6</code>, leaving discuss on <code>7</code>, decline on <code>8</code>, and snooze on <code>9</code>. A pick puts the quoted request and the option in the prompt. When the agent revises the request through the tool, that pick turns stale, so sending it only replies; the redrawn drawer offers the new options.",
+    "Once the request is done, the drawer shows its options as text and marks the one recorded. A done whose text matches no option, such as one marked from the terminal, gets a line of its own."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Draws the request's options in the drawer, keys them by letter, and records the chosen one as the done's text.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 1712,
+       "text": "A request without options that is marked done with text, such as <code>project inbox done 5 --text \"Step 4 didn't work\"</code>, finds no chosen option, so its resolved drawer draws a muted <b>Done</b> and a second line <b>Done ✓ Step 4 didn't work</b>. Falling back to the <code>Done</code> option when the text matches none fixes it."
+      },
+      {
+       "kind": "verify",
+       "line": 1711,
+       "text": "A probe test picked an option, revised the options through the tool, and sent the prompt: no <code>inbox done</code> ran. A pick from the redrawn drawer then recorded <code>done --text=Signed in</code>."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Moves the drawer tests to agent options, and adds a request without options offering a single Done."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Instructions and documentation",
+   "kicker": "Agents block version 22, and the drawer and CLI docs",
+   "intro": [
+    "The generated agents block tells an agent to give a request options that fit the work, such as <code>Looks good</code> and <code>Some feedback</code> for a test, and to act on the option and notes it gets back. Version 21 shipped in 0.8.5, so this is version 22, with its hash pinned. <code>docs/plugins.md</code> and <code>docs/cli.md</code> describe the new drawer and flags."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>AGENTS.md</code>'s block matches the template byte for byte with <code>docs/projects</code> filled in, the template stays within 79 columns, and its SHA-256 matches the pinned hash."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Version 22 of the agents block."
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "The repository's copy of the generated block."
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins version 22's hash."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Describes the drawer's options, the single Done, and the hotkeys."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Documents <code>request --option</code>, its refusals, and revising options."
+    }
+   ]
+  }
+ ]
+}
