@@ -7,7 +7,7 @@ priority: now
 
 An agent can put a request in your inbox for work only you can do, such as
 testing a build on your phone, and the request carries the whole hand-off,
-from the agent's preparation to your result, as one item.
+from any preparation the agent must do first to your result, as one item.
 
 ## 1. Problem
 
@@ -32,18 +32,20 @@ could report only in another message.
 ## 2. Solution
 
 Add a third kind of item, a request. An agent posts one with `project inbox
-request`, or the `request` tool in Claude Code. It has a one-line subject, its
-steps as Markdown detail, and, optionally, a start action: a one-line
-description of what the agent does when you're ready, such as "Install build
-`c0d62a3b` on your iPhone and launch it." A request without a start action
-waits for you to do it and then press **done** or **decline**. A request with
-one first shows **start**. Pressing it sends the agent `STARTED`, quoting the
-start action, and is your consent to that action and nothing more. The agent
-does it, then marks the request ready, or blocked with a reason, such as "The
-phone is locked. Unlock it and press retry." **done** and **decline** put the
-quoted request in your prompt with `Done` or `Declined` under it, so you can
-add notes and send them. Build it in two layers: layer 1 is a request with
-done and decline, and layer 2 adds the start action.
+request`, or the `request` tool in Claude Code. It has a one-line subject and
+its steps as Markdown detail. Most requests need nothing more: you do the
+work, such as running a command or signing in, and press **done** or
+**decline**. Only when the agent must do something before you can begin does
+it add a start action: a one-line description of what it does when you're
+ready, such as "Install build `c0d62a3b` on your iPhone and launch it." A
+request with a start action first shows **start**. Pressing it sends the
+agent `STARTED`, quoting the start action, and is your consent to that action
+and nothing more. The agent does it, then marks the request ready, or blocked
+with a reason, such as "The phone is locked. Unlock it and press retry."
+**done** and **decline** put the quoted request in your prompt with `Done` or
+`Declined` under it, so you can add notes and send them. Build it in two
+layers: layer 1 is a request with done and decline, and layer 2 adds the
+start action.
 
 ### 2.1 The flow
 
@@ -54,6 +56,10 @@ done and decline, and layer 2 adds the start action.
 2. You open its drawer: the steps, then the actions. A request without a
    start action, or one that is ready, shows `done | decline | discuss |
    snooze`. A request with a start action shows **start** before them.
+Steps 3 to 5 apply only to a request with a start action. A request without
+one goes from step 2 straight to step 6, and never shows **start**,
+`starting`, `ready`, or `blocked`.
+
 3. **start** runs `project inbox start <number> --action <action>`, passing
    the start action its drawer shows, which `start` records. When an agent
    revised the start action since the panel last read the store, the two
@@ -156,9 +162,11 @@ The hooks module registers `request`, and in layer 2 `ready` and `block`,
 beside `ask` and `tell`, with `isDeferred: false`.
 
 - **`request`** takes `request`, `detail`, `pr`, and in layer 2 `start`. Its
-  description tells the agent to use it for work only the person can do, to
-  put the steps in `detail`, and to name what it will do when the person
-  starts in `start`. It tells the agent to do the start action only after a
+  description tells the agent to use it for work only the person can do and
+  to put the steps in `detail`. It tells the agent to give `start` only when
+  it must do something before the person can begin, such as installing a
+  build, and to leave it out otherwise, so that the request goes straight to
+  done or decline. It tells the agent to do the start action only after a
   message that starts `STARTED <number>` arrives, and to do exactly what that
   message quotes. It answers `Requested 5.` and the messages to expect:
   `DONE 5` or `DECLINED 5`, and `STARTED 5` first when there is a start
@@ -249,6 +257,7 @@ A refusal follows `ask`'s rules: exit `65` gives the check that failed.
 | --- | --- |
 | `project inbox request "Test the gutters" --detail "1. …"` | Prints the next number; `list` shows it `open` beside questions and notices |
 | A subject of two lines or 121 characters | Exits `65`, as `tell` does |
+| A request posted without `--start` | Its drawer shows `done \| decline \| discuss \| snooze`, and its line never shows **start**, `starting`, `ready`, or `blocked` |
 | Press **done**, add a line of notes, send | The request is `done` and delivered once; the agent reads the notes in the prompt; no `DONE` line follows |
 | Send the quote with `done?` under it | A reply: the request stays open |
 | `project inbox decline 5 --text "No phone today"` | The deliverer sends `DECLINED 5 Test the gutters → No phone today` once |
