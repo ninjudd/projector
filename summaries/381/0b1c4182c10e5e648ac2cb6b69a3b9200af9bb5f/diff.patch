@@ -1,0 +1,194 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 00071284..b6968a19 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -549,7 +549,7 @@ notice once you have read it and closes its drawer, and nothing goes back
+ to the agent.
+ 
+ A request's drawer shows its steps, then the options its agent gave, on `1`
+-and on, in the options' place, then **discuss request**, **decline request**,
++and on, in the options' place, then **discuss request**, **dismiss request**,
+ and **snooze request**. A test's options might be **Looks good** and **Some
+ feedback**, and a request posted without options offers a single **Done**.
+ Like a question's option, each records nothing at once: it puts the quoted
+@@ -561,11 +561,10 @@ options, or a plain `Done` or `Declined`, alone on the first line under the
+ quote counts as the outcome.
+ Anything else there, such as `done?` or a question about which build to
+ test, is a reply: the request stays open, and the reply reaches the agent as
+-your prompt. **decline request** takes the place of **dismiss**, and like
+-it, declines the request at once; the agent hears `DECLINED`. To give a
+-reason, use **discuss request** instead. A done request's drawer marks the
+-choice it was resolved with, and a declined one says `Declined` and offers
+-**restore request**.
++your prompt. **dismiss request** declines the request at once, and the
++agent hears `DECLINED`. To give a reason, use **discuss request** instead.
++A done request's drawer marks the choice it was resolved with, and a
++dismissed one says `Declined` and offers **restore request**.
+ 
+ A request the agent must prepare for, such as installing a build on your
+ phone, has a start action. Its drawer says `Start:` and what the agent will
+@@ -580,12 +579,12 @@ you to read and press again. While the agent works, the drawer says
+ read `Ready:` and `ready`, in green, and you begin. When the agent could not
+ do it, they read `Blocked:` with its reason and `blocked`, in yellow, and
+ **Retry** takes the place of **Start**, for you to press once you have done
+-what the reason says. The options and **decline request** work throughout,
++what the reason says. The options and **dismiss request** work throughout,
+ the options from `1` while there is no **Start** or **Retry** to press. A
+ request without a start action shows none of this.
+ 
+-**dismiss**, **decline**, **restore**, and **unsnooze** act at once. A
+-dismissed or declined item stays in the list a while, struck through, as the
++**dismiss**, **restore**, and **unsnooze** act at once. A dismissed item,
++a request included, stays in the list a while, struck through, as the
+ paragraph on resolved items below describes, so you undo a dismissal you did
+ not mean by opening its line again and choosing **restore**.
+ 
+@@ -626,10 +625,11 @@ marks the answer given with `✓`, listing an answer typed in a terminal with
+ `project inbox answer --text` after the options.
+ 
+ While a dismissed or snoozed item is still listed, click its line to open
+-its drawer again. There, **restore question** or **restore notice** takes
+-the place of **dismiss** for a dismissed item, which has no **snooze**
+-line, since a resolved item cannot be snoozed. **unsnooze question** or
+-**unsnooze notice** takes the place of **snooze** for a snoozed one. Either
++its drawer again. There, **restore question**, **restore notice**, or
++**restore request** takes the place of **dismiss** for a dismissed item,
++which has no **snooze** line, since a resolved item cannot be snoozed.
++**unsnooze question**, **unsnooze notice**, or **unsnooze request** takes the
++place of **snooze** for a snoozed one. Either
+ runs `project inbox restore`, and the item is open again at once, in its
+ place in the list, with its drawer still open and **dismiss** and
+ **snooze** back in their places. A dismissed question whose `DISMISSED`
+@@ -702,10 +702,10 @@ presses it before the label in the accent color, such as
+ acts on: `question`, `notice`, `request`, or `PR`.
+ 
+ - **7** presses **discuss**.
+-- **8** presses **dismiss**, or **decline** on a request, or **restore** in
+-  their place. Dismiss asks to
+-  be sure, on `8` again to dismiss and `9` to keep the item, so dismissing
+-  from the keyboard is `8` `8`.
++- **8** presses **dismiss**, or **restore** in its place. An item's
++  **dismiss** acts at once. A pull request's asks to be sure, on `8` again
++  to dismiss and `9` to keep it, so dismissing one from the keyboard is `8`
++  `8`.
+ - **9** presses **snooze**, or **unsnooze** in its place, which a pull
+   request's drawer does not offer. While snooze asks how long, the lengths
+   take `1` to `4` in the options' place and `9` cancels.
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 0827fdc2..5a03b0de 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -1933,7 +1933,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
+   await ui.unmount()
+ })
+ 
+-test('requests through the tool, and a request’s drawer offers the agent’s options in the options’ place and no dismiss', async ($, on) => {
++test('requests through the tool, and a request’s drawer offers the agent’s options in the options’ place, then discuss, dismiss, and snooze', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock)
+@@ -1965,7 +1965,7 @@ test('requests through the tool, and a request’s drawer offers the agent’s o
+     ['outcome:1.a', '1', true, 'Looks good'],
+     ['outcome:1.b', '2', true, "Some feedback"],
+   ])
+-  expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss request', 'decline:1 8 decline request', 'snooze:1 9 snooze request'])
++  expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss request', 'dismiss:1 8 dismiss request', 'snooze:1 9 snooze request'])
+   await ui.unmount()
+ })
+ 
+@@ -2007,7 +2007,7 @@ test('a request posted without options offers a single Done, which records done
+   await ui.unmount()
+ })
+ 
+-test('decline request on 8 declines at once, strikes the line through, and offers restore in its place', async ($, on) => {
++test('dismiss request on 8 declines it at once, strikes the line through, and offers restore in its place', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   const session = questionWorld(on, clock, [requested()])
+@@ -2015,20 +2015,22 @@ test('decline request on 8 declines at once, strikes the line through, and offer
+ 
+   const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'item:3' })
+-  expect(await ui.find({ type: 'Button', key: 'outcome:3.declined' })).toBeUndefined()
+-  await ui.press({ key: 'decline:3' })
++  expect((await ui.find({ type: 'Button', key: 'dismiss:3' }))?.text).toBe('dismiss request')
++  await ui.press({ key: 'dismiss:3' })
+   await clock.settle()
+-  expect(session.project().filter(command => command.startsWith('inbox decline'))).toEqual([
+-    'inbox decline 3 --session s1 --json',
++  expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([
++    'inbox dismiss 3 --session s1 --json',
+   ])
+   expect(session.filled).toEqual([])
++  // Dismissing a request records it declined, so its agent hears DECLINED.
++  expect(session.store.store.get('3')?.answer).toEqual(expect.objectContaining({ dismissed: true, declined: true }))
+   const line = await ui.find({ type: 'Text', text: 'Test the gutters' })
+   expect([line?.props.color, line?.props.strikethrough]).toEqual(['subtle', true])
+ 
+   await ui.press({ key: 'item:3' })
+   expect(await ui.find({ type: 'Text', text: /^Declined/ })).toBeDefined()
+   expect(await ui.find({ type: 'Button', key: 'restore:3' })).toBeDefined()
+-  expect(await ui.find({ type: 'Button', key: 'decline:3' })).toBeUndefined()
++  expect(await ui.find({ type: 'Button', key: 'dismiss:3' })).toBeUndefined()
+   await ui.unmount()
+ })
+ 
+@@ -2129,7 +2131,7 @@ test('start, first on 1, records the start action the drawer shows, and STARTED
+     ['2', 'Looks good'],
+     ['3', "Some feedback"],
+   ])
+-  expect(await actionLinesOf(ui)).toEqual(['discuss:3 7 discuss request', 'decline:3 8 decline request', 'snooze:3 9 snooze request'])
++  expect(await actionLinesOf(ui)).toEqual(['discuss:3 7 discuss request', 'dismiss:3 8 dismiss request', 'snooze:3 9 snooze request'])
+   // Opening the drawer records nothing and sends nothing.
+   expect(session.project().filter(command => command.startsWith('inbox start'))).toEqual([])
+ 
+@@ -3803,7 +3805,7 @@ test('an open item’s line closes its drawer on 0, and no other line takes 0',
+ /** The open drawer's action lines, in order: each one's key, the letter that presses it, and its label. */
+ async function actionLinesOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
+   const actions = (await ui.findAll({ type: 'Button' })).filter(button =>
+-    /^(discuss|dismiss|decline|snooze|unsnooze|restore):/.test(button.key ?? ''),
++    /^(discuss|dismiss|snooze|unsnooze|restore):/.test(button.key ?? ''),
+   )
+   return actions.map(action => `${action.key ?? ''} ${String(action.props.hotkey ?? '')} ${action.text}`)
+ }
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 8430496f..7ff9f409 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -822,7 +822,7 @@ const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
+ async function act(
+   $: Engine,
+   item: Item,
+-  command: 'dismiss' | 'decline' | 'snooze' | 'restore' | 'start',
++  command: 'dismiss' | 'snooze' | 'restore' | 'start',
+   minutes?: number,
+ ): Promise<void> {
+   const { ref, session } = item
+@@ -1759,10 +1759,8 @@ export const register: Register = on => {
+       const pull = pullOf(item)
+       // Each action names the kind of item it acts on. A dismissed or snoozed
+       // item's drawer offers to bring it back where it offered to dismiss or
+-      // snooze it, on the same digit; a resolved item cannot be snoozed. An
+-      // open request offers decline in dismiss's place, since declining it
+-      // is how you set it aside, and it declines at once, as dismiss does.
+-      const setAside = item.kind === 'request' ? 'decline' : 'dismiss'
++      // snooze it, on the same digit; a resolved item cannot be snoozed.
++      // Dismissing a request declines it, so its agent hears `DECLINED`.
+       const restore = (name: string, hotkey: string): Line => ({
+         name,
+         label: `${name} ${item.kind}`,
+@@ -1785,11 +1783,11 @@ export const register: Register = on => {
+         ...(isOpen
+           ? [
+               {
+-                name: setAside,
+-                label: `${setAside} ${item.kind}`,
++                name: 'dismiss',
++                label: `dismiss ${item.kind}`,
+                 hotkey: '8',
+                 onPress: () => {
+-                  void act($, item, setAside)
++                  void act($, item, 'dismiss')
+                 },
+               },
+               isSnoozed
