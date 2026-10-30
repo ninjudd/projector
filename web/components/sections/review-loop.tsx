@@ -10,12 +10,12 @@ const steps = [
     body: "A new commit lands on one of your pull requests, whichever session opened it.",
   },
   {
-    title: "The review loop reviews it",
-    body: "It checks out that exact commit locally, reads the change, and posts what it finds as one comment review. Each pull request keeps its own reviewer, so the next review knows the last, and a large one gets a summary on the repository\u2019s site.",
+    title: "A reviewing session reviews it",
+    body: "The session that reviews your repository checks out that exact commit locally, reads the change, and posts what it finds as one comment review. Each pull request keeps its own reviewer, so the next review knows the last, and a large one gets a summary on the repository\u2019s site.",
   },
   {
-    title: "The watch loop fixes it",
-    body: "Each finding is checked, fixed, committed, and pushed, and a branch that conflicts with its base gets the base merged in. The loop replies with the commit and resolves the thread. Each pull request keeps its own fixer, so the next round knows the last.",
+    title: "The pushing session fixes it",
+    body: "The session that pushed the pull request hears about each finding, then checks, fixes, commits, and pushes it, and a branch that conflicts with its base gets the base merged in. It replies with the commit and resolves the thread. Each pull request keeps its own fixer, so the next round knows the last.",
   },
   {
     title: "The draft becomes ready",
@@ -44,10 +44,13 @@ export function ReviewLoop() {
       title="Automated reviews"
       lead={
         <>
-          <Code>review-pr</Code> reviews one pull request&rsquo;s current head when you ask, and{" "}
-          <Code>fix-pr</Code> fixes what a review found and resolves merge conflicts. Two more
-          skills, <Code>start-review-loop</Code> and <Code>start-watch-loop</Code>, run them in the
-          background while you keep working. The plans and the CLI do not depend on any of them.
+          <Code>review-pr</Code> reviews a pull request&rsquo;s current head and each head pushed
+          after it, and <Code>review-repo</Code> does the same for every pull request of yours in a
+          repository. <Code>fix-pr</Code> fixes what a review found and resolves merge conflicts,
+          and the session that pushed a pull request runs it again whenever a review finds
+          something. One background process watches the pull requests for every session, so
+          nothing needs starting while you keep working. The plans and the CLI do not depend on
+          any of them.
         </>
       }
       size="tight"
@@ -63,17 +66,17 @@ export function ReviewLoop() {
       </ol>
       <div className="mt-10 max-w-2xl space-y-4 text-[15px] leading-relaxed text-muted">
         <p>
-          Until then the pull request stays a draft, so draft means the loops still have something
-          to say. A clean loop is one model&rsquo;s reading of one commit. It catches what a careful
+          Until then the pull request stays a draft, so draft means a review still has something to
+          say. A clean review is one model&rsquo;s reading of one commit. It catches what a careful
           first pass catches, and it is not proof that the change is correct, so a human review
-          still follows. The rules the loops follow on GitHub, including who may mark a draft ready
-          and how findings are labeled, are in the skill documents. The loop runs a pull
+          still follows. The rules the skills follow on GitHub, including who may mark a draft
+          ready and how findings are labeled, are in the skill documents. A review runs a pull
           request&rsquo;s tests only when it trusts who could push to it, and asks you before
           running code from anyone else.
         </p>
         <div className="flex flex-wrap gap-x-6 gap-y-2 pt-1">
-          <DocLink href={DOCS.reviewLoop}>Review loop</DocLink>
-          <DocLink href={DOCS.watchLoop}>Watch loop</DocLink>
+          <DocLink href={DOCS.reviewRepo}>review-repo</DocLink>
+          <DocLink href={DOCS.fixPr}>fix-pr</DocLink>
         </div>
       </div>
     </Section>

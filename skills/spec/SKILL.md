@@ -100,7 +100,7 @@ this order.
   the problem statement never needs it, and a reader who doubts it finds it
   here.
 
-Those sections give the three things the review loop checks on every head
+Those sections give the three things a review checks on every head
 their places: correctness in the acceptance criteria, performance in the
 cost section, and reuse and replacement among the reasons for the design.
 Settle each there, so the implementation gives the review nothing to find.
@@ -163,3 +163,17 @@ Then read the plan as its reviewer would, and confirm each of these:
 Leave the plan changes visible for ordinary Git review; do not commit, push,
 or open a pull request unless the user or repository workflow asks for those
 actions.
+
+When you open a pull request for the plan, open it as a draft, and
+subscribe the session to fix it, so review findings on the plan are fixed as
+they arrive:
+
+```sh
+project watch add <owner>/<repo>#<number>
+```
+
+Subscribe as `../fix-pr/SKILL.md` describes under "Subscribe the session to
+the pull request": skip the command when
+`project config get watch.auto_start --default true` prints `false`, and act
+on the `events:` line it prints. When you hand over the URL, say whether the
+session is subscribed and how its events arrive.

@@ -35,8 +35,8 @@ export function SiteFooter() {
           <FooterLink href={DOCS.convention}>Project convention</FooterLink>
           <FooterLink href={DOCS.cli}>CLI reference</FooterLink>
           <FooterLink href={DOCS.plugins}>Plugin guide</FooterLink>
-          <FooterLink href={DOCS.reviewLoop}>Review loop</FooterLink>
-          <FooterLink href={DOCS.watchLoop}>Watch loop</FooterLink>
+          <FooterLink href={DOCS.reviewRepo}>review-repo</FooterLink>
+          <FooterLink href={DOCS.fixPr}>fix-pr</FooterLink>
         </div>
         <div className="flex flex-col gap-3">
           <h3 className="text-sm font-medium text-fg">Project</h3>
