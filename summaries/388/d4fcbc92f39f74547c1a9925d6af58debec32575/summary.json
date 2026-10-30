@@ -1,0 +1,157 @@
+{
+ "version": 1,
+ "name": "Watch daemon",
+ "project": "watch-daemon",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 388,
+  "title": "Draw the panel from the watch daemon and deliver its events",
+  "head": "d4fcbc92f39f74547c1a9925d6af58debec32575",
+  "headRef": "watch-panel",
+  "base": "a7203b5d6a574a307ec3e4348f01e081e03f9881",
+  "baseRef": "watch-skills",
+  "basePr": 387
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the area Claude Code draws above the prompt, listing the pull requests a session works on and its inbox. Until now it found those pull requests by spotting the commands that started a watcher script, <code>watch-threads.sh</code> or <code>watch-prs.sh</code>, and asked GitHub about all of them every 30 seconds. The layers below this one replace those watchers with one <b>watch daemon</b> per machine. A session <b>subscribes</b> to a pull request by writing a line to its own <code>subscriptions</code> file, and the daemon queries GitHub, caches each result, and appends <b>events</b>, such as a new finding or a conflict, to the session's <code>events</code> file.",
+   "In Claude Code, nothing yet put those events in front of the agent, and the panel still ran its own GitHub query. This layer closes both gaps in the plugin's <b>mod</b>, the hooks module in <code>hooks/</code>:",
+   "<ul class=\"tight\"><li><b>Delivery.</b> At session start and once a minute, the mod runs <code>project watch renew --deliverer mod</code>, which marks the session live and starts the daemon. Every 5 seconds it checks the <code>events</code> file, and when it holds lines, runs <code>project watch take --json</code> and submits them as one prompt.</li><li><b>Subscribing on push.</b> After a Bash call that runs <code>git push</code>, <code>gh pr create</code>, or <code>gh stack</code>, the mod sends the output to <code>project watch add --from-output -</code>.</li><li><b>The panel.</b> It lists the session's subscriptions, plus the pull requests the daemon <b>adopted</b> for a whole-repository review subscription, reading each row from the daemon's cache and the operator from <code>daemon.json</code>. A drawer names the roles, <code>fixing</code> and <code>reviewing</code>, and dismiss runs <code>project watch drop</code> per role.</li></ul>",
+   "A session that started an old watcher before the upgrade keeps it, and only those pull requests still cost the panel a GitHub query."
+  ],
+  "cards": [
+   {
+    "id": "files",
+    "title": "The daemon's files the mod reads",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>File, under <code>~/.local/state/projector/watch/</code></th><th>What the mod does with it</th></tr></thead><tbody><tr><td><code>sessions/&lt;id&gt;/subscriptions</code></td><td>Lists the pull requests and roles; <code>!</code> lines exclude one</td></tr><tr><td><code>sessions/&lt;id&gt;/state.json</code></td><td>Reads <code>adopted</code>, the pull requests a repository subscription covers</td></tr><tr><td><code>sessions/&lt;id&gt;/events</code></td><td>Stats it each tick and takes it when not empty</td></tr><tr><td><code>cache/&lt;owner&gt;/&lt;repo&gt;/pulls/&lt;n&gt;.json</code></td><td>Draws the row; a missing file draws <code>loading…</code></td></tr><tr><td><code>daemon.json</code></td><td>Reads <code>operator</code> to sort your own pull requests first</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, at <code>d4fcbc9</code>, opened two findings: the panel ignores <code>!</code> lines for adopted pull requests, so a dismissed one stays until the daemon's next pass, and after <code>/clear</code> the new session id waits up to a minute for its first renewal.</li><li>The full gate passed, and <code>hooks/typecheck.sh</code> passed against the main checkout's declarations.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "reading",
+   "title": "Reading the daemon's files",
+   "kicker": "Pure parsers for the subscriptions, adopted list, operator, cache, and push commands",
+   "intro": [
+    "These functions turn the daemon's files into what the panel draws, with no engine calls, so <code>hooks/parse.test.ts</code> can test each one alone. A subscription line reads like <code>owner/repo#12 fix</code>, <code>owner/repo#12 review &lt;model&gt; &lt;reviewer&gt;</code>, or <code>owner/repo review &lt;model&gt; &lt;reviewer&gt;</code> for every pull request of a repository. A leading <code>!</code> keeps that pull request out of the role.",
+    "<code>parseCache</code> reuses <code>toPullRequest</code>, the function that already reads the panel's own GraphQL answer, because the daemon caches the same node shape with every field the panel draws."
+   ],
+   "files": [
+    {
+     "path": "hooks/parse.ts",
+     "note": "Adds the subscription grammar, <code>subscribedOf</code>, the readers of <code>state.json</code> and <code>daemon.json</code>, the state-root and cache paths, and <code>isPushCommand</code>.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 340,
+       "text": "Open finding: adopted pull requests skip the <code>!</code> check, so a dismissed adopted pull request stays listed until the daemon's next pass, up to <code>watch.interval</code> seconds. Models in <code>!</code> lines are compared exactly, not by the daemon's lowercased identity without a <code>[1m]</code>-style variant."
+      },
+      {
+       "kind": "verify",
+       "line": 383,
+       "text": "The cache path lowercases the repository, as the daemon's <code>cache_dir</code> does, and the state root follows <code>XDG_STATE_HOME</code> as <code>watch.state_root</code> does."
+      }
+     ]
+    },
+    {
+     "path": "hooks/github.ts",
+     "note": "Adds <code>parseCache</code> and <code>loadingOf</code>, and moves <code>isRecord</code> into <code>parse.ts</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The daemon's <code>QUERY</code> asks for every field <code>toPullRequest</code> reads, including <code>updatedAt</code>, <code>additions</code>, <code>deletions</code>, and <code>changedFiles</code>, so a cached row keeps its age and changed lines. Checked by reading both."
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds the <code>Role</code> type, a row's <code>roles</code> in place of its loop kinds, <code>isLoading</code>, and the <code>panelSubscribed</code> state key, which <code>claude plugin validate .</code> requires."
+    }
+   ]
+  },
+  {
+   "id": "mod",
+   "title": "Delivering events and drawing the panel",
+   "kicker": "The mod renews the session, submits events, subscribes on push, and draws rows from the cache",
+   "intro": [
+    "Every 5-second tick now runs <code>checkWatch</code> whether or not the panel is shown: it delivers events, renews the session when a minute passed with none, and shows the panel when a new subscription appears. A shown panel also reloads its rows from the files on every tick. It asks GitHub only every 30 seconds, and only for an old watcher's pull requests that the daemon has no result for.",
+    "<code>isSubmitting</code> holds back the next <code>take</code> while a submitted prompt waits for the session, so events that arrive meanwhile go as one later prompt. <code>take</code> empties the file under the session's lock, so each event is delivered once."
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds <code>renew</code>, <code>deliverEvents</code>, <code>noticeSubscriptions</code>, <code>checkWatch</code>, and <code>subscribeFrom</code>; rewrites <code>load</code> to read the daemon's files, <code>dismissPr</code> to drop by role, and the row and drawer for loading rows and roles.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 1017,
+       "text": "Open finding: <code>renewedAt</code> is not keyed by session id, so after <code>/clear</code> or a resume moves the session to a new id, that id goes unrenewed for up to a minute, and a skill's <code>project watch add</code> in that window reports <code>events: none</code> and starts a second deliverer."
+      },
+      {
+       "kind": "context",
+       "text": "The Bash hook passes the output to <code>project watch add --from-output -</code> without waiting, so a push's result never waits on GitHub."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Parser cases and simulated-engine panel cases for the daemon's files",
+   "intro": [
+    "<code>parse.test.ts</code> covers the grammar, exclusions, adopted lists, and push detection. <code>panel.test.tsx</code> adds <code>watchWorld</code>, a simulated engine whose <code>project watch</code> commands edit in-memory files as the CLI would, and uses it to test listing, delivery, renewal, push subscription, and dismissal."
+   ],
+   "files": [
+    {
+     "path": "hooks/parse.test.ts"
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>claude plugin test .</code> ran 212 tests at this head with none failing."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and plans",
+   "kicker": "The panel's guide, the fixing role in panel-themes, and what the mod settled",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the panel's new sources, the loading row, dismiss by role, and a new section on how the mod delivers events. The <code>panel-themes</code> plan, a draft, renames its <code>watching</code> role to <code>fixing</code>. The <code>watch-daemon</code> plan, in progress, appends § 9.3 with the choices this layer settled."
+   ],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "It says dismissing drops the line at once, which does not yet hold for an adopted pull request; see the finding on <code>hooks/parse.ts</code>."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/panel-themes/readme.md"
+    },
+    {
+     "path": "docs/projects/watch-daemon/readme.md",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "§ 9.3 is appended after § 9.2, and the one in-place edit, in § 3, renumbers nothing."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
