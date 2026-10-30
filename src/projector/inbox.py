@@ -280,14 +280,33 @@ def check_start(action: str) -> None:
     check_subject("start action", action, None)
 
 
+def check_request_options(options: list[str]) -> None:
+    """The checks a request's options pass: at most `MAX_OPTIONS`, so they keep the digits a start
+    leaves, each one line and offered once, and none `Declined`, which declines a request."""
+    if len(options) > MAX_OPTIONS:
+        raise InboxError(f"{len(options)} options; offer a request at most {MAX_OPTIONS}")
+    for index, option in enumerate(options):
+        if not option.strip():
+            raise InboxError("an --option is empty")
+        if not is_one_line(option):
+            raise InboxError(f"the option {option!r} must be one line; put the rest in --detail")
+        if option.strip() == "Declined":
+            raise InboxError("`Declined` declines a request, so it cannot be one of its options")
+        if option.strip() in (other.strip() for other in options[:index]):
+            raise InboxError(f"the option {option.strip()!r} is offered twice")
+
+
 def request(session: str, subject: str, *, detail: str = "", pr: Optional[str] = None,
-            agent: Optional[str] = None, start: Optional[str] = None) -> dict:
-    """Check, number, and record a request, whose detail holds its steps and whose `start`, when it
-    has one, is what the agent does once the person presses start; returns it."""
+            agent: Optional[str] = None, start: Optional[str] = None, options: Optional[list[str]] = None) -> dict:
+    """Check, number, and record a request, whose detail holds its steps, whose `start`, when it
+    has one, is what the agent does once the person presses start, and whose `options`, when it
+    gives them, are what the person chooses between when they finish; returns it."""
     check_subject("request", subject, pr)
     if start is not None:
         check_start(start)
-    return post(session, "request", subject, detail=detail, pr=pr, agent=agent, start=start)
+    check_request_options(options or [])
+    choices = [option.strip() for option in options] if options else None
+    return post(session, "request", subject, detail=detail, pr=pr, agent=agent, start=start, choices=choices)
 
 
 # Finding an item
@@ -559,9 +578,10 @@ def revise(session: Optional[str], ref: str, *, question: Optional[str] = None, 
     """Replace an open question's or request's text in place, keeping its number, its place in the
     list, and its snooze. Each part left as None keeps its text; `options` replaces every option but
     the recommendation. A question takes `question`, `recommend`, and `options`, a request takes
-    `request` and `start`, where an empty `start` removes it, and both take `detail`. The revised
-    item passes the checks its posting made. A revised request returns to open, so a press of start
-    made for its old text never covers the new."""
+    `request`, `start`, where an empty `start` removes it, and `options`, which replaces all its
+    options, an empty list removing them, and both take `detail`. The revised item passes the
+    checks its posting made. A revised request returns to open, so a press of start made for its old
+    text never covers the new."""
     if all(part is None for part in (question, detail, recommend, options, request, start)):
         raise InboxError("give the new text with --question, --request, --start, --detail, --recommend, or "
                          "--option")
@@ -573,13 +593,19 @@ def revise(session: Optional[str], ref: str, *, question: Optional[str] = None, 
         if item.get("answer"):
             raise InboxError(f"{item['ref']} is already {resolution(item)}")
         if is_request(item):
-            if question is not None or recommend is not None or options is not None:
-                raise InboxError(f"{item['ref']} is a request; revise its text with --request, --start, and "
-                                 "--detail")
+            if question is not None or recommend is not None:
+                raise InboxError(f"{item['ref']} is a request; revise its text with --request, --start, --option, "
+                                 "and --detail")
             subject = item["subject"] if request is None else request
             check_subject("request", subject, item.get("pr"))
             if start:
                 check_start(start)
+            if options is not None:
+                check_request_options(options)
+                if options:
+                    item["choices"] = [option.strip() for option in options]
+                else:
+                    item.pop("choices", None)
             item["subject"] = subject.strip()
             if detail is not None:
                 item["detail"] = detail.strip()

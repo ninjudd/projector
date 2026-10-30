@@ -25,7 +25,7 @@ import {
   askArguments,
   BLOCK_DESCRIPTION,
   BLOCK_SCHEMA,
-  CHOICES,
+  choicesOf,
   forMainLoop,
   isShownAt,
   isSnoozedAt,
@@ -1153,7 +1153,7 @@ export const register: Register = on => {
     void $.ui.notify(String(e.request), { title: 'Projector request' }).catch(() => undefined)
     const hasStart = typeof e.start === 'string' && e.start !== ''
     return {
-      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with Looks good or There's an issue, both of which mean done, or as a message that starts DONE ${ref}; a decline arrives as a message that starts DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
+      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE ${ref}; a decline arrives as a message that starts DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
     }
   }).catch(() => ({ deny: 'Projector could not record the request; ask the person in the conversation instead' }))
 
@@ -1313,8 +1313,8 @@ export const register: Register = on => {
     if (entered.drop === undefined) {
       for (const ref of done) void closeDrawer($, `item:${ref}`).catch(() => undefined)
       for (const one of answers) void recordFromPrompt($, one.question, ['answer', `${one.question.ref}.${one.letter}`])
-      // A done records which choice said so, `Looks good` or
-      // `There's an issue`, as its text; a plain `Done` or a decline needs none.
+      // A done records which of the request's options said so as its text; a
+      // plain `Done` or a decline needs none.
       for (const { request, outcome, word } of outcomes) {
         const said = outcome === 'done' && word !== 'Done' ? [`--text=${word}`] : []
         void recordFromPrompt($, request, [outcome === 'done' ? 'done' : 'decline', request.ref, ...said])
@@ -1704,11 +1704,13 @@ export const register: Register = on => {
       }
       const start = startOf(request)
       const first = start === undefined ? 1 : 2
-      // The choice a done was recorded with: the one whose words the
-      // outcome's text holds. A done from a terminal or a typed `Done`
-      // matches none, and neither does a decline, so each takes a line of its own.
-      const chosen = recorded === 'done' ? CHOICES.find(choice => choice.word === said) : undefined
-      const notes = said === chosen?.word ? undefined : said
+      // The option a done was recorded with: the one whose words the
+      // outcome's text holds, or `Done` when it holds none. A done from a
+      // terminal with other text matches none, and neither does a decline, so
+      // each takes a line of its own.
+      const choices = choicesOf(request)
+      const chosen = recorded === 'done' ? choices.find(choice => choice === (said ?? 'Done')) : undefined
+      const notes = said === chosen ? undefined : said
       const marked = <Text color="success"> ✓</Text>
 
       return [
@@ -1719,14 +1721,14 @@ export const register: Register = on => {
             {start === 'start' ? 'Start' : 'Retry'}
           </Button>
         ),
-        ...CHOICES.map((choice, index) =>
+        ...choices.map((choice, index) =>
           answer === undefined ? (
-            <Button key={`outcome:${ref}.${choice.key}`} plain hotkey={String(first + index)} onPress={() => pick(choice.word)}>
-              {choice.word}
+            <Button key={`outcome:${ref}.${letterAt(index)}`} plain hotkey={String(first + index)} onPress={() => pick(choice)}>
+              {choice}
             </Button>
           ) : (
-            <Text key={`outcome:${ref}.${choice.key}`} color={choice === chosen ? undefined : 'subtle'}>
-              {choice.word}
+            <Text key={`outcome:${ref}.${letterAt(index)}`} color={choice === chosen ? undefined : 'subtle'}>
+              {choice}
               {choice === chosen && marked}
               {choice === chosen && notes !== undefined && <Text color="subtle">{` ${notes}`}</Text>}
             </Text>
@@ -1838,7 +1840,7 @@ export const register: Register = on => {
           ? `answer:${ref}.${letterAt(0)}`
           : item.kind === 'request'
             ? startOf(item) === undefined
-              ? `outcome:${ref}.${CHOICES[0].key}`
+              ? `outcome:${ref}.${letterAt(0)}`
               : `start:${ref}`
             : `discuss:${ref}`
       const isSending = !isOpen && item.deliveredAt === undefined

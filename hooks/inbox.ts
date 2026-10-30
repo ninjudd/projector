@@ -65,31 +65,25 @@ export const proposalOf = (item: Answerable, answer: string) => `${quoteOf(item)
 export type Given = { question: Question; letter: string }
 
 /**
- * What a request's drawer offers after any start, in order: the words each
- * puts under the request's quote, which are also its label, and its key.
- * Both mark the request done, and say which. Declining is one of the
- * drawer's actions, since it needs no notes.
+ * What a request's drawer offers after any start, in order: the options its
+ * agent gave, or a single `Done` when it gave none. Each puts its words under
+ * the request's quote and marks the request done, saying which. Declining is
+ * one of the drawer's actions, since it needs no notes.
  */
-export const CHOICES = [
-  { word: 'Looks good', key: 'good' },
-  { word: "There's an issue", key: 'issue' },
-] as const
-
-/** The words under a quoted request that resolve it: the drawer's choices, and a plain `Done` or `Declined` typed by hand. */
-const OUTCOME_WORDS: ReadonlyMap<string, Finished['outcome']> = new Map([
-  ...CHOICES.map(choice => [choice.word, 'done'] as const),
-  ['Done', 'done'],
-  ['Declined', 'declined'],
-])
+export const choicesOf = (request: Request): readonly string[] => request.choices ?? ['Done']
 
 /** One outcome a sent prompt gives a request: done or declined, and the words that said so. */
 export type Finished = { request: Request; outcome: 'done' | 'declined'; word: string }
 
-/** The outcome a request's quote takes: the words on the first line after it, so notes can follow. */
-function outcomeIn(said: string | undefined): Omit<Finished, 'request'> | undefined {
+/**
+ * The outcome a request's quote takes: the words on the first line after it,
+ * so notes can follow. One of the request's options, or a plain `Done`, marks
+ * it done, and a plain `Declined` declines it.
+ */
+function outcomeIn(request: Request, said: string | undefined): Omit<Finished, 'request'> | undefined {
   const word = said?.split('\n')[0]?.trim() ?? ''
-  const outcome = OUTCOME_WORDS.get(word)
-  return outcome === undefined ? undefined : { outcome, word }
+  if (word === 'Declined') return { outcome: 'declined', word }
+  return word === 'Done' || choicesOf(request).includes(word) ? { outcome: 'done', word } : undefined
 }
 
 /**
@@ -112,12 +106,12 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
  * the prompt's end, is one of its options, whatever blank lines and spaces
  * surround it: what pressing an option puts in the prompt. A quoted open
  * request takes an outcome only when its quote ends its line and the first
- * line after it that is not blank is exactly one of its drawer's choices,
- * `Looks good` or `There's an issue`, or a plain `Done` or `Declined`; the
- * rest is the person's notes. A quote that a drawer put in the prompt, with that
- * answer or alone through discuss, speaks to the item of the drawer that did
- * so last, `proposed` holding them oldest first: one of its options or
- * outcomes resolves it, and any other text replies to it. A drawer's pick
+ * line after it that is not blank is exactly one of its options, a plain
+ * `Done`, or a plain `Declined`; the rest is the person's notes. A quote that
+ * a drawer put in the prompt, with that answer or alone through discuss,
+ * speaks to the item of the drawer that did so last, `proposed` holding them
+ * oldest first: one of its options resolves it, and any other text replies to
+ * it. A drawer's pick
  * from before its item was revised only replies, and one whose item was
  * resolved before the prompt was sent does nothing, so a drawer's pick never
  * falls through to another item with the same words.
@@ -149,14 +143,14 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
   // Whether the text after an item's quote resolves it: one of a question's
   // options, or a request's outcome.
   const takes = (item: Answerable, said: string | undefined) =>
-    item.kind === 'question' ? said !== undefined && item.choices.includes(said) : outcomeIn(said) !== undefined
+    item.kind === 'question' ? said !== undefined && item.choices.includes(said) : outcomeIn(item, said) !== undefined
   const resolve = (item: Answerable, said: string) => {
     answered.add(item.ref)
     if (item.kind === 'question') {
       answers.push({ question: item, letter: letterAt(item.choices.indexOf(said)) })
       return
     }
-    const outcome = outcomeIn(said)
+    const outcome = outcomeIn(item, said)
     if (outcome !== undefined) outcomes.push({ request: item, ...outcome })
   }
   for (const { end, quote } of quotes) {
@@ -377,6 +371,9 @@ export const REQUEST_DESCRIPTION = described([
   'or checking a change on their own device: it appears in Projector’s panel above their prompt, and you keep working.',
   'Write the request in one short line of at most 120 characters, and put the steps they follow in `detail`.',
   'Name the pull request it is about in `pr`, as owner/repo#number.',
+  'Give the choices they pick from when they finish in `options`, each a short answer that fits the work: for a test,',
+  '`Looks good` and `Some feedback`. Each one marks the request done and tells you which they chose, and they can add',
+  'notes under it. Leave `options` out to offer a single `Done`. They can always decline the request instead.',
   'Give `start` only when you must do something before they can begin, such as installing a build on their phone:',
   'one line saying what you will do. Leave it out otherwise, and the request goes straight to done or declined.',
   'Do the slow part before you post the request, such as building the app, so the start action only installs and',
@@ -385,9 +382,8 @@ export const REQUEST_DESCRIPTION = described([
   'the start action. Do the start action only after it arrives, and do exactly what it quotes and nothing more.',
   'Then mark the request ready with `ready`, or, when you cannot finish, `block` it with what they should do first.',
   'Keep working on anything the result does not block. The call returns the request’s number, such as 3.',
-  'When they finish, their outcome arrives later as their prompt, quoting the request with `Looks good` or',
-  "`There's an issue`, both of which mean done, and any notes under it, or as a message that starts `DONE 3`.",
-  'When they decline it, a message that starts `DECLINED 3` arrives. When they restore a request after you heard',
+  'When they finish, their outcome arrives later as their prompt, quoting the request with the option they chose and',
+  'any notes under it, or as a message that starts `DONE 3` and names the option. When they decline it, a message that starts `DECLINED 3` arrives. When they restore a request after you heard',
   '`DECLINED 3`, `RESTORED 3` arrives, and the request is open again. When they reply in their own words instead, the',
   'reply arrives as their prompt, quoting the request, and the request stays open.',
   'When you need the person to decide something rather than do it, use `ask` instead.',
@@ -398,6 +394,13 @@ export const REQUEST_SCHEMA = {
   properties: {
     request: { type: 'string', description: 'What the person should do, in one line of at most 120 characters.' },
     detail: { type: 'string', description: 'The steps they follow, as Markdown.' },
+    options: {
+      type: 'array',
+      items: { type: 'string' },
+      maxItems: 5,
+      description:
+        'Up to five choices they pick from when they finish, each marking the request done, such as `Looks good` and `Some feedback` for a test; leave it out to offer a single `Done`.',
+    },
     start: {
       type: 'string',
       description:
@@ -415,15 +418,17 @@ export function requestArguments(
   session: string,
   agentId: string | undefined,
 ): string[] | { error: string } {
-  const { request, detail, start, pr } = input
+  const { request, detail, start, pr, options = [] } = input
   if (!isText(request)) return { error: '`request` must be a string' }
   if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
   if (start !== undefined && !isText(start)) return { error: '`start` must be a string' }
   if (pr !== undefined && !isText(pr)) return { error: '`pr` must be a string such as owner/repo#123' }
+  if (!Array.isArray(options) || !options.every(isText)) return { error: '`options` must be a list of strings' }
   return [
     'inbox',
     'request',
     `--session=${session}`,
+    ...options.map(option => `--option=${option}`),
     ...(start === undefined || start === '' ? [] : [`--start=${start}`]),
     ...postedFlags(detail, pr, agentId),
     '--',
@@ -536,8 +541,8 @@ export const REVISE_DESCRIPTION = described([
   'Revise a question you asked or a request you posted that is still open, keeping its number, when the person’s reply',
   'shows it was unclear or the choice or the work has changed. Name it by the number `ask` or `request` returned, and',
   'give only what changes: for a question, the question, its detail, the recommendation, or the other options, which',
-  '`options` replaces as a whole; for a request, the request, its detail, or its start action, where an empty `start`',
-  'removes it. A revised request returns to open, so a start the person pressed for its old text needs a new press.',
+  '`options` replaces as a whole; for a request, the request, its detail, its options, which `options` replaces as a',
+  'whole and an empty list removes, or its start action, where an empty `start` removes it. A revised request returns to open, so a start the person pressed for its old text needs a new press.',
   'Projector’s panel redraws it at once, and a question’s answer still arrives as a message that starts',
   '`ANSWER 3.<letter>` or `DISMISSED 3`, a request’s outcome as one that starts `DONE 3` or `DECLINED 3`.',
 ])

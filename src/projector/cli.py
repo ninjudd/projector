@@ -750,6 +750,9 @@ def add_inbox_parser(subcommands) -> None:
     detail = request.add_mutually_exclusive_group()
     detail.add_argument("--detail", default="", help="the steps the person follows, as Markdown")
     detail.add_argument("--detail-file", type=Path, help="read the steps from this file")
+    request.add_argument("--option", action="append", default=[],
+                         help="what the person can choose when they finish, each marking the request done; repeat "
+                              "for each, up to five")
     request.add_argument("--start", help="what you do once the person presses start, in one line; leave it out when "
                                          "there is nothing to prepare")
     request.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
@@ -799,7 +802,8 @@ def add_inbox_parser(subcommands) -> None:
     options = revise.add_mutually_exclusive_group()
     options.add_argument("--option", action="append",
                          help="another answer; repeat for each, up to five, to replace every option but answer a")
-    options.add_argument("--no-options", action="store_true", help="drop every option but answer a")
+    options.add_argument("--no-options", action="store_true",
+                         help="drop every option but a question's answer a, or every option of a request")
     detail = revise.add_mutually_exclusive_group()
     detail.add_argument("--detail", help="the new detail, as Markdown; an empty one clears it")
     detail.add_argument("--detail-file", type=Path, help="read the new detail from this file")
@@ -1381,6 +1385,8 @@ def print_item(item: dict) -> None:
         print(f"\n{item['detail']}\n")
     if item["kind"] == "question":
         print_choices(item)
+    for option in item["choices"] if item["kind"] == "request" and item.get("choices") else []:
+        print(f"- {option}")
     if item.get("start"):
         print(f"start: {item['start']}")
     if (item.get("progress") or {}).get("reason"):
@@ -1410,7 +1416,8 @@ def run_inbox(arguments: argparse.Namespace) -> int:
         elif command == "tell":
             item = inbox.tell(session, arguments.notice, **posted)
         else:
-            item = inbox.request(session, arguments.request, start=arguments.start, **posted)
+            item = inbox.request(session, arguments.request, start=arguments.start, options=arguments.option,
+                                 **posted)
         print(json_text({"item": item}) if json_output else item["ref"])
     elif command == "list":
         session = inbox_session(arguments, False)

@@ -61,8 +61,9 @@ what it did to each:
   tells an agent to post a request only for work it cannot do itself, such as
   running a command it is not allowed to run or checking a change on the
   person's phone, with numbered steps that each say what the person should
-  see, and to read a done request's notes, find out what failed when the
-  person says `There's an issue`, and not post a declined request again.
+  see, and options that fit the work, such as `Looks good` and
+  `Some feedback` for a test. It tells an agent to act on the option a person
+  chose and the notes under it, and not to post a declined request again.
   It tells an agent to give a request a start action only when it must
   prepare something first, to do the slow part, such as a build, before it
   posts the request so the start is quick, to do the start action only once
@@ -2077,13 +2078,20 @@ An agent asks you to do something only you can do with `request`, such as
 running a command it may not run, signing in to a service, or checking a
 change on your own device. A request takes one line, the steps you follow as
 `--detail` or `--detail-file`, the same `--pr` and `--agent` as a question,
-and the next number in the session's count:
+and the next number in the session's count. Each `--option`, up to five,
+names a choice you pick from when you finish, and each marks the request
+done; a request without one offers a single `Done`:
 
 ```console
 $ project inbox request "Test the gutters on your phone" \
+    --option "Looks good" --option "Some feedback" \
     --detail "1. Open Fyra. 2. Hold a track." --session "$SESSION"
 5
 ```
+
+`request` refuses an empty option, one of more than one line, one offered
+twice, a sixth, and `Declined`, which declines a request. `revise` replaces a
+request's options with `--option`, and `--no-options` removes them.
 
 Once you have done the work, run `project inbox done 5`, or
 `project inbox decline 5` when you will not do it. Either takes `--text`
