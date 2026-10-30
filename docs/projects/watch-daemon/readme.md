@@ -809,6 +809,9 @@ What each loop spends today was measured with `rateLimit { cost }` and
   request per pass and makes no REST call.
 - **The panel** sends one batched GraphQL query every 30 seconds while it is
   shown, `POLL_MS` in `hooks/register.tsx`. This was not measured.
+- **The daemon's query** in § 2.6 costs 2 points, measured with its own
+  `rateLimit { cost }` on #386 with the daemon's `QUERY`. The figures in § 4
+  and § 5 count 2 points a query: six full passes an hour make `12N`.
 
 How `gh api` handles a conditional request, as observed:
 
