@@ -10,6 +10,7 @@ import type {
   PullRequest,
   Question,
   Request,
+  Role,
   Row,
   Section,
   SeenLoop,
@@ -17,8 +18,23 @@ import type {
   Snapshot,
   Thread,
 } from './types'
-import { buildQuery, buildThreadsQuery, parseResponse, parseThreads, type Fetched } from './github'
-import { findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
+import { buildQuery, buildThreadsQuery, loadingOf, parseCache, parseResponse, parseThreads, type Fetched } from './github'
+import {
+  cachePathOf,
+  findWatchers,
+  isPushCommand,
+  keyOf,
+  parseAdopted,
+  parseOperator,
+  parseSubscriptions,
+  parseTracked,
+  subscribedOf,
+  watchRootOf,
+  type Env,
+  type Subscribed,
+  type SubscriptionRole,
+  type TrackedPr,
+} from './parse'
 import {
   ASK_DESCRIPTION,
   ASK_SCHEMA,
@@ -68,6 +84,8 @@ type Ran = { exitCode: number; stdout: string; stderr: string }
 
 const TICK_MS = 5_000
 const POLL_MS = 30_000
+/** How often the session tells the daemon it is live when no event came, well inside the 5 minutes it lapses after. */
+const RENEW_MS = 60_000
 const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null, error: null }
 const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
@@ -79,9 +97,18 @@ const REVISE_TOOL = 'mcp__projector__revise'
 const RESTORE_TOOL = 'mcp__projector__restore'
 const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
 
-// Watching first: a pull request both loops track is listed once, where its
-// watch loop puts it.
 const KINDS: readonly LoopKind[] = ['watching', 'reviewing']
+
+/** The roles in the order a drawer names them. */
+const ROLES: readonly Role[] = ['fixing', 'reviewing']
+
+/** The role a subscription's role, or an earlier watcher's kind, holds. */
+const ROLE_OF: Record<SubscriptionRole | LoopKind, Role> = {
+  fix: 'fixing',
+  review: 'reviewing',
+  watching: 'fixing',
+  reviewing: 'reviewing',
+}
 
 const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
   passing: 'success',
@@ -149,11 +176,11 @@ const kindColors = (requestColor: string): Record<Item['kind'], string> => ({
 const BRANCH_COLOR = 'ansi256(6)'
 
 /**
- * The color of what a loop does with a pull request, on its drawer's facts
- * line: watching in the terminal palette's blue, slot 4, in the same form as
- * `BRANCH_COLOR`, and reviewing in the theme's `claude` orange.
+ * The color of each role on a pull request's drawer's facts line: fixing in
+ * the terminal palette's blue, slot 4, in the same form as `BRANCH_COLOR`, and
+ * reviewing in the theme's `claude` orange.
  */
-const LOOP_COLORS: Record<LoopKind, string> = { watching: 'ansi256(4)', reviewing: 'claude' }
+const ROLE_COLORS: Record<Role, string> = { fixing: 'ansi256(4)', reviewing: 'claude' }
 
 /** The key that closes an open item's drawer, from its line at the drawer's top. */
 const CLOSE_HOTKEY = '0'
@@ -248,6 +275,7 @@ const SNOOZES = [
 ] as const
 
 const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
+const subscribed = atom({ plugin: 'projector', key: 'panelSubscribed' } as const, [])
 const snapshot = atom({ plugin: 'projector', key: 'panelSnapshot' } as const, EMPTY)
 const now = atom({ plugin: 'projector', key: 'panelNow' } as const, 0)
 const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, false)
@@ -274,14 +302,23 @@ const oldSending = atom({ plugin: 'projector', key: 'bandSending' } as const, {}
 // so a value an earlier version wrote can have another shape.
 const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
 const current = (value: Snapshot): Snapshot =>
-  Array.isArray(value.rows) ? { ...value, viewer: value.viewer ?? null } : EMPTY
+  Array.isArray(value.rows) && value.rows.every(row => Array.isArray(row.roles))
+    ? { ...value, viewer: value.viewer ?? null }
+    : EMPTY
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 let envLoad: Promise<Env> | undefined
 let inFlight: Promise<void> | undefined
-let isQueued = false
+/** Whether the refresh queued behind the one in flight asks GitHub; undefined when none is queued. */
+let queuedPoll: boolean | undefined
+/** When the panel last polled GitHub. A shown panel polls every `POLL_MS`, and reads the daemon's files on every tick. */
 let attemptedAt = 0
+/** When the daemon last heard the session renew, by this copy of the module. */
+let renewedAt: number | undefined
+let isWatching = false
+/** Whether the daemon's last batch of events waits to reach the session, so the next batch waits behind it and goes as one prompt. */
+let isSubmitting = false
 const unreadable = new Set<string>()
 
 /** The store's directory as the panel last read it, so it reads again only after a change. */
@@ -348,9 +385,18 @@ async function canonical($: Engine, path: string): Promise<string | undefined> {
   }
 }
 
-/** Runs the `project` CLI; rejects when it cannot start or is still running at the 15-second timeout. */
-const project = ($: Engine, args: readonly string[]): Promise<Ran> =>
-  $.process.run(['project', ...args], { timeoutMs: 15_000 })
+/**
+ * Runs the `project` CLI, with `stdin` on its standard input when given;
+ * rejects when it cannot start or is still running at the 15-second timeout.
+ */
+const project = ($: Engine, args: readonly string[], stdin?: string): Promise<Ran> =>
+  $.process.run(['project', ...args], { timeoutMs: 15_000, ...(stdin === undefined ? {} : { stdin }) })
+
+/** The session's id, or undefined when the engine cannot say. */
+const sessionOf = ($: Engine): Promise<string | undefined> => $.session.id().catch(() => undefined)
+
+/** A file's text, or undefined when it cannot be read, as one not written yet. */
+const textOf = ($: Engine, path: string): Promise<string | undefined> => $.fs.read(path).catch(() => undefined)
 
 /** The CLI's error, as its last line of standard error says it. */
 const errorOf = (ran: Ran) =>
@@ -508,60 +554,104 @@ async function trackedSets($: Engine): Promise<(SeenLoop & { entries: TrackedPr[
   )
 }
 
-async function load($: Engine): Promise<void> {
-  const sets = await trackedSets($)
+/** The folder the daemon and the CLI keep a session's subscriptions and events in. */
+const folderOf = (root: string, session: string) => `${root}/sessions/${session}`
 
-  const kindsOf = new Map<string, LoopKind[]>()
+/**
+ * The pull requests the session subscribes to, from the CLI's
+ * `subscriptions` file and the pull requests the daemon adopted for its
+ * repository subscriptions.
+ */
+async function subscriptionsOf($: Engine, root: string | undefined, session: string | undefined): Promise<Subscribed[]> {
+  if (root === undefined || session === undefined) return []
+  const folder = folderOf(root, session)
+  const [lines, state] = await Promise.all([textOf($, `${folder}/subscriptions`), textOf($, `${folder}/state.json`)])
+  return subscribedOf(parseSubscriptions(lines ?? ''), parseAdopted(state ?? ''))
+}
+
+/** The daemon's last result for a pull request, or null when it has none yet. */
+async function cachedOf($: Engine, root: string | undefined, pr: TrackedPr): Promise<PullRequest | null> {
+  const text = root === undefined ? undefined : await textOf($, cachePathOf(root, pr))
+  return text === undefined ? null : parseCache(pr, text)
+}
+
+/**
+ * Lists the pull requests the session subscribes to, and those an earlier
+ * watcher's tracked file lists, each with its roles. Each pull request's row
+ * comes from the daemon's cache, and a subscribed one the daemon has no result
+ * for yet draws as loading. An earlier watcher's pull request that the daemon
+ * has no result for comes from GitHub, asked only when `isPolled`, and
+ * between polls keeps what GitHub said last.
+ */
+async function load($: Engine, isPolled: boolean): Promise<void> {
+  const root = watchRootOf(await envOf($))
+  const [subscriptions, sets, daemon] = await Promise.all([
+    sessionOf($).then(session => subscriptionsOf($, root, session)),
+    trackedSets($),
+    root === undefined ? undefined : textOf($, `${root}/daemon.json`),
+  ])
+
+  const rolesOf = new Map<string, Role[]>()
   const tracked = new Map<string, TrackedPr>()
+  const add = (pr: TrackedPr, role: Role) => {
+    const key = keyOf(pr)
+    tracked.set(key, tracked.get(key) ?? pr)
+    const roles = rolesOf.get(key) ?? []
+    if (!roles.includes(role)) rolesOf.set(key, ROLES.filter(one => one === role || roles.includes(one)))
+  }
+  for (const { pr, roles } of subscriptions) for (const role of roles) add(pr, ROLE_OF[role])
   for (const kind of KINDS) {
-    for (const entry of sets.filter(set => set.kind === kind).flatMap(set => set.entries)) {
-      const key = keyOf(entry)
-      tracked.set(key, tracked.get(key) ?? entry)
-      const kinds = kindsOf.get(key) ?? []
-      if (!kinds.includes(kind)) kindsOf.set(key, [...kinds, kind])
-    }
+    for (const entry of sets.filter(set => set.kind === kind).flatMap(set => set.entries)) add(entry, ROLE_OF[kind])
   }
 
-  // Each reload reads the panel's setting too, so an edit to it shows without a restart.
-  const [fetched] = await Promise.all([fetchPrs($, [...tracked.values()]), readBackground($)])
+  const cached = new Map(
+    await Promise.all([...tracked].map(async ([key, pr]) => [key, await cachedOf($, root, pr)] as const)),
+  )
+  const isSubscribed = new Set(subscriptions.map(({ pr }) => keyOf(pr)))
+  const unknown = [...tracked].filter(([key]) => cached.get(key) === null && !isSubscribed.has(key))
+  // Each poll reads the panel's setting too, so an edit to it shows without a restart.
+  const [fetched] = isPolled
+    ? await Promise.all([fetchPrs($, unknown.map(([, pr]) => pr)), readBackground($)])
+    : [undefined]
 
-  // When GitHub cannot be reached, keep drawing what it said last time.
+  // When GitHub cannot be reached, or is not asked, keep drawing what it said last time.
   const last = current(await read($, snapshot))
   const previous = new Map(last.rows.map(row => [keyOf(row.pr), row.pr]))
-  const isFetched = fetched.error === null
+  const error = fetched === undefined ? last.error : fetched.error
+  const fromGitHub = (key: string) => (fetched?.error === null ? fetched.prs.get(key) : previous.get(key))
 
-  const rows: Row[] = [...kindsOf].flatMap(([key, kinds]) => {
-    const pr = fetched.prs.get(key) ?? (isFetched ? undefined : previous.get(key))
-    return pr !== undefined && pr.state === 'OPEN' ? [{ pr, kinds }] : []
+  const rows: Row[] = [...tracked].flatMap(([key, entry]) => {
+    const pr = cached.get(key) ?? (isSubscribed.has(key) ? loadingOf(entry) : fromGitHub(key))
+    return pr !== undefined && pr.state === 'OPEN' ? [{ pr, roles: rolesOf.get(key) ?? [] }] : []
   })
 
   const time = await $.clock.now()
   await update($, snapshot, () => ({
     rows,
-    viewer: fetched.viewer ?? last.viewer,
-    fetchedAt: isFetched ? time : last.fetchedAt,
-    error: fetched.error,
+    viewer: parseOperator(daemon ?? '') ?? fetched?.viewer ?? last.viewer,
+    fetchedAt: error === null ? time : last.fetchedAt,
+    error,
   }))
   await update($, now, () => time)
   await closeLeftDrawer($, time)
-  await loadThreads($)
+  if (isPolled) await loadThreads($)
 }
 
 /**
- * Reloads the loops and their pull requests, only while the panel is shown
- * unless forced. A request that arrives mid-load runs once more after it,
- * so a change it was told about is never missed.
+ * Reloads the session's pull requests, only while the panel is shown unless
+ * forced, asking GitHub only when `isPolled`. A request that arrives mid-load
+ * runs once more after it, so a change it was told about is never missed.
  */
-function refresh($: Engine, isForced = false): Promise<void> {
+function refresh($: Engine, isForced = false, isPolled = true): Promise<void> {
   if (inFlight !== undefined) {
-    isQueued = true
+    queuedPoll = queuedPoll === true || isPolled
     return inFlight
   }
   inFlight = (async () => {
     try {
       if (isForced || (await read($, isShown))) {
-        attemptedAt = await $.clock.now()
-        await load($)
+        if (isPolled) attemptedAt = await $.clock.now()
+        await load($, isPolled)
       }
     } catch (error) {
       const message = messageOf(error)
@@ -569,9 +659,10 @@ function refresh($: Engine, isForced = false): Promise<void> {
     }
   })().finally(() => {
     inFlight = undefined
-    if (isQueued) {
-      isQueued = false
-      void refresh($)
+    if (queuedPoll !== undefined) {
+      const isQueuedPoll = queuedPoll
+      queuedPoll = undefined
+      void refresh($, false, isQueuedPoll)
     }
   })
   return inFlight
@@ -862,8 +953,9 @@ async function act(
 }
 
 /**
- * Dismisses a pull request from the session's loops: `project loop drop`
- * keeps it out of each tracked file that lists it, and the panel reloads
+ * Dismisses a pull request from the session: `project watch drop` keeps it
+ * out of each role the session subscribes to it in, `project loop drop` out
+ * of each earlier watcher's tracked file that lists it, and the panel reloads
  * without it. A failure says why, and the line stays.
  */
 async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
@@ -871,26 +963,127 @@ async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
   const named = `${pr.repo}#${pr.number}`
   if (acting.has(key)) return
   acting.add(key)
-  const stopped: LoopKind[] = []
+  const stopped: Role[] = []
+  const drop = async (args: string[], role: Role) => {
+    const ran = await project($, args)
+    if (ran.exitCode !== 0) throw new Error(errorOf(ran))
+    stopped.push(role)
+  }
   try {
+    const session = await sessionOf($)
+    const subscription = (await subscriptionsOf($, watchRootOf(await envOf($)), session)).find(
+      one => keyOf(one.pr) === key,
+    )
+    for (const role of subscription?.roles ?? []) {
+      if (session !== undefined) await drop(['watch', 'drop', named, '--role', role, '--session', session], ROLE_OF[role])
+    }
     for (const loop of await trackedSets($)) {
-      if (!loop.entries.some(entry => keyOf(entry) === key)) continue
-      const ran = await project($, ['loop', 'drop', named, '--tracked', loop.tracked])
-      if (ran.exitCode !== 0) {
-        void $.ui.toast(`projector: ${errorOf(ran)}`)
-        return
+      if (loop.entries.some(entry => keyOf(entry) === key)) {
+        await drop(['loop', 'drop', named, '--tracked', loop.tracked], ROLE_OF[loop.kind])
       }
-      stopped.push(loop.kind)
     }
     await closeDrawer($, key)
   } catch (error) {
     void $.ui.toast(`projector: ${messageOf(error)}`)
   } finally {
     acting.delete(key)
-    const kinds = KINDS.filter(kind => stopped.includes(kind))
-    if (kinds.length > 0) void $.ui.toast(`projector: stopped ${kinds.join(' and ')} ${named}`)
+    const roles = ROLES.filter(role => stopped.includes(role))
+    if (roles.length > 0) void $.ui.toast(`projector: stopped ${roles.join(' and ')} ${named}`)
     await refresh($)
   }
+}
+
+/**
+ * Tells the daemon the session is live and that the mod delivers its
+ * events, which also starts the daemon when none runs. A CLI too old to know
+ * `project watch` leaves the session unsubscribed, and the debug log says so.
+ */
+async function renew($: Engine, session: string, time: number): Promise<void> {
+  const ran = await project($, ['watch', 'renew', '--deliverer', 'mod', '--session', session])
+  if (ran.exitCode === 0) renewedAt = time
+  else $.ui.log(`projector: project watch renew failed: ${errorOf(ran)}`, { to: 'debug' })
+}
+
+/**
+ * Takes the daemon's events for the session once its `events` file holds
+ * any, and submits them as one prompt, which waits until the session is
+ * idle, as an inbox answer for the main loop does. `take` renews the session,
+ * so only a minute without an event renews it alone. Events that arrive while
+ * a batch waits stay in the file, and go as one prompt after it.
+ */
+async function deliverEvents($: Engine, root: string, session: string, time: number): Promise<void> {
+  const events = await $.fs.stat(`${folderOf(root, session)}/events`).catch(() => undefined)
+  if (events === undefined || events.size === 0 || isSubmitting) {
+    if (renewedAt === undefined || time - renewedAt >= RENEW_MS) await renew($, session, time)
+    return
+  }
+  const ran = await project($, ['watch', 'take', '--json', '--session', session])
+  if (ran.exitCode !== 0) return
+  renewedAt = time
+  const { events: lines } = JSON.parse(ran.stdout) as { events?: unknown }
+  const text = (Array.isArray(lines) ? lines : []).filter(line => typeof line === 'string').join('\n')
+  if (text === '') return
+  isSubmitting = true
+  void $.prompt
+    .submit({ text })
+    .then(
+      submitted => {
+        if (submitted.drop !== undefined) {
+          $.ui.log(`projector: the daemon's events did not reach the session: ${submitted.drop}`, { to: 'debug' })
+        }
+      },
+      () => undefined,
+    )
+    .finally(() => {
+      isSubmitting = false
+    })
+}
+
+/**
+ * Shows the panel when the session subscribes to a pull request it had not
+ * subscribed to when the panel last looked, as a new watcher shows it.
+ */
+async function noticeSubscriptions($: Engine, root: string, session: string): Promise<void> {
+  const keys = (await subscriptionsOf($, root, session)).map(({ pr }) => keyOf(pr))
+  const known = await read($, subscribed)
+  const isKnown = (key: string) => Array.isArray(known) && known.includes(key)
+  if (keys.length === known.length && keys.every(isKnown)) return
+  await update($, subscribed, () => keys)
+  if (keys.some(key => !isKnown(key)) && !(await read($, isShown))) show($)
+}
+
+/** Delivers the daemon's events and keeps the session live, whether or not the panel is shown. */
+async function checkWatch($: Engine, time: number): Promise<void> {
+  if (isWatching) return
+  isWatching = true
+  try {
+    const root = watchRootOf(await envOf($))
+    const session = await sessionOf($)
+    if (root === undefined || session === undefined) return
+    // A CLI that cannot run leaves the subscriptions the panel can still read.
+    await deliverEvents($, root, session, time).catch(() => undefined)
+    await noticeSubscriptions($, root, session)
+  } catch {
+    // The next tick tries again.
+  } finally {
+    isWatching = false
+  }
+}
+
+/** Runs `checkWatch` now rather than at the next tick. */
+const watchSoon = ($: Engine) => $.clock.after(1, () => void $.clock.now().then(time => checkWatch($, time)))
+
+/**
+ * Subscribes the session to fix each pull request a command's output shows
+ * it opened or pushed to. The CLI finds them, and adds nothing when
+ * `watch.auto_start` is off.
+ */
+async function subscribeFrom($: Engine, output: string): Promise<void> {
+  const session = await sessionOf($)
+  if (session === undefined || output.trim() === '') return
+  const ran = await project($, ['watch', 'add', '--from-output', '-', '--session', session], output)
+  if (ran.exitCode === 0) watchSoon($)
+  else $.ui.log(`projector: project watch add --from-output failed: ${errorOf(ran)}`, { to: 'debug' })
 }
 
 /**
@@ -918,16 +1111,18 @@ async function recordFromPrompt($: Engine, item: Answerable, record: readonly st
 }
 
 /**
- * Reads the inbox whether or not the panel is shown, closes the drawer of an
- * item that left the panel, and brings a hidden panel back for an item whose
- * snooze ended since the last tick. A shown panel moves
- * its clock on, which returns that item to the list, and polls GitHub once
- * the last load is old enough.
+ * Reads the inbox and delivers the daemon's events whether or not the panel
+ * is shown, closes the drawer of an item that left the panel, and brings a
+ * hidden panel back for an item whose snooze ended since the last tick. A
+ * shown panel moves its clock on, which returns that item to the list, reads
+ * its pull requests again from the daemon's files, and polls GitHub once the
+ * last poll is old enough.
  */
 async function tick($: Engine): Promise<void> {
   // Read before the store, so a snooze that ends while the store is read
   // falls in the next tick's window.
   const time = await $.clock.now()
+  void checkWatch($, time)
   await checkInbox($)
   await closeLeftDrawer($, time).catch(() => undefined)
   const since = tickedAt ?? time
@@ -937,7 +1132,7 @@ async function tick($: Engine): Promise<void> {
     return
   }
   await update($, now, () => time)
-  if (time - attemptedAt >= POLL_MS) await refresh($)
+  await refresh($, false, time - attemptedAt >= POLL_MS)
 }
 
 /**
@@ -1003,9 +1198,10 @@ function notesOf(pr: PullRequest): Note[] {
 /**
  * A pull request's color on the line its collapsed rows give way to: red
  * when a note or its checks hold it back, else its state's, as its row draws
- * `draft` or `ready`.
+ * `draft` or `ready`, and muted while it loads.
  */
-function statusColor(pr: PullRequest): Note['color'] {
+function statusColor(pr: PullRequest): Note['color'] | 'subtle' {
+  if (pr.isLoading === true) return 'subtle'
   if (pr.isConflicting || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.checks === 'failing') return 'error'
   return pr.isDraft ? 'warning' : 'success'
 }
@@ -1101,7 +1297,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'projector',
-      description: 'Show or hide Projector’s panel of your loops’ pull requests and your inbox',
+      description: 'Show or hide Projector’s panel of the pull requests you fix or review, and your inbox',
     })
     // A session whose engine cannot serve the tools keeps the panel.
     for (const tool of [
@@ -1123,6 +1319,8 @@ export const register: Register = on => {
       .then(rows => paint($, rows.find(row => row.key === 'theme')?.value))
       .catch(() => undefined)
     $.clock.after(1, () => void readBackground($))
+    // Renewing starts the daemon, so it runs from a timer too.
+    watchSoon($)
     $.clock.every(TICK_MS, () => void tick($))
     soon($)
     checkSoon($)
@@ -1258,10 +1456,16 @@ export const register: Register = on => {
   }))
 
   // These hooks only watch: the catch hands back what the event settled to,
-  // so a failure here never runs a tool twice or refuses anything.
+  // so a failure here never runs a tool twice or refuses anything. A push's
+  // subscription waits on GitHub, so the tool's result does not wait on it.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
-    if (ran.deny === undefined) await adopt($, e.command)
+    if (ran.deny !== undefined) return ran
+    await adopt($, e.command)
+    if (isPushCommand(e.command)) {
+      const output = ran.isError === true ? (ran.text ?? '') : `${ran.result.stdout}\n${ran.result.stderr}`
+      void subscribeFrom($, output).catch(() => undefined)
+    }
     return ran
   }).catch(($, e, next) => next(e))
 
@@ -1965,9 +2169,12 @@ export const register: Register = on => {
       )
     }
 
-    const drawRow = ({ pr, kinds }: Row) => {
+    const drawRow = ({ pr, roles }: Row) => {
       const key = keyOf(pr)
       const notes = notesOf(pr)
+      // A pull request the daemon has no result for yet holds only its
+      // reference, so its line says it is loading in its title's place.
+      const isLoaded = pr.isLoading !== true
       return (
         <Box key={key} flexDirection="column">
           {/* Only the title gives way when the line is short; the label column
@@ -1986,16 +2193,18 @@ export const register: Register = on => {
                 onPress={() => toggle(key, `pr:${key}`, opened === key ? undefined : `discuss:${key}`)}
               />
             </Box>
-            <Box flexShrink={0}>
-              <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
-            </Box>
-            {!isOwn(pr, shown.viewer) && (
+            {isLoaded && (
+              <Box flexShrink={0}>
+                <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
+              </Box>
+            )}
+            {isLoaded && !isOwn(pr, shown.viewer) && (
               <Box key={`author:${key}`} flexShrink={0} width={authorWidth}>
                 <Text color="subtle">{pr.author ?? ''}</Text>
               </Box>
             )}
             <Box flexGrow={1} flexShrink={1}>
-              <Text wrap="truncate-end">{pr.title}</Text>
+              {isLoaded ? <Text wrap="truncate-end">{pr.title}</Text> : <Text color="subtle">loading…</Text>}
             </Box>
             {notes.length > 0 && (
               <Box flexShrink={0}>
@@ -2017,18 +2226,19 @@ export const register: Register = on => {
               {/* Each `·` keeps the default color, so a piece's color, such
                   as the checks', stops at its own text. */}
               <Text wrap="truncate-end">
-                {kinds.flatMap((kind, at) => [
+                {roles.flatMap((role, at) => [
                   ...(at === 0 ? [] : [' and ']),
-                  <Text key={`loop:${kind}`} color={LOOP_COLORS[kind]}>
-                    {kind}
+                  <Text key={`role:${role}`} color={ROLE_COLORS[role]}>
+                    {role}
                   </Text>,
                 ])}
                 {pr.branch !== '' && ' · '}
                 {pr.branch !== '' && <Text color={BRANCH_COLOR}>{pr.branch}</Text>}
-                {' · '}
-                <Text color="success">{`+${pr.additions}`}</Text>{' '}
-                <Text color="error">{`−${pr.deletions}`}</Text>
-                {` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
+                {isLoaded && ' · '}
+                {isLoaded && <Text color="success">{`+${pr.additions}`}</Text>}
+                {isLoaded && ' '}
+                {isLoaded && <Text color="error">{`−${pr.deletions}`}</Text>}
+                {isLoaded && ` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
                 {pr.checks !== null && ' · '}
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
               </Text>

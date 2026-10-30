@@ -190,6 +190,41 @@ export function findWatchers(command: string, env: Env): Watcher[] {
   return found
 }
 
+const GIT_OPTIONS_WITH_VALUES = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env'])
+const WRAPPERS = new Set(['command', 'env', 'exec', 'nohup', 'time'])
+
+/** The words of each simple command in a command line, as the shell would split them. */
+function commandsOf(command: string): string[][] {
+  const commands: string[][] = [[]]
+  for (const token of tokenize(command)) {
+    if ('parts' in token) commands[commands.length - 1]?.push(raw(token.parts))
+    else commands.push([])
+  }
+  return commands.filter(words => words.length > 0)
+}
+
+/**
+ * Whether a command line runs `git push`, `gh pr create`, or a `gh stack`
+ * command, whose output can name a pull request the session opened or pushed
+ * to. A command only mentioned, as in `echo git push`, does not count.
+ */
+export function isPushCommand(command: string): boolean {
+  return commandsOf(command).some(words => {
+    let at = 0
+    while (at < words.length && (ASSIGNMENT.test(words[at] ?? '') || WRAPPERS.has(words[at] ?? ''))) at += 1
+    const name = (words[at] ?? '').split('/').pop()
+    const rest = words.slice(at + 1)
+    if (name === 'gh') return rest[0] === 'stack' || (rest[0] === 'pr' && rest[1] === 'create')
+    if (name !== 'git') return false
+    for (let next = 0; next < rest.length; next += 1) {
+      const word = rest[next] ?? ''
+      if (GIT_OPTIONS_WITH_VALUES.has(word)) next += 1
+      else if (!word.startsWith('-')) return word === 'push'
+    }
+    return false
+  })
+}
+
 const ENTRY = /^(!?)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$/
 
 /** Names a pull request without regard to case, as GitHub and the watchers do. */
@@ -221,3 +256,129 @@ export function parseTracked(text: string): TrackedPr[] {
     .filter(([key]) => !excluded.has(key))
     .map(([, pr]) => pr)
 }
+
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** What a subscription asks of the session, in the CLI's words: to fix the pull request, or to review it. */
+export type SubscriptionRole = 'fix' | 'review'
+
+/** One line of a session's `subscriptions` file. */
+export type Subscription = {
+  repo: string
+  /** Null for a line that reviews every pull request of the repository. */
+  number: number | null
+  role: SubscriptionRole
+  /** The model a `review` line reviews with; null for a `fix` line, and for a `!` line that names none. */
+  model: string | null
+  isExcluded: boolean
+}
+
+/** A pull request the session subscribes to, and the roles it holds on it. */
+export type Subscribed = { pr: TrackedPr; roles: SubscriptionRole[] }
+
+const SUBSCRIPTION = /^(!?)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#([1-9][0-9]*))?\s+(fix|review)(?=\s|$)(?:\s+(\S+))?/
+const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+
+/**
+ * Reads a session's `subscriptions` file: `owner/repo#N fix`, optionally
+ * followed by `auto`, `owner/repo#N review <model> <reviewer>`,
+ * `owner/repo review <model> <reviewer>`, and any of them behind `!` to keep
+ * the pull request out of that role. Lines of any other shape are skipped.
+ */
+export function parseSubscriptions(text: string): Subscription[] {
+  return text.split('\n').flatMap(line => {
+    const match = SUBSCRIPTION.exec(line.trim())
+    if (match === null) return []
+    const [, bang, repo, number, role, word] = match as unknown as [
+      string,
+      string,
+      string,
+      string | undefined,
+      SubscriptionRole,
+      string | undefined,
+    ]
+    if (role === 'fix' && number === undefined) return []
+    return [
+      {
+        repo,
+        number: number === undefined ? null : Number(number),
+        role,
+        model: role === 'review' ? (word ?? null) : null,
+        isExcluded: bang === '!',
+      },
+    ]
+  })
+}
+
+/**
+ * The pull requests a session subscribes to, in the order its lines name
+ * them, then those its repository subscriptions adopted, each once with the
+ * roles it holds. A `!` line takes the pull request out of that role, and for
+ * `review` out of that model, wherever the line sits; one naming no model
+ * takes it out of every model.
+ */
+export function subscribedOf(lines: readonly Subscription[], adopted: readonly TrackedPr[]): Subscribed[] {
+  const keyOfLine = (line: Subscription) => `${line.repo}#${line.number ?? ''}`.toLowerCase()
+  const isExcluded = (line: Subscription) =>
+    lines.some(
+      one =>
+        one.isExcluded &&
+        one.role === line.role &&
+        keyOfLine(one) === keyOfLine(line) &&
+        (one.model === null || one.model === line.model),
+    )
+
+  const found = new Map<string, Subscribed>()
+  const add = (pr: TrackedPr, role: SubscriptionRole) => {
+    const was = found.get(keyOf(pr)) ?? { pr, roles: [] }
+    found.set(keyOf(pr), was.roles.includes(role) ? was : { ...was, roles: [...was.roles, role] })
+  }
+  for (const line of lines) {
+    if (line.number !== null && !line.isExcluded && !isExcluded(line)) add({ repo: line.repo, number: line.number }, line.role)
+  }
+  for (const pr of adopted) add(pr, 'review')
+  return [...found.values()]
+}
+
+/**
+ * Reads the pull requests the daemon adopted for the session's repository
+ * subscriptions from its `state.json`: `{"adopted": {"owner/repo": [12, 14]}}`.
+ * The file holds other keys, which belong to the daemon.
+ */
+export function parseAdopted(text: string): TrackedPr[] {
+  let state: unknown
+  try {
+    state = JSON.parse(text)
+  } catch {
+    return []
+  }
+  const adopted = isRecord(state) ? state.adopted : undefined
+  if (!isRecord(adopted)) return []
+  return Object.entries(adopted).flatMap(([repo, numbers]) =>
+    REPO.test(repo) && Array.isArray(numbers)
+      ? numbers.filter((number): number is number => Number.isInteger(number) && number > 0).map(number => ({ repo, number }))
+      : [],
+  )
+}
+
+/** The login the daemon's `daemon.json` names as the operator, or null when it names none. */
+export function parseOperator(text: string): string | null {
+  try {
+    const daemon: unknown = JSON.parse(text)
+    return isRecord(daemon) && typeof daemon.operator === 'string' && daemon.operator !== '' ? daemon.operator : null
+  } catch {
+    return null
+  }
+}
+
+/** Where the watch daemon keeps its files, as the CLI finds it: under `XDG_STATE_HOME`, else `~/.local/state`. */
+export function watchRootOf(env: Env): string | undefined {
+  const home = env('HOME')
+  const base = env('XDG_STATE_HOME') ?? (home === undefined ? undefined : `${home}/.local/state`)
+  return base === undefined ? undefined : `${base}/projector/watch`
+}
+
+/** The daemon's last result for a pull request, which it files under the repository's name in lowercase. */
+export const cachePathOf = (root: string, pr: TrackedPr) =>
+  `${root}/cache/${pr.repo.toLowerCase()}/pulls/${pr.number}.json`

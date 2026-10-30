@@ -1,7 +1,17 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { buildQuery, buildThreadsQuery, parseResponse, parseThreads } from './github'
-import { findWatchers, parseTracked } from './parse'
+import { buildQuery, buildThreadsQuery, loadingOf, parseCache, parseResponse, parseThreads } from './github'
+import {
+  cachePathOf,
+  findWatchers,
+  isPushCommand,
+  parseAdopted,
+  parseOperator,
+  parseSubscriptions,
+  parseTracked,
+  subscribedOf,
+  watchRootOf,
+} from './parse'
 
 const VARIABLES: Record<string, string> = { HOME: '/home/ada' }
 const env = (name: string) => VARIABLES[name]
@@ -233,6 +243,196 @@ describe('GitHub', () => {
       expect(parseThreads(threadsQuery, { exitCode: 1, stdout: JSON.stringify(missing), stderr: '' })).toBeNull()
       const offline = { exitCode: 1, stdout: '', stderr: 'error connecting to api.github.com\n' }
       expect(parseThreads(threadsQuery, offline)).toBeNull()
+    })
+  })
+})
+
+describe('isPushCommand', () => {
+  test('finds a push, a new pull request, or a stack command, wherever it sits in the line', () => {
+    for (const command of [
+      'git push',
+      'git push -u origin HEAD',
+      'cd /w && git -C sub --no-pager push origin feature',
+      'GIT_TRACE=1 git push',
+      'env GH_TOKEN=x gh pr create --draft --title "Add a thing" --body-file b.md',
+      '/usr/bin/git push --force-with-lease',
+      'gh stack submit',
+      'npm test; gh stack push',
+      '(cd sub && git push)',
+    ]) {
+      expect([command, isPushCommand(command)]).toEqual([command, true])
+    }
+  })
+
+  test('leaves out a command that only mentions one, or runs another subcommand', () => {
+    for (const command of [
+      'echo git push',
+      "git commit -m 'git push later'",
+      'git status',
+      'git log --grep push',
+      'git -C push status',
+      'gh pr view 12',
+      'gh pr list',
+      'grep -r "gh pr create" skills',
+      'my-git push',
+      '# git push',
+    ]) {
+      expect([command, isPushCommand(command)]).toEqual([command, false])
+    }
+  })
+})
+
+describe('subscriptions', () => {
+  test('reads each line of the grammar and skips any other', () => {
+    const text = [
+      'acme/app#12 fix',
+      'acme/app#13 fix auto',
+      'acme/app#14 review claude-opus-5-5 octocat',
+      'acme/app review claude-opus-5-5 octocat',
+      '!acme/app#9 review claude-opus-5-5 octocat',
+      '!acme/app#12 fix',
+      'acme/app fix',
+      'acme/app#16 fixer',
+      'not a line',
+      '',
+    ].join('\n')
+    expect(parseSubscriptions(text)).toEqual([
+      { repo: 'acme/app', number: 12, role: 'fix', model: null, isExcluded: false },
+      { repo: 'acme/app', number: 13, role: 'fix', model: null, isExcluded: false },
+      { repo: 'acme/app', number: 14, role: 'review', model: 'claude-opus-5-5', isExcluded: false },
+      { repo: 'acme/app', number: null, role: 'review', model: 'claude-opus-5-5', isExcluded: false },
+      { repo: 'acme/app', number: 9, role: 'review', model: 'claude-opus-5-5', isExcluded: true },
+      { repo: 'acme/app', number: 12, role: 'fix', model: null, isExcluded: true },
+    ])
+  })
+
+  test('lists each pull request once with its roles, less the excluded ones, then the adopted ones', () => {
+    const lines = parseSubscriptions(
+      [
+        'acme/app#13 fix auto',
+        'Acme/App#13 review claude-opus-5-5 octocat',
+        'acme/app#12 fix',
+        '!ACME/APP#12 fix',
+        'acme/app#14 review claude-opus-5-5 octocat',
+        'acme/app#14 review claude-sonnet-5 octocat',
+        '!acme/app#14 review claude-opus-5-5 octocat',
+        'acme/app#15 review claude-opus-5-5 octocat',
+        '!acme/app#15 review',
+        'acme/app review claude-opus-5-5 octocat',
+      ].join('\n'),
+    )
+    const adopted = [
+      { repo: 'acme/app', number: 13 },
+      { repo: 'acme/app', number: 20 },
+    ]
+    expect(subscribedOf(lines, adopted)).toEqual([
+      { pr: { repo: 'acme/app', number: 13 }, roles: ['fix', 'review'] },
+      // One model's exclusion leaves another model's review, and one that names no model excludes every model.
+      { pr: { repo: 'acme/app', number: 14 }, roles: ['review'] },
+      { pr: { repo: 'acme/app', number: 20 }, roles: ['review'] },
+    ])
+  })
+
+  test('reads the adopted pull requests from the daemon’s state, and nothing else of it', () => {
+    const state = JSON.stringify({
+      adopted: { 'acme/app': [12, 14], 'x/y': [3, 0, 'four', 2.5], 'not a repository': [1] },
+      announced: { 'acme/app#12': {} },
+    })
+    expect(parseAdopted(state)).toEqual([
+      { repo: 'acme/app', number: 12 },
+      { repo: 'acme/app', number: 14 },
+      { repo: 'x/y', number: 3 },
+    ])
+    expect(parseAdopted('')).toEqual([])
+    expect(parseAdopted('{"adopted": []}')).toEqual([])
+  })
+
+  test('reads the operator from daemon.json', () => {
+    const daemon = { pid: 12, version: '0.9.0', started_at: '2026-10-30T12:00:00Z', operator: 'octocat' }
+    expect(parseOperator(JSON.stringify(daemon))).toBe('octocat')
+    expect(parseOperator(JSON.stringify({ ...daemon, operator: '' }))).toBeNull()
+    expect(parseOperator('{')).toBeNull()
+  })
+})
+
+describe('the daemon’s files', () => {
+  test('live under XDG_STATE_HOME, else ~/.local/state, as the CLI finds them', () => {
+    expect(watchRootOf(env)).toBe('/home/ada/.local/state/projector/watch')
+    const variables: Record<string, string> = { HOME: '/home/ada', XDG_STATE_HOME: '/state' }
+    expect(watchRootOf(name => variables[name])).toBe('/state/projector/watch')
+    expect(watchRootOf(() => undefined)).toBeUndefined()
+  })
+
+  test('file a pull request’s result under its repository in lowercase', () => {
+    expect(cachePathOf('/w', { repo: 'Acme/App', number: 12 })).toBe('/w/cache/acme/app/pulls/12.json')
+  })
+
+  test('give a pull request’s row from its cached result', () => {
+    // Every field the daemon's query names, as the cache holds them.
+    const pullRequest = {
+      number: 12,
+      title: 'Add a thing',
+      url: 'https://github.com/acme/app/pull/12',
+      body: '',
+      state: 'OPEN',
+      isDraft: true,
+      reviewDecision: null,
+      mergeable: 'CONFLICTING',
+      updatedAt: '2026-10-30T11:00:00Z',
+      headRefOid: 'a'.repeat(40),
+      headRefName: 'add-a-thing',
+      baseRefName: 'main',
+      author: { login: 'octocat' },
+      additions: 30,
+      deletions: 4,
+      changedFiles: 3,
+      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'PENDING' } } }] },
+      comments: { nodes: [] },
+      reviews: { nodes: [] },
+      changesRequested: { nodes: [] },
+      reviewThreads: {
+        nodes: [
+          { id: 'T1', isResolved: false, path: 'a.py', line: 3, first: { nodes: [] }, last: { nodes: [] } },
+          { id: 'T2', isResolved: true, path: 'b.py', line: 9, first: { nodes: [] }, last: { nodes: [] } },
+        ],
+      },
+    }
+    const cached = JSON.stringify({
+      fetched_at: '2026-10-30T11:59:00Z',
+      etags: { pull: 'W/"1"' },
+      repository: { visibility: 'PUBLIC', pullRequest },
+      reviews: [],
+    })
+    expect(parseCache({ repo: 'Acme/App', number: 12 }, cached)).toEqual({
+      repo: 'Acme/App',
+      number: 12,
+      title: 'Add a thing',
+      url: 'https://github.com/acme/app/pull/12',
+      state: 'OPEN',
+      isDraft: true,
+      reviewDecision: null,
+      isConflicting: true,
+      openThreads: 1,
+      author: 'octocat',
+      branch: 'add-a-thing',
+      additions: 30,
+      deletions: 4,
+      changedFiles: 3,
+      checks: 'pending',
+      updatedAt: Date.UTC(2026, 9, 30, 11),
+      summaryUrl: null,
+    })
+    expect(parseCache({ repo: 'acme/app', number: 12 }, '')).toBeNull()
+    expect(parseCache({ repo: 'acme/app', number: 12 }, '{"repository": {"pullRequest": null}}')).toBeNull()
+  })
+
+  test('give a pull request with no result yet a loading row that holds only its reference', () => {
+    expect(loadingOf({ repo: 'acme/app', number: 12 })).toMatchObject({
+      repo: 'acme/app',
+      number: 12,
+      url: 'https://github.com/acme/app/pull/12',
+      state: 'OPEN',
+      isLoading: true,
     })
   })
 })

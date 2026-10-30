@@ -1,8 +1,15 @@
-/** What a loop does with its pull requests: `watch-threads.sh` watches, `watch-prs.sh` reviews. */
+/**
+ * What an earlier watcher did with the pull requests its tracked file lists:
+ * `watch-threads.sh` watches, `watch-prs.sh` reviews. A session that started
+ * one before the daemon keeps it until the session ends.
+ */
 export type LoopKind = 'watching' | 'reviewing'
 
-/** A tracked file this session started a watcher on. */
+/** A tracked file this session started an earlier watcher on. */
 export type SeenLoop = { kind: LoopKind; tracked: string }
+
+/** What the session does with a pull request, as its drawer names it. */
+export type Role = 'fixing' | 'reviewing'
 
 export type Checks = 'passing' | 'failing' | 'pending'
 
@@ -42,14 +49,16 @@ export type PullRequest = {
   updatedAt: number | null
   /** The Projector summary the description links, when one was published. */
   summaryUrl: string | null
+  /** Whether the daemon has yet to give a result for the pull request, which then holds only its reference. */
+  isLoading?: boolean
 }
 
-/** One line of the panel: an open pull request and what the loops do with it. */
-export type Row = { pr: PullRequest; kinds: LoopKind[] }
+/** One line of the panel: an open pull request and what the session does with it. */
+export type Row = { pr: PullRequest; roles: Role[] }
 
 export type Snapshot = {
   rows: Row[]
-  /** The login of the account the panel's `gh` is signed in as; null until GitHub says. */
+  /** The operator's login, from the daemon or else from GitHub; null until one says. */
   viewer: string | null
   fetchedAt: number | null
   error: string | null
@@ -159,6 +168,8 @@ declare module 'claude-code' {
   interface PluginState {
     projector: {
       seenLoops: SeenLoop[]
+      /** The pull requests the session subscribed to when the panel last looked, by `keyOf`, so a new one shows the panel. */
+      panelSubscribed: string[]
       panelSnapshot: Snapshot
       panelNow: number
       isPanelShown: boolean
