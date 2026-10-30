@@ -1,0 +1,89 @@
+{
+ "version": 1,
+ "name": "Reload plugins note",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 385,
+  "title": "Say that /reload-plugins loads an upgraded plugin",
+  "head": "72b8c35197c129efd183dde5e2f7482baacdb3a5",
+  "headRef": "note-reload-plugins",
+  "base": "6113114866825613c7fd584bb6a84d7fc43bb1ab",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's installer, <code>install.sh</code>, installs or updates the Projector plugin and its <code>gh-stack</code> dependency in Claude Code. <code>project upgrade</code> runs the same installer. When Claude Code updates a plugin, the only advice it prints is \"Restart to apply changes.\" A session that is already open does not need a restart, though. Running <code>/reload-plugins</code> in it loads the new version in place.",
+   "This change makes the installer end its Claude Code section with a <code>reload</code> row that says so. The row prints only when the run changed the installed version of Projector or <code>gh-stack</code>, a first install included. A run that changes nothing prints no row, and the Codex section is untouched. <code>docs/plugins.md</code> describes the row and names <code>/reload-plugins</code> beside a restart."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review of <code>72b8c35</code>: clean, with no finding threads.</li><li>A live run against the real <code>claude</code> 2.1.314 in a scratch config printed the row on an upgrade from 0.8.4, and no row on the run after it.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "installer",
+   "title": "The installer prints a reload row",
+   "kicker": "install.sh compares the plugin versions before and after a Claude Code install",
+   "intro": [
+    "<code>install_claude</code> is the installer function that adds or refreshes Projector's marketplace in Claude Code, then installs or updates <code>projector@projector</code> and <code>gh-stack@projector</code>. It now records both installed versions before it starts and again at the end. When the two readings differ, it prints the <code>reload</code> row in the installer's usual two-column form.",
+    "The versions come from <code>host_plugin_version</code>, which reads <code>claude plugin list --json</code>. Each reading costs one more <code>claude</code> call, about half a second, during a run that also downloads and installs plugins."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "install.sh",
+     "note": "Reads the versions before the marketplace step and compares them after the <code>gh-stack</code> step.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 321,
+       "text": "This comparison cannot fail the install. <code>host_plugin_version</code> ends in <code>|| true</code>, so <code>claude_plugin_versions</code> always succeeds, and the <code>[ … ] || printf</code> list succeeds on both branches under <code>set -euo pipefail</code>. A live run in a scratch <code>HOME</code> and <code>CLAUDE_CONFIG_DIR</code> exited 0 on both an upgrade and a run that changed nothing."
+      },
+      {
+       "kind": "context",
+       "line": 328,
+       "text": "One string holds both versions. A change to either plugin, or a plugin going from absent to installed, makes the before and after strings differ."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_install.py",
+     "note": "The fake <code>claude</code> now swaps in a second plugin list after an update or install, so a test can simulate a version change.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Against <code>main</code>'s <code>install.sh</code>, all three cases of <code>test_a_changed_plugin_says_an_open_session_can_reload_it</code> fail. Both new tests pass at this head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The documentation names /reload-plugins",
+   "kicker": "docs/plugins.md describes the row and the reload",
+   "intro": [
+    "The plugin guide gains a paragraph on the <code>reload</code> row. Its section on updating an installed copy now says an open Claude Code session applies an update when you run <code>/reload-plugins</code> or restart it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "One new paragraph after the <code>gh-stack</code> install notes, and one revised sentence in the update section.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 137,
+       "text": "Claude Code 2.1.314 itself tells you to run <code>/reload-plugins</code> to apply a plugin that its autoupdate changed, which supports this paragraph. <code>project upgrade</code> passes the installer's output through and prints no restart advice of its own."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

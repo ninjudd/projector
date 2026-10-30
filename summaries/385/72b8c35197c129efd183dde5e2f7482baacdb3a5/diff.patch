@@ -1,0 +1,122 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 0ec3463a..3e6738c0 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -134,6 +134,11 @@ extension that provides `gh stack` from another owner alone, prints a
+ extension. `status` adds a `stack-` row comparing the extension with the
+ pin.
+ 
++When the installer changes the version of a Claude Code plugin, Projector
++or `gh-stack`, it prints a `reload` row. Claude Code itself says to
++restart, but a session that is already open loads the new version when you
++run `/reload-plugins` in it.
++
+ ## Install only the CLI
+ 
+ `pipx` installs an isolated `project` from the newest release's source
+@@ -989,9 +994,10 @@ release may still break, so the `v0` channel promises less than a `v1` channel
+ will.
+ 
+ Update an installed copy with each host's own command, or run `./install.sh
+-all` from a checkout, which runs these for every host it finds. Claude Code
+-needs a restart to apply the update, and Codex refreshes a Git marketplace
+-snapshot before it can see the new version:
++all` from a checkout, which runs these for every host it finds. An open
++Claude Code session applies the update when you run `/reload-plugins` in it
++or restart it, and Codex refreshes a Git marketplace snapshot before it can
++see the new version:
+ 
+ ```sh
+ claude plugin update projector@projector
+diff --git a/install.sh b/install.sh
+index 023c20ec..39ab9278 100755
+--- a/install.sh
++++ b/install.sh
+@@ -297,7 +297,8 @@ install_claude() {
+   }
+   mkdir -p "$CLAUDE_DIR"
+   remove_legacy_links claude
+-  local marketplace source
++  local marketplace source installed
++  installed="$(claude_plugin_versions)"
+   marketplace="$(host_marketplace claude)"
+   source="$(plugin_source claude)"
+   if [ -z "$marketplace" ]; then
+@@ -315,6 +316,16 @@ install_claude() {
+     run_claude plugin install projector@projector --scope user
+   fi
+   install_claude_gh_stack
++  # A session that is already open keeps the plugins it loaded. Claude Code
++  # says to restart it, but /reload-plugins loads the new ones in place.
++  [ "$(claude_plugin_versions)" = "$installed" ] ||
++    printf '%-14s %s\n' "reload" "run /reload-plugins in an open Claude Code session to load the new version without a restart"
++}
++
++# The installed versions of Projector and gh-stack, empty for one that is not
++# installed, so a change to either shows as a change to the whole.
++claude_plugin_versions() {
++  printf '%s %s\n' "$(host_plugin_version claude)" "$(host_plugin_version claude gh-stack@projector)"
+ }
+ 
+ # Projector depends on the gh-stack plugin and fails to load without it, but
+diff --git a/tests/test_install.py b/tests/test_install.py
+index 93594f52..6a3f1832 100644
+--- a/tests/test_install.py
++++ b/tests/test_install.py
+@@ -41,7 +41,8 @@ def setUp(self) -> None:
+         # every time, and one written to `<command>-fails-once` only the first
+         # time. The host fails with status 3, which the installer never exits
+         # with itself, so a test can tell the host's status from the
+-        # installer's.
++        # installer's. A plugin list written to `<command>-plugins-after.json`
++        # replaces the host's list once it updates or installs a plugin.
+         for command, executable in (("claude", "host-a"), ("codex", "host-b")):
+             once = f'"$PROJECTOR_TEST_STATE/{command}-fails-once"'
+             (self.fake_bin / executable).write_text(
+@@ -52,6 +53,8 @@ def setUp(self) -> None:
+                 'case "$*" in\n'
+                 f'  "plugin marketplace list --json") cat "$PROJECTOR_TEST_STATE/{command}-marketplaces.json" 2>/dev/null ;;\n'
+                 f'  "plugin list --json") cat "$PROJECTOR_TEST_STATE/{command}-plugins.json" 2>/dev/null ;;\n'
++                f'  "plugin update "*|"plugin install "*) after="$PROJECTOR_TEST_STATE/{command}-plugins-after.json"\n'
++                f'    [ ! -f "$after" ] || mv "$after" "$PROJECTOR_TEST_STATE/{command}-plugins.json" ;;\n'
+                 "esac\n"
+                 "exit 0\n"
+             )
+@@ -475,6 +478,37 @@ def test_an_update_moves_an_installed_gh_stack_to_the_marketplaces_pin(self) ->
+         self.assertIn("claude plugin update gh-stack@projector\n", log)
+         self.assertNotIn("plugin install", log)
+ 
++    def test_a_changed_plugin_says_an_open_session_can_reload_it(self) -> None:
++        # Claude Code says to restart, though /reload-plugins loads the new
++        # version in a session that is already open.
++        reload = "reload         run /reload-plugins in an open Claude Code session"
++        for before, after in (([("projector@projector", "0.2.0"), ("gh-stack@projector", "0.2.1")],
++                               [("projector@projector", "0.3.0"), ("gh-stack@projector", "0.2.1")]),
++                              ([("projector@projector", "0.2.0"), ("gh-stack@projector", "0.2.0")],
++                               [("projector@projector", "0.2.0"), ("gh-stack@projector", "0.2.1")]),
++                              ([], [("projector@projector", "0.3.0"), ("gh-stack@projector", "0.2.1")])):
++            with self.subTest(before=before, after=after):
++                self.host_has("claude", marketplace="github", version="0", source="acme/projector")
++                for name, plugins in (("plugins", before), ("plugins-after", after)):
++                    (self.state / f"claude-{name}.json").write_text(
++                        json.dumps([{"id": plugin, "version": version} for plugin, version in plugins]))
++
++                result = self.install("claude")
++
++                self.assertEqual(0, result.returncode, result.stderr)
++                self.assertIn(reload, result.stdout)
++
++    def test_an_update_that_changes_no_plugin_says_nothing_about_reloading(self) -> None:
++        self.host_has("claude", marketplace="github", version="0.2.0", source="acme/projector")
++        plugins = json.loads((self.state / "claude-plugins.json").read_text())
++        plugins.append({"id": "gh-stack@projector", "version": "0.2.1"})
++        (self.state / "claude-plugins.json").write_text(json.dumps(plugins))
++
++        result = self.install("claude")
++
++        self.assertEqual(0, result.returncode, result.stderr)
++        self.assertNotIn("run /reload-plugins", result.stdout)
++
+     def test_codex_installs_gh_stack_as_a_plugin_of_its_own(self) -> None:
+         result = self.install("codex")
+ 
