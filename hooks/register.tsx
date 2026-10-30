@@ -1368,30 +1368,43 @@ export const register: Register = on => {
           {reloaded !== '' && <Text color="subtle">{`  ${reloaded}`}</Text>}
         </Box>
       )
-    // A collapsed section's line, which expands it again, so it is bulleted
-    // `+` where an item is bulleted `-`. Collapsed pull requests list their
-    // labels in the rows' order, each in its status's color; a collapsed kind
-    // of item reads as its count, in the kind's color.
+    // A collapsed section's line expands it again, so it is bulleted `+`
+    // where an item is bulleted `-`. A collapsed kind of item reads as its
+    // count, in the kind's color. Collapsed pull requests are a row of plain
+    // Buttons: the `+` expands them, and each label after it, in the rows'
+    // order and its status's color, expands them with its drawer open.
+    const expandOnto = (key: string) => {
+      Promise.all([
+        update($, collapsed, was => (Array.isArray(was) ? was.filter(one => one !== 'pr') : [])),
+        update($, drawer, () => key),
+      ])
+        .then(() => loadThreads($))
+        .catch(() => undefined)
+      ask(key, null)
+      carry(`open:${key}`, `discuss:${key}`)
+    }
     const expander = (section: Section) =>
       shownCounts
         .filter(one => one.section === section && isCollapsed(section))
-        .map(({ count }) => (
-          <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
-            {section === 'pr' ? (
-              <Text>
-                {'+ '}
-                {byAuthor(shown.rows, shown.viewer).flatMap(({ pr }, at) => [
-                  ...(at === 0 ? [] : [' ']),
-                  <Text key={keyOf(pr)} color={statusColor(pr)}>
-                    {label(pr)}
-                  </Text>,
-                ])}
-              </Text>
-            ) : (
+        .map(({ count }) =>
+          section === 'pr' ? (
+            <Box key="collapsed:pr" flexDirection="row">
+              <Button key="expand:pr" plain onPress={() => fold(section)}>
+                <Text>+</Text>
+              </Button>
+              {byAuthor(shown.rows, shown.viewer).flatMap(({ pr }) => [
+                <Text key={`before:${keyOf(pr)}`}> </Text>,
+                <Button key={`open:${keyOf(pr)}`} plain onPress={() => expandOnto(keyOf(pr))}>
+                  <Text color={statusColor(pr)}>{label(pr)}</Text>
+                </Button>,
+              ])}
+            </Box>
+          ) : (
+            <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
               <Text color={KIND_COLORS[section]}>{`+ ${count}`}</Text>
-            )}
-          </Button>
-        ))
+            </Button>
+          ),
+        )
     const panel = (lines: RenderChildren, isHeaded = true) =>
       isTerminal ? (
         <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>

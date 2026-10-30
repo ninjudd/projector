@@ -426,7 +426,8 @@ out of view. A collapsed line starts with `+`, where an item's starts with
 `+ #12 #14 #15` in their place, listing each in the rows' order and coloring
 it by status: red when a conflict, a change request, or failing checks hold
 it back, and otherwise yellow for a draft and green for a pull request that
-is ready. A collapsed kind of item becomes a line such as `+ 2 questions` at
+is ready. Click a pull request's number to expand them with its drawer
+open. A collapsed kind of item becomes a line such as `+ 2 questions` at
 the top of the items, drawn in the kind's color. Click the line, or the
 count again, to expand it. The pull requests, the questions, and the notices
 collapse apart from each other, and each stays collapsed, new ones included,

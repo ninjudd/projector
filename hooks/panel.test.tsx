@@ -2533,18 +2533,26 @@ test('the pull requests’ count in the header collapses them to one line in the
   questionWorld(on, clock, [held()])
   await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
-  /** The panel's lines, a pull request or an item by its key and a collapsed section by what it reads. */
-  const lines = async () =>
-    (await ui.findAll({ type: 'Button' }))
+  /** The panel's lines, a pull request or an item by its key, and a collapsed section by what it reads. */
+  const lines = async () => {
+    const collapsed = (await ui.find({ key: 'collapsed:pr' }))?.text ?? ''
+    return (await ui.findAll({ type: 'Button' }))
       .filter(button => /^(pr|item|expand):/.test(button.key ?? ''))
-      .map(button => (button.key?.startsWith('expand:') === true ? button.text : (button.key ?? '')))
+      .map(button =>
+        button.key === 'expand:pr'
+          ? collapsed
+          : button.key?.startsWith('expand:') === true
+            ? button.text
+            : (button.key ?? ''),
+      )
+  }
 
   expect(await lines()).toEqual(['pr:x/y#7', 'item:1'])
 
   // The pull requests collapse to one line, bulleted `+`, that lists them, and the header keeps counting them.
   await ui.press({ key: 'count:pr' })
   expect(await lines()).toEqual(['+ #7', 'item:1'])
-  expect(partsOf(await ui.find({ type: 'Text', text: '+ #7' }))).toEqual(['+ ', ['#7', 'error']])
+  expect((await ui.find({ type: 'Text', text: '#7' }))?.props.color).toBe('error')
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
 
@@ -2564,7 +2572,7 @@ test('the pull requests’ count in the header collapses them to one line in the
   await ui.unmount()
 })
 
-test('collapsed pull requests list their labels in the rows’ order, each in its status’s color', async ($, on) => {
+test('collapsed pull requests list their labels in the rows’ order and status colors, and a label opens its drawer', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#10\no/r#12\n' })
@@ -2574,18 +2582,35 @@ test('collapsed pull requests list their labels in the rows’ order, each in it
   const ui = await $.ui.mount(PANEL)
 
   await ui.press({ key: 'count:pr' })
-  // Ready is green and a draft yellow, as their rows' states are; a conflict, a change request, or failing checks is red.
-  expect(partsOf(await ui.find({ type: 'Text', text: '+ #1 #2 #10 #12' }))).toEqual([
-    '+ ',
-    ['#1', 'success'],
-    ' ',
-    ['#2', 'warning'],
-    ' ',
-    ['#10', 'error'],
-    ' ',
-    ['#12', 'error'],
-  ])
+  expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #1 #2 #10 #12')
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
+  // Ready is green and a draft yellow, as their rows' states are; a conflict, a change request, or failing checks is red.
+  const colors = await Promise.all(
+    ['#1', '#2', '#10', '#12'].map(async text => (await ui.find({ type: 'Text', text }))?.props.color),
+  )
+  expect(colors).toEqual(['success', 'warning', 'error', 'error'])
+  // Each label is a Button that expands the pull requests and opens its own drawer.
+  expect((await ui.findAll({ type: 'Button' })).map(button => button.key).filter(key => /^open:/.test(key ?? ''))).toEqual([
+    'open:o/r#1',
+    'open:o/r#2',
+    'open:o/r#10',
+    'open:o/r#12',
+  ])
+  await ui.press({ key: 'open:o/r#10' })
+  expect(await ui.find({ key: 'collapsed:pr' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+  expect(await ui.find({ key: 'drawer:o/r#10' })).toBeDefined()
+  expect(await ui.find({ key: 'drawer:o/r#1' })).toBeUndefined()
+
+  // A label opens its drawer even when another drawer was open before the pull requests collapsed.
+  await ui.press({ key: 'count:pr' })
+  await ui.press({ key: 'open:o/r#2' })
+  expect(await ui.find({ key: 'drawer:o/r#2' })).toBeDefined()
+  expect(await ui.find({ key: 'drawer:o/r#10' })).toBeUndefined()
+  // A label whose drawer was already open keeps it open, rather than toggling it shut.
+  await ui.press({ key: 'count:pr' })
+  await ui.press({ key: 'open:o/r#2' })
+  expect(await ui.find({ key: 'drawer:o/r#2' })).toBeDefined()
   await ui.unmount()
 })
 

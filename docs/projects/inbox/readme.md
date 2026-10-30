@@ -2312,6 +2312,10 @@ its status's color, says both without expanding the rows.
   or failing checks make it `error`, the color of the row's notes for them.
   Otherwise a draft is `warning` and a ready pull request `success`, as the
   row draws `draft` and `ready`.
+- **Each label is a button.** Pressing one expands the pull requests and
+  opens that pull request's drawer, closing any other. A drawer that was
+  already open stays open rather than toggling shut. The `+` before the
+  labels expands them with no drawer change.
 - **A collapsed line is bulleted `+`.** Every collapsed section's line
   starts with `+` rather than the `-` that bullets an item, so it reads as
   something that expands. A collapsed kind of item still reads as its
@@ -2319,6 +2323,8 @@ its status's color, says both without expanding the rows.
 
 ### 28.2 Why this design
 
+- **A label is where you look, so it is where you press.** Expanding and
+  then finding the row would make you read the list twice.
 - **One color for each pull request.** A row shows its state and each note
   apart; a single label has room for one color, so what holds the pull
   request back outranks its state.
@@ -2327,6 +2333,6 @@ its status's color, says both without expanding the rows.
 
 | Behavior | Test |
 | --- | --- |
-| Collapsed pull requests read `+ #1 #2 #10 #12`, ready in `success`, a draft in `warning`, and a conflict with a change request and failing checks each in `error` | `collapsed pull requests list their labels in the rows’ order, each in its status’s color` in `hooks/panel.test.tsx` |
+| Collapsed pull requests read `+ #1 #2 #10 #12`, ready in `success`, a draft in `warning`, and a conflict with a change request and failing checks each in `error`; each label is a Button that expands them and opens its drawer, closing another and never toggling its own shut | `collapsed pull requests list their labels in the rows’ order and status colors, and a label opens its drawer` in `hooks/panel.test.tsx` |
 | A collapsed conflicting pull request reads `+ #7` in `error`, and the line still expands the rows | `the pull requests’ count in the header collapses them to one line in their place, and the line expands them` |
 | A collapsed kind of item reads `+ 1 notice` in its kind's color | `a count in the header collapses its kind to one line at the top of the items, and the line expands it` |
