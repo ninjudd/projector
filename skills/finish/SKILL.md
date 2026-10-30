@@ -14,7 +14,7 @@ the outcome.
 2. Enumerate every acceptance criterion and identify the strongest available
    evidence for it: tests, runtime behavior, generated artifacts, or current
    external state.
-3. Prove the three things the review loop checks, whether or not a criterion
+3. Prove the three things a review checks, whether or not a criterion
    names them. Correctness: the tests or observations that pin each promised
    behavior exist and pass. Performance: the measurement the plan named was
    taken and is recorded, or the plan said cost does not matter and the

@@ -14,8 +14,7 @@ PUBLISHED_SKILLS = {
     "finish",
     "review-pr",
     "fix-pr",
-    "start-review-loop",
-    "start-watch-loop",
+    "review-repo",
     "summarize-pr",
     "write",
     "rewrite",
@@ -143,7 +142,6 @@ class PackagingTests(unittest.TestCase):
         for citing in (
             ROOT / "src" / "projector" / "templates" / "agents-block.md",
             ROOT / "skills" / "fix-pr" / "SKILL.md",
-            ROOT / "skills" / "start-watch-loop" / "SKILL.md",
         ):
             prose = " ".join(citing.read_text().split())
             self.assertIn('under "Stack dependent work"', prose, str(citing.relative_to(ROOT)))
@@ -157,8 +155,22 @@ class PackagingTests(unittest.TestCase):
                 target = (ROOT / "skills" / skill / "SKILL.md").read_text()
                 with self.subTest(citing=str(citing.relative_to(ROOT)), skill=skill):
                     self.assertIn(heading, HEADING.findall(target))
-        self.assertIn(("fix-pr", "Preserve stacked ownership"), cited)
         self.assertIn(("fix-pr", "Hold the pull request while changes are built"), cited)
+        self.assertIn(("fix-pr", "Subscribe the session to the pull request"), cited)
+        self.assertIn(("review-pr", "Subscribe the session to the pull request"), cited)
+        self.assertIn(("review-pr", "Act on the session's review events"), cited)
+
+    def test_no_skill_starts_a_watcher_or_names_a_removed_loop_skill(self) -> None:
+        # The watch daemon replaced both loop skills and their watcher scripts, so a skill that still
+        # named one would send an agent to a file that no longer ships.
+        removed = ("start-watch-loop", "start-review-loop", "watch-threads", "watch-prs", "project loop",
+                   "--tracked")
+        for path in sorted((ROOT / "skills").rglob("*")):
+            if path.is_file():
+                text = path.read_text()
+                for name in removed:
+                    with self.subTest(path=str(path.relative_to(ROOT)), name=name):
+                        self.assertNotIn(name, text)
 
     def test_a_citation_resolves_to_a_heading_at_any_level_but_not_to_prose(self) -> None:
         skill = "# Skill\n\n## Section\n\n### Subsection\n\nProse that mentions ## Elsewhere.\n"

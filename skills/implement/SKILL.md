@@ -52,9 +52,9 @@ reviewable and verify each behavior in proportion to its risk. Follow the
 repository's branch, stack, commit, review, and merge rules, and
 [Hand the work over](#hand-the-work-over) where they are silent.
 
-Apply the review method's passes to your own change before the review loop
-does; `../review-pr/method.md` § 3 describes them, and three apply to
-nearly every change:
+Apply the review method's passes to your own change before a review does;
+`../review-pr/method.md` § 3 describes them, and three apply to nearly every
+change:
 
 - **Correctness.** Trace each change past the happy path: what happens when
   an input is missing, when the call repeats, when the operation fails or is
@@ -73,9 +73,9 @@ nearly every change:
   for.
 
 Follow `../guidelines.md`, the code guidelines every Projector skill shares.
-The review loop reads your head against them and the watch loop follows them in
-each fix, so a rule skipped here comes back as a finding citing the section
-you skipped. Its first rule is about comments: write code that needs none,
+A review reads your head against them and `fix-pr` follows them in each
+fix, so a rule skipped here comes back as a finding citing the section you
+skipped. Its first rule is about comments: write code that needs none,
 simplify a stretch before you explain it, and add a comment only to preserve a
 constraint or reason the code cannot carry on its own.
 
@@ -142,9 +142,8 @@ holding two unrelated arguments at once, or when one half would still be
 worth shipping if the other were abandoned. Work that crosses it becomes a
 stack, built as [Stack dependent work](#stack-dependent-work) describes.
 
-Open it as a draft. A review loop marks it ready on a clean head, so the
-draft says the work has not been signed off yet; never mark it ready
-yourself.
+Open it as a draft. A clean review of its head marks it ready, so the draft
+says the work has not been signed off yet; never mark it ready yourself.
 
 Follow the writing guide in `../writing.md`, § 10 in particular, when you
 write each commit message, the title, and the body. Its first rule starts
@@ -166,38 +165,42 @@ and point at the test that covers it. `gh stack submit` writes each layer's
 body too, and it is the wrong body; replace it as
 [Stack dependent work](#stack-dependent-work) describes.
 
-Then start the watch loop on the pull request, so review findings are fixed as
-they arrive instead of waiting for the user to notice that nothing is fixing
-them. Only the top-level conversation, the one the user talks to, starts or
-joins a watch loop. A subagent's processes end when it returns, and the
-conversation that started it cannot see a loop it left behind, so it would
-start a second one. When you run as a subagent, start no watch loop and join
-none: hand the pull request up with your result. The conversation that
-started you may be a subagent too, so each one hands it up in turn until it
-reaches the top-level conversation. That conversation treats a pull request
-opened below it as one it opened itself, and starts its watch loop on it or
-adds it to the loop it already runs.
+Then subscribe the session to fix the pull request, and every layer of a
+stack, so review findings are fixed as they arrive instead of waiting for
+the user to notice that nothing is fixing them. Run this for each pull
+request you opened, as `../fix-pr/SKILL.md` describes under "Subscribe the
+session to the pull request":
 
-The top-level conversation starts no watch loop when either of these holds:
+```sh
+project watch add <owner>/<repo>#<number>
+```
 
-- `project config get watch.auto_start --default true` prints `false`.
-- The host cannot keep a process running after this turn.
+A subagent's commands carry the session's id, so a subagent that opens a
+pull request subscribes the session it belongs to, and the pull request
+needs no handing up. Skip the command when
+`project config get watch.auto_start --default true` prints `false`. The
+session that wrote the pull request does not review it unless the user asks
+it to: a session that runs `review-pr` or `review-repo` reviews it, and
+until one does, the pull request stays a draft.
 
-Otherwise run `../start-watch-loop/SKILL.md` with the pull request, and every
-layer of a stack, as its tracked set, and start its watcher with
-`--exit-when-closed`, so the loop ends on its own once every pull request it
-watches has merged or closed. When this conversation already runs a watch
-loop, add the pull request to that loop's tracked file instead, with
-`project loop add owner/repo#number --tracked <file>`; never start a second
-one. Leave the review loop alone: it watches every pull request the operator
-has in the repository, so it runs once per repository, not once per change.
+When you hand over the URL, say whether the session is subscribed to fix
+the pull request, and how its events arrive, from the `events:` line that
+`project watch add` printed:
 
-When you hand over the URL, say whether a watch loop is watching the pull
-request. Either this session's watch loop watches it and stops when the
-session ends, or none does, and you say whether the setting or the host
-stopped it, and that review findings wait until the user runs
-`start-watch-loop`. As a subagent, say that you started no watch loop and are
-handing the pull request up to the top-level conversation, which runs it.
+- **`events: mod`** means Projector's mod in Claude Code submits them as a
+  prompt.
+- **`events: stream`** means a `project watch stream` that the session
+  runs prints them.
+- **`events: none`** means nothing delivers them yet. Start the
+  `project watch stream` command the line names under the host's
+  persistent process or monitor facility, and say that you did. As a
+  subagent, start nothing, and say in your result that the stream needs
+  starting, so the conversation the user talks to starts it. Where the host
+  cannot keep a process running after this turn, say that the events wait
+  until a session starts the stream.
+
+When the setting kept you from subscribing, say so, and that review
+findings wait until the user runs `fix-pr`.
 
 ## Stack dependent work
 
@@ -207,9 +210,9 @@ below it, that GitHub records as one stack. Make and keep one with
 reference for its commands; Projector's marketplace serves it as the
 `gh-stack` plugin, which Claude Code installs with Projector and Projector's
 installer adds for Codex. Where the skill is not installed,
-`gh stack <command> --help` covers the flags. `fix-pr` and `start-watch-loop`
-find and update a stack's layers, and fall back when `gh stack` cannot help,
-as this section describes.
+`gh stack <command> --help` covers the flags. `fix-pr` finds and updates a
+stack's layers, and falls back when `gh stack` cannot help, as this section
+describes.
 
 The `gh-stack` skill is upstream's, unmodified. Where it and Projector
 differ, these rules win:
@@ -222,7 +225,7 @@ differ, these rules win:
 - **Open every layer as a draft.** `gh stack submit --auto` opens new pull
   requests as drafts. Never pass `--open` to `submit` or `link`: it marks
   every layer ready for review, the existing ones included, and only a
-  review loop's clean verdict marks a layer ready.
+  clean review marks a layer ready.
 - **Replace the title and body `submit` writes.** The body is a "Stack
   created with GitHub Stacks CLI" footer, after the hard-wrapped commit body
   when the layer has one commit, with no `## Testing` section, and a squash

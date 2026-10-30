@@ -13,8 +13,7 @@ instructions and supporting scripts without a generated copy or host-specific
 fork.
 
 The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
-`start-review-loop`, `start-watch-loop`, `summarize-pr`, `write`, and
-`rewrite`.
+`review-repo`, `summarize-pr`, `write`, and `rewrite`.
 `summarize-pr` summarizes a pull request's changes as a guided review page.
 Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
 `$<skill>`.
@@ -22,24 +21,13 @@ Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
 `implement` builds from that plan, or from a description of a change small
 enough to need no spec, such as `/projector:implement fix the typo in the
 install docs`.
-`review-pr` reviews a pull request's current head once, by the method in
-`skills/review-pr/method.md`, and publishes one labeled review;
-`start-review-loop` runs it on every new head of your pull requests and of
-those that request your review. `fix-pr` answers one pull request's
+`review-pr` reviews a pull request's current head, by the method in
+`skills/review-pr/method.md`, publishes one labeled review, and goes on to
+review each head pushed after it; `review-repo` does the same for every pull
+request of yours in the repository and every one that requests your review,
+including pull requests opened later. `fix-pr` answers one pull request's
 findings, verifying each by the same protocol, and merges the base into a
-branch that conflicts with it; `start-watch-loop` runs it, one subagent per
-pull request, whenever its watcher reports work on one this conversation
-owns. `implement` starts that loop on every pull request it opens, or adds
-the pull request to the loop the conversation already runs,
-and a loop it starts ends once every pull request it watches has merged or
-closed. Only the conversation you talk to runs the loop. An `implement`
-running as a subagent hands its pull request up, through every subagent
-above it, to that conversation, which starts or joins the loop on it, and a
-subagent asked to start the loop hands that request up the same way. Where
-the host cannot keep the loop running, `implement` says so when it hands the
-pull request over. To start the loop yourself instead, run
-`project config set watch.auto_start false --user`, or leave out `--user` to
-change only the current repository. `fix-pr` also implements or defers each
+branch that conflicts with it. `fix-pr` also implements or defers each
 suggestion a review lists. While it builds a change that no review has read,
 such as a
 suggestion it implements or a change you ask for, it holds the pull request
@@ -66,18 +54,50 @@ back where the text lives when it can, such as
 `/projector:rewrite the install section of the README`. The core workflows
 use the local CLI and do not require MCP.
 
+A session keeps fixing and reviewing pull requests through subscriptions,
+so there is no loop for you to start. When `implement`, `spec`, or `fix-pr`
+opens or pushes to a pull request, it runs `project watch add` to subscribe
+the session to fix it, every layer of a stack included. `review-pr`
+subscribes the session to review the pull request it reviews, and
+`review-repo` subscribes it to review the repository. In Claude Code,
+Projector's mod also subscribes the session to fix each pull request that a
+`git push`, `gh pr create`, or `gh stack` command in the session opened or
+pushed to, inside a skill or not. A subagent's commands carry its session's
+id, so a pull request that a subagent opens subscribes the session it
+belongs to. One background process per machine, the watch daemon, polls
+every subscribed pull request and sends each finding, conflict, and new head
+to one session, as a line that ends with what to do:
+
+```text
+CONFLICT acme/app#12 conflicts with main — run fix-pr on acme/app#12 in subagent fix-12
+```
+
+The session runs `fix-pr` or `review-pr` on it, in one subagent for each
+pull request, and one for each stack. In Claude Code, the mod delivers the
+lines as a prompt. On another host, such as Codex, `project watch stream`
+prints them, and a skill starts it under the host's monitor facility when
+`project watch add` says that nothing delivers the session's events. Any
+`project watch` command starts the daemon, which exits a few minutes after
+the last session goes away, so you never start or stop it yourself. The
+session that writes a pull request does not review it unless you ask, so
+run `review-repo` or `review-pr` in a session to review it; until a review
+signs a head off, the pull request stays a draft. To keep pushes from
+subscribing a session, run
+`project config set watch.auto_start false --user`, or leave out `--user` to
+change only the current repository. [The CLI guide](cli.md) describes the
+`project watch` commands.
+
 When dependent work needs more than one pull request to stay reviewable,
 `implement` opens it as a stack that GitHub records, using the `gh stack`
 GitHub CLI extension, and `fix-pr` carries a fix on a lower layer up through
 the layers above it right away. Every layer stays on the current head of the
 layer below it, so you can merge the whole stack, or any number of layers
-from the bottom up, in one step from GitHub, and `start-watch-loop` reports
-which of them are ready to merge together. The extension is optional.
-Without it, or in a repository that does not have stacks enabled,
-`implement` chains the pull requests by base branch and tells you once, and
-`fix-pr` and `start-watch-loop` find a stack's layers from those base
-branches. Install it with `gh extension install github/gh-stack` to get
-real stacks.
+from the bottom up, in one step from GitHub, and `fix-pr` reports which of
+them are ready to merge together. The extension is optional. Without it, or
+in a repository that does not have stacks enabled, `implement` chains the
+pull requests by base branch and tells you once, and `fix-pr` finds a
+stack's layers from those base branches. Install it with
+`gh extension install github/gh-stack` to get real stacks.
 
 GitHub's own `gh-stack` skill teaches an agent the extension's commands.
 Projector does not copy it. Both hosts' Projector marketplaces serve a

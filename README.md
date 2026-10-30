@@ -66,20 +66,21 @@ query time. Projector never writes a tracked status index.
 
 The plugin gives Claude Code and Codex the same skills: `spec`, `implement`,
 and `finish` a project, where `implement` also builds a small change from a
-description; `review-pr` to review a pull request once; `fix-pr` to fix its
-findings and merge conflicts once; `start-review-loop` and `start-watch-loop`
-to run those two on every pull request continuously; `summarize-pr`, which
-summarizes a pull request's changes as a guided review page; `write`,
-which writes any prose so that it follows Projector's writing guide; and
-`rewrite`, which revises existing text by that guide and writes it back
-where it lives. Claude invokes a skill as `/projector:<skill>` and Codex as
-`$<skill>`. See [Install Projector](docs/plugins.md) for how the skills
-work together.
+description; `review-pr` to review a pull request and each head pushed after
+it; `review-repo` to review every pull request of yours in a repository the
+same way; `fix-pr` to fix a pull request's findings and merge conflicts,
+which the session that pushed a pull request runs again whenever a review
+finds something; `summarize-pr`, which summarizes a pull request's changes
+as a guided review page; `write`, which writes any prose so that it follows
+Projector's writing guide; and `rewrite`, which revises existing text by
+that guide and writes it back where it lives. Claude invokes a skill as
+`/projector:<skill>` and Codex as `$<skill>`. See
+[Install Projector](docs/plugins.md) for how the skills work together.
 
 In Claude Code, the plugin also shows Projector's panel above the prompt.
-It lists your loops' pull requests and your inbox: the questions, notices,
-and requests that agents post with the `ask`, `tell`, and `request` tools or
-with `project inbox`. See
+It lists the pull requests your session fixes and reviews, and your inbox:
+the questions, notices, and requests that agents post with the `ask`,
+`tell`, and `request` tools or with `project inbox`. See
 [Read your inbox in Projector's panel](docs/plugins.md#read-your-inbox-in-projectors-panel)
 and [Use the inbox](docs/cli.md#use-the-inbox).
 

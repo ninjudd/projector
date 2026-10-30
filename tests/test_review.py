@@ -1451,10 +1451,10 @@ class ModelTests(PublishCase):
         self.assertIn(f"`project review finish 1 --repo {REPO} --model a/b`", err)
         self.assertEqual("a/b", self.read_state("a/b")["model"])
 
-    def test_every_command_the_review_loop_runs_takes_its_loop_and_model(self) -> None:
-        skill = (Path(cli.__file__).resolve().parents[2] / "skills" / "start-review-loop" / "SKILL.md").read_text()
-        sentence = re.search(r"passes `--loop <id>` and `--model <model-id>` to each\s+`project review` command it "
-                             r"runs on a pull request: (.*?)\. ", skill, re.S)
+    def test_every_command_a_review_runs_takes_its_loop_and_model(self) -> None:
+        skill = (Path(cli.__file__).resolve().parents[2] / "skills" / "review-pr" / "SKILL.md").read_text()
+        sentence = re.search(r"Pass `--loop <session-id>` and `--model <model-id>` to each\s+`project review`\s+command "
+                             r"you\s+run\s+on\s+the\s+pull\s+request: (.*?)\. ", skill, re.S)
         commands = re.findall(r"`(\w+)`", sentence.group(1))
         self.assertEqual(["setup", "move", "census", "settle", "interdiff", "gate", "publish", "release", "finish"],
                          commands)
@@ -2017,12 +2017,12 @@ class FinishTests(PublishCase):
         # Code's auto mode refuses, where one narrow rule allows the command.
         skills = Path(cli.__file__).resolve().parents[2] / "skills"
         review_pr = (skills / "review-pr" / "SKILL.md").read_text()
-        review_loop = (skills / "start-review-loop" / "SKILL.md").read_text()
+        review_repo = (skills / "review-repo" / "SKILL.md").read_text()
 
         self.assertIn("`project review finish <number>`", review_pr)
         self.assertIn("`--replace <comment-id>`", review_pr)
-        self.assertIn("`project review finish <number> --repo <owner>/<repo> --force`", review_loop)
-        for text in (review_pr, review_loop):
+        for text in (review_pr, review_repo):
+            self.assertIn("`project review finish <number> --repo <owner>/<repo> --force`", " ".join(text.split()))
             self.assertNotIn("issues/comments", text)
             self.assertNotIn("git worktree", text)
 
@@ -3021,16 +3021,14 @@ class StatusTests(LatestWinsCase):
                          (held["verdict"], held["held"], held["holds"]))
         self.assertEqual(("clean", False, []), (lifted["verdict"], lifted["held"], lifted["holds"]))
 
-    def test_the_hold_the_command_writes_is_the_one_publish_status_and_the_review_watcher_read(self) -> None:
+    def test_the_hold_the_command_writes_is_the_one_publish_status_and_fix_pr_read(self) -> None:
         skills = Path(cli.__file__).resolve().parents[2] / "skills"
         fix_pr = [line.strip() for line in (skills / "fix-pr" / "SKILL.md").read_text().splitlines()]
-        watcher = (skills / "start-review-loop" / "scripts" / "watch-prs.sh").read_text()
 
         self.assertEqual(HOLD, review.hold_body(["Skip fenced code blocks when looking for headings"]))
         self.assertEqual(review.HOLD_MARKER, HOLD.splitlines()[-1])
         self.assertTrue(HOLD.splitlines()[0] in fix_pr, "fix-pr shows the opening line the command writes")
         self.assertTrue(review.HOLD_MARKER in fix_pr, "fix-pr shows the marker the command writes")
-        self.assertIn(f'contains("{review.HOLD_MARKER}")', watcher)
 
     def test_fix_pr_holds_and_ends_the_hold_through_the_command_alone(self) -> None:
         # The command posts the hold before it drafts the pull request, so fix-pr must not take either step by

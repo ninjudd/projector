@@ -8,8 +8,8 @@ export const DOCS = {
   plugins: `${GITHUB}/blob/main/docs/plugins.md`,
   site: `${GITHUB}/blob/main/docs/site.md`,
   convention: `${GITHUB}/blob/main/docs/projects/README.md`,
-  reviewLoop: `${GITHUB}/blob/main/skills/start-review-loop/SKILL.md`,
-  watchLoop: `${GITHUB}/blob/main/skills/start-watch-loop/SKILL.md`,
+  reviewRepo: `${GITHUB}/blob/main/skills/review-repo/SKILL.md`,
+  fixPr: `${GITHUB}/blob/main/skills/fix-pr/SKILL.md`,
   issues: `${GITHUB}/issues`,
   license: `${GITHUB}/blob/main/LICENSE`,
 };

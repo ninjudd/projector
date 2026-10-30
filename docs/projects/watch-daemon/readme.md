@@ -549,6 +549,8 @@ change its tracked file, and the release after removes them.
 | `docs/cli.md`, `docs/plugins.md`, `README.md` | The commands, the settings, the skills, and the panel's roles |
 | `web/components/sections/review-loop.tsx`, `web/lib/links.ts` | Name and link `review-repo` |
 | `docs/projects/panel-themes/readme.md` | Its `watching` role becomes `fixing` |
+| `web/components/site-footer.tsx` | Its links to the loop skills become links to `review-repo` and `fix-pr` |
+| `tests/test_instructions.py` | Pins the agent instructions template's new version |
 
 ## 3. Why this design
 
@@ -790,6 +792,12 @@ the hour's total, not the total.
 - **The inferences in § 2.6.** Deferred to rollout step 1. The design holds
   whichever way each one comes out, and the results only tune
   `watch.full_every` and remove requests.
+- **A stack whose layers have different owners.** Ownership is per pull
+  request, but one subagent fixes every layer of a stack, so `MOVED` for one
+  layer would leave two sessions pushing one stack's branches. Until the
+  daemon owns a stack as a unit, `fix-pr` stops its subagent on such a
+  `MOVED` and asks the user which session fixes the rest of the stack.
+  Deferred, owned by ninjudd.
 
 ## 8. Background
 
@@ -940,3 +948,34 @@ Building the daemon settled these choices, which the design above left open.
   machine sleeping from the end of its last turn, not its start. A pass that
   runs past a minute, as a pass over a few dozen pull requests does, then
   forgives no lock and keeps no closed session live.
+
+### 9.2 The skills
+
+- **Where the review events' rules live.** `review-pr` holds them, and
+  `review-repo` cites them, because a session that ran `review-pr` alone
+  also hears `NEW HEAD`.
+- **When `review-pr` subscribes.** It subscribes after `setup` succeeds, so
+  the lock `setup` takes already marks the head in flight and the daemon
+  announces no `NEW PR` for the head under review. It also subscribes when
+  `setup` refuses because another session's review holds the head, and says
+  so.
+- **No pull request line under `review-repo`.** A `review-pr` subagent that
+  `review-repo` started adds no line of its own, so stopping the
+  repository's review leaves no pull request subscribed.
+- **Who starts `stream`.** Only the top-level conversation starts
+  `project watch stream`. A subagent that reads `events: none` reports it.
+- **A host with no session id.** The top-level conversation chooses an id and
+  passes it to its subagents with `--session` or `PROJECTOR_SESSION`.
+- **Always `--loop`.** Every `review-pr` run passes the session's id as
+  `--loop`, so a review a person asks for can be incremental too.
+- **An excluded pull request.** When `project watch add` refuses a pull
+  request the session excludes, the skill tells the user and runs `restore`
+  only when asked.
+- **Stopping `review-repo`.** It removes the subscription, stops its
+  subagents, and runs `project review finish --force` for each pull request.
+- **An explicit `add` after each push.** `fix-pr` runs
+  `project watch add` after every push, so running `fix-pr` in another
+  session takes the pull request's `fix` role. That is deliberate: the user
+  asked that session to fix it.
+- **A guard.** `tests/test_packaging.py` fails when any file under `skills/`
+  names a removed loop skill, `project loop`, or `--tracked`.

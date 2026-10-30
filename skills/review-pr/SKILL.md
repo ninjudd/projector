@@ -1,13 +1,15 @@
 ---
 name: review-pr
-description: Review a pull request's current head locally by Projector's written review method and publish one labeled review, setting the pull request's draft state to match the verdict. Use when the user asks to review a pull request or a change once.
+description: Review a pull request's current head locally by Projector's written review method and publish one labeled review, setting the pull request's draft state to match the verdict, then subscribe the session to review each later head. Use when the user asks to review a pull request or a change.
 ---
 
 # Review a pull request
 
 Review one pull request's current head, exactly as pushed, and publish one
-review of it. The review runs once and starts no watcher; `start-review-loop`
-runs this skill for every new head it sees.
+review of it. The review runs once, and it subscribes the session to review
+the pull request, so each later head arrives as an event that runs this
+skill again. `review-repo` runs this skill for every pull request of the
+operator's in a repository.
 
 ## Choose the pull request
 
@@ -49,8 +51,9 @@ persuasive form this mistake takes, because it looks like the sanctioned
 source rather than a substitute for it.
 
 A wrong reviewer fails quietly, posting as the wrong account with nothing to
-flag it, and under `start-review-loop` it posts review after review that way,
-so the source matters here more than anywhere else in this skill.
+flag it, and on every later head the session reviews it posts review after
+review that way, so the source matters here more than anywhere else in this
+skill.
 
 Confirm whatever you resolve under the token actually used:
 
@@ -60,8 +63,8 @@ gh api user --jq .login
 ```
 
 The **operator** is the other role these instructions name: the account whose
-checkout the review runs beside, and under `start-review-loop` the account
-the loop tracks pull requests for: those it wrote and those that request its
+checkout the review runs beside, and under `review-repo` the account whose
+pull requests the session reviews: those it wrote and those that request its
 review. By default it is that same authenticated user, which is why neither
 role needs configuring. A reviewer override is what separates them, and every
 `<operator>` below means this login, never the reviewer's.
@@ -142,7 +145,7 @@ transition is the sign-off a reader sees in the pull-request list.
 
 ### Review as one model among several
 
-Review loops can run on several models at once, such as one in Claude Code and
+Sessions can review on several models at once, such as one in Claude Code and
 one in Codex, each posting as the same reviewer account, to give a pull
 request separate opinions. Projector tells them apart by the model, not the
 account. A reviewer is the model ID you pass as `--model`, compared
@@ -157,7 +160,7 @@ it.
 - **Another model** is a second opinion. Its review keeps its own state, lock,
   and scratch worktree, its start comment never stops your `setup`, and its
   verdict never trips your collision check.
-- **A model upgraded in the middle of a pull request**, such as a loop
+- **A model upgraded in the middle of a pull request**, such as a session
   restarted on a newer version, is a new reviewer.
 
 The newest verdict on the head signs it off. After it submits, `publish`
@@ -171,7 +174,7 @@ ones the site's status reads. So a clean verdict from one model after
 another model's change request marks the pull request ready, and a change
 request after a clean verdict drafts it again. That is safe because a clean
 verdict needs every Projector finding thread settled first, whichever model
-opened it, and it lets you stop one model's loop partway through a pull
+opened it, and it lets you stop one model's reviews partway through a pull
 request without the pull request waiting on it. In the same step `publish`
 reads the finding threads again, and while any is open it keeps the pull
 request a draft whatever the newest verdict says, because another model can
@@ -193,13 +196,79 @@ each model there when several gave one, the number of suggestions standing
 with each, the open finding threads, and any open hold, as `docs/cli.md`
 describes; `fix-pr` reads it to tell whether a head is signed off.
 
+## Subscribe the session to the pull request
+
+A review belongs to the agent session that runs it, and the session's id
+names the review's record. In Claude Code the id is
+`$CLAUDE_CODE_SESSION_ID`, which every command has, a subagent's included.
+On a host that sets no session id, the conversation the user talks to
+chooses one, of letters, digits, `.`, `_`, and `-`, and gives it to each
+subagent it starts. Every `project watch` command there takes it as
+`--session <id>`, or reads it from `PROJECTOR_SESSION`.
+
+Pass `--loop <session-id>` and `--model <model-id>` to each
+`project review` command you run on the pull request: `setup`, `move`,
+`census`, `settle`, `interdiff`, `gate`, `publish`, `release`, and
+`finish`. `project review publish` keeps the session's record of the reviews
+it published under that id in the review state directory. The record decides
+the collision check before a verdict and the full review an incremental
+review builds on.
+
+Once `setup` succeeds, subscribe the session to review the pull request with
+the model you pass as `--model`:
+
+```sh
+project watch add <owner>/<repo>#<number> --role review --model <model-id>
+```
+
+Add `--reviewer <login>` only when the user named the reviewer. Without it,
+the command resolves the reviewer from `review.username` and then the
+operator, as [Resolve identity](#resolve-identity) does. The watch daemon,
+one process per machine that polls every pull request a session subscribes
+to, then announces each later head as `NEW HEAD` and an author's answer on
+an unmoved head as `RESPONDED`. Each event ends with what to do, as
+[Act on the session's review events](#act-on-the-sessions-review-events)
+describes. Subscribe after `setup`, not before: the lock `setup` takes tells
+the daemon that a review of this head is in flight, so it announces no event
+for the head you are reviewing. When `setup` refuses because another
+session's review by this model holds the head, subscribe all the same, and
+report that the other review is running. This session's subscription is the
+newest to the pull request itself, so it outranks the other session's on
+this machine. The review moves here once the other review publishes, and
+this session reviews from the next head.
+
+Skip the command when `review-repo` started this review. The session's
+subscription to the repository already covers the pull request, and a line
+for the pull request would outlive the user's request to stop reviewing the
+repository. A run of this skill on a pull request the session already
+subscribes to changes nothing by subscribing again. The command refuses a
+pull request the session excludes, as one the user dismissed in Projector's
+panel. Tell the user, and run `project watch restore` with the same
+arguments only when they ask.
+
+The command's last line says how the session's events arrive:
+
+| Line | Means | Do |
+| --- | --- | --- |
+| `events: mod` | Projector's mod in Claude Code submits them as a prompt. | Nothing more. |
+| `events: stream` | A `project watch stream` that the session runs prints them. | Nothing more. |
+| ``events: none — start `project watch stream --session <id>` …`` | Nothing delivers them yet. | Start the command the line names under the host's persistent process or monitor facility, where it runs until stopped. |
+
+Start the stream only from the conversation the user talks to, because a
+subagent's processes end when it returns. A subagent that reads `none` says
+so in its report, and the conversation that started it starts the stream.
+
+When the user asks the session to stop reviewing the pull request, run
+`project watch remove <owner>/<repo>#<number> --role review --model <model-id>`.
+A subscription also ends by itself when the pull request merges or closes.
+
 ## Review an exact head
 
 For the head under review, steps 1 to 4 are one command, run from a checkout
 of the repository or given one with `--checkout`:
 
 ```sh
-project review setup <number> --model <model-id> [--loop <id>] [--rereview]
+project review setup <number> --model <model-id> --loop <session-id> [--rereview]
 ```
 
 It refuses, exiting non-zero with the reason, unless each step holds, and it
@@ -230,8 +299,7 @@ records them in the review's state file, from which every later command reads
 the checkout, the worktree, and the repository. An untrusted head is reviewed
 by reading. It posts with a token for the reviewer from `review.username` or
 the authenticated user, set for that call alone; `--reviewer` passes explicit
-user input. `start-review-loop` passes its loop id as `--loop` to every
-command, and `--rereview` marks a re-review of a head the loop already
+user input. `--rereview` marks a re-review of a head the session already
 published a verdict on, the case `RESPONDED` asks for.
 
 `--model` is the model ID the host reports for this session, never a default
@@ -259,9 +327,11 @@ once this review's start comment is posted. Never delete a start comment
 through `gh api`, which a host's automatic approval can refuse as a write to
 an external system.
 
-Under `start-review-loop`, run `project review interdiff <number>` next. A head
-that changed little since the loop's last full review can get an incremental
-review in place of steps 5 to 7, as
+Subscribe the session to the pull request now, as
+[Subscribe the session to the pull request](#subscribe-the-session-to-the-pull-request)
+describes. Then run `project review interdiff <number>`. A head that changed
+little since the session's last full review can get an incremental review in
+place of steps 5 to 7, as
 [Review a minimal push incrementally](#review-a-minimal-push-incrementally)
 describes. Every other head continues here.
 
@@ -340,8 +410,8 @@ the head was reviewed without running its code and why.
 
 A start comment belongs to the review it opens, not to the SHA it first named,
 and it lives only until that review is published. When the head moves before
-publication — step 7 catches it, or `start-review-loop` reports `NEW HEAD`
-while inspection is still running — do not post a second start comment. Run
+publication — step 7 catches it, or a `NEW HEAD` event arrives while
+inspection is still running — do not post a second start comment. Run
 `project review move <number>`, from any directory. It creates a worktree for
 the new head, rechecks whether the head is trusted, moves the lock to it, and
 edits the existing comment in place so it names the new short SHA, says the
@@ -363,7 +433,7 @@ session that stopped between publishing and deleting: a comment whose
 same model on its `sha=`. It means no review in progress, so leave it to
 `project review finish`, which deletes it. Compare the timestamps rather than
 testing for the review's presence, because a re-review of an unmoved head,
-such as the one `start-review-loop` runs on `RESPONDED`, has a live start
+such as the one a session runs on `RESPONDED`, has a live start
 comment that shares its `sha=` with the verdict that preceded it. Compare the
 model too: another model's start comment belongs to that model's review,
 which is still running. The marker's `model=` names the model, and a start
@@ -377,12 +447,13 @@ user explicitly requests that service. This skill performs the local review.
 
 ## Review a minimal push incrementally
 
-An incremental review reads only the change since a review loop's last full
-review of the pull request, and publishes a short clean verdict on the new
-head that names the full review it builds on. It is a verdict like any other,
-so draft state, the site's header, and `fix-pr` read it as they read a full
-review. Only a loop's own full review can carry one, so a review run by hand
-is always full.
+An incremental review reads only the change since the last full review of
+the pull request in the session's record, and publishes a short clean
+verdict on the new head that names the full review it builds on. It is a
+verdict like any other, so draft state, the site's header, and `fix-pr` read
+it as they read a full review. Only a full review in the session's record
+can carry one, so a session's first review of a pull request is full, unless
+the record holds a review it took over from another session.
 
 After `setup`, run:
 
@@ -390,18 +461,19 @@ After `setup`, run:
 project review interdiff <number> [--json]
 ```
 
-It finds this loop's last full review of the pull request and measures the
-pull request's own change since that review's head, whether the author pushed
-a commit, merged the base branch, rebased, or rewrote a commit. It leaves out
+It finds the last full review of the pull request in the session's record,
+the one `--loop` names, and measures the pull request's own change since
+that review's head, whether the author pushed a commit, merged the base
+branch, rebased, or rewrote a commit. It leaves out
 what the base brought in. Where the author resolved a conflict, the patch
 removes the conflict region, with the base's side, the original lines, and the
 reviewed head's side between diff3 markers, and adds the resolution. It prints
 the earlier full review, how the head moved, the counts, any conflicted paths,
 and the patch. It exits 0 only when the rules that need no judgment all hold:
 
-- `review.incremental` is not `false`, and a loop runs the review.
+- `review.incremental` is not `false`, and the review passes `--loop`.
 - The head is trusted.
-- The loop's record holds a clean full review of the pull request, and the
+- The session's record holds a clean full review of the pull request, and the
   newest verdict in it is clean and names another head.
 - That full review is on GitHub, and its marker names the Projector version,
   model, and effort this run would write.
@@ -670,12 +742,13 @@ project review settle <number> --thread <thread-id> --result <result> --body <fi
 The command opens the reply with
 `<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> -->`,
 filled from the review's state with the head under review and the model
-running it, so neither loop reads the reply back as a new finding or as the
-author answering. It posts the reply as the reviewer, resolves or unresolves
-the thread as the result asks, and reads both back. It refuses a thread that
-is not a Projector finding thread on this pull request. Never write the
-marker yourself or resolve a thread through `gh api`: a reply whose marker
-is mistyped reads to the review loop as the author answering.
+running it, so neither the watch daemon nor `fix-pr` reads the reply back as
+a new finding or as the author answering. It posts the reply as the
+reviewer, resolves or unresolves the thread as the result asks, and reads
+both back. It refuses a thread that is not a Projector finding thread on
+this pull request. Never write the marker yourself or resolve a thread
+through `gh api`: a reply whose marker is mistyped reads to the watch daemon
+as the author answering.
 
 - **Fixed:** the head addresses the finding. Run `--result fixed` on an open
   thread, saying what at this head settles it; the command resolves the
@@ -722,7 +795,7 @@ Publish with `project review publish`, from any directory:
 
 ```sh
 project review publish <number> --verdict <clean|changes-requested> \
-  --body <file> [--threads <file>] --covered <read>/<changed> [--loop <id>] [--model <model-id>]
+  --body <file> [--threads <file>] --covered <read>/<changed> --loop <session-id> --model <model-id>
 ```
 
 The body file is the review below its signature line: the intent paragraph,
@@ -746,7 +819,7 @@ the same shape, with `"priority": "P3"`, a `line` you may leave out, and a
 ends the body with a `### Suggestions` list of them, each item opening with
 its `path:line` in code font. Directly before the label it writes
 `<!-- projector-suggestions v=1 count=<n> -->`, the number of items, which
-`project review status` and the watch loop read. A body that carries a
+`project review status` and the watch daemon read. A body that carries a
 suggestions section of its own, as one an older release of this skill
 wrote, still publishes as written, with the count line before its label.
 
@@ -767,13 +840,21 @@ can correct the input and run it again, when:
   being posted, or `changes-requested` with none;
 - the collision check below trips.
 
+`publish`, `move`, and `settle` also refuse when the head's lock no longer
+names the `--loop` you pass, and say that the review was handed over. The
+watch daemon moved the review to another session, as
+[Stop when the review moves to another session](#stop-when-the-review-moves-to-another-session)
+describes. Stop and report the hand-over. Do not run `setup` again, because
+the head is the other session's to review now.
+
 The collision check lists every verdict the reviewer has already posted on
-this exact SHA by this model, reading every page, since each watch-loop thread
+this exact SHA by this model, reading every page, since each `fix-pr` thread
 reply adds a review object of its own. A verdict by another model is a second
 opinion and never collides; one whose marker names no model, from an earlier
-release, collides with every model. A verdict this run did not publish means
-the same model under the same account already reviewed this commit, whether
-an earlier run or another agent reviewing it now. Hold the review and ask the
+release, collides with every model. A verdict that the session's record
+lacks means the same model under the same account already reviewed this
+commit, whether another session earlier or another agent reviewing it now.
+Hold the review and ask the
 user whether to submit, rather than either submitting or standing down. Two
 verdicts from one model on one commit read as a single thorough review, so
 the overlap goes unnoticed unless
@@ -783,11 +864,12 @@ no verdict at all. If the user says to submit, run `publish` again with
 `--second-verdict <earlier-review-id>` and name that review in the body, so a
 reader sees the second verdict was deliberate.
 
-When `start-review-loop` runs this skill, it passes `--loop <id>`, and the
-loop's record of the reviews it published decides instead, as that skill
-describes: a verdict by this model that another loop posted trips the check,
-and a second verdict on a head this loop already published needs
-`setup --rereview`, the re-review `RESPONDED` asks for.
+The session's record is what tells its own verdicts apart. A second verdict
+on a head the session already published needs `setup --rereview`, the
+re-review `RESPONDED` asks for. When the watch daemon moves a review between
+sessions, it copies the pull request's entries from the former owner's
+record into the new owner's, so the new owner's re-review of a head the
+former owner reviewed passes the check.
 
 A head is *clean* only when, after you have settled every earlier finding as
 above, no Projector finding thread is open **and this review posts no P1 or P2
@@ -798,10 +880,10 @@ tests are one-way: a finding you kept or reopened makes the head not clean
 whatever else inspection found, and a new thread makes it not clean whatever
 the earlier findings came to. Because you resolve what you verify, a clean
 head needs no second pass to notice that someone clicked resolve, and an
-author who fixes a finding without resolving it is not held up. Under
-`start-review-loop` the watcher asks for a re-review on an unmoved head when
-the author answers: `RESPONDED` fires when every thread is resolved, or when
-the newest comment on an open finding thread is the author's.
+author who fixes a finding without resolving it is not held up. The watch
+daemon asks a subscribed session for a re-review on an unmoved head when the
+author answers: `RESPONDED` fires when every thread is resolved, or when the
+newest comment on an open finding thread is the author's.
 
 `publish` chooses the review state and draft transition from the mode:
 
@@ -829,8 +911,8 @@ dismissed and no later approval replaced, and the pull request is no longer
 blocked on a change request that its reviews have settled. While the author
 holds the pull request, those change requests stand until a clean review
 after the hold. A change request the account posted by hand, without a
-Projector verdict marker, is a person's and stays, even when it mentions the
-loop.
+Projector verdict marker, is a person's and stays, even when it mentions
+Projector.
 
 On a self-review, the draft transition follows the newest verdict on the
 head rather than this review's alone. When another model posts a verdict on
@@ -858,7 +940,7 @@ After submitting, `publish` re-reads the review it posted, sets draft state
 for a self-review by the newest verdict on the head and re-reads the pull
 request's `isDraft`, or dismisses the standing change requests under a clean
 newest verdict on another author's pull request, then adds the review id to
-the loop's record, deletes the start comment, and releases the lock, in that
+the session's record, deletes the start comment, and releases the lock, in that
 order, so the pull request is never left with neither a start comment nor its
 verdict's draft state. It prints which change requests it dismissed. When a
 dismissal fails, `publish` exits non-zero and names the review; dismiss it on
@@ -880,8 +962,8 @@ Once the summary below has run or been skipped, run
 `project review finish <number>`, which removes the scratch worktree a
 summary reads for context. It also deletes every start comment of this
 model's that no longer means a review in progress, clears the locks, and
-deletes the review's state, keeping the loop's record. It refuses while the
-review is unpublished. A `start-review-loop` subagent may instead keep the
+deletes the review's state, keeping the session's record. It refuses while
+the review is unpublished. A `review-<number>` subagent may instead keep the
 review set up for the pull request's next head and run `finish` when the pull
 request closes. The next head's `setup` removes the published head's worktree,
 so the review keeps one checkout at a time.
@@ -969,3 +1051,165 @@ visible. Run `project list --json`, match the changed path to the longest
 canonical project directory, and read its state with
 `project show <name> --json`. Supplemental documents carry no independent
 status.
+
+## Act on the session's review events
+
+A session subscribed to review a pull request, through this skill or through
+`review-repo`, receives the pull request's review events. Each is one line,
+`<KIND> <owner/repo#number> <detail> — <action>`, which Projector's mod
+submits as a prompt in Claude Code and `project watch stream` prints on
+another host. The watch daemon sends each event to one session, the one that
+owns the pull request's review on this model, and the line ends with what to
+do:
+
+```text
+NEW HEAD acme/app#14 9f3c2a1 — run review-pr on acme/app#14 in subagent review-14 with --loop 08270a6c-e8dd-42c9-851b-ae1e507aa6dc
+```
+
+- **`NEW PR`** reports a pull request whose review this session now owns,
+  with a head this model has not reviewed. Start the pull request's
+  subagent, as the next section describes, and have it review the head.
+- **`NEW HEAD`** reports a head this model has not reviewed. Send it to the
+  pull request's subagent as a message, or start one when the pull request
+  has none. A `NEW HEAD` that arrives mid-review is the moved-head case that
+  [One start comment per review](#one-start-comment-per-review) covers.
+- **A `NEW HEAD` that says its last review stalled** reports that the
+  session's review of the pull request ran no `project review` command for
+  `watch.review_stall` seconds, 30 minutes by default, and that the daemon
+  cleared its lock. Stop the subagent first, then start a new one under the
+  same name to review the head. The stalled subagent passes the same
+  `--loop`, so the refusal that stops a reviewer whose review was handed
+  over would not stop it.
+- **`RESPONDED`** reports that the author answered every finding on an
+  unmoved head. Send it to the subagent, which re-reviews the head with
+  `setup --rereview`.
+- **`MOVED`** reports that another session now owns the review. Stop the
+  subagent, and run no `project review finish`, as
+  [Stop when the review moves to another session](#stop-when-the-review-moves-to-another-session)
+  describes.
+- **`MERGED`** and **`CLOSED`** report that the pull request merged or
+  closed. Tell its subagent to run
+  `project review finish <number> --repo <owner>/<repo> --force` with the
+  session's `--loop` and `--model`. A closed pull request takes no review,
+  so `--force` discards one still in progress, and `--repo` keeps the
+  command off another repository's review of the same number. `finish`
+  deletes the subagent's start comments, clears its locks and state, and
+  removes its scratch worktrees. Then close the subagent. The daemon removes
+  the pull request's subscription itself.
+- **`MISSING`** reports that the pull request or the repository does not
+  exist, or that the operator cannot see it, and that the daemon removed the
+  subscription. Tell the user.
+
+`RESPONDED` asks for a re-review of a head still waiting on the reviewer.
+The author answered without pushing, by resolving every thread or by
+replying on an open finding thread, so no head event is coming, and only a
+re-review can settle the findings and sign off. It fires once per answer,
+and the re-review's own replies carry the verify marker, so they never count
+as one. The author's hold comment, which `fix-pr` posts with
+`project review hold` while it builds a change, as `../fix-pr/SKILL.md`
+describes under "Hold the pull request while changes are built", silences
+`RESPONDED`: the head waits on the author's push, not on a re-review, and
+`publish` keeps the pull request a draft while the hold is open however
+clean the review. Ending a hold that the daemon saw on the current head is
+an answer, so it asks for a re-review once the author ends the hold, in case
+a review of that head ran while the hold kept it a draft. A `RESPONDED` that
+reaches a subagent after a review has marked the pull request ready, with no
+change request standing, needs nothing: that review already signed the head
+off.
+
+The daemon announces `NEW HEAD` again every `watch.renotify` seconds, 15
+minutes by default, while the head has no verdict by this model from the
+reviewer and no review of it in flight. So an event that never arrived comes
+back, and so does a head whose reviewer died, once its lock stalls.
+
+### Give each pull request its own subagent
+
+Where the host can keep a subagent alive and send it later messages, each
+pull request whose review the session owns gets one reviewing subagent. The
+session routes events and records outcomes; the subagent owns every review
+of its pull request. Review context that carries over is the point: on a
+fix-cycle head the subagent already knows its earlier findings, the author's
+replies, and what it verified last round, so it reads the new head against
+that history instead of rediscovering it.
+
+- On a pull request's first event, start its subagent under the name the
+  event gives, `review-<number>`. Give it the repository, the pull request,
+  the head SHA, the reviewer and operator logins, the review mode, the
+  session's id to pass as `--loop`, the model ID to pass as `--model`, and
+  the path of this file, and have it run this skill for the head. When the
+  session reviews the repository through `review-repo`, tell the subagent to
+  skip [Subscribe the session to the pull request](#subscribe-the-session-to-the-pull-request).
+- Start each subagent with a working directory of its own where the host
+  offers one; in Claude Code, pass `isolation: "worktree"` to the Agent
+  tool. Otherwise tell the subagent never to change the session's directory:
+  it reaches the worktree `project review setup` prints by path, with
+  `git -C <worktree>` and absolute paths for file tools. A subagent that
+  moves a shared directory moves every other subagent with it.
+- Send every later `NEW HEAD` and `RESPONDED` for that pull request to the
+  same subagent as a message; never start a second one for it, except after
+  a stall. Each message is another run of this skill, for the head it
+  names; a `RESPONDED` re-review of an unmoved head runs
+  `project review setup` with `--rereview`.
+- The subagent reports each published review back: the SHA, the verdict,
+  the review id, how many threads it opened, for an incremental review the
+  head of the full review it builds on, and a newer verdict by another model
+  that set the draft state when `publish` names one. `publish` has already
+  added the id to the session's record. A question for the user comes back
+  to the session to ask. So does a hand-over that `publish`, `move`, or
+  `settle` reports: close that subagent, and run no `finish` for it.
+- Each subagent summarizes every pull request it reviews, as
+  [Summarize the pull request](#summarize-the-pull-request) describes,
+  another author's included. The session never pauses or holds summaries on
+  its own judgment. The one off switch is `review.summarize = false`, which
+  the user sets, or asks you to set with
+  `project config set review.summarize false`.
+- Between heads the subagent keeps its review set up, and each head's
+  `setup` removes the worktree of the head before it.
+- When a subagent is lost, to a session restart for example, start a
+  replacement under the same name. It rebuilds its context from GitHub: the
+  pull request's Projector reviews, their finding threads, and the replies
+  on them.
+- A subagent whose publish the host refused reports the refusal and stops
+  that publish; it never retries a refused publish in another form, as this
+  skill and `../summarize-pr/SKILL.md` say. Tell the user once for the
+  session, not once per pull request, that the host's automatic approval
+  refused a publish and that running `project init` in a terminal adds the
+  rules. Then keep reviewing.
+
+The session does not inspect code, so its own context stays small however
+many pull requests it reviews. Where the host has no subagents, the session
+runs this skill itself for each head.
+
+### Stop when the review moves to another session
+
+Two sessions can subscribe to review one pull request on one model, such as
+a session that runs `review-repo` and another that runs this skill on one of
+its pull requests. The watch daemon gives the review to one of them, the
+owner. A subscription to the pull request outranks one to its repository,
+and between two of the same kind the newer one wins. The review's state and
+lock belong to the machine and the model, not to the session, so the daemon
+moves a review only between reviews:
+
+- **A review in flight finishes first.** When a newer subscription outranks
+  the owner while the owner reviews a head, the owner keeps the review until
+  that review publishes or is released.
+- **A stalled review moves at once.** Each `project review` command touches
+  the head's lock as it runs. When the owner's lock goes unchanged for
+  `watch.review_stall` seconds, the daemon clears it and moves the review to
+  the session waiting for it. When no session waits, the owner keeps the
+  review and gets `NEW HEAD` saying its last review stalled.
+- **An ended session's review moves at once.** When the owner's session
+  stops renewing its subscriptions, as when its conversation closes, the
+  daemon clears every lock that names it and moves the review.
+
+At each move, the daemon copies the pull request's entries from the former
+owner's record into the new owner's, so the new owner can re-review a head
+the former owner reviewed, and its next review can still be incremental.
+The former owner, when it is still running, gets `MOVED`.
+
+On `MOVED`, stop reviewing the pull request. Run no `project review finish`:
+the review's state now belongs to the new owner, and `finish` would delete
+it. A reviewer that runs on anyway is refused at its next `publish`, `move`,
+or `settle`, which says that the review was handed over. Stop there and
+report, and do not run `setup` again. On this machine, the new owner's
+`setup` replaces the former owner's start comment without `--replace`.

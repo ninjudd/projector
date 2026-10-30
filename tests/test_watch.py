@@ -386,7 +386,7 @@ NO_REVIEWER = ", and no session on this machine reviews it"
 
 
 class FixRoleTests(WatchCase):
-    """`watch-threads.sh`'s cases, as the `fix` owner hears them."""
+    """What the `fix` owner hears."""
 
     def fixer(self, *lines: str) -> None:
         self.subscribe("fixer", *lines)
@@ -666,7 +666,7 @@ class FixRoleTests(WatchCase):
 
 
 class ReviewRoleTests(WatchCase):
-    """`watch-prs.sh`'s cases, as the `review` owner hears them."""
+    """What the `review` owner hears."""
 
     def reviewer(self, *numbers: int, model: str = MODEL, login: str = "operator") -> None:
         self.subscribe("reviewer", *(f"acme/app#{number} review {model} {login}" for number in numbers))
