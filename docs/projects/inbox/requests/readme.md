@@ -391,8 +391,8 @@ adjust, as § 7 says.
 | An outcome or withdrawal replaces an unclaimed `STARTED`, and follows a claimed one | `StartTests.test_an_outcome_or_withdrawal_replaces_a_started_no_deliverer_claimed`, `test_an_outcome_recorded_while_started_is_claimed_follows_it`, `test_a_withdrawal_while_started_is_claimed_lets_that_line_settle` |
 
 The panel's tick still reads the store only when a file changes, and a
-request adds no process to it, as § 5 planned. `hooks/typecheck.sh` needs
-the declarations an interactive `claude --plugin-dir .` session writes, which
-the checkouts this was built in lacked. The review loop's run of it on layer
-2's first head found four type errors in `hooks/panel.test.tsx`, which the
-next commit fixes; run the script again where the declarations exist.
+request adds no process to it, as § 5 planned. `hooks/typecheck.sh` passes
+at layer 2's head. It needs the declarations an interactive
+`claude --plugin-dir .` session writes, which the checkouts this was built in
+lacked, so the review loop ran it, with the main checkout's TypeScript and
+Claude Code types.
