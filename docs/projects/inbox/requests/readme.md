@@ -282,6 +282,10 @@ path.
    tests, as one pull request.
 2. Layer 2 ships the start action on top of it, as the next layer of a
    `gh stack`, and can merge with layer 1 or after it.
+3. The release notes for each layer tell people to run `project init`
+   again, because it writes the new ask rules into their settings. Until
+   they do, `Bash(project *)` lets an agent run `project inbox done` and
+   `decline`, and in layer 2 `start`, without asking.
 
 ## 7. Open questions
 
