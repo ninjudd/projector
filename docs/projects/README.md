@@ -158,8 +158,9 @@ section appended to the plan, and name the section it supersedes. The earlier
 section keeps what was decided at the time, and the new one says what changed
 and why.
 
-A record still changes in two ways. Its status and priority change through the
-`project` commands, and a reference to a renamed project is updated as
+A record still changes in two ways. Its status, priority, and owner change
+through the `project status`, `project priority`, and `project owner` commands,
+and a reference to a renamed project is updated as
 [Rename a project deliberately](#rename-a-project-deliberately) describes.
 
 ## Find projects
