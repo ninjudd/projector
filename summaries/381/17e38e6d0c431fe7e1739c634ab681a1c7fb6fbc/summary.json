@@ -1,0 +1,98 @@
+{
+ "version": 1,
+ "name": "Request dismiss action",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 381,
+  "title": "Call a request's set-aside action dismiss request",
+  "head": "17e38e6d0c431fe7e1739c634ab681a1c7fb6fbc",
+  "headRef": "request-dismiss",
+  "base": "af1952d2ac34c7f85b4570fe19a8939d7053f224",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel lists the items agents post to your inbox: questions, notices, and requests, where a request is work only you can do, such as testing a build. Opening an item shows its <b>drawer</b>, a list of actions, each pressed by a digit. Digit <code>8</code> sets an item aside: <b>dismiss question</b> and <b>dismiss notice</b> for those kinds, and, until this change, <b>decline request</b> for a request.",
+   "\"Decline\" reads as a refusal, which is stronger than what pressing it usually means. This pull request renames the action to <b>dismiss request</b>, so every kind of item uses the same word on the same digit. The recorded outcome stays the same. The button now runs <code>project inbox dismiss</code> in place of <code>project inbox decline</code>, and the CLI has always recorded a dismissed request as declined. So the agent that posted the request still hears <code>DECLINED</code>, and a dismissed request's drawer still says <code>Declined</code> and offers <b>restore request</b> on <code>8</code>."
+  ],
+  "cards": [
+   {
+    "id": "outcome",
+    "title": "What each path records",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>You do</th><th>Panel runs</th><th>Agent hears</th></tr></thead><tbody><tr><td>Press <b>dismiss request</b> on <code>8</code></td><td><code>project inbox dismiss</code></td><td class=\"r\"><code>DECLINED</code></td></tr><tr><td>Send a prompt quoting the request with <code>Declined</code> under it</td><td><code>project inbox decline</code></td><td class=\"r\"><code>DECLINED</code></td></tr><tr><td>Press <b>restore request</b> on <code>8</code></td><td><code>project inbox restore</code></td><td class=\"r\"><code>RESTORED</code>, once it heard <code>DECLINED</code></td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One open finding: a test's name still says the request drawer offers no dismiss, while the test now asserts that it does.</li><li>The pull request body says the panel no longer runs <code>decline</code>. It still runs it for a prompt that says <code>Declined</code>; only the drawer action goes away.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "panel",
+   "title": "The drawer's dismiss action",
+   "kicker": "One action, named dismiss, for every kind of item",
+   "intro": [
+    "The drawer builds its actions in <code>register.tsx</code>. Before this change, a request's set-aside action took a special name, <code>decline</code>, so its key, label, and command all read <code>decline</code>. Now every open item gets the same <code>dismiss</code> action on <code>8</code>, labeled with the item's kind, and <code>act</code>, the function that runs an inbox command for the panel, no longer takes <code>decline</code>.",
+    "The tests check the new label and command, and that dismissing a request records it declined."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "In a scratch inbox store, <code>project inbox dismiss</code> and <code>project inbox decline</code> with no text each store a request's answer as <code>{dismissed: true, declined: true}</code>, and each one's deliverer sends <code>DECLINED</code>. A dismiss has declined a request since requests first shipped in #372."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Drops the request-only <code>setAside</code> name, so the drawer's <code>8</code> action is <code>dismiss</code> for every kind of item.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The panel still runs <code>project inbox decline</code> elsewhere, when you send a prompt that quotes a request with a plain <code>Declined</code> under it. Only the drawer's action stops using it."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Expects <code>dismiss request</code> on <code>8</code>, the <code>inbox dismiss</code> command, and a declined record.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Run against the base's <code>register.tsx</code>, three of these tests fail, so they catch the old label and command. The full suite passes at this head: 180 pass, 0 fail."
+      },
+      {
+       "kind": "flag",
+       "line": 1968,
+       "text": "The test's name, at line 1936, still says the drawer offers \"no dismiss\", while this line asserts <code>dismiss:1 8 dismiss request</code>. Rename it so it says the drawer offers discuss, dismiss, and snooze."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The panel's documentation",
+   "kicker": "docs/plugins.md describes dismiss request",
+   "intro": [
+    "The plugin guide's panel section now names <b>dismiss request</b> wherever it named <b>decline request</b>, and the keyboard list says <code>8</code> presses <b>dismiss</b> or <b>restore</b>, with no request-only exception."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Renames the request's action in the drawer, start-action, act-at-once, and keyboard paragraphs.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The keyboard bullet still says \"Dismiss asks to be sure\" on <code>8</code> <code>8</code>. That holds only for a pull request; an item's dismiss acts at once, as this file says above. The sentence predates this change.",
+       "line": 704
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
