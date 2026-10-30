@@ -1111,13 +1111,35 @@ class RequestTests(InboxCase):
         self.assertEqual(("Test the new gutters", "1. Open Fyra."), (self.item(2)["subject"], self.item(2)["detail"]))
         self.assertEqual(0, self.run_cli("revise", "2", "--detail", "1. Open the new build.", "--session", "s1")[0])
         self.assertEqual("1. Open the new build.", self.item(2)["detail"])
-        for args in (["--question", "Why?"], ["--recommend", "Yes"], ["--option", "No"], ["--request", "x" * 121]):
+        for args in (["--question", "Why?"], ["--recommend", "Yes"], ["--option", "Declined"], ["--request", "x" * 121]):
             with self.subTest(args=args[0]):
                 code, _, err = self.run_cli("revise", "2", *args, "--session", "s1")
                 self.assertEqual(65, code, err)
         code, _, err = self.run_cli("revise", "1", "--request", "Do it", "--session", "s1")
         self.assertEqual(65, code)
         self.assertIn("--question", err)
+
+    def test_records_the_options_the_agent_gives_and_refuses_ones_that_fail_a_check(self) -> None:
+        self.request("Test the gutters", "--option", " Looks good ", "--option", "Some feedback")
+        self.assertEqual(["Looks good", "Some feedback"], self.item(2)["choices"])
+        self.assertEqual("2 Test the gutters\n- Looks good\n- Some feedback\nopen\n", self.run_cli("show", "2")[1])
+        self.request("Sign in")
+        self.assertNotIn("choices", self.item(3))
+        count = (self.folder() / "count.json").read_text()
+        for options in (["Declined"], ["A", "A"], [" "], ["Two\nlines"], ["A", "B", "C", "D", "E", "F"]):
+            with self.subTest(options=options):
+                args = [arg for option in options for arg in ("--option", option)]
+                code, _, err = self.run_cli("request", "Run it", *args, "--session", "s1")
+                self.assertEqual(65, code, err)
+        self.assertEqual(count, (self.folder() / "count.json").read_text())
+
+    def test_revise_replaces_or_drops_a_requests_options(self) -> None:
+        self.request("Test the gutters", "--option", "Looks good")
+        self.assertEqual(0, self.run_cli("revise", "2", "--option", "Signed in", "--option", "Could not",
+                                         "--session", "s1")[0])
+        self.assertEqual(["Signed in", "Could not"], self.item(2)["choices"])
+        self.assertEqual(0, self.run_cli("revise", "2", "--no-options", "--session", "s1")[0])
+        self.assertNotIn("choices", self.item(2))
 
     def test_lists_and_shows_a_request_by_its_kind_and_state(self) -> None:
         self.request("Test the gutters", "--detail", "1. Open Fyra.")

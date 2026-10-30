@@ -564,7 +564,7 @@ test('a call of the tell tool becomes `project inbox tell`, text kept as text', 
 test('the request tool asks for work only the person can do, its steps in `detail`, and names what comes back', () => {
   expect(REQUEST_DESCRIPTION).toContain('Ask the person to do something only they can do')
   expect(REQUEST_DESCRIPTION).toContain('put the steps they follow in `detail`')
-  expect(REQUEST_DESCRIPTION).toContain('or as a message that starts `DONE 3`.')
+  expect(REQUEST_DESCRIPTION).toContain('or as a message that starts `DONE 3` and names the option.')
   expect(REQUEST_DESCRIPTION).toContain('When they decline it, a message that starts `DECLINED 3` arrives.')
   expect(REQUEST_DESCRIPTION).toContain('When you need the person to decide something rather than do it, use `ask` instead.')
 })
@@ -581,16 +581,28 @@ test('a call of the request tool becomes `project inbox request`, text kept as t
     '-Test the gutters',
   ])
   expect(requestArguments({ request: 'Sign in' }, 's1', undefined)).toEqual(['inbox', 'request', '--session=s1', '--', 'Sign in'])
+  expect(requestArguments({ request: 'Test it', options: ['Looks good', '-Some feedback'] }, 's1', undefined)).toEqual([
+    'inbox',
+    'request',
+    '--session=s1',
+    '--option=Looks good',
+    '--option=-Some feedback',
+    '--',
+    'Test it',
+  ])
+  expect(requestArguments({ request: 'R', options: 'Looks good' }, 's1', undefined)).toEqual({
+    error: '`options` must be a list of strings',
+  })
   expect(requestArguments({ detail: 'Why' }, 's1', undefined)).toEqual({ error: '`request` must be a string' })
   expect(requestArguments({ request: 'R', detail: 7 }, 's1', undefined)).toEqual({ error: '`detail` must be a string' })
 })
 
 test('a choice on the line under a quoted request is its outcome, a typed Done too, and notes may follow', () => {
-  const open = request()
+  const open = request({ choices: ['Looks good', 'Some feedback'] })
   const outcomesIn = (text: string) => readPrompt(text, [open]).outcomes
   expect(outcomesIn('"Test the gutters"\n\nLooks good\n')).toEqual([{ request: open, outcome: 'done', word: 'Looks good' }])
-  expect(outcomesIn('"Test the gutters"\n\nThere\'s an issue\n\nStep 4 didn’t work\nthe rest did')).toEqual([
-    { request: open, outcome: 'done', word: "There's an issue" },
+  expect(outcomesIn('"Test the gutters"\n\nSome feedback\n\nStep 4 didn’t work\nthe rest did')).toEqual([
+    { request: open, outcome: 'done', word: "Some feedback" },
   ])
   expect(outcomesIn('"Test the gutters"\n\n  Declined \n\nNo phone today')).toEqual([
     { request: open, outcome: 'declined', word: 'Declined' },
@@ -601,6 +613,17 @@ test('a choice on the line under a quoted request is its outcome, a typed Done t
     outcomes: [{ request: open, outcome: 'done', word: 'Looks good' }],
     replies: [],
   })
+})
+
+test('a request takes only its own options, and one without options takes Done', () => {
+  const tested = request({ choices: ['Signed in', 'Could not sign in'] })
+  expect(readPrompt('"Test the gutters"\n\nSigned in', [tested]).outcomes).toEqual([
+    { request: tested, outcome: 'done', word: 'Signed in' },
+  ])
+  expect(readPrompt('"Test the gutters"\n\nLooks good', [tested]).replies).toEqual([tested])
+  const plain = request()
+  expect(readPrompt('"Test the gutters"\n\nDone', [plain]).outcomes).toEqual([{ request: plain, outcome: 'done', word: 'Done' }])
+  expect(readPrompt('"Test the gutters"\n\nLooks good', [plain]).replies).toEqual([plain])
 })
 
 test('anything else under a quoted request replies to it and leaves it open', () => {
