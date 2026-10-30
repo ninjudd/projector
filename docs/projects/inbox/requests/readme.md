@@ -190,6 +190,7 @@ A refusal follows `ask`'s rules: exit `65` gives the check that failed.
 | `hooks/inbox.ts` | `needsDelivery` for a request's owed lines; `readPrompt` reads `Done` and `Declined` under a quoted request; `relayNote` and `replyNote` word their notes for a request; the tools' descriptions and argument builders |
 | `hooks/register.tsx` | The tools; the request's line, color, and state mark; its drawer's actions; `act` runs `start` with the action the drawer shows, and reads the store again on exit `65`; `deliver` and the prompt hook take a request |
 | `tests/test_inbox.py`, `tests/test_permissions.py`, `hooks/inbox.test.ts`, `hooks/panel.test.tsx` | Tests for the criteria in § 4 |
+| `src/projector/templates/agents-block.md` | The inbox paragraph every agent reads, Codex agents included, names `request` beside `ask` and `tell`. Bump the block's version, pin its new hash in `tests/test_instructions.py`, and run `project init` so this repository's `AGENTS.md` takes the new block |
 | `docs/cli.md` | "Use the inbox" describes requests and the new commands |
 | `docs/plugins.md` | "Read your inbox in Projector's panel" describes a request's drawer and the tools |
 
