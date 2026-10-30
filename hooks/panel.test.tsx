@@ -4624,6 +4624,8 @@ type WatchOptions = {
   bash?: Beneath['bash']
   /** Why `project watch drop` refuses, exiting 75, when it does. */
   refusal?: string
+  /** The session's id each time the mod asks for it, `SESSION` unless a test moves the session. */
+  sessionId?: () => string
 }
 
 /**
@@ -4634,7 +4636,7 @@ type WatchOptions = {
  * writes its exclusion. A prompt the panel submits waits while `hold` holds
  * it, until `release`.
  */
-function watchWorld(on: On, { files = {}, env = {}, bash, refusal }: WatchOptions = {}) {
+function watchWorld(on: On, { files = {}, env = {}, bash, refusal, sessionId = () => SESSION }: WatchOptions = {}) {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME, ...env })
   const root = env.XDG_STATE_HOME === undefined ? WATCH_ROOT : `${env.XDG_STATE_HOME}/projector/watch`
@@ -4675,7 +4677,7 @@ function watchWorld(on: On, { files = {}, env = {}, bash, refusal }: WatchOption
   }
   const { commands } = world(on, all, cli, { bash })
   on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('session.id', () => ({ value: SESSION }))
+  on('session.id', () => ({ value: sessionId() }))
   on('command.register', () => ({ value: { command: 'projector' } }))
   const toasts = toastsOf(on)
   const submitted: string[] = []
@@ -4843,6 +4845,25 @@ test('renews the session at its start, which starts the daemon, and once a minut
   const ui = await $.ui.mount(PANEL)
   expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
   await ui.unmount()
+})
+
+test('renews a new session id at the next tick, as after /clear, rather than a minute after the old id', async ($, on) => {
+  let id = 's1'
+  const session = watchWorld(on, { sessionId: () => id })
+  const watched = () => session.project().filter(command => command.startsWith('watch'))
+  await begin($, session.clock)
+  expect(watched()).toEqual(['watch renew --deliverer mod --session s1'])
+
+  await session.clock.advance(20_000)
+  await session.clock.settle()
+  id = 's2'
+  await session.clock.advance(TICK)
+  await session.clock.settle()
+  expect(watched()).toEqual(['watch renew --deliverer mod --session s1', 'watch renew --deliverer mod --session s2'])
+  // The new id then renews once a minute, like any other.
+  await session.clock.advance(30_000)
+  await session.clock.settle()
+  expect(watched()).toHaveLength(2)
 })
 
 test('submits the daemon’s events as one prompt and empties the file, which renews the session', async ($, on) => {

@@ -314,8 +314,12 @@ let inFlight: Promise<void> | undefined
 let queuedPoll: boolean | undefined
 /** When the panel last polled GitHub. A shown panel polls every `POLL_MS`, and reads the daemon's files on every tick. */
 let attemptedAt = 0
-/** When the daemon last heard the session renew, by this copy of the module. */
-let renewedAt: number | undefined
+/**
+ * Which session id the daemon last heard renew, by this copy of the module,
+ * and when. The engine moves the session to a new id on `/clear`, and that id
+ * renews at once rather than a minute after the old one.
+ */
+let renewed: { session: string; at: number } | undefined
 let isWatching = false
 /** Whether the daemon's last batch of events waits to reach the session, so the next batch waits behind it and goes as one prompt. */
 let isSubmitting = false
@@ -1000,9 +1004,13 @@ async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
  */
 async function renew($: Engine, session: string, time: number): Promise<void> {
   const ran = await project($, ['watch', 'renew', '--deliverer', 'mod', '--session', session])
-  if (ran.exitCode === 0) renewedAt = time
+  if (ran.exitCode === 0) renewed = { session, at: time }
   else $.ui.log(`projector: project watch renew failed: ${errorOf(ran)}`, { to: 'debug' })
 }
+
+/** Whether the daemon heard this session id renew within the last minute. */
+const isRenewed = (session: string, time: number) =>
+  renewed !== undefined && renewed.session === session && time - renewed.at < RENEW_MS
 
 /**
  * Takes the daemon's events for the session once its `events` file holds
@@ -1014,12 +1022,12 @@ async function renew($: Engine, session: string, time: number): Promise<void> {
 async function deliverEvents($: Engine, root: string, session: string, time: number): Promise<void> {
   const events = await $.fs.stat(`${folderOf(root, session)}/events`).catch(() => undefined)
   if (events === undefined || events.size === 0 || isSubmitting) {
-    if (renewedAt === undefined || time - renewedAt >= RENEW_MS) await renew($, session, time)
+    if (!isRenewed(session, time)) await renew($, session, time)
     return
   }
   const ran = await project($, ['watch', 'take', '--json', '--session', session])
   if (ran.exitCode !== 0) return
-  renewedAt = time
+  renewed = { session, at: time }
   const { events: lines } = JSON.parse(ran.stdout) as { events?: unknown }
   const text = (Array.isArray(lines) ? lines : []).filter(line => typeof line === 'string').join('\n')
   if (text === '') return

@@ -1011,3 +1011,6 @@ Building the daemon settled these choices, which the design above left open.
   the session's repository lines reviews it with a model that no `!` line
   names, so a dismissed pull request leaves at once rather than after the
   daemon's next pass rewrites `adopted`.
+- **A new session id.** The mod records which session id it last renewed.
+  When the engine moves the session to a new id, as `/clear` does, the mod
+  renews the new id at the next tick.

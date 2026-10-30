@@ -408,7 +408,10 @@ the daemon's events into the conversation, so no watcher runs in it:
   session is idle, as an inbox answer for the main loop does. Events that
   arrive while a prompt waits go together in the next one. When no event
   comes for a minute, the mod runs `renew` again, because the daemon lets a
-  session lapse after 5 minutes without a renewal.
+  session lapse after 5 minutes without a renewal. When the session moves to
+  a new id, as `/clear` moves it, the mod renews the new id at the next
+  check, so a skill that subscribes the session there finds the mod
+  delivering its events.
 - **After a Bash command that runs `git push`, `gh pr create`, or a
   `gh stack` command**, the mod passes the command's output to
   `project watch add --from-output -`. The CLI subscribes the session to fix
