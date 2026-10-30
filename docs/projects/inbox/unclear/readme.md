@@ -42,8 +42,9 @@ it delivers `DISMISSED` and `STARTED`. The item's line reads `unclear`
 until the agent revises it. Notices become revisable, so the agent revises
 any kind of item in place, keeping its number, and the revision clears the
 mark. A question offers at most five choices, its recommendation and four
-others, so `6` is free in every drawer. To say what you don't understand,
-you still use **discuss**.
+others. A request offers at most four options, so with **Start** or
+**Retry** on `1` its choices also end at `5`. That leaves `6` free in every
+drawer. To say what you don't understand, you still use **discuss**.
 
 ### 2.1 The flow
 
@@ -87,9 +88,10 @@ answer, outcome, or dismissal. A claimed `UNCLEAR` may already wait in the
 session's queue, so it keeps its claim and reaches the agent first, as a
 claimed `STARTED` does.
 
-A question stored with six choices before this change keeps them on `1`
-to `6`, and its drawer draws **I don't understand** without a digit, for a
-click or Enter.
+An item stored before this change can hold a choice on `6`: a question
+with six choices, or a request with five options and **Start** or
+**Retry** on `1`. Its drawer keeps each choice on its digit and draws
+**I don't understand** without a digit, for a click or Enter.
 
 ### 2.2 The store
 
@@ -117,8 +119,8 @@ ahead of a request's `started`, `ready`, or `blocked`.
 | Command | Change |
 | --- | --- |
 | `project inbox unclear <number>` | New. Records `unclear` on an open item of any kind. Exits `65` for a resolved item, and for an item already marked unclear that its agent has not revised since |
-| `project inbox revise <number> [--notice <line>] [--detail <markdown>]` | Takes a notice, with its new subject in `--notice`, checked as `tell` checks one; `--question`, `--request`, `--start`, `--recommend`, and `--option` exit `65` for a notice. Revising any item removes its `unclear` and drops a claim on that line |
-| `project inbox ask`, `revise` | `--option` takes at most four other answers, and a fifth exits `65` |
+| `project inbox revise <number> [--notice <line>] [--detail <markdown>]` | Takes a notice, with its new subject in `--notice`, checked as `tell` checks one; `--question`, `--request`, `--start`, `--recommend`, `--option`, and `--no-options` exit `65` for a notice. Revising any item removes its `unclear` and drops a claim on that line |
+| `project inbox ask`, `request`, `revise` | `--option` takes at most four: a question's other answers, or a request's options. A fifth exits `65` |
 | `claim`, `delivered`, `reopen`, `watch` | Take a notice that owes the `unclear` line |
 
 `unclear` records what only you may say, so it joins `answer`, `dismiss`,
@@ -132,25 +134,26 @@ Projector's permission rules make an agent ask before it runs them.
   starts `UNCLEAR 3` arrives, and the agent revises the item to explain it
   more simply or to add the context the person lacks, keeping its number.
   Each tool's result names `UNCLEAR` beside the other messages it names.
-- **`ask`**'s `options` takes at most four items.
+- **`ask`** and **`request`** each take at most four items in `options`,
+  and each schema's description of `options` says four where it says five.
 - **`revise`** takes a notice, with a new `notice` field for its subject,
-  and its `options` takes at most four items. Its description names a
-  notice beside a question and a request, and says that a revision clears
-  the person's I don't understand.
+  and its `options` takes at most four items, for a question or a request.
+  Its description names a notice beside a question and a request, and says
+  that a revision clears the person's I don't understand.
 
 ### 2.5 Files
 
 | File | Change |
 | --- | --- |
-| `src/projector/inbox.py` | `MAX_OPTIONS = 4`; a new `unclear`; `owed_line`, `claimed_line`, `message`, `claim`, `settle`, `clear_for_outcome`, and `revise` handle the `unclear` line and notices |
-| `src/projector/cli.py` | The `unclear` subcommand, `revise --notice`, the `--option` help, and the `unclear` state in `item_state` |
+| `src/projector/inbox.py` | `MAX_OPTIONS = 4`, the cap that `check` applies to a question's other answers and `check_request_options` to a request's options; a new `unclear`; `owed_line`, `claimed_line`, `message`, `claim`, `settle`, `clear_for_outcome`, and `revise` handle the `unclear` line and notices |
+| `src/projector/cli.py` | The `unclear` subcommand, `revise --notice`, the `--option` help of `ask`, `request`, and `revise`, and the `unclear` state in `item_state` |
 | `src/projector/permissions.py` | `Bash(project inbox unclear *)` in `ASK`, and `unclear` in `ASKED` |
 | `hooks/types.d.ts` | `unclear?: { at: number; deliveredAt?: number }` on `Posted` |
-| `hooks/inbox.ts` | `needsDelivery` takes a notice that owes the `unclear` line; `forMainLoop` words its note for an `UNCLEAR` line; the tools' descriptions and schemas; `reviseArguments` passes `--notice` |
-| `hooks/register.tsx` | The drawer's line on `6`; `act` runs `unclear`; the line's `unclear` mark; `deliver` takes any kind of item; `settle`'s toast for a failed `UNCLEAR` |
+| `hooks/inbox.ts` | `needsDelivery` takes a notice that owes the `unclear` line; `forMainLoop` words its note for an `UNCLEAR` line; the tools' descriptions and schemas, with `maxItems: 4` on the `options` of `ask`, `request`, and `revise`; `reviseArguments` passes `--notice` |
+| `hooks/register.tsx` | The drawer's line on `6`, drawn without a digit when a choice holds `6`; `act` runs `unclear`; the line's `unclear` mark; `deliver` takes any kind of item; `settle`'s toast for a failed `UNCLEAR` |
 | `src/projector/templates/agents-block.md` | Teaches `UNCLEAR` beside `ANSWER`, `DONE`, and `DECLINED`. Bump the block's version to 22, pin its hash in `tests/test_instructions.py`, and run `project init` so this repository's `AGENTS.md` and `CLAUDE.md` take the new block |
-| `docs/cli.md` | "Use the inbox" describes `unclear`, `revise --notice`, and the cap of four other options |
-| `docs/plugins.md` | "Read your inbox in Projector's panel" and "Use the panel from the keyboard" describe the action, the mark, and the choices on `1` to `5` |
+| `docs/cli.md` | "Use the inbox" describes `unclear`, `revise --notice`, and the cap of four, for a question's other answers and for a request's options, where it says five or a sixth. Its paragraph on `revise` also drops the claim that `revise` refuses `--option` for a request |
+| `docs/plugins.md` | "Read your inbox in Projector's panel" and "Use the panel from the keyboard" describe the action and the mark, and say that a question's choices and a request's, after any **Start** or **Retry**, end at `5`, where they say the options keep `1` to `6` |
 | `tests/test_inbox.py`, `tests/test_permissions.py`, `tests/test_instructions.py`, `hooks/inbox.test.ts`, `hooks/panel.test.tsx` | Tests for the criteria in § 4 |
 
 ## 3. Why this design
@@ -175,13 +178,18 @@ Projector's permission rules make an agent ask before it runs them.
   explanation a new number and a new place in the list, so the panel shows
   the confusing notice vanish and an unrelated-looking one arrive. Revising
   in place reuses the code that already revises questions and requests.
-- **`6`, by capping a question at five choices.** Every digit in a
-  question's drawer is taken: `1` to `6` for its choices, `7` to `9` for its
-  actions, and `0` to close it. A letter key works only while the panel has
-  the keyboard, never typed first into an empty prompt as a digit is, so the
-  action would be the only line in the drawer without that shortcut. Four
-  answers besides the recommendation still give a real choice, and an agent
-  with more can put the rest in the detail.
+- **`6`, by capping a question at five choices and a request at four
+  options.** Every digit in a question's drawer is taken: `1` to `6` for
+  its choices, `7` to `9` for its actions, and `0` to close it. A request
+  with **Start** or **Retry** on `1` and five options takes `1` to `6` the
+  same way. A letter key works only while the panel has the keyboard,
+  never typed first into an empty prompt as a digit is, so the action would
+  be the only line in the drawer without that shortcut. Four answers
+  besides the recommendation still give a real choice, as four options do
+  for a request, and an agent with more can put the rest in the detail.
+  The one cap, `MAX_OPTIONS`, holds for a request without a start action
+  too, because a revision can add one and a blocked start puts **Retry** on
+  `1`.
 - **An ask rule for `unclear`.** Like an answer or a dismissal, it records
   what only you may say. Without the rule, an agent could mark its own item
   unclear.
@@ -199,7 +207,9 @@ Projector's permission rules make an agent ask before it runs them.
 | Dismiss or answer an item whose `UNCLEAR` no deliverer claimed | No `UNCLEAR` is sent; the agent hears only the dismissal or the answer |
 | Answer an item while its `UNCLEAR` is claimed | The agent hears `UNCLEAR`, then the answer |
 | `project inbox ask` with five `--option` flags | Exits `65`, naming the cap of four other options |
+| `project inbox request` with five `--option` flags, or `revise` of a request with five | Each exits `65`, naming the cap of four options |
 | A question stored with six choices | Its drawer shows all six on `1` to `6`, and I don't understand without a digit |
+| A request stored with a start action and five options | Its drawer shows **Start** on `1` and the options on `2` to `6`, and I don't understand without a digit |
 | An agent runs `project inbox unclear` | Claude Code asks permission under Projector's rules |
 | `project inbox watch --once` with an unclear notice | Prints `UNCLEAR 5 <subject>` and marks the line delivered |
 
@@ -207,7 +217,8 @@ Projector's permission rules make an agent ask before it runs them.
 rows in temporary stores. `hooks/panel.test.tsx` covers the drawer and
 delivery rows, and `tests/test_permissions.py` covers the ask rule. They
 fail before the change, because `project inbox unclear` and the `unclear`
-field don't exist and `revise` refuses a notice.
+field don't exist, `revise` refuses a notice, and `ask` and `request`
+accept a fifth option.
 
 ## 5. Cost
 
