@@ -387,6 +387,9 @@ which the model sees as `mcp__projector__ask`, tells you something that
 needs no answer with the `tell` tool, `mcp__projector__tell`, and asks you to
 do something only you can do, such as running a command it may not run, with
 the `request` tool, `mcp__projector__request`. Either way it keeps working.
+When a request's start action is done, the agent marks it ready with the
+`ready` tool, `mcp__projector__ready`, or says why it could not with the
+`block` tool, `mcp__projector__block`.
 When an item it posted no longer needs you, such as a question your reply
 settled, the agent takes it back with the `withdraw` tool,
 `mcp__projector__withdraw`, by the number `ask`, `tell`, or `request`
@@ -552,6 +555,21 @@ there, such as `done?` or a question about which build to test, is a reply:
 the request stays open, and the reply reaches the agent as your prompt. A
 done or declined request's drawer marks its outcome, and a declined one offers
 **restore request**.
+
+A request the agent must prepare for, such as installing a build on your
+phone, has a start action. Its drawer says `Start:` and what the agent will
+do, and offers **start request** on `8`. Opening the drawer, reading the
+steps, or leaving it open sends nothing. Press **start request** when you are
+ready to begin: the panel records the start action its drawer shows, and the
+agent hears `STARTED` with that action. If the agent revised the start action
+since the panel drew the drawer, the press records nothing, and the drawer
+shows the new action for you to read and press again. While the agent works,
+the drawer says `Starting:`, and the line ends with `starting`. Once the
+agent is done, they read `Ready:` and `ready`, in green, and you begin. When
+the agent could not do it, they read `Blocked:` with its reason and
+`blocked`, in yellow, and **retry request** takes the place of start, for you
+to press once you have done what the reason says. **Done** and **Declined**
+work throughout. A request without a start action shows none of this.
 
 **dismiss**, **restore**, and **unsnooze** act at once. A dismissed item
 stays in the list a while, struck through, as the paragraph on resolved

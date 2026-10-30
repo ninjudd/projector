@@ -1303,6 +1303,9 @@ const requested = (fields: Partial<HeldRequest> = {}): HeldRequest => ({
   ...fields,
 })
 
+/** A held item when it is a request, so a test reads a request's own fields. */
+const heldRequest = (item: Held | undefined): HeldRequest | undefined => (item?.kind === 'request' ? item : undefined)
+
 /** An item with the named fields cleared. */
 const without = <T extends Held>(item: T, ...keys: string[]): T =>
   Object.fromEntries(Object.entries(item).filter(([key]) => !keys.includes(key))) as T
@@ -1342,8 +1345,14 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     const at = args.indexOf(`--${name}`)
     return at === -1 ? undefined : args[at + 1]
   }
+  /** Whether an open request's start waits for its `STARTED` line, as the CLI owes it. */
+  const owesStart = (item: Held): item is HeldRequest =>
+    item.kind === 'request' && item.answer === undefined && item.started !== undefined && item.started.deliveredAt === undefined
   const textOf = (item: HeldQuestion | HeldRequest) => {
     const { answer, ref, subject } = item
+    if (item.kind === 'request' && item.claim?.line === 'started') {
+      return `STARTED ${ref} ${subject} → ${item.started?.action ?? ''}`
+    }
     if (item.restoredAt !== undefined) return `RESTORED ${ref} ${subject}`
     if (answer !== undefined && 'letter' in answer) return `ANSWER ${ref}.${answer.letter} ${subject} → ${answer.text}`
     if (answer !== undefined && ('done' in answer || 'declined' in answer)) {
@@ -1397,10 +1406,13 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         ...(agentId === undefined ? {} : { agentId }),
       }
       const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
+      const start = flag(args, 'start')
       put(
         command === 'ask'
           ? { ...common, kind: 'question', choices: [flag(args, 'recommend') ?? '', ...options] }
-          : { ...common, kind: command === 'tell' ? 'notice' : 'request' },
+          : command === 'tell'
+            ? { ...common, kind: 'notice' }
+            : { ...common, kind: 'request', ...(start === undefined ? {} : { start }) },
       )
       return ran(`${ref}\n`)
     }
@@ -1443,6 +1455,26 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       const recorded = { ...awake, answer: { ...answer, ...declined } } as Held
       return printed(put(isDelivered ? { ...recorded, deliveredAt: time } : recorded))
     }
+    if (command === 'start' || command === 'ready' || command === 'block') {
+      if (awake.kind !== 'request') return failed(65, `${ref} is a ${awake.kind}, and only a request can be marked ${command}`)
+      if (item.answer !== undefined) return failed(65, `${ref} is already resolved`)
+      if (command === 'start') {
+        if (item.kind !== 'request' || item.start === undefined) return failed(65, `${ref} has no start action`)
+        if (flag(args, 'action') !== item.start) {
+          return failed(65, `${ref}'s start action is now '${item.start}'; read it and press start again`)
+        }
+        return printed(put({ ...without(item, 'progress'), started: { action: item.start, startedAt: time } }))
+      }
+      if (item.kind !== 'request' || item.started === undefined || item.progress !== undefined) {
+        return failed(65, `${ref} is not started`)
+      }
+      const reason = flag(args, 'reason')
+      const progress =
+        command === 'ready'
+          ? { state: 'ready' as const, at: time }
+          : { state: 'blocked' as const, ...(reason === undefined ? {} : { reason }), at: time }
+      return printed(put({ ...item, progress }))
+    }
     if (command === 'done' || command === 'decline') {
       if (awake.kind !== 'request') return failed(65, `${ref} is a ${awake.kind}, and only a request can be marked ${command}`)
       const said = flag(args, 'text')
@@ -1463,8 +1495,16 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     }
     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
     if (command === 'revise' && item.kind === 'request') {
+      // A revised request returns to open, as the CLI resets it.
+      const start = flag(args, 'start') ?? item.start
+      const revised = without(item, 'started', 'progress', 'start')
       return printed(
-        put({ ...item, subject: flag(args, 'request') ?? item.subject, detail: flag(args, 'detail') ?? item.detail }),
+        put({
+          ...revised,
+          subject: flag(args, 'request') ?? item.subject,
+          detail: flag(args, 'detail') ?? item.detail,
+          ...(start === undefined || start === '' ? {} : { start }),
+        }),
       )
     }
     if (command === 'answer' && item.kind === 'request') {
@@ -1489,9 +1529,8 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       return printed(put({ ...(awake as HeldQuestion), answer: { letter, text, answeredAt: time } }))
     }
     if (command === 'claim') {
-      if (item.restoredAt === undefined && (item.answer === undefined || item.deliveredAt !== undefined)) {
-        return failed(65, 'nothing to deliver')
-      }
+      const isOwed = item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined)
+      if (!isOwed && !owesStart(item) && flag(args, 'renew') === undefined) return failed(65, 'nothing to deliver')
       const renew = flag(args, 'renew')
       if (renew !== undefined) {
         if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
@@ -1499,11 +1538,23 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         return ran('')
       }
       if (item.claim !== undefined && time - item.claim.renewedAt < 60_000) return failed(65, 'already claimed')
-      const claim = { token: `token-${writes}`, renewedAt: time }
-      return printed(put({ ...item, claim }), { token: claim.token, text: textOf(item) })
+      const line = isOwed ? (item.restoredAt !== undefined && item.answer === undefined ? 'restored' : 'answer') : 'started'
+      const claimed = { ...item, claim: { token: `token-${writes}`, renewedAt: time, line } } as HeldQuestion | HeldRequest
+      return printed(put(claimed), { token: claimed.claim?.token, text: textOf(claimed) })
     }
     if (command === 'delivered' || command === 'reopen') {
       if (item.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
+      // A start's line marks the start delivered, or takes it back when it failed.
+      if (item.kind === 'request' && item.claim?.line === 'started') {
+        const settled = without(item, 'claim')
+        return printed(
+          put(
+            command === 'delivered' && item.started !== undefined
+              ? { ...settled, started: { ...item.started, deliveredAt: time } }
+              : without(settled, 'started'),
+          ),
+        )
+      }
       // A restore's line is done either way.
       if (item.restoredAt !== undefined) return printed(put(without(item, 'claim', 'restoredAt')))
       return printed(put(command === 'delivered' ? { ...item, deliveredAt: time } : reopened(item)))
@@ -1606,6 +1657,8 @@ test('asks through the tool, and the panel lists the question below the pull req
     expect.objectContaining({ name: 'ask', isDeferred: false }),
     expect.objectContaining({ name: 'tell', isDeferred: false }),
     expect.objectContaining({ name: 'request', isDeferred: false }),
+    expect.objectContaining({ name: 'ready', isDeferred: false }),
+    expect.objectContaining({ name: 'block', isDeferred: false }),
     expect.objectContaining({ name: 'withdraw', isDeferred: false }),
     expect.objectContaining({ name: 'revise', isDeferred: false }),
     expect.objectContaining({ name: 'restore', isDeferred: false }),
@@ -1882,7 +1935,7 @@ test('requests through the tool, and a request’s drawer offers Done and Declin
 
   const called = await $.tool.call({ tool: 'mcp__projector__request', request: 'Test the gutters', detail: '1. Open Fyra.' })
   expect(String(called.text ?? called.result)).toBe(
-    'Requested 1. Keep working on anything the result does not block; its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE 1 or DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
+    'Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE 1 or DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
   )
   expect(session.project()).toContain('inbox request --session=s1 --detail=1. Open Fyra. -- Test the gutters')
   expect(session.notified).toEqual(['Test the gutters'])
@@ -1956,6 +2009,173 @@ test('a reply under a quoted request leaves it open, and a decline from a termin
   await clock.settle()
   expect(session.submitted.at(-1)?.text).toBe('DECLINED 3 Test the gutters → No phone today')
   expect(session.store.store.get('3')?.deliveredAt).toBeDefined()
+})
+
+const INSTALL = 'Install build c0d62a3b on your iPhone'
+
+test('start on 8 records the start action the drawer shows, and STARTED reaches the agent that posted the request', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [requested({ start: INSTALL, agentId: 'agent-1' })], {
+    agents: [running('running')],
+  })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:3' })
+  expect(await ui.find({ type: 'Text', text: `Start: ${INSTALL}` })).toBeDefined()
+  const start = await ui.find({ type: 'Button', key: 'start:3' })
+  expect([start?.props.hotkey, start?.text]).toEqual(['8', 'start request'])
+  // Opening the drawer records nothing and sends nothing.
+  expect(session.project().filter(command => command.startsWith('inbox start'))).toEqual([])
+
+  await ui.press({ key: 'start:3' })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox start'))).toEqual([
+    `inbox start 3 --action=${INSTALL} --session s1 --json`,
+  ])
+  // The drawer stays open, saying the agent is at work, with nothing left to start.
+  expect(await ui.find({ type: 'Text', text: `Starting: ${INSTALL}` })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeUndefined()
+
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.sent).toEqual([{ to: 'agent-1', text: `STARTED 3 Test the gutters → ${INSTALL}` }])
+  expect(session.store.store.get('3')).toEqual(
+    expect.objectContaining({ started: expect.objectContaining({ deliveredAt: expect.any(Number) }) }),
+  )
+  await ui.press({ key: 'close:3' })
+  expect((await ui.find({ type: 'Text', text: 'starting' }))?.props.color).toBe('subtle')
+  await ui.unmount()
+})
+
+test('a press of start on a drawer the agent revised since records nothing and shows the new start action', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [requested({ start: INSTALL })])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:3' })
+  // The agent revises the start action from its shell, which the panel reads only on a later tick.
+  session.store.write(requested({ start: 'Install build d41f on your iPhone' }))
+  await ui.press({ key: 'start:3' })
+  await clock.settle()
+  expect(heldRequest(session.store.store.get('3'))?.started).toBeUndefined()
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: 'Start: Install build d41f on your iPhone' })).toBeDefined()
+  expect(session.sent).toEqual([])
+  expect(session.submitted).toEqual([])
+  await ui.unmount()
+})
+
+test('a blocked request shows its reason and retry on 8, and a ready one says so with nothing to start', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const started = { action: INSTALL, startedAt: NOW - 5_000, deliveredAt: NOW - 4_000 }
+  const blocked = { state: 'blocked' as const, reason: 'The phone is locked. Unlock it and press retry.', at: NOW - 1_000 }
+  const session = questionWorld(on, clock, [
+    requested({ start: INSTALL, started, progress: blocked }),
+    requested({ ref: '4', number: 4, subject: 'Sign in', start: 'Open the sign-in page', started, progress: { state: 'ready', at: NOW } }),
+  ])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  const marks = [await ui.find({ type: 'Text', text: 'blocked' }), await ui.find({ type: 'Text', text: 'ready' })]
+  expect(marks.map(mark => mark?.props.color)).toEqual(['warning', 'success'])
+  await ui.press({ key: 'item:3' })
+  expect(await ui.find({ type: 'Text', text: `Blocked: ${blocked.reason}` })).toBeDefined()
+  const retry = await ui.find({ type: 'Button', key: 'retry:3' })
+  expect([retry?.props.hotkey, retry?.text]).toEqual(['8', 'retry request'])
+  await ui.press({ key: 'retry:3' })
+  await clock.settle()
+  expect(session.project()).toContain(`inbox start 3 --action=${INSTALL} --session s1 --json`)
+  expect(heldRequest(session.store.store.get('3'))?.progress).toBeUndefined()
+
+  await ui.press({ key: 'close:3' })
+  await ui.press({ key: 'item:4' })
+  expect(await ui.find({ type: 'Text', text: `Ready: ${INSTALL}` })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'start:4' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'outcome:4.done' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a STARTED that cannot be delivered takes the start back, says so, and offers start again', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const started = { action: INSTALL, startedAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [requested({ start: INSTALL, started })], { drop: 'a hook refused it' })
+  await startSession($, clock)
+  await clock.advance(TICK)
+  await clock.settle()
+
+  expect(session.submitted.map(one => one.text)).toEqual([`STARTED 3 Test the gutters → ${INSTALL}`])
+  expect(session.toasts).toEqual([
+    'projector: the start of "Test the gutters" did not reach its agent (a hook refused it); press start again',
+  ])
+  expect(heldRequest(session.store.store.get('3'))?.started).toBeUndefined()
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:3' })
+  expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a request without a start action shows no start line, no start, and no mark', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  questionWorld(on, clock, [requested()])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  for (const mark of ['starting', 'ready', 'blocked']) expect(await ui.find({ type: 'Text', text: mark })).toBeUndefined()
+  await ui.press({ key: 'item:3' })
+  expect(await ui.find({ type: 'Text', text: /^(Start|Starting|Ready|Blocked): / })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'outcome:3.done' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the request, revise, and restore results say STARTED comes first for a request with a start action', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock)
+  await startSession($, clock)
+  const first =
+    'Once the person presses start, a message that starts STARTED 1 arrives first, quoting the start action; do exactly that, then mark the request ready or blocked.'
+
+  const posted = await $.tool.call({ tool: 'mcp__projector__request', request: 'Test the gutters', start: INSTALL })
+  expect(String(posted.text ?? posted.result)).toContain(first)
+  expect(session.project()).toContain(`inbox request --session=s1 --start=${INSTALL} -- Test the gutters`)
+  const revised = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, detail: '1. Open Fyra.' })
+  expect(String(revised.text ?? revised.result)).toBe(
+    `Revised 1. Projector’s panel shows the new text, and the request is open again. ${first} Its outcome arrives as a message that starts DONE 1 or DECLINED 1.`,
+  )
+  session.store.write({ ...requested({ ref: '1', number: 1, start: INSTALL }), answer: { dismissed: true, declined: true, answeredAt: NOW } })
+  const restored = await $.tool.call({ tool: 'mcp__projector__restore', number: 1 })
+  expect(String(restored.text ?? restored.result)).toContain(first)
+
+  const plain = await $.tool.call({ tool: 'mcp__projector__request', request: 'Sign in' })
+  expect(String(plain.text ?? plain.result)).not.toContain('STARTED')
+})
+
+test('the ready and block tools mark a started request, and the panel shows it at once', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const started = { action: INSTALL, startedAt: NOW - 5_000, deliveredAt: NOW - 4_000 }
+  const session = questionWorld(on, clock, [requested({ start: INSTALL, started })])
+  await startSession($, clock)
+
+  const blocked = await $.tool.call({ tool: 'mcp__projector__block', number: 3, reason: 'Unlock the phone' })
+  expect(String(blocked.text ?? blocked.result)).toBe(
+    'Marked 3 blocked. Projector’s panel shows the person your reason; when they press retry, a new message that starts STARTED 3 arrives.',
+  )
+  expect(session.project()).toContain('inbox block 3 --reason=Unlock the phone --session s1 --json')
+  const ui = await $.ui.mount(PANEL)
+  expect((await ui.find({ type: 'Text', text: 'blocked' }))?.props.color).toBe('warning')
+  const refused = await $.tool.call({ tool: 'mcp__projector__ready', number: 3 })
+  expect(refused.deny ?? refused.text).toBe('3 is not started')
+  await ui.unmount()
 })
 
 test('a question another shares the text of takes only the answer its own drawer put in the prompt', async ($, on) => {
@@ -2974,7 +3194,7 @@ test('the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, 
   expect(unknown.deny ?? unknown.text).toBe('no item 9')
 
   const empty = await $.tool.call({ tool: 'mcp__projector__revise', number: 1 })
-  expect(empty.deny ?? empty.text).toBe('give what changes: `question`, `request`, `detail`, `recommendation`, or `options`')
+  expect(empty.deny ?? empty.text).toBe('give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`')
 
   session.store.failing.locks = 1
   const busy = await $.tool.call(revise)

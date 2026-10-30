@@ -1131,5 +1131,145 @@ class RequestTests(InboxCase):
                          self.run_cli("list", "--session", "s1")[1].splitlines())
 
 
+INSTALL = "Install build c0d62a3b on your iPhone"
+
+
+class StartTests(InboxCase):
+    def setUp(self) -> None:
+        super().setUp()
+        code, _, err = self.run_cli("request", "Test the gutters", "--start", INSTALL, "--session", "s1")
+        self.assertEqual(0, code, err)
+
+    def cli(self, *args: str) -> tuple[int, str, str]:
+        return self.run_cli(*args, "--session", "s1")
+
+    def start(self, action: str = INSTALL) -> tuple[int, str, str]:
+        return self.cli("start", "1", "--action", action)
+
+    def watch(self) -> str:
+        return self.cli("watch", "--once")[1]
+
+    def status(self) -> str:
+        return cli.item_state(self.item(1))
+
+    def claim(self) -> str:
+        code, out, err = self.cli("claim", "1", "--json")
+        self.assertEqual(0, code, err)
+        return json.loads(out)["token"]
+
+    def test_records_a_checked_start_action(self) -> None:
+        self.assertEqual(INSTALL, self.item(1)["start"])
+        for start in ("Two\nlines", "x" * 121, " "):
+            with self.subTest(start=start[:12]):
+                code, _, err = self.run_cli("request", "Sign in", "--start", start, "--session", "s1")
+                self.assertEqual(65, code, err)
+                self.assertIn("start action", err)
+        self.assertEqual("start: Install build c0d62a3b on your iPhone\nopen\n",
+                         self.run_cli("show", "1")[1].split("\n", 1)[1])
+
+    def test_start_records_the_action_read_and_sends_started_once(self) -> None:
+        self.assertEqual((0, "started 1\n", ""), self.start())
+        self.assertEqual(INSTALL, self.item(1)["started"]["action"])
+        self.assertEqual("STARTED 1 Test the gutters → Install build c0d62a3b on your iPhone\n", self.watch())
+        self.assertEqual("", self.watch())
+        self.assertEqual("started", self.status())
+
+    def test_start_refuses_a_stale_action_a_second_press_and_a_request_with_none(self) -> None:
+        code, _, err = self.start("Install build 0ld on your iPhone")
+        self.assertEqual(65, code)
+        self.assertIn("read it and press start again", err)
+        self.assertNotIn("started", self.item(1))
+        self.start()
+        self.assertEqual(65, self.start()[0])
+        self.run_cli("request", "Sign in", "--session", "s1")
+        self.assertIn("no start action", self.cli("start", "2", "--action", INSTALL)[2])
+        self.run_cli("ask", "Merge?", "--recommend", "Yes", "--session", "s1")
+        self.assertIn("only a request", self.cli("start", "3", "--action", INSTALL)[2])
+
+    def test_the_agent_marks_a_started_request_ready_or_blocked(self) -> None:
+        for args in (["ready", "1"], ["block", "1", "--reason", "Unlock it"]):
+            with self.subTest(command=args[0]):
+                code, _, err = self.cli(*args)
+                self.assertEqual(65, code)
+                self.assertIn("not started", err)
+        self.start()
+        self.assertEqual((0, "blocked 1\n", ""), self.cli("block", "1", "--reason", "The phone is locked."))
+        self.assertEqual("The phone is locked.", self.item(1)["progress"]["reason"])
+        self.assertEqual(65, self.cli("ready", "1")[0])
+        self.assertEqual(65, self.cli("block", "1", "--reason", "two\nlines")[0])
+
+    def test_retry_after_a_block_records_a_new_start(self) -> None:
+        self.start()
+        self.watch()
+        self.cli("block", "1", "--reason", "The phone is locked.")
+        self.assertEqual((0, "started 1\n", ""), self.start())
+        self.assertNotIn("progress", self.item(1))
+        self.assertNotIn("deliveredAt", self.item(1)["started"])
+        self.assertEqual("STARTED 1 Test the gutters → Install build c0d62a3b on your iPhone\n", self.watch())
+        self.assertEqual((0, "ready 1\n", ""), self.cli("ready", "1"))
+        self.assertEqual(65, self.start()[0])
+
+    def test_revising_a_started_request_returns_it_to_open(self) -> None:
+        self.start()
+        self.claim()
+        self.cli("revise", "1", "--start", "Install build d41f on your iPhone")
+        request = self.item(1)
+        self.assertEqual("open", self.status())
+        self.assertTrue({"started", "progress", "claim"}.isdisjoint(request))
+        self.assertEqual(65, self.start()[0])
+        self.assertEqual(0, self.start("Install build d41f on your iPhone")[0])
+        self.assertEqual("STARTED 1 Test the gutters → Install build d41f on your iPhone\n", self.watch())
+        self.cli("revise", "1", "--start", "")
+        self.assertNotIn("start", self.item(1))
+        self.assertEqual(65, self.cli("revise", "1", "--start", "x" * 121)[0])
+
+    def test_a_failed_started_removes_the_start(self) -> None:
+        self.start()
+        token = self.claim()
+        self.assertEqual(0, self.cli("reopen", "1", "--claim", token)[0])
+        self.assertEqual("open", self.status())
+        self.assertTrue({"started", "claim"}.isdisjoint(self.item(1)))
+
+    def test_an_outcome_or_withdrawal_replaces_a_started_no_deliverer_claimed(self) -> None:
+        self.start()
+        self.cli("done", "1", "--text", "All good")
+        self.assertNotIn("started", self.item(1))
+        self.assertEqual("DONE 1 Test the gutters → All good\n", self.watch())
+        self.run_cli("request", "Sign in", "--start", INSTALL, "--session", "s1")
+        self.cli("start", "2", "--action", INSTALL)
+        self.cli("withdraw", "2")
+        self.assertNotIn("started", self.item(2))
+        self.assertEqual("", self.watch())
+
+    def test_an_outcome_recorded_while_started_is_claimed_follows_it(self) -> None:
+        self.start()
+        token = self.claim()
+        self.cli("done", "1")
+        self.assertEqual("", self.watch())
+        self.assertEqual(0, self.cli("claim", "1", "--renew", token)[0])
+        self.assertEqual(0, self.cli("delivered", "1", "--claim", token)[0])
+        self.assertIn("deliveredAt", self.item(1)["started"])
+        self.assertEqual("DONE 1 Test the gutters\n", self.watch())
+
+    def test_a_withdrawal_while_started_is_claimed_lets_that_line_settle(self) -> None:
+        self.start()
+        token = self.claim()
+        self.cli("withdraw", "1")
+        self.assertEqual(0, self.cli("claim", "1", "--renew", token)[0])
+        self.assertEqual(0, self.cli("delivered", "1", "--claim", token)[0])
+        self.assertEqual("", self.watch())
+
+    def test_a_restored_request_waits_for_a_new_start(self) -> None:
+        self.start()
+        self.watch()
+        self.cli("ready", "1")
+        self.cli("decline", "1")
+        self.assertEqual("DECLINED 1 Test the gutters\n", self.watch())
+        self.cli("restore", "1")
+        self.assertEqual("open", self.status())
+        self.assertTrue({"started", "progress"}.isdisjoint(self.item(1)))
+        self.assertEqual("RESTORED 1 Test the gutters\n", self.watch())
+
+
 if __name__ == "__main__":
     unittest.main()
