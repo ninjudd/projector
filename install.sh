@@ -297,7 +297,8 @@ install_claude() {
   }
   mkdir -p "$CLAUDE_DIR"
   remove_legacy_links claude
-  local marketplace source
+  local marketplace source installed
+  installed="$(claude_plugin_versions)"
   marketplace="$(host_marketplace claude)"
   source="$(plugin_source claude)"
   if [ -z "$marketplace" ]; then
@@ -315,6 +316,16 @@ install_claude() {
     run_claude plugin install projector@projector --scope user
   fi
   install_claude_gh_stack
+  # A session that is already open keeps the plugins it loaded. Claude Code
+  # says to restart it, but /reload-plugins loads the new ones in place.
+  [ "$(claude_plugin_versions)" = "$installed" ] ||
+    printf '%-14s %s\n' "reload" "run /reload-plugins in an open Claude Code session to load the new version without a restart"
+}
+
+# The installed versions of Projector and gh-stack, empty for one that is not
+# installed, so a change to either shows as a change to the whole.
+claude_plugin_versions() {
+  printf '%s %s\n' "$(host_plugin_version claude)" "$(host_plugin_version claude gh-stack@projector)"
 }
 
 # Projector depends on the gh-stack plugin and fails to load without it, but

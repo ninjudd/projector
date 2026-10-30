@@ -134,6 +134,11 @@ extension that provides `gh stack` from another owner alone, prints a
 extension. `status` adds a `stack-` row comparing the extension with the
 pin.
 
+When the installer changes the version of a Claude Code plugin, Projector
+or `gh-stack`, it prints a `reload` row. Claude Code itself says to
+restart, but a session that is already open loads the new version when you
+run `/reload-plugins` in it.
+
 ## Install only the CLI
 
 `pipx` installs an isolated `project` from the newest release's source
@@ -989,9 +994,10 @@ release may still break, so the `v0` channel promises less than a `v1` channel
 will.
 
 Update an installed copy with each host's own command, or run `./install.sh
-all` from a checkout, which runs these for every host it finds. Claude Code
-needs a restart to apply the update, and Codex refreshes a Git marketplace
-snapshot before it can see the new version:
+all` from a checkout, which runs these for every host it finds. An open
+Claude Code session applies the update when you run `/reload-plugins` in it
+or restart it, and Codex refreshes a Git marketplace snapshot before it can
+see the new version:
 
 ```sh
 claude plugin update projector@projector

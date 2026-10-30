@@ -41,7 +41,8 @@ class InstallTests(unittest.TestCase):
         # every time, and one written to `<command>-fails-once` only the first
         # time. The host fails with status 3, which the installer never exits
         # with itself, so a test can tell the host's status from the
-        # installer's.
+        # installer's. A plugin list written to `<command>-plugins-after.json`
+        # replaces the host's list once it updates or installs a plugin.
         for command, executable in (("claude", "host-a"), ("codex", "host-b")):
             once = f'"$PROJECTOR_TEST_STATE/{command}-fails-once"'
             (self.fake_bin / executable).write_text(
@@ -52,6 +53,8 @@ class InstallTests(unittest.TestCase):
                 'case "$*" in\n'
                 f'  "plugin marketplace list --json") cat "$PROJECTOR_TEST_STATE/{command}-marketplaces.json" 2>/dev/null ;;\n'
                 f'  "plugin list --json") cat "$PROJECTOR_TEST_STATE/{command}-plugins.json" 2>/dev/null ;;\n'
+                f'  "plugin update "*|"plugin install "*) after="$PROJECTOR_TEST_STATE/{command}-plugins-after.json"\n'
+                f'    [ ! -f "$after" ] || mv "$after" "$PROJECTOR_TEST_STATE/{command}-plugins.json" ;;\n'
                 "esac\n"
                 "exit 0\n"
             )
@@ -474,6 +477,37 @@ class InstallTests(unittest.TestCase):
         log = self.log.read_text()
         self.assertIn("claude plugin update gh-stack@projector\n", log)
         self.assertNotIn("plugin install", log)
+
+    def test_a_changed_plugin_says_an_open_session_can_reload_it(self) -> None:
+        # Claude Code says to restart, though /reload-plugins loads the new
+        # version in a session that is already open.
+        reload = "reload         run /reload-plugins in an open Claude Code session"
+        for before, after in (([("projector@projector", "0.2.0"), ("gh-stack@projector", "0.2.1")],
+                               [("projector@projector", "0.3.0"), ("gh-stack@projector", "0.2.1")]),
+                              ([("projector@projector", "0.2.0"), ("gh-stack@projector", "0.2.0")],
+                               [("projector@projector", "0.2.0"), ("gh-stack@projector", "0.2.1")]),
+                              ([], [("projector@projector", "0.3.0"), ("gh-stack@projector", "0.2.1")])):
+            with self.subTest(before=before, after=after):
+                self.host_has("claude", marketplace="github", version="0", source="acme/projector")
+                for name, plugins in (("plugins", before), ("plugins-after", after)):
+                    (self.state / f"claude-{name}.json").write_text(
+                        json.dumps([{"id": plugin, "version": version} for plugin, version in plugins]))
+
+                result = self.install("claude")
+
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertIn(reload, result.stdout)
+
+    def test_an_update_that_changes_no_plugin_says_nothing_about_reloading(self) -> None:
+        self.host_has("claude", marketplace="github", version="0.2.0", source="acme/projector")
+        plugins = json.loads((self.state / "claude-plugins.json").read_text())
+        plugins.append({"id": "gh-stack@projector", "version": "0.2.1"})
+        (self.state / "claude-plugins.json").write_text(json.dumps(plugins))
+
+        result = self.install("claude")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertNotIn("run /reload-plugins", result.stdout)
 
     def test_codex_installs_gh_stack_as_a_plugin_of_its_own(self) -> None:
         result = self.install("codex")
