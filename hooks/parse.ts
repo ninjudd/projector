@@ -269,7 +269,7 @@ export type Subscription = {
   /** Null for a line that reviews every pull request of the repository. */
   number: number | null
   role: SubscriptionRole
-  /** The model a `review` line reviews with; null for a `fix` line, and for a `!` line that names none. */
+  /** The model a `review` line reviews with; null for a `fix` line. */
   model: string | null
   isExcluded: boolean
 }
@@ -277,35 +277,48 @@ export type Subscription = {
 /** A pull request the session subscribes to, and the roles it holds on it. */
 export type Subscribed = { pr: TrackedPr; roles: SubscriptionRole[] }
 
-const SUBSCRIPTION = /^(!?)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#([1-9][0-9]*))?\s+(fix|review)(?=\s|$)(?:\s+(\S+))?/
+/** The daemon's `LINE` grammar: `fix`, optionally `auto`, or `review` with a model and a reviewer, and nothing after. */
+const SUBSCRIPTION =
+  /^(!?)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#([1-9][0-9]*))?\s+(?:fix(?:\s+(auto))?|review\s+(\S+)\s+[A-Za-z0-9-]+)$/
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 
 /**
- * Reads a session's `subscriptions` file: `owner/repo#N fix`, optionally
- * followed by `auto`, `owner/repo#N review <model> <reviewer>`,
- * `owner/repo review <model> <reviewer>`, and any of them behind `!` to keep
- * the pull request out of that role. Lines of any other shape are skipped.
+ * The reviewer a model ID names, as the daemon compares models: the ID
+ * lowercased, without a trailing bracketed variant such as `[1m]`, so one
+ * model at another context window is the same reviewer.
+ */
+export const modelIdentityOf = (model: string) => model.toLowerCase().replace(/\[[^[\]]*\]$/, '')
+
+/**
+ * Reads a session's `subscriptions` file as the daemon reads it:
+ * `owner/repo#N fix`, optionally followed by `auto`,
+ * `owner/repo#N review <model> <reviewer>`, and
+ * `owner/repo review <model> <reviewer>`, with a pull request's `fix` or
+ * `review` line behind `!` to keep the pull request out of that role. The
+ * daemon skips a line of any other shape, so the panel skips it too.
  */
 export function parseSubscriptions(text: string): Subscription[] {
   return text.split('\n').flatMap(line => {
     const match = SUBSCRIPTION.exec(line.trim())
     if (match === null) return []
-    const [, bang, repo, number, role, word] = match as unknown as [
+    const [, bang, repo, number, auto, model] = match as unknown as [
       string,
       string,
       string,
       string | undefined,
-      SubscriptionRole,
+      string | undefined,
       string | undefined,
     ]
-    if (role === 'fix' && number === undefined) return []
+    const isExcluded = bang === '!'
+    if (model === undefined && (number === undefined || (isExcluded && auto !== undefined))) return []
+    if (model !== undefined && isExcluded && number === undefined) return []
     return [
       {
         repo,
         number: number === undefined ? null : Number(number),
-        role,
-        model: role === 'review' ? (word ?? null) : null,
-        isExcluded: bang === '!',
+        role: model === undefined ? 'fix' : 'review',
+        model: model ?? null,
+        isExcluded,
       },
     ]
   })
@@ -315,29 +328,38 @@ export function parseSubscriptions(text: string): Subscription[] {
  * The pull requests a session subscribes to, in the order its lines name
  * them, then those its repository subscriptions adopted, each once with the
  * roles it holds. A `!` line takes the pull request out of that role, and for
- * `review` out of that model, wherever the line sits; one naming no model
- * takes it out of every model.
+ * `review` out of that model, wherever the line sits. An adopted pull request
+ * stays only while a repository line of the session reviews it with a model no
+ * `!` line names, as the daemon decides, so a dismissed one goes at once
+ * rather than when the daemon's next pass rewrites `adopted`.
  */
 export function subscribedOf(lines: readonly Subscription[], adopted: readonly TrackedPr[]): Subscribed[] {
-  const keyOfLine = (line: Subscription) => `${line.repo}#${line.number ?? ''}`.toLowerCase()
-  const isExcluded = (line: Subscription) =>
-    lines.some(
-      one =>
-        one.isExcluded &&
-        one.role === line.role &&
-        keyOfLine(one) === keyOfLine(line) &&
-        (one.model === null || one.model === line.model),
-    )
+  const roleOf = (line: Subscription) => (line.model === null ? line.role : `review ${modelIdentityOf(line.model)}`)
+  const claimOf = (pr: TrackedPr, role: string) => `${keyOf(pr)} ${role}`
+  const excluded = new Set(
+    lines.flatMap(line =>
+      line.isExcluded && line.number !== null ? [claimOf({ repo: line.repo, number: line.number }, roleOf(line))] : [],
+    ),
+  )
+  const live = lines.filter(line => !line.isExcluded)
 
   const found = new Map<string, Subscribed>()
   const add = (pr: TrackedPr, role: SubscriptionRole) => {
     const was = found.get(keyOf(pr)) ?? { pr, roles: [] }
     found.set(keyOf(pr), was.roles.includes(role) ? was : { ...was, roles: [...was.roles, role] })
   }
-  for (const line of lines) {
-    if (line.number !== null && !line.isExcluded && !isExcluded(line)) add({ repo: line.repo, number: line.number }, line.role)
+  for (const line of live) {
+    if (line.number === null) continue
+    const pr = { repo: line.repo, number: line.number }
+    if (!excluded.has(claimOf(pr, roleOf(line)))) add(pr, line.role)
   }
-  for (const pr of adopted) add(pr, 'review')
+  const repositories = live.filter(line => line.number === null)
+  for (const pr of adopted) {
+    const isReviewed = repositories.some(
+      line => line.repo.toLowerCase() === pr.repo.toLowerCase() && !excluded.has(claimOf(pr, roleOf(line))),
+    )
+    if (isReviewed) add(pr, 'review')
+  }
   return [...found.values()]
 }
 

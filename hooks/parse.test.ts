@@ -283,7 +283,7 @@ describe('isPushCommand', () => {
 })
 
 describe('subscriptions', () => {
-  test('reads each line of the grammar and skips any other', () => {
+  test('reads each line of the grammar and skips any other, as the daemon does', () => {
     const text = [
       'acme/app#12 fix',
       'acme/app#13 fix auto',
@@ -293,6 +293,15 @@ describe('subscriptions', () => {
       '!acme/app#12 fix',
       'acme/app fix',
       'acme/app#16 fixer',
+      'acme/app#16 fix later',
+      'acme/app#16 fix auto now',
+      '!acme/app#16 fix auto',
+      'acme/app#17 review',
+      'acme/app#17 review claude-opus-5-5',
+      'acme/app#17 review claude-opus-5-5 octo_cat',
+      'acme/app#17 review claude-opus-5-5 octocat now',
+      '!acme/app#17 review',
+      '!acme/app review claude-opus-5-5 octocat',
       'not a line',
       '',
     ].join('\n')
@@ -317,18 +326,37 @@ describe('subscriptions', () => {
         'acme/app#14 review claude-sonnet-5 octocat',
         '!acme/app#14 review claude-opus-5-5 octocat',
         'acme/app#15 review claude-opus-5-5 octocat',
-        '!acme/app#15 review',
-        'acme/app review claude-opus-5-5 octocat',
+        '!acme/app#15 review Claude-Opus-5-5[1m] octocat',
+        'acme/app review claude-opus-5-5[1m] octocat',
+        '!acme/app#21 review claude-opus-5-5 octocat',
       ].join('\n'),
     )
     const adopted = [
       { repo: 'acme/app', number: 13 },
       { repo: 'acme/app', number: 20 },
+      { repo: 'acme/app', number: 21 },
+      { repo: 'x/y', number: 3 },
     ]
     expect(subscribedOf(lines, adopted)).toEqual([
       { pr: { repo: 'acme/app', number: 13 }, roles: ['fix', 'review'] },
-      // One model's exclusion leaves another model's review, and one that names no model excludes every model.
+      // One model's exclusion leaves another model's review. Models compare as the daemon compares them, in
+      // lowercase and without a context-window variant, so #15's `!` line takes it out.
       { pr: { repo: 'acme/app', number: 14 }, roles: ['review'] },
+      // A `!` line takes an adopted pull request out before the daemon's next pass drops it from `adopted`, and
+      // one adopted for a repository no line reviews any longer goes too.
+      { pr: { repo: 'acme/app', number: 20 }, roles: ['review'] },
+    ])
+  })
+
+  test('keeps an adopted pull request that one model of the repository still reviews', () => {
+    const lines = parseSubscriptions(
+      [
+        'acme/app review claude-opus-5-5 octocat',
+        'acme/app review claude-sonnet-5 octocat',
+        '!acme/app#20 review claude-opus-5-5 octocat',
+      ].join('\n'),
+    )
+    expect(subscribedOf(lines, [{ repo: 'acme/app', number: 20 }])).toEqual([
       { pr: { repo: 'acme/app', number: 20 }, roles: ['review'] },
     ])
   })

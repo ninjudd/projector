@@ -1005,3 +1005,9 @@ Building the daemon settled these choices, which the design above left open.
   `$.process.run`, and does not wait for it.
 - **A loading row.** A pull request with no cache file yet shows no state,
   author, or age, and its drawer names only its roles.
+- **Reading the subscriptions as the daemon does.** The panel parses the
+  `subscriptions` file with the daemon's `LINE` grammar and compares models
+  by `review.identity`. It keeps an adopted pull request only while one of
+  the session's repository lines reviews it with a model that no `!` line
+  names, so a dismissed pull request leaves at once rather than after the
+  daemon's next pass rewrites `adopted`.

@@ -4988,6 +4988,36 @@ test('dismiss drops a pull request from each role the session holds and from an 
   await ui.unmount()
 })
 
+test('dismissing a pull request the daemon adopted takes its line away at once, before the daemon’s next pass', async ($, on) => {
+  // The repository line names the model with a context-window variant, and the drop names it without one: the
+  // daemon takes both for one reviewer, and so does the panel.
+  const session = watchWorld(on, {
+    files: {
+      [SUBSCRIPTIONS]: `o/r review ${MODEL}[1m] ${VIEWER}\n`,
+      [STATE]: JSON.stringify({ adopted: { 'o/r': [1, 11] } }),
+      ...cached('o/r', given('o/r', 1)),
+      ...cached('o/r', given('o/r', 11)),
+    },
+  })
+  await begin($, session.clock)
+
+  const ui = await $.ui.mount(PANEL)
+  expect(await rowsOf(ui)).toEqual(['pr:o/r#1', 'pr:o/r#11'])
+  await ui.press({ key: 'pr:o/r#11' })
+  await ui.press({ key: 'dismiss:o/r#11' })
+  await ui.press({ key: 'confirm:o/r#11' })
+  await session.clock.settle()
+
+  // The daemon's state still lists #11 as adopted, as it does until its next pass.
+  expect(session.project().filter(command => command.startsWith('watch drop'))).toEqual([
+    'watch drop o/r#11 --role review --session s1',
+  ])
+  expect(session.files[STATE]).toContain('11')
+  expect(session.toasts).toEqual(['projector: stopped reviewing o/r#11'])
+  expect(await rowsOf(ui)).toEqual(['pr:o/r#1'])
+  await ui.unmount()
+})
+
 test('a drop the CLI refuses says why and keeps the line', async ($, on) => {
   const busy = `another command holds ${SUBSCRIPTIONS}.lock; try again once it finishes`
   const session = watchWorld(on, {
