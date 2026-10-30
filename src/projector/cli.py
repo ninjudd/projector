@@ -23,7 +23,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import inbox, instructions, loop, permissions, review, site, summary
+from . import inbox, instructions, loop, permissions, review, site, summary, watch
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
@@ -311,7 +311,7 @@ def cached_release(path: Path, url: str) -> tuple[float, Optional[str]]:
 def record_release(path: Path, url: str, version: Optional[str]) -> bool:
     """Cache `version` as checked now, and say whether the cache could be written."""
 
-    # Parallel commands, such as a review loop's subagents, write this at
+    # Parallel commands, such as a session's reviewer subagents, write this at
     # once, so each writes its own file and renames it into place.
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -503,7 +503,7 @@ def parser() -> argparse.ArgumentParser:
         "set", help="set one value in one configuration file", parents=[root_option]
     )
     config_set.add_argument("key", help="a key Projector reads, for example watch.auto_start")
-    config_set.add_argument("value", help="true or false, or text, as the key takes")
+    config_set.add_argument("value", help="true or false, a whole number, or text, as the key takes")
     add_config_file(config_set)
     add_output(config_set)
 
@@ -655,7 +655,7 @@ def parser() -> argparse.ArgumentParser:
                              "later: default the review set up for this pull request)")
         command.add_argument("--state-dir", type=Path,
                              help="where review state and locks live (default: $XDG_STATE_HOME/projector/reviews)")
-        command.add_argument("--loop", help="the review loop's id, which keys its record of published reviews")
+        command.add_argument("--loop", help="the reviewing session's id, which keys its record of published reviews")
         add_output(command)
     review_setup.add_argument("--checkout", type=Path,
                               help="the source checkout to fetch into (default: the repository containing "
@@ -701,6 +701,7 @@ def parser() -> argparse.ArgumentParser:
 
     add_inbox_parser(subcommands)
     add_loop_parser(subcommands)
+    add_watch_parser(subcommands)
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
@@ -966,6 +967,201 @@ def run_loop(arguments: argparse.Namespace) -> int:
         print(json_text({"action": action if changed else "unchanged", "pr": reference, "tracked": str(tracked)}))
     else:
         print(changed_text if changed else unchanged_text)
+    return 0
+
+
+def add_watch_parser(subcommands) -> None:
+    parser = subcommands.add_parser("watch", help="subscribe the session to the pull requests it fixes and reviews, "
+                                                   "and deliver what the watch daemon finds on them")
+    commands = parser.add_subparsers(dest="watch_command", required=True)
+
+    def command(name: str, help_text: str, session: bool = True) -> argparse.ArgumentParser:
+        parsed = commands.add_parser(name, help=help_text)
+        if session:
+            parsed.add_argument("--session", help="the session's id (default: $PROJECTOR_SESSION, then "
+                                                  "$CLAUDE_CODE_SESSION_ID)")
+        return parsed
+
+    def roles(parsed: argparse.ArgumentParser) -> None:
+        parsed.add_argument("--role", choices=("fix", "review"), default="fix", help="the role (default: fix)")
+        parsed.add_argument("--model", help="for review, the model ID the session reviews with")
+
+    add = command("add", "subscribe the session to fix or review a pull request, or to review a repository's")
+    add.add_argument("target", nargs="?", help="owner/repo#number, a pull request URL, or, for review, owner/repo")
+    add.add_argument("--from-output", metavar="FILE",
+                     help="subscribe to fix each pull request that a command's output shows it opened or pushed to; "
+                          "- reads standard input")
+    roles(add)
+    add.add_argument("--reviewer", help="for review, the login the reviews post as (default: review.username, then "
+                                        "the account gh is signed in as)")
+    add_output(add)
+    for name, help_text in (("remove", "end the session's subscription, and leave its exclusions"),
+                            ("drop", "keep the pull request out of the role for this session"),
+                            ("restore", "let a dropped pull request back into the role for this session")):
+        changed = command(name, help_text)
+        changed.add_argument("target", help="owner/repo#number or a pull request URL, or owner/repo for remove "
+                                            "--role review")
+        roles(changed)
+        add_output(changed)
+    add_output(command("list", "list subscriptions, whether each session is live, and which roles it owns: the "
+                               "session's, or every session's without one"))
+    add_output(command("take", "print and clear the session's events, and renew the session"))
+    renew = command("renew", "mark the session live")
+    renew.add_argument("--deliverer", required=True, choices=watch.DELIVERERS,
+                       help="what delivers the session's events: Projector's mod, or `project watch stream`")
+    command("stream", "renew the session and print each event as it arrives, until stopped")
+    add_output(command("status", "report the watch daemon, its live sessions and targets, its last pass, and the "
+                                 "GraphQL points it spent in the last hour", session=False))
+    command("serve", "run the watch daemon; every other watch command starts it", session=False)
+    command("stop", "ask the watch daemon to exit", session=False)
+
+
+def here_config():
+    return load_config(config_start(argparse.Namespace(root=None)))
+
+
+def watch_reviewer(explicit: Optional[str]) -> str:
+    configured = here_config().setting("review.username")
+    operator = "" if explicit or configured else review.authenticated_login()
+    reviewer = review.reviewer_login(explicit, configured, operator)
+    if not re.fullmatch(r"[A-Za-z0-9-]+", reviewer):
+        raise UsageError(f"{reviewer!r} is not a GitHub login")
+    return reviewer
+
+
+def watch_subscription(arguments: argparse.Namespace, repo: str, number: Optional[int]) -> watch.Subscription:
+    if arguments.role == "fix":
+        if number is None:
+            raise UsageError(f"{repo} is a repository; a session fixes a pull request, as owner/repo#number")
+        if arguments.model or arguments.reviewer:
+            raise UsageError("--model and --reviewer go with --role review")
+        return watch.Subscription(repo, number, "fix")
+    if not arguments.model:
+        raise UsageError("--role review needs --model, the model ID the session reviews with")
+    review.model_key(arguments.model)
+    return watch.Subscription(repo, number, "review", arguments.model, watch_reviewer(arguments.reviewer))
+
+
+def watch_delivery(root: Path, session: str) -> tuple[str, str]:
+    way = watch.delivery(root, session, time.time())
+    if way != "none":
+        return way, f"events: {way}"
+    return way, (f"events: none — start `project watch stream --session {session}` under your host's monitor "
+                 "facility")
+
+
+def report_added(root: Path, session: str, added: list[str], json_output: bool, unchanged: str) -> None:
+    way, line = watch_delivery(root, session)
+    if json_output:
+        print(json_text({"added": added, "delivery": way}))
+        return
+    for written in added:
+        print(f"added {written}")
+    if not added:
+        print(unchanged)
+    print(line)
+
+
+def run_watch(arguments: argparse.Namespace) -> int:
+    root = watch.state_root()
+    command = arguments.watch_command
+    version = distribution_version()
+    json_output = getattr(arguments, "json_output", False)
+    if command == "serve":
+        return watch.serve(root, version)
+    if command == "stop":
+        pid = watch.stop_daemon(root)
+        print(f"stopped the watch daemon {pid}" if pid else "no watch daemon is running")
+        return 0
+    started = watch.ensure_daemon(root, version, newer_release)
+    if command == "status":
+        report = {"daemon": started, **watch.status(root, time.time())}
+        if json_output:
+            print(json_text(report))
+        else:
+            state = "starting" if started != "running" else (
+                f"running, pid {report['pid']}, version {report['version']}, started {report['started_at']}, "
+                f"operator {report['operator'] or 'unknown'}")
+            print(f"daemon: {state}")
+            print(f"live sessions: {', '.join(report['live_sessions']) or 'none'}")
+            print(f"targets: {', '.join(report['targets']) or 'none'}")
+            print(f"repositories: {', '.join(report['repositories']) or 'none'}")
+            print(f"last pass: {report['last_pass'] or 'none yet'}")
+            print(f"GraphQL points in the last hour: {report['graphql_points_last_hour']}")
+        return 0
+    session = watch.session_id(arguments.session, required=command != "list")
+    if command == "list":
+        rows = watch.listing(root, session)
+        if json_output:
+            print(json_text({"subscriptions": rows}))
+        for row in [] if json_output else rows:
+            if row["excluded"]:
+                owns = "excluded"
+            elif "owner" in row:
+                owns = "owner" if row["owner"] else "not owner"
+            else:
+                owns = f"owns {', '.join(f'#{number}' for number in row['owns'])}" if row["owns"] else "owns none"
+            columns = [row["line"], "live" if row["live"] else "lapsed", owns]
+            print("\t".join(columns if session else [row["session"], *columns]))
+    elif command == "add":
+        if (arguments.target is None) == (arguments.from_output is None):
+            raise UsageError("`project watch add` takes a target or --from-output, and not both")
+        if arguments.from_output is not None:
+            text = (sys.stdin.read() if arguments.from_output == "-"
+                    else Path(arguments.from_output).read_text(encoding="utf-8", errors="replace"))
+            if here_config().setting("watch.auto_start") is False:
+                report_added(root, session, [], json_output,
+                             "watch.auto_start is false, so the output subscribes the session to nothing")
+                return 0
+            added, problems = watch.add_from_output(root, session, text)
+            for problem in problems:
+                print(f"project: {problem}", file=sys.stderr)
+            report_added(root, session, added, json_output, "the output shows no new pull request to fix")
+            return 0
+        repo, number = watch.parse_target(arguments.target)
+        wanted = watch_subscription(arguments, repo, number)
+        line = watch.add(root, session, wanted)
+        report_added(root, session, [line] if line else [], json_output,
+                     f"the session already subscribes to {wanted.target} {wanted.role}")
+    elif command in ("remove", "drop", "restore"):
+        repo, number = watch.parse_target(arguments.target)
+        if number is None and (command != "remove" or arguments.role == "fix"):
+            raise UsageError(f"{repo} is a repository; name a pull request, as owner/repo#number")
+        if arguments.model:
+            review.model_key(arguments.model)
+        if command == "drop":
+            reviewer = None
+            if arguments.role == "review" and arguments.model:
+                covering = watch.reviewed_models(watch.subscriptions(watch.session_folder(root, session)), repo,
+                                                 number)
+                if review.identity(arguments.model) not in covering:
+                    reviewer = watch_reviewer(None)
+            changed = watch.drop(root, session, repo, number, arguments.role, arguments.model, reviewer)
+        else:
+            changed = watch.remove(root, session, repo, number, arguments.role, arguments.model,
+                                   excluded=command == "restore")
+        done = {"remove": "removed", "drop": "dropped", "restore": "restored"}[command]
+        if json_output:
+            print(json_text({done: changed}))
+        for line in [] if json_output else changed:
+            print(f"{done} {line}")
+        if not changed and not json_output:
+            print(f"unchanged: the session had nothing to {command} for {arguments.target} {arguments.role}")
+    elif command == "take":
+        events = watch.take(root, session, time.time())
+        if json_output:
+            print(json_text({"session": session, "events": events}))
+        for line in [] if json_output else events:
+            print(line)
+    elif command == "renew":
+        watch.renew(root, session, arguments.deliverer, time.time())
+        print(f"renewed {session}")
+    elif command == "stream":
+        try:
+            watch.stream(root, session, lambda line: print(line, flush=True),
+                         lambda: watch.ensure_daemon(root, version, newer_release))
+        except KeyboardInterrupt:
+            pass
     return 0
 
 
@@ -1346,10 +1542,11 @@ def run_review(arguments: argparse.Namespace) -> int:
     else:
         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
         if command == "census":
-            # Every model's threads are counted alike, so the model a loop passes is only checked.
+            # Every model's threads are counted alike, so the model a loop passes only picks the review whose
+            # lock census touches, a lookup that refuses nothing, and is checked here.
             if arguments.model is not None:
                 review.model_key(arguments.model)
-            result = review.census(repo, arguments.pr)
+            result = review.census(repo, arguments.pr, root, arguments.model, loop)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:
@@ -1366,11 +1563,12 @@ def run_review(arguments: argparse.Namespace) -> int:
             return 0
         paths = review.review_paths(root, repo, arguments.pr, arguments.model)
         if command == "settle":
-            result = review.settle(paths, arguments.thread, arguments.result, arguments.body)
+            result = review.settle(paths, arguments.thread, arguments.result, arguments.body, loop)
             print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.settle_lines(result)))
             return 0
         if command == "interdiff":
             state = review.read_state(paths)
+            review.touch_head(paths, state, loop)
             enabled = incremental_enabled(Path(state["checkout"]))
             result = review.incremental_rules(root, state, loop if loop is not None else state.get("loop"), enabled)
             if arguments.json_output:
@@ -1416,7 +1614,7 @@ def run_review(arguments: argparse.Namespace) -> int:
             except ProjectorError:
                 configured = None
             result = review.gate(paths, configured if isinstance(configured, str) else None,
-                                 output_to_stderr=arguments.json_output)
+                                 output_to_stderr=arguments.json_output, loop=loop)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:
@@ -2139,6 +2337,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_inbox(arguments)
     if arguments.command == "loop":
         return run_loop(arguments)
+    if arguments.command == "watch":
+        return run_watch(arguments)
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.

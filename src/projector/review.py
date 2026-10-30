@@ -15,13 +15,21 @@ under its model key. Layout of the state directory:
     prs/<owner>/<repo>/<pr>/<model-key>/state.json         the review's state
     prs/<owner>/<repo>/<pr>/<model-key>/<sha>.lock         the lock a review holds from setup until publish
     prs/<owner>/<repo>/<pr>/<model-key>/review.json        the review publish is submitting
+    prs/<owner>/<repo>/<pr>/.lock                          the mutex a lock is checked or cleared under
     worktrees/<owner>/<repo>/<pr>/<model-key>/<short-sha>  scratch worktrees, never inside the checkout
     loops/<id>/published.json                              a loop's record of the review ids it published
+    loops/<id>/.lock                                       the mutex a record is written under
 
 A review keeps one scratch worktree, its current head's: `setup` and `move` remove the worktrees of the
 model's earlier heads of the pull request, `finish` removes the last, and `prune` sweeps what none of
 them reached, such as the `worktrees/<owner>/<repo>/<pr>/<short-sha>` folders made before each model kept
 its own.
+
+`setup`, `census`, `settle`, `move`, `gate`, and `publish` touch the head's lock as they run, and so does
+`project review interdiff` through `touch_head`, so the lock's modification time is the review's last sign
+of progress, which the watch daemon reads to find a stalled review. The daemon hands a stalled or lapsed
+review to another loop by clearing its lock, so `settle`, `move`, and `publish` refuse once the lock no
+longer names their loop, and `publish` checks again before it writes the state and releases the lock.
 """
 
 from __future__ import annotations
@@ -34,13 +42,14 @@ import shutil
 import socket
 import subprocess
 from collections import Counter
-from contextlib import suppress
+from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from .core import ProjectorError, distribution_version
+from .inbox import SESSION, locked, write_json
 from .summary import repo_slug
 
 FINDING_MARKER = "projector-finding"
@@ -55,7 +64,8 @@ MARK = "📽️"
 SHORT = 12
 SHORT_SHA = re.compile(r"^[0-9a-f]{12}$")
 STALE_AFTER = timedelta(days=1)
-LOOP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# Seconds between a running gate's touches of its lock, well inside the stall the watch daemon allows.
+TOUCH_EVERY = 60
 # A trailing bracketed variant of a model ID, such as the context window in `claude-opus-5-5[1m]`.
 VARIANT = re.compile(r"\[[^\[\]]*\]$")
 
@@ -261,9 +271,9 @@ def ensure_loop(root: Path, loop: Optional[str]) -> None:
     if loop is None:
         return
     record = loop_record(root, loop)
-    if not record.exists():
-        record.parent.mkdir(parents=True, exist_ok=True)
-        record.write_text("[]\n", encoding="utf-8")
+    with locked(record.parent):
+        if not record.exists():
+            write_json(record, [])
 
 
 def stored_state(paths: Paths) -> Optional[dict]:
@@ -348,7 +358,137 @@ def release(paths: Paths) -> list[Path]:
     return released
 
 
-def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False) -> dict:
+@dataclass
+class ReviewLock:
+    """A review's lock as the watch daemon reads it: the head it holds, the loop it names, and when a review
+    command last touched it."""
+
+    path: Path
+    repo: str
+    number: int
+    model_key: str
+    sha: str
+    loop: Optional[str]
+    modified: float
+
+
+def read_lock(path: Path) -> Optional[ReviewLock]:
+    """The lock at `path`, `prs/<owner>/<repo>/<pr>/<model-key>/<sha>.lock`, or None when it is gone. A lock that
+    does not parse, as one read while `take_lock` writes it, names no loop."""
+    try:
+        text = path.read_text(encoding="utf-8")
+        modified = path.stat().st_mtime
+    except FileNotFoundError:
+        return None
+    try:
+        held = json.loads(text)
+    except ValueError:
+        held = None
+    loop = held.get("loop") if isinstance(held, dict) else None
+    folder = path.parent
+    return ReviewLock(path, f"{folder.parents[2].name}/{folder.parents[1].name}", int(folder.parent.name),
+                      folder.name, path.stem, loop if isinstance(loop, str) else None, modified)
+
+
+def touch(lock: Path) -> None:
+    with suppress(FileNotFoundError):
+        os.utime(lock)
+
+
+def touch_head(paths: Paths, state: dict, loop: Optional[str]) -> None:
+    """Touch the lock on the state's head while it names `loop`, or the state's loop when `loop` is None, as a
+    command that refuses nothing over the lock does, so it keeps no other loop's review alive."""
+    lock = read_lock(paths.lock(state["sha"]))
+    if lock is not None and lock.loop == (loop if loop is not None else state.get("loop")):
+        touch(lock.path)
+
+
+def review_mutex(folder: Path) -> AbstractContextManager[None]:
+    """The inbox's lock on the pull request's folder, held to check a model's review lock before a write and to
+    clear one. It sits above the models' folders, where a `.lock` would match the `*.lock` that finds heads."""
+    return locked(folder.parent)
+
+
+def loop_name(loop: Optional[str]) -> str:
+    return f"loop {loop}" if loop else "no loop"
+
+
+def check_lock(paths: Paths, sha: str, loop: Optional[str], submitted: Optional[int] = None) -> Optional[ReviewLock]:
+    """The lock on `sha`, touched so that its modification time shows the review making progress, or None when a
+    review run outside a loop holds none. Refuses when the lock names another loop than `loop`, or is gone from a
+    loop's review: the watch daemon handed the review over, and its state and lock are the new owner's. Call it
+    under `review_mutex`, which `clear_lock` holds too, and pass the review a `publish` already `submitted`."""
+    lock = read_lock(paths.lock(sha))
+    if lock is None and loop is None:
+        return None
+    if lock is None or lock.loop != loop:
+        why = ("its lock is gone" if lock is None
+               else f"its lock names {loop_name(lock.loop)}, and this command runs in {loop_name(loop)}")
+        after = f" after review {submitted} was submitted" if submitted is not None else ""
+        raise ReviewError(f"the review of {paths.repo}#{paths.number} at {sha[:7]} by model {paths.model} was handed "
+                          f"over to another loop{after}: {why}; stop and report this rather than running "
+                          "`project review setup` again")
+    touch(lock.path)
+    return lock
+
+
+def fence(paths: Paths, sha: str, loop: Optional[str]) -> Optional[ReviewLock]:
+    """`check_lock` under `review_mutex`, as `settle`, `move`, and `publish` run it first."""
+    with review_mutex(paths.folder):
+        return check_lock(paths, sha, loop)
+
+
+def review_locks(repo: str, number: int, root: Optional[Path] = None) -> list[ReviewLock]:
+    """Every review lock on this machine for the pull request, across models. `repo` matches without regard to
+    case, as the watch daemon's subscriptions do, and each lock names the repository as its folder spells it."""
+    prs = (state_dir() if root is None else root) / "prs"
+    locks = []
+    for folder in sorted(prs.glob(f"*/*/{number}")) if prs.is_dir() else []:
+        if f"{folder.parents[1].name}/{folder.parent.name}".lower() != repo.lower():
+            continue
+        for path in sorted(folder.glob("*/*.lock")):
+            lock = read_lock(path)
+            if lock is not None:
+                locks.append(lock)
+    return locks
+
+
+def clear_lock(lock: ReviewLock) -> None:
+    """Remove the lock, as the watch daemon does to hand a review over; a lock already gone is fine, and so is one
+    another loop took since it was read, which stays. A `publish` checking the lock under `review_mutex` either
+    finishes its writes first or finds the lock gone."""
+    with review_mutex(lock.path.parent):
+        found = read_lock(lock.path)
+        if found is not None and found.loop == lock.loop:
+            lock.path.unlink(missing_ok=True)
+
+
+def copy_published(source_loop: str, target_loop: str, repo: str, number: int,
+                   root: Optional[Path] = None) -> int:
+    """Copy the pull request's entries from one loop's record into another's, skipping any review_id already
+    there, under projector.inbox.locked on each record's folder. Returns how many entries it copied.
+
+    The target keeps its entries in the order they were published, because `incremental_rules` reads the
+    pull request's last entry as its newest."""
+    root = state_dir() if root is None else root
+    source, target = loop_record(root, source_loop), loop_record(root, target_loop)
+    if not source.is_file():
+        return 0
+    with locked(source.parent):
+        entries = [entry for entry in read_record(root, source_loop)
+                   if (entry.get("repo") or "").lower() == repo.lower() and entry.get("number") == number]
+    if not entries:
+        return 0
+    with locked(target.parent):
+        record = read_record(root, target_loop)
+        known = {entry.get("review_id") for entry in record}
+        copied = [entry for entry in entries if entry.get("review_id") not in known]
+        if copied:
+            write_json(target, sorted(record + copied, key=lambda entry: entry.get("published_at") or ""))
+    return len(copied)
+
+
+def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False, loop: Optional[str] = None) -> dict:
     """Run the repository's `review.gate` command in the review's scratch worktree.
 
     The command runs the head's code, so it runs only on a head the state file
@@ -360,8 +500,12 @@ def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False) -
     standard error instead when `output_to_stderr` is set, so a caller printing
     JSON keeps standard output for that alone. Its exit status, with the
     command and when it ran, is recorded in the state file and returned.
+    A gate can run for many minutes, so it touches the head's lock as it
+    starts, every `TOUCH_EVERY` seconds while the command runs, and as it
+    ends, as `touch_head` does for `loop`.
     """
     state = read_state(paths)
+    touch_head(paths, state, loop)
     if not state.get("trusted"):
         raise ReviewError(f"the head {state['sha'][:7]} of {state['repo']}#{paths.number} is untrusted "
                           f"({state.get('untrusted_because') or 'no reason recorded'}), so its code does not "
@@ -372,13 +516,29 @@ def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False) -
     worktree = Path(state["worktree"])
     environ = dict(os.environ, PROJECTOR_WORKTREE=str(worktree), PROJECTOR_BASE=state["base"])
     ran_at = now()
-    result = subprocess.run(["sh", "-c", command, "sh", str(worktree), state["base"]],
-                            cwd=worktree, env=environ, stdout=2 if output_to_stderr else None)
-    record = {"command": command, "exit_code": result.returncode, "sha": state["sha"],
-              "ran_at": ran_at.isoformat()}
+    process = subprocess.Popen(["sh", "-c", command, "sh", str(worktree), state["base"]],
+                               cwd=worktree, env=environ, stdout=2 if output_to_stderr else None)
+    exit_code = wait_touching(process, lambda: touch_head(paths, state, loop))
+    record = {"command": command, "exit_code": exit_code, "sha": state["sha"], "ran_at": ran_at.isoformat()}
     state["gate"] = record
     write_state(paths, state)
+    touch_head(paths, state, loop)
     return record
+
+
+def wait_touching(process: subprocess.Popen, touching: Callable[[], None]) -> int:
+    """Wait for `process`, calling `touching` every `TOUCH_EVERY` seconds while it runs, and kill it when the wait
+    is interrupted, as `subprocess.run` does."""
+    try:
+        while True:
+            try:
+                return process.wait(timeout=TOUCH_EVERY)
+            except subprocess.TimeoutExpired:
+                touching()
+    except BaseException:
+        process.kill()
+        process.wait()
+        raise
 
 
 # The pull request
@@ -617,7 +777,7 @@ def write_hold(repo: str, number: int, comment: Optional[int], changes: list[str
 
 def hold_add(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
     """Post the hold, or add `changes` to the newest one. Only once the comment reads back is the pull request
-    drafted: to the review loop, a draft on an unchanged head with no hold open is an author who answered
+    drafted: to the watch daemon, a draft on an unchanged head with no hold open is an author who answered
     without pushing."""
     number = pr["number"]
     if pr.get("state") != "open":
@@ -641,7 +801,7 @@ def hold_add(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
 def hold_drop(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
     """Remove `changes`, which the owner decided will not be built, from every hold comment of the author's
     that lists them, and delete a comment left with none. The hold ends only once no comment is left, on a
-    head no push changed, which asks the review loop to re-review it."""
+    head no push changed, which asks the session reviewing it to re-review it."""
     number = pr["number"]
     if not held:
         raise ReviewError(f"{repo}#{number} has no hold open, so there is no change to drop")
@@ -696,14 +856,16 @@ def hold_lines(result: dict) -> list[str]:
                 f"{count} still listed: " + "; ".join(changes) + f"; {state}"]
     return [f"ended the hold on {where}, deleting hold comment {comment['id']}, which listed "
             + ("; ".join(changes) if changes else "no change"),
-            f"the review loop reviews {head} next, and a clean verdict marks it ready; {state}"]
+            f"the session reviewing it reviews {head} next, and a clean verdict marks it ready; {state}"]
 
 
 # Resolving which review a command means
 
 def valid_loop(loop: Optional[str]) -> Optional[str]:
-    if loop is not None and not LOOP_ID.match(loop):
-        raise ReviewError(f"--loop {loop!r} is not a usable id; use letters, digits, '.', '_' and '-'")
+    """`loop`, refused unless it is a session id, since the watch daemon passes a session's id as the loop."""
+    if loop is not None and not SESSION.match(loop):
+        raise ReviewError(f"--loop {loop!r} is not a usable id; use up to 128 letters, digits, '.', '_' and '-', "
+                          "starting with a letter or digit")
     return loop
 
 
@@ -818,6 +980,7 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
         "heads": 1,
     }
     write_state(paths, state)
+    touch(lock)
     return dict(state, removed=removed)
 
 
@@ -858,12 +1021,14 @@ def delete_comment(repo: str, comment: int, token: Optional[str] = None) -> None
 def move(paths: Paths, loop: Optional[str]) -> dict:
     number = paths.number
     state = read_state(paths)
+    loop = loop if loop is not None else state.get("loop")
+    fence(paths, state["sha"], loop)
     checkout = Path(state["checkout"])
     pr = pull_request(state["repo"], number)
     sha, old = pr["head"]["sha"], state["sha"]
     if sha == old:
         raise ReviewError(f"the head of {state['repo']}#{number} is still {old[:7]}; there is nothing to move")
-    lock = take_lock(paths, sha, loop if loop is not None else state.get("loop"))
+    lock = take_lock(paths, sha, loop)
     try:
         merge_base = fetch_head(checkout, state["repo"], pr)
         worktree = paths.worktree(sha)
@@ -889,6 +1054,7 @@ def move(paths: Paths, loop: Optional[str]) -> dict:
                  cross_repository=((pr["head"].get("repo") or {}).get("full_name")) != state["repo"],
                  heads=state["heads"] + 1, worktrees=kept + [str(worktree)])
     write_state(paths, state)
+    touch(lock)
     return dict(state, removed=removed)
 
 
@@ -1233,9 +1399,27 @@ THREADS_QUERY = """query($o:String!,$r:String!,$n:Int!,$after:String){ repositor
       comments(first:50){ nodes{ databaseId body } } } } } } }"""
 
 
-def census(repo: str, number: int) -> dict:
+def touch_review(root: Path, repo: str, number: int, model: Optional[str], loop: Optional[str]) -> None:
+    """`touch_head` for this machine's review of the pull request by `model`, or by the one model with a review set
+    up here when `model` is None. Several models set up and no `model`, or no review at all, touch nothing, since
+    census needs none."""
+    try:
+        found = find_model(root, repo, number, model)
+        paths = Paths(root, repo, number, found) if found else None
+        state = stored_state(paths) if paths else None
+    except (ReviewError, ValueError):
+        return
+    if paths is not None and state is not None:
+        touch_head(paths, state, loop)
+
+
+def census(repo: str, number: int, root: Optional[Path] = None, model: Optional[str] = None,
+           loop: Optional[str] = None) -> dict:
     """Every Projector finding thread on the pull request, read to the last page, with its
-    replies, so the review can verify and settle each one from this one list."""
+    replies, so the review can verify and settle each one from this one list. Given the review
+    state directory `root`, it first touches the lock of `model`'s review, as `touch_review` says."""
+    if root is not None:
+        touch_review(root, repo, number, model, loop)
     owner, name = repo.split("/", 1)
     threads, after = [], None
     while True:
@@ -1329,14 +1513,15 @@ def reply_text(body_path: Path) -> str:
     return text
 
 
-def settle(paths: Paths, thread: str, result: str, body_path: Path) -> dict:
+def settle(paths: Paths, thread: str, result: str, body_path: Path, loop: Optional[str] = None) -> dict:
     """`review settle`: as the reviewer, reply on a finding thread with the verify marker filled from the
     review's state, resolve or unresolve the thread as `result` asks, and read both back. A reply already
     carrying the same marker as the thread's last comment is not posted again, so a run that stopped after
-    replying finishes when it runs again."""
+    replying finishes when it runs again. `loop`, or else the review's own, must be the one its lock names."""
     if result not in SETTLED:
         raise ReviewError(f"--result must be one of {', '.join(SETTLED)}, not {result}")
     state = read_state(paths)
+    fence(paths, state["sha"], loop if loop is not None else state.get("loop"))
     repo, number = state["repo"], state["number"]
     text = reply_text(body_path)
     marker = verify_marker(result, state["sha"], state["model"])
@@ -1522,7 +1707,7 @@ def incremental_rules(root: Path, state: dict, loop: Optional[str], enabled: boo
         if not enabled:
             raise Refused("review.incremental is false")
         if loop is None:
-            raise Refused("no review loop runs this review, so it has no full review of its own to build on")
+            raise Refused("this review runs in no loop, so it has no full review of its own to build on")
         if not state.get("trusted"):
             raise Refused(f"the head {sha[:7]} is untrusted ({state.get('untrusted_because') or 'no reason recorded'})")
         entries = [r for r in read_record(root, loop) if r.get("repo") == repo and r.get("number") == number]
@@ -2038,7 +2223,7 @@ def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:
     many `suggestions` stand with that review, as `with_full_review` finds them.
 
     One entry per account, not per model, because a reviewer is a model within an account: a teammate whose
-    loop runs the same model must not hide the verdict a review loop looks for as its own."""
+    session runs the same model must not hide the verdict a reviewing session looks for as its own."""
     newest: dict[tuple[str, str], tuple[dict, dict]] = {}
 
     def order(entry: dict) -> tuple[datetime, int]:
@@ -2262,7 +2447,9 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
             incremental: bool = False, enabled: bool = True) -> dict:
     """Submit the review, then re-read it, act on the head's newest verdict and its open finding
     threads, record, delete the start comment, and release the lock, in that order. Every refusal
-    leaves the lock held for this review to retry.
+    leaves the lock held for this review to retry, except the fence's: once the lock names another
+    loop, or a loop's lock is gone, the state and lock are the new owner's, so `publish` writes
+    neither, checking before each write of the state.
 
     Acting on the newest verdict sets a self-review's draft state. On another author's pull request a
     clean newest verdict with no finding open dismisses the reviewer's standing Projector change
@@ -2290,7 +2477,7 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
             raise ReviewError("--verdict must be clean or changes-requested" + (f", not {verdict}" if verdict else ""))
         if not re.fullmatch(r"\d+/\d+", covered or ""):
             raise ReviewError("--covered must be <files read>/<files changed>, such as 12/12")
-    if not paths.lock(sha).exists():
+    if fence(paths, sha, loop) is None:
         raise ReviewError(f"no review of {repo}#{number} at {sha[:7]} holds the lock; "
                           f"run `project review setup {number}` again")
     published = state.get("published")
@@ -2357,7 +2544,9 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
         # posting a second one.
         state["published"] = {"id": review_id, "sha": sha, "verdict": verdict, "event": event,
                               "from": incremental_from, "self": mine}
-        write_state(paths, state)
+        with review_mutex(paths.folder):
+            check_lock(paths, sha, loop, review_id)
+            write_state(paths, state)
     published = state["published"]
     token = reviewer_token(reviewer)
     read = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}"]) or {}
@@ -2392,21 +2581,23 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
                                   f"{newest['verdict']}, with {open_threads} open finding threads"
                                   f"{' and a hold open' if held else ''}; set it with `gh pr ready` and retry")
     if loop is not None:
-        record = read_record(root, loop)
-        if not any(r.get("review_id") == review_id for r in record):
-            # `base` is the merge base a later incremental review measures from; `from` marks an
-            # incremental review, which a later one never builds on.
-            record.append({"repo": repo, "number": number, "sha": sha, "review_id": review_id,
-                           "verdict": published["verdict"], "published_at": now().isoformat(),
-                           "base": state["base"], "from": published.get("from"), "model": state["model"]})
-            loop_record(root, loop).parent.mkdir(parents=True, exist_ok=True)
-            loop_record(root, loop).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        with locked(loop_record(root, loop).parent):
+            record = read_record(root, loop)
+            if not any(r.get("review_id") == review_id for r in record):
+                # `base` is the merge base a later incremental review measures from; `from` marks an
+                # incremental review, which a later one never builds on.
+                record.append({"repo": repo, "number": number, "sha": sha, "review_id": review_id,
+                               "verdict": published["verdict"], "published_at": now().isoformat(),
+                               "base": state["base"], "from": published.get("from"), "model": state["model"]})
+                write_json(loop_record(root, loop), record)
     comment = (state.get("start_comment") or {}).get("id")
     if comment:
         delete_comment(repo, comment, token)
         state["start_comment"] = None
-    write_state(paths, state)
-    paths.lock(sha).unlink(missing_ok=True)
+    with review_mutex(paths.folder):
+        check_lock(paths, sha, loop, review_id)
+        write_state(paths, state)
+        paths.lock(sha).unlink(missing_ok=True)
     return {"repo": repo, "number": number, "sha": sha, "review_id": review_id, "verdict": published["verdict"],
             "event": published["event"], "draft": draft_wanted, "dismissed": dismissed, "from": published.get("from"),
             "newest": newest, "open_threads": open_threads, "held": held}

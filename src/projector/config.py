@@ -60,7 +60,21 @@ SETTINGS: dict[str, type] = {
     "review.summarize": bool,
     "fix.resolve_human_threads": bool,
     "watch.auto_start": bool,
+    "watch.interval": int,
+    "watch.full_every": int,
+    "watch.renotify": int,
+    "watch.review_stall": int,
     "panel.background": str,
+}
+
+# The least value `project config set` accepts for each whole-number key. The
+# watch daemon reads a smaller `watch.interval` that a file sets by hand as this
+# minimum, so it never polls GitHub more often.
+MINIMUMS: dict[str, int] = {
+    "watch.interval": 30,
+    "watch.full_every": 1,
+    "watch.renotify": 1,
+    "watch.review_stall": 1,
 }
 
 
@@ -86,10 +100,16 @@ def setting_type(key: str) -> type:
 def parse_value(key: str, text: str) -> Any:
     """`text` from the command line as the type `key` takes."""
 
-    if setting_type(key) is bool:
+    kind = setting_type(key)
+    if kind is bool:
         if text not in ("true", "false"):
             raise UsageError(f"{key} must be true or false, not {text!r}")
         return text == "true"
+    if kind is int:
+        least = MINIMUMS[key]
+        if not re.fullmatch(r"[0-9]+", text) or int(text) < least:
+            raise UsageError(f"{key} must be a whole number of at least {least}, not {text!r}")
+        return int(text)
     try:
         text.encode("utf-8")
     except UnicodeEncodeError:
@@ -215,8 +235,9 @@ class Config:
 
         value = self.get(key)
         kind = SETTINGS[key]
-        if value is not None and not isinstance(value, kind):
-            expected = "true or false" if kind is bool else "a string"
+        # TOML reads `true` as a bool, which Python also counts as an int.
+        if value is not None and (not isinstance(value, kind) or (kind is int and isinstance(value, bool))):
+            expected = {bool: "true or false", int: "a whole number"}.get(kind, "a string")
             raise ConfigError(f"{key} must be {expected}, not {type(value).__name__}")
         return value
 

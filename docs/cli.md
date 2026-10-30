@@ -146,18 +146,18 @@ what it did to each:
   approval.
 
   `project review gate` runs the checkout's `review.gate` command, and stays
-  allowed so a review loop runs unattended. An agent that edits `review.gate`
-  and then runs the gate therefore runs that command without a prompt, the
-  same edit-then-run pattern as any allowed test runner. Codex leaves the gate
-  to its usual approval, as the next entry describes. The ask rules match the
-  command text an agent writes, so they keep an agent from running these
-  commands unasked, not from spelling one another way.
+  allowed so a reviewing session runs unattended. An agent that edits
+  `review.gate` and then runs the gate therefore runs that command without a
+  prompt, the same edit-then-run pattern as any allowed test runner. Codex
+  leaves the gate to its usual approval, as the next entry describes. The ask
+  rules match the command text an agent writes, so they keep an agent from
+  running these commands unasked, not from spelling one another way.
 
   When `CLAUDE_CONFIG_DIR` is set, the file is `settings.json` in that
   directory instead. Without the allow rule, Claude Code asks before each
   Projector command an agent runs, which pushes the agent toward editing
   Projector's files by hand or calling `gh api` itself. Its auto mode can
-  refuse a review loop's clean review of your own pull request as
+  refuse a reviewing session's clean review of your own pull request as
   self-approval, although the review is a `COMMENT` that moves no
   `reviewDecision` and a person still merges. It can refuse the deletion of a
   comment as a write to an external system: the comment that holds your pull
@@ -209,7 +209,7 @@ what it did to each:
 
   ```text
   prefix_rule(
-      pattern = ["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary", "version"]],
+      pattern = ["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary", "version", "watch"]],
       decision = "allow",
   )
   prefix_rule(
@@ -649,14 +649,18 @@ reads, which are these:
 | `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and `CLAUDE.md` |
 | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
-| `review.username` | string | the authenticated user | `review-pr` and `start-review-loop`, as the GitHub login that posts reviews |
+| `review.username` | string | the authenticated user | `review-pr` and `review-repo`, as the GitHub login that posts reviews, and `project watch add --role review`, as the login a review subscription names |
 | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
 | `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing every `project` command but the few that reach outside Projector's own state to your Claude Code settings and Codex rules |
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
-| `watch.auto_start` | boolean | `true` | `implement`, to start `start-watch-loop` on each pull request it opens, or add the pull request to the watch loop the conversation already runs; `false` leaves starting the loop to you |
+| `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
+| `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
+| `watch.full_every` | whole number | `600` | the watch daemon, from `~/.projector.toml` only, as the most seconds a pull request goes without a GraphQL query |
+| `watch.renotify` | whole number | `900` | the watch daemon, from `~/.projector.toml` only, as the seconds before work that still stands is announced again |
+| `watch.review_stall` | whole number | `1800` | the watch daemon, from `~/.projector.toml` only, as the seconds a review's lock can go unchanged before the daemon treats the review as stalled |
 | `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
@@ -667,11 +671,17 @@ makes both commands that read it refuse and name the key.
 
 The operator -- the account whose branches carry fixes and whose token pushes
 them -- is deliberately not a key. It follows whichever token is authenticated,
-because both loops act through that token and a file naming a different
-account could only disagree with it. Which pull requests a loop watches is not
-an identity question either: each watcher reads its tracked set from a file of
-`owner/repo#number` lines that the conversation maintains, and sees nothing
-outside it.
+because the skills and the watch daemon act through that token and a file
+naming a different account could only disagree with it. Which pull requests a
+session watches is not an identity question either: the session's
+[subscriptions](#watch-pull-requests) name them, and the daemon sees nothing
+outside them.
+
+One daemon serves every repository on the machine, so it reads
+`watch.interval`, `watch.full_every`, `watch.renotify`, and
+`watch.review_stall` from `~/.projector.toml` alone and ignores them in a
+repository's file. Set them with `--user`. The daemon reads a hand-written
+`watch.interval` below 30 as 30.
 
 ## Change configuration
 
@@ -699,8 +709,10 @@ file with one of these options:
 Outside a Git repository, the default has no file to change, so `set` and
 `unset` exit 69 unless you pass `--user` or `--file`.
 
-`set` takes `true` or `false` for a boolean key and any text for a string
-key, and refuses any other value with exit code 2. It also refuses, with
+`set` takes `true` or `false` for a boolean key, a whole number for a
+whole-number key, and any text for a string key. It refuses any other value
+with exit code 2, as it does a whole number below 30 for `watch.interval` or
+below 1 for the other `watch` numbers. It also refuses, with
 exit code 2 and the list of keys, a key that the table in
 [Read configuration](#read-configuration) does not list. `get` still reads
 a key that is not in the table.
@@ -962,9 +974,9 @@ file whose diff hides some of its lines: a file that is neither new nor
 deleted, whose diff has a hunk, and whose entry in the head is a regular file
 of at most 1 MiB that is not a `.gitattributes` file. Each is a tree entry
 naming the blob the head already has, so the ref gains no file content.
-Publishes that run at the same time, as a review loop's subagents run them,
-each land. A publish whose push loses the race for the ref fetches the ref
-again, rebuilds its commit on the new tip, keeping every other publisher's
+Publishes that run at the same time, as a reviewing session's subagents run
+them, each land. A publish whose push loses the race for the ref fetches the
+ref again, rebuilds its commit on the new tip, keeping every other publisher's
 summaries, and pushes again, up to five pushes in all. It says how many
 times it retried. Any other push failure, such as a refused login, fails at
 once.
@@ -1418,7 +1430,7 @@ the default branch when the site builds.
 ## Review a pull request
 
 `project review` runs the mechanical steps of the `review-pr` skill, so
-a review loop does not rebuild them as helpers of its own:
+a reviewing session does not rebuild them as helpers of its own:
 
 ```sh
 project review setup 66 --model claude-opus-5-5 --loop example-review-claude-opus-5-5
@@ -1498,8 +1510,10 @@ thread whose first comment carries the `projector-finding` marker, reading
 every page, and prints how many are resolved and open and each open thread's
 `path:line`; with `--json` each thread also carries its comments. It counts
 every model's threads alike and takes `--model` like the commands around it,
-so a review loop passes the same flags to each. `release` clears the locks of
-one model's review of the pull request.
+so a reviewing session passes the same flags to each. `--model` and `--loop`
+also pick the review whose lock `census` touches, as the lock paragraph below
+describes. `release` clears the locks of one model's review of the pull
+request.
 
 `settle` answers one finding thread once the review has verified it at the
 head under review. `--thread` is the thread's `id` from `census --json`,
@@ -1624,7 +1638,7 @@ body with the suggestions in one form, which `review suggestions` reads back:
 ```
 
 The `projector-suggestions` line directly before the label counts the list,
-for `status` and the watch loop to read without parsing it. It is a line of
+for `status` and the watch daemon to read without parsing it. It is a line of
 its own because every earlier release reads a review marker that holds a
 field it does not know as no verdict at all. The review's marker keeps the
 shape those releases read. A body that carries a suggestions section of its
@@ -1726,7 +1740,7 @@ it cannot read the pull request. With `--json` it prints one object:
 | `draft` | Whether the pull request is a draft. |
 | `verdict` | The newest verdict on the head: `clean`, `changes-requested`, or `unreviewed`. |
 | `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, and the number of `suggestions` that stand with its review: those the review lists and, for an incremental review, those of the full review it builds on. Each review's count is its `projector-suggestions` line, or its body's list where it has none. It is `null` when the head is `unreviewed`. |
-| `models` | Each account's newest verdict by each model on the head in the same shape, newest first. A review loop finds its own by `login` and `model`. |
+| `models` | Each account's newest verdict by each model on the head in the same shape, newest first. A reviewing session finds its own by `login` and `model`. |
 | `suggestions` | The number of suggestions every entry of `models` brings, each review counted once: the suggestions `suggestions` lists for the head. |
 | `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
 | `held` | Whether the pull request's author has a hold comment open, which keeps the pull request a draft whatever `verdict` says. |
@@ -1950,11 +1964,44 @@ A review holds a lock for its pull request, head, and model from `setup` until
 it is published, recording the host, the loop, and when it was taken, so a
 second instance of the same model for the same head exits. A refused `setup`
 releases it, a lock older than a day is stale, and `release` clears the locks
-of one model's review left by a session that stopped. `--loop <id>` names the
-review loop; each loop keeps its record of published reviews under that id,
-and each entry names its model. State, locks, loop records, and scratch
-worktrees live under `$XDG_STATE_HOME/projector/reviews`, or
-`~/.local/state/projector/reviews`, and `--state-dir` moves them. A model's
+of one model's review left by a session that stopped. `setup`, `census`,
+`settle`, `move`, `interdiff`, `gate`, and `publish` touch the lock as they
+run, so its modification time shows when the review last made progress.
+`gate` also touches it once a minute while the repository's command runs, so
+a long gate never looks stalled. `census` touches the lock of the review that
+`--model` names, or of the one model with a review set up here. `census`,
+`interdiff`, and `gate` touch the lock only while it names their loop.
+
+`--loop <id>` names the reviewing session that runs the review, by that
+session's id, and the commands call it the review's loop. Each loop keeps its
+record of published reviews under its id, and each entry names its model. The
+id is up to 128 letters, digits, `.`, `_`, and `-`, starting with a letter or
+digit, so any session id `project inbox` accepts is a loop id. `publish` adds
+to the record under a lock on the record's folder, so a copy that
+`project watch` makes into the same record at the same moment loses no entry.
+A command without `--loop` runs in the loop that `setup` recorded, and a
+review set up without `--loop` runs in no loop.
+
+`project watch` hands a review to another loop by clearing its lock, when the
+review stalls or the session that owns it lapses. So `settle`, `move`, and
+`publish` refuse, exiting 1, when the head's lock names another loop than the
+one they run in, or when the lock of a review that runs in a loop is gone:
+
+```
+project: the review of example/app#66 at 4f2a9c1 by model claude-opus-5-5 was handed over to another loop: its lock names loop 5f0c2d4e-91ab-4c3d-8e7f-2a6b1c9d0e3f, and this command runs in loop 08270a6c-e8dd-42c9-851b-ae1e507aa6dc; stop and report this rather than running `project review setup` again
+```
+
+Stop the review and report the refusal. Running `setup` again would take the
+review back from the loop that owns it now. `publish` checks the lock again
+before each write of the review's state and before it releases the lock, so
+a hand-over that lands after it submitted the review leaves the new owner's
+state and lock alone; the refusal then names the review it submitted. A
+review that runs in no loop works as before: `settle` and `move` run without
+a lock, and `publish` without one refuses and says to run `setup` again.
+
+State, locks, loop records, and scratch worktrees live under
+`$XDG_STATE_HOME/projector/reviews`, or `~/.local/state/projector/reviews`,
+and `--state-dir` moves them. A model's
 state and locks are under `prs/<owner>/<repo>/<pr>/<model-key>/` and its
 worktrees under `worktrees/<owner>/<repo>/<pr>/<model-key>/`. The model key
 is the ID lowercased and without its bracketed variant, with every character
@@ -2319,6 +2366,204 @@ nothing when it refuses. A number no session holds exits 66. In Claude
 Code, the agent revises an item with Projector's `revise` tool, and the
 panel redraws it at once.
 
+## Watch pull requests
+
+`project watch` subscribes an agent session to the pull requests it fixes and
+reviews, and delivers what happens on them. One daemon per machine,
+`project watch serve`, polls GitHub for every pull request that a live
+session subscribes to, and appends each event to that session's `events`
+file. You never start the daemon yourself: every `project watch` command but
+`serve` and `stop` starts it when none is running, and it exits 5 minutes
+after the last session lapses. Its files live under
+`$XDG_STATE_HOME/projector/watch/`, or under `~/.local/state/projector/watch/`
+when `XDG_STATE_HOME` is unset.
+
+Each command acts for the session that `--session` names, then
+`PROJECTOR_SESSION`, then `CLAUDE_CODE_SESSION_ID`, which Claude Code sets in
+every command it runs, a subagent's included. So a subagent's command
+subscribes the top-level session. An id holds letters, digits, `.`, `_`, and
+`-`. A command that needs a session and finds none exits 2.
+
+### Subscribe a session
+
+`add` subscribes the session to a role on a target. The target is
+`owner/repo#number`, a pull request's URL, or, for `--role review`,
+`owner/repo`. `--role` is `fix` by default:
+
+```console
+$ project watch add acme/app#12
+added acme/app#12 fix
+events: mod
+$ project watch add acme/app --role review --model claude-opus-5-5
+added acme/app review claude-opus-5-5 octocat
+events: mod
+```
+
+Each subscription is one line of the session's `subscriptions` file:
+
+| Line | Subscribes the session to |
+| --- | --- |
+| `acme/app#12 fix` | The pull request's findings, verdicts, conflicts, review bodies, and merge or close |
+| `acme/app#13 fix auto` | The same, added by a push, as `--from-output` adds it |
+| `acme/app#14 review <model> <reviewer>` | The pull request's new heads and its author's answers, for one model and the login its reviews post as |
+| `acme/app review <model> <reviewer>` | Every open pull request in the repository that the operator wrote or that requests the operator's review by login, including pull requests opened later |
+| `!acme/app#9 fix` or `!acme/app#9 review <model> <reviewer>` | Nothing: the pull request stays out of that role for this session, wherever the line sits |
+
+References match without regard to case. `--role review` needs `--model`, the
+model ID the session reviews with, and resolves the reviewer from
+`--reviewer`, then `review.username`, then the account `gh` is signed in as.
+
+`add` changes nothing when the session already has the subscription, and
+says so. It refuses, with exit code 65, a pull request the session drops
+from that role; run `project watch restore` first. An explicit `add` of a
+pull request the session has as `fix auto` drops the `auto` mark, which lets
+the session take the `fix` role from another session (see
+[Who hears an event](#who-hears-an-event)).
+
+The last line of `add` says how the session's events arrive: `events: mod`
+when Projector's mod in Claude Code renews the session, `events: stream`
+when a running `project watch stream` renews it, or
+``events: none — start `project watch stream --session <id>` under your
+host's monitor facility`` when nothing has renewed it in the last 5
+minutes. With `--json`, `add` prints the lines it `added` and the
+`delivery`, which is `mod`, `stream`, or `none`.
+
+### Subscribe from a command's output
+
+`add --from-output FILE` reads a command's output from the file, or from
+standard input when `FILE` is `-`, and subscribes the session to `fix auto`
+on each pull request the output shows it opened or pushed to:
+
+```console
+$ git push 2>&1 | project watch add --from-output -
+added acme/app#12 fix auto
+events: mod
+```
+
+It finds each pull request URL, as `gh pr create` prints one, and each
+`To <remote>` block of a `git push` to GitHub with its
+`<old>..<new>  <source> -> <branch>` lines. For each pushed branch, it asks
+GitHub for the open pull request whose head is that branch, one REST
+request, and subscribes to it. A branch with no open pull request adds
+nothing, and a pull request the session drops from `fix` is skipped. A
+lookup that fails is named on stderr, and the command still exits 0. When
+`watch.auto_start` is `false`, it adds nothing and says so.
+
+### End or exclude a subscription
+
+`remove`, `drop`, and `restore` take a target and `--role`, which is `fix`
+by default, and print each line they change:
+
+| Command | What it changes | When to run it |
+| --- | --- | --- |
+| `remove` | Removes the session's subscription lines for the target and role, and leaves its `!` lines. | To stop fixing or reviewing a pull request, or with `--role review` and `owner/repo`, a repository. |
+| `drop` | Appends a `!` line for the pull request and role. | To keep a pull request out of the role for this session, as dismissing it in the panel does. |
+| `restore` | Removes the session's `!` lines for the pull request and role. | To let a dropped pull request back in. |
+
+For `--role review`, `--model` limits the command to one model. Without it,
+`remove` and `restore` cover every model, and `drop` covers every model the
+session reviews the pull request with; `drop` refuses, with exit code 65, a
+pull request the session does not review. With `--json`, each prints the
+lines under `removed`, `dropped`, or `restored`.
+
+### Deliver events
+
+A session is live while something renews it, and the daemon polls only for
+live sessions. A session nothing has renewed for 5 minutes lapses: the
+daemon stops polling for it and hands its roles to other sessions. Renewing
+it again makes it live, and the daemon announces what is outstanding for
+it. The daemon counts the 5 minutes on its own clock and forgives a gap in
+its own loop, so a machine's sleep lapses no session.
+
+- **`renew --deliverer mod|stream`** marks the session live. Projector's mod
+  runs it when a Claude Code session starts and at least once a minute.
+- **`take`** prints and empties the session's events and renews the session.
+  With `--json`, it prints `{"session": "<id>", "events": ["<line>", ...]}`.
+  The mod runs it when the session's `events` file is not empty, and submits
+  the lines as one prompt.
+- **`stream`** renews the session every 30 seconds and prints each event as
+  it arrives, until you stop it. Run it under your host's persistent process
+  or monitor facility on a host without the mod, such as Codex. It also
+  starts the daemon again if the daemon died.
+
+### Who hears an event
+
+The daemon gives each event to one session, the owner, for each pull request
+and role: one owner for `fix`, and one for `review` for each model. The
+candidates are the live sessions with a subscription that covers the pull
+request in that role and no `!` line that excludes it. Among them:
+
+1. A subscription to the pull request beats a subscription to its
+   repository.
+2. Among equals, the subscription added most recently wins.
+3. A `fix auto` line never outranks a subscription that existed when it was
+   added, so a session that pushes one fix to another session's pull
+   request does not take the pull request from it.
+
+When the owner changes, the new owner hears at once what is outstanding, and
+a former owner that is still live gets `MOVED`. A `review` role moves only
+between reviews. While a review lock for the pull request and model names
+the owner, the owner keeps the role. When that lock has not changed for
+`watch.review_stall` seconds, the daemon clears it and moves the role to the
+session that outranks the owner, or, when none does, announces the head to
+the owner again. When an owner lapses, the daemon clears its review locks at
+once. At every move of a `review` role, the daemon copies the pull request's
+entries from the former owner's record of published reviews into the new
+owner's.
+
+Each event is one line, `<KIND> <owner/repo#number> <detail> — <action>`,
+which ends with what the session should do:
+
+```text
+FINDING acme/app#12 docs/x.md:40 [bugbot]: P2 the link is broken — run fix-pr on acme/app#12 in subagent fix-12
+NEW HEAD acme/app#14 (feature): 4f2a9c1 -> 9f3c2a1, needs an exact-head review — run review-pr on acme/app#14 in subagent review-14 with --loop 08270a6c
+MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagent review-14 and run no project review finish
+```
+
+| Kind | Role | Reports |
+| --- | --- | --- |
+| `FINDING` | `fix` | An unresolved review thread |
+| `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
+| `CONFLICT` | `fix` | A branch that conflicts with its base |
+| `REVIEW` | `fix` | A comment review with a body, with the count of suggestions a Projector review lists |
+| `DRAFT` | `fix`, when the session does not also review the pull request | A head that no review has signed off, and whether any session on this machine reviews the pull request |
+| `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed |
+| `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled |
+| `RESPONDED` | `review` | The author answered every finding on an unmoved head, or lifted a hold |
+| `MOVED` | any | Another session owns the role now |
+| `MERGED`, `CLOSED` | any | The pull request merged or closed |
+| `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |
+
+`FINDING`, `VERDICT`, `CONFLICT`, `DRAFT`, and `NEW HEAD` report work that
+stands until it is done, so the daemon announces each again, with
+`(still open)` after the reference, every `watch.renotify` seconds while it
+stands. A `NEW HEAD` stands while the head has no verdict by the model from
+its reviewer and no review of it is in flight. After `MERGED`, `CLOSED`, or
+`MISSING`, the daemon removes the pull request's subscription lines from
+every session, and leaves the `!` lines.
+
+### Inspect and stop the daemon
+
+`list` prints each subscription with whether its session is live and whether
+the session owns the role, as the daemon last recorded them. For a
+repository's line, it prints the pull requests the session owns through it.
+It lists the session's subscriptions, or every session's when no session is
+named. With `--json`, it prints `subscriptions`.
+
+`status` prints the daemon's pid, version, start time, and operator, the live
+sessions, the pull requests and repositories it polls, its last pass, and the
+GraphQL points it spent in the last hour. With `--json`, it prints the same
+fields, and `daemon`, which is `running`, `started`, or `replaced`.
+
+`stop` asks the running daemon to exit, waits up to 10 seconds, and prints
+its pid, or says that none is running. The next `project watch` command
+starts a new one. A command replaces a running daemon whose version is
+strictly older than its own, so after `project upgrade` the new code takes
+over at the first command. A daemon or a command whose version is `unknown`,
+as one run from a checkout that was never installed reports, never replaces
+and is never replaced. The daemon writes its output to `daemon.log` in the
+state directory.
+
 ## Change a loop's tracked file
 
 A watch or review loop reads its tracked file, one `owner/repo#number` a
@@ -2378,7 +2623,8 @@ Each command refuses, with exit code 65, a reference that is not
 ## Consume JSON
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
-`priority`, `done`, `check`, or any `config`, `inbox`, or `loop` command.
+`priority`, `done`, `check`, any `config`, `inbox`, or `loop` command, or
+`watch add`, `remove`, `drop`, `restore`, `list`, `take`, or `status`.
 Responses use stdout only for JSON and include `"schema_version": 2`. An `inbox` command that
 prints one item prints it under `item`, and `inbox list` prints `items`.
 `inbox watch --json` prints one JSON object a line, as a watcher reads it.
@@ -2428,10 +2674,10 @@ Projector uses these exit codes:
 | `0` | The command completed successfully. |
 | `2` | Command syntax or an argument is invalid. |
 | `3` | `project site status` found no Projector site for the repository. |
-| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, a `loop add`, `loop drop`, `loop restore`, or `loop remove` reference is not `owner/repo#number`, or `loop add` names a pull request the tracked file drops. |
+| `65` | Project data is invalid, a mutation is unsafe, an inbox item, answer, or snooze is refused, a `loop add`, `loop drop`, `loop restore`, or `loop remove` reference is not `owner/repo#number`, or `loop add` names a pull request the tracked file drops, `watch add` names a pull request the session drops from the role, or `watch drop` names a pull request the session does not review. |
 | `66` | The requested project, the projects directory, the inbox item, or the tracked file of a `loop drop`, `loop restore`, or `loop remove` command does not exist. |
 | `67` | The requested project is ambiguous, or an inbox reference names items in more than one session. |
 | `69` | Git, the interactive editor, or the installer is unavailable. |
-| `75` | Another command held an inbox session's lock for five seconds; run the command again. |
+| `75` | Another command held an inbox or watch session's lock for five seconds; run the command again. |
 | `78` | A `.projector.toml` file is not valid TOML. |
 | `141` | The reader of the command's output closed before reading all of it, as `head` does once it has its lines. The command stops without a message, and 141 is the status a shell reports for `cat` or `git` stopped the same way. |

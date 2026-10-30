@@ -16,6 +16,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
@@ -542,6 +544,53 @@ class GateTests(ReviewCase):
         self.assertEqual((self.GATE, 3, state["sha"]), (record["command"], record["exit_code"], record["sha"]))
         self.assertIn("exited 3", err)
 
+    # A time long past that a gate command sets the lock back to with `touch -r`, so `[ lock -nt reference ]`
+    # holds only once gate touched the lock.
+    PAST = 1_000_000_000
+
+    def reference(self) -> Path:
+        path = Path(tempfile.mkdtemp()) / "reference"
+        path.write_text("")
+        os.utime(path, (self.PAST, self.PAST))
+        return path
+
+    def test_touches_the_lock_as_it_starts_and_as_it_ends(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        lock, reference = self.lock(self.head), self.reference()
+        os.utime(lock, (self.PAST, self.PAST))
+        self.configure(f'[ "{lock}" -nt "{reference}" ] && echo started > "$1/gate.started"; '
+                       f'touch -r "{reference}" "{lock}"')
+
+        code, _, err = self.later("gate", "--loop", "l1")
+
+        self.assertEqual(0, code, err)
+        self.assertTrue((Path(self.read_state()["worktree"]) / "gate.started").exists(), "touched as it starts")
+        self.assertGreater(lock.stat().st_mtime, self.PAST, "touched as it ends")
+
+    def test_a_long_gate_keeps_its_lock_fresh_while_its_command_runs(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        lock, reference = self.lock(self.head), self.reference()
+        self.configure(f'for round in 1 2 3; do touch -r "{reference}" "{lock}"; sleep 0.5; '
+                       f'if [ "{lock}" -nt "{reference}" ]; then echo $round >> "$1/gate.rounds"; fi; done')
+
+        with mock.patch.object(review, "TOUCH_EVERY", 0.05):
+            code, _, err = self.later("gate", "--loop", "l1")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual("1\n2\n3\n", (Path(self.read_state()["worktree"]) / "gate.rounds").read_text())
+
+    def test_a_gate_in_another_loop_touches_no_lock(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        lock = self.lock(self.head)
+        os.utime(lock, (self.PAST, self.PAST))
+        self.configure("sleep 0.3")
+
+        with mock.patch.object(review, "TOUCH_EVERY", 0.05):
+            code, _, err = self.later("gate", "--loop", "l2")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(self.PAST, lock.stat().st_mtime)
+
     def test_a_passing_gate_exits_zero_and_is_recorded(self) -> None:
         self.assertEqual(0, self.setup_review()[0])
         self.configure("true")
@@ -1066,10 +1115,10 @@ class PublishRefusalTests(PublishCase):
         self.refused(self.publish("clean"), "does not match review-pr/SKILL.md")
 
     def test_publish_without_a_review_holding_the_lock_is_refused(self) -> None:
-        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.setup_review()[0])
         self.assertEqual(0, self.later("release", "--repo", REPO)[0])
 
-        code, _, err = self.publish("clean")
+        code, _, err = self.publish("clean", loop=None)
 
         self.assertEqual(1, code)
         self.assertIn("project review setup 1", err)
@@ -1431,6 +1480,343 @@ class ModelTests(PublishCase):
         self.assertEqual(0, self.later("move")[0])
 
         self.assertIn(f" sha={self.github.pr['head']['sha']} model=claude-opus-5-5 -->", self.github.comments[101])
+
+
+def record_entry(review_id: int, published_at: str, repo: str = REPO, number: int = 1) -> dict:
+    return {"repo": repo, "number": number, "sha": "a" * 40, "review_id": review_id, "verdict": "clean",
+            "published_at": published_at, "base": "b" * 40, "from": None, "model": "claude-opus-5-5"}
+
+
+class HandOverTests(PublishCase):
+    """The watch daemon hands a review to another loop by clearing its lock. Each command touches the lock as it
+    runs, so an untouched lock shows a stalled review; `settle`, `move`, and `publish` refuse once the lock names
+    another loop; and a loop's record is written under a lock, so the daemon's copy at a hand-over loses no
+    entry."""
+
+    def age(self, lock: Path) -> None:
+        """Leave the lock untouched for an hour, as a stalled review does."""
+        then = time.time() - 3600
+        os.utime(lock, (then, then))
+
+    def assert_touched(self, lock: Path) -> None:
+        self.assertGreater(lock.stat().st_mtime, time.time() - 60, f"{lock.name} was not touched")
+
+    def age_on(self, call: str) -> None:
+        """Age the review's locks each time gh is asked for `call`, as a slow step would leave them."""
+        answer = review.run_gh
+
+        def aging(args: list[str], token: str | None = None) -> str:
+            if call in " ".join(args):
+                for lock in self.folder().glob("*.lock"):
+                    self.age(lock)
+            return answer(args, token)
+
+        patcher = mock.patch.object(review, "run_gh", aging)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def record(self, loop: str) -> Path:
+        return self.state / "loops" / loop / "published.json"
+
+    def hand_over(self) -> None:
+        """What a hand-over from loop l1 to loop l2 does: the daemon clears the lock and copies the record, and the
+        new owner sets up."""
+        for lock in review.review_locks(REPO, 1, self.state):
+            review.clear_lock(lock)
+        review.copy_published("l1", "l2", REPO, 1, self.state)
+        self.assertEqual(0, self.setup_review("--loop", "l2")[0])
+
+    def take_over(self) -> None:
+        """The hand-over as it leaves the files when it lands in the middle of a publish: the new owner's lock,
+        state, and record, written without a call to GitHub."""
+        for lock in review.review_locks(REPO, 1, self.state):
+            review.clear_lock(lock)
+        review.ensure_loop(self.state, "l2")
+        state = self.read_state()
+        state.pop("published", None)
+        state.update(loop="l2", start_comment={"id": 4242, "created_at": "2026-09-27T01:13:00Z"})
+        self.new_owner = {"state": state, "lock": {"sha": self.head, "loop": "l2"}}
+        (self.folder() / "state.json").write_text(json.dumps(state))
+        self.lock(self.head).write_text(json.dumps(self.new_owner["lock"]))
+
+    def owned(self) -> dict[str, tuple[bytes, float]]:
+        """The new owner's state, lock, and record, each with when it last changed."""
+        return {path.name: (path.read_bytes(), path.stat().st_mtime)
+                for path in (self.folder() / "state.json", self.lock(self.head), self.record("l2"))}
+
+    def test_setup_touches_the_lock_once_its_slow_steps_are_done(self) -> None:
+        self.age_on(f"repos/{REPO}/issues/1/comments")
+
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        self.assert_touched(self.lock(self.head))
+
+    def test_census_touches_the_lock_of_the_review_its_model_and_loop_name(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        lock = self.lock(self.head)
+        self.age(lock)
+
+        other = self.later("census", "--loop", "l2", "--model", self.model)
+        untouched = lock.stat().st_mtime
+        own = self.later("census", "--loop", "l1", "--model", self.model)
+
+        self.assertEqual((0, 0), (other[0], own[0]), other[2] + own[2])
+        self.assertLess(untouched, time.time() - 600, "census in another loop keeps no other loop's review alive")
+        self.assert_touched(lock)
+
+    def test_census_names_the_review_by_its_model_and_without_one_touches_none_of_several(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "l1")[0])
+        claude, gpt = self.lock(self.head, "claude-opus-5-5"), self.lock(self.head, "gpt-5.5")
+        self.age(claude)
+        self.age(gpt)
+
+        unnamed = self.later("census")
+        ages = (claude.stat().st_mtime, gpt.stat().st_mtime)
+        named = self.later("census", "--model", "gpt-5.5")
+
+        self.assertEqual((0, 0), (unnamed[0], named[0]), unnamed[2] + named[2])
+        self.assertTrue(unnamed[1].startswith("0 finding threads"), "census counts with no review picked")
+        self.assertLess(max(ages), time.time() - 600, "census without --model picks none of two models")
+        self.assertLess(claude.stat().st_mtime, time.time() - 600)
+        self.assert_touched(gpt)
+
+    def test_move_touches_the_new_heads_lock_once_it_moves(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.github.pr["head"]["sha"] = second = self.push_head("second head")
+        self.age_on("-X PATCH")
+
+        self.assertEqual(0, self.later("move", "--loop", "l1")[0])
+
+        self.assert_touched(self.lock(second))
+
+    def test_interdiff_touches_the_lock_of_its_own_loops_review(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        lock = self.lock(self.head)
+        self.age(lock)
+
+        other = self.later("interdiff", "--loop", "l2")
+        untouched = lock.stat().st_mtime
+        own = self.later("interdiff", "--loop", "l1")
+
+        self.assertEqual((1, 1), (other[0], own[0]), "with no full review to build on, interdiff refuses")
+        self.assertLess(untouched, time.time() - 600, "interdiff in another loop keeps no other loop's review alive")
+        self.assert_touched(lock)
+
+    def test_a_session_id_of_any_length_the_inbox_takes_is_a_loop_id(self) -> None:
+        session = "s" + "0123456789" * 9 + "abcdefghi"
+        too_long = "s" * 129
+
+        set_up = self.setup_review("--loop", session)
+        published = self.publish("clean", loop=session)
+        refused = self.setup_review("--loop", too_long)
+
+        self.assertEqual(100, len(session))
+        self.assertEqual((0, 0), (set_up[0], published[0]), set_up[2] + published[2])
+        self.assertEqual([901], [entry["review_id"] for entry in json.loads(self.record(session).read_text())])
+        self.assertEqual(1, refused[0])
+        self.assertIn("up to 128 letters, digits", refused[2])
+
+    def test_publish_touches_the_lock_before_it_submits(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.age(self.lock(self.head))
+        seen: list[float] = []
+        self.github.before_post = lambda: seen.append(self.lock(self.head).stat().st_mtime)
+
+        self.assertEqual(0, self.publish("clean")[0])
+
+        self.assertGreater(seen[0], time.time() - 60)
+
+    def test_publish_after_a_hand_over_refuses_and_leaves_the_new_owners_state_lock_and_record(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.hand_over()
+        owned = self.owned()
+
+        code, _, err = self.publish("clean", loop="l1")
+
+        self.assertEqual(1, code)
+        self.assertIn(f"the review of {REPO}#1 at {self.head[:7]} by model {self.model} was handed over to another "
+                      "loop: its lock names loop l2, and this command runs in loop l1; stop and report this rather "
+                      "than running `project review setup` again", err)
+        self.assertEqual([], self.github.reviews)
+        self.assertEqual(owned, self.owned())
+
+    def test_publish_in_a_loop_whose_lock_is_gone_refuses_as_handed_over(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        for lock in review.review_locks(REPO, 1, self.state):
+            review.clear_lock(lock)
+
+        code, _, err = self.publish("clean")
+
+        self.assertEqual(1, code)
+        self.assertIn("was handed over to another loop: its lock is gone; stop and report this", err)
+        self.assertEqual([], self.github.reviews)
+
+    def test_move_after_a_hand_over_refuses_before_it_takes_a_lock_or_edits_the_start_comment(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.hand_over()
+        owned, comments = self.owned(), dict(self.github.comments)
+        self.github.pr["head"]["sha"] = second = self.push_head("second head")
+
+        code, _, err = self.later("move", "--loop", "l1")
+
+        self.assertEqual(1, code)
+        self.assertIn("was handed over to another loop: its lock names loop l2, and this command runs in loop l1",
+                      err)
+        self.assertFalse(self.lock(second).exists())
+        self.assertEqual(comments, self.github.comments)
+        self.assertEqual(owned, self.owned())
+
+    def test_a_review_outside_any_loop_moves_and_publishes_as_before(self) -> None:
+        self.assertEqual(0, self.setup_review()[0])
+        self.github.pr["head"]["sha"] = second = self.push_head("second head")
+
+        moved = self.later("move")
+        published = self.publish("clean", loop=None)
+
+        self.assertEqual((0, 0), (moved[0], published[0]), moved[2] + published[2])
+        self.assertFalse(self.lock(second).exists())
+        self.assertFalse((self.state / "loops").exists())
+
+    def test_without_loop_a_command_runs_in_the_loop_setup_recorded(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+
+        code, _, err = self.publish("clean", loop=None)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([901], [entry["review_id"] for entry in json.loads(self.record("l1").read_text())])
+
+    def test_a_publish_handed_over_once_it_submitted_writes_no_state_and_keeps_the_new_lock(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.github.after_post = self.take_over
+
+        code, _, err = self.publish("clean")
+
+        self.assertEqual(1, code)
+        self.assertIn("was handed over to another loop after review 901 was submitted: its lock names loop l2, "
+                      "and this command runs in loop l1", err)
+        self.assertEqual(1, len(self.github.reviews), "the verdict submitted before the hand-over stands")
+        self.assertEqual(self.new_owner["state"], self.read_state())
+        self.assertEqual(self.new_owner["lock"], json.loads(self.lock(self.head).read_text()))
+        self.assertEqual([], json.loads(self.record("l1").read_text()))
+
+    def test_publish_checks_the_lock_again_before_its_final_writes(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        answer = review.run_gh
+
+        def handed_over_while_ready(args: list[str], token: str | None = None) -> str:
+            if args[:2] == ["pr", "ready"]:
+                self.take_over()
+            return answer(args, token)
+
+        with mock.patch.object(review, "run_gh", handed_over_while_ready):
+            code, _, err = self.publish("clean")
+
+        self.assertEqual(1, code)
+        self.assertIn("was handed over to another loop after review 901 was submitted", err)
+        self.assertEqual(self.new_owner["state"], self.read_state())
+        self.assertEqual(self.new_owner["lock"], json.loads(self.lock(self.head).read_text()))
+        self.assertEqual([], json.loads(self.record("l2").read_text()))
+        self.assertEqual([901], [entry["review_id"] for entry in json.loads(self.record("l1").read_text())],
+                         "the stalled loop's own record keeps the review it submitted")
+
+    def test_the_new_owner_rereviews_a_head_the_former_owner_reviewed_with_the_record_copied(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.publish("clean", loop="l1")[0])
+        self.assertEqual(0, self.setup_review("--loop", "l2", "--rereview")[0])
+        uncopied = self.publish("clean", loop="l2")
+
+        copied = review.copy_published("l1", "l2", REPO, 1, self.state)
+        accepted = self.publish("clean", loop="l2")
+
+        self.assertEqual(1, uncopied[0])
+        self.assertIn("that loop l2 did not publish", uncopied[2])
+        self.assertEqual(1, copied)
+        self.assertEqual(0, accepted[0], accepted[2])
+        self.assertEqual([901, 902], [entry["review_id"] for entry in json.loads(self.record("l2").read_text())])
+
+    def test_a_copy_racing_a_publish_loses_no_entry(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l2")[0])
+        self.record("l1").parent.mkdir(parents=True)
+        self.record("l1").write_text(json.dumps([record_entry(700, "2026-09-26T00:00:00+00:00")]))
+        write, copied, copiers = review.write_json, [], []
+
+        def copy_mid_write(path: Path, value: object) -> None:
+            if path == self.record("l2") and not copiers and threading.current_thread() is threading.main_thread():
+                copier = threading.Thread(target=lambda: copied.append(
+                    review.copy_published("l1", "l2", REPO, 1, self.state)))
+                copiers.append(copier)
+                copier.start()
+                # Long enough for an unlocked copy to read the record and write it back before this write lands.
+                copier.join(0.5)
+            write(path, value)
+
+        with mock.patch.object(review, "write_json", copy_mid_write):
+            code, _, err = self.publish("clean", loop="l2")
+            copiers[0].join()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([1], copied)
+        self.assertEqual([700, 901], [entry["review_id"] for entry in json.loads(self.record("l2").read_text())])
+
+    def test_review_locks_lists_each_models_lock_on_the_pull_request(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.assertEqual(0, self.as_model("gpt-5.5")[0])
+
+        locks = review.review_locks("ACME/App", 1, self.state)
+
+        self.assertEqual([(REPO, 1, "claude-opus-5-5", self.head, "l1"), (REPO, 1, "gpt-5.5", self.head, None)],
+                         [(lock.repo, lock.number, lock.model_key, lock.sha, lock.loop) for lock in locks])
+        self.assertEqual([lock.path.stat().st_mtime for lock in locks], [lock.modified for lock in locks])
+        self.assertEqual([self.lock(self.head, "claude-opus-5-5"), self.lock(self.head, "gpt-5.5")],
+                         [lock.path for lock in locks])
+        self.assertEqual([], review.review_locks(REPO, 2, self.state))
+        self.assertEqual([], review.review_locks(REPO, 1, self.state / "nowhere"))
+
+    def test_clear_lock_removes_the_lock_it_read_and_leaves_one_another_loop_took_since(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        [lock] = review.review_locks(REPO, 1, self.state)
+
+        review.clear_lock(lock)
+        review.clear_lock(lock)
+        cleared = lock.path.exists()
+        lock.path.write_text(json.dumps({"sha": self.head, "loop": "l2"}))
+        review.clear_lock(lock)
+
+        self.assertFalse(cleared)
+        self.assertTrue(lock.path.exists(), "a lock another loop took since the daemon read it stays")
+
+    def test_clear_lock_waits_for_a_publish_checking_the_lock(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        [lock] = review.review_locks(REPO, 1, self.state)
+        clearing = threading.Thread(target=review.clear_lock, args=(lock,))
+
+        with review.review_mutex(self.folder()):
+            clearing.start()
+            clearing.join(0.3)
+            held = lock.path.exists()
+        clearing.join()
+
+        self.assertTrue(held, "the lock stays while the mutex is held")
+        self.assertFalse(lock.path.exists())
+
+    def test_copy_published_copies_the_pull_requests_new_entries_in_published_order(self) -> None:
+        l1 = [record_entry(700, "2026-09-26T01:00:00+00:00"), record_entry(701, "2026-09-26T02:00:00+00:00", "acme/other"),
+              record_entry(702, "2026-09-26T03:00:00+00:00", number=2), record_entry(704, "2026-09-25T00:00:00+00:00",
+                                                                                      "ACME/App")]
+        for loop, entries in (("l1", l1), ("l2", [record_entry(700, "2026-09-26T01:00:00+00:00"),
+                                                   record_entry(703, "2026-09-26T04:00:00+00:00")])):
+            self.record(loop).parent.mkdir(parents=True)
+            self.record(loop).write_text(json.dumps(entries))
+
+        first = review.copy_published("l1", "l2", REPO, 1, self.state)
+        again = review.copy_published("l1", "l2", REPO, 1, self.state)
+        missing = review.copy_published("l9", "l3", REPO, 1, self.state)
+
+        self.assertEqual((1, 0, 0), (first, again, missing))
+        self.assertEqual([704, 700, 703], [entry["review_id"] for entry in json.loads(self.record("l2").read_text())])
+        self.assertFalse((self.state / "loops" / "l3").exists())
+        self.assertFalse((self.state / "loops" / "l9").exists())
 
 
 class FinishTests(PublishCase):
@@ -2099,6 +2485,26 @@ class SettleTests(PublishCase):
             self.assertIn(f"`--result {result}`", skill)
         self.assertNotIn("resolveReviewThread", skill)
         self.assertNotIn("Every reply you post opens with", skill)
+
+    def test_settle_touches_the_heads_lock(self) -> None:
+        then = time.time() - 3600
+        os.utime(self.lock(self.head), (then, then))
+
+        code, _, err = self.settle("fixed", "--loop", "l1")
+
+        self.assertEqual(0, code, err)
+        self.assertGreater(self.lock(self.head).stat().st_mtime, time.time() - 60)
+
+    def test_settle_after_a_hand_over_refuses_and_posts_nothing(self) -> None:
+        self.assertEqual(0, self.later("release", "--repo", REPO)[0])
+        self.assertEqual(0, self.setup_review("--loop", "l2")[0])
+
+        code, _, err = self.settle("fixed", "--loop", "l1")
+
+        self.assertEqual(1, code)
+        self.assertIn("was handed over to another loop: its lock names loop l2, and this command runs in loop l1",
+                      err)
+        self.assertEqual([], self.mutations())
 
 
 def iso(at: datetime) -> str:
@@ -2877,7 +3283,8 @@ class HoldTests(ReviewCase):
         self.assertEqual(0, code, err)
         self.assertEqual({}, self.held())
         self.assertEqual([f"ended the hold on {REPO}#1, deleting hold comment {comment}, which listed {self.CHANGE}",
-                          f"the review loop reviews {self.head[:7]} next, and a clean verdict marks it ready; it is a "
+                          f"the session reviewing it reviews {self.head[:7]} next, and a clean verdict marks it ready; "
+                          "it is a "
                           "draft"], out.splitlines())
         self.assertEqual([], self.drafts())
 
@@ -2942,7 +3349,8 @@ class HoldTests(ReviewCase):
                                  "ending the hold never marks the pull request ready")
                 self.assertEqual([f"ended the hold on {REPO}#1, deleting hold comment {comment}, which listed "
                                   f"{self.CHANGE}; {self.OTHER}",
-                                  f"the review loop reviews {self.head[:7]} next, and a clean verdict marks it ready; "
+                                  f"the session reviewing it reviews {self.head[:7]} next, and a clean verdict marks "
+                                  "it ready; "
                                   f"it is {'a draft' if draft else 'not a draft'}"], out.splitlines())
 
     def test_a_bare_drop_deletes_every_hold_comment_by_the_author(self) -> None:
@@ -3379,7 +3787,7 @@ class InterdiffRuleTests(IncrementalCase):
         self.push_feature(self.build(self.reviewed, {"a.css": css(r1=9, r2=9)}))
         self.assertEqual(0, self.setup_review()[0])
 
-        self.refused("no review loop runs this review")
+        self.refused("this review runs in no loop")
 
     def test_an_untrusted_head_is_full(self) -> None:
         self.github.commit_authors = ["operator", "stranger"]

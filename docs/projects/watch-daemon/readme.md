@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -70,9 +70,9 @@ loop.
 The daemon keeps its files under `$XDG_STATE_HOME/projector/watch/`, which
 is `~/.local/state/projector/watch/` by default.
 
-1. **Starting.** Every `project watch` command except `serve` first tries
-   the exclusive lock on `daemon.mutex` without waiting, through the
-   portable `try_lock` in `src/projector/inbox.py`. When it gets the lock, no
+1. **Starting.** Every `project watch` command except `serve` and `stop`
+   first tries the exclusive lock on `daemon.mutex` without waiting, through
+   the portable `try_lock` in `src/projector/inbox.py`. When it gets the lock, no
    daemon is running: it lets the lock go and starts `project watch serve`
    detached, in a new session on POSIX and as a detached process on Windows,
    with its output appended to `daemon.log`. It does not wait for the daemon,
@@ -276,11 +276,13 @@ daemon hands a review over only between reviews:
   change, and forgives a gap in its own loop as it does for a session, so a
   machine's sleep stalls no review. When a lock naming the owner has not
   changed for `watch.review_stall` seconds, 30 minutes by default, the
-  review is stalled. The daemon sends the owner `MOVED`, clears the lock,
-  copies the record as below, and moves the role. When no other session is
-  a candidate, the owner keeps the role, and the daemon clears the lock and
-  announces `NEW HEAD` to it again, saying that its last review stalled
-  (§ 2.7).
+  review is stalled. When a session that outranks the owner waits for the
+  role, the daemon sends the owner `MOVED`, clears the lock, copies the
+  record as below, and moves the role. Otherwise the owner keeps the role,
+  and the daemon clears the lock and announces `NEW HEAD` to it again,
+  saying that its last review stalled (§ 2.7). A stall moves the role only
+  to a session that outranks the owner, so the role never moves back and
+  forth between two sessions.
 - **A lapsed owner.** When the owner lapses, the daemon at once clears
   every lock on this machine that names the lapsed session, with no wait,
   and moves the role.
@@ -369,6 +371,14 @@ repository(owner: $o, name: $r) { visibility
 panel's row, which shows the pull request's age and its changed lines, as
 `FIELDS` in `hooks/github.ts` reads them today. They cost nothing, because a
 scalar field adds no connection.
+
+The daemon's query also asks for `nameWithOwner`, `mergedAt`,
+`mergeCommit { oid }`, each issue comment's `databaseId`, `createdAt`, and
+`updatedAt`, and the query's own `rateLimit { cost }`. `MERGED` names the
+time and the merge commit, the check for another machine's live start
+comment needs each comment's id and times, the daemon reads the review state
+under the repository's own spelling, and `project watch status` reports the
+points spent. The cache's `repository` object holds all of them.
 
 The cache holds, under `cache/<owner>/<repo>/`, `pulls/<number>.json` with
 each request's last `ETag` and the last result with its time,
@@ -521,9 +531,11 @@ change its tracked file, and the release after removes them.
 | File | Change |
 | --- | --- |
 | `src/projector/watch.py` (new) | The daemon: sessions, subscriptions, owners, passes, conditional requests, the cache, and events |
-| `src/projector/cli.py` | `project watch` and its subcommands |
+| `src/projector/cli.py` | `project watch` and its subcommands. `run_review` passes the state directory, the model, and the loop to `census`, and the loop to `settle`, so both reach the lock. |
+| `src/projector/permissions.py` | Codex's allow rule for whole `project` commands gains `watch`, so Codex runs the commands the skills run without asking |
 | `src/projector/config.py` | `watch.interval`, `watch.full_every`, `watch.renotify`, `watch.review_stall`, and the new meaning of `watch.auto_start` |
-| `src/projector/review.py` | `setup`, `census`, `settle`, `move`, and `publish` touch the head's lock as they run, and `census` finds this machine's review of the pull request by the model to do so. `publish`, `move`, and `settle` refuse a lock that does not name their `--loop`, and `publish` writes its state and removes the lock only while the lock still names it. `publish` writes the loop record under the inbox's `locked` on its folder (§ 2.5). |
+| `src/projector/review.py` | `setup`, `census`, `settle`, `move`, and `publish` touch the head's lock as they run, and `census` finds this machine's review of the pull request by the model to do so. `publish`, `move`, and `settle` refuse a lock that does not name their `--loop`, and `publish` writes its state and removes the lock only while the lock still names it. `publish` writes the loop record under the inbox's `locked` on its folder (§ 2.5). `interdiff` touches the lock once, and `gate` touches it about once a minute while the repository's checks run, so a long gate never reads as a stall. `--loop` accepts every id `project inbox` accepts as a session. |
+| `tests/test_config.py` | The documented settings may be whole numbers |
 | `src/projector/loop.py` | Unchanged for one release, then removed with `project loop` |
 | `skills/review-repo/SKILL.md` (new) | § 2.10 |
 | `skills/review-pr/SKILL.md`, `skills/fix-pr/SKILL.md`, `skills/implement/SKILL.md`, `skills/spec/SKILL.md` | § 2.10 |
@@ -667,7 +679,7 @@ change its tracked file, and the release after removes them.
 | Run `publish` from the stalled reviewer after the hand-over | It refuses, saying the review was handed over, and the new owner's state, lock, and record are unchanged |
 | Lapse an owner that holds a lock | The pass that finds it lapsed clears every lock on this machine naming that session, and the new owner gets `NEW PR` |
 | After a move, answer every finding on a head the former owner reviewed | The new owner gets `RESPONDED`, and its `publish` under `--rereview` is accepted |
-| Subscribe two sessions on different models to review one pull request | Each gets `NEW HEAD` |
+| Subscribe two sessions on different models to review one pull request, then push to it | Each gets `NEW PR`, then `NEW HEAD` |
 | Under a repository subscription, open a pull request as the operator, request the operator's review on another, and request a team on a third | The first two are adopted and the third is not |
 | Write `!acme/app#15 review …` in the subscribing session | That session hears nothing about review of #15 |
 | Leave a head with no verdict and no review in flight past `watch.renotify` | `NEW HEAD` again |
@@ -797,6 +809,9 @@ What each loop spends today was measured with `rateLimit { cost }` and
   request per pass and makes no REST call.
 - **The panel** sends one batched GraphQL query every 30 seconds while it is
   shown, `POLL_MS` in `hooks/register.tsx`. This was not measured.
+- **The daemon's query** in § 2.6 costs 2 points, measured with its own
+  `rateLimit { cost }` on #386 with the daemon's `QUERY`. The figures in § 4
+  and § 5 count 2 points a query: six full passes an hour make `12N`.
 
 How `gh api` handles a conditional request, as observed:
 
@@ -851,3 +866,77 @@ So a change of owner needs the hand-over in § 2.5, not only `--replace`.
 
 `tests/test_watchers.py` holds the watchers' tests, through a fake `gh` that
 refuses any argument it does not know, `-i` and `-H` among them.
+
+## 9. What implementation settled
+
+Building the daemon settled these choices, which the design above left open.
+
+### 9.1 The daemon and the review lock
+
+- **When a line was added.** The daemon records a subscription file's
+  modification time the first time it sees each line, in the session's
+  `state.json` under `added`, and breaks a tie by the session's id.
+- **Precedence among `fix` lines.** The newest explicit line wins. With no
+  explicit line, the oldest `auto` line wins, so a later push never takes a
+  pull request from the session that pushed first.
+- **Owners each pass.** The daemon works out every owner on every pass and
+  keeps them in `owners.json` at the state root. A session that gains a role
+  starts that role's announcements afresh, so it hears what is outstanding,
+  as a resumed session does.
+- **`MOVED`.** A live former owner gets `MOVED` whenever the role moves to
+  another session, including when the owner removed or dropped its own line.
+- **Waiting for a review in flight.** The move waits even when the owner
+  removed its line, and the owner hears nothing meanwhile.
+- **A lapsed owner's locks.** The daemon clears them on each pull request
+  whose review the lapsed session owned, because `review_locks` reads one
+  pull request at a time.
+- **Lock times.** The daemon counts a lock as changed when it first sees it,
+  so after the daemon restarts, a review gets a full `watch.review_stall`
+  before it counts as stalled.
+- **Adoption.** The pull requests a repository subscription adopted are kept
+  in `cache/<owner>/<repo>/adopted.json`, and a closed one is never adopted
+  again. Each session's `state.json` lists its adopted pull requests under
+  `adopted`, as `{"owner/repo": [12, 14]}` with lowercase keys and sorted
+  numbers, leaving out those it excludes. The panel reads that list.
+- **Paths.** Cache paths use the lowercase owner and repository. The daemon
+  reads review state under GraphQL's `nameWithOwner`, and `review_locks`
+  matches a repository without regard to case.
+- **`MERGED` and `CLOSED`.** Each session hears either once, recorded in its
+  `state.json` under `closed` for 7 days. The daemon then removes the pull
+  request's plain lines from every session and keeps its `!` lines.
+- **`ETag`s.** The daemon saves a request's `ETag` only after the query it
+  led to succeeds, so a change seen while a query fails is queried again. A
+  base branch's `ETag` is kept per pull request, and a `404` base is marked
+  gone so the pull request is queried once.
+- **Event wording.** The details keep the old watchers' wording, with `: `
+  before a quoted snippet. A reminder puts `(still open)` after the
+  reference, as `FINDING acme/app#12 (still open) …`, so every line starts
+  with its kind and its reference. `TRACKED`, `DONE`, and `BRANCH` are gone.
+- **Drafts.** Only a draft the operator wrote counts as waiting on a review,
+  as the old review loop's `--author` filter did.
+- **Older verdict markers.** The daemon recognizes a verdict through
+  `verdict_marker`, which needs the marker's model, so a marker from a
+  release that wrote none no longer counts toward `RESPONDED`.
+- **Commands.** `stop` starts no daemon, `add` does not renew the session,
+  and `take` keeps the recorded deliverer, `mod` when none is recorded.
+  `remove`, `drop`, and `restore` take `--json`. `status.json` at the state
+  root holds what `project watch status` reports.
+- **Settings.** `project config set` refuses `watch.interval` below 30 and
+  the other `watch` numbers below 1. The daemon reads them only from the
+  user's configuration and treats a hand-written interval below 30 as 30.
+- **The fence's words.** A refused `publish`, `move`, or `settle` says the
+  review "was handed over to another loop", and why. The skills key on that
+  phrase.
+- **The review mutex.** `publish`'s re-check and `clear_lock` hold
+  `projector.inbox.locked` on the pull request's folder,
+  `prs/<owner>/<repo>/<pr>/`, not the model's, because `Paths.locks()` globs
+  `*.lock`, which also matches the `.lock` that `locked` creates.
+- **A review outside any loop.** A review set up with no `--loop` holds a
+  lock that names none, and passes the fence as before.
+- **The record copy.** `copy_published` returns 0 when the former owner has no
+  record, and sorts the merged record by `published_at`, because an
+  incremental review reads the last entry as the newest.
+- **A long pass is no sleep.** The daemon measures the gap that reads as the
+  machine sleeping from the end of its last turn, not its start. A pass that
+  runs past a minute, as a pass over a few dozen pull requests does, then
+  forgives no lock and keeps no closed session live.
