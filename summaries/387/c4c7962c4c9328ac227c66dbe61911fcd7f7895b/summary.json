@@ -1,0 +1,240 @@
+{
+ "version": 1,
+ "name": "Watch daemon",
+ "project": "watch-daemon",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 387,
+  "title": "Subscribe sessions to their pull requests in place of the loop skills",
+  "head": "c4c7962c4c9328ac227c66dbe61911fcd7f7895b",
+  "headRef": "watch-skills",
+  "base": "96d322adeb7bb69791cca7526fa604d4aa92b7da",
+  "baseRef": "watch-daemon",
+  "basePr": 386
+ },
+ "overview": {
+  "summary": [
+   "Projector drives a pull request to a clean review with two kinds of agent work: a <b>fixer</b>, which answers review findings and merge conflicts with <code>fix-pr</code>, and a <b>reviewer</b>, which reviews each pushed head with <code>review-pr</code>. Until this stack, two skills kept that work going. <code>start-watch-loop</code> ran a watcher script, <code>watch-threads.sh</code>, in the conversation that opened a pull request. <code>start-review-loop</code> ran <code>watch-prs.sh</code> to review every pull request of the operator's. The operator is the GitHub account <code>gh</code> is signed in as.",
+   "The layer below, #386, adds the <b>watch daemon</b>: one background process per machine, <code>project watch serve</code>, that polls every pull request an agent session subscribes to and appends events for it to the session. A <b>subscription</b> is one line in the session's folder that names a pull request, or a repository, and a <b>role</b>: <code>fix</code> or <code>review</code>. An <b>event</b> is one line such as <code>FINDING</code>, <code>NEW HEAD</code>, or <code>MOVED</code> that ends with what the session should do.",
+   "This layer moves the skills onto that daemon. The skills that open or push a pull request subscribe the session to fix it with <code>project watch add</code>. <code>review-pr</code> subscribes the session to review the pull request it reviews, and the new <code>review-repo</code> subscribes the session to review a whole repository. The rules for acting on each event move out of the two loop skills into <code>fix-pr</code> and <code>review-pr</code>, and both loop skills and their watcher scripts are deleted. The docs, the website, and the generated <code>AGENTS.md</code> section follow. The layer above, #388, moves Projector's panel and Claude Code mod onto the daemon."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Session</b>: one agent conversation and its subagents. Claude Code names it in <code>CLAUDE_CODE_SESSION_ID</code>. On another host, the top-level conversation picks an id and passes it as <code>--session</code> or <code>PROJECTOR_SESSION</code>.</li><li><b>Owner</b>: the one session the daemon gives a pull request's events for a role. A subscription to the pull request beats one to its repository, and the newer one wins between equals.</li><li><b>Delivery</b>: how events reach the session. <code>project watch add</code> ends with an <code>events:</code> line: <code>mod</code> (Claude Code's mod, in #388), <code>stream</code> (a running <code>project watch stream</code>), or <code>none</code>, with the command to start.</li><li><b>Fence</b>: <code>project review publish</code>, <code>move</code>, and <code>settle</code> refuse when the head's lock no longer names their <code>--loop</code>, because the daemon handed the review to another session.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review status",
+    "html": "<p>The first review, 5718931462 of <code>a7203b5</code>, found two P2 problems in the prose. <code>docs/cli.md</code> still described the old loops, and three edited Markdown lines were far wider than the lines around them. Both are fixed at <code>3c4fad1</code>. Review 5719283841 of that head is clean and marked the pull request ready. The full gate passed at both heads.</p><p>Head <code>c4c7962</code> restacks the same five commits onto #386's <code>96d322a</code>, which renames the remaining loop references in <code>docs/cli.md</code>. Review 5719461195 of that head is clean.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The plan records what the skills settled",
+   "kicker": "Section 9.2 of the watch-daemon plan, a deferred question, and two more rows in the file table",
+   "intro": [
+    "The plan, <code>docs/projects/watch-daemon/readme.md</code>, already describes the skills in § 2.10. This layer adds § 9.2, which records the choices that building the skills settled. Read it first, because the skill groups below carry those choices out.",
+    "A new open question in § 7 covers a stack whose layers end up with different <code>fix</code> owners. Ownership is per pull request, but one subagent fixes a whole stack, so <code>fix-pr</code> stops on such a <code>MOVED</code> and asks the user."
+   ],
+   "files": [
+    {
+     "path": "docs/projects/watch-daemon/readme.md",
+     "note": "New § 9.2, a deferred question in § 7, and two rows in § 2.12's file table."
+    }
+   ]
+  },
+  {
+   "id": "fix",
+   "title": "Pushing a pull request subscribes the session to fix it",
+   "kicker": "fix-pr, implement, and spec subscribe with project watch add and act on fix events",
+   "intro": [
+    "Each skill that opens or pushes a pull request now runs <code>project watch add owner/repo#number</code> after the push, for every layer of a stack. The <code>fix</code> role is the default. The skill skips the command when <code>watch.auto_start</code> is <code>false</code>, and reads the <code>events:</code> line to learn whether something delivers the session's events. Only the top-level conversation starts <code>project watch stream</code>, because a subagent's processes end when it returns.",
+    "<code>fix-pr</code> gains two sections. <b>Subscribe the session to the pull request</b> holds the subscription rules that <code>implement</code> and <code>spec</code> cite. <b>Act on the session's events</b> takes over the old watch loop's rules: what each <code>fix</code> event means, one subagent per pull request named <code>fix-&lt;number&gt;</code> or <code>fix-stack-&lt;number&gt;</code>, and the report of clean state and stack readiness.",
+    "Because a subagent's commands carry the session's id, <code>implement</code> drops its rule to hand a pull request up to the top-level conversation."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Each command, flag, and quoted output line matches <code>add_watch_parser</code> and <code>watch_delivery</code> in <code>src/projector/cli.py</code>, and each event's action text matches <code>route_fix</code> and <code>closing_actions</code> in <code>src/projector/watch.py</code>, read at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "New sections for subscribing and for acting on events, plus wording that names a review or the watch daemon where it named a loop."
+    },
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "The hand-over subscribes the session and reports the <code>events:</code> line, in place of starting or joining a watch loop."
+    },
+    {
+     "path": "skills/spec/SKILL.md",
+     "note": "A plan's pull request subscribes the session to fix it, as <code>fix-pr</code> describes."
+    }
+   ]
+  },
+  {
+   "id": "review",
+   "title": "Reviewing subscribes the session to review",
+   "kicker": "review-pr subscribes after setup and always passes --loop; review-repo replaces start-review-loop",
+   "intro": [
+    "<code>review-pr</code> now subscribes the session to review the pull request after <code>project review setup</code> succeeds. Setup takes a lock on the head first, so the daemon sees a review in flight and announces nothing for the head under review. Every <code>project review</code> command passes the session's id as <code>--loop</code>, so each session keeps its own record of published reviews, and a review a person asks for can be incremental too.",
+    "The skill gains <b>Act on the session's review events</b> and <b>Stop when the review moves to another session</b>. They cover <code>NEW PR</code>, <code>NEW HEAD</code>, a stalled review, <code>RESPONDED</code>, <code>MOVED</code>, and closing. They also cover the fence, which tells a reviewer whose review was handed over to stop rather than run <code>setup</code> again.",
+    "<code>review-repo</code> is new. It subscribes the session to review every open pull request the operator wrote or that requests the operator's review, runs <code>project review rules</code> once to warn about missing permissions, and starts a <code>review-&lt;number&gt;</code> subagent for each event. A subagent it starts skips the per-pull-request subscription, so stopping the repository review leaves nothing subscribed."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>tests/test_review.py</code> reads the list of commands that take <code>--loop</code> and <code>--model</code> from <code>review-pr</code> and checks that it names every <code>project review</code> command. The suite passed at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Subscription, the <code>--loop</code> rule, event handling, and the hand-over fence."
+    },
+    {
+     "path": "skills/review-repo/SKILL.md",
+     "note": "New skill: subscribe to a repository's reviews, what that covers, and how to stop."
+    }
+   ]
+  },
+  {
+   "id": "removed",
+   "title": "The loop skills and their watchers are deleted",
+   "kicker": "start-review-loop, start-watch-loop, watch-prs.sh, and watch-threads.sh",
+   "intro": [
+    "With every rule now in <code>fix-pr</code> or <code>review-pr</code>, the two loop skills and their watcher scripts go. A loop that a session started before upgrading keeps running from the old plugin version's folder until the session ends. Those scripts call only <code>gh</code>, and <code>project loop</code> stays for one release."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "No user-facing document tells an upgrading user what happens to a loop that is already running. The plan's rollout step 3 covers it. The review body suggests a short note in <code>docs/plugins.md</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/start-review-loop/SKILL.md",
+     "collapsed": true
+    },
+    {
+     "path": "skills/start-review-loop/scripts/watch-prs.sh",
+     "collapsed": true
+    },
+    {
+     "path": "skills/start-watch-loop/SKILL.md",
+     "collapsed": true
+    },
+    {
+     "path": "skills/start-watch-loop/scripts/watch-threads.sh",
+     "collapsed": true
+    }
+   ]
+  },
+  {
+   "id": "instructions",
+   "title": "The generated instructions move to version 24",
+   "kicker": "The AGENTS.md template says implement subscribes the session and a review marks a pull request ready",
+   "intro": [
+    "<code>project init</code> writes a Projector section into each repository's <code>AGENTS.md</code> from <code>src/projector/templates/agents-block.md</code>. Two sentences change, and the version moves from 23 to 24 so that <code>init</code> rewrites the section. <code>tests/test_instructions.py</code> pins each version's hash."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The template, with <code>{projects_dir}</code> set to <code>docs/projects</code>, appears byte for byte in <code>AGENTS.md</code>. Its longest line is 79 columns, and the version 24 hash does not exist on <code>main</code>, which stops at 23."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The template's two changed sentences and its new version."
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's copy of the generated section."
+    },
+    {
+     "path": "tests/test_instructions.py"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The docs and the website name the new skills",
+   "kicker": "README.md, docs/plugins.md, docs/cli.md, three files under web/, and two skills' wording",
+   "intro": [
+    "The README and the plugin guide list <code>review-repo</code> in place of the loop skills. A new paragraph in <code>docs/plugins.md</code> explains subscriptions, the daemon, and event delivery on both hosts. On the website, the automated-reviews section and the footer link to <code>review-repo</code> and <code>fix-pr</code>.",
+    "<code>docs/cli.md</code> now describes the generated <code>AGENTS.md</code> section, <code>project review hold</code>, and <code>project review rules</code> in terms of the subscription, the watch daemon, and <code>review-repo</code>. <code>skills/finish/SKILL.md</code> and <code>skills/summarize-pr/SKILL.md</code> name a review or a reviewing session rather than a review loop.",
+    "The panel's own section of <code>docs/plugins.md</code> still describes the old watchers. The panel changes in #388."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>npm ci</code>, <code>npm run typecheck</code>, <code>npm run lint</code>, and <code>npm run build</code> in <code>web/</code> passed at this head, and every <code>DOCS</code> key the site uses exists."
+    }
+   ],
+   "files": [
+    {
+     "path": "README.md",
+     "note": "The skill list."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "The skill list, and a new paragraph on subscriptions and the watch daemon."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The generated section's description, <code>project review hold</code>, and <code>project review rules</code> name the subscription, the watch daemon, and <code>review-repo</code>."
+    },
+    {
+     "path": "skills/finish/SKILL.md",
+     "note": "Wording only: a review, not the review loop, checks a head."
+    },
+    {
+     "path": "skills/summarize-pr/SKILL.md",
+     "note": "Wording only: a reviewing session's subagents publish at once."
+    },
+    {
+     "path": "web/components/sections/review-loop.tsx",
+     "note": "The steps and the lead now describe sessions rather than loops."
+    },
+    {
+     "path": "web/components/site-footer.tsx"
+    },
+    {
+     "path": "web/lib/links.ts"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests follow the removed files",
+   "kicker": "Packaging guard, rewritten skill tests, and the watcher tests' removal",
+   "intro": [
+    "<code>tests/test_packaging.py</code> publishes <code>review-repo</code> in place of both loop skills. Its new guard fails when any file under <code>skills/</code> names a removed loop skill, a watcher script, <code>project loop</code>, or <code>--tracked</code>. The tests in <code>tests/test_review.py</code> that read the loop skill now read <code>review-pr</code> and <code>review-repo</code>. <code>tests/test_watchers.py</code> goes with the scripts, because #386 ported its cases to <code>tests/test_watch.py</code>. Two docstrings in <code>src/projector/watch.py</code> stop naming the scripts."
+   ],
+   "files": [
+    {
+     "path": "tests/test_packaging.py"
+    },
+    {
+     "path": "tests/test_review.py"
+    },
+    {
+     "path": "tests/test_watch.py"
+    },
+    {
+     "path": "tests/test_watchers.py"
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Docstrings only."
+    }
+   ]
+  }
+ ]
+}
