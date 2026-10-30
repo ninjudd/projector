@@ -254,6 +254,14 @@ Apply these rules to the verified set, in this order:
   the change's own, and its impact sets its priority.
 - **A rule violation cites its rule** by document and section. Without a
   citation it is a style opinion and is dropped.
+- **A completed plan is a record.** A Projector project's plan that is
+  already at `status: completed` on the pull request's base records what was
+  decided and built. A finding that asks the change to rewrite or annotate
+  that plan so it matches the change is dropped, even when it cites a rule
+  that keeps `docs/` current. When living documentation describes the same
+  behavior and the change left it stale, the finding asks for that document
+  instead. A plan the change itself marks `completed` is not a record yet, so
+  a finding about the outcome it records stands.
 - **One root cause is one finding.** The same defect at several sites becomes
   one finding that lists every location and anchors at the first. Two
   candidates on the same defect merge, keeping a second framing only when it

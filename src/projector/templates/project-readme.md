@@ -18,7 +18,11 @@ plan, fix by hand what the error or `project check` names, then go back to the
 commands. Do not create shared queue files, status or priority directories, or
 symlinks, and do not move a project when its status or priority changes.
 Number plan sections and never renumber them after another document or code
-comment cites them.
+comment cites them. Run `project done` in the pull request that carries the
+last of a project's code, so it is completed when that pull request merges,
+not in a later pull request or after a release. A completed plan records what
+was decided and built: when later work changes behavior it describes, update
+the living documentation and leave the plan as it is.
 
 Run `project list` to browse projects, `project search` to search them, and
 `project check` to validate the tree. Every `project` command comes from the

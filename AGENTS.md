@@ -143,7 +143,7 @@ because squash merges preserve that body as the commit message.
 For review findings, verify first, commit locally, reply with the commit, push,
 resolve the thread, and re-fetch it in that order.
 
-<!-- projector:begin 14 -->
+<!-- projector:begin 18 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -158,9 +158,20 @@ to find and change projects instead of parsing plan files yourself, and run
 Write new and substantially revised documentation in the Google developer
 documentation style: second person, present tense, active voice, sentence-case
 headings, exact identifiers in code font, and a command or example when it
-communicates more directly than prose. Keep `docs/` describing the behavior on
-the current branch, and update it in the change that alters that behavior. An
-existing document keeps its register until you revise it substantially.
+communicates more directly than prose. Keep the living documentation in
+`docs/` describing the behavior on the current branch, and update it in the
+change that alters that behavior. An existing document keeps its register until
+you revise it substantially.
+
+A plan under `docs/projects` is not living documentation. Update the plan of
+the project you are building as its decisions settle, in the change that
+settles them. Run `project done` in the pull request that carries the last of
+the project's code, so the project is `completed` when that pull request
+merges. Never open a separate pull request just to mark a shipped project
+completed, and do not wait for a release: Projector does not track releases,
+and a project held open for one tends to stay open. A `completed` plan records
+what was decided and built, so leave it as it is, and when later work changes
+behavior it describes, update the living documentation instead.
 
 Write GitHub issues and review comments in the same style. Write a pull request
 body as prose that explains why the change exists, because a squash merge makes

@@ -66,8 +66,11 @@ the frontmatter by hand when you author a new plan without the command.
 - `in-progress`: Implementation has begun and the project is being worked.
   Keep a blocked project here while its blocker is being resolved, and explain
   the blocker in the project plan.
-- `completed`: The project no longer needs work. State whether it shipped, was
-  abandoned, or was superseded in the project plan.
+- `completed`: The project no longer needs work. Mark a project that shipped
+  `completed` in the pull request that carries the last of its code, so it is
+  completed when that pull request merges, not in a later pull request or
+  after a release. State whether it shipped, was abandoned, or was superseded
+  in the project plan.
 
 `priority` records when the work should happen:
 
@@ -112,7 +115,9 @@ For example, the pull request that begins implementation runs
 `project status` to move the project from `ready` to `in-progress`. The pull
 request that completes the final implementation runs `project done`, which
 sets the status to `completed`. A stale status is worse than a missing
-status.
+status. Do not wait for a release before you run `project done`, and do not
+open a separate pull request for it. Projector does not track releases, so
+track them in your release process or issue tracker.
 
 The commands load the plan before they write, so they refuse a plan whose
 frontmatter `project check` rejects. A plan with `status: blocked`, for
@@ -137,6 +142,21 @@ this scaffold, and the `spec` skill fills it.
 Write the smallest plan that makes those clear. Keep the reason for a status
 or priority change in the body rather than adding more field values. Split
 material into a supplemental file when it obscures the main plan.
+
+## Leave a completed plan as it is
+
+A plan guides its project while the work is being built, and records what was
+decided and built once the project is `completed`. Update the plan of the
+project you are building in the change that settles each decision. Once the
+project is `completed`, leave its plan as it is. When later work changes
+behavior a completed plan describes, update the living documentation in
+`docs/` in that change, and record the new decision in the plan of the project
+the later work belongs to, when it has one.
+
+A completed plan still changes in two ways. Its status, priority, and owner
+change through the `project status`, `project priority`, and `project owner`
+commands, and a reference to a renamed project is updated as
+[Rename a project deliberately](#rename-a-project-deliberately) describes.
 
 ## Find projects
 
