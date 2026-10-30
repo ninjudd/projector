@@ -1,0 +1,135 @@
+{
+ "version": 1,
+ "name": "Inbox request drawer",
+ "project": "inbox/requests",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 377,
+  "title": "Color requests by theme, put start first, and offer Looks good and There's an issue",
+  "head": "e35a3a600160d2f6cea6e5b17740e8013c38ffe8",
+  "headRef": "request-drawer",
+  "base": "5f100cc85e69fe19a5616f27ca833d4e4defd0ec",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel sits above the Claude Code prompt and lists your pull requests and your inbox. The inbox holds three kinds of item that agents post: a <b>question</b> wants an answer, a <b>notice</b> wants a read, and a <b>request</b> asks you to do something only you can do, such as testing a build on your phone. Each open item's line has its own color, so you can tell the kinds apart at a glance. Opening an item shows its <b>drawer</b>, with numbered buttons you press by digit, by click, or by Enter.",
+   "This pull request reworks how requests look and how you finish them:",
+   "<ul><li><b>Color.</b> A request's line used Claude Code's <code>suggestion</code> color, which every built-in theme draws in the same blue as a question. It is now a pastel peach, <code>rgb(255,190,140)</code>, on the dark themes, and a darker orange, <code>rgb(180,90,40)</code>, on <code>light</code> and <code>light-daltonized</code>, where the peach was too faint to read.</li><li><b>Start first.</b> A request with a <b>start action</b> (something the agent prepares before you begin, such as installing the build) offers <b>Start</b>, or <b>Retry</b> after the agent reports it was blocked, on <code>1</code>, ahead of the other choices.</li><li><b>Two ways to say done.</b> <b>Looks good</b> and <b>There's an issue</b> replace <b>Done</b> and <b>Declined</b>. Both mark the request done, and the words you chose are recorded as the outcome's text, so the agent knows to look for a failure.</li><li><b>Decline as an action.</b> <b>decline request</b> on <code>8</code> takes dismiss's place and declines at once.</li></ul>",
+   "The agents block that <code>project init</code> writes into each repository's <code>AGENTS.md</code> moves to version 21, so agents know the new words. The review found one open problem: the new state key is not declared in <code>hooks/types.d.ts</code>, so <code>claude plugin validate .</code> and <code>hooks/typecheck.sh</code> fail."
+  ],
+  "cards": [
+   {
+    "id": "digits",
+    "title": "A request drawer's buttons",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Request</th><th>Before</th><th>After</th></tr></thead><tbody><tr><td>Start action, not yet pressed</td><td><code>1</code> Done, <code>2</code> Declined, <code>8</code> start request</td><td><code>1</code> Start, <code>2</code> Looks good, <code>3</code> There's an issue</td></tr><tr><td>Start action, agent blocked</td><td><code>1</code> Done, <code>2</code> Declined, <code>8</code> retry request</td><td><code>1</code> Retry, <code>2</code> Looks good, <code>3</code> There's an issue</td></tr><tr><td>No start action, or starting or ready</td><td><code>1</code> Done, <code>2</code> Declined</td><td><code>1</code> Looks good, <code>2</code> There's an issue</td></tr></tbody></table></div><p class=\"note\">Every open request has <code>7</code> discuss and <code>9</code> snooze, and now <code>8</code> decline request.</p>"
+   },
+   {
+    "id": "contrast",
+    "title": "Request line contrast on the panel's background",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Theme</th><th>Request</th><th>Question</th><th>Resolved (<code>subtle</code>)</th></tr></thead><tbody><tr><td><code>dark</code></td><td>11.40</td><td>9.81</td><td>2.28</td></tr><tr><td><code>dark-daltonized</code></td><td>11.40</td><td>10.91</td><td>2.28</td></tr><tr><td><code>light</code></td><td>4.16</td><td>3.86</td><td>1.92</td></tr><tr><td><code>light-daltonized</code></td><td>4.16</td><td>4.11</td><td>1.92</td></tr></tbody></table></div><p class=\"note\">WCAG contrast ratios against the panel's background, <code>rgb(20,20,20)</code> on the dark themes and <code>rgb(240,240,240)</code> on the light ones. Theme colors come from Claude Code 2.1.314.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "outcomes",
+   "title": "What a sent prompt records",
+   "kicker": "The words under a quoted request, and the outcome each records",
+   "intro": [
+    "When you press a choice, the panel puts the quoted request and the choice's words in your prompt. Sending it records the outcome. <code>CHOICES</code> lists the two choices, <b>Looks good</b> and <b>There's an issue</b>. <code>readPrompt</code> reads the first line under a quote as the outcome when it is one of those words, or a plain <code>Done</code> or <code>Declined</code> typed by hand. Each outcome it returns now carries the <code>word</code> that said so, and the panel passes a choice's words to <code>project inbox done</code> as <code>--text</code>.",
+    "The request tool's description, and the result it returns, now tell the agent that both choices mean done and that a decline arrives as a <code>DECLINED</code> message."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Replaces <code>OUTCOMES</code> with <code>CHOICES</code> and a map of the words that resolve a request, and updates the request tool's description."
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "Covers each choice, a typed <code>Done</code> and <code>Declined</code>, and the new <code>word</code> field."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "The panel's request line and drawer",
+   "kicker": "Color by theme, Start first, the choices, and decline on 8",
+   "intro": [
+    "<code>paint</code> already chose the panel's background from the Claude Code theme, following a custom theme to the built-in theme it builds on. It now also sets <code>themeRequestColor</code>: <code>rgb(180,90,40)</code> for <code>light</code> and <code>light-daltonized</code>, and peach for any other theme. The item line and the collapsed <code>+ N requests</code> line both read it through <code>kindColors</code>.",
+    "In the drawer, <code>startOf</code> decides whether the first button is <b>Start</b>, <b>Retry</b>, or absent, and the two choices follow it. A resolved request marks the choice it was recorded with. A done request recorded from a terminal or with a typed <code>Done</code>, or a declined one, gets a <code>Done</code> or <code>Declined</code> line of its own. <b>decline request</b> uses the line dismiss uses for other items, so it acts at once, and the declined request is struck through and offers <b>restore request</b>.",
+    "Pressing <b>Start</b> still goes through <code>act</code>, which passes the start action the drawer shows as <code>--action</code>. The CLI refuses that with exit 65 when the agent has revised the action, and the panel then reads the store again."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran <code>claude plugin test .</code>: 177 pass. The tests cover the per-theme color through <code>/theme</code>, decline on <code>8</code>, the recorded <code>--text</code>, and Enter landing on <code>start:4</code> and <code>outcome:5.good</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Per-theme request color, the choices and resolved marks in <code>drawOutcomes</code>, decline in dismiss's place, and <code>--text</code> on a done from a sent prompt.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 262,
+       "text": "The new state key <code>projector.panelThemeRequestColor</code> is not declared in <code>PluginState</code> in <code>hooks/types.d.ts</code>. As a result, <code>claude plugin validate .</code> fails and <code>hooks/typecheck.sh</code> reports TS2322 here and TS2345 at line 1457. Declare <code>panelThemeRequestColor: string</code> there."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "New tests for decline on <code>8</code> and for the color by theme; existing request tests move to the new labels and digits, and the Enter test covers requests."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Describes the per-theme color, the choices, decline, and where Enter puts the ring.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The keyboard section's list still says <code>8</code> presses <b>dismiss</b> or <b>restore</b>, without decline for a request."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "agents",
+   "title": "The agents block, version 21",
+   "kicker": "What Projector tells every agent about a request's outcome",
+   "intro": [
+    "<code>project init</code> writes a block of instructions into each repository's <code>AGENTS.md</code> from <code>src/projector/templates/agents-block.md</code>. Each version of that template is pinned by its hash in <code>tests/test_instructions.py</code>, so a text change needs a new version. Version 21 names the two choices, says that a decline arrives as <code>DECLINED</code>, and tells an agent to find out what failed when the person says <code>There's an issue</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The block in <code>AGENTS.md</code> matches the rendered template (<code>block_matches</code> returns true). The template's SHA-256 is the pinned <code>88a3ad16…</code>, and no template line is longer than 79 columns."
+    },
+    {
+     "kind": "context",
+     "text": "The completed <code>inbox/requests</code> plan still describes <b>Done</b> and <b>Declined</b>. <code>AGENTS.md</code> leaves completed plans as they are and keeps <code>docs/</code> current instead."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Version 21's text about a request's outcome."
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's copy of version 21."
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins version 21's hash."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Says what <code>project init</code>'s block now tells agents about <code>There's an issue</code>."
+    }
+   ]
+  }
+ ]
+}
