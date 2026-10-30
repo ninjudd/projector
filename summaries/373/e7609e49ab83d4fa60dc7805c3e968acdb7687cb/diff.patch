@@ -1,0 +1,1866 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 3a73431d..84f4778f 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -143,7 +143,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 19 -->
++<!-- projector:begin 20 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -226,7 +226,16 @@ do the work yourself whenever you can. Write the request as what they should
+ do, and put the steps in its detail as a numbered list, each step with what
+ they should see, so their notes can name the step that failed. Post one
+ request for the whole hand-off rather than a question and a notice for its
+-parts, and keep working on anything it does not block.
++parts, and keep working on anything it does not block. Give the request a
++start action only when you must prepare something before they can begin,
++such as installing a build on their phone, and leave it out otherwise. Do
++the slow part before you post the request, such as building the app, so the
++start action only installs and launches it and they are not left waiting
++once they press start. They press start when they are ready, and a message
++that starts `STARTED` arrives quoting the start action. Do the start action
++only then, do exactly what that message quotes and nothing more, and mark the
++request ready with the `ready` tool, or blocked with the `block` tool and
++what they should do first, such as unlocking the phone.
+ 
+ When the person picks one of a question's options, the answer reaches you
+ as a message that starts `ANSWER`. When they finish a request, its outcome
+diff --git a/docs/cli.md b/docs/cli.md
+index e034f886..959264aa 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -62,6 +62,11 @@ what it did to each:
+   running a command it is not allowed to run or checking a change on the
+   person's phone, with numbered steps that each say what the person should
+   see, and to read a done request's notes and not post a declined one again.
++  It tells an agent to give a request a start action only when it must
++  prepare something first, to do the slow part, such as a build, before it
++  posts the request so the start is quick, to do the start action only once
++  `STARTED` arrives, exactly as that message quotes it, and then to mark the
++  request ready or blocked.
+   It tells an agent whose question or request the person replied to, rather
+   than resolving it, to answer what they asked and then withdraw the item
+   with the `withdraw` tool, revise it with the `revise` tool, or leave it
+@@ -98,7 +103,8 @@ what it did to each:
+     "Bash(project inbox dismiss *)",
+     "Bash(project inbox snooze *)",
+     "Bash(project inbox done *)",
+-    "Bash(project inbox decline *)"
++    "Bash(project inbox decline *)",
++    "Bash(project inbox start *)"
+   ]
+   ```
+ 
+@@ -110,18 +116,20 @@ what it did to each:
+   `Bash(project site *prepare*)` asks before either flag, as `--prepare x` or
+   `--prepare=x`, and before `--no-prepare` too. Those two commands refuse an
+   abbreviated option such as `--prep`, so no shorter spelling slips past the
+-  rule. `project inbox answer`, `dismiss`, `snooze`, `done`, and `decline`
+-  record your answer to an item an agent posted, your outcome for a request,
+-  or your choice to dismiss or put it off, so an agent running one could
+-  answer its own question or mark its own request done. Projector's panel runs
+-  them itself, not through an agent's shell, so answering from the panel never
+-  asks. Claude Code checks ask rules before allow rules, so an ask rule
+-  prompts for a command that `Bash(project *)` also allows, and a trailing
+-  ` *` matches the command with no arguments too. `project` refuses an option
+-  before the command, so every command line it runs starts with its command,
+-  and that command's ask rule matches wherever the options go:
+-  `Bash(project init *)` asks before `project init --root .`. A line such as
+-  `project --root . init` matches no ask rule, and `project` refuses it.
++  rule. `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, and
++  `start` record your answer to an item an agent posted, your outcome for a
++  request, your consent to a request's start action, or your choice to
++  dismiss or put it off, so an agent running one could answer its own
++  question, mark its own request done, or consent to its own start action.
++  Projector's panel runs them itself, not through an agent's shell, so
++  answering from the panel never asks. Claude Code checks ask rules before
++  allow rules, so an ask rule prompts for a command that `Bash(project *)`
++  also allows, and a trailing ` *` matches the command with no arguments
++  too. `project` refuses an option before the command, so every command line
++  it runs starts with its command, and that command's ask rule matches
++  wherever the options go: `Bash(project init *)` asks before
++  `project init --root .`. A line such as `project --root . init` matches no
++  ask rule, and `project` refuses it.
+ 
+   `project edit`, and `project create` without `--no-edit`, open your
+   `$VISUAL` or `$EDITOR`, and need no ask rule. They open it only at a
+@@ -204,7 +212,7 @@ what it did to each:
+       decision = "allow",
+   )
+   prefix_rule(
+-      pattern = ["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "request", "restore", "revise", "show", "tell", "watch", "withdraw"]],
++      pattern = ["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore", "revise", "show", "tell", "watch", "withdraw"]],
+       decision = "allow",
+   )
+   prefix_rule(
+@@ -220,9 +228,9 @@ what it did to each:
+   No rule matches `project init`, `project upgrade`, `project config set` or
+   `unset`, `project create` or `project edit`, whose editor an agent could
+   drive, `project review gate`, `project site build` or `serve`,
+-  `project inbox answer`, `dismiss`, `snooze`, `done`, or `decline`, which
+-  record your choice,
+-  or a command line that starts with an option, so Codex's usual approval
++  `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, or
++  `start`, which record your choice, or a command line that starts with an
++  option, so Codex's usual approval
+   decides them, in its sandbox. A command added to Projector later reaches
+   Codex once Projector names it and you run `init` again. To see what the
+   rules allow, run
+@@ -1996,10 +2004,11 @@ your prompt. The agent then withdraws the question if the reply settles it,
+ revises it if the reply shows it was unclear, or leaves it open while it still
+ needs you.
+ 
+-`answer`, `dismiss`, `snooze`, `done`, and `decline` record your choice, so
+-the permission rules `project init` adds ask you before an agent runs one, in
+-Claude Code, and leave them to Codex's usual approval. Otherwise an agent
+-could answer its own question or mark its own request done. Projector's
++`answer`, `dismiss`, `snooze`, `done`, `decline`, and `start` record your
++choice, so the permission rules `project init` adds ask you before an agent
++runs one, in Claude Code, and leave them to Codex's usual approval. Otherwise
++an agent could answer its own question, mark its own request done, or press
++start for you. Projector's
+ panel runs them itself, so answering there never asks. `restore` takes no
+ choice from you, so an agent runs it without asking, in either host, when
+ you say a dismissal was a mistake.
+@@ -2093,8 +2102,44 @@ takes no answer, so `answer` refuses one with exit code 65, and `done` and
+ `decline` refuse any other kind of item, a resolved request, and a `--text` of
+ more than one line. `dismiss` declines a request with no text. A decline is a
+ dismissal, so `restore` reopens a declined request, and the agent that heard
+-`DECLINED` hears `RESTORED`. `list` shows a request as `open`, `done`,
+-`declined`, or `withdrawn`.
++`DECLINED` hears `RESTORED`. `list` shows a request as `open`, `started`,
++`ready`, `blocked`, `done`, `declined`, or `withdrawn`.
++
++When the agent must prepare something before you can begin, such as
++installing a build on your phone, it gives the request a start action with
++`--start`. Nothing happens until you say you are ready with `start`, which
++takes the start action as you read it and refuses one that no longer
++matches, so you consent only to what you read. The deliverer then sends the
++agent `STARTED` with that action, and the agent does it and marks the
++request `ready`, or `block`s it with what you should do first. Run `start`
++again to retry a blocked request:
++
++```console
++$ project inbox request "Test the gutters" \
++    --start "Install build c0d62a3b on your iPhone" --session "$SESSION"
++6
++$ project inbox start 6 --action "Install build c0d62a3b on your iPhone"
++started 6
++$ project inbox watch --once --session "$SESSION"
++STARTED 6 Test the gutters → Install build c0d62a3b on your iPhone
++$ project inbox block 6 --session "$SESSION" \
++    --reason "The phone is locked. Unlock it and press retry."
++blocked 6
++```
++
++`start` refuses, with exit code 65, a request with no start action, one
++already started and not blocked, a resolved one, and an `--action` that
++differs from the stored start action. `ready` and `block` refuse a request
++that is not started or that is already ready or blocked, and `block` refuses
++an empty reason or one longer than one line. `revise` takes `--start` to
++change the start action, and an empty `--start ""` removes it. Revising a
++started, ready, or blocked request returns it to open, so a start you
++pressed for the old text never covers the new. A restored request returns to
++open the same way. When you mark a request done or decline it before its
++`STARTED` reaches the agent, the outcome takes its place, and the agent hears
++only the outcome. A `STARTED` already on its way still arrives, and the
++outcome follows it. When `STARTED` cannot be delivered, the start is taken
++back, so you press start again.
+ 
+ To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
+ an hour, or for the whole minutes that `--for` gives, up to a day (1440
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 2fd8aaf4..af1da5b0 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -387,6 +387,9 @@ which the model sees as `mcp__projector__ask`, tells you something that
+ needs no answer with the `tell` tool, `mcp__projector__tell`, and asks you to
+ do something only you can do, such as running a command it may not run, with
+ the `request` tool, `mcp__projector__request`. Either way it keeps working.
++When a request's start action is done, the agent marks it ready with the
++`ready` tool, `mcp__projector__ready`, or says why it could not with the
++`block` tool, `mcp__projector__block`.
+ When an item it posted no longer needs you, such as a question your reply
+ settled, the agent takes it back with the `withdraw` tool,
+ `mcp__projector__withdraw`, by the number `ask`, `tell`, or `request`
+@@ -553,6 +556,21 @@ the request stays open, and the reply reaches the agent as your prompt. A
+ done or declined request's drawer marks its outcome, and a declined one offers
+ **restore request**.
+ 
++A request the agent must prepare for, such as installing a build on your
++phone, has a start action. Its drawer says `Start:` and what the agent will
++do, and offers **start request** on `8`. Opening the drawer, reading the
++steps, or leaving it open sends nothing. Press **start request** when you are
++ready to begin: the panel records the start action its drawer shows, and the
++agent hears `STARTED` with that action. If the agent revised the start action
++since the panel drew the drawer, the press records nothing, and the drawer
++shows the new action for you to read and press again. While the agent works,
++the drawer says `Starting:`, and the line ends with `starting`. Once the
++agent is done, they read `Ready:` and `ready`, in green, and you begin. When
++the agent could not do it, they read `Blocked:` with its reason and
++`blocked`, in yellow, and **retry request** takes the place of start, for you
++to press once you have done what the reason says. **Done** and **Declined**
++work throughout. A request without a start action shows none of this.
++
+ **dismiss**, **restore**, and **unsnooze** act at once. A dismissed item
+ stays in the list a while, struck through, as the paragraph on resolved
+ items below describes, so you undo a dismissal you did not mean by opening
+diff --git a/docs/projects/inbox/requests/readme.md b/docs/projects/inbox/requests/readme.md
+index 9369c7b7..e17ffe78 100644
+--- a/docs/projects/inbox/requests/readme.md
++++ b/docs/projects/inbox/requests/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: in-progress
++status: completed
+ priority: now
+ ---
+ 
+@@ -335,3 +335,68 @@ details, each a first choice under § 7 where it concerns the look.
+ - **The `request` tool's result names both routes.** The outcome arrives as
+   the person's prompt, quoting the request with `Done` or `Declined`, or as a
+   message that starts `DONE` or `DECLINED`, so the agent reads either.
++
++## 9. What layer 2 settled
++
++Layer 2 builds the start action of § 2 on layer 1. Building it settled these
++details, each a first choice under § 7 where it concerns the look.
++
++- **start and retry sit on `8`.** An open request leaves `8` free, since it
++  offers no dismiss, so **start request** takes it, and **retry request**
++  replaces it once the agent says it was blocked. Neither shows while the
++  agent works or once it is ready.
++- **A line above the outcomes says where the start stands.** It reads
++  `Start:`, `Starting:`, or `Ready:` with the start action, or `Blocked:`
++  with the agent's reason. The request's line ends with `starting`,
++  `ready`, or `blocked`, in `subtle`, `success`, and `warning`.
++- **`claim` records which line it took.** A claim carries `line`, `answer`,
++  `restored`, or `started`, so `settle` finishes the `STARTED` it claimed
++  even after an outcome lands, and `message` sends that line. A claim an
++  earlier release made has no `line`, and the item's owed line stands in.
++- **A restored request waits for a new start.** Restoring a declined
++  request removes its `started` and `progress`, because the agent heard
++  `DECLINED` and may have undone what it prepared.
++- **`revise --start ""` removes the start action**, and a revision of any
++  part returns the request to open.
++- **`ready` and `block` take a started request only once.** Both refuse a
++  request that is not started or already ready or blocked, so the agent
++  cannot mark a start it never received.
++- **A failed `STARTED` says so.** Its toast reads `the start of "<request>"
++  did not reach its agent; press start again`, and **start** returns.
++- **The agents block teaches the start action.** Version 20 tells an agent
++  to give a start action only when it must prepare something first, and to
++  do the slow part, such as building the app, before it posts the request,
++  so the start action only installs and launches it and the person is not
++  left waiting once they press start. It tells the agent to do the start
++  action only once `STARTED` arrives and exactly as that message quotes it,
++  and then to mark the request ready or blocked. The `request` tool's
++  description says the same.
++
++## 10. Outcome
++
++The project shipped in two layers: layer 1, in
++[#372](https://github.com/ninjudd/projector/pull/372), with requests, done,
++and decline, and layer 2, on top of it, with the start action. The design is
++§ 2's, with the details §§ 8 and 9 record. The look stays the owner's to
++adjust, as § 7 says.
++
++| Criterion in § 4 | Evidence |
++| --- | --- |
++| `request` numbers and lists a request; a bad subject exits `65` | `RequestTests.test_numbers_a_request_in_the_count_every_kind_uses`, `test_refuses_a_request_that_fails_a_check_and_writes_nothing`, `test_lists_and_shows_a_request_by_its_kind_and_state` |
++| A request without `--start` shows no start, mark, or start line | `panel.test.tsx`: `requests through the tool, …`, `a request without a start action shows no start line, no start, and no mark` |
++| done from the drawer records the outcome once; `done?` replies | `panel.test.tsx`: `Done puts the request and Done in the prompt, …`; `inbox.test.ts`: `anything else under a quoted request replies to it and leaves it open` |
++| `decline --text` sends `DECLINED` with the text; `answer` refuses a request | `RequestTests.test_an_outcome_carries_the_persons_one_line`, `test_a_request_takes_no_answer_and_another_kind_no_outcome` |
++| restore of a declined request sends `RESTORED` | `RequestTests.test_declining_is_a_dismissal_that_restore_reopens` |
++| Opening a drawer sends nothing; start sends `STARTED` and shows `starting` | `panel.test.tsx`: `start on 8 records the start action the drawer shows, …` |
++| A failed `STARTED` removes the start and offers start again | `StartTests.test_a_failed_started_removes_the_start`; `panel.test.tsx`: `a STARTED that cannot be delivered takes the start back, …` |
++| block, then retry | `StartTests.test_retry_after_a_block_records_a_new_start`; `panel.test.tsx`: `a blocked request shows its reason and retry on 8, …` |
++| revise after start returns to open; a stale drawer's press records nothing | `StartTests.test_revising_a_started_request_returns_it_to_open`, `test_start_refuses_a_stale_action_a_second_press_and_a_request_with_none`; `panel.test.tsx`: `a press of start on a drawer the agent revised since …` |
++| `start`, `done`, and `decline` ask; `request`, `ready`, and `block` do not | `tests/test_permissions.py` |
++| An outcome or withdrawal replaces an unclaimed `STARTED`, and follows a claimed one | `StartTests.test_an_outcome_or_withdrawal_replaces_a_started_no_deliverer_claimed`, `test_an_outcome_recorded_while_started_is_claimed_follows_it`, `test_a_withdrawal_while_started_is_claimed_lets_that_line_settle` |
++
++The panel's tick still reads the store only when a file changes, and a
++request adds no process to it, as § 5 planned. `hooks/typecheck.sh` passes
++at layer 2's head. It needs the declarations an interactive
++`claude --plugin-dir .` session writes, which the checkouts this was built in
++lacked, so the review loop ran it, with the main checkout's TypeScript and
++Claude Code types.
+diff --git a/hooks/inbox.test.ts b/hooks/inbox.test.ts
+index 51da3f9c..35dc6de9 100644
+--- a/hooks/inbox.test.ts
++++ b/hooks/inbox.test.ts
+@@ -14,6 +14,7 @@ import {
+   readPrompt,
+   relayNote,
+   replyNote,
++  reportArguments,
+   REQUEST_DESCRIPTION,
+   requestArguments,
+   RESTORE_DESCRIPTION,
+@@ -396,7 +397,7 @@ test('a call of the revise tool becomes `project inbox revise` with only what ch
+     '--json',
+   ])
+   expect(reviseArguments({ number: 3 }, 's1')).toEqual({
+-    error: 'give what changes: `question`, `request`, `detail`, `recommendation`, or `options`',
++    error: 'give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`',
+   })
+   expect(reviseArguments({ number: '3', detail: 'x' }, 's1')).toEqual({
+     error: '`number` must be the whole number `ask` or `request` returned, such as 3',
+@@ -668,4 +669,41 @@ test('a call of the revise tool revises a request with `request`', () => {
+     '--json',
+   ])
+   expect(reviseArguments({ number: 3, request: 7 }, 's1')).toEqual({ error: '`request` must be a string' })
++  expect(reviseArguments({ number: 3, start: '' }, 's1')).toEqual(['inbox', 'revise', '3', '--session', 's1', '--start=', '--json'])
++})
++
++test('the request tool tells the agent to give a start action only when it must prepare, and to wait for STARTED', () => {
++  expect(REQUEST_DESCRIPTION).toContain('Give `start` only when you must do something before they can begin')
++  expect(REQUEST_DESCRIPTION).toContain('Do the start action only after it arrives, and do exactly what it quotes and nothing more.')
++  expect(requestArguments({ request: 'Test the gutters', start: 'Install the build' }, 's1', undefined)).toEqual([
++    'inbox',
++    'request',
++    '--session=s1',
++    '--start=Install the build',
++    '--',
++    'Test the gutters',
++  ])
++  expect(requestArguments({ request: 'R', start: 7 }, 's1', undefined)).toEqual({ error: '`start` must be a string' })
++})
++
++test('a call of the ready or block tool becomes `project inbox ready` or `block`', () => {
++  expect(reportArguments({ number: 3 }, 's1')).toEqual(['inbox', 'ready', '3', '--session', 's1', '--json'])
++  expect(reportArguments({ number: 3, reason: '-Unlock the phone' }, 's1')).toEqual([
++    'inbox',
++    'block',
++    '3',
++    '--reason=-Unlock the phone',
++    '--session',
++    's1',
++    '--json',
++  ])
++  expect(reportArguments({ number: 0 }, 's1')).toEqual({ error: '`number` must be the whole number `request` returned, such as 3' })
++})
++
++test('a request’s start waits for a deliverer until STARTED is delivered, and only while the request is open', () => {
++  const started = { action: 'Install the build', startedAt: NOW }
++  expect(needsDelivery(request({ start: 'Install the build', started }), NOW)).toBe(true)
++  expect(needsDelivery(request({ started: { ...started, deliveredAt: NOW } }), NOW)).toBe(false)
++  expect(needsDelivery(request({ started, claim: { token: 't', renewedAt: NOW, line: 'started' } }), NOW)).toBe(false)
++  expect(needsDelivery(request({ started, answer: { done: true, answeredAt: NOW }, deliveredAt: NOW }), NOW)).toBe(false)
+ })
+diff --git a/hooks/inbox.ts b/hooks/inbox.ts
+index d67772f5..e2c9771e 100644
+--- a/hooks/inbox.ts
++++ b/hooks/inbox.ts
+@@ -39,14 +39,20 @@ export const wokeBetween = (items: readonly Item[], since: number, time: number)
+       item.answer === undefined && item.snoozedUntil !== undefined && since < item.snoozedUntil && item.snoozedUntil <= time,
+   )
+ 
++/** Whether an open request's start waits for `STARTED` to reach its agent. */
++export const isStarting = (request: Request) =>
++  request.answer === undefined && request.started !== undefined && request.started.deliveredAt === undefined
++
+ /**
+  * Whether a question's or request's line waits for a deliverer: an answer or
+- * outcome recorded and undelivered, or word of a restore, and claimed by none
+- * that is live.
++ * outcome recorded and undelivered, word of a restore, or a request's start,
++ * and claimed by none that is live.
+  */
+ export const needsDelivery = (item: Item, time: number): item is Answerable =>
+   item.kind !== 'notice' &&
+-  (item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined)) &&
++  (item.restoredAt !== undefined ||
++    (item.answer !== undefined && item.deliveredAt === undefined) ||
++    (item.kind === 'request' && isStarting(item))) &&
+   (item.claim === undefined || time - item.claim.renewedAt >= CLAIM_MS)
+ 
+ /** What the panel puts in the prompt to discuss an item: its subject, in quotes. */
+@@ -354,6 +360,13 @@ export const REQUEST_DESCRIPTION = described([
+   'or checking a change on their own device: it appears in Projector’s panel above their prompt, and you keep working.',
+   'Write the request in one short line of at most 120 characters, and put the steps they follow in `detail`.',
+   'Name the pull request it is about in `pr`, as owner/repo#number.',
++  'Give `start` only when you must do something before they can begin, such as installing a build on their phone:',
++  'one line saying what you will do. Leave it out otherwise, and the request goes straight to done or declined.',
++  'Do the slow part before you post the request, such as building the app, so the start action only installs and',
++  'launches it and the person is not left waiting once they press start.',
++  'With `start`, the person presses start when they are ready, and a message that starts `STARTED 3` arrives quoting',
++  'the start action. Do the start action only after it arrives, and do exactly what it quotes and nothing more.',
++  'Then mark the request ready with `ready`, or, when you cannot finish, `block` it with what they should do first.',
+   'Keep working on anything the result does not block. The call returns the request’s number, such as 3.',
+   'When they finish, their outcome arrives later as their prompt, quoting the request with `Done` or `Declined` and any',
+   'notes under it, or as a message that starts `DONE 3` or `DECLINED 3`. When they restore a request after you heard',
+@@ -367,6 +380,11 @@ export const REQUEST_SCHEMA = {
+   properties: {
+     request: { type: 'string', description: 'What the person should do, in one line of at most 120 characters.' },
+     detail: { type: 'string', description: 'The steps they follow, as Markdown.' },
++    start: {
++      type: 'string',
++      description:
++        'What you will do once they press start, in one line, such as installing a build; leave it out when there is nothing to prepare.',
++    },
+     pr: { type: 'string', description: 'The pull request the request is about, as owner/repo#number.' },
+   },
+   required: ['request'],
+@@ -379,11 +397,67 @@ export function requestArguments(
+   session: string,
+   agentId: string | undefined,
+ ): string[] | { error: string } {
+-  const { request, detail, pr } = input
++  const { request, detail, start, pr } = input
+   if (!isText(request)) return { error: '`request` must be a string' }
+   if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
++  if (start !== undefined && !isText(start)) return { error: '`start` must be a string' }
+   if (pr !== undefined && !isText(pr)) return { error: '`pr` must be a string such as owner/repo#123' }
+-  return ['inbox', 'request', `--session=${session}`, ...postedFlags(detail, pr, agentId), '--', request]
++  return [
++    'inbox',
++    'request',
++    `--session=${session}`,
++    ...(start === undefined || start === '' ? [] : [`--start=${start}`]),
++    ...postedFlags(detail, pr, agentId),
++    '--',
++    request,
++  ]
++}
++
++export const READY_DESCRIPTION = described([
++  'Mark a request you posted ready once you have done its start action, after the message that starts `STARTED 3`',
++  'arrived: Projector’s panel tells the person they can begin. Name it by the number `request` returned.',
++  'Nothing comes back to you until they finish it, as a message that starts `DONE 3` or `DECLINED 3`.',
++])
++
++export const READY_SCHEMA = {
++  type: 'object',
++  properties: {
++    number: { type: 'integer', minimum: 1, description: 'The request’s number, as `request` returned it, such as 3.' },
++  },
++  required: ['number'],
++  additionalProperties: false,
++}
++
++export const BLOCK_DESCRIPTION = described([
++  'Say you could not do a started request’s start action, and what the person should do before they press retry,',
++  'such as “The phone is locked. Unlock it and press retry.” Name it by the number `request` returned.',
++  'When they press retry, a new message that starts `STARTED 3` arrives, and you try the start action again.',
++])
++
++export const BLOCK_SCHEMA = {
++  type: 'object',
++  properties: {
++    number: { type: 'integer', minimum: 1, description: 'The request’s number, as `request` returned it, such as 3.' },
++    reason: {
++      type: 'string',
++      description: 'What the person should do before they press retry, in one line of at most 120 characters.',
++    },
++  },
++  required: ['number', 'reason'],
++  additionalProperties: false,
++}
++
++/** The arguments of `project inbox ready` or `block` for one call of its tool, or why the call cannot be one. */
++export function reportArguments(
++  input: Readonly<Record<string, unknown>>,
++  session: string,
++): string[] | { error: string } {
++  const { number, reason } = input
++  if (!isNumber(number)) return { error: '`number` must be the whole number `request` returned, such as 3' }
++  if (reason !== undefined && !isText(reason)) return { error: '`reason` must be a string' }
++  return reason === undefined
++    ? ['inbox', 'ready', String(number), '--session', session, '--json']
++    : ['inbox', 'block', String(number), `--reason=${reason}`, '--session', session, '--json']
+ }
+ 
+ export const WITHDRAW_DESCRIPTION = described([
+@@ -444,7 +518,8 @@ export const REVISE_DESCRIPTION = described([
+   'Revise a question you asked or a request you posted that is still open, keeping its number, when the person’s reply',
+   'shows it was unclear or the choice or the work has changed. Name it by the number `ask` or `request` returned, and',
+   'give only what changes: for a question, the question, its detail, the recommendation, or the other options, which',
+-  '`options` replaces as a whole; for a request, the request or its detail.',
++  '`options` replaces as a whole; for a request, the request, its detail, or its start action, where an empty `start`',
++  'removes it. A revised request returns to open, so a start the person pressed for its old text needs a new press.',
+   'Projector’s panel redraws it at once, and a question’s answer still arrives as a message that starts',
+   '`ANSWER 3.<letter>` or `DISMISSED 3`, a request’s outcome as one that starts `DONE 3` or `DECLINED 3`.',
+ ])
+@@ -459,6 +534,7 @@ export const REVISE_SCHEMA = {
+     },
+     question: { type: 'string', description: 'The new question, in one line of at most 120 characters.' },
+     request: { type: 'string', description: 'The new request, in one line of at most 120 characters.' },
++    start: { type: 'string', description: 'The request’s new start action, in one line; an empty string removes it.' },
+     recommendation: {
+       type: 'string',
+       description: 'The new answer you recommend, written in full; it is answer a.',
+@@ -488,17 +564,18 @@ export function reviseArguments(
+   input: Readonly<Record<string, unknown>>,
+   session: string,
+ ): string[] | { error: string } {
+-  const { number, question, request, recommendation, options, detail } = input
++  const { number, question, request, start, recommendation, options, detail } = input
+   if (!isNumber(number)) return { error: '`number` must be the whole number `ask` or `request` returned, such as 3' }
+   if (question !== undefined && !isText(question)) return { error: '`question` must be a string' }
+   if (request !== undefined && !isText(request)) return { error: '`request` must be a string' }
++  if (start !== undefined && !isText(start)) return { error: '`start` must be a string' }
+   if (recommendation !== undefined && !isText(recommendation)) return { error: '`recommendation` must be a string' }
+   if (options !== undefined && (!Array.isArray(options) || !options.every(isText))) {
+     return { error: '`options` must be a list of strings' }
+   }
+   if (detail !== undefined && !isText(detail)) return { error: '`detail` must be a string' }
+-  if ([question, request, recommendation, options, detail].every(value => value === undefined)) {
+-    return { error: 'give what changes: `question`, `request`, `detail`, `recommendation`, or `options`' }
++  if ([question, request, start, recommendation, options, detail].every(value => value === undefined)) {
++    return { error: 'give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`' }
+   }
+   return [
+     'inbox',
+@@ -508,6 +585,7 @@ export function reviseArguments(
+     session,
+     ...(question === undefined ? [] : [`--question=${question}`]),
+     ...(request === undefined ? [] : [`--request=${request}`]),
++    ...(start === undefined ? [] : [`--start=${start}`]),
+     ...(recommendation === undefined ? [] : [`--recommend=${recommendation}`]),
+     ...(options === undefined ? [] : options.length === 0 ? ['--no-options'] : options.map(option => `--option=${option}`)),
+     ...(detail === undefined ? [] : [`--detail=${detail}`]),
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 1b98d503..b2b90101 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -1303,6 +1303,9 @@ const requested = (fields: Partial<HeldRequest> = {}): HeldRequest => ({
+   ...fields,
+ })
+ 
++/** A held item when it is a request, so a test reads a request's own fields. */
++const heldRequest = (item: Held | undefined): HeldRequest | undefined => (item?.kind === 'request' ? item : undefined)
++
+ /** An item with the named fields cleared. */
+ const without = <T extends Held>(item: T, ...keys: string[]): T =>
+   Object.fromEntries(Object.entries(item).filter(([key]) => !keys.includes(key))) as T
+@@ -1342,8 +1345,14 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+     const at = args.indexOf(`--${name}`)
+     return at === -1 ? undefined : args[at + 1]
+   }
++  /** Whether an open request's start waits for its `STARTED` line, as the CLI owes it. */
++  const owesStart = (item: Held): item is HeldRequest =>
++    item.kind === 'request' && item.answer === undefined && item.started !== undefined && item.started.deliveredAt === undefined
+   const textOf = (item: HeldQuestion | HeldRequest) => {
+     const { answer, ref, subject } = item
++    if (item.kind === 'request' && item.claim?.line === 'started') {
++      return `STARTED ${ref} ${subject} → ${item.started?.action ?? ''}`
++    }
+     if (item.restoredAt !== undefined) return `RESTORED ${ref} ${subject}`
+     if (answer !== undefined && 'letter' in answer) return `ANSWER ${ref}.${answer.letter} ${subject} → ${answer.text}`
+     if (answer !== undefined && ('done' in answer || 'declined' in answer)) {
+@@ -1397,10 +1406,13 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+         ...(agentId === undefined ? {} : { agentId }),
+       }
+       const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
++      const start = flag(args, 'start')
+       put(
+         command === 'ask'
+           ? { ...common, kind: 'question', choices: [flag(args, 'recommend') ?? '', ...options] }
+-          : { ...common, kind: command === 'tell' ? 'notice' : 'request' },
++          : command === 'tell'
++            ? { ...common, kind: 'notice' }
++            : { ...common, kind: 'request', ...(start === undefined ? {} : { start }) },
+       )
+       return ran(`${ref}\n`)
+     }
+@@ -1443,6 +1455,26 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       const recorded = { ...awake, answer: { ...answer, ...declined } } as Held
+       return printed(put(isDelivered ? { ...recorded, deliveredAt: time } : recorded))
+     }
++    if (command === 'start' || command === 'ready' || command === 'block') {
++      if (awake.kind !== 'request') return failed(65, `${ref} is a ${awake.kind}, and only a request can be marked ${command}`)
++      if (item.answer !== undefined) return failed(65, `${ref} is already resolved`)
++      if (command === 'start') {
++        if (item.kind !== 'request' || item.start === undefined) return failed(65, `${ref} has no start action`)
++        if (flag(args, 'action') !== item.start) {
++          return failed(65, `${ref}'s start action is now '${item.start}'; read it and press start again`)
++        }
++        return printed(put({ ...without(item, 'progress'), started: { action: item.start, startedAt: time } }))
++      }
++      if (item.kind !== 'request' || item.started === undefined || item.progress !== undefined) {
++        return failed(65, `${ref} is not started`)
++      }
++      const reason = flag(args, 'reason')
++      const progress =
++        command === 'ready'
++          ? { state: 'ready' as const, at: time }
++          : { state: 'blocked' as const, ...(reason === undefined ? {} : { reason }), at: time }
++      return printed(put({ ...item, progress }))
++    }
+     if (command === 'done' || command === 'decline') {
+       if (awake.kind !== 'request') return failed(65, `${ref} is a ${awake.kind}, and only a request can be marked ${command}`)
+       const said = flag(args, 'text')
+@@ -1463,8 +1495,16 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+     }
+     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
+     if (command === 'revise' && item.kind === 'request') {
++      // A revised request returns to open, as the CLI resets it.
++      const start = flag(args, 'start') ?? item.start
++      const revised = without(item, 'started', 'progress', 'start')
+       return printed(
+-        put({ ...item, subject: flag(args, 'request') ?? item.subject, detail: flag(args, 'detail') ?? item.detail }),
++        put({
++          ...revised,
++          subject: flag(args, 'request') ?? item.subject,
++          detail: flag(args, 'detail') ?? item.detail,
++          ...(start === undefined || start === '' ? {} : { start }),
++        }),
+       )
+     }
+     if (command === 'answer' && item.kind === 'request') {
+@@ -1489,9 +1529,8 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+       return printed(put({ ...(awake as HeldQuestion), answer: { letter, text, answeredAt: time } }))
+     }
+     if (command === 'claim') {
+-      if (item.restoredAt === undefined && (item.answer === undefined || item.deliveredAt !== undefined)) {
+-        return failed(65, 'nothing to deliver')
+-      }
++      const isOwed = item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined)
++      if (!isOwed && !owesStart(item) && flag(args, 'renew') === undefined) return failed(65, 'nothing to deliver')
+       const renew = flag(args, 'renew')
+       if (renew !== undefined) {
+         if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
+@@ -1499,11 +1538,23 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
+         return ran('')
+       }
+       if (item.claim !== undefined && time - item.claim.renewedAt < 60_000) return failed(65, 'already claimed')
+-      const claim = { token: `token-${writes}`, renewedAt: time }
+-      return printed(put({ ...item, claim }), { token: claim.token, text: textOf(item) })
++      const line = isOwed ? (item.restoredAt !== undefined && item.answer === undefined ? 'restored' : 'answer') : 'started'
++      const claimed = { ...item, claim: { token: `token-${writes}`, renewedAt: time, line } } as HeldQuestion | HeldRequest
++      return printed(put(claimed), { token: claimed.claim?.token, text: textOf(claimed) })
+     }
+     if (command === 'delivered' || command === 'reopen') {
+       if (item.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
++      // A start's line marks the start delivered, or takes it back when it failed.
++      if (item.kind === 'request' && item.claim?.line === 'started') {
++        const settled = without(item, 'claim')
++        return printed(
++          put(
++            command === 'delivered' && item.started !== undefined
++              ? { ...settled, started: { ...item.started, deliveredAt: time } }
++              : without(settled, 'started'),
++          ),
++        )
++      }
+       // A restore's line is done either way.
+       if (item.restoredAt !== undefined) return printed(put(without(item, 'claim', 'restoredAt')))
+       return printed(put(command === 'delivered' ? { ...item, deliveredAt: time } : reopened(item)))
+@@ -1606,6 +1657,8 @@ test('asks through the tool, and the panel lists the question below the pull req
+     expect.objectContaining({ name: 'ask', isDeferred: false }),
+     expect.objectContaining({ name: 'tell', isDeferred: false }),
+     expect.objectContaining({ name: 'request', isDeferred: false }),
++    expect.objectContaining({ name: 'ready', isDeferred: false }),
++    expect.objectContaining({ name: 'block', isDeferred: false }),
+     expect.objectContaining({ name: 'withdraw', isDeferred: false }),
+     expect.objectContaining({ name: 'revise', isDeferred: false }),
+     expect.objectContaining({ name: 'restore', isDeferred: false }),
+@@ -1882,7 +1935,7 @@ test('requests through the tool, and a request’s drawer offers Done and Declin
+ 
+   const called = await $.tool.call({ tool: 'mcp__projector__request', request: 'Test the gutters', detail: '1. Open Fyra.' })
+   expect(String(called.text ?? called.result)).toBe(
+-    'Requested 1. Keep working on anything the result does not block; its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE 1 or DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
++    'Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE 1 or DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
+   )
+   expect(session.project()).toContain('inbox request --session=s1 --detail=1. Open Fyra. -- Test the gutters')
+   expect(session.notified).toEqual(['Test the gutters'])
+@@ -1958,6 +2011,173 @@ test('a reply under a quoted request leaves it open, and a decline from a termin
+   expect(session.store.store.get('3')?.deliveredAt).toBeDefined()
+ })
+ 
++const INSTALL = 'Install build c0d62a3b on your iPhone'
++
++test('start on 8 records the start action the drawer shows, and STARTED reaches the agent that posted the request', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [requested({ start: INSTALL, agentId: 'agent-1' })], {
++    agents: [running('running')],
++  })
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'item:3' })
++  expect(await ui.find({ type: 'Text', text: `Start: ${INSTALL}` })).toBeDefined()
++  const start = await ui.find({ type: 'Button', key: 'start:3' })
++  expect([start?.props.hotkey, start?.text]).toEqual(['8', 'start request'])
++  // Opening the drawer records nothing and sends nothing.
++  expect(session.project().filter(command => command.startsWith('inbox start'))).toEqual([])
++
++  await ui.press({ key: 'start:3' })
++  await clock.settle()
++  expect(session.project().filter(command => command.startsWith('inbox start'))).toEqual([
++    `inbox start 3 --action=${INSTALL} --session s1 --json`,
++  ])
++  // The drawer stays open, saying the agent is at work, with nothing left to start.
++  expect(await ui.find({ type: 'Text', text: `Starting: ${INSTALL}` })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeUndefined()
++
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(session.sent).toEqual([{ to: 'agent-1', text: `STARTED 3 Test the gutters → ${INSTALL}` }])
++  expect(session.store.store.get('3')).toEqual(
++    expect.objectContaining({ started: expect.objectContaining({ deliveredAt: expect.any(Number) }) }),
++  )
++  await ui.press({ key: 'close:3' })
++  expect((await ui.find({ type: 'Text', text: 'starting' }))?.props.color).toBe('subtle')
++  await ui.unmount()
++})
++
++test('a press of start on a drawer the agent revised since records nothing and shows the new start action', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock, [requested({ start: INSTALL })])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'item:3' })
++  // The agent revises the start action from its shell, which the panel reads only on a later tick.
++  session.store.write(requested({ start: 'Install build d41f on your iPhone' }))
++  await ui.press({ key: 'start:3' })
++  await clock.settle()
++  expect(heldRequest(session.store.store.get('3'))?.started).toBeUndefined()
++  await clock.advance(TICK)
++  await clock.settle()
++  expect(await ui.find({ type: 'Text', text: 'Start: Install build d41f on your iPhone' })).toBeDefined()
++  expect(session.sent).toEqual([])
++  expect(session.submitted).toEqual([])
++  await ui.unmount()
++})
++
++test('a blocked request shows its reason and retry on 8, and a ready one says so with nothing to start', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const started = { action: INSTALL, startedAt: NOW - 5_000, deliveredAt: NOW - 4_000 }
++  const blocked = { state: 'blocked' as const, reason: 'The phone is locked. Unlock it and press retry.', at: NOW - 1_000 }
++  const session = questionWorld(on, clock, [
++    requested({ start: INSTALL, started, progress: blocked }),
++    requested({ ref: '4', number: 4, subject: 'Sign in', start: 'Open the sign-in page', started, progress: { state: 'ready', at: NOW } }),
++  ])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(PANEL)
++  const marks = [await ui.find({ type: 'Text', text: 'blocked' }), await ui.find({ type: 'Text', text: 'ready' })]
++  expect(marks.map(mark => mark?.props.color)).toEqual(['warning', 'success'])
++  await ui.press({ key: 'item:3' })
++  expect(await ui.find({ type: 'Text', text: `Blocked: ${blocked.reason}` })).toBeDefined()
++  const retry = await ui.find({ type: 'Button', key: 'retry:3' })
++  expect([retry?.props.hotkey, retry?.text]).toEqual(['8', 'retry request'])
++  await ui.press({ key: 'retry:3' })
++  await clock.settle()
++  expect(session.project()).toContain(`inbox start 3 --action=${INSTALL} --session s1 --json`)
++  expect(heldRequest(session.store.store.get('3'))?.progress).toBeUndefined()
++
++  await ui.press({ key: 'close:3' })
++  await ui.press({ key: 'item:4' })
++  expect(await ui.find({ type: 'Text', text: `Ready: ${INSTALL}` })).toBeDefined()
++  expect(await ui.find({ type: 'Button', key: 'start:4' })).toBeUndefined()
++  expect(await ui.find({ type: 'Button', key: 'outcome:4.done' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('a STARTED that cannot be delivered takes the start back, says so, and offers start again', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const started = { action: INSTALL, startedAt: NOW - 1_000 }
++  const session = questionWorld(on, clock, [requested({ start: INSTALL, started })], { drop: 'a hook refused it' })
++  await startSession($, clock)
++  await clock.advance(TICK)
++  await clock.settle()
++
++  expect(session.submitted.map(one => one.text)).toEqual([`STARTED 3 Test the gutters → ${INSTALL}`])
++  expect(session.toasts).toEqual([
++    'projector: the start of "Test the gutters" did not reach its agent (a hook refused it); press start again',
++  ])
++  expect(heldRequest(session.store.store.get('3'))?.started).toBeUndefined()
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'item:3' })
++  expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('a request without a start action shows no start line, no start, and no mark', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  questionWorld(on, clock, [requested()])
++  await startSession($, clock)
++
++  const ui = await $.ui.mount(PANEL)
++  for (const mark of ['starting', 'ready', 'blocked']) expect(await ui.find({ type: 'Text', text: mark })).toBeUndefined()
++  await ui.press({ key: 'item:3' })
++  expect(await ui.find({ type: 'Text', text: /^(Start|Starting|Ready|Blocked): / })).toBeUndefined()
++  expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeUndefined()
++  expect(await ui.find({ type: 'Button', key: 'outcome:3.done' })).toBeDefined()
++  await ui.unmount()
++})
++
++test('the request, revise, and restore results say STARTED comes first for a request with a start action', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const session = questionWorld(on, clock)
++  await startSession($, clock)
++  const first =
++    'Once the person presses start, a message that starts STARTED 1 arrives first, quoting the start action; do exactly that, then mark the request ready or blocked.'
++
++  const posted = await $.tool.call({ tool: 'mcp__projector__request', request: 'Test the gutters', start: INSTALL })
++  expect(String(posted.text ?? posted.result)).toContain(first)
++  expect(session.project()).toContain(`inbox request --session=s1 --start=${INSTALL} -- Test the gutters`)
++  const revised = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, detail: '1. Open Fyra.' })
++  expect(String(revised.text ?? revised.result)).toBe(
++    `Revised 1. Projector’s panel shows the new text, and the request is open again. ${first} Its outcome arrives as a message that starts DONE 1 or DECLINED 1.`,
++  )
++  session.store.write({ ...requested({ ref: '1', number: 1, start: INSTALL }), answer: { dismissed: true, declined: true, answeredAt: NOW } })
++  const restored = await $.tool.call({ tool: 'mcp__projector__restore', number: 1 })
++  expect(String(restored.text ?? restored.result)).toContain(first)
++
++  const plain = await $.tool.call({ tool: 'mcp__projector__request', request: 'Sign in' })
++  expect(String(plain.text ?? plain.result)).not.toContain('STARTED')
++})
++
++test('the ready and block tools mark a started request, and the panel shows it at once', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  const started = { action: INSTALL, startedAt: NOW - 5_000, deliveredAt: NOW - 4_000 }
++  const session = questionWorld(on, clock, [requested({ start: INSTALL, started })])
++  await startSession($, clock)
++
++  const blocked = await $.tool.call({ tool: 'mcp__projector__block', number: 3, reason: 'Unlock the phone' })
++  expect(String(blocked.text ?? blocked.result)).toBe(
++    'Marked 3 blocked. Projector’s panel shows the person your reason; when they press retry, a new message that starts STARTED 3 arrives.',
++  )
++  expect(session.project()).toContain('inbox block 3 --reason=Unlock the phone --session s1 --json')
++  const ui = await $.ui.mount(PANEL)
++  expect((await ui.find({ type: 'Text', text: 'blocked' }))?.props.color).toBe('warning')
++  const refused = await $.tool.call({ tool: 'mcp__projector__ready', number: 3 })
++  expect(refused.deny ?? refused.text).toBe('3 is not started')
++  await ui.unmount()
++})
++
+ test('a question another shares the text of takes only the answer its own drawer put in the prompt', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -2974,7 +3194,7 @@ test('the revise tool refuses what the CLI refuses, asks an old CLI to upgrade,
+   expect(unknown.deny ?? unknown.text).toBe('no item 9')
+ 
+   const empty = await $.tool.call({ tool: 'mcp__projector__revise', number: 1 })
+-  expect(empty.deny ?? empty.text).toBe('give what changes: `question`, `request`, `detail`, `recommendation`, or `options`')
++  expect(empty.deny ?? empty.text).toBe('give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`')
+ 
+   session.store.failing.locks = 1
+   const busy = await $.tool.call(revise)
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 405e322d..64f60e66 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -23,6 +23,8 @@ import {
+   ASK_DESCRIPTION,
+   ASK_SCHEMA,
+   askArguments,
++  BLOCK_DESCRIPTION,
++  BLOCK_SCHEMA,
+   forMainLoop,
+   isShownAt,
+   isSnoozedAt,
+@@ -32,9 +34,12 @@ import {
+   OUTCOMES,
+   proposalOf,
+   quoteOf,
++  READY_DESCRIPTION,
++  READY_SCHEMA,
+   readPrompt,
+   relayNote,
+   replyNote,
++  reportArguments,
+   REQUEST_DESCRIPTION,
+   REQUEST_SCHEMA,
+   requestArguments,
+@@ -67,6 +72,8 @@ const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null, error: null }
+ const ASK_TOOL = 'mcp__projector__ask'
+ const TELL_TOOL = 'mcp__projector__tell'
+ const REQUEST_TOOL = 'mcp__projector__request'
++const READY_TOOL = 'mcp__projector__ready'
++const BLOCK_TOOL = 'mcp__projector__block'
+ const WITHDRAW_TOOL = 'mcp__projector__withdraw'
+ const REVISE_TOOL = 'mcp__projector__revise'
+ const RESTORE_TOOL = 'mcp__projector__restore'
+@@ -108,6 +115,16 @@ const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice']
+ /** What the header counts, in its order: the pull requests, then each kind of item. */
+ const SECTIONS: readonly Section[] = ['pr', ...ITEM_KINDS]
+ 
++/** Where a started request stands: the agent is doing its start action, did it, or could not. */
++type Stage = 'starting' | 'ready' | 'blocked'
++
++/** The color of a started request's mark: muted while the agent works, green when you can begin, yellow when you must act first. */
++const STAGE_COLORS: Record<Stage, string> = { starting: 'subtle', ready: 'success', blocked: 'warning' }
++
++/** Where a request stands once you pressed start, or undefined before. */
++const stageOf = (request: Request): Stage | undefined =>
++  request.progress?.state ?? (request.started === undefined ? undefined : 'starting')
++
+ const KIND_COLORS: Record<Item['kind'], string> = {
+   question: QUESTION_COLOR,
+   notice: NOTICE_COLOR,
+@@ -666,14 +683,17 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
+   if (ran?.exitCode === 0) await replace($, itemOf(ran.stdout, session))
+   if (outcome === 'reopen') {
+     // You never see an item's number, so the toast names the item by its
+-    // subject. A restore's line is not sent again, and its item stays open.
++    // subject. A restore's line is not sent again, and its item stays open. A
++    // start that did not reach its agent is taken back, so start returns.
+     const item = (await read($, items)).find(one => one.ref === ref && one.session === session)
+     const quoted = item === undefined ? undefined : quoteOf(item)
+     const why = reason ? ` (${reason})` : ''
+     void $.ui.toast(
+       text.startsWith('RESTORED ')
+         ? `projector: word that ${quoted ?? 'an item'} is open again did not reach its agent${why}`
+-        : item?.kind === 'request'
++        : text.startsWith('STARTED ')
++          ? `projector: the start of ${quoted ?? 'a request'} did not reach its agent${why}; press start again`
++          : item?.kind === 'request'
+           ? `projector: the outcome of ${quoted ?? 'a request'} did not reach its agent${why}; mark it done or declined again`
+           : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
+     )
+@@ -789,7 +809,7 @@ const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
+ async function act(
+   $: Engine,
+   item: Item,
+-  command: 'dismiss' | 'snooze' | 'restore',
++  command: 'dismiss' | 'snooze' | 'restore' | 'start',
+   minutes?: number,
+ ): Promise<void> {
+   const { ref, session } = item
+@@ -797,12 +817,15 @@ async function act(
+   acting.add(ref)
+   try {
+     const length = minutes === undefined ? [] : ['--for', String(minutes)]
+-    const ran = await project($, ['inbox', command, ref, ...length, '--session', session, '--json'])
++    // Start passes the start action the drawer shows, which is what you
++    // consented to, and the CLI refuses it when the agent has revised it.
++    const action = command === 'start' && item.kind === 'request' ? [`--action=${item.start ?? ''}`] : []
++    const ran = await project($, ['inbox', command, ref, ...length, ...action, '--session', session, '--json'])
+     if (ran.exitCode === 0) {
+       await replace($, itemOf(ran.stdout, session))
+-      if (command !== 'restore') await closeDrawer($, `item:${ref}`)
++      if (command !== 'restore' && command !== 'start') await closeDrawer($, `item:${ref}`)
+     } else if (ran.exitCode === 65) {
+-      // Resolved elsewhere since the panel read the store: read it again.
++      // Resolved or revised elsewhere since the panel read the store: read it again.
+       listed = undefined
+     } else {
+       void $.ui.toast(`projector: ${errorOf(ran)}`)
+@@ -1012,6 +1035,16 @@ function labeler(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+   return pr => `${isNameEnough ? pr.repo.split('/')[1] : pr.repo}#${pr.number}`
+ }
+ 
++/**
++ * What a tool's result says first about a request with a start action: that
++ * `STARTED` arrives once the person presses start, and what to do then.
++ * Empty for a request without one.
++ */
++const startsFirst = (hasStart: boolean, ref: string) =>
++  hasStart
++    ? ` Once the person presses start, a message that starts STARTED ${ref} arrives first, quoting the start action; do exactly that, then mark the request ready or blocked.`
++    : ''
++
+ /**
+  * Runs the `project inbox` command one of the tools makes: what it printed,
+  * or why the tool call is refused. `instead` says where the agent turns when
+@@ -1048,6 +1081,8 @@ export const register: Register = on => {
+       { name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA },
+       { name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA },
+       { name: 'request', description: REQUEST_DESCRIPTION, inputSchema: REQUEST_SCHEMA },
++      { name: 'ready', description: READY_DESCRIPTION, inputSchema: READY_SCHEMA },
++      { name: 'block', description: BLOCK_DESCRIPTION, inputSchema: BLOCK_SCHEMA },
+       { name: 'withdraw', description: WITHDRAW_DESCRIPTION, inputSchema: WITHDRAW_SCHEMA },
+       { name: 'revise', description: REVISE_DESCRIPTION, inputSchema: REVISE_SCHEMA },
+       { name: 'restore', description: RESTORE_DESCRIPTION, inputSchema: RESTORE_SCHEMA },
+@@ -1103,11 +1138,34 @@ export const register: Register = on => {
+     if ('deny' in posted) return posted
+     const ref = posted.stdout.trim()
+     void $.ui.notify(String(e.request), { title: 'Projector request' }).catch(() => undefined)
++    const hasStart = typeof e.start === 'string' && e.start !== ''
+     return {
+-      result: `Requested ${ref}. Keep working on anything the result does not block; its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE ${ref} or DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
++      result: `Requested ${ref}. Keep working on anything the result does not block.${startsFirst(hasStart, ref)} Its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE ${ref} or DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
+     }
+   }).catch(() => ({ deny: 'Projector could not record the request; ask the person in the conversation instead' }))
+ 
++  // The panel takes the request from the CLI at once, so its line and drawer
++  // say ready or blocked before the next read of the store.
++  for (const [tool, said] of [
++    [READY_TOOL, 'ready'],
++    [BLOCK_TOOL, 'blocked'],
++  ] as const) {
++    on('tool.call', { tool }, async ($, e) => {
++      const session = await $.session.id()
++      const args = reportArguments(said === 'ready' ? { number: e.number } : { number: e.number, reason: e.reason ?? '' }, session)
++      const ran = await runTool($, args, 'tell the person in the conversation instead')
++      if ('deny' in ran) return ran
++      const item = itemOf(ran.stdout, session)
++      await replace($, item)
++      return {
++        result:
++          said === 'ready'
++            ? `Marked ${item.ref} ready. Projector’s panel tells the person they can begin; its outcome arrives as a message that starts DONE ${item.ref} or DECLINED ${item.ref}.`
++            : `Marked ${item.ref} blocked. Projector’s panel shows the person your reason; when they press retry, a new message that starts STARTED ${item.ref} arrives.`,
++      }
++    }).catch(() => ({ deny: `Projector could not mark the request ${said}; tell the person in the conversation instead` }))
++  }
++
+   // The panel takes the withdrawn item from the CLI at once, so it leaves the
+   // panel before the next read of the store.
+   on('tool.call', { tool: WITHDRAW_TOOL }, async ($, e) => {
+@@ -1138,7 +1196,7 @@ export const register: Register = on => {
+     return {
+       result:
+         item.kind === 'request'
+-          ? `Revised ${ref}. Projector’s panel shows the new text, and its outcome still arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
++          ? `Revised ${ref}. Projector’s panel shows the new text, and the request is open again.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
+           : `Revised ${ref}. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
+     }
+   }).catch(() => ({
+@@ -1162,7 +1220,7 @@ export const register: Register = on => {
+         item.kind === 'notice'
+           ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it; nothing comes back to you.`
+           : item.kind === 'request'
+-            ? `Restored ${ref}. It is open in Projector’s panel again, and its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}. An agent that already heard DECLINED ${ref} hears RESTORED ${ref} first.`
++            ? `Restored ${ref}. It is open in Projector’s panel again. An agent that already heard DECLINED ${ref} hears RESTORED ${ref} first.${startsFirst(item.start !== undefined, ref)} Its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
+             : `Restored ${ref}. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
+     }
+   }).catch(() => ({
+@@ -1588,6 +1646,26 @@ export const register: Register = on => {
+     // for notes under it, and only sending it records the outcome. A resolved
+     // request's outcomes are text, the one recorded marked, followed by the
+     // person's text when they gave one.
++    // An open request with a start action says above its outcomes what start
++    // does, then that the agent is doing it, that it is done, or why it could
++    // not be done, in the color its line's mark takes.
++    const drawStart = (request: Request) => {
++      const { ref, start, started, progress } = request
++      if (request.answer !== undefined || start === undefined) return []
++      const stage = stageOf(request)
++      const said =
++        stage === undefined
++          ? `Start: ${start}`
++          : stage === 'blocked'
++            ? `Blocked: ${progress?.reason ?? ''}`
++            : `${stage === 'ready' ? 'Ready' : 'Starting'}: ${started?.action ?? start}`
++      return [
++        <Text key={`before-start:${ref}`}> </Text>,
++        <Text key={`start-line:${ref}`} color={stage === undefined ? undefined : STAGE_COLORS[stage]}>
++          {said}
++        </Text>,
++      ]
++    }
+     const drawOutcomes = (request: Request) => {
+       const { ref, answer } = request
+       const recorded = answer === undefined ? undefined : 'done' in answer ? 'done' : 'declined' in answer ? 'declined' : undefined
+@@ -1598,6 +1676,7 @@ export const register: Register = on => {
+       }
+ 
+       return [
++        ...drawStart(request),
+         <Text key={`before-outcomes:${ref}`}> </Text>,
+         ...Object.entries(OUTCOMES).map(([word, outcome], index) =>
+           answer === undefined ? (
+@@ -1614,6 +1693,16 @@ export const register: Register = on => {
+         ),
+       ]
+     }
++    // An open request with a start action offers start on `8`, the digit an
++    // open request leaves free, until you press it, and retry there once the
++    // agent says it was blocked. Pressing it records your consent to the start
++    // action the drawer shows, and only that press sends `STARTED`.
++    const startLines = (request: Request): Line[] => {
++      const stage = stageOf(request)
++      if (request.start === undefined || (stage !== undefined && stage !== 'blocked')) return []
++      const name = stage === 'blocked' ? 'retry' : 'start'
++      return [{ name, label: `${name} request`, hotkey: '8', onPress: () => void act($, request, 'start') }]
++    }
+     const drawItem = (item: Item) => {
+       const { ref, answer } = item
+       const key = `item:${ref}`
+@@ -1651,7 +1740,7 @@ export const register: Register = on => {
+         ...(isOpen
+           ? [
+               ...(item.kind === 'request'
+-                ? []
++                ? startLines(item)
+                 : [
+                     {
+                       name: 'dismiss',
+@@ -1715,6 +1804,7 @@ export const register: Register = on => {
+             ? `outcome:${ref}.${OUTCOMES.Done}`
+             : `discuss:${ref}`
+       const isSending = !isOpen && item.deliveredAt === undefined
++      const stage = item.kind === 'request' && isOpen ? stageOf(item) : undefined
+ 
+       return (
+         <Box key={`line:${ref}`} flexDirection="column">
+@@ -1744,6 +1834,13 @@ export const register: Register = on => {
+                 <Text color="subtle">sending</Text>
+               </Box>
+             )}
++            {stage !== undefined && (
++              <Box flexShrink={0}>
++                <Text key={`stage:${ref}`} color={STAGE_COLORS[stage]}>
++                  {stage}
++                </Text>
++              </Box>
++            )}
+             {pull !== '' && (
+               <Box flexShrink={0}>
+                 <Text color="subtle">{pull}</Text>
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 78f1ea1b..7e5146bb 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -115,8 +115,15 @@ export type Notice = Posted & {
+  */
+ export type Request = Posted & {
+   kind: 'request'
++  /** What the agent does once you press start, in one line; absent when there is nothing to prepare. */
++  start?: string
++  /** The start action as it read when you pressed start or retry, and when; `deliveredAt` once `STARTED` reached the agent. */
++  started?: { action: string; startedAt: number; deliveredAt?: number }
++  /** What the agent made of the start: `ready`, or `blocked` with the reason you read before you retry. */
++  progress?: { state: 'ready' | 'blocked'; reason?: string; at: number }
+   answer?: Outcome
+-  claim?: { token: string; renewedAt: number }
++  /** A deliverer's hold on the line it sends: `line` says which, a `STARTED` or the outcome. */
++  claim?: { token: string; renewedAt: number; line?: 'answer' | 'restored' | 'started' }
+   /** When the person restored the request after its agent may have heard `DECLINED`, until `RESTORED` is delivered. */
+   restoredAt?: number
+ }
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 1733799d..7c780ff0 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -750,6 +750,8 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     detail = request.add_mutually_exclusive_group()
+     detail.add_argument("--detail", default="", help="the steps the person follows, as Markdown")
+     detail.add_argument("--detail-file", type=Path, help="read the steps from this file")
++    request.add_argument("--start", help="what you do once the person presses start, in one line; leave it out when "
++                                         "there is nothing to prepare")
+     request.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
+     request.add_argument("--agent", help="the posting subagent's id, when a subagent posts")
+ 
+@@ -772,6 +774,19 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+         outcome.add_argument("reference", help="the request's number, such as 3")
+         outcome.add_argument("--text", help="what you tell the agent, in one line")
+ 
++    start = command("start", "record that you pressed start on a request, for the start action you read")
++    start.add_argument("reference", help="the request's number, such as 3")
++    start.add_argument("--action", required=True, help="the start action as you read it, which must match the "
++                                                       "request's")
++
++    ready = command("ready", "record that you did a started request's start action")
++    ready.add_argument("reference", help="the request's number, such as 3")
++
++    block = command("block", "record why you could not do a started request's start action")
++    block.add_argument("reference", help="the request's number, such as 3")
++    block.add_argument("--reason", required=True, help="what the person should do before pressing retry, in one "
++                                                       "line")
++
+     withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
+     withdraw.add_argument("reference")
+ 
+@@ -779,6 +794,7 @@ def command(name: str, help_text: str) -> argparse.ArgumentParser:
+     revise.add_argument("reference", help="the item's number, such as 3")
+     revise.add_argument("--question", help="the new question, in one line of at most 120 characters")
+     revise.add_argument("--request", help="the new request, in one line of at most 120 characters")
++    revise.add_argument("--start", help="the request's new start action, in one line; an empty one removes it")
+     revise.add_argument("--recommend", help="the new recommended answer, which becomes answer a")
+     options = revise.add_mutually_exclusive_group()
+     options.add_argument("--option", action="append",
+@@ -1342,7 +1358,10 @@ def item_state(item: dict) -> str:
+         return f"snoozed until {wake_time(until)}"
+     answered = item.get("answer")
+     if not answered:
+-        return "open"
++        progress = item.get("progress")
++        if progress:
++            return progress["state"]
++        return "started" if item.get("started") else "open"
+     if answered.get("dismissed"):
+         return "withdrawn" if answered.get("withdrawn") else "declined" if answered.get("declined") else "dismissed"
+     if answered.get("done"):
+@@ -1362,6 +1381,10 @@ def print_item(item: dict) -> None:
+         print(f"\n{item['detail']}\n")
+     if item["kind"] == "question":
+         print_choices(item)
++    if item.get("start"):
++        print(f"start: {item['start']}")
++    if (item.get("progress") or {}).get("reason"):
++        print(f"blocked: {item['progress']['reason']}")
+     print(item_state(item))
+ 
+ 
+@@ -1387,7 +1410,7 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+         elif command == "tell":
+             item = inbox.tell(session, arguments.notice, **posted)
+         else:
+-            item = inbox.request(session, arguments.request, **posted)
++            item = inbox.request(session, arguments.request, start=arguments.start, **posted)
+         print(json_text({"item": item}) if json_output else item["ref"])
+     elif command == "list":
+         session = inbox_session(arguments, False)
+@@ -1416,11 +1439,21 @@ def run_inbox(arguments: argparse.Namespace) -> int:
+         record = inbox.done if command == "done" else inbox.decline
+         item = record(inbox_session(arguments, False), ref, arguments.text)
+         print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
++    elif command in ("start", "ready", "block"):
++        session = inbox_session(arguments, False)
++        if command == "start":
++            item = inbox.start(session, ref, arguments.action)
++        elif command == "ready":
++            item = inbox.ready(session, ref)
++        else:
++            item = inbox.block(session, ref, arguments.reason)
++        print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
+     elif command == "revise":
+         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
+         options = [] if arguments.no_options else arguments.option
+         item = inbox.revise(inbox_session(arguments, False), ref, question=arguments.question, detail=detail,
+-                            recommend=arguments.recommend, options=options, request=arguments.request)
++                            recommend=arguments.recommend, options=options, request=arguments.request,
++                            start=arguments.start)
+         print(json_text({"item": item}) if json_output else f"revised {item['ref']}")
+     elif command == "snooze":
+         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)
+diff --git a/src/projector/inbox.py b/src/projector/inbox.py
+index 9c5615a1..ee88d069 100644
+--- a/src/projector/inbox.py
++++ b/src/projector/inbox.py
+@@ -3,11 +3,13 @@
+ An item is a question, which the person answers or dismisses and whose answer goes back to the
+ agent; a notice, which the person reads and dismisses and which sends nothing back; or a request,
+ work only the person can do, which they mark done or decline and whose outcome goes back to the
+-agent. The agent that posted an open item can withdraw it, which dismisses it and sends nothing
+-back, and can revise an open question's or request's text in place. An item the person dismissed,
+-declined, or snoozed can be restored, which reopens it in place. Each session numbers its items 1,
+-2, 3, and on, in one count across every kind. Its items are JSON files in their own directory, one per item and named
+-by its number, with `count.json` holding the last number given. Every write happens under the
++agent. A request can carry a start action, what the agent does once the person presses start,
++and the agent then marks it ready or blocked. The agent that posted an open item can withdraw it,
++which dismisses it and sends nothing back, and can revise an open question's or request's text in
++place. An item the person dismissed, declined, or snoozed can be restored, which reopens it in
++place. Each session numbers its items 1, 2, 3, and on, in one count across every kind. Its items
++are JSON files in their own directory, one per item and named by its number, with `count.json`
++holding the last number given. Every write happens under the
+ directory's lock, an operating-system lock on its `.lock` file, and lands by renaming a temporary
+ file into place, so two writers never lose each other's change and a reader never sees half a
+ file.
+@@ -227,7 +229,7 @@ def check(question: str, recommend: str, options: list[str], pr: Optional[str])
+ 
+ 
+ def post(session: str, kind: str, subject: str, *, detail: str, pr: Optional[str], agent: Optional[str],
+-         choices: Optional[list[str]] = None) -> dict:
++         choices: Optional[list[str]] = None, start: Optional[str] = None) -> dict:
+     """Number and record an item that passed its checks; returns it. Every kind shares the
+     session's one count, which only grows, so a number names one item for the whole session,
+     even after pruning deletes the item that held the largest."""
+@@ -246,6 +248,8 @@ def post(session: str, kind: str, subject: str, *, detail: str, pr: Optional[str
+         }
+         if choices is not None:
+             record["choices"] = choices
++        if start is not None:
++            record["start"] = start.strip()
+         if agent:
+             record["agentId"] = agent
+         # The count lands first: a write that stops between the two then skips a
+@@ -270,11 +274,20 @@ def tell(session: str, notice: str, *, detail: str = "", pr: Optional[str] = Non
+     return post(session, "notice", notice, detail=detail, pr=pr, agent=agent)
+ 
+ 
++def check_start(action: str) -> None:
++    """The checks a start action passes: those a subject passes, so it reads on one line of the
++    drawer and of the `STARTED` line that quotes it."""
++    check_subject("start action", action, None)
++
++
+ def request(session: str, subject: str, *, detail: str = "", pr: Optional[str] = None,
+-            agent: Optional[str] = None) -> dict:
+-    """Check, number, and record a request, whose detail holds its steps; returns it."""
++            agent: Optional[str] = None, start: Optional[str] = None) -> dict:
++    """Check, number, and record a request, whose detail holds its steps and whose `start`, when it
++    has one, is what the agent does once the person presses start; returns it."""
+     check_subject("request", subject, pr)
+-    return post(session, "request", subject, detail=detail, pr=pr, agent=agent)
++    if start is not None:
++        check_start(start)
++    return post(session, "request", subject, detail=detail, pr=pr, agent=agent, start=start)
+ 
+ 
+ # Finding an item
+@@ -371,10 +384,35 @@ def resolution(item: dict) -> str:
+     return "done" if answered.get("done") else f"answered, as {answer_ref(item)}"
+ 
+ 
++def owed_line(item: dict) -> Optional[str]:
++    """The line an item owes its agent next, if any: `answer` for an answer, outcome, or dismissal
++    not yet delivered, `restored` for word that a dismissal it may have heard of was undone, or
++    `started` for an open request's start not yet delivered."""
++    if item.get("answer") and not item.get("deliveredAt"):
++        return "answer"
++    if item.get("restoredAt"):
++        return "restored"
++    started = item.get("started")
++    if not item.get("answer") and started and not started.get("deliveredAt"):
++        return "started"
++    return None
++
++
++def claimed_line(item: dict) -> Optional[str]:
++    """The line a claim on the item delivers: the one `claim` recorded, or, for a claim an earlier
++    release made without recording it, the one the item owes."""
++    claimed = item.get("claim")
++    return (claimed.get("line") or owed_line(item)) if claimed else None
++
++
+ def message(question: dict) -> str:
+     """The line that tells the agent what became of its question or request, as `watch` prints it
+-    and the panel sends it: its answer or outcome, its dismissal, or that a dismissal it may have
+-    heard of was undone. A request's outcome ends with the person's text when they gave one."""
++    and the panel sends it: its answer or outcome, its dismissal, that a dismissal it may have
++    heard of was undone, or that the person pressed start, quoting the start action they pressed it
++    for. A request's outcome ends with the person's text when they gave one."""
++    line = claimed_line(question) or owed_line(question)
++    if line == "started":
++        return f"STARTED {question['ref']} {question['subject']} → {question['started']['action']}"
+     if question.get("restoredAt"):
+         return f"RESTORED {question['ref']} {question['subject']}"
+     answered = question["answer"]
+@@ -439,16 +477,32 @@ def outcome_text(text: Optional[str]) -> dict:
+     return {"text": text.strip()} if text and text.strip() else {}
+ 
+ 
++def clear_for_outcome(item: dict) -> tuple[bool, bool]:
++    """Clear what an answer, outcome, or dismissal replaces, and say whether word of a restore was
++    owed and whether a claim was dropped. It clears a snooze, word of a restore, the claim to deliver
++    either, and a request's start that no deliverer has claimed. A claimed `STARTED` may already wait
++    in the session's queue as a prompt that nothing can recall, so it keeps its claim, and the new
++    line is owed once `settle` finishes it."""
++    starting = claimed_line(item) == "started"
++    item.pop("snoozedUntil", None)
++    item.pop("snoozedAt", None)
++    restored = item.pop("restoredAt", None) is not None
++    if starting:
++        return restored, False
++    claimed = item.pop("claim", None) is not None
++    started = item.get("started")
++    if started and not started.get("deliveredAt"):
++        del item["started"]
++    return restored, claimed
++
++
+ def record_dismissal(item: dict, withdrawn: bool, said: dict) -> None:
+     if item.get("answer"):
+         raise InboxError(f"{item['ref']} is already {resolution(item)}")
+     now = now_ms()
+-    restored = item.pop("restoredAt", None) is not None
+-    claimed = item.pop("claim", None) is not None
++    restored, claimed = clear_for_outcome(item)
+     declined = {"declined": True, **said} if is_request(item) and not withdrawn else {}
+     item["answer"] = {"dismissed": True, **declined, "answeredAt": now, **({"withdrawn": True} if withdrawn else {})}
+-    item.pop("snoozedUntil", None)
+-    item.pop("snoozedAt", None)
+     if withdrawn or is_notice(item) or (restored and not claimed):
+         item["deliveredAt"] = now
+ 
+@@ -483,23 +537,34 @@ def record(item: dict) -> None:
+         refuse_unless_request(item, "done")
+         if item.get("answer"):
+             raise InboxError(f"{item['ref']} is already {resolution(item)}")
+-        item["answer"] = {"done": True, **said, "answeredAt": now_ms()}
+         # As an answer does, the outcome replaces word of a restore that has not reached the agent.
+-        for key in ("snoozedUntil", "snoozedAt", "restoredAt", "claim"):
+-            item.pop(key, None)
++        clear_for_outcome(item)
++        item["answer"] = {"done": True, **said, "answeredAt": now_ms()}
+ 
+     return update(session, ref, record, is_open)
+ 
+ 
++def reset_start(item: dict) -> None:
++    """Return a request to open, before any start: its start, the agent's progress, and the claim
++    to deliver its `STARTED` go, so only a new press of start sends one."""
++    if claimed_line(item) == "started":
++        del item["claim"]
++    item.pop("started", None)
++    item.pop("progress", None)
++
++
+ def revise(session: Optional[str], ref: str, *, question: Optional[str] = None, detail: Optional[str] = None,
+            recommend: Optional[str] = None, options: Optional[list[str]] = None,
+-           request: Optional[str] = None) -> dict:
++           request: Optional[str] = None, start: Optional[str] = None) -> dict:
+     """Replace an open question's or request's text in place, keeping its number, its place in the
+     list, and its snooze. Each part left as None keeps its text; `options` replaces every option but
+     the recommendation. A question takes `question`, `recommend`, and `options`, a request takes
+-    `request`, and both take `detail`. The revised item passes the checks its posting made."""
+-    if question is None and detail is None and recommend is None and options is None and request is None:
+-        raise InboxError("give the new text with --question, --request, --detail, --recommend, or --option")
++    `request` and `start`, where an empty `start` removes it, and both take `detail`. The revised
++    item passes the checks its posting made. A revised request returns to open, so a press of start
++    made for its old text never covers the new."""
++    if all(part is None for part in (question, detail, recommend, options, request, start)):
++        raise InboxError("give the new text with --question, --request, --start, --detail, --recommend, or "
++                         "--option")
+ 
+     def record(item: dict) -> None:
+         if is_notice(item):
+@@ -509,14 +574,22 @@ def record(item: dict) -> None:
+             raise InboxError(f"{item['ref']} is already {resolution(item)}")
+         if is_request(item):
+             if question is not None or recommend is not None or options is not None:
+-                raise InboxError(f"{item['ref']} is a request; revise its text with --request and --detail")
++                raise InboxError(f"{item['ref']} is a request; revise its text with --request, --start, and "
++                                 "--detail")
+             subject = item["subject"] if request is None else request
+             check_subject("request", subject, item.get("pr"))
++            if start:
++                check_start(start)
+             item["subject"] = subject.strip()
+             if detail is not None:
+                 item["detail"] = detail.strip()
++            if start is not None and start.strip():
++                item["start"] = start.strip()
++            elif start is not None:
++                item.pop("start", None)
++            reset_start(item)
+             return
+-        if request is not None:
++        if request is not None or start is not None:
+             raise InboxError(f"{item['ref']} is a question; revise its text with --question")
+         subject = item["subject"] if question is None else question
+         first, *others = item["choices"]
+@@ -570,10 +643,64 @@ def record(item: dict) -> None:
+             item["restoredAt"] = now_ms()
+         for key in ("answer", "deliveredAt", "claim"):
+             item.pop(key, None)
++        # The agent heard the request declined and may have undone what it prepared, so a restored
++        # request waits for a new press of start.
++        reset_start(item)
+ 
+     return update(session, ref, record, is_restorable)
+ 
+ 
++def start(session: Optional[str], ref: str, action: str) -> dict:
++    """Record that the person pressed start on a request, consenting to `action`, the start action
++    their drawer showed, and nothing more. A drawer drawn before the agent revised the start action
++    shows the old one, so a press whose action differs from the stored one records nothing. A
++    blocked request takes a new press, which is a retry. The deliverer then sends `STARTED`."""
++    def record(item: dict) -> None:
++        refuse_unless_request(item, "started")
++        if item.get("answer"):
++            raise InboxError(f"{item['ref']} is already {resolution(item)}")
++        stored = item.get("start")
++        if stored is None:
++            raise InboxError(f"{item['ref']} has no start action; mark it done or decline it")
++        if action.strip() != stored:
++            raise InboxError(f"{item['ref']}'s start action is now {stored!r}; read it and press start again")
++        if item.get("started") and (item.get("progress") or {}).get("state") != "blocked":
++            raise InboxError(f"{item['ref']} is already started")
++        item["started"] = {"action": stored, "startedAt": now_ms()}
++        item.pop("progress", None)
++
++    return update(session, ref, record, is_open)
++
++
++def report(session: Optional[str], ref: str, state: str, reason: Optional[str] = None) -> dict:
++    """Record what the agent made of a request's start: `ready`, once it did the start action, or
++    `blocked`, with the `reason` the person reads before they press retry. Nothing goes back to the
++    agent, which wrote it."""
++    if reason is not None:
++        check_subject("reason", reason, None)
++
++    def record(item: dict) -> None:
++        refuse_unless_request(item, state)
++        if item.get("answer"):
++            raise InboxError(f"{item['ref']} is already {resolution(item)}")
++        if not item.get("started"):
++            raise InboxError(f"{item['ref']} is not started; wait for `STARTED {item['ref']}` before marking it "
++                             f"{state}")
++        if item.get("progress"):
++            raise InboxError(f"{item['ref']} is already {item['progress']['state']}")
++        item["progress"] = {"state": state, **({"reason": reason.strip()} if reason else {}), "at": now_ms()}
++
++    return update(session, ref, record, is_open)
++
++
++def ready(session: Optional[str], ref: str) -> dict:
++    return report(session, ref, "ready")
++
++
++def block(session: Optional[str], ref: str, reason: str) -> dict:
++    return report(session, ref, "blocked", reason)
++
++
+ def snoozed_until(item: dict) -> Optional[int]:
+     """When a snoozed item returns, while that time is still ahead."""
+     until = item.get("snoozedUntil")
+@@ -588,13 +715,16 @@ def live_claim(question: dict) -> Optional[dict]:
+ 
+ 
+ def claim(session: Optional[str], ref: str, renew: Optional[str] = None) -> dict:
+-    """Claim an answer for delivery, or renew a claim by its token; returns the question."""
++    """Claim the line an item owes for delivery, recording which line it is, or renew a claim by its
++    token; returns the item. A claimed `STARTED` renews even once the request is resolved, since
++    its line still waits in the session's queue."""
+     def take(question: dict) -> None:
+         refuse_notice(question, "has nothing to deliver")
+-        if not question.get("answer") and not question.get("restoredAt"):
++        line = owed_line(question)
++        if line is None and not (renew is not None and claimed_line(question) == "started"):
++            if question.get("deliveredAt"):
++                raise InboxError(f"{answer_ref(question)} is already delivered")
+             raise InboxError(f"{question['ref']} has no answer to deliver")
+-        if question.get("deliveredAt"):
+-            raise InboxError(f"{answer_ref(question)} is already delivered")
+         if renew is not None:
+             if (question.get("claim") or {}).get("token") != renew:
+                 raise InboxError(f"{answer_ref(question)} is not claimed with that token")
+@@ -602,21 +732,30 @@ def take(question: dict) -> None:
+             return
+         if live_claim(question):
+             raise InboxError(f"{answer_ref(question)} is already claimed for delivery")
+-        question["claim"] = {"token": secrets.token_hex(8), "renewedAt": now_ms()}
++        question["claim"] = {"token": secrets.token_hex(8), "renewedAt": now_ms(), "line": line}
+ 
+     return update(session, ref, take)
+ 
+ 
+ def settle(session: Optional[str], ref: str, token: str, delivered: bool) -> dict:
+-    """Mark a claimed answer delivered, or reopen the question when its delivery failed. A claimed
+-    `RESTORED` line is done either way: the panel does not retry it, and the question's answer or
+-    next dismissal still reaches the agent."""
++    """Mark a claimed line delivered, or undo what it reported when its delivery failed: a question
++    reopens, and a request's start is removed, so the person presses start again. A claimed
++    `RESTORED` line is done either way: the panel does not retry it, and the item's answer or next
++    dismissal still reaches the agent. An outcome recorded while a `STARTED` was claimed is owed
++    once that line settles."""
+     def finish(question: dict) -> None:
+-        if question.get("deliveredAt"):
++        line = claimed_line(question)
++        if line != "started" and question.get("deliveredAt"):
+             raise InboxError(f"{answer_ref(question)} is already delivered")
+         if (question.get("claim") or {}).get("token") != token:
+             raise InboxError(f"{question['ref']} is not claimed with that token")
+         del question["claim"]
++        if line == "started":
++            if delivered:
++                question["started"]["deliveredAt"] = now_ms()
++            else:
++                question.pop("started")
++            return
+         if question.pop("restoredAt", None) is not None:
+             return
+         if delivered:
+@@ -636,9 +775,9 @@ def prune(folder: Path) -> None:
+ 
+ 
+ def owes_a_line(item: dict) -> bool:
+-    """Whether the item's agent is owed a line: an answer or dismissal not yet delivered, or word that
+-    a dismissal it may have heard of was undone."""
+-    return bool(item.get("restoredAt")) or bool(item.get("answer")) and not item.get("deliveredAt")
++    """Whether the item's agent is owed a line: an answer, outcome, or dismissal not yet delivered,
++    word that a dismissal it may have heard of was undone, or a request's start."""
++    return owed_line(item) is not None
+ 
+ 
+ def undelivered(session: str) -> list[dict]:
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index 673f9da1..501dc50d 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -24,10 +24,11 @@
+ `project site build` and `serve` run the shell command `--prepare` names, or
+ the checkout's own `site.prepare` once `--allow-prepare` allows it. Ask rules
+ also cover what only the person may record: `project inbox answer`,
+-`dismiss`, `snooze`, `done`, and `decline` record the person's answer to an
+-item an agent posted, their outcome for a request, or their choice to dismiss
+-or put it off, so an agent running one could answer its own question or mark
+-its own request done. Projector's panel runs those commands itself,
++`dismiss`, `snooze`, `done`, `decline`, and `start` record the person's answer
++to an item an agent posted, their outcome for a request, their consent to a
++request's start action, or their choice to dismiss or put it off, so an agent
++running one could answer its own question, mark its own request done, or
++consent to its own start action. Projector's panel runs those commands itself,
+ not through an agent's shell, so the person answering from the panel is never
+ asked. `project inbox restore` needs no ask rule: it reopens an item the
+ person dismissed or snoozed, which takes no choice from them, and an agent
+@@ -75,8 +76,8 @@
+ types into, so the rules also leave out every command that can run another
+ program: `create` and `edit`, whose editor an agent could drive,
+ `review gate`, and `site build` and `serve`. They leave out `inbox answer`,
+-`dismiss`, `snooze`, `done`, and `decline` too. A new command reaches Codex once it is added
+-here and `init` rewrites the file.
++`dismiss`, `snooze`, `done`, `decline`, and `start` too. A new command reaches
++Codex once it is added here and `init` rewrites the file.
+ """
+ 
+ from __future__ import annotations
+@@ -93,7 +94,7 @@
+ ASK = ("Bash(project init *)", "Bash(project upgrade *)", "Bash(project config set *)",
+        "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
+        "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project inbox done *)",
+-       "Bash(project inbox decline *)")
++       "Bash(project inbox decline *)", "Bash(project inbox start *)")
+ # The narrower rules Projector wrote before `Bash(project *)` covered them,
+ # which `init` removes from `permissions.allow`.
+ SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
+@@ -103,8 +104,8 @@
+ RETIRED_ASK = ("Bash(project -*)",)
+ 
+ ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
+-         "`--prepare` or `--allow-prepare`, and `project inbox answer`, `dismiss`, `snooze`, `done`, and "
+-         "`decline`")
++         "`--prepare` or `--allow-prepare`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
++         "`decline`, and `start`")
+ COMMANDS = "every `project` command but the few that reach outside Projector's own state"
+ 
+ # Each pattern Codex may run without asking, and outside its sandbox, with the
+@@ -115,10 +116,10 @@
+      "Runs a Projector command that works on plans, loops, or pull request summaries, or prints its version or "
+      "help."),
+     (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
+-    (["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "request", "restore", "revise", "show",
+-                           "tell", "watch", "withdraw"]],
+-     "Posts, revises, reads, withdraws, restores, or delivers an inbox item, but never records the person's "
+-     "answer to one."),
++    (["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore",
++                           "revise", "show", "tell", "watch", "withdraw"]],
++     "Posts, revises, reads, withdraws, restores, or delivers an inbox item, or reports on a request's start, "
++     "but never records the person's answer to one."),
+     (["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "release",
+                             "rules", "settle", "setup", "status", "suggestions"]],
+      "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),
+@@ -135,8 +136,8 @@
+     "# Codex's usual approval decides every command these rules leave out: `project init`, `project upgrade`,\n"
+     "# `project config set` and `unset`, `project create` and `project edit`, which can open an editor,\n"
+     "# `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
+-    "# the command line names, `project inbox answer`, `dismiss`, `snooze`, `done`, and `decline`, which\n"
+-    "# record the person's choice, and a command line that starts with an option.\n"
++    "# the command line names, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, and `start`,\n"
++    "# which record the person's choice, and a command line that starts with an option.\n"
+     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
+               f'    justification = "{justification}",\n)\n'
+               for pattern, justification in CODEX_ALLOW)
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 24551f36..c669a850 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 19 -->
++<!-- projector:begin 20 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -81,7 +81,16 @@ do the work yourself whenever you can. Write the request as what they should
+ do, and put the steps in its detail as a numbered list, each step with what
+ they should see, so their notes can name the step that failed. Post one
+ request for the whole hand-off rather than a question and a notice for its
+-parts, and keep working on anything it does not block.
++parts, and keep working on anything it does not block. Give the request a
++start action only when you must prepare something before they can begin,
++such as installing a build on their phone, and leave it out otherwise. Do
++the slow part before you post the request, such as building the app, so the
++start action only installs and launches it and they are not left waiting
++once they press start. They press start when they are ready, and a message
++that starts `STARTED` arrives quoting the start action. Do the start action
++only then, do exactly what that message quotes and nothing more, and mark the
++request ready with the `ready` tool, or blocked with the `block` tool and
++what they should do first, such as unlocking the phone.
+ 
+ When the person picks one of a question's options, the answer reaches you
+ as a message that starts `ANSWER`. When they finish a request, its outcome
+diff --git a/tests/test_inbox.py b/tests/test_inbox.py
+index 3348e5b9..e14e3193 100644
+--- a/tests/test_inbox.py
++++ b/tests/test_inbox.py
+@@ -1131,5 +1131,145 @@ def test_lists_and_shows_a_request_by_its_kind_and_state(self) -> None:
+                          self.run_cli("list", "--session", "s1")[1].splitlines())
+ 
+ 
++INSTALL = "Install build c0d62a3b on your iPhone"
++
++
++class StartTests(InboxCase):
++    def setUp(self) -> None:
++        super().setUp()
++        code, _, err = self.run_cli("request", "Test the gutters", "--start", INSTALL, "--session", "s1")
++        self.assertEqual(0, code, err)
++
++    def cli(self, *args: str) -> tuple[int, str, str]:
++        return self.run_cli(*args, "--session", "s1")
++
++    def start(self, action: str = INSTALL) -> tuple[int, str, str]:
++        return self.cli("start", "1", "--action", action)
++
++    def watch(self) -> str:
++        return self.cli("watch", "--once")[1]
++
++    def status(self) -> str:
++        return cli.item_state(self.item(1))
++
++    def claim(self) -> str:
++        code, out, err = self.cli("claim", "1", "--json")
++        self.assertEqual(0, code, err)
++        return json.loads(out)["token"]
++
++    def test_records_a_checked_start_action(self) -> None:
++        self.assertEqual(INSTALL, self.item(1)["start"])
++        for start in ("Two\nlines", "x" * 121, " "):
++            with self.subTest(start=start[:12]):
++                code, _, err = self.run_cli("request", "Sign in", "--start", start, "--session", "s1")
++                self.assertEqual(65, code, err)
++                self.assertIn("start action", err)
++        self.assertEqual("start: Install build c0d62a3b on your iPhone\nopen\n",
++                         self.run_cli("show", "1")[1].split("\n", 1)[1])
++
++    def test_start_records_the_action_read_and_sends_started_once(self) -> None:
++        self.assertEqual((0, "started 1\n", ""), self.start())
++        self.assertEqual(INSTALL, self.item(1)["started"]["action"])
++        self.assertEqual("STARTED 1 Test the gutters → Install build c0d62a3b on your iPhone\n", self.watch())
++        self.assertEqual("", self.watch())
++        self.assertEqual("started", self.status())
++
++    def test_start_refuses_a_stale_action_a_second_press_and_a_request_with_none(self) -> None:
++        code, _, err = self.start("Install build 0ld on your iPhone")
++        self.assertEqual(65, code)
++        self.assertIn("read it and press start again", err)
++        self.assertNotIn("started", self.item(1))
++        self.start()
++        self.assertEqual(65, self.start()[0])
++        self.run_cli("request", "Sign in", "--session", "s1")
++        self.assertIn("no start action", self.cli("start", "2", "--action", INSTALL)[2])
++        self.run_cli("ask", "Merge?", "--recommend", "Yes", "--session", "s1")
++        self.assertIn("only a request", self.cli("start", "3", "--action", INSTALL)[2])
++
++    def test_the_agent_marks_a_started_request_ready_or_blocked(self) -> None:
++        for args in (["ready", "1"], ["block", "1", "--reason", "Unlock it"]):
++            with self.subTest(command=args[0]):
++                code, _, err = self.cli(*args)
++                self.assertEqual(65, code)
++                self.assertIn("not started", err)
++        self.start()
++        self.assertEqual((0, "blocked 1\n", ""), self.cli("block", "1", "--reason", "The phone is locked."))
++        self.assertEqual("The phone is locked.", self.item(1)["progress"]["reason"])
++        self.assertEqual(65, self.cli("ready", "1")[0])
++        self.assertEqual(65, self.cli("block", "1", "--reason", "two\nlines")[0])
++
++    def test_retry_after_a_block_records_a_new_start(self) -> None:
++        self.start()
++        self.watch()
++        self.cli("block", "1", "--reason", "The phone is locked.")
++        self.assertEqual((0, "started 1\n", ""), self.start())
++        self.assertNotIn("progress", self.item(1))
++        self.assertNotIn("deliveredAt", self.item(1)["started"])
++        self.assertEqual("STARTED 1 Test the gutters → Install build c0d62a3b on your iPhone\n", self.watch())
++        self.assertEqual((0, "ready 1\n", ""), self.cli("ready", "1"))
++        self.assertEqual(65, self.start()[0])
++
++    def test_revising_a_started_request_returns_it_to_open(self) -> None:
++        self.start()
++        self.claim()
++        self.cli("revise", "1", "--start", "Install build d41f on your iPhone")
++        request = self.item(1)
++        self.assertEqual("open", self.status())
++        self.assertTrue({"started", "progress", "claim"}.isdisjoint(request))
++        self.assertEqual(65, self.start()[0])
++        self.assertEqual(0, self.start("Install build d41f on your iPhone")[0])
++        self.assertEqual("STARTED 1 Test the gutters → Install build d41f on your iPhone\n", self.watch())
++        self.cli("revise", "1", "--start", "")
++        self.assertNotIn("start", self.item(1))
++        self.assertEqual(65, self.cli("revise", "1", "--start", "x" * 121)[0])
++
++    def test_a_failed_started_removes_the_start(self) -> None:
++        self.start()
++        token = self.claim()
++        self.assertEqual(0, self.cli("reopen", "1", "--claim", token)[0])
++        self.assertEqual("open", self.status())
++        self.assertTrue({"started", "claim"}.isdisjoint(self.item(1)))
++
++    def test_an_outcome_or_withdrawal_replaces_a_started_no_deliverer_claimed(self) -> None:
++        self.start()
++        self.cli("done", "1", "--text", "All good")
++        self.assertNotIn("started", self.item(1))
++        self.assertEqual("DONE 1 Test the gutters → All good\n", self.watch())
++        self.run_cli("request", "Sign in", "--start", INSTALL, "--session", "s1")
++        self.cli("start", "2", "--action", INSTALL)
++        self.cli("withdraw", "2")
++        self.assertNotIn("started", self.item(2))
++        self.assertEqual("", self.watch())
++
++    def test_an_outcome_recorded_while_started_is_claimed_follows_it(self) -> None:
++        self.start()
++        token = self.claim()
++        self.cli("done", "1")
++        self.assertEqual("", self.watch())
++        self.assertEqual(0, self.cli("claim", "1", "--renew", token)[0])
++        self.assertEqual(0, self.cli("delivered", "1", "--claim", token)[0])
++        self.assertIn("deliveredAt", self.item(1)["started"])
++        self.assertEqual("DONE 1 Test the gutters\n", self.watch())
++
++    def test_a_withdrawal_while_started_is_claimed_lets_that_line_settle(self) -> None:
++        self.start()
++        token = self.claim()
++        self.cli("withdraw", "1")
++        self.assertEqual(0, self.cli("claim", "1", "--renew", token)[0])
++        self.assertEqual(0, self.cli("delivered", "1", "--claim", token)[0])
++        self.assertEqual("", self.watch())
++
++    def test_a_restored_request_waits_for_a_new_start(self) -> None:
++        self.start()
++        self.watch()
++        self.cli("ready", "1")
++        self.cli("decline", "1")
++        self.assertEqual("DECLINED 1 Test the gutters\n", self.watch())
++        self.cli("restore", "1")
++        self.assertEqual("open", self.status())
++        self.assertTrue({"started", "progress"}.isdisjoint(self.item(1)))
++        self.assertEqual("RESTORED 1 Test the gutters\n", self.watch())
++
++
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 29314578..32aacd83 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -31,6 +31,7 @@
+     17: "6b8b4e673fac23dea0813c5b948d7ac865bbd7544e7f9cc37702bef0abed4be6",
+     18: "26c080d4949f402c9bc966004641e5daa8cbf8ae197d108c8f9e00b98a7e89aa",
+     19: "f087c2db4d63c3e424fed3ac40fcc3b0467000728d1d2f1055a4b3e8840ba69b",
++    20: "15508339c9b61eb3d11d565b239c75898a2fb05f786edb614bfdeb488c4e7110",
+ }
+ 
+ 
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index cec4b0ac..e0b48026 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -45,6 +45,9 @@
+     ("project inbox done 3 --session s1", "ask", "none"),
+     ("project inbox done 3 --text 'All good'", "ask", "none"),
+     ("project inbox decline 3 --session s1", "ask", "none"),
++    ("project inbox start 3 --action 'Install the build' --session s1", "ask", "none"),
++    ("project inbox ready 3 --session s1", "allow", "allow"),
++    ("project inbox block 3 --reason 'Unlock the phone' --session s1", "allow", "allow"),
+     ("project list --json", "allow", "allow"),
+     ("project config get review.username", "allow", "allow"),
+     ("project config list", "allow", "allow"),
+@@ -93,7 +96,7 @@
+ # What the Codex rules leave to Codex's usual approval: each command with the
+ # subcommands left out, or None where the whole command is.
+ CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None,
+-                  "config": {"set", "unset"}, "inbox": {"answer", "decline", "dismiss", "done", "snooze"}, "review": {"gate"},
++                  "config": {"set", "unset"}, "inbox": {"answer", "decline", "dismiss", "done", "snooze", "start"}, "review": {"gate"},
+                   "site": {"build", "serve"}}
+ 
+ # Some of the variables Claude Code lets an allow rule match past. Its list is
