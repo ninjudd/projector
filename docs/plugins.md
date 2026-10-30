@@ -549,7 +549,7 @@ notice once you have read it and closes its drawer, and nothing goes back
 to the agent.
 
 A request's drawer shows its steps, then the options its agent gave, on `1`
-and on, in the options' place, then **discuss request**, **decline request**,
+and on, in the options' place, then **discuss request**, **dismiss request**,
 and **snooze request**. A test's options might be **Looks good** and **Some
 feedback**, and a request posted without options offers a single **Done**.
 Like a question's option, each records nothing at once: it puts the quoted
@@ -561,11 +561,10 @@ options, or a plain `Done` or `Declined`, alone on the first line under the
 quote counts as the outcome.
 Anything else there, such as `done?` or a question about which build to
 test, is a reply: the request stays open, and the reply reaches the agent as
-your prompt. **decline request** takes the place of **dismiss**, and like
-it, declines the request at once; the agent hears `DECLINED`. To give a
-reason, use **discuss request** instead. A done request's drawer marks the
-choice it was resolved with, and a declined one says `Declined` and offers
-**restore request**.
+your prompt. **dismiss request** declines the request at once, and the
+agent hears `DECLINED`. To give a reason, use **discuss request** instead.
+A done request's drawer marks the choice it was resolved with, and a
+dismissed one says `Declined` and offers **restore request**.
 
 A request the agent must prepare for, such as installing a build on your
 phone, has a start action. Its drawer says `Start:` and what the agent will
@@ -580,12 +579,12 @@ you to read and press again. While the agent works, the drawer says
 read `Ready:` and `ready`, in green, and you begin. When the agent could not
 do it, they read `Blocked:` with its reason and `blocked`, in yellow, and
 **Retry** takes the place of **Start**, for you to press once you have done
-what the reason says. The options and **decline request** work throughout,
+what the reason says. The options and **dismiss request** work throughout,
 the options from `1` while there is no **Start** or **Retry** to press. A
 request without a start action shows none of this.
 
-**dismiss**, **decline**, **restore**, and **unsnooze** act at once. A
-dismissed or declined item stays in the list a while, struck through, as the
+**dismiss**, **restore**, and **unsnooze** act at once. A dismissed item,
+a request included, stays in the list a while, struck through, as the
 paragraph on resolved items below describes, so you undo a dismissal you did
 not mean by opening its line again and choosing **restore**.
 
@@ -702,8 +701,7 @@ presses it before the label in the accent color, such as
 acts on: `question`, `notice`, `request`, or `PR`.
 
 - **7** presses **discuss**.
-- **8** presses **dismiss**, or **decline** on a request, or **restore** in
-  their place. Dismiss asks to
+- **8** presses **dismiss**, or **restore** in its place. Dismiss asks to
   be sure, on `8` again to dismiss and `9` to keep the item, so dismissing
   from the keyboard is `8` `8`.
 - **9** presses **snooze**, or **unsnooze** in its place, which a pull
