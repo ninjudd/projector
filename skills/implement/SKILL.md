@@ -116,8 +116,10 @@ description for work without a plan. If required work on a project
 remains, record the exact state, leave the status `in-progress`, and set the
 priority to `now`, `next`, or `later` as the user's real scheduling intent
 requires. If every criterion in the plan is proven, continue with `finish`
-in the same implementation change. Do not wait for a release: the change that
-merges the last of the project's code is the one that completes it.
+in the same implementation change. Do not wait for a release or open a
+separate pull request: the pull request that carries the last of the
+project's code runs `project done`, so the project is completed when it
+merges.
 
 ## Hand the work over
 

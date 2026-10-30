@@ -66,10 +66,11 @@ the frontmatter by hand when you author a new plan without the command.
 - `in-progress`: Implementation has begun and the project is being worked.
   Keep a blocked project here while its blocker is being resolved, and explain
   the blocker in the project plan.
-- `completed`: The project no longer needs work. A project ships once the last
-  of its code merges into the default branch, so mark it `completed` in that
-  pull request rather than after a release. State whether it shipped, was
-  abandoned, or was superseded in the project plan.
+- `completed`: The project no longer needs work. Mark a project that shipped
+  `completed` in the pull request that carries the last of its code, so it is
+  completed when that pull request merges, not in a later pull request or
+  after a release. State whether it shipped, was abandoned, or was superseded
+  in the project plan.
 
 `priority` records when the work should happen:
 
@@ -114,9 +115,9 @@ For example, the pull request that begins implementation runs
 `project status` to move the project from `ready` to `in-progress`. The pull
 request that completes the final implementation runs `project done`, which
 sets the status to `completed`. A stale status is worse than a missing
-status. Do not wait for a release before you run `project done`. Projector
-does not track releases, so track them in your release process or issue
-tracker, and let the plan close when its code merges.
+status. Do not wait for a release before you run `project done`, and do not
+open a separate pull request for it. Projector does not track releases, so
+track them in your release process or issue tracker.
 
 The commands load the plan before they write, so they refuse a plan whose
 frontmatter `project check` rejects. A plan with `status: blocked`, for
