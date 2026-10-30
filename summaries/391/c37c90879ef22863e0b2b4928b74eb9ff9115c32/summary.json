@@ -1,0 +1,132 @@
+{
+ "version": 1,
+ "name": "Upgrade init report",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 391,
+  "title": "Say whether an upgrade changed what project init writes",
+  "head": "c37c90879ef22863e0b2b4928b74eb9ff9115c32",
+  "headRef": "worktree-upgrade-init-report",
+  "base": "6113114866825613c7fd584bb6a84d7fc43bb1ab",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project upgrade</code> reinstalls the <code>project</code> command and the host plugins by running Projector's installer, <code>install.sh</code>, and passes on the installer's output and exit status. <code>project init</code> is the separate command that writes Projector's generated files: the Projector section in a repository's <code>AGENTS.md</code> and <code>CLAUDE.md</code>, the site workflow <code>.github/workflows/projector-site.yml</code>, and the permission rules in your Claude Code settings and Codex rules. Until now, nothing told you whether a new release changed any of those, so you either ran <code>init</code> in every repository after each upgrade or waited for <code>project check</code> to warn. <code>check</code> never reports the permission rules at all.",
+   "This pull request makes <code>upgrade</code> answer that question. It takes a SHA-256 digest of each of the three outputs before the installer runs. After the install, it asks the <code>project</code> on <code>PATH</code> for the same digests through a new hidden flag, <code>project version --init-digests</code>. It then prints rows in the installer's own two-column format:",
+   "<ul class=\"tight\"><li><code>init-changed</code>, once for each output whose digest differs, followed by a yellow <code>init-needed</code> row that says to run <code>project init</code>.</li><li><code>init-current</code> when nothing changed.</li><li><code>init-unknown</code> when the <code>project</code> on <code>PATH</code> cannot answer, because it predates the flag or is missing.</li></ul>",
+   "The exit status stays the installer's. After a failed install, <code>upgrade</code> still lists what changed, because a failed <code>all</code> install can already have replaced the CLI. It prints no <code>init-current</code> or <code>init-unknown</code> row in that case. <code>upgrade</code> never writes a repository or settings file itself. You run <code>init</code> when the rows ask for it."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Digest</b>: a SHA-256 hash of what <code>init</code> would write, with a label that names the output. The instructions and the workflow are rendered for one fixed repository, <code>docs/projects</code> and action ref <code>v0</code>, which is enough to show a template change.</li><li><b>The <code>project</code> on <code>PATH</code></b>: the command you run <code>init</code> with next, and the one the installer's <code>cli</code> row reports on. The running process still holds the old code, so <code>upgrade</code> asks this command for the new digests.</li><li><b>Installer row</b>: a line of <code>install.sh</code> output, a name padded to 14 columns and then the text. A warning row adds ⚠️ and prints bold yellow on a terminal unless <code>NO_COLOR</code> is set.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The Projector review of <code>c37c908</code> was clean, with no finding threads and two suggestions.</li><li>The review ran <code>upgrade</code> end to end against a stub installer with a temporary home, covering each changed output, an unchanged install, an older or missing <code>project</code>, failed installs, an unreachable installer, and a checkout install. It found that no repository or settings file changed.</li><li>The first upgrade that prints these rows is one run from a release that includes this change, because the comparison runs in the command being replaced.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "upgrade",
+   "title": "Upgrade compares what init writes before and after the install",
+   "kicker": "The digests, the hidden flag, and the rows that report them",
+   "intro": [
+    "<code>run_upgrade</code> now has three steps. It takes <code>init_digests()</code> from the running code, runs the installer through <code>run_installer</code>, which is the old <code>run_upgrade</code> body, and calls <code>report_init_changes</code>. The order matters, because <code>install.sh cli</code> rewrites this package under the running interpreter, templates included.",
+    "<code>installed_init_digests</code> runs <code>project version --init-digests</code> from <code>PATH</code> with a 30-second timeout, and returns <code>None</code> on any failure or malformed answer. <code>report_init_changes</code> compares by name and digest, and prints the newer command's label. So a newer release can name an output this command has never heard of, and an output that the newer release stopped writing is not reported."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The review recomputed the three digests by hand, from the template with <code>docs/projects</code> substituted, from <code>json.dumps</code> of <code>ALLOW</code>, <code>ASK</code>, <code>SUPERSEDED</code>, <code>RETIRED_ASK</code>, and <code>CODEX_RULES</code>, and from <code>workflow_text(\"v0\")</code>. Each matched the hidden flag's output."
+    },
+    {
+     "kind": "context",
+     "text": "The digests cover every file <code>init</code> rewrites. <code>init</code> creates the projects README once and never rewrites it, so it is rightly left out. The <code>CLAUDE.md</code> import line, <code>@AGENTS.md</code>, is a constant that no digest covers."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds <code>init_digests</code>, <code>installed_init_digests</code>, <code>installer_row</code>, and <code>report_init_changes</code>. It splits <code>run_upgrade</code> into the installer run and the report, and adds the hidden <code>version --init-digests</code> flag.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The digests are taken before the installer runs. In an end-to-end run, a stub installer rewrote the running package's own template in place, as a pipx reinstall does, and <code>upgrade</code> still reported the changed Projector section.",
+       "line": 249
+      },
+      {
+       "kind": "verify",
+       "text": "An older <code>project</code> on <code>PATH</code> and a <code>PATH</code> with no <code>project</code> each printed <code>init-unknown</code> after a successful install. After a failed one, each printed no row and kept the installer's exit status.",
+       "line": 202
+      },
+      {
+       "kind": "context",
+       "text": "<code>init-unknown</code> tells you to run <code>project check</code>, which warns about the Projector section and the site workflow but not about the permission rules. <code>project review rules</code> reports those. The review lists this as a suggestion.",
+       "line": 202
+      },
+      {
+       "kind": "verify",
+       "text": "<code>project help version</code> doesn't show the hidden flag, and the flag's JSON answer works from an uninstalled checkout, whose version is <code>unknown</code>.",
+       "line": 787
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests for each row and for the digests",
+   "kicker": "Unit tests in UpgradeTests",
+   "intro": [
+    "<code>UpgradeTests</code> now patches <code>installed_init_digests</code> by default to return the running command's own digests, so every existing upgrade test expects <code>init-current</code> unless it says otherwise. The new tests cover each row, the order of the digests and the installer, a separate digest for each output, and a real <code>project</code> on <code>PATH</code> that answers or refuses the flag."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_projector.py",
+     "note": "Seven new tests in <code>UpgradeTests</code>, plus a default patch in <code>setUp</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The full suite passed at this head: 1,140 tests, 1 skipped, with <code>python3.12</code>.",
+       "line": 2201
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation of the new rows",
+   "kicker": "The README, the CLI reference, and the install guide",
+   "intro": [
+    "<code>docs/cli.md</code> gains a section, \"Know when to run <code>init</code> again\", which describes each row and its limits. The README and <code>docs/plugins.md</code> each gain a sentence that points to it. #385, which adds a <code>reload</code> row inside <code>install.sh</code>, edits other parts of <code>docs/plugins.md</code> and contradicts nothing here."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "README.md"
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The new section under Upgrade.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The checkout bullet above this section still says that <code>upgrade</code> ends with the installer's <code>repo-</code> row. The <code>init-</code> rows now print after it. The review lists this as a suggestion."
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}

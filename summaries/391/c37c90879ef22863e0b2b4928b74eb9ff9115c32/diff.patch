@@ -1,0 +1,373 @@
+diff --git a/README.md b/README.md
+index b3131690..d515ad7b 100644
+--- a/README.md
++++ b/README.md
+@@ -19,9 +19,10 @@ newer, and no git:
+ curl -fsSL https://projector.bot/install.sh | bash
+ ```
+ 
+-`project upgrade` moves everything to the newest release later, and every
+-`project` command warns you when a newer release is out. To install
+-only the CLI, pin a release, or install each plugin yourself, see
++`project upgrade` moves everything to the newest release later and says
++whether it changed anything `project init` writes, and every `project` command
++warns you when a newer release is out. To install only the CLI, pin a
++release, or install each plugin yourself, see
+ [Install Projector](docs/plugins.md).
+ 
+ ## Get started
+diff --git a/docs/cli.md b/docs/cli.md
+index 5aa68c29..a3a4bd07 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -814,6 +814,42 @@ when the released installer cannot be downloaded.
+ 
+ `upgrade` has no `--json` mode because the installer owns the output.
+ 
++### Know when to run `init` again
++
++After the installer's rows, `upgrade` prints rows of its own, in the same
++format, that say whether you need to run `project init` again. A release can
++change three things `init` writes: the Projector section in `AGENTS.md` and
++`CLAUDE.md`, the site workflow, and the permission rules in your Claude Code
++settings and Codex rules. `upgrade` compares what the command it replaced
++writes with what the `project` on your `PATH` writes after the install, which
++is the command you run `init` with next, and lists each one that changed:
++
++```text
++init-changed   the Projector section in AGENTS.md and CLAUDE.md
++init-changed   the permission rules in your Claude Code settings and Codex rules
++init-needed    ⚠️  run project init in each repository that uses Projector to write the changes above
++```
++
++`init-needed` carries a ⚠️ marker and prints in bold yellow on a terminal,
++unless `NO_COLOR` is set. When nothing changed, `upgrade` prints one row
++instead:
++
++```text
++init-current   nothing project init writes changed
++```
++
++`init-unknown` means the `project` on your `PATH` cannot say what it writes,
++as a release older than this check cannot, or that no `project` is on your
++`PATH`. Run `project check` in each repository then; it warns about an
++outdated Projector section or site workflow. An install that fails can still
++have replaced the command, so after a failure `upgrade` lists what changed but
++prints no `init-current` or `init-unknown` row. A target that leaves the CLI
++alone, such as `claude` or `status`, changes nothing `init` writes.
++
++The rows compare two installs, not your repositories. A repository where you
++skipped `init` after an earlier upgrade can still be behind when this one
++changed nothing, and `project check` says so there.
++
+ ### Know when a release is out
+ 
+ A command installed from a release warns on stderr when a newer release is
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 0ec3463a..e512e909 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -861,6 +861,9 @@ the row plain.
+ `project upgrade <target>` runs this installer from any directory, for a
+ command installed from this checkout: `project upgrade cli` is
+ `./install.sh cli`, and `project upgrade status` is `./install.sh status`.
++It then adds `init-` rows that say whether the install changed anything
++`project init` writes; see [Know when to run `init`
++again](cli.md#know-when-to-run-init-again).
+ 
+ A reinstall keeps the Python the existing venv was created with. Left to
+ itself, `pipx` builds under its default interpreter, which on some machines is
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 25d305ee..4dc43a14 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -23,7 +23,7 @@
+ from urllib.parse import urlparse
+ from urllib.request import url2pathname, urlopen
+ 
+-from . import inbox, loop, permissions, review, site, summary
++from . import inbox, instructions, loop, permissions, review, site, summary
+ from .permissions import allow_commands
+ from .summary import WORKFLOW_PATH
+ from .config import (
+@@ -129,7 +129,90 @@ def fetch_installer(url: str, target: Path) -> None:
+         raise EnvironmentError(f"cannot upgrade: could not download the installer from {url}: {error}") from error
+ 
+ 
+-def run_upgrade(targets: list[str]) -> int:
++def init_digests() -> dict[str, dict[str, str]]:
++    """A digest of each thing `init` writes that a release can change, with the label that names it.
++
++    `upgrade` compares these with the ones the command it installs computes,
++    and a newer command can write something this one has never heard of, so
++    each digest carries its own label. The instructions and the workflow are
++    rendered for one fixed repository, which is enough to show a template
++    change.
++    """
++
++    outputs = {
++        "instructions": ("the Projector section in AGENTS.md and CLAUDE.md", instructions.render("docs/projects")),
++        "site-workflow": (f"the site workflow, {WORKFLOW_PATH}", summary.workflow_text("v0")),
++        "permission-rules": (
++            "the permission rules in your Claude Code settings and Codex rules",
++            json.dumps([permissions.ALLOW, permissions.ASK, permissions.SUPERSEDED, permissions.RETIRED_ASK,
++                        permissions.CODEX_RULES]),
++        ),
++    }
++    return {name: {"label": label, "sha256": hashlib.sha256(text.encode()).hexdigest()}
++            for name, (label, text) in outputs.items()}
++
++
++def installed_init_digests() -> Optional[dict[str, dict[str, str]]]:
++    """`init_digests` as the `project` on PATH computes them, or None when it cannot say.
++
++    This process still runs the code the install replaced, so it asks the
++    command you run `init` with next, which is also the one the installer
++    reports on.
++    """
++
++    command = shutil.which("project")
++    if command is None:
++        return None
++    try:
++        result = subprocess.run([command, "version", "--init-digests"],
++                                capture_output=True, text=True, timeout=30, check=True)
++        digests = json.loads(result.stdout)["init"]
++    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
++        return None
++    if not isinstance(digests, dict) or not all(
++        isinstance(entry, dict) and isinstance(entry.get("label"), str) and isinstance(entry.get("sha256"), str)
++        for entry in digests.values()
++    ):
++        return None
++    return digests
++
++
++def installer_row(name: str, text: str, warn: bool = False) -> None:
++    """Print a row as the installer prints its own, marking a warning the way its `warn_row` does."""
++
++    if not warn:
++        print(f"{name:<14} {text}")
++    elif sys.stdout.isatty() and not os.environ.get("NO_COLOR"):
++        print(f"\033[1;33m{name:<14} ⚠️  {text}\033[0m")
++    else:
++        print(f"{name:<14} ⚠️  {text}")
++
++
++def report_init_changes(before: dict[str, dict[str, str]], succeeded: bool) -> None:
++    """List what the install changed in what `init` writes, so you know whether to run it again.
++
++    An install that failed can still have replaced the command, so its
++    changes are listed too, but it claims neither that nothing changed nor
++    that the command could not say.
++    """
++
++    after = installed_init_digests()
++    if after is None:
++        if succeeded:
++            installer_row("init-unknown", "the project on PATH cannot say what project init writes -- run "
++                          "project check in each repository that uses Projector", warn=True)
++        return
++    changed = [entry["label"] for name, entry in after.items() if before.get(name, {}).get("sha256") != entry["sha256"]]
++    for label in changed:
++        installer_row("init-changed", label)
++    if changed:
++        installer_row("init-needed", "run project init in each repository that uses Projector to write the changes "
++                      "above", warn=True)
++    elif succeeded:
++        installer_row("init-current", "nothing project init writes changed")
++
++
++def run_installer(record: dict, targets: list[str]) -> int:
+     """Run the installer from anywhere, with the same targets, output, and exit status.
+ 
+     Installation belongs to the installer, which already knows how to place
+@@ -139,11 +222,7 @@ def run_upgrade(targets: list[str]) -> int:
+     and runs that, which reinstalls from the newest release without git.
+     """
+ 
+-    record = install_record()
+     source = checkout(record)
+-    # `install.sh cli` rewrites this package under the running interpreter.
+-    # Everything this process still needs is imported already, so nothing
+-    # below reaches for a file the reinstall is in the middle of replacing.
+     if source is not None:
+         script = source / "install.sh"
+         if not script.is_file():
+@@ -159,6 +238,20 @@ def run_upgrade(targets: list[str]) -> int:
+         return subprocess.run(["bash", str(script), *targets], env=environment, check=False).returncode
+ 
+ 
++def run_upgrade(targets: list[str]) -> int:
++    """Run the installer, then list what it changed in what `init` writes."""
++
++    record = install_record()
++    # `install.sh cli` rewrites this package under the running interpreter,
++    # templates included, so what `init` writes is read before it runs.
++    # Everything else this process still needs is imported already, so nothing
++    # after it reaches for a file the reinstall is in the middle of replacing.
++    before = init_digests()
++    code = run_installer(record, targets)
++    report_init_changes(before, code == 0)
++    return code
++
++
+ RELEASE_CHECK_SECONDS = 24 * 60 * 60
+ RELEASE_CHECK_TIMEOUT = 2
+ 
+@@ -690,6 +783,8 @@ def parser() -> argparse.ArgumentParser:
+     version = subcommands.add_parser("version", help="print the version of this command")
+     # Where this command's package lives, which `install.sh status` diffs against the checkout.
+     version.add_argument("--package-dir", action="store_true", help=argparse.SUPPRESS)
++    # What this command's `init` writes, which `upgrade` asks the command it installs for.
++    version.add_argument("--init-digests", action="store_true", help=argparse.SUPPRESS)
+     help_command = subcommands.add_parser("help", help="print this help, or one command's")
+     help_command.add_argument("topic", nargs="*", metavar="command", help="the command, such as init or review publish")
+     return result
+@@ -2023,7 +2118,10 @@ def show_help(topic: list[str]) -> int:
+ 
+ def run(arguments: argparse.Namespace) -> int:
+     if arguments.command == "version":
+-        print(Path(__file__).resolve().parent if arguments.package_dir else f"project {distribution_version()}")
++        if arguments.init_digests:
++            print(json_text({"init": init_digests()}))
++        else:
++            print(Path(__file__).resolve().parent if arguments.package_dir else f"project {distribution_version()}")
+         return 0
+     if arguments.command == "help":
+         return show_help(arguments.topic)
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 406039f1..0c7a7e64 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -1944,6 +1944,9 @@ def setUp(self) -> None:
+         # Not a repository: upgrading the command must not need one.
+         self.elsewhere = self.root / "elsewhere"
+         self.elsewhere.mkdir()
++        # The command the fake installer "installs" writes what this one does.
++        self.answer = mock.patch.object(cli, "installed_init_digests", return_value=cli.init_digests())
++        self.installed = self.patch(self.answer)
+ 
+     def patch(self, patcher: object) -> object:
+         started = patcher.start()
+@@ -2127,6 +2130,120 @@ def test_a_checkout_without_the_installer_is_named(self) -> None:
+         self.assertEqual(69, code)
+         self.assertIn(str(self.checkout / "install.sh"), stderr)
+ 
++    def changed_install(self) -> None:
++        """The installed command writes a new Projector section, a new kind of file, and no site workflow."""
++
++        digests = cli.init_digests()
++        digests["instructions"]["sha256"] = "0" * 64
++        digests["hooks"] = {"label": "the hooks in your settings", "sha256": "1" * 64}
++        del digests["site-workflow"]
++        self.installed.return_value = digests
++
++    def test_an_install_that_changes_nothing_init_writes_says_so(self) -> None:
++        self.installed_from(self.checkout_record())
++        self.fake_installer()
++
++        code, stdout, _ = self.invoke("cli")
++
++        self.assertEqual(0, code)
++        self.assertEqual("init-current   nothing project init writes changed\n", stdout)
++
++    def test_an_install_lists_each_thing_init_writes_that_changed(self) -> None:
++        self.installed_from(self.checkout_record())
++        self.fake_installer()
++        self.changed_install()
++
++        code, stdout, _ = self.invoke()
++
++        self.assertEqual(0, code)
++        # The new kind is named by the label the installed command gave it,
++        # and what that command no longer writes is not something to run init for.
++        self.assertEqual(
++            [
++                "init-changed   the Projector section in AGENTS.md and CLAUDE.md",
++                "init-changed   the hooks in your settings",
++                "init-needed    ⚠️  run project init in each repository that uses Projector to write the changes above",
++            ],
++            stdout.splitlines(),
++        )
++
++    def test_a_failed_install_lists_only_what_it_changed(self) -> None:
++        # `all` installs the CLI before it fails for want of a host, so a
++        # failure can still have changed what init writes.
++        self.installed_from(self.checkout_record())
++        self.fake_installer(exit_code=69)
++
++        code, stdout, _ = self.invoke()
++        self.assertEqual((69, ""), (code, stdout))
++
++        self.changed_install()
++        code, stdout, _ = self.invoke()
++        self.assertEqual(69, code)
++        self.assertIn("init-needed", stdout)
++
++    def test_an_installed_command_that_cannot_say_is_named(self) -> None:
++        self.installed_from(self.checkout_record())
++        self.fake_installer()
++        self.installed.return_value = None
++
++        code, stdout, _ = self.invoke()
++
++        self.assertEqual(0, code)
++        self.assertEqual(
++            "init-unknown   ⚠️  the project on PATH cannot say what project init writes -- run project check in "
++            "each repository that uses Projector\n",
++            stdout,
++        )
++
++        self.fake_installer(exit_code=3)
++        self.assertEqual((3, ""), self.invoke()[:2])
++
++    def test_what_init_writes_is_read_before_the_installer_runs(self) -> None:
++        # The reinstall replaces the templates this command reads them from.
++        self.installed_from(self.checkout_record())
++        self.fake_installer()
++        installer_had_run = []
++        real = cli.init_digests
++        self.patch(mock.patch.object(
++            cli, "init_digests", side_effect=lambda: installer_had_run.append(self.log.exists()) or real()
++        ))
++
++        self.invoke("cli")
++
++        self.assertEqual([False], installer_had_run)
++
++    def test_each_thing_init_writes_has_a_digest_of_its_own(self) -> None:
++        before = cli.init_digests()
++        edits = {
++            "instructions": mock.patch.object(instructions, "template", return_value=instructions.template() + "x"),
++            "site-workflow": mock.patch.object(cli.summary, "WORKFLOW", cli.summary.WORKFLOW + "# x\n"),
++            "permission-rules": mock.patch.object(permissions, "ASK", (*permissions.ASK, "Bash(project x *)")),
++        }
++        self.assertEqual(set(edits), set(before))
++        for name, edit in edits.items():
++            with self.subTest(name):
++                with edit:
++                    after = cli.init_digests()
++                self.assertEqual({name}, {key for key in before if before[key] != after[key]})
++
++    def test_the_project_on_path_answers(self) -> None:
++        self.answer.stop()
++        bin_dir = self.root / "bin"
++        bin_dir.mkdir()
++        project = bin_dir / "project"
++        source = Path(cli.__file__).resolve().parents[1]
++        project.write_text(f'#!/bin/sh\nPYTHONPATH={shlex.quote(str(source))} exec '
++                           f'{shlex.quote(sys.executable)} -m projector "$@"\n')
++        project.chmod(0o755)
++
++        with mock.patch.dict(os.environ, {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}):
++            self.assertEqual(cli.init_digests(), cli.installed_init_digests())
++            # A release older than this check refuses the question.
++            project.write_text('#!/bin/sh\necho "unrecognized arguments: --init-digests" >&2\nexit 2\n')
++            self.assertIsNone(cli.installed_init_digests())
++        with mock.patch.dict(os.environ, {"PATH": str(self.elsewhere)}):
++            self.assertIsNone(cli.installed_init_digests())
++
+ 
+ class StaleReleaseWarningTests(unittest.TestCase):
+     """Every command says on stderr when it is older than the release `upgrade` installs.
