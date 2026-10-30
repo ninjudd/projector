@@ -1776,9 +1776,10 @@ export const register: Register = on => {
       const isOpened = opened === key
       const color = !isOpen || isSnoozed ? 'subtle' : colorOf[item.kind]
       const pull = pullOf(item)
-      // Each action names the kind of item it acts on. A dismissed or snoozed
-      // item's drawer offers to bring it back where it offered to dismiss or
-      // snooze it, on the same digit; a resolved item cannot be snoozed.
+      // Each action but I don't understand, which says only that, names the
+      // kind of item it acts on. A dismissed or snoozed item's drawer offers
+      // to bring it back where it offered to dismiss or snooze it, on the same
+      // digit; a resolved item cannot be snoozed.
       // Dismissing a request declines it, so its agent hears `DECLINED`.
       const restore = (name: string, hotkey: string): Line => ({
         name,
@@ -1805,7 +1806,7 @@ export const register: Register = on => {
           ? [
               {
                 name: 'unclear',
-                label: `I don't understand this ${item.kind}`,
+                label: "I don't understand",
                 hotkey: choiceDigits < 6 ? '6' : undefined,
                 onPress: () => {
                   void act($, item, 'unclear')

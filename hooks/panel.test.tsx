@@ -2014,7 +2014,7 @@ test('requests through the tool, and a request’s drawer offers the agent’s o
     ['outcome:1.b', '2', true, "Some feedback"],
   ])
   expect(await actionLinesOf(ui)).toEqual([
-    "unclear:1 6 I don't understand this request",
+    "unclear:1 6 I don't understand",
     'discuss:1 7 discuss request',
     'dismiss:1 8 dismiss request',
     'snooze:1 9 snooze request',
@@ -2185,7 +2185,7 @@ test('start, first on 1, records the start action the drawer shows, and STARTED 
     ['3', "Some feedback"],
   ])
   expect(await actionLinesOf(ui)).toEqual([
-    "unclear:3 6 I don't understand this request",
+    "unclear:3 6 I don't understand",
     'discuss:3 7 discuss request',
     'dismiss:3 8 dismiss request',
     'snooze:3 9 snooze request',
@@ -2357,7 +2357,7 @@ test('I don’t understand on a running subagent’s notice records it, sends UN
 
   await ui.press({ key: 'item:2' })
   const action = await ui.find({ type: 'Button', key: 'unclear:2' })
-  expect([action?.props.hotkey, action?.props.plain, action?.text]).toEqual(['6', true, "I don't understand this notice"])
+  expect([action?.props.hotkey, action?.props.plain, action?.text]).toEqual(['6', true, "I don't understand"])
   await ui.press({ key: 'unclear:2' })
   await clock.advance(1)
   await clock.settle()
@@ -3046,7 +3046,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
     expect((await ui.find({ type: 'Button', key: `${name}:2` }))?.props.plain).toBe(true)
   }
   expect(await actionLinesOf(ui)).toEqual([
-    "unclear:2 6 I don't understand this notice",
+    "unclear:2 6 I don't understand",
     'discuss:2 7 discuss notice',
     'dismiss:2 8 dismiss notice',
     'snooze:2 9 snooze notice',
@@ -4119,7 +4119,7 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for 
     'snooze:1',
   ])
   expect(await actionLinesOf(ui)).toEqual([
-    "unclear:1 6 I don't understand this question",
+    "unclear:1 6 I don't understand",
     'discuss:1 7 discuss question',
     'dismiss:1 8 dismiss question',
     'snooze:1 9 snooze question',
@@ -4160,7 +4160,7 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for 
   await clock.settle()
   await ui.press({ key: 'item:1' })
   expect(await actionLinesOf(ui)).toEqual([
-    "unclear:1 6 I don't understand this question",
+    "unclear:1 6 I don't understand",
     'discuss:1 7 discuss question',
     'dismiss:1 8 dismiss question',
     'unsnooze:1 9 unsnooze question',
@@ -4186,7 +4186,7 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for 
   // A notice's actions name a notice.
   await ui.press({ key: 'item:2' })
   expect(await actionLinesOf(ui)).toEqual([
-    "unclear:2 6 I don't understand this notice",
+    "unclear:2 6 I don't understand",
     'discuss:2 7 discuss notice',
     'dismiss:2 8 dismiss notice',
     'snooze:2 9 snooze notice',
@@ -4198,7 +4198,7 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for 
   // A request's actions name a request, and a declined one, being resolved, offers no I don't understand.
   await ui.press({ key: 'item:3' })
   expect(await actionLinesOf(ui)).toEqual([
-    "unclear:3 6 I don't understand this request",
+    "unclear:3 6 I don't understand",
     'discuss:3 7 discuss request',
     'dismiss:3 8 dismiss request',
     'snooze:3 9 snooze request',
@@ -4385,7 +4385,7 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length 
   await ui.press({ key: 'cancel:1' })
   expect((await optionsOf(ui)).map(option => option.key)).toEqual(['answer:1.a', 'answer:1.b'])
   expect(await actionLinesOf(ui)).toEqual([
-    "unclear:1 6 I don't understand this question",
+    "unclear:1 6 I don't understand",
     'discuss:1 7 discuss question',
     'dismiss:1 8 dismiss question',
     'snooze:1 9 snooze question',
@@ -4394,7 +4394,7 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length 
 
   // A notice shows the same lines, and snoozes nothing yet.
   const actions = [
-    "unclear:2 6 I don't understand this notice",
+    "unclear:2 6 I don't understand",
     'discuss:2 7 discuss notice',
     'dismiss:2 8 dismiss notice',
     'snooze:2 9 snooze notice',
