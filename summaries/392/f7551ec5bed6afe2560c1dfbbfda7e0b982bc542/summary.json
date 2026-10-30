@@ -1,0 +1,78 @@
+{
+ "version": 1,
+ "name": "Plain I don't understand label",
+ "project": "inbox/unclear",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 392,
+  "title": "Label I don't understand without the item's kind",
+  "head": "f7551ec5bed6afe2560c1dfbbfda7e0b982bc542",
+  "headRef": "plain-unclear-label",
+  "base": "6113114866825613c7fd584bb6a84d7fc43bb1ab",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox panel sits above the Claude Code prompt and lists the questions, notices, and requests that agents post for you. Opening an item shows its drawer: the item's detail, any options, and a line of actions on the digits <code>6</code> to <code>9</code>. The action on <code>6</code>, <b>I don't understand</b>, tells the agent that posted the item that you don't follow it, so the agent rewrites the item in simpler terms.",
+   "Until this change that label named the item's kind, as <code>I don't understand this question</code>, <code>this notice</code>, or <code>this request</code>. The drawer already shows the item, so the kind added nothing. The label now reads <code>I don't understand</code> for every kind:",
+   "<pre>6: I don't understand\n7: discuss question\n8: dismiss question\n9: snooze question</pre>",
+   "The other actions keep the kind, because <code>dismiss question</code> and <code>dismiss request</code> do different things. What a press does is unchanged: it still records the item as <code>unclear</code>, and the hotkey is still <code>6</code>."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "label",
+   "title": "The drawer's label and its tests",
+   "kicker": "One string in the panel, and the tests that compare it exactly",
+   "intro": [
+    "The panel builds each drawer's action lines in <code>hooks/register.tsx</code>. The <code>unclear</code> line is the one change: its label drops <code>this ${item.kind}</code>. Its hotkey rule and its press handler are untouched.",
+    "The panel tests in <code>hooks/panel.test.tsx</code> compare each drawer's action lines with exact text, so every expectation that showed the old label now shows the new one."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The tests catch the old label. With the old label put back in <code>register.tsx</code>, <code>claude plugin test .</code> fails 6 panel tests; at the head all 191 pass."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The <code>unclear</code> action's label is now a fixed string, and the comment above the actions says it is the one label that names no kind.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The hotkey is still <code>6</code>, and still left out when a stored item holds a choice on <code>6</code>. The press still runs <code>act</code> with <code>unclear</code>, which passes the subject and detail the drawer shows, so a press on text the agent revised since records nothing.",
+       "line": 1809
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Ten expectations of the drawer's action lines take the new label."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The panel's documentation",
+   "kicker": "docs/plugins.md shows and describes the new label",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the panel. Its drawer example, its description of each kind's drawer, and its keyboard section now use the plain label. The keyboard section's rule that each label ends with what it acts on now names <b>I don't understand</b> as the one exception."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "No other code, test, tool description, <code>docs/cli.md</code> text, or <code>AGENTS.md</code> block template still reads <code>I don't understand this</code>. Only the completed <code>inbox/unclear</code> plan keeps the old wording, as its record.",
+       "line": 728
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

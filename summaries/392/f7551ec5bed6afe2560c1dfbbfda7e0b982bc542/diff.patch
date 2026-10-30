@@ -1,0 +1,178 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 0ec3463a..ba2a6022 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -469,7 +469,7 @@ the item's first letter:
+       (recommended)
+       2: Add a budget of two retries per host, and keep the total cap
+ 
+-      6: I don't understand this question
++      6: I don't understand
+       7: discuss question
+       8: dismiss question
+       9: snooze question
+@@ -532,9 +532,8 @@ Claude Code's own `: ` after the key always takes, so under the pointer or
+ the focus ring the line inverts as the key and one block after it. A
+ question's drawer has four actions:
+ 
+-- **I don't understand this question** tells the agent that you don't
+-  follow the question, in one press, as the paragraph after this list
+-  describes.
++- **I don't understand** tells the agent that you don't follow the
++  question, in one press, as the paragraph after this list describes.
+ - **discuss question** puts the quoted question in the prompt, followed
+   by a blank line, and leaves the drawer open, so the options and detail
+   stay in view while you type. Type your reply under the quote, or on the
+@@ -563,16 +562,16 @@ sends `UNCLEAR` takes its place, so the agent hears only that. To say what
+ you don't understand, use **discuss** instead.
+ 
+ A notice's drawer shows its detail, then the same four actions: **I don't
+-understand this notice**, **discuss notice**, **dismiss notice**, and
+-**snooze notice**. **discuss notice** puts the quoted notice in the prompt.
++understand**, **discuss notice**, **dismiss notice**, and **snooze
++notice**. **discuss notice** puts the quoted notice in the prompt.
+ A prompt you send that quotes a notice answers nothing, but it closes the
+ notice's drawer; the notice stays in the panel until you dismiss it.
+ **dismiss notice** clears the notice once you have read it and closes its
+ drawer, and nothing goes back to the agent.
+ 
+ A request's drawer shows its steps, then the options its agent gave, on `1`
+-and on, in the options' place, then **I don't understand this request**,
+-**discuss request**, **dismiss request**, and **snooze request**. A test's
++and on, in the options' place, then **I don't understand**, **discuss
++request**, **dismiss request**, and **snooze request**. A test's
+ options might be **Looks good** and **Some feedback**, and a request posted
+ without options offers a single **Done**.
+ Like a question's option, each records nothing at once: it puts the quoted
+@@ -726,8 +725,8 @@ A drawer's actions follow its options, a line each, with the digit that
+ presses it before the label in the accent color, such as
+ `7: discuss question`. The digits count down from 9, so a question's choices
+ and a request's, after any **Start** or **Retry**, end at `5`, and the
+-item's line keeps `0`. Each label ends with what the action acts on:
+-`question`, `notice`, `request`, or `PR`.
++item's line keeps `0`. Each label but **I don't understand** ends with
++what the action acts on: `question`, `notice`, `request`, or `PR`.
+ 
+ - **6** presses **I don't understand**, which an open item's drawer offers
+   until you press it.
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index f9f48783..aa26426d 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -2014,7 +2014,7 @@ test('requests through the tool, and a request’s drawer offers the agent’s o
+     ['outcome:1.b', '2', true, "Some feedback"],
+   ])
+   expect(await actionLinesOf(ui)).toEqual([
+-    "unclear:1 6 I don't understand this request",
++    "unclear:1 6 I don't understand",
+     'discuss:1 7 discuss request',
+     'dismiss:1 8 dismiss request',
+     'snooze:1 9 snooze request',
+@@ -2185,7 +2185,7 @@ test('start, first on 1, records the start action the drawer shows, and STARTED
+     ['3', "Some feedback"],
+   ])
+   expect(await actionLinesOf(ui)).toEqual([
+-    "unclear:3 6 I don't understand this request",
++    "unclear:3 6 I don't understand",
+     'discuss:3 7 discuss request',
+     'dismiss:3 8 dismiss request',
+     'snooze:3 9 snooze request',
+@@ -2357,7 +2357,7 @@ test('I don’t understand on a running subagent’s notice records it, sends UN
+ 
+   await ui.press({ key: 'item:2' })
+   const action = await ui.find({ type: 'Button', key: 'unclear:2' })
+-  expect([action?.props.hotkey, action?.props.plain, action?.text]).toEqual(['6', true, "I don't understand this notice"])
++  expect([action?.props.hotkey, action?.props.plain, action?.text]).toEqual(['6', true, "I don't understand"])
+   await ui.press({ key: 'unclear:2' })
+   await clock.advance(1)
+   await clock.settle()
+@@ -3046,7 +3046,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
+     expect((await ui.find({ type: 'Button', key: `${name}:2` }))?.props.plain).toBe(true)
+   }
+   expect(await actionLinesOf(ui)).toEqual([
+-    "unclear:2 6 I don't understand this notice",
++    "unclear:2 6 I don't understand",
+     'discuss:2 7 discuss notice',
+     'dismiss:2 8 dismiss notice',
+     'snooze:2 9 snooze notice',
+@@ -4119,7 +4119,7 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for
+     'snooze:1',
+   ])
+   expect(await actionLinesOf(ui)).toEqual([
+-    "unclear:1 6 I don't understand this question",
++    "unclear:1 6 I don't understand",
+     'discuss:1 7 discuss question',
+     'dismiss:1 8 dismiss question',
+     'snooze:1 9 snooze question',
+@@ -4160,7 +4160,7 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for
+   await clock.settle()
+   await ui.press({ key: 'item:1' })
+   expect(await actionLinesOf(ui)).toEqual([
+-    "unclear:1 6 I don't understand this question",
++    "unclear:1 6 I don't understand",
+     'discuss:1 7 discuss question',
+     'dismiss:1 8 dismiss question',
+     'unsnooze:1 9 unsnooze question',
+@@ -4186,7 +4186,7 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for
+   // A notice's actions name a notice.
+   await ui.press({ key: 'item:2' })
+   expect(await actionLinesOf(ui)).toEqual([
+-    "unclear:2 6 I don't understand this notice",
++    "unclear:2 6 I don't understand",
+     'discuss:2 7 discuss notice',
+     'dismiss:2 8 dismiss notice',
+     'snooze:2 9 snooze notice',
+@@ -4198,7 +4198,7 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for
+   // A request's actions name a request, and a declined one, being resolved, offers no I don't understand.
+   await ui.press({ key: 'item:3' })
+   expect(await actionLinesOf(ui)).toEqual([
+-    "unclear:3 6 I don't understand this request",
++    "unclear:3 6 I don't understand",
+     'discuss:3 7 discuss request',
+     'dismiss:3 8 dismiss request',
+     'snooze:3 9 snooze request',
+@@ -4385,7 +4385,7 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length
+   await ui.press({ key: 'cancel:1' })
+   expect((await optionsOf(ui)).map(option => option.key)).toEqual(['answer:1.a', 'answer:1.b'])
+   expect(await actionLinesOf(ui)).toEqual([
+-    "unclear:1 6 I don't understand this question",
++    "unclear:1 6 I don't understand",
+     'discuss:1 7 discuss question',
+     'dismiss:1 8 dismiss question',
+     'snooze:1 9 snooze question',
+@@ -4394,7 +4394,7 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length
+ 
+   // A notice shows the same lines, and snoozes nothing yet.
+   const actions = [
+-    "unclear:2 6 I don't understand this notice",
++    "unclear:2 6 I don't understand",
+     'discuss:2 7 discuss notice',
+     'dismiss:2 8 dismiss notice',
+     'snooze:2 9 snooze notice',
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 6bb8b4dd..1cb46e71 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1776,9 +1776,10 @@ export const register: Register = on => {
+       const isOpened = opened === key
+       const color = !isOpen || isSnoozed ? 'subtle' : colorOf[item.kind]
+       const pull = pullOf(item)
+-      // Each action names the kind of item it acts on. A dismissed or snoozed
+-      // item's drawer offers to bring it back where it offered to dismiss or
+-      // snooze it, on the same digit; a resolved item cannot be snoozed.
++      // Each action but I don't understand, which says only that, names the
++      // kind of item it acts on. A dismissed or snoozed item's drawer offers
++      // to bring it back where it offered to dismiss or snooze it, on the same
++      // digit; a resolved item cannot be snoozed.
+       // Dismissing a request declines it, so its agent hears `DECLINED`.
+       const restore = (name: string, hotkey: string): Line => ({
+         name,
+@@ -1805,7 +1806,7 @@ export const register: Register = on => {
+           ? [
+               {
+                 name: 'unclear',
+-                label: `I don't understand this ${item.kind}`,
++                label: "I don't understand",
+                 hotkey: choiceDigits < 6 ? '6' : undefined,
+                 onPress: () => {
+                   void act($, item, 'unclear')
