@@ -1,0 +1,261 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index ae0423f4..3ea63c15 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -421,13 +421,18 @@ the pull requests, before its time.
+ 
+ Click a count in the header to collapse what it counts to one line, so a
+ long list of pull requests or a burst of notices does not push the questions
+-out of view. Collapsed pull requests become a line such as `- 3 pull
+-requests` in their place. A collapsed kind of item becomes a line such as
+-`- 2 questions` at the top of the items, drawn in the kind's color. Click the
+-line, or the count again, to expand it. The pull requests, the questions,
+-and the notices collapse apart from each other, and each stays collapsed,
+-new ones included, until you expand it. While a collapsed kind has nothing
+-open, the header has no count for it, so its muted items show in the list.
++out of view. A collapsed line starts with `+`, where an item's starts with
++`-`, to say it expands. Collapsed pull requests become a line such as
++`+ #12 #14 #15` in their place, listing each in the rows' order and coloring
++it by status: red when a conflict, a change request, or failing checks hold
++it back, and otherwise yellow for a draft and green for a pull request that
++is ready. Click a pull request's number to expand them with its drawer
++open. A collapsed kind of item becomes a line such as `+ 2 questions` at
++the top of the items, drawn in the kind's color. Click the line, or the
++count again, to expand it. The pull requests, the questions, and the notices
++collapse apart from each other, and each stays collapsed, new ones included,
++until you expand it. While a collapsed kind has nothing open, the header has
++no count for it, so its muted items show in the list.
+ 
+ Click anywhere on an item to open its drawer, and click it again to close
+ it. On the main screen, press Enter on it from the keyboard instead. While
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index c9a98068..72eb3b7a 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -77,6 +77,9 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+       reviewDecision: 'CHANGES_REQUESTED',
+       reviewThreads: { nodes: [{ isResolved: false }] },
+     }),
++    p12: pr(12, 'Change failing its checks', {
++      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
++    }),
+     p11: pr(11, 'Approved change', {
+       reviewDecision: 'APPROVED',
+       reviewThreads: { nodes: [{ isResolved: false }, { isResolved: false }, { isResolved: false }] },
+@@ -2497,20 +2500,20 @@ test('a count in the header collapses its kind to one line at the top of the ite
+ 
+   // The notices collapse to one line in their color, and the header keeps counting them.
+   await ui.press({ key: 'count:notice' })
+-  expect(await lines()).toEqual(['- 1 notice', 'item:3', 'item:1'])
+-  expect((await ui.find({ type: 'Text', text: '- 1 notice' }))?.props.color).toBe('inactive')
++  expect(await lines()).toEqual(['+ 1 notice', 'item:3', 'item:1'])
++  expect((await ui.find({ type: 'Text', text: '+ 1 notice' }))?.props.color).toBe('inactive')
+   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/)
+ 
+   // The questions collapse apart from the notices, their line first.
+   await ui.press({ key: 'count:question' })
+-  expect(await lines()).toEqual(['- 2 questions', '- 1 notice'])
++  expect(await lines()).toEqual(['+ 2 questions', '+ 1 notice'])
+ 
+   // The line expands its kind, and so does the count again.
+   await ui.press({ key: 'expand:question' })
+-  expect(await lines()).toEqual(['- 1 notice', 'item:3', 'item:1'])
++  expect(await lines()).toEqual(['+ 1 notice', 'item:3', 'item:1'])
+   await ui.press({ key: 'count:question' })
+   await ui.press({ key: 'count:question' })
+-  expect(await lines()).toEqual(['- 1 notice', 'item:3', 'item:1'])
++  expect(await lines()).toEqual(['+ 1 notice', 'item:3', 'item:1'])
+ 
+   // A kind with nothing open has no count to expand it from, so its items show; a new one collapses again.
+   session.store.run(['project', 'inbox', 'dismiss', '2', '--session', SESSION])
+@@ -2520,7 +2523,7 @@ test('a count in the header collapses its kind to one line at the top of the ite
+   session.store.write(notice({ ref: '4', number: 4, subject: 'Merged #6', postedAt: clock.now() }))
+   await clock.advance(TICK)
+   await clock.settle()
+-  expect(await lines()).toEqual(['- 1 notice', 'item:3', 'item:1'])
++  expect(await lines()).toEqual(['+ 1 notice', 'item:3', 'item:1'])
+   await ui.unmount()
+ })
+ 
+@@ -2530,34 +2533,84 @@ test('the pull requests’ count in the header collapses them to one line in the
+   questionWorld(on, clock, [held()])
+   await startSession($, clock)
+   const ui = await $.ui.mount(PANEL)
+-  /** The panel's lines, a pull request or an item by its key and a collapsed section by what it reads. */
+-  const lines = async () =>
+-    (await ui.findAll({ type: 'Button' }))
++  /** The panel's lines, a pull request or an item by its key, and a collapsed section by what it reads. */
++  const lines = async () => {
++    const collapsed = (await ui.find({ key: 'collapsed:pr' }))?.text ?? ''
++    return (await ui.findAll({ type: 'Button' }))
+       .filter(button => /^(pr|item|expand):/.test(button.key ?? ''))
+-      .map(button => (button.key?.startsWith('expand:') === true ? button.text : (button.key ?? '')))
++      .map(button =>
++        button.key === 'expand:pr'
++          ? collapsed
++          : button.key?.startsWith('expand:') === true
++            ? button.text
++            : (button.key ?? ''),
++      )
++  }
+ 
+   expect(await lines()).toEqual(['pr:x/y#7', 'item:1'])
+ 
+-  // The pull requests collapse to one line in the rows' default color, and the header keeps counting them.
++  // The pull requests collapse to one line, bulleted `+`, that lists them, and the header keeps counting them.
+   await ui.press({ key: 'count:pr' })
+-  expect(await lines()).toEqual(['- 1 pull request', 'item:1'])
+-  expect((await ui.find({ type: 'Text', text: '- 1 pull request' }))?.props.color).toBeUndefined()
++  expect(await lines()).toEqual(['+ #7', 'item:1'])
++  expect((await ui.find({ type: 'Text', text: '#7' }))?.props.color).toBe('error')
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
+ 
+   // They collapse apart from the items, and stay collapsed when the panel reloads.
+   await ui.press({ key: 'count:question' })
+-  expect(await lines()).toEqual(['- 1 pull request', '- 1 question'])
++  expect(await lines()).toEqual(['+ #7', '+ 1 question'])
+   await clock.advance(TICK)
+   await clock.settle()
+-  expect(await lines()).toEqual(['- 1 pull request', '- 1 question'])
++  expect(await lines()).toEqual(['+ #7', '+ 1 question'])
+ 
+   // The line expands them, and so does the count again.
+   await ui.press({ key: 'expand:pr' })
+-  expect(await lines()).toEqual(['pr:x/y#7', '- 1 question'])
++  expect(await lines()).toEqual(['pr:x/y#7', '+ 1 question'])
++  await ui.press({ key: 'count:pr' })
++  await ui.press({ key: 'count:pr' })
++  expect(await lines()).toEqual(['pr:x/y#7', '+ 1 question'])
++  await ui.unmount()
++})
++
++test('collapsed pull requests list their labels in the rows’ order and status colors, and a label opens its drawer', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#10\no/r#12\n' })
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++  const ui = await $.ui.mount(PANEL)
++
++  await ui.press({ key: 'count:pr' })
++  expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #1 #2 #10 #12')
++  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
++  // Ready is green and a draft yellow, as their rows' states are; a conflict, a change request, or failing checks is red.
++  const colors = await Promise.all(
++    ['#1', '#2', '#10', '#12'].map(async text => (await ui.find({ type: 'Text', text }))?.props.color),
++  )
++  expect(colors).toEqual(['success', 'warning', 'error', 'error'])
++  // Each label is a Button that expands the pull requests and opens its own drawer.
++  expect((await ui.findAll({ type: 'Button' })).map(button => button.key).filter(key => /^open:/.test(key ?? ''))).toEqual([
++    'open:o/r#1',
++    'open:o/r#2',
++    'open:o/r#10',
++    'open:o/r#12',
++  ])
++  await ui.press({ key: 'open:o/r#10' })
++  expect(await ui.find({ key: 'collapsed:pr' })).toBeUndefined()
++  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
++  expect(await ui.find({ key: 'drawer:o/r#10' })).toBeDefined()
++  expect(await ui.find({ key: 'drawer:o/r#1' })).toBeUndefined()
++
++  // A label opens its drawer even when another drawer was open before the pull requests collapsed.
+   await ui.press({ key: 'count:pr' })
++  await ui.press({ key: 'open:o/r#2' })
++  expect(await ui.find({ key: 'drawer:o/r#2' })).toBeDefined()
++  expect(await ui.find({ key: 'drawer:o/r#10' })).toBeUndefined()
++  // A label whose drawer was already open keeps it open, rather than toggling it shut.
+   await ui.press({ key: 'count:pr' })
+-  expect(await lines()).toEqual(['pr:x/y#7', '- 1 question'])
++  await ui.press({ key: 'open:o/r#2' })
++  expect(await ui.find({ key: 'drawer:o/r#2' })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index a3fc8d9e..9c7ad6c0 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -95,12 +95,7 @@ const ITEM_KINDS: readonly Item['kind'][] = ['question', 'notice']
+ /** What the header counts, in its order: the pull requests, then each kind of item. */
+ const SECTIONS: readonly Section[] = ['pr', ...ITEM_KINDS]
+ 
+-/** The color of a collapsed section's line: the rows' default for pull requests, and each kind's own. */
+-const SECTION_COLORS: Record<Section, string | undefined> = {
+-  pr: undefined,
+-  question: QUESTION_COLOR,
+-  notice: NOTICE_COLOR,
+-}
++const KIND_COLORS: Record<Item['kind'], string> = { question: QUESTION_COLOR, notice: NOTICE_COLOR }
+ 
+ /**
+  * The color of a pull request's branch on its drawer's facts line: the
+@@ -939,6 +934,16 @@ function notesOf(pr: PullRequest): Note[] {
+   return notes
+ }
+ 
++/**
++ * A pull request's color on the line its collapsed rows give way to: red
++ * when a note or its checks hold it back, else its state's, as its row draws
++ * `draft` or `ready`.
++ */
++function statusColor(pr: PullRequest): Note['color'] {
++  if (pr.isConflicting || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.checks === 'failing') return 'error'
++  return pr.isDraft ? 'warning' : 'success'
++}
++
+ /** How much of a thread's first line its drawer line shows. */
+ const EXCERPT_LENGTH = 60
+ 
+@@ -1363,16 +1368,43 @@ export const register: Register = on => {
+           {reloaded !== '' && <Text color="subtle">{`  ${reloaded}`}</Text>}
+         </Box>
+       )
+-    // A collapsed section's line, its count in the section's color, which
+-    // expands it again.
++    // A collapsed section's line expands it again, so it is bulleted `+`
++    // where an item is bulleted `-`. A collapsed kind of item reads as its
++    // count, in the kind's color. Collapsed pull requests are a row of plain
++    // Buttons: the `+` expands them, and each label after it, in the rows'
++    // order and its status's color, expands them with its drawer open.
++    const expandOnto = (key: string) => {
++      Promise.all([
++        update($, collapsed, was => (Array.isArray(was) ? was.filter(one => one !== 'pr') : [])),
++        update($, drawer, () => key),
++      ])
++        .then(() => loadThreads($))
++        .catch(() => undefined)
++      ask(key, null)
++      carry(`open:${key}`, `discuss:${key}`)
++    }
+     const expander = (section: Section) =>
+       shownCounts
+         .filter(one => one.section === section && isCollapsed(section))
+-        .map(({ count }) => (
+-          <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
+-            <Text color={SECTION_COLORS[section]}>{`- ${count}`}</Text>
+-          </Button>
+-        ))
++        .map(({ count }) =>
++          section === 'pr' ? (
++            <Box key="collapsed:pr" flexDirection="row">
++              <Button key="expand:pr" plain onPress={() => fold(section)}>
++                <Text>+</Text>
++              </Button>
++              {byAuthor(shown.rows, shown.viewer).flatMap(({ pr }) => [
++                <Text key={`before:${keyOf(pr)}`}> </Text>,
++                <Button key={`open:${keyOf(pr)}`} plain onPress={() => expandOnto(keyOf(pr))}>
++                  <Text color={statusColor(pr)}>{label(pr)}</Text>
++                </Button>,
++              ])}
++            </Box>
++          ) : (
++            <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
++              <Text color={KIND_COLORS[section]}>{`+ ${count}`}</Text>
++            </Button>
++          ),
++        )
+     const panel = (lines: RenderChildren, isHeaded = true) =>
+       isTerminal ? (
+         <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>
