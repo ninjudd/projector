@@ -407,7 +407,9 @@ The items are a list below the pull requests, newest first, each line
 starting with `-`. An open question's line is drawn in the theme's
 `permission` color, the one Claude Code gives its own permission prompts,
 because an agent's question usually asks leave to do something. An open
-request's line is drawn in the theme's `suggestion` blue. An open notice's
+request's line is drawn in a pastel peach, `rgb(255,190,140)`, the same in
+every theme, because Claude Code's themes give no other key a pastel apart
+from the question's. An open notice's
 line is drawn in the theme's mid gray, `inactive`, apart from the `subtle` of
 a resolved or snoozed item, so you can tell which items want an answer, which
 want work, and which want a read. Each line ends with the pull request the
@@ -543,33 +545,35 @@ stays in the panel until you dismiss it. **dismiss notice** clears the
 notice once you have read it and closes its drawer, and nothing goes back
 to the agent.
 
-A request's drawer shows its steps, then **Done** on `1` and **Declined** on
+A request's drawer shows its steps, then **done** on `1` and **declined** on
 `2` in the options' place, then **discuss request** and **snooze request**.
 There is no **dismiss request**, because declining says the same no. Like an
-option, **Done** and **Declined** record nothing at once: each puts the quoted
-request, a blank line, and its word in the prompt, with the cursor below for
-any notes. Sending the prompt records the outcome, closes the drawer, and
-carries your notes to the agent, so nothing else goes back. Only that word
-alone on the first line under the quote counts as the outcome. Anything else
-there, such as `done?` or a question about which build to test, is a reply:
-the request stays open, and the reply reaches the agent as your prompt. A
-done or declined request's drawer marks its outcome, and a declined one offers
-**restore request**.
+option, **done** and **declined** record nothing at once: each puts the quoted
+request, a blank line, and `Done` or `Declined` in the prompt, with the
+cursor below for any notes. Sending the prompt records the outcome, closes
+the drawer, and carries your notes to the agent, so nothing else goes back.
+Only that word alone on the first line under the quote counts as the
+outcome. Anything else there, such as `done?` or a question about which
+build to test, is a reply: the request stays open, and the reply reaches the
+agent as your prompt. A done or declined request's drawer marks its outcome,
+and a declined one offers **restore request**.
 
 A request the agent must prepare for, such as installing a build on your
 phone, has a start action. Its drawer says `Start:` and what the agent will
-do, and offers **start request** on `8`. Opening the drawer, reading the
-steps, or leaving it open sends nothing. Press **start request** when you are
-ready to begin: the panel records the start action its drawer shows, and the
-agent hears `STARTED` with that action. If the agent revised the start action
-since the panel drew the drawer, the press records nothing, and the drawer
-shows the new action for you to read and press again. While the agent works,
-the drawer says `Starting:`, and the line ends with `starting`. Once the
-agent is done, they read `Ready:` and `ready`, in green, and you begin. When
-the agent could not do it, they read `Blocked:` with its reason and
-`blocked`, in yellow, and **retry request** takes the place of start, for you
-to press once you have done what the reason says. **Done** and **Declined**
-work throughout. A request without a start action shows none of this.
+do, and offers **start** first, on `1`, with **done** and **declined** after
+it on `2` and `3`. Opening the drawer, reading the steps, or leaving it open
+sends nothing. Press **start** when you are ready to begin: the panel records
+the start action its drawer shows, and the agent hears `STARTED` with that
+action. If the agent revised the start action since the panel drew the
+drawer, the press records nothing, and the drawer shows the new action for
+you to read and press again. While the agent works, the drawer says
+`Starting:`, and the line ends with `starting`. Once the agent is done, they
+read `Ready:` and `ready`, in green, and you begin. When the agent could not
+do it, they read `Blocked:` with its reason and `blocked`, in yellow, and
+**retry** takes the place of start, for you to press once you have done what
+the reason says. **done** and **declined** work throughout, on `1` and `2`
+while there is no start or retry to press. A request without a start action
+shows none of this.
 
 **dismiss**, **restore**, and **unsnooze** act at once. A dismissed item
 stays in the list a while, struck through, as the paragraph on resolved

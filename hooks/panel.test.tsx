@@ -1927,7 +1927,7 @@ test('an option puts the question and its answer in the prompt, and sending it a
   await ui.unmount()
 })
 
-test('requests through the tool, and a request’s drawer offers Done and Declined in the options’ place and no dismiss', async ($, on) => {
+test('requests through the tool, and a request’s drawer offers done and declined in the options’ place and no dismiss', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
@@ -1944,13 +1944,13 @@ test('requests through the tool, and a request’s drawer offers Done and Declin
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 request  \d+s$/)
-  expect((await ui.find({ type: 'Text', text: 'Test the gutters' }))?.props.color).toBe('suggestion')
+  expect((await ui.find({ type: 'Text', text: 'Test the gutters' }))?.props.color).toBe('rgb(255,190,140)')
   await ui.press({ key: 'item:1' })
   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('1. Open Fyra.')
   const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
   expect(outcomes.map(button => [button.key, button.props.hotkey, button.props.plain, button.text])).toEqual([
-    ['outcome:1.done', '1', true, 'Done'],
-    ['outcome:1.declined', '2', true, 'Declined'],
+    ['outcome:1.done', '1', true, 'done'],
+    ['outcome:1.declined', '2', true, 'declined'],
   ])
   expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss request', 'snooze:1 9 snooze request'])
   await ui.unmount()
@@ -1987,7 +1987,7 @@ test('Done puts the request and Done in the prompt, and sending it with notes re
   // The done request still opens, Done marked, the rest muted, and nothing left to press.
   await ui.press({ key: 'item:3' })
   expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: /^Declined/ }))?.props.color).toBe('subtle')
+  expect((await ui.find({ type: 'Text', text: /^declined/ }))?.props.color).toBe('subtle')
   expect((await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))).toEqual([])
   await ui.unmount()
 })
@@ -2013,7 +2013,7 @@ test('a reply under a quoted request leaves it open, and a decline from a termin
 
 const INSTALL = 'Install build c0d62a3b on your iPhone'
 
-test('start on 8 records the start action the drawer shows, and STARTED reaches the agent that posted the request', async ($, on) => {
+test('start, first on 1, records the start action the drawer shows, and STARTED reaches the agent that posted the request', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [requested({ start: INSTALL, agentId: 'agent-1' })], {
@@ -2025,7 +2025,14 @@ test('start on 8 records the start action the drawer shows, and STARTED reaches 
   await ui.press({ key: 'item:3' })
   expect(await ui.find({ type: 'Text', text: `Start: ${INSTALL}` })).toBeDefined()
   const start = await ui.find({ type: 'Button', key: 'start:3' })
-  expect([start?.props.hotkey, start?.text]).toEqual(['8', 'start request'])
+  expect([start?.props.hotkey, start?.text]).toEqual(['1', 'start'])
+  // Start comes first, so done and declined follow it on 2 and 3, and the actions offer no start of their own.
+  const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
+  expect(outcomes.map(button => [button.props.hotkey, button.text])).toEqual([
+    ['2', 'done'],
+    ['3', 'declined'],
+  ])
+  expect(await actionLinesOf(ui)).toEqual(['discuss:3 7 discuss request', 'snooze:3 9 snooze request'])
   // Opening the drawer records nothing and sends nothing.
   expect(session.project().filter(command => command.startsWith('inbox start'))).toEqual([])
 
@@ -2070,7 +2077,7 @@ test('a press of start on a drawer the agent revised since records nothing and s
   await ui.unmount()
 })
 
-test('a blocked request shows its reason and retry on 8, and a ready one says so with nothing to start', async ($, on) => {
+test('a blocked request shows its reason and retry on 1, and a ready one says so with nothing to start', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const started = { action: INSTALL, startedAt: NOW - 5_000, deliveredAt: NOW - 4_000 }
@@ -2086,9 +2093,9 @@ test('a blocked request shows its reason and retry on 8, and a ready one says so
   expect(marks.map(mark => mark?.props.color)).toEqual(['warning', 'success'])
   await ui.press({ key: 'item:3' })
   expect(await ui.find({ type: 'Text', text: `Blocked: ${blocked.reason}` })).toBeDefined()
-  const retry = await ui.find({ type: 'Button', key: 'retry:3' })
-  expect([retry?.props.hotkey, retry?.text]).toEqual(['8', 'retry request'])
-  await ui.press({ key: 'retry:3' })
+  const retry = await ui.find({ type: 'Button', key: 'start:3' })
+  expect([retry?.props.hotkey, retry?.text]).toEqual(['1', 'retry'])
+  await ui.press({ key: 'start:3' })
   await clock.settle()
   expect(session.project()).toContain(`inbox start 3 --action=${INSTALL} --session s1 --json`)
   expect(heldRequest(session.store.store.get('3'))?.progress).toBeUndefined()

@@ -104,10 +104,11 @@ const QUESTION_COLOR = 'permission'
 const NOTICE_COLOR = 'inactive'
 
 /**
- * The theme color of an open request's line: the blue Claude Code gives its
- * suggestions, apart from a question's and a notice's.
+ * The color of an open request's line: a pastel peach, the same in every
+ * theme. Claude Code gives no theme key a pastel apart from a question's
+ * `permission`; even `suggestion` draws the same blue.
  */
-const REQUEST_COLOR = 'suggestion'
+const REQUEST_COLOR = 'rgb(255,190,140)'
 
 /** The kinds of item, in the order the header counts them. */
 const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice']
@@ -1641,11 +1642,6 @@ export const register: Register = on => {
         ),
       ]
     }
-    // An open request's outcomes take the options' place, on the digits 1 and
-    // 2: each puts the quoted request and its word in the prompt, with room
-    // for notes under it, and only sending it records the outcome. A resolved
-    // request's outcomes are text, the one recorded marked, followed by the
-    // person's text when they gave one.
     // An open request with a start action says above its outcomes what start
     // does, then that the agent is doing it, that it is done, or why it could
     // not be done, in the color its line's mark takes.
@@ -1666,6 +1662,22 @@ export const register: Register = on => {
         </Text>,
       ]
     }
+    // What an open request's first line presses: start, until you press it,
+    // or retry once the agent says it was blocked; nothing while the agent
+    // works or once it is ready, nor for a request without a start action.
+    const startOf = (request: Request): 'start' | 'retry' | undefined => {
+      const stage = stageOf(request)
+      if (request.answer !== undefined || request.start === undefined) return undefined
+      return stage === undefined ? 'start' : stage === 'blocked' ? 'retry' : undefined
+    }
+    // An open request's choices take the options' place, start first while
+    // there is one to press, then done and declined, on the digits from 1.
+    // Start records your consent to the start action the line above it
+    // shows, and only that press sends `STARTED`. Done and declined each put
+    // the quoted request and its word in the prompt, with room for notes
+    // under it, and only sending it records the outcome. A resolved request's
+    // outcomes are text, the one recorded marked, followed by the person's
+    // text when they gave one.
     const drawOutcomes = (request: Request) => {
       const { ref, answer } = request
       const recorded = answer === undefined ? undefined : 'done' in answer ? 'done' : 'declined' in answer ? 'declined' : undefined
@@ -1674,34 +1686,31 @@ export const register: Register = on => {
         propose(request, word)
         fill(`${proposalOf(request, word)}\n\n`)
       }
+      const start = startOf(request)
+      const first = start === undefined ? 1 : 2
 
       return [
         ...drawStart(request),
         <Text key={`before-outcomes:${ref}`}> </Text>,
+        start !== undefined && (
+          <Button key={`start:${ref}`} plain hotkey="1" onPress={() => void act($, request, 'start')}>
+            {start}
+          </Button>
+        ),
         ...Object.entries(OUTCOMES).map(([word, outcome], index) =>
           answer === undefined ? (
-            <Button key={`outcome:${ref}.${outcome}`} plain hotkey={String(index + 1)} onPress={() => pick(word)}>
-              {word}
+            <Button key={`outcome:${ref}.${outcome}`} plain hotkey={String(first + index)} onPress={() => pick(word)}>
+              {outcome}
             </Button>
           ) : (
             <Text key={`outcome:${ref}.${outcome}`} color={outcome === recorded ? undefined : 'subtle'}>
-              {word}
+              {outcome}
               {outcome === recorded && <Text color="success"> ✓</Text>}
               {outcome === recorded && said !== undefined && <Text color="subtle">{` ${said}`}</Text>}
             </Text>
           ),
         ),
       ]
-    }
-    // An open request with a start action offers start on `8`, the digit an
-    // open request leaves free, until you press it, and retry there once the
-    // agent says it was blocked. Pressing it records your consent to the start
-    // action the drawer shows, and only that press sends `STARTED`.
-    const startLines = (request: Request): Line[] => {
-      const stage = stageOf(request)
-      if (request.start === undefined || (stage !== undefined && stage !== 'blocked')) return []
-      const name = stage === 'blocked' ? 'retry' : 'start'
-      return [{ name, label: `${name} request`, hotkey: '8', onPress: () => void act($, request, 'start') }]
     }
     const drawItem = (item: Item) => {
       const { ref, answer } = item
@@ -1740,7 +1749,7 @@ export const register: Register = on => {
         ...(isOpen
           ? [
               ...(item.kind === 'request'
-                ? startLines(item)
+                ? []
                 : [
                     {
                       name: 'dismiss',
@@ -1801,7 +1810,9 @@ export const register: Register = on => {
         : item.kind === 'question'
           ? `answer:${ref}.${letterAt(0)}`
           : item.kind === 'request'
-            ? `outcome:${ref}.${OUTCOMES.Done}`
+            ? startOf(item) === undefined
+              ? `outcome:${ref}.${OUTCOMES.Done}`
+              : `start:${ref}`
             : `discuss:${ref}`
       const isSending = !isOpen && item.deliveredAt === undefined
       const stage = item.kind === 'request' && isOpen ? stageOf(item) : undefined
