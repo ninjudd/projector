@@ -861,6 +861,9 @@ the row plain.
 `project upgrade <target>` runs this installer from any directory, for a
 command installed from this checkout: `project upgrade cli` is
 `./install.sh cli`, and `project upgrade status` is `./install.sh status`.
+It then adds `init-` rows that say whether the install changed anything
+`project init` writes; see [Know when to run `init`
+again](cli.md#know-when-to-run-init-again).
 
 A reinstall keeps the Python the existing venv was created with. Left to
 itself, `pipx` builds under its default interpreter, which on some machines is

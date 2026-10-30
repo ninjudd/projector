@@ -19,9 +19,10 @@ newer, and no git:
 curl -fsSL https://projector.bot/install.sh | bash
 ```
 
-`project upgrade` moves everything to the newest release later, and every
-`project` command warns you when a newer release is out. To install
-only the CLI, pin a release, or install each plugin yourself, see
+`project upgrade` moves everything to the newest release later and says
+whether it changed anything `project init` writes, and every `project` command
+warns you when a newer release is out. To install only the CLI, pin a
+release, or install each plugin yourself, see
 [Install Projector](docs/plugins.md).
 
 ## Get started

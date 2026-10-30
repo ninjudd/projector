@@ -814,6 +814,42 @@ when the released installer cannot be downloaded.
 
 `upgrade` has no `--json` mode because the installer owns the output.
 
+### Know when to run `init` again
+
+After the installer's rows, `upgrade` prints rows of its own, in the same
+format, that say whether you need to run `project init` again. A release can
+change three things `init` writes: the Projector section in `AGENTS.md` and
+`CLAUDE.md`, the site workflow, and the permission rules in your Claude Code
+settings and Codex rules. `upgrade` compares what the command it replaced
+writes with what the `project` on your `PATH` writes after the install, which
+is the command you run `init` with next, and lists each one that changed:
+
+```text
+init-changed   the Projector section in AGENTS.md and CLAUDE.md
+init-changed   the permission rules in your Claude Code settings and Codex rules
+init-needed    ⚠️  run project init in each repository that uses Projector to write the changes above
+```
+
+`init-needed` carries a ⚠️ marker and prints in bold yellow on a terminal,
+unless `NO_COLOR` is set. When nothing changed, `upgrade` prints one row
+instead:
+
+```text
+init-current   nothing project init writes changed
+```
+
+`init-unknown` means the `project` on your `PATH` cannot say what it writes,
+as a release older than this check cannot, or that no `project` is on your
+`PATH`. Run `project check` in each repository then; it warns about an
+outdated Projector section or site workflow. An install that fails can still
+have replaced the command, so after a failure `upgrade` lists what changed but
+prints no `init-current` or `init-unknown` row. A target that leaves the CLI
+alone, such as `claude` or `status`, changes nothing `init` writes.
+
+The rows compare two installs, not your repositories. A repository where you
+skipped `init` after an earlier upgrade can still be behind when this one
+changed nothing, and `project check` says so there.
+
 ### Know when a release is out
 
 A command installed from a release warns on stderr when a newer release is
