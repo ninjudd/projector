@@ -1300,6 +1300,7 @@ const requested = (fields: Partial<HeldRequest> = {}): HeldRequest => ({
   postedAt: NOW - 30_000,
   subject: 'Test the gutters',
   detail: '1. Open Fyra.',
+  choices: ['Looks good', 'Some feedback'],
   ...fields,
 })
 
@@ -1412,7 +1413,12 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
           ? { ...common, kind: 'question', choices: [flag(args, 'recommend') ?? '', ...options] }
           : command === 'tell'
             ? { ...common, kind: 'notice' }
-            : { ...common, kind: 'request', ...(start === undefined ? {} : { start }) },
+            : {
+                ...common,
+                kind: 'request',
+                ...(start === undefined ? {} : { start }),
+                ...(options.length === 0 ? {} : { choices: options }),
+              },
       )
       return ran(`${ref}\n`)
     }
@@ -1927,17 +1933,24 @@ test('an option puts the question and its answer in the prompt, and sending it a
   await ui.unmount()
 })
 
-test('requests through the tool, and a request’s drawer offers its three choices in the options’ place and no dismiss', async ($, on) => {
+test('requests through the tool, and a request’s drawer offers the agent’s options in the options’ place and no dismiss', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock)
   await startSession($, clock)
 
-  const called = await $.tool.call({ tool: 'mcp__projector__request', request: 'Test the gutters', detail: '1. Open Fyra.' })
+  const called = await $.tool.call({
+    tool: 'mcp__projector__request',
+    request: 'Test the gutters',
+    detail: '1. Open Fyra.',
+    options: ['Looks good', 'Some feedback'],
+  })
   expect(String(called.text ?? called.result)).toBe(
-    'Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with Looks good or There\'s an issue, both of which mean done, or as a message that starts DONE 1; a decline arrives as a message that starts DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
+    'Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with the option they chose, or as a message that starts DONE 1; a decline arrives as a message that starts DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
   )
-  expect(session.project()).toContain('inbox request --session=s1 --detail=1. Open Fyra. -- Test the gutters')
+  expect(session.project()).toContain(
+    'inbox request --session=s1 --option=Looks good --option=Some feedback --detail=1. Open Fyra. -- Test the gutters',
+  )
   expect(session.notified).toEqual(['Test the gutters'])
 
   await clock.advance(1)
@@ -1949,10 +1962,48 @@ test('requests through the tool, and a request’s drawer offers its three choic
   expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('1. Open Fyra.')
   const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
   expect(outcomes.map(button => [button.key, button.props.hotkey, button.props.plain, button.text])).toEqual([
-    ['outcome:1.good', '1', true, 'Looks good'],
-    ['outcome:1.issue', '2', true, "There's an issue"],
+    ['outcome:1.a', '1', true, 'Looks good'],
+    ['outcome:1.b', '2', true, "Some feedback"],
   ])
   expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss request', 'decline:1 8 decline request', 'snooze:1 9 snooze request'])
+  await ui.unmount()
+})
+
+test('a done with text from a terminal marks a request’s Done option and shows the text beside it, on one line', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { done: true as const, text: "Step 4 didn't work", answeredAt: NOW - 1_000 }
+  questionWorld(on, clock, [requested({ choices: undefined, answer, deliveredAt: NOW - 1_000 })])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:3' })
+  expect((await ui.findAll({ type: 'Text', text: /^Done/ })).map(found => found.text)).toEqual([
+    "Done ✓ Step 4 didn't work",
+  ])
+  await ui.unmount()
+})
+
+test('a request posted without options offers a single Done, which records done with no text', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [requested({ choices: undefined })])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:3' })
+  const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
+  expect(outcomes.map(button => [button.key, button.props.hotkey, button.text])).toEqual([['outcome:3.a', '1', 'Done']])
+  await ui.press({ key: 'outcome:3.a' })
+  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nDone\n\n'])
+  await $.prompt.submit({ text: '"Test the gutters"\n\nDone\n', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox done'))).toEqual(['inbox done 3 --session s1 --json'])
+
+  // The resolved drawer marks that Done, and draws no second Done line.
+  await ui.press({ key: 'item:3' })
+  expect((await ui.findAll({ type: 'Text', text: /^Done/ })).length).toBe(1)
+  expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -1999,7 +2050,7 @@ test('an open request is peach on a dark theme and a darker orange on a light on
   await ui.unmount()
 })
 
-test('There’s an issue puts the request and its words in the prompt, and sending it records done with them once', async ($, on) => {
+test('Some feedback puts the request and its words in the prompt, and sending it records done with them once', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [requested({ agentId: 'agent-1' })], { agents: [running('running')] })
@@ -2008,20 +2059,20 @@ test('There’s an issue puts the request and its words in the prompt, and sendi
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:3' })
   // Choosing an outcome records nothing yet: it fills the prompt, with room for notes under it.
-  await ui.press({ key: 'outcome:3.issue' })
-  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nThere\'s an issue\n\n'])
+  await ui.press({ key: 'outcome:3.b' })
+  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nSome feedback\n\n'])
   expect(session.store.store.get('3')?.answer).toBeUndefined()
 
-  const text = '"Test the gutters"\n\nThere\'s an issue\n\nStep 4 didn’t work.\n'
+  const text = '"Test the gutters"\n\nSome feedback\n\nStep 4 didn’t work.\n'
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.submitted).toEqual([
     { text, context: ['The subagent Fix #7 (agent-1) requested "Test the gutters"; send it the outcome this prompt gives.'] },
   ])
   expect(session.project().filter(command => command.startsWith('inbox done'))).toEqual([
-    "inbox done 3 --text=There's an issue --session s1 --json",
+    "inbox done 3 --text=Some feedback --session s1 --json",
   ])
-  expect(session.store.store.get('3')?.answer).toEqual(expect.objectContaining({ done: true, text: "There's an issue" }))
+  expect(session.store.store.get('3')?.answer).toEqual(expect.objectContaining({ done: true, text: "Some feedback" }))
   expect(session.store.store.get('3')?.deliveredAt).toBeDefined()
   // The prompt carried the outcome and the notes, so the panel sends nothing more.
   await clock.advance(TICK)
@@ -2032,7 +2083,7 @@ test('There’s an issue puts the request and its words in the prompt, and sendi
   // The done request still opens, the choice it was made with marked, the rest muted, and nothing left to press.
   await ui.press({ key: 'item:3' })
   expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: /^There's an issue/ }))?.props.color).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /^Some feedback/ }))?.props.color).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: /^Looks good/ }))?.props.color).toBe('subtle')
   expect((await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))).toEqual([])
   await ui.unmount()
@@ -2076,7 +2127,7 @@ test('start, first on 1, records the start action the drawer shows, and STARTED 
   const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
   expect(outcomes.map(button => [button.props.hotkey, button.text])).toEqual([
     ['2', 'Looks good'],
-    ['3', "There's an issue"],
+    ['3', "Some feedback"],
   ])
   expect(await actionLinesOf(ui)).toEqual(['discuss:3 7 discuss request', 'decline:3 8 decline request', 'snooze:3 9 snooze request'])
   // Opening the drawer records nothing and sends nothing.
@@ -2150,7 +2201,7 @@ test('a blocked request shows its reason and retry on 1, and a ready one says so
   await ui.press({ key: 'item:4' })
   expect(await ui.find({ type: 'Text', text: `Ready: ${INSTALL}` })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'start:4' })).toBeUndefined()
-  expect(await ui.find({ type: 'Button', key: 'outcome:4.good' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'outcome:4.a' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -2185,7 +2236,7 @@ test('a request without a start action shows no start line, no start, and no mar
   await ui.press({ key: 'item:3' })
   expect(await ui.find({ type: 'Text', text: /^(Start|Starting|Ready|Blocked): / })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeUndefined()
-  expect(await ui.find({ type: 'Button', key: 'outcome:3.good' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'outcome:3.a' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -3999,7 +4050,7 @@ test('Enter on a line moves the ring into the drawer it opens and back onto the 
   await tab($, 'item:5')
   await ui.press({ key: 'item:5' })
   await ui.press({ key: 'close:5' })
-  expect(tried.slice(4)).toEqual(['start:4', 'outcome:5.good'])
+  expect(tried.slice(4)).toEqual(['start:4', 'outcome:5.a'])
 
   // A pull request's drawer opens under its line, so closing it leaves the ring where it is.
   await tab($, 'pr:x/y#7')

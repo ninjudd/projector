@@ -1,4 +1,4 @@
-<!-- projector:begin 21 -->
+<!-- projector:begin 22 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -81,35 +81,37 @@ do the work yourself whenever you can. Write the request as what they should
 do, and put the steps in its detail as a numbered list, each step with what
 they should see, so their notes can name the step that failed. Post one
 request for the whole hand-off rather than a question and a notice for its
-parts, and keep working on anything it does not block. Give the request a
-start action only when you must prepare something before they can begin,
-such as installing a build on their phone, and leave it out otherwise. Do
-the slow part before you post the request, such as building the app, so the
-start action only installs and launches it and they are not left waiting
-once they press start. They press start when they are ready, and a message
-that starts `STARTED` arrives quoting the start action. Do the start action
-only then, do exactly what that message quotes and nothing more, and mark the
-request ready with the `ready` tool, or blocked with the `block` tool and
-what they should do first, such as unlocking the phone.
+parts, and keep working on anything it does not block. Give the request the
+options they choose from when they finish, each a short answer that fits the
+work, such as `Looks good` and `Some feedback` for a test; each marks it
+done, and they can always decline it instead. Give the request a start
+action only when you must prepare something before they can begin, such as
+installing a build on their phone, and leave it out otherwise. Do the slow
+part before you post the request, such as building the app, so the start
+action only installs and launches it and they are not left waiting once they
+press start. They press start when they are ready, and a message that starts
+`STARTED` arrives quoting the start action. Do the start action only then,
+do exactly what that message quotes and nothing more, and mark the request
+ready with the `ready` tool, or blocked with the `block` tool and what they
+should do first, such as unlocking the phone.
 
 When the person picks one of a question's options, the answer reaches you
 as a message that starts `ANSWER`. When they finish a request, its outcome
-reaches you as their prompt, quoting the request with `Looks good` or
-`There's an issue`, both of which mean done, and any notes under it, or as
-a message that starts `DONE`. When they decline it, a message that starts
-`DECLINED` arrives. Read the notes even when it is done, and when they say
-`There's an issue`, find out what failed before you go on.
-A declined request is the person's no, so do not post it again unless they
-ask. When they reply to a question or a request instead, answer what they
-asked. Then withdraw the item with the `withdraw` tool if the reply settles
-it, revise it with the `revise` tool if the reply shows it was unclear or
-the choice or the work has changed, or leave it open while it still needs
-them. Each time the person writes to you, also look over the other items you
-posted that are still open, and withdraw any that no longer need them, such
-as news that has gone stale. When the person says they dismissed or declined
-an item by mistake, restore it with the `restore` tool or
-`project inbox restore` rather than posting it again. Name an item to the
-tools by the number `ask`, `tell`, or `request` returned. The panel never
-shows that number, so in what you write to the person, name an item by what
-it asks, tells, or requests.
+reaches you as their prompt, quoting the request with the option they chose
+and any notes under it, or as a message that starts `DONE` and names the
+option. When they decline it, a message that starts `DECLINED` arrives. Read
+the option and the notes, and act on what they say before you go on, even
+when the request is done. A declined request is the person's no, so do not
+post it again unless they ask. When they reply to a question or a request
+instead, answer what they asked. Then withdraw the item with the `withdraw`
+tool if the reply settles it, revise it with the `revise` tool if the reply
+shows it was unclear or the choice or the work has changed, or leave it open
+while it still needs them. Each time the person writes to you, also look
+over the other items you posted that are still open, and withdraw any that
+no longer need them, such as news that has gone stale. When the person says
+they dismissed or declined an item by mistake, restore it with the `restore`
+tool or `project inbox restore` rather than posting it again. Name an item
+to the tools by the number `ask`, `tell`, or `request` returned. The panel
+never shows that number, so in what you write to the person, name an item
+by what it asks, tells, or requests.
 <!-- projector:end -->

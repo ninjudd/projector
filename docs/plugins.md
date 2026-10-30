@@ -548,16 +548,17 @@ stays in the panel until you dismiss it. **dismiss notice** clears the
 notice once you have read it and closes its drawer, and nothing goes back
 to the agent.
 
-A request's drawer shows its steps, then **Looks good** on `1` and **There's
-an issue** on `2` in the options' place, then **discuss request**,
-**decline request**, and **snooze request**. Like an option, **Looks good**
-and **There's an issue** record nothing at once: each puts the quoted
+A request's drawer shows its steps, then the options its agent gave, on `1`
+and on, in the options' place, then **discuss request**, **decline request**,
+and **snooze request**. A test's options might be **Looks good** and **Some
+feedback**, and a request posted without options offers a single **Done**.
+Like a question's option, each records nothing at once: it puts the quoted
 request, a blank line, and its words in the prompt, with the cursor below for
-any notes. Both mark the request done, and record which you chose, so the
-notes under **There's an issue** say what went wrong. Sending the prompt
-records the outcome, closes the drawer, and carries your notes to the agent,
-so nothing else goes back. Only a choice's words, or a plain `Done` or
-`Declined`, alone on the first line under the quote count as the outcome.
+any notes. Every option marks the request done, and records which you chose.
+Sending the prompt records the outcome, closes the drawer, and carries your
+notes to the agent, so nothing else goes back. Only one of the request's
+options, or a plain `Done` or `Declined`, alone on the first line under the
+quote counts as the outcome.
 Anything else there, such as `done?` or a question about which build to
 test, is a reply: the request stays open, and the reply reaches the agent as
 your prompt. **decline request** takes the place of **dismiss**, and like
@@ -568,8 +569,8 @@ choice it was resolved with, and a declined one says `Declined` and offers
 
 A request the agent must prepare for, such as installing a build on your
 phone, has a start action. Its drawer says `Start:` and what the agent will
-do, and offers **Start** first, on `1`, with the two choices after it on `2`
-and `3`. Opening the drawer, reading the steps, or leaving it open sends
+do, and offers **Start** first, on `1`, with the request's options after it
+from `2`. Opening the drawer, reading the steps, or leaving it open sends
 nothing. Press **Start** when you are ready to begin: the panel records
 the start action its drawer shows, and the agent hears `STARTED` with that
 action. If the agent revised the start action since the panel drew the
@@ -579,10 +580,9 @@ you to read and press again. While the agent works, the drawer says
 read `Ready:` and `ready`, in green, and you begin. When the agent could not
 do it, they read `Blocked:` with its reason and `blocked`, in yellow, and
 **Retry** takes the place of **Start**, for you to press once you have done
-what the reason says. The two choices and **decline request** work
-throughout, the choices on `1` and `2` while there is no **Start** or
-**Retry** to press. A request without a start action
-shows none of this.
+what the reason says. The options and **decline request** work throughout,
+the options from `1` while there is no **Start** or **Retry** to press. A
+request without a start action shows none of this.
 
 **dismiss**, **decline**, **restore**, and **unsnooze** act at once. A
 dismissed or declined item stays in the list a while, struck through, as the
@@ -672,7 +672,7 @@ keyboard in, and once the panel has it, Esc and Enter.
 
 Enter on a line opens its drawer and moves the ring onto the drawer's first
 control: a question's first option, a request's **Start** or **Retry** when
-it has one and **Looks good** otherwise, and **discuss** for any other item.
+it has one and its first option otherwise, and **discuss** for any other item.
 Tab then walks the options and the actions. Enter on the open line closes the
 drawer and leaves the ring on the line. A click opens and closes a drawer
 without moving the ring. In the same way, Enter on the **snooze** line moves the

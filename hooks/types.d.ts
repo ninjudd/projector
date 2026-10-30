@@ -117,6 +117,8 @@ export type Request = Posted & {
   kind: 'request'
   /** What the agent does once you press start, in one line; absent when there is nothing to prepare. */
   start?: string
+  /** The options the agent offers you when you finish, each marking the request done; absent offers a single `Done`. */
+  choices?: string[]
   /** The start action as it read when you pressed start or retry, and when; `deliveredAt` once `STARTED` reached the agent. */
   started?: { action: string; startedAt: number; deliveredAt?: number }
   /** What the agent made of the start: `ready`, or `blocked` with the reason you read before you retry. */
