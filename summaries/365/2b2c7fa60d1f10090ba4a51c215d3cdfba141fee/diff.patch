@@ -1,0 +1,264 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 01cb866c..2203eb83 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -143,7 +143,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 14 -->
++<!-- projector:begin 18 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -158,9 +158,20 @@ to find and change projects instead of parsing plan files yourself, and run
+ Write new and substantially revised documentation in the Google developer
+ documentation style: second person, present tense, active voice, sentence-case
+ headings, exact identifiers in code font, and a command or example when it
+-communicates more directly than prose. Keep `docs/` describing the behavior on
+-the current branch, and update it in the change that alters that behavior. An
+-existing document keeps its register until you revise it substantially.
++communicates more directly than prose. Keep the living documentation in
++`docs/` describing the behavior on the current branch, and update it in the
++change that alters that behavior. An existing document keeps its register until
++you revise it substantially.
++
++A plan under `docs/projects` is not living documentation. Update the plan of
++the project you are building as its decisions settle, in the change that
++settles them. Run `project done` in the pull request that carries the last of
++the project's code, so the project is `completed` when that pull request
++merges. Never open a separate pull request just to mark a shipped project
++completed, and do not wait for a release: Projector does not track releases,
++and a project held open for one tends to stay open. A `completed` plan records
++what was decided and built, so leave it as it is, and when later work changes
++behavior it describes, update the living documentation instead.
+ 
+ Write GitHub issues and review comments in the same style. Write a pull request
+ body as prose that explains why the change exists, because a squash merge makes
+diff --git a/docs/projects/README.md b/docs/projects/README.md
+index 0f24305d..bfc2bc96 100644
+--- a/docs/projects/README.md
++++ b/docs/projects/README.md
+@@ -66,8 +66,11 @@ the frontmatter by hand when you author a new plan without the command.
+ - `in-progress`: Implementation has begun and the project is being worked.
+   Keep a blocked project here while its blocker is being resolved, and explain
+   the blocker in the project plan.
+-- `completed`: The project no longer needs work. State whether it shipped, was
+-  abandoned, or was superseded in the project plan.
++- `completed`: The project no longer needs work. Mark a project that shipped
++  `completed` in the pull request that carries the last of its code, so it is
++  completed when that pull request merges, not in a later pull request or
++  after a release. State whether it shipped, was abandoned, or was superseded
++  in the project plan.
+ 
+ `priority` records when the work should happen:
+ 
+@@ -112,7 +115,9 @@ For example, the pull request that begins implementation runs
+ `project status` to move the project from `ready` to `in-progress`. The pull
+ request that completes the final implementation runs `project done`, which
+ sets the status to `completed`. A stale status is worse than a missing
+-status.
++status. Do not wait for a release before you run `project done`, and do not
++open a separate pull request for it. Projector does not track releases, so
++track them in your release process or issue tracker.
+ 
+ The commands load the plan before they write, so they refuse a plan whose
+ frontmatter `project check` rejects. A plan with `status: blocked`, for
+@@ -138,6 +143,21 @@ Write the smallest plan that makes those clear. Keep the reason for a status
+ or priority change in the body rather than adding more field values. Split
+ material into a supplemental file when it obscures the main plan.
+ 
++## Leave a completed plan as it is
++
++A plan guides its project while the work is being built, and records what was
++decided and built once the project is `completed`. Update the plan of the
++project you are building in the change that settles each decision. Once the
++project is `completed`, leave its plan as it is. When later work changes
++behavior a completed plan describes, update the living documentation in
++`docs/` in that change, and record the new decision in the plan of the project
++the later work belongs to, when it has one.
++
++A completed plan still changes in two ways. Its status, priority, and owner
++change through the `project status`, `project priority`, and `project owner`
++commands, and a reference to a renamed project is updated as
++[Rename a project deliberately](#rename-a-project-deliberately) describes.
++
+ ## Find projects
+ 
+ List projects with `project list`, and search them with `project search`:
+diff --git a/skills/finish/SKILL.md b/skills/finish/SKILL.md
+index a777baec..aaf3b3dc 100644
+--- a/skills/finish/SKILL.md
++++ b/skills/finish/SKILL.md
+@@ -34,11 +34,15 @@ design. State whether the project shipped, was abandoned, or was superseded,
+ and link the replacement when one exists. Preserve the history of decisions
+ and unanswered questions that still explain the result.
+ 
+-Run `project done <name>` in the implementation change that completes the
+-project; it sets the status to `completed`, after which the project needs no
+-priority. Do not defer the status update to a follow-up pull request, and do
+-not mark an early slice completed when later slices still carry the same
+-promised outcome.
++Run `project done <name>` in the pull request that carries the last of the
++project's code, so the project is completed when that pull request merges; it
++sets the status to `completed`, after which the project needs no priority. Do
++not defer the status update to a follow-up pull request or until a release,
++and do not mark an early slice completed when later slices still carry the
++same promised outcome. A release, deployment, or
++rollout after the merge is tracked outside Projector, so a criterion that
++waits on one does not hold the project open: say in the plan where it is
++tracked.
+ 
+ ## Validate the handoff
+ 
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 9f7ce6e2..a1e285b1 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -311,6 +311,15 @@ same code:
+ 6. Keep independent fixes in independent commits; batch findings that share one
+    cause.
+ 
++Decline a finding that asks you to rewrite or annotate a Projector plan that
++is already at `status: completed` on the pull request's base. A completed plan
++records what was decided and built, as `../review-pr/method.md` § 6 says, so
++reply with that reason and leave the plan as it is. When living documentation
++describes the same behavior and the change left it stale, the finding holds
++for that document: fix it there, and say in the reply that the plan stays as
++it is. A plan this pull request marks `completed` is not a record yet, so fix
++a finding about the outcome it records as you would any other.
++
+ If the correct behavior requires a user decision, ask instead of guessing and
+ go on with unrelated findings. If a finding recurs after a pushed fix, stop
+ and report the recurrence before changing it again.
+diff --git a/skills/implement/SKILL.md b/skills/implement/SKILL.md
+index 53b1c598..c7dab80b 100644
+--- a/skills/implement/SKILL.md
++++ b/skills/implement/SKILL.md
+@@ -83,9 +83,11 @@ When the work has a plan, update it in the same change whenever
+ implementation settles a decision, changes scope, reveals a new constraint,
+ or completes an acceptance criterion. Follow the writing guide in
+ `../writing.md` when you write the update, as `spec` does. Append numbered
+-sections rather than renumbering cited sections. Create a nested project
+-only when it has an independently useful lifecycle. Put details that belong
+-to the parent in a supplemental document.
++sections rather than renumbering cited sections. When this change alters
++behavior that a `completed` plan describes, update the living documentation
++and leave that plan as it is, because it records what was decided and built.
++Create a nested project only when it has an independently useful lifecycle.
++Put details that belong to the parent in a supplemental document.
+ 
+ Do not infer a parent's status or priority from a child or vice versa. Do not
+ move project directories, generate a tracked status index, or duplicate either
+@@ -114,7 +116,10 @@ description for work without a plan. If required work on a project
+ remains, record the exact state, leave the status `in-progress`, and set the
+ priority to `now`, `next`, or `later` as the user's real scheduling intent
+ requires. If every criterion in the plan is proven, continue with `finish`
+-in the same implementation change.
++in the same implementation change. Do not wait for a release or open a
++separate pull request: the pull request that carries the last of the
++project's code runs `project done`, so the project is completed when it
++merges.
+ 
+ ## Hand the work over
+ 
+diff --git a/skills/review-pr/method.md b/skills/review-pr/method.md
+index c1c4e008..879d1f40 100644
+--- a/skills/review-pr/method.md
++++ b/skills/review-pr/method.md
+@@ -254,6 +254,14 @@ Apply these rules to the verified set, in this order:
+   the change's own, and its impact sets its priority.
+ - **A rule violation cites its rule** by document and section. Without a
+   citation it is a style opinion and is dropped.
++- **A completed plan is a record.** A Projector project's plan that is
++  already at `status: completed` on the pull request's base records what was
++  decided and built. A finding that asks the change to rewrite or annotate
++  that plan so it matches the change is dropped, even when it cites a rule
++  that keeps `docs/` current. When living documentation describes the same
++  behavior and the change left it stale, the finding asks for that document
++  instead. A plan the change itself marks `completed` is not a record yet, so
++  a finding about the outcome it records stands.
+ - **One root cause is one finding.** The same defect at several sites becomes
+   one finding that lists every location and anchors at the first. Two
+   candidates on the same defect merge, keeping a second framing only when it
+diff --git a/skills/spec/SKILL.md b/skills/spec/SKILL.md
+index 65ca2d81..a7ba7e78 100644
+--- a/skills/spec/SKILL.md
++++ b/skills/spec/SKILL.md
+@@ -81,7 +81,9 @@ this order.
+   the behavior that must hold, the inputs and states that could break it,
+   and the test or observation that proves it. A table of what to do and
+   what to expect, followed by the tests that fail before the change, works
+-  well. A criterion nobody can observe is a hope, not evidence.
++  well. A criterion nobody can observe is a hope, not evidence. Write
++  criteria the merged code can meet, because the project is complete once its
++  code merges; a release that follows is tracked outside Projector.
+ - **Cost.** The paths where cost matters, the load they carry, and how the
+   change is measured against it, or that cost does not matter here and
+   why. A plan silent on cost leaves the implementer and the reviewer to
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index 8d0a2836..a7413dd7 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 14 -->
++<!-- projector:begin 18 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -13,9 +13,20 @@ to find and change projects instead of parsing plan files yourself, and run
+ Write new and substantially revised documentation in the Google developer
+ documentation style: second person, present tense, active voice, sentence-case
+ headings, exact identifiers in code font, and a command or example when it
+-communicates more directly than prose. Keep `docs/` describing the behavior on
+-the current branch, and update it in the change that alters that behavior. An
+-existing document keeps its register until you revise it substantially.
++communicates more directly than prose. Keep the living documentation in
++`docs/` describing the behavior on the current branch, and update it in the
++change that alters that behavior. An existing document keeps its register until
++you revise it substantially.
++
++A plan under `{projects_dir}` is not living documentation. Update the plan of
++the project you are building as its decisions settle, in the change that
++settles them. Run `project done` in the pull request that carries the last of
++the project's code, so the project is `completed` when that pull request
++merges. Never open a separate pull request just to mark a shipped project
++completed, and do not wait for a release: Projector does not track releases,
++and a project held open for one tends to stay open. A `completed` plan records
++what was decided and built, so leave it as it is, and when later work changes
++behavior it describes, update the living documentation instead.
+ 
+ Write GitHub issues and review comments in the same style. Write a pull request
+ body as prose that explains why the change exists, because a squash merge makes
+diff --git a/src/projector/templates/project-readme.md b/src/projector/templates/project-readme.md
+index b903bb5f..6f256605 100644
+--- a/src/projector/templates/project-readme.md
++++ b/src/projector/templates/project-readme.md
+@@ -18,7 +18,11 @@ plan, fix by hand what the error or `project check` names, then go back to the
+ commands. Do not create shared queue files, status or priority directories, or
+ symlinks, and do not move a project when its status or priority changes.
+ Number plan sections and never renumber them after another document or code
+-comment cites them.
++comment cites them. Run `project done` in the pull request that carries the
++last of a project's code, so it is completed when that pull request merges,
++not in a later pull request or after a release. A completed plan records what
++was decided and built: when later work changes behavior it describes, update
++the living documentation and leave the plan as it is.
+ 
+ Run `project list` to browse projects, `project search` to search them, and
+ `project check` to validate the tree. Every `project` command comes from the
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index ea835492..e45144ca 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -26,6 +26,10 @@
+     12: "63875baaa115d20fb8662ce521fdebf9bc7a10e84a4d0ea53698fd935d9b06f8",
+     13: "d0a5ecaad619d65f4bf6f445cc85be91dddcdf13e2f776fdcefe0a2f26390150",
+     14: "bca95d2b5719bb51c440f0b57164b8d1f93250d1125fed4c10ce642822a485cc",
++    15: "a9536c8a7a967be5e79960a696693673cffb3fee2ee725107899b972019fc587",
++    16: "44c6313380de5f8680ad1eac4af28aefdce465fffea9c9fb76c1036c922e8bd8",
++    17: "6b8b4e673fac23dea0813c5b948d7ac865bbd7544e7f9cc37702bef0abed4be6",
++    18: "26c080d4949f402c9bc966004641e5daa8cbf8ae197d108c8f9e00b98a7e89aa",
+ }
+ 
+ 
