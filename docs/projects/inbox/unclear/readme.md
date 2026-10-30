@@ -194,8 +194,7 @@ Projector's permission rules make an agent ask before it runs them.
   besides the recommendation still give a real choice, as four options do
   for a request, and an agent with more can put the rest in the detail.
   The one cap, `MAX_OPTIONS`, holds for a request without a start action
-  too, because a revision can add one and a blocked start puts **Retry** on
-  `1`.
+  too, because a revision can add one.
 - **An ask rule for `unclear`.** Like an answer or a dismissal, it records
   what only you may say. Without the rule, an agent could mark its own item
   unclear.
