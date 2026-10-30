@@ -1,0 +1,84 @@
+{
+ "version": 1,
+ "name": "Inbox requests plan",
+ "project": "inbox/requests",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 370,
+  "title": "Spec requests in the inbox for work only the person can do",
+  "head": "ce5596feb4fda72e2d48495469720058df34f304",
+  "headRef": "inbox-requests-spec",
+  "base": "ee724a7e1f8de17dbe59ee0bc660c8a0676d366d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox is where an agent puts things the person must not miss. It is a store of items for each session, which the <code>project inbox</code> CLI writes and Projector's panel lists above the Claude Code prompt. Today an item is either a <b>question</b>, whose answer goes back to the agent as a line such as <code>ANSWER 3.a</code>, or a <b>notice</b>, which sends nothing back.",
+   "Neither kind fits work that only the person can do, such as testing a build on their phone. Issue #366 describes a session where one such hand-off took a question, an install, a notice, and a typed reply. This pull request adds the plan for a third kind of item, a <b>request</b>, as the nested project <code>inbox/requests</code> under the completed <code>inbox</code> plan. The plan is at <code>ready</code> and <code>now</code>, and this pull request changes no code.",
+   "<ol><li><b>Layer 1: done and decline.</b> Most requests need only this. An agent posts a request with steps, and the person does the work and presses <b>done</b> or <b>decline</b>. Those buttons put the quoted request in the prompt with <code>Done</code> or <code>Declined</code> under it, so the person's notes travel with the outcome.</li><li><b>Layer 2: start.</b> When the agent must prepare something first, such as installing a build, the request carries a start action. Nothing happens until the person presses <b>start</b>, which sends the agent <code>STARTED</code>, quoting that action, as the person's consent to it. Opening the drawer sends nothing. The agent then marks the request <code>ready</code>, or <code>blocked</code> with a reason the person reads before pressing <b>retry</b>.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Claim</b>: a short-lived token a deliverer takes on an item before it sends the item's line, so that two deliverers never send the same line.</li><li><b><code>restoredAt</code></b>: today's one field that lets an open item owe its agent a line, <code>RESTORED</code>. The plan's <code>started</code> field works the same way.</li><li><b>Ask rule</b>: a permission rule that <code>project init</code> writes, which makes Claude Code ask the person before an agent runs a command that records the person's choice.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review, of <code>86a5232</code>, opened two threads, and both were fixed by <code>54b96db</code>:</p><ul class=\"tight\"><li>§ 2.3 named a <code>project inbox context</code> command that doesn't exist.</li><li><b>start</b> recorded the start action from the store, so a press on a stale drawer could consent to an action the person never saw. <b>start</b> now passes <code>--action</code>, and <code>start</code> exits <code>65</code> on a mismatch.</li></ul><p><code>ce5596f</code> then makes a request without a start action the ordinary case, and makes <b>start</b> and <b>retry</b> explicit presses. Its review found the head clean, with the race guard intact, and suggested one Markdown fix.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The request plan",
+   "kicker": "A third inbox item that carries a hand-off from post to result",
+   "intro": [
+    "The plan adds a request to the inbox's existing store rather than building a new mechanism. A request is numbered with questions and notices, listed in the same panel, snoozed and restored the same way, and delivered by the same claim-and-settle steps.",
+    "Read § 2.1 for the flow, § 2.2 for the stored fields, and § 2.3 for the CLI. § 3 gives the reasons, and its consent rule matters most: pressing <b>start</b> consents to the start action as it read at that moment and to nothing else, and <code>start</code>, <code>done</code>, and <code>decline</code> become ask rules, so that an agent can't record the person's consent itself."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>project show inbox/requests --json</code> loads the plan as <code>ready</code> and <code>now</code>, and <code>project check</code> passes at this head and with <code>main</code>'s CLI. The completed parent plan is untouched."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/inbox/requests/readme.md",
+     "collapsed": false,
+     "note": "The whole plan: the problem, the flow and its two layers, the store fields, the CLI and Claude Code tools, the files to change, and the acceptance criteria.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 62,
+       "text": "This note renders on GitHub as part of step 2, because it follows step 2's text with no blank line. The review suggests a blank line before it."
+      },
+      {
+       "kind": "verify",
+       "line": 66,
+       "text": "<b>start</b> passes the action its drawer shows, and <code>start</code> exits <code>65</code> when the stored action differs. On exit <code>65</code>, <code>act</code> in <code>hooks/register.tsx</code> already drops the store signature and reads the store again, so the drawer shows the new action and needs a new press."
+      },
+      {
+       "kind": "context",
+       "line": 130,
+       "text": "A request owes its agent a line in three cases: an undelivered outcome, an undelivered <code>RESTORED</code>, and an undelivered <code>STARTED</code>. <code>done</code>, <code>decline</code>, and <code>withdraw</code> drop a <code>STARTED</code> that no deliverer has claimed. A claimed one may already wait in the session's queue as a prompt, so it is sent first and the outcome follows."
+      },
+      {
+       "kind": "verify",
+       "line": 159,
+       "text": "<code>answer</code>, <code>dismiss</code>, and <code>snooze</code> are the ask rules in <code>src/projector/permissions.py</code> today. Adding <code>start</code>, <code>done</code>, and <code>decline</code> there follows the same pattern, and the panel runs them outside an agent's shell, so the person is never asked. § 6 tells people to run <code>project init</code> again to get the new rules."
+      },
+      {
+       "kind": "verify",
+       "line": 227,
+       "text": "<code>is_restorable</code> and <code>restore</code> in <code>src/projector/inbox.py</code> accept any dismissal that wasn't withdrawn. Storing a decline as <code>dismissed</code> with <code>declined</code> lets a declined request be restored, with <code>RESTORED</code> sent when the agent already heard <code>DECLINED</code>."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
