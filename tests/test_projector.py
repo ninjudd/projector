@@ -1944,6 +1944,9 @@ class UpgradeTests(unittest.TestCase):
         # Not a repository: upgrading the command must not need one.
         self.elsewhere = self.root / "elsewhere"
         self.elsewhere.mkdir()
+        # The command the fake installer "installs" writes what this one does.
+        self.answer = mock.patch.object(cli, "installed_init_digests", return_value=cli.init_digests())
+        self.installed = self.patch(self.answer)
 
     def patch(self, patcher: object) -> object:
         started = patcher.start()
@@ -2126,6 +2129,120 @@ class UpgradeTests(unittest.TestCase):
 
         self.assertEqual(69, code)
         self.assertIn(str(self.checkout / "install.sh"), stderr)
+
+    def changed_install(self) -> None:
+        """The installed command writes a new Projector section, a new kind of file, and no site workflow."""
+
+        digests = cli.init_digests()
+        digests["instructions"]["sha256"] = "0" * 64
+        digests["hooks"] = {"label": "the hooks in your settings", "sha256": "1" * 64}
+        del digests["site-workflow"]
+        self.installed.return_value = digests
+
+    def test_an_install_that_changes_nothing_init_writes_says_so(self) -> None:
+        self.installed_from(self.checkout_record())
+        self.fake_installer()
+
+        code, stdout, _ = self.invoke("cli")
+
+        self.assertEqual(0, code)
+        self.assertEqual("init-current   nothing project init writes changed\n", stdout)
+
+    def test_an_install_lists_each_thing_init_writes_that_changed(self) -> None:
+        self.installed_from(self.checkout_record())
+        self.fake_installer()
+        self.changed_install()
+
+        code, stdout, _ = self.invoke()
+
+        self.assertEqual(0, code)
+        # The new kind is named by the label the installed command gave it,
+        # and what that command no longer writes is not something to run init for.
+        self.assertEqual(
+            [
+                "init-changed   the Projector section in AGENTS.md and CLAUDE.md",
+                "init-changed   the hooks in your settings",
+                "init-needed    ⚠️  run project init in each repository that uses Projector to write the changes above",
+            ],
+            stdout.splitlines(),
+        )
+
+    def test_a_failed_install_lists_only_what_it_changed(self) -> None:
+        # `all` installs the CLI before it fails for want of a host, so a
+        # failure can still have changed what init writes.
+        self.installed_from(self.checkout_record())
+        self.fake_installer(exit_code=69)
+
+        code, stdout, _ = self.invoke()
+        self.assertEqual((69, ""), (code, stdout))
+
+        self.changed_install()
+        code, stdout, _ = self.invoke()
+        self.assertEqual(69, code)
+        self.assertIn("init-needed", stdout)
+
+    def test_an_installed_command_that_cannot_say_is_named(self) -> None:
+        self.installed_from(self.checkout_record())
+        self.fake_installer()
+        self.installed.return_value = None
+
+        code, stdout, _ = self.invoke()
+
+        self.assertEqual(0, code)
+        self.assertEqual(
+            "init-unknown   ⚠️  the project on PATH cannot say what project init writes -- run project check in "
+            "each repository that uses Projector\n",
+            stdout,
+        )
+
+        self.fake_installer(exit_code=3)
+        self.assertEqual((3, ""), self.invoke()[:2])
+
+    def test_what_init_writes_is_read_before_the_installer_runs(self) -> None:
+        # The reinstall replaces the templates this command reads them from.
+        self.installed_from(self.checkout_record())
+        self.fake_installer()
+        installer_had_run = []
+        real = cli.init_digests
+        self.patch(mock.patch.object(
+            cli, "init_digests", side_effect=lambda: installer_had_run.append(self.log.exists()) or real()
+        ))
+
+        self.invoke("cli")
+
+        self.assertEqual([False], installer_had_run)
+
+    def test_each_thing_init_writes_has_a_digest_of_its_own(self) -> None:
+        before = cli.init_digests()
+        edits = {
+            "instructions": mock.patch.object(instructions, "template", return_value=instructions.template() + "x"),
+            "site-workflow": mock.patch.object(cli.summary, "WORKFLOW", cli.summary.WORKFLOW + "# x\n"),
+            "permission-rules": mock.patch.object(permissions, "ASK", (*permissions.ASK, "Bash(project x *)")),
+        }
+        self.assertEqual(set(edits), set(before))
+        for name, edit in edits.items():
+            with self.subTest(name):
+                with edit:
+                    after = cli.init_digests()
+                self.assertEqual({name}, {key for key in before if before[key] != after[key]})
+
+    def test_the_project_on_path_answers(self) -> None:
+        self.answer.stop()
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        project = bin_dir / "project"
+        source = Path(cli.__file__).resolve().parents[1]
+        project.write_text(f'#!/bin/sh\nPYTHONPATH={shlex.quote(str(source))} exec '
+                           f'{shlex.quote(sys.executable)} -m projector "$@"\n')
+        project.chmod(0o755)
+
+        with mock.patch.dict(os.environ, {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}):
+            self.assertEqual(cli.init_digests(), cli.installed_init_digests())
+            # A release older than this check refuses the question.
+            project.write_text('#!/bin/sh\necho "unrecognized arguments: --init-digests" >&2\nexit 2\n')
+            self.assertIsNone(cli.installed_init_digests())
+        with mock.patch.dict(os.environ, {"PATH": str(self.elsewhere)}):
+            self.assertIsNone(cli.installed_init_digests())
 
 
 class StaleReleaseWarningTests(unittest.TestCase):

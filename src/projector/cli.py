@@ -23,7 +23,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import inbox, loop, permissions, review, site, summary
+from . import inbox, instructions, loop, permissions, review, site, summary
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
@@ -129,7 +129,90 @@ def fetch_installer(url: str, target: Path) -> None:
         raise EnvironmentError(f"cannot upgrade: could not download the installer from {url}: {error}") from error
 
 
-def run_upgrade(targets: list[str]) -> int:
+def init_digests() -> dict[str, dict[str, str]]:
+    """A digest of each thing `init` writes that a release can change, with the label that names it.
+
+    `upgrade` compares these with the ones the command it installs computes,
+    and a newer command can write something this one has never heard of, so
+    each digest carries its own label. The instructions and the workflow are
+    rendered for one fixed repository, which is enough to show a template
+    change.
+    """
+
+    outputs = {
+        "instructions": ("the Projector section in AGENTS.md and CLAUDE.md", instructions.render("docs/projects")),
+        "site-workflow": (f"the site workflow, {WORKFLOW_PATH}", summary.workflow_text("v0")),
+        "permission-rules": (
+            "the permission rules in your Claude Code settings and Codex rules",
+            json.dumps([permissions.ALLOW, permissions.ASK, permissions.SUPERSEDED, permissions.RETIRED_ASK,
+                        permissions.CODEX_RULES]),
+        ),
+    }
+    return {name: {"label": label, "sha256": hashlib.sha256(text.encode()).hexdigest()}
+            for name, (label, text) in outputs.items()}
+
+
+def installed_init_digests() -> Optional[dict[str, dict[str, str]]]:
+    """`init_digests` as the `project` on PATH computes them, or None when it cannot say.
+
+    This process still runs the code the install replaced, so it asks the
+    command you run `init` with next, which is also the one the installer
+    reports on.
+    """
+
+    command = shutil.which("project")
+    if command is None:
+        return None
+    try:
+        result = subprocess.run([command, "version", "--init-digests"],
+                                capture_output=True, text=True, timeout=30, check=True)
+        digests = json.loads(result.stdout)["init"]
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(digests, dict) or not all(
+        isinstance(entry, dict) and isinstance(entry.get("label"), str) and isinstance(entry.get("sha256"), str)
+        for entry in digests.values()
+    ):
+        return None
+    return digests
+
+
+def installer_row(name: str, text: str, warn: bool = False) -> None:
+    """Print a row as the installer prints its own, marking a warning the way its `warn_row` does."""
+
+    if not warn:
+        print(f"{name:<14} {text}")
+    elif sys.stdout.isatty() and not os.environ.get("NO_COLOR"):
+        print(f"\033[1;33m{name:<14} ⚠️  {text}\033[0m")
+    else:
+        print(f"{name:<14} ⚠️  {text}")
+
+
+def report_init_changes(before: dict[str, dict[str, str]], succeeded: bool) -> None:
+    """List what the install changed in what `init` writes, so you know whether to run it again.
+
+    An install that failed can still have replaced the command, so its
+    changes are listed too, but it claims neither that nothing changed nor
+    that the command could not say.
+    """
+
+    after = installed_init_digests()
+    if after is None:
+        if succeeded:
+            installer_row("init-unknown", "the project on PATH cannot say what project init writes -- run "
+                          "project check in each repository that uses Projector", warn=True)
+        return
+    changed = [entry["label"] for name, entry in after.items() if before.get(name, {}).get("sha256") != entry["sha256"]]
+    for label in changed:
+        installer_row("init-changed", label)
+    if changed:
+        installer_row("init-needed", "run project init in each repository that uses Projector to write the changes "
+                      "above", warn=True)
+    elif succeeded:
+        installer_row("init-current", "nothing project init writes changed")
+
+
+def run_installer(record: dict, targets: list[str]) -> int:
     """Run the installer from anywhere, with the same targets, output, and exit status.
 
     Installation belongs to the installer, which already knows how to place
@@ -139,11 +222,7 @@ def run_upgrade(targets: list[str]) -> int:
     and runs that, which reinstalls from the newest release without git.
     """
 
-    record = install_record()
     source = checkout(record)
-    # `install.sh cli` rewrites this package under the running interpreter.
-    # Everything this process still needs is imported already, so nothing
-    # below reaches for a file the reinstall is in the middle of replacing.
     if source is not None:
         script = source / "install.sh"
         if not script.is_file():
@@ -157,6 +236,20 @@ def run_upgrade(targets: list[str]) -> int:
         fetch_installer(url, script)
         print(f"+ curl -fsSL {url} | bash -s -- {shlex.join(targets)}".rstrip(), file=sys.stderr)
         return subprocess.run(["bash", str(script), *targets], env=environment, check=False).returncode
+
+
+def run_upgrade(targets: list[str]) -> int:
+    """Run the installer, then list what it changed in what `init` writes."""
+
+    record = install_record()
+    # `install.sh cli` rewrites this package under the running interpreter,
+    # templates included, so what `init` writes is read before it runs.
+    # Everything else this process still needs is imported already, so nothing
+    # after it reaches for a file the reinstall is in the middle of replacing.
+    before = init_digests()
+    code = run_installer(record, targets)
+    report_init_changes(before, code == 0)
+    return code
 
 
 RELEASE_CHECK_SECONDS = 24 * 60 * 60
@@ -690,6 +783,8 @@ def parser() -> argparse.ArgumentParser:
     version = subcommands.add_parser("version", help="print the version of this command")
     # Where this command's package lives, which `install.sh status` diffs against the checkout.
     version.add_argument("--package-dir", action="store_true", help=argparse.SUPPRESS)
+    # What this command's `init` writes, which `upgrade` asks the command it installs for.
+    version.add_argument("--init-digests", action="store_true", help=argparse.SUPPRESS)
     help_command = subcommands.add_parser("help", help="print this help, or one command's")
     help_command.add_argument("topic", nargs="*", metavar="command", help="the command, such as init or review publish")
     return result
@@ -2023,7 +2118,10 @@ def show_help(topic: list[str]) -> int:
 
 def run(arguments: argparse.Namespace) -> int:
     if arguments.command == "version":
-        print(Path(__file__).resolve().parent if arguments.package_dir else f"project {distribution_version()}")
+        if arguments.init_digests:
+            print(json_text({"init": init_digests()}))
+        else:
+            print(Path(__file__).resolve().parent if arguments.package_dir else f"project {distribution_version()}")
         return 0
     if arguments.command == "help":
         return show_help(arguments.topic)
