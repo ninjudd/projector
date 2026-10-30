@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -248,3 +248,65 @@ the new agents block into their instructions. Until they do,
   and closing the drawer on the press are a first choice. Owner: ninjudd,
   who adjusts the panel in daily use, as the [inbox](../readme.md) plan's
   § 7 records for questions and notices.
+
+## 8. What the implementation settled
+
+Building § 2 settled these details. Each one about the look is a first
+choice under § 7.
+
+- **`started` and `unclear` are one kind of line.** `OPEN_LINES` in
+  `src/projector/inbox.py` names the lines an open item owes without being
+  resolved. `claim`, `settle`, and `clear_for_outcome` treat both alike, and
+  `settle` marks the field of the line's own name delivered, or removes it
+  when the delivery failed.
+- **An answer keeps a claimed `UNCLEAR`.** `answer` clears what it replaces
+  through `clear_for_outcome`, as `done` and the dismissals do, so a claimed
+  `UNCLEAR` on a question reaches its agent before the answer.
+- **A restore takes back `unclear`.** The dismissal settled the person's
+  word, as it settles a request's start, so a restored item waits for a new
+  press.
+- **A stored item over the cap must shrink to be revised.** `revise` checks
+  a question's options on every revision, so an agent that revises a
+  question stored with five other options must give four or fewer. A
+  request's options are checked only when `revise` replaces them.
+- **The mark sits before a request's stage.** An open request that is both
+  unclear and started shows `unclear`, then `starting`, `ready`, or
+  `blocked`, because the stage still says whether you can begin.
+- **Enter on a notice's line puts the ring on discuss.** The ring skips
+  **I don't understand** above it, so pressing Enter twice fills the prompt
+  and never sends `UNCLEAR` by accident.
+- **Every item can carry a claim.** `hooks/types.d.ts` declares `claim` on
+  `Posted`, with `unclear` among its lines, since a notice can now be
+  claimed. The `restore` tool's result for a notice names `UNCLEAR` too.
+
+## 9. Outcome
+
+The project shipped in one pull request, as § 6 planned, with the design
+of § 2 and the details § 8 records. The look stays the owner's to adjust,
+as § 7 says. In the table, `UnclearTests` and the other Python classes are in
+`tests/test_inbox.py`.
+
+| Criterion in § 4 | Evidence |
+| --- | --- |
+| Each open kind's drawer offers `6`; a resolved one does not | `panel.test.tsx`: `a drawer’s actions follow its options a line each, on 6 to 9, named for what they act on` |
+| A running subagent's notice: `unclear`, one `UNCLEAR`, the mark, no action | `panel.test.tsx`: `I don’t understand on a running subagent’s notice records it, sends UNCLEAR once, and marks the line until a revise` |
+| A finished subagent's item reaches the main loop with the note | `panel.test.tsx`: `I don’t understand on an item whose subagent finished reaches the main loop, naming the subagent, and marks it beside its stage`; `inbox.test.ts`: `the main loop is told which subagent posted an item it receives UNCLEAR for` |
+| `revise --notice` keeps the number, drops the mark, and offers `6` again | `ReviseTests.test_revises_a_notice_with_its_own_flags_and_keeps_its_number`, `UnclearTests.test_watch_sends_unclear_once_and_the_mark_stands_until_a_revision`, and the panel test of the running subagent's notice |
+| A failed delivery takes the mark back with a toast | `UnclearTests.test_a_failed_unclear_removes_it`; `panel.test.tsx`: `an UNCLEAR that cannot be delivered takes the mark back, says so, and offers I don’t understand again` |
+| A second press, a resolved item, and a stale drawer record nothing | `UnclearTests.test_refuses_text_the_agent_revised_a_second_press_and_a_resolved_item`; `panel.test.tsx`: `a press of I don’t understand on a drawer the agent revised since records nothing and shows the new text` |
+| An answer or dismissal replaces an unclaimed `UNCLEAR`, and follows a claimed one | `UnclearTests.test_an_answer_or_dismissal_replaces_an_unclear_no_deliverer_claimed`, `test_an_answer_or_outcome_recorded_while_unclear_is_claimed_follows_it`, `test_a_dismissal_while_a_notices_unclear_is_claimed_lets_that_line_settle` |
+| Five options exit `65` for `ask`, `request`, and `revise` | `AskTests.test_refuses_a_question_that_fails_a_check_and_writes_nothing`, `ReviseTests.test_refuses_a_revision_that_fails_a_check_and_changes_nothing`, `RequestTests.test_records_the_options_the_agent_gives_and_refuses_ones_that_fail_a_check`, `test_revise_replaces_or_drops_a_requests_options`; `inbox.test.ts`: `ask, request, and revise take at most four options, leaving 6 for I don’t understand` |
+| A stored six-choice question, or a request with Start and five options, keeps its digits and offers the action without one | `panel.test.tsx`: `a question stored with six choices, or a request with Start and five options, keeps them on 1 to 6 and offers I don’t understand without a digit` |
+| An agent's `project inbox unclear` asks | The `unclear` row of `DECISIONS` in `tests/test_permissions.py` |
+| `watch --once` prints `UNCLEAR` and marks it delivered | `UnclearTests.test_watch_sends_unclear_once_and_the_mark_stands_until_a_revision` |
+
+As § 5 planned, the panel's idle tick does no new work. `needsDelivery`
+reads one more field in memory, and a press runs one CLI process, as a
+dismissal does. The `started` handling in `claim`, `settle`, and
+`clear_for_outcome` now covers `unclear` through `OPEN_LINES`, so the store
+holds no second copy of it. `hooks/typecheck.sh` needs the declarations
+that an interactive `claude --plugin-dir .` session writes. No checkout this
+change was built in had them, so the hooks were type-checked instead against
+the declarations Claude Code 2.1.277 published. The head and its base gave
+the same 75 errors, all from those older declarations, so the change adds
+none they can see.

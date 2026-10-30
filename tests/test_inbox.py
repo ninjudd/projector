@@ -1160,6 +1160,11 @@ class RequestTests(InboxCase):
         self.assertEqual(["Signed in", "Could not"], self.item(2)["choices"])
         self.assertEqual(0, self.run_cli("revise", "2", "--no-options", "--session", "s1")[0])
         self.assertNotIn("choices", self.item(2))
+        code, _, err = self.run_cli("revise", "2", *[arg for n in "ABCDE" for arg in ("--option", n)],
+                                    "--session", "s1")
+        self.assertEqual(65, code)
+        self.assertIn("offer a request at most 4", err)
+        self.assertNotIn("choices", self.item(2))
 
     def test_lists_and_shows_a_request_by_its_kind_and_state(self) -> None:
         self.request("Test the gutters", "--detail", "1. Open Fyra.")
