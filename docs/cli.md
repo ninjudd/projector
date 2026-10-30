@@ -57,12 +57,16 @@ what it did to each:
   `implement` skill, so a watch loop starts on its pull request, open every
   pull request as a draft until a clean review marks it ready, and, where the
   `ask`, `tell`, and `request` tools are available, post anything the person
-  must not miss to the inbox as well as saying it in the conversation. It tells an
-  agent whose question the person replied to, rather than picking an option,
-  to answer what they asked and then withdraw the question with the
-  `withdraw` tool, revise it with the `revise` tool, or leave it open, and to
-  withdraw any other item that no longer needs them each time the person
-  writes. `init` appends the section to an existing file or creates
+  must not miss to the inbox as well as saying it in the conversation. It
+  tells an agent to post a request only for work it cannot do itself, such as
+  running a command it is not allowed to run or checking a change on the
+  person's phone, with numbered steps that each say what the person should
+  see, and to read a done request's notes and not post a declined one again.
+  It tells an agent whose question or request the person replied to, rather
+  than resolving it, to answer what they asked and then withdraw the item
+  with the `withdraw` tool, revise it with the `revise` tool, or leave it
+  open, and to withdraw any other item that no longer needs them each time
+  the person writes. `init` appends the section to an existing file or creates
   the file with only that section, and refreshes the section when it falls
   behind the template this command ships. Everything outside the markers is
   yours and is never changed.

@@ -64,26 +64,41 @@ clears it.
 Talk with the person in the conversation as usual. When Projector's `ask`,
 `tell`, and `request` tools are available, also post anything they must not
 miss to the inbox, a decision with `ask`, news with `tell`, and work only
-they can do with `request`, and say it in your reply too. Always post it when it sits among a lot of other text, such as a
-decision in the middle of a long report, where the person could skim past
-it. Post news they need to act on, such as a failure that needs them, and
-anything that comes up while they are away. Leave out what they already see
-elsewhere, such as a pull request's state, which the panel lists. An item
-stays above their prompt until they answer or dismiss it, so keep the inbox
-for what matters, not as a log of everything you did.
+they can do with `request`, and say it in your reply too. Always post it
+when it sits among a lot of other text, such as a decision in the middle of
+a long report, where the person could skim past it. Post news they need to
+act on, such as a failure that needs them, and anything that comes up while
+they are away. Leave out what they already see elsewhere, such as a pull
+request's state, which the panel lists. An item stays above their prompt
+until they answer or dismiss it, so keep the inbox for what matters, not as
+a log of everything you did.
+
+Post a request when the next step needs the person to do something you
+cannot do yourself, such as running a command you are not allowed to run,
+signing in to a service, or checking a change on a device you cannot reach,
+like their phone. Ask a question instead when you need their decision, and
+do the work yourself whenever you can. Write the request as what they should
+do, and put the steps in its detail as a numbered list, each step with what
+they should see, so their notes can name the step that failed. Post one
+request for the whole hand-off rather than a question and a notice for its
+parts, and keep working on anything it does not block.
 
 When the person picks one of a question's options, the answer reaches you
-as a message that starts `ANSWER`, and when they finish or decline a
-request, its outcome arrives as one that starts `DONE` or `DECLINED`. When
-they reply to a question you asked
-instead, answer what they asked. Then withdraw the question with the
-`withdraw` tool if the reply settles it, revise it with the `revise` tool
-if the reply shows it was unclear or the choice has changed, or leave it
-open while it still needs them. Each time the person writes to you, also
-look over the other items you posted that are still open, and withdraw any
-that no longer need them, such as news that has gone stale. When the person
-says they dismissed an item by mistake, restore it with the `restore` tool or
-`project inbox restore` rather than asking again. Name an item to the tools
-by the number `ask`, `tell`, or `request` returned. The panel never shows that number, so
-in what you write to the person, name an item by what it asks or tells.
+as a message that starts `ANSWER`. When they finish a request, its outcome
+reaches you as their prompt, quoting the request with `Done` or `Declined`
+and any notes under it, or as a message that starts `DONE` or `DECLINED`.
+Read the notes even when it is done, because a step can still have failed.
+A declined request is the person's no, so do not post it again unless they
+ask. When they reply to a question or a request instead, answer what they
+asked. Then withdraw the item with the `withdraw` tool if the reply settles
+it, revise it with the `revise` tool if the reply shows it was unclear or
+the choice or the work has changed, or leave it open while it still needs
+them. Each time the person writes to you, also look over the other items you
+posted that are still open, and withdraw any that no longer need them, such
+as news that has gone stale. When the person says they dismissed or declined
+an item by mistake, restore it with the `restore` tool or
+`project inbox restore` rather than posting it again. Name an item to the
+tools by the number `ask`, `tell`, or `request` returned. The panel never
+shows that number, so in what you write to the person, name an item by what
+it asks, tells, or requests.
 <!-- projector:end -->
