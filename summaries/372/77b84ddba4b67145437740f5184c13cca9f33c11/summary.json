@@ -1,0 +1,207 @@
+{
+ "version": 1,
+ "name": "Inbox requests",
+ "project": "inbox/requests",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 372,
+  "title": "Add requests to the inbox for work only the person can do",
+  "head": "77b84ddba4b67145437740f5184c13cca9f33c11",
+  "headRef": "inbox-requests",
+  "base": "abaf586795451d4ebba7c1b21871ae7f70bc533a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox is where an agent puts things in front of you while it keeps working. Until now it held two kinds of item: a <b>question</b>, which you answer and whose answer goes back to the agent, and a <b>notice</b>, which you read and dismiss. Each session keeps its items as JSON files under Projector's state directory, and Projector's panel, above the Claude Code prompt, lists them.",
+   "Some work only you can do: running a command the agent may not run, signing in to a service, or checking a build on your phone. Agents stitched that hand-off together from a question, a notice, and typed messages. This pull request adds a third kind of item, a <b>request</b>, that carries the work and its outcome as one item.",
+   "<ol><li><b>An agent posts a request</b> with <code>project inbox request</code> or the <code>request</code> tool. Its one-line subject says what to do, and its detail holds the steps.</li><li><b>You open its drawer</b> in the panel. It shows the steps, then <b>Done</b> on <code>1</code> and <b>Declined</b> on <code>2</code> where a question shows its options.</li><li><b>Done or Declined fills your prompt</b> with the quoted request and the word, so you can type notes under it. Sending the prompt records the outcome and carries your notes to the agent.</li><li><b>From a terminal</b>, <code>project inbox done</code> and <code>decline</code> record the outcome, and the panel's deliverer sends the agent <code>DONE</code> or <code>DECLINED</code>.</li></ol>",
+   "This is layer 1 of the <code>inbox/requests</code> plan. Layer 2, a later pull request, adds a <i>start action</i>: something the agent must prepare before you can begin, such as installing a build, which waits for you to press <b>start</b>. So the plan moves from <code>ready</code> to <code>in-progress</code> here."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Outcome</b>: how you resolved a request, <code>done</code> or <code>declined</code>, with an optional line of text.</li><li><b>Deliverer</b>: the panel's loop, or <code>project inbox watch</code>, that sends an agent the line its item owes, such as <code>DONE 5 Test the gutters → All good</code>.</li><li><b>Claim</b>: a short-lived lock a deliverer takes on an item before sending its line, so two deliverers never send it twice.</li><li><b>Ask rule</b>: a Claude Code permission rule that makes an agent ask you before running a command, even one an allow rule such as <code>Bash(project *)</code> covers.</li><li><b>Agents block</b>: the section <code>project init</code> writes into each repository's <code>AGENTS.md</code>, versioned so <code>init</code> can tell when to rewrite it.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Where review stands",
+    "html": "<ul class=\"tight\"><li>The full gate passed at this head: 1111 unit tests, <code>project check</code>, both plugin validations, 164 hooks tests, the type check, and <code>git diff --check</code>.</li><li>One finding is open: the agents block's edit leaves unwrapped lines, which every adopting repository's <code>AGENTS.md</code> copies.</li><li>Until you run <code>project init</code> again, <code>Bash(project *)</code> still lets an agent run <code>done</code> and <code>decline</code> without asking, as the plan's rollout says.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "store",
+   "title": "A request in the inbox store and the CLI",
+   "kicker": "The new kind, its outcomes, and the commands that record them",
+   "intro": [
+    "The inbox store keeps one JSON file per item, and every command changes an item under the session's lock. A request is a third <code>kind</code> in that store, so it shares the session's numbering, snoozing, withdrawing, restoring, and delivery with questions and notices.",
+    "A request's outcome lives in the same <code>answer</code> field a question's answer does. <code>done</code> records <code>{done: true}</code>. <code>decline</code> records a dismissal with <code>declined: true</code>, so <code>restore</code> and the code that reads a dismissed item work unchanged. Both take an optional one-line <code>--text</code>, which the deliverer appends after an arrow."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Ran the plan's acceptance rows in a scratch <code>XDG_STATE_HOME</code>: <code>answer</code> on a request exits 65 naming <code>done</code> and <code>decline</code>; <code>decline --text</code> makes <code>watch</code> print <code>DECLINED 1 Test the gutters → No phone today</code> once; <code>restore</code> then sends <code>RESTORED 1</code>; <code>done</code> and <code>decline</code> exit 65 on a question, a notice, and a resolved request."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/inbox.py",
+     "note": "Adds <code>request</code>, <code>done</code>, and <code>decline</code>, and teaches <code>dismiss</code>, <code>revise</code>, <code>message</code>, and <code>resolution</code> about a request.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>record_dismissal</code> is the old body of <code>dismiss</code>, now shared with <code>decline</code>. A request dismissed without <code>withdrawn</code> gets <code>declined: true</code>, so <code>project inbox dismiss</code> on a request declines it.",
+       "line": 442
+      },
+      {
+       "kind": "context",
+       "text": "<code>done</code> clears a pending <code>restoredAt</code> and claim the way <code>answer</code> does: the outcome tells the agent the request was open again, so a <code>RESTORED</code> line still waiting is dropped.",
+       "line": 488
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "The <code>request</code>, <code>done</code>, and <code>decline</code> subcommands, <code>revise --request</code>, and the <code>done</code> and <code>declined</code> states that <code>list</code> prints."
+    },
+    {
+     "path": "tests/test_inbox.py",
+     "note": "<code>RequestTests</code> covers the CLI rows of the plan's acceptance table."
+    }
+   ]
+  },
+  {
+   "id": "permissions",
+   "title": "Only you record a request's outcome",
+   "kicker": "Ask rules for done and decline, and an allowance for request",
+   "intro": [
+    "Projector's permission rules let an agent run any <code>project</code> command freely, except a few that record the person's own choice. Those are ask rules, which Claude Code checks before allow rules. <code>done</code> and <code>decline</code> join <code>answer</code>, <code>dismiss</code>, and <code>snooze</code> there, so an agent can't mark its own request done. The panel runs these commands itself, outside any agent's shell, so you are never asked when you use it.",
+    "The rules reach your settings only when <code>project init</code> runs again. Until then, <code>Bash(project *)</code> allows both commands, as the plan's rollout and the pull request body say. Codex's rules allow <code>request</code> and leave <code>done</code> and <code>decline</code> to its usual approval."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Two new ask rules, and <code>request</code> among Codex's allowed inbox commands."
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Pins <code>done</code> and <code>decline</code> as ask rules and <code>request</code> as allowed, in both hosts."
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "The missing-rule case now names the last ask rule, whichever it is."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "The panel's drawer, prompt reading, and tools",
+   "kicker": "How Claude Code shows a request and reads your Done or Declined",
+   "intro": [
+    "The hooks module is Projector's Claude Code plugin code: it draws the panel, registers the inbox tools agents call, and reads each prompt you send. A request's drawer draws <b>Done</b> and <b>Declined</b> where a question draws its options. Pressing one fills the prompt with the quoted request, a blank line, and the word, and records nothing yet.",
+    "When you send the prompt, <code>readPrompt</code> decides what it says to each open item. A quoted request takes an outcome only when the first non-blank line under the quote is exactly <code>Done</code> or <code>Declined</code>; the rest is your notes. Anything else, such as <code>done?</code>, is a reply that leaves the request open. The prompt hook then runs <code>done</code> or <code>decline</code>, followed by <code>claim</code> and <code>delivered</code>, because the prompt itself carried the outcome and notes to the agent."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A pick from a drawer the agent revised since is marked stale, and only replies, so a press never records an outcome for text you did not see."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/types.d.ts",
+     "note": "A <code>Request</code> type, its <code>Outcome</code>, and <code>Answerable</code> for a question or a request."
+    },
+    {
+     "path": "hooks/inbox.ts",
+     "note": "<code>readPrompt</code> reads a request's outcome, the relay notes say <code>requested</code>, and the new <code>request</code> tool's description and arguments.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A request's drawer owns its quote whatever text follows, because notes follow its outcome; a question's drawer owns it only for the option it put there or for discuss.",
+       "line": 149
+      }
+     ]
+    },
+    {
+     "path": "hooks/register.tsx",
+     "note": "Registers the tool, colors a request's line <code>suggestion</code> blue, draws the outcomes, drops dismiss from a request's drawer, and records outcomes from the prompt."
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "Prompt reading, the tool's arguments, and the relay notes."
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "The drawer, a Done sent with notes, a reply, and a terminal decline delivered as <code>DECLINED</code>."
+    }
+   ]
+  },
+  {
+   "id": "instructions",
+   "title": "What every agent reads",
+   "kicker": "The agents block names request beside ask and tell",
+   "intro": [
+    "<code>project init</code> writes a versioned block into each repository's <code>AGENTS.md</code>, which Claude Code and Codex agents both read. The block moves to version 19 so agents learn to post work only you can do with <code>request</code>, and to expect <code>DONE</code> or <code>DECLINED</code> back. A test pins each version's hash, so a later edit can't change a released block silently."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Compared this repository's <code>AGENTS.md</code> block with the template, with <code>{projects_dir}</code> as <code>docs/projects</code>: byte-identical. The pinned hash for version 19 matches the template's SHA-256."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Version 19 of the block.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "Open finding: this line runs to 122 characters, line 78 breaks after five words, and line 87 runs to 89, where the rest of the block wraps at about 76. Rewrap before version 19 ships, run <code>project init</code>, and re-pin the hash; afterwards a fix needs version 20.",
+       "line": 67
+      }
+     ]
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's copy of the block, from <code>project init</code>."
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins version 19's hash."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI and panel docs, and what layer 1 settled",
+   "intro": [
+    "The CLI reference describes the new commands, the panel guide describes a request's drawer, and the README names the third kind. The plan moves to <code>in-progress</code> and gains a section 8 recording what building layer 1 settled, such as the drawer's digits and the line's color."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "\"Use the inbox\" gains requests, <code>done</code>, and <code>decline</code>, and the permission rules list the new ask rules."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "A request's drawer, the <code>request</code> tool, and the header's request count."
+    },
+    {
+     "path": "README.md",
+     "note": "Names requests and the <code>request</code> tool beside questions and notices."
+    },
+    {
+     "path": "docs/projects/inbox/requests/readme.md",
+     "note": "Status <code>in-progress</code>, and section 8, what layer 1 settled."
+    }
+   ]
+  }
+ ]
+}
