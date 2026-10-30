@@ -383,17 +383,20 @@ shows within 30 seconds, without a restart.
 ### Read your inbox in Projector's panel
 
 An agent in Claude Code asks you a question with Projector's `ask` tool,
-which the model sees as `mcp__projector__ask`, and tells you something that
-needs no answer with the `tell` tool, `mcp__projector__tell`. Either way it
-keeps working. When an item it posted no longer needs you, such as a question
-your reply settled, the agent takes it back with the `withdraw` tool,
-`mcp__projector__withdraw`, by the number `ask` or `tell` returned. The panel
-never shows that number, so the agent names an item to you by what it asks or
-tells. When your reply shows that a question was unclear, the agent rewrites
-the question in place with the `revise` tool, `mcp__projector__revise`. When
-you tell it you dismissed or snoozed an item by mistake, the agent brings the
-item back under its number with the `restore` tool, `mcp__projector__restore`,
-rather than asking again. An agent that runs `project inbox ask`, `tell`,
+which the model sees as `mcp__projector__ask`, tells you something that
+needs no answer with the `tell` tool, `mcp__projector__tell`, and asks you to
+do something only you can do, such as running a command it may not run, with
+the `request` tool, `mcp__projector__request`. Either way it keeps working.
+When an item it posted no longer needs you, such as a question your reply
+settled, the agent takes it back with the `withdraw` tool,
+`mcp__projector__withdraw`, by the number `ask`, `tell`, or `request`
+returned. The panel never shows that number, so the agent names an item to
+you by what it asks, tells, or requests. When your reply shows that a
+question or a request was unclear, the agent rewrites it in place with the
+`revise` tool, `mcp__projector__revise`. When you tell it you dismissed,
+declined, or snoozed an item by mistake, the agent brings the item back under
+its number with the `restore` tool, `mcp__projector__restore`, rather than
+asking again. An agent that runs `project inbox ask`, `tell`, `request`,
 `withdraw`, `revise`, or `restore` from the shell reaches the same inbox, as
 [Use the inbox](cli.md#use-the-inbox) describes.
 
@@ -401,13 +404,14 @@ The items are a list below the pull requests, newest first, each line
 starting with `-`. An open question's line is drawn in the theme's
 `permission` color, the one Claude Code gives its own permission prompts,
 because an agent's question usually asks leave to do something. An open
-notice's line is drawn in the theme's mid gray, `inactive`, apart from the
-`subtle` of a resolved or snoozed item, so you can tell which items want an
-answer and which want a read. Each line ends with the pull request the item
-is about, as the panel labels it, and how long ago it was posted. The panel
-appears when an item arrives or is restored, even after you hid it, and in
-a terminal the header counts the open questions and the open notices after
-the pull requests, before its time.
+request's line is drawn in the theme's `suggestion` blue. An open notice's
+line is drawn in the theme's mid gray, `inactive`, apart from the `subtle` of
+a resolved or snoozed item, so you can tell which items want an answer, which
+want work, and which want a read. Each line ends with the pull request the
+item is about, as the panel labels it, and how long ago it was posted. The
+panel appears when an item arrives or is restored, even after you hid it, and
+in a terminal the header counts the open questions, the open requests, and
+the open notices after the pull requests, before its time.
 
 ```text
   /projector                1 pull request · 2 questions · 1 notice  12s   [-]
@@ -429,10 +433,10 @@ it back, and otherwise yellow for a draft and green for a pull request that
 is ready. Click a pull request's number to expand them with its drawer
 open. A collapsed kind of item becomes a line such as `+ 2 questions` at
 the top of the items, drawn in the kind's color. Click the line, or the
-count again, to expand it. The pull requests, the questions, and the notices
-collapse apart from each other, and each stays collapsed, new ones included,
-until you expand it. While a collapsed kind has nothing open, the header has
-no count for it, so its muted items show in the list.
+count again, to expand it. The pull requests, the questions, the requests,
+and the notices collapse apart from each other, and each stays collapsed,
+new ones included, until you expand it. While a collapsed kind has nothing
+open, the header has no count for it, so its muted items show in the list.
 
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press Enter on it from the keyboard instead. While
@@ -535,6 +539,19 @@ a notice answers nothing, but it closes the notice's drawer; the notice
 stays in the panel until you dismiss it. **dismiss notice** clears the
 notice once you have read it and closes its drawer, and nothing goes back
 to the agent.
+
+A request's drawer shows its steps, then **Done** on `1` and **Declined** on
+`2` in the options' place, then **discuss request** and **snooze request**.
+There is no **dismiss request**, because declining says the same no. Like an
+option, **Done** and **Declined** record nothing at once: each puts the quoted
+request, a blank line, and its word in the prompt, with the cursor below for
+any notes. Sending the prompt records the outcome, closes the drawer, and
+carries your notes to the agent, so nothing else goes back. Only that word
+alone on the first line under the quote counts as the outcome. Anything else
+there, such as `done?` or a question about which build to test, is a reply:
+the request stays open, and the reply reaches the agent as your prompt. A
+done or declined request's drawer marks its outcome, and a declined one offers
+**restore request**.
 
 **dismiss**, **restore**, and **unsnooze** act at once. A dismissed item
 stays in the list a while, struck through, as the paragraph on resolved
@@ -640,7 +657,7 @@ so nothing reaches the agent until you send. A resolved question's options
 have no digits.
 
 An open item's own line, at the top of its drawer, reads `0:` before it,
-for every item, open or resolved, question or notice. Press `0` the same
+for every item, open or resolved, of every kind. Press `0` the same
 two ways, while the panel has the keyboard or first into an empty prompt
 while the line is wholly in view in the panel, and the drawer closes, as a
 click or Enter on that line closes it. A pull

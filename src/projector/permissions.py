@@ -24,9 +24,10 @@ widens an agent's authority, such as `review.allow_approve`, and
 `project site build` and `serve` run the shell command `--prepare` names, or
 the checkout's own `site.prepare` once `--allow-prepare` allows it. Ask rules
 also cover what only the person may record: `project inbox answer`,
-`dismiss`, and `snooze` record the person's answer to an item an agent
-posted, or their choice to dismiss or put it off, so an agent running one
-could answer its own question. Projector's panel runs those commands itself,
+`dismiss`, `snooze`, `done`, and `decline` record the person's answer to an
+item an agent posted, their outcome for a request, or their choice to dismiss
+or put it off, so an agent running one could answer its own question or mark
+its own request done. Projector's panel runs those commands itself,
 not through an agent's shell, so the person answering from the panel is never
 asked. `project inbox restore` needs no ask rule: it reopens an item the
 person dismissed or snoozed, which takes no choice from them, and an agent
@@ -74,7 +75,7 @@ allowed command outside its sandbox, and can give it a terminal the agent
 types into, so the rules also leave out every command that can run another
 program: `create` and `edit`, whose editor an agent could drive,
 `review gate`, and `site build` and `serve`. They leave out `inbox answer`,
-`dismiss`, and `snooze` too. A new command reaches Codex once it is added
+`dismiss`, `snooze`, `done`, and `decline` too. A new command reaches Codex once it is added
 here and `init` rewrites the file.
 """
 
@@ -91,7 +92,8 @@ from .core import FileAction, write_through
 ALLOW = ("Bash(project *)",)
 ASK = ("Bash(project init *)", "Bash(project upgrade *)", "Bash(project config set *)",
        "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
-       "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)")
+       "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project inbox done *)",
+       "Bash(project inbox decline *)")
 # The narrower rules Projector wrote before `Bash(project *)` covered them,
 # which `init` removes from `permissions.allow`.
 SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
@@ -101,7 +103,8 @@ SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "
 RETIRED_ASK = ("Bash(project -*)",)
 
 ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
-         "`--prepare` or `--allow-prepare`, and `project inbox answer`, `dismiss`, and `snooze`")
+         "`--prepare` or `--allow-prepare`, and `project inbox answer`, `dismiss`, `snooze`, `done`, and "
+         "`decline`")
 COMMANDS = "every `project` command but the few that reach outside Projector's own state"
 
 # Each pattern Codex may run without asking, and outside its sandbox, with the
@@ -112,8 +115,8 @@ CODEX_ALLOW = (
      "Runs a Projector command that works on plans, loops, or pull request summaries, or prints its version or "
      "help."),
     (["project", "config", ["get", "list", "paths"]], "Reads Projector's configuration."),
-    (["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "restore", "revise", "show", "tell",
-                           "watch", "withdraw"]],
+    (["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "request", "restore", "revise", "show",
+                           "tell", "watch", "withdraw"]],
      "Posts, revises, reads, withdraws, restores, or delivers an inbox item, but never records the person's "
      "answer to one."),
     (["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "release",
@@ -132,8 +135,8 @@ CODEX_RULES = (
     "# Codex's usual approval decides every command these rules leave out: `project init`, `project upgrade`,\n"
     "# `project config set` and `unset`, `project create` and `project edit`, which can open an editor,\n"
     "# `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
-    "# the command line names, `project inbox answer`, `dismiss`, and `snooze`, which record the person's\n"
-    "# choice, and a command line that starts with an option.\n"
+    "# the command line names, `project inbox answer`, `dismiss`, `snooze`, `done`, and `decline`, which\n"
+    "# record the person's choice, and a command line that starts with an option.\n"
     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
               f'    justification = "{justification}",\n)\n'
               for pattern, justification in CODEX_ALLOW)

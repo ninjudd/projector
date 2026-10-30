@@ -2,12 +2,14 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-code'
 
 import type {
+  Answerable,
   Checks,
   Item,
   LoopKind,
   Notice,
   PullRequest,
   Question,
+  Request,
   Row,
   Section,
   SeenLoop,
@@ -27,11 +29,15 @@ import {
   letterAt,
   liveAgent,
   needsDelivery,
+  OUTCOMES,
   proposalOf,
   quoteOf,
   readPrompt,
   relayNote,
   replyNote,
+  REQUEST_DESCRIPTION,
+  REQUEST_SCHEMA,
+  requestArguments,
   RESTORE_DESCRIPTION,
   RESTORE_SCHEMA,
   restoreArguments,
@@ -60,6 +66,7 @@ const POLL_MS = 30_000
 const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null, error: null }
 const ASK_TOOL = 'mcp__projector__ask'
 const TELL_TOOL = 'mcp__projector__tell'
+const REQUEST_TOOL = 'mcp__projector__request'
 const WITHDRAW_TOOL = 'mcp__projector__withdraw'
 const REVISE_TOOL = 'mcp__projector__revise'
 const RESTORE_TOOL = 'mcp__projector__restore'
@@ -89,13 +96,23 @@ const QUESTION_COLOR = 'permission'
  */
 const NOTICE_COLOR = 'inactive'
 
+/**
+ * The theme color of an open request's line: the blue Claude Code gives its
+ * suggestions, apart from a question's and a notice's.
+ */
+const REQUEST_COLOR = 'suggestion'
+
 /** The kinds of item, in the order the header counts them. */
-const ITEM_KINDS: readonly Item['kind'][] = ['question', 'notice']
+const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice']
 
 /** What the header counts, in its order: the pull requests, then each kind of item. */
 const SECTIONS: readonly Section[] = ['pr', ...ITEM_KINDS]
 
-const KIND_COLORS: Record<Item['kind'], string> = { question: QUESTION_COLOR, notice: NOTICE_COLOR }
+const KIND_COLORS: Record<Item['kind'], string> = {
+  question: QUESTION_COLOR,
+  notice: NOTICE_COLOR,
+  request: REQUEST_COLOR,
+}
 
 /**
  * The color of a pull request's branch on its drawer's facts line: the
@@ -267,16 +284,16 @@ let proposed: Proposal[] = []
 let ring: { requestId: string; key: string | undefined } | undefined
 
 /**
- * Records what a question's drawer put in the prompt: an option, or an empty
- * answer for discuss. It takes the place of the question's last fresh pick,
- * and of any stale pick that put the same text in the prompt, since a sent
- * prompt cannot tell the two apart.
+ * Records what a question's or request's drawer put in the prompt: an option
+ * or an outcome, or an empty answer for discuss. It takes the place of the
+ * item's last fresh pick, and of any stale pick that put the same text in the
+ * prompt, since a sent prompt cannot tell the two apart.
  */
-function propose(question: Question, answer: string): void {
-  const quote = quoteOf(question)
+function propose(item: Answerable, answer: string): void {
+  const quote = quoteOf(item)
   const isKept = (one: Proposal) =>
-    one.isStale === true ? one.quote !== quote || one.answer !== answer : one.ref !== question.ref
-  proposed = [...proposed.filter(isKept), { ref: question.ref, quote, answer }]
+    one.isStale === true ? one.quote !== quote || one.answer !== answer : one.ref !== item.ref
+  proposed = [...proposed.filter(isKept), { ref: item.ref, quote, answer }]
 }
 
 /** The few variables the panel's paths are written with, read once per load. */
@@ -577,7 +594,7 @@ async function closeLeftDrawer($: Engine, time: number): Promise<void> {
  * An item as the CLI prints it, without the session the panel adds. Each kind
  * is its own `Omit`, because one over the union would merge their `kind`s.
  */
-type Printed = Omit<Question, 'session'> | Omit<Notice, 'session'>
+type Printed = Omit<Question, 'session'> | Omit<Notice, 'session'> | Omit<Request, 'session'>
 
 /** The item a CLI command printed with `--json`, in the session it belongs to. */
 const itemOf = (stdout: string, session: string): Item => ({
@@ -648,25 +665,27 @@ async function settle($: Engine, ref: string, outcome: 'delivered' | 'reopen', r
   )
   if (ran?.exitCode === 0) await replace($, itemOf(ran.stdout, session))
   if (outcome === 'reopen') {
-    // You never see an item's number, so the toast names the question by its
-    // subject. A restore's line is not sent again, and its question stays open.
-    const question = (await read($, items)).find(one => one.ref === ref && one.session === session)
-    const quoted = question === undefined ? undefined : quoteOf(question)
+    // You never see an item's number, so the toast names the item by its
+    // subject. A restore's line is not sent again, and its item stays open.
+    const item = (await read($, items)).find(one => one.ref === ref && one.session === session)
+    const quoted = item === undefined ? undefined : quoteOf(item)
     const why = reason ? ` (${reason})` : ''
     void $.ui.toast(
       text.startsWith('RESTORED ')
-        ? `projector: word that ${quoted ?? 'a question'} is open again did not reach its agent${why}`
-        : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
+        ? `projector: word that ${quoted ?? 'an item'} is open again did not reach its agent${why}`
+        : item?.kind === 'request'
+          ? `projector: the outcome of ${quoted ?? 'a request'} did not reach its agent${why}; mark it done or declined again`
+          : `projector: ${quoted === undefined ? 'an answer' : `the answer to ${quoted}`} did not reach its agent${why}; answer it again`,
     )
   }
 }
 
 /**
- * Claims a recorded answer and delivers it: to the subagent that asked while
- * it can still read a message, otherwise to the main loop as a prompt of its
- * own, which waits for the session to be idle.
+ * Claims a recorded answer or outcome and delivers it: to the subagent that
+ * posted the item while it can still read a message, otherwise to the main
+ * loop as a prompt of its own, which waits for the session to be idle.
  */
-async function deliver($: Engine, question: Question): Promise<void> {
+async function deliver($: Engine, question: Answerable): Promise<void> {
   const { ref, session } = question
   delivering.add(ref)
   try {
@@ -829,15 +848,16 @@ async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
 }
 
 /**
- * Records an answer a sent prompt gave and marks it delivered, because the
+ * Records an answer or outcome a sent prompt gave, with `record`, such as
+ * `['answer', '3.a']` or `['done', '5']`, and marks it delivered, because the
  * prompt itself carries it to the main loop. The panel's own deliverer leaves
- * the question alone meanwhile, so the agent hears the answer once.
+ * the item alone meanwhile, so the agent hears it once.
  */
-async function answerFromPrompt($: Engine, question: Question, letter: string): Promise<void> {
-  const { ref, session } = question
+async function recordFromPrompt($: Engine, item: Answerable, record: readonly string[]): Promise<void> {
+  const { ref, session } = item
   delivering.add(ref)
   try {
-    const answered = await project($, ['inbox', 'answer', `${ref}.${letter}`, '--session', session, '--json'])
+    const answered = await project($, ['inbox', ...record, '--session', session, '--json'])
     if (answered.exitCode !== 0) return
     const claimed = await project($, ['inbox', 'claim', ref, '--session', session, '--json'])
     if (claimed.exitCode !== 0) return
@@ -845,7 +865,7 @@ async function answerFromPrompt($: Engine, question: Question, letter: string): 
     const ran = await project($, ['inbox', 'delivered', ref, '--claim', token, '--session', session, '--json'])
     if (ran.exitCode === 0) await replace($, itemOf(ran.stdout, session))
   } catch {
-    // An answer recorded but not marked delivered is the panel's to deliver on a later tick.
+    // An answer or outcome recorded but not marked delivered is the panel's to deliver on a later tick.
   } finally {
     delivering.delete(ref)
   }
@@ -1027,6 +1047,7 @@ export const register: Register = on => {
     for (const tool of [
       { name: 'ask', description: ASK_DESCRIPTION, inputSchema: ASK_SCHEMA },
       { name: 'tell', description: TELL_DESCRIPTION, inputSchema: TELL_SCHEMA },
+      { name: 'request', description: REQUEST_DESCRIPTION, inputSchema: REQUEST_SCHEMA },
       { name: 'withdraw', description: WITHDRAW_DESCRIPTION, inputSchema: WITHDRAW_SCHEMA },
       { name: 'revise', description: REVISE_DESCRIPTION, inputSchema: REVISE_SCHEMA },
       { name: 'restore', description: RESTORE_DESCRIPTION, inputSchema: RESTORE_SCHEMA },
@@ -1076,6 +1097,17 @@ export const register: Register = on => {
     }
   }).catch(() => ({ deny: 'Projector could not record the notice; tell the person in the conversation instead' }))
 
+  on('tool.call', { tool: REQUEST_TOOL }, async ($, e) => {
+    const args = requestArguments(e, await $.session.id(), e.agentId)
+    const posted = await runTool($, args, 'ask the person in the conversation instead')
+    if ('deny' in posted) return posted
+    const ref = posted.stdout.trim()
+    void $.ui.notify(String(e.request), { title: 'Projector request' }).catch(() => undefined)
+    return {
+      result: `Requested ${ref}. Keep working on anything the result does not block; its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE ${ref} or DECLINED ${ref}. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.`,
+    }
+  }).catch(() => ({ deny: 'Projector could not record the request; ask the person in the conversation instead' }))
+
   // The panel takes the withdrawn item from the CLI at once, so it leaves the
   // panel before the next read of the store.
   on('tool.call', { tool: WITHDRAW_TOOL }, async ($, e) => {
@@ -1102,11 +1134,15 @@ export const register: Register = on => {
     const item = itemOf(ran.stdout, session)
     await replace($, item)
     proposed = proposed.map(proposal => (proposal.ref === item.ref ? { ...proposal, isStale: true } : proposal))
+    const { ref } = item
     return {
-      result: `Revised ${item.ref}. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER ${item.ref} or DISMISSED ${item.ref}.`,
+      result:
+        item.kind === 'request'
+          ? `Revised ${ref}. Projector’s panel shows the new text, and its outcome still arrives as a message that starts DONE ${ref} or DECLINED ${ref}.`
+          : `Revised ${ref}. Projector’s panel shows the new text, and its answer still arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}.`,
     }
   }).catch(() => ({
-    deny: 'Projector could not revise the question; ask the revised question in the conversation instead',
+    deny: 'Projector could not revise the item; post the revised text in the conversation instead',
   }))
 
   // The panel takes the restored item from the CLI at once, so it is open in
@@ -1125,7 +1161,9 @@ export const register: Register = on => {
       result:
         item.kind === 'notice'
           ? `Restored ${ref}. It is back in Projector’s panel until the person dismisses it; nothing comes back to you.`
-          : `Restored ${ref}. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
+          : item.kind === 'request'
+            ? `Restored ${ref}. It is open in Projector’s panel again, and its outcome arrives as a message that starts DONE ${ref} or DECLINED ${ref}. An agent that already heard DECLINED ${ref} hears RESTORED ${ref} first.`
+            : `Restored ${ref}. It is open in Projector’s panel again, and its answer arrives as a message that starts ANSWER ${ref} or DISMISSED ${ref}. An agent that already heard DISMISSED ${ref} hears RESTORED ${ref} first.`,
     }
   }).catch(() => ({
     deny: 'Projector could not restore the item; tell the person in the conversation that it could not be restored',
@@ -1167,39 +1205,46 @@ export const register: Register = on => {
       return entered
     }
 
-    // An option the panel put in the prompt answers its question: the prompt
-    // carries the answer to the main loop, and once the prompt has entered,
-    // the panel records it. Any other text under a quoted question replies to
-    // it, and the prompt carries the reply while the question stays open.
-    // Either way the prompt is done with the question's drawer. A subagent's
-    // question gets a note naming it, so the main loop can pass the answer or
-    // the reply on. Only a prompt you sent, at the terminal or through Remote
+    // An option the panel put in the prompt answers its question, and `Done`
+    // or `Declined` under a quoted request is its outcome: the prompt carries
+    // the answer or the outcome, with any notes after it, to the main loop,
+    // and once the prompt has entered, the panel records it. Any other text
+    // under a quoted question or request replies to it, and the prompt
+    // carries the reply while the item stays open. Either way the prompt is
+    // done with the item's drawer. A subagent's item gets a note naming it,
+    // so the main loop can pass the answer, the outcome, or the reply on. Only a prompt you sent, at the terminal or through Remote
     // Control, counts: an agent's message or a notification can quote a
     // question it is still waiting on.
     const session = await $.session.id()
     const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
     const mine = isYours ? (await read($, items)).filter(item => item.session === session) : []
-    const { answers, replies } = readPrompt(e.text, mine, isYours ? proposed : [])
-    // An open question is done only when the prompt answers or replies to
-    // it, so a quote two questions share closes one drawer, not both.
-    const isOpenQuestion = (item: Item) => item.kind === 'question' && item.answer === undefined
+    const { answers, outcomes, replies } = readPrompt(e.text, mine, isYours ? proposed : [])
+    // An open question or request is done only when the prompt resolves or
+    // replies to it, so a quote two of them share closes one drawer, not both.
+    const isOpenAnswerable = (item: Item) => item.kind !== 'notice' && item.answer === undefined
     const done = new Set([
-      ...mine.filter(item => !isOpenQuestion(item) && e.text.includes(quoteOf(item))).map(item => item.ref),
+      ...mine.filter(item => !isOpenAnswerable(item) && e.text.includes(quoteOf(item))).map(item => item.ref),
       ...answers.map(one => one.question.ref),
-      ...replies.map(question => question.ref),
+      ...outcomes.map(one => one.request.ref),
+      ...replies.map(item => item.ref),
     ])
     if (isYours) proposed = proposed.filter(proposal => !done.has(proposal.ref) && !e.text.includes(proposal.quote))
-    const answered = answers.map(one => one.question).filter(question => question.agentId !== undefined)
-    const replied = replies.filter(question => question.agentId !== undefined)
+    const answered = [...answers.map(one => one.question), ...outcomes.map(one => one.request)].filter(
+      item => item.agentId !== undefined,
+    )
+    const replied = replies.filter(item => item.agentId !== undefined)
     const agents = answered.length + replied.length === 0 ? [] : await $.agent.list().catch(() => [])
     const notes = [
-      ...answered.map(question => relayNote(question, agents)),
-      ...replied.map(question => replyNote(question, agents)),
+      ...answered.map(item => relayNote(item, agents)),
+      ...replied.map(item => replyNote(item, agents)),
     ]
     const entered = await next(notes.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...notes] })
     if (entered.drop === undefined) {
       for (const ref of done) void closeDrawer($, `item:${ref}`).catch(() => undefined)
-      for (const one of answers) void answerFromPrompt($, one.question, one.letter)
+      for (const one of answers) void recordFromPrompt($, one.question, ['answer', `${one.question.ref}.${one.letter}`])
+      for (const one of outcomes) {
+        void recordFromPrompt($, one.request, [one.outcome === 'done' ? 'done' : 'decline', one.request.ref])
+      }
     }
     return entered
   }).catch(($, e, next) => next(e))
@@ -1538,6 +1583,37 @@ export const register: Register = on => {
         ),
       ]
     }
+    // An open request's outcomes take the options' place, on the digits 1 and
+    // 2: each puts the quoted request and its word in the prompt, with room
+    // for notes under it, and only sending it records the outcome. A resolved
+    // request's outcomes are text, the one recorded marked, followed by the
+    // person's text when they gave one.
+    const drawOutcomes = (request: Request) => {
+      const { ref, answer } = request
+      const recorded = answer === undefined ? undefined : 'done' in answer ? 'done' : 'declined' in answer ? 'declined' : undefined
+      const said = answer !== undefined && 'text' in answer ? answer.text : undefined
+      const pick = (word: string) => {
+        propose(request, word)
+        fill(`${proposalOf(request, word)}\n\n`)
+      }
+
+      return [
+        <Text key={`before-outcomes:${ref}`}> </Text>,
+        ...Object.entries(OUTCOMES).map(([word, outcome], index) =>
+          answer === undefined ? (
+            <Button key={`outcome:${ref}.${outcome}`} plain hotkey={String(index + 1)} onPress={() => pick(word)}>
+              {word}
+            </Button>
+          ) : (
+            <Text key={`outcome:${ref}.${outcome}`} color={outcome === recorded ? undefined : 'subtle'}>
+              {word}
+              {outcome === recorded && <Text color="success"> ✓</Text>}
+              {outcome === recorded && said !== undefined && <Text color="subtle">{` ${said}`}</Text>}
+            </Text>
+          ),
+        ),
+      ]
+    }
     const drawItem = (item: Item) => {
       const { ref, answer } = item
       const key = `item:${ref}`
@@ -1547,11 +1623,12 @@ export const register: Register = on => {
       // through, so it reads as put off rather than dismissed.
       const isSnoozed = isSnoozedAt(item, time)
       const isOpened = opened === key
-      const color = !isOpen || isSnoozed ? 'subtle' : item.kind === 'question' ? QUESTION_COLOR : NOTICE_COLOR
+      const color = !isOpen || isSnoozed ? 'subtle' : KIND_COLORS[item.kind]
       const pull = pullOf(item)
       // Each action names the kind of item it acts on. A dismissed or snoozed
       // item's drawer offers to bring it back where it offered to dismiss or
-      // snooze it, on the same digit; a resolved item cannot be snoozed.
+      // snooze it, on the same digit; a resolved item cannot be snoozed. An
+      // open request offers no dismiss, since declining it says the same no.
       const restore = (name: string, hotkey: string): Line => ({
         name,
         label: `${name} ${item.kind}`,
@@ -1567,20 +1644,24 @@ export const register: Register = on => {
           label: `discuss ${item.kind}`,
           hotkey: '7',
           onPress: () => {
-            if (item.kind === 'question') propose(item, '')
+            if (item.kind !== 'notice') propose(item, '')
             fill(`${quoteOf(item)}\n\n`)
           },
         },
         ...(isOpen
           ? [
-              {
-                name: 'dismiss',
-                label: `dismiss ${item.kind}`,
-                hotkey: '8',
-                onPress: () => {
-                  void act($, item, 'dismiss')
-                },
-              },
+              ...(item.kind === 'request'
+                ? []
+                : [
+                    {
+                      name: 'dismiss',
+                      label: `dismiss ${item.kind}`,
+                      hotkey: '8',
+                      onPress: () => {
+                        void act($, item, 'dismiss')
+                      },
+                    },
+                  ]),
               isSnoozed
                 ? restore('unsnooze', '9')
                 : {
@@ -1626,7 +1707,13 @@ export const register: Register = on => {
       // position, and the open line's key is one the list never draws, so a
       // move onto the line in the list waits for the panel to draw the list.
       const line = isOpened ? `close:${ref}` : key
-      const first = item.kind === 'question' && isOpen ? `answer:${ref}.${letterAt(0)}` : `discuss:${ref}`
+      const first = !isOpen
+        ? `discuss:${ref}`
+        : item.kind === 'question'
+          ? `answer:${ref}.${letterAt(0)}`
+          : item.kind === 'request'
+            ? `outcome:${ref}.${OUTCOMES.Done}`
+            : `discuss:${ref}`
       const isSending = !isOpen && item.deliveredAt === undefined
 
       return (
@@ -1673,6 +1760,7 @@ export const register: Register = on => {
               {item.detail !== '' && <Text key={`before-detail:${ref}`}> </Text>}
               {item.detail !== '' && <Markdown key={`detail:${ref}`} text={item.detail} />}
               {item.kind === 'question' && !isChoosingLength && drawAnswers(item)}
+              {item.kind === 'request' && !isChoosingLength && drawOutcomes(item)}
               <Text key={`before-buttons:${ref}`}> </Text>
               {drawLines(ref, isChoosingLength ? lengths : actions)}
             </Box>
