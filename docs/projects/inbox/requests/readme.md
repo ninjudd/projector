@@ -59,6 +59,7 @@ start action.
    snooze`. A request with a start action shows **start** before them.
    Opening the drawer, reading the steps, or leaving the drawer open sends
    nothing and records nothing.
+
 Steps 3 to 5 apply only to a request with a start action. A request without
 one goes from step 2 straight to step 6, and never shows **start**,
 `starting`, `ready`, or `blocked`.
