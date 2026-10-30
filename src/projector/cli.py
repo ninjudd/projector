@@ -716,8 +716,8 @@ def seconds(text: str) -> float:
 
 
 def add_inbox_parser(subcommands) -> None:
-    parser = subcommands.add_parser("inbox", help="put a question or a notice in the person's inbox, and answer, "
-                                                   "dismiss, snooze, restore, and deliver it")
+    parser = subcommands.add_parser("inbox", help="put a question, a notice, or a request in the person's inbox, "
+                                                   "and answer, dismiss, snooze, restore, and deliver it")
     commands = parser.add_subparsers(dest="inbox_command", required=True)
 
     def command(name: str, help_text: str) -> argparse.ArgumentParser:
@@ -744,6 +744,17 @@ def add_inbox_parser(subcommands) -> None:
     tell.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
     tell.add_argument("--agent", help="the posting subagent's id, when a subagent posts")
 
+    request = command("request", "check, number, and record a request for work only the person can do, and print "
+                                 "its number, such as 3")
+    request.add_argument("request", help="the request, in one line of at most 120 characters")
+    detail = request.add_mutually_exclusive_group()
+    detail.add_argument("--detail", default="", help="the steps the person follows, as Markdown")
+    detail.add_argument("--detail-file", type=Path, help="read the steps from this file")
+    request.add_argument("--start", help="what you do once the person presses start, in one line; leave it out when "
+                                         "there is nothing to prepare")
+    request.add_argument("--pr", help="the pull request it is about, as owner/repo#number")
+    request.add_argument("--agent", help="the posting subagent's id, when a subagent posts")
+
     listing = command("list", "list open items: the session's, or every session's without one")
     listing.add_argument("--all", action="store_true", help="include delivered items")
 
@@ -754,15 +765,36 @@ def add_inbox_parser(subcommands) -> None:
     answer.add_argument("reference", help="the question's number and the answer's letter, such as 3.a")
     answer.add_argument("--text", help="the typed answer, for the question's last letter")
 
-    dismiss = command("dismiss", "record that you dismissed a question or read a notice")
+    dismiss = command("dismiss", "record that you dismissed a question, read a notice, or declined a request")
     dismiss.add_argument("reference")
+
+    for name, help_text in (("done", "record that you did a request"),
+                            ("decline", "record that you declined a request")):
+        outcome = command(name, help_text)
+        outcome.add_argument("reference", help="the request's number, such as 3")
+        outcome.add_argument("--text", help="what you tell the agent, in one line")
+
+    start = command("start", "record that you pressed start on a request, for the start action you read")
+    start.add_argument("reference", help="the request's number, such as 3")
+    start.add_argument("--action", required=True, help="the start action as you read it, which must match the "
+                                                       "request's")
+
+    ready = command("ready", "record that you did a started request's start action")
+    ready.add_argument("reference", help="the request's number, such as 3")
+
+    block = command("block", "record why you could not do a started request's start action")
+    block.add_argument("reference", help="the request's number, such as 3")
+    block.add_argument("--reason", required=True, help="what the person should do before pressing retry, in one "
+                                                       "line")
 
     withdraw = command("withdraw", "take back an open item that no longer needs the person, sending the agent nothing")
     withdraw.add_argument("reference")
 
-    revise = command("revise", "replace an open question's text, keeping its number")
-    revise.add_argument("reference", help="the question's number, such as 3")
+    revise = command("revise", "replace an open question's or request's text, keeping its number")
+    revise.add_argument("reference", help="the item's number, such as 3")
     revise.add_argument("--question", help="the new question, in one line of at most 120 characters")
+    revise.add_argument("--request", help="the new request, in one line of at most 120 characters")
+    revise.add_argument("--start", help="the request's new start action, in one line; an empty one removes it")
     revise.add_argument("--recommend", help="the new recommended answer, which becomes answer a")
     options = revise.add_mutually_exclusive_group()
     options.add_argument("--option", action="append",
@@ -1326,9 +1358,14 @@ def item_state(item: dict) -> str:
         return f"snoozed until {wake_time(until)}"
     answered = item.get("answer")
     if not answered:
-        return "open"
+        progress = item.get("progress")
+        if progress:
+            return progress["state"]
+        return "started" if item.get("started") else "open"
     if answered.get("dismissed"):
-        return "withdrawn" if answered.get("withdrawn") else "dismissed"
+        return "withdrawn" if answered.get("withdrawn") else "declined" if answered.get("declined") else "dismissed"
+    if answered.get("done"):
+        return "done"
     if item.get("deliveredAt"):
         return f"delivered {inbox.answer_ref(item)}"
     if inbox.live_claim(item):
@@ -1342,8 +1379,12 @@ def print_item(item: dict) -> None:
         print(f"about {item['pr']}")
     if item.get("detail"):
         print(f"\n{item['detail']}\n")
-    if not inbox.is_notice(item):
+    if item["kind"] == "question":
         print_choices(item)
+    if item.get("start"):
+        print(f"start: {item['start']}")
+    if (item.get("progress") or {}).get("reason"):
+        print(f"blocked: {item['progress']['reason']}")
     print(item_state(item))
 
 
@@ -1360,12 +1401,16 @@ def run_inbox(arguments: argparse.Namespace) -> int:
     ref, letter = inbox.parse_reference(written) if written is not None else (None, None)
     if letter is not None and command != "answer":
         raise inbox.InboxError(f"`{command}` takes the item's reference, {ref}, without an answer letter")
-    if command in ("ask", "tell"):
+    if command in ("ask", "tell", "request"):
         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
         session = inbox_session(arguments, True)
         posted = {"detail": detail, "pr": arguments.pr, "agent": arguments.agent}
-        item = (inbox.ask(session, arguments.question, arguments.recommend, arguments.option, **posted)
-                if command == "ask" else inbox.tell(session, arguments.notice, **posted))
+        if command == "ask":
+            item = inbox.ask(session, arguments.question, arguments.recommend, arguments.option, **posted)
+        elif command == "tell":
+            item = inbox.tell(session, arguments.notice, **posted)
+        else:
+            item = inbox.request(session, arguments.request, start=arguments.start, **posted)
         print(json_text({"item": item}) if json_output else item["ref"])
     elif command == "list":
         session = inbox_session(arguments, False)
@@ -1390,11 +1435,25 @@ def run_inbox(arguments: argparse.Namespace) -> int:
                 else inbox.dismiss(session, ref, withdrawn=command == "withdraw"))
         done = {"answer": "answered", "dismiss": "dismissed", "withdraw": "withdrew"}[command]
         print(json_text({"item": item}) if json_output else f"{done} {inbox.answer_ref(item)}")
+    elif command in ("done", "decline"):
+        record = inbox.done if command == "done" else inbox.decline
+        item = record(inbox_session(arguments, False), ref, arguments.text)
+        print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
+    elif command in ("start", "ready", "block"):
+        session = inbox_session(arguments, False)
+        if command == "start":
+            item = inbox.start(session, ref, arguments.action)
+        elif command == "ready":
+            item = inbox.ready(session, ref)
+        else:
+            item = inbox.block(session, ref, arguments.reason)
+        print(json_text({"item": item}) if json_output else f"{item_state(item)} {item['ref']}")
     elif command == "revise":
         detail = arguments.detail_file.read_text(encoding="utf-8") if arguments.detail_file else arguments.detail
         options = [] if arguments.no_options else arguments.option
         item = inbox.revise(inbox_session(arguments, False), ref, question=arguments.question, detail=detail,
-                            recommend=arguments.recommend, options=options)
+                            recommend=arguments.recommend, options=options, request=arguments.request,
+                            start=arguments.start)
         print(json_text({"item": item}) if json_output else f"revised {item['ref']}")
     elif command == "snooze":
         item = inbox.snooze(inbox_session(arguments, False), ref, arguments.minutes)

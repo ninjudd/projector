@@ -13,7 +13,8 @@ instructions and supporting scripts without a generated copy or host-specific
 fork.
 
 The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
-`start-review-loop`, `start-watch-loop`, `summarize-pr`, and `write`.
+`start-review-loop`, `start-watch-loop`, `summarize-pr`, `write`, and
+`rewrite`.
 `summarize-pr` summarizes a pull request's changes as a guided review page.
 Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
 `$<skill>`.
@@ -58,8 +59,12 @@ reviews and links the summary from its review;
 review and fix against. Every skill that writes prose a person reads, such as
 a plan, a review, a summary, or a pull request body, follows the writing
 guide in `skills/writing.md`. `write` applies the same guide to any other
-prose you ask for, such as `/projector:write tighten the install section of
-the README`. The core workflows use the local CLI and do not require MCP.
+prose you ask for, such as `/projector:write a README section on the
+site`. `rewrite` revises text that already exists, such as a file, a pull
+request description, a comment, or a Slack message, and writes the result
+back where the text lives when it can, such as
+`/projector:rewrite the install section of the README`. The core workflows
+use the local CLI and do not require MCP.
 
 When dependent work needs more than one pull request to stay reviewable,
 `implement` opens it as a stack that GitHub records, using the `gh stack`
@@ -194,12 +199,14 @@ session starts a loop's watcher for the first time.
 ```text
   /projector                                              2 pull requests  12s   [-]
    #267 draft List a loop's open pull requests above the Claude Code prompt 2h
-   #258 draft grace Name the reviewed head in a review's sig… conflict · 5* 5m
+   #258 draft grace Name the reviewed head in a review's sig… conflict · 2* 5m
         reviewing · review-signature · +84 −12 in 5 files · checks passing
         7: discuss PR
         8: dismiss PR
         open in github
         open in projector
+        src/review.py:412 · ada · P2 · The signature names the base, not the head
+        docs/cli.md:88 · ada · P3 · Say which head the line names · outdated
                                                            ctrl+x tab to focus
 ```
 
@@ -207,7 +214,7 @@ Each line is the pull request's number, `draft` or `ready`, its author when
 someone else wrote it, and the title. Notes follow when the pull request
 has them: `conflict` or `changes requested` in red, `approved` in green,
 and last the number of unresolved review threads before a `*` in yellow,
-such as `5*`. The ` · ` between two notes keeps the default text color. The
+such as `2*`. The ` · ` between two notes keeps the default text color. The
 line ends with how long ago the pull request last changed, in the column
 where the inbox's items end with their ages. Only the title shortens on a
 narrow terminal.
@@ -281,19 +288,30 @@ checks' state takes a color of its own, and the rest, ` in 5 files` and
 each `·` included, keeps the default text color. Below that come two
 actions, a line each, on the digits `7` and `8`, as
 [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
-describes, and then two links:
+describes, and then the links:
 
 - **discuss PR** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
   one repository.
-- **dismiss PR** asks to be sure first, as
-  [dismissing an item](#read-your-inbox-in-projectors-panel) does, then
-  keeps the pull request out of every loop of this session that tracks
-  it, and the panel drops its line and says which loops stopped, such as
-  `stopped watching and reviewing acme/app#258`.
+- **dismiss PR** asks to be sure first, because a dismissed pull request
+  leaves the panel at once. It replaces the action lines with
+  `8: yes, dismiss PR` and `9: no, keep it`, so a stray `8` only asks.
+  Press `8` again to keep the pull request out of every loop of this
+  session that tracks it, and the panel drops its line and says which
+  loops stopped, such as `stopped watching and reviewing acme/app#258`.
+  `9`, closing the drawer, or opening another keeps it.
 - **open in github** opens the pull request on GitHub.
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
+- **Each unresolved review thread**, oldest first, opens the thread's first
+  comment on GitHub. Its line names the file and line the thread is on, who
+  opened it, and the first line of its first comment, cut to 60 characters,
+  and ends in `outdated` when a later push changed the lines it is on. These
+  are the threads the yellow `*` counts. GitHub folds an outdated thread
+  away, and hides an older one on a long timeline behind **Load more**, so
+  the link reaches a thread the pull request's page does not show. The
+  threads appear once GitHub answers the drawer's own query, a moment
+  after the drawer opens.
 
 Each link has a line of its own, because a terminal that does not draw
 hyperlinks shows a link's URL after its text, and a line shared with
@@ -312,8 +330,8 @@ with its drawer closed.
 On the main screen, which Claude Code uses under tmux and when
 `CLAUDE_CODE_NO_FLICKER=0` is set, use the panel from the keyboard, as
 [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
-describes. The **open in github** and **open in projector** links take no
-press there; the terminal opens them the way it opens any other link.
+describes. The **open in github**, **open in projector**, and thread links take
+no press there; the terminal opens them the way it opens any other link.
 
 The panel lists only this session's loops. It finds a loop by the
 `--tracked` file its watcher reads, and learns that file when the session
@@ -325,8 +343,14 @@ says so once and leaves that loop out.
 The panel reloads when one of the session's watchers reports a change and
 when a turn ends, and every 30 seconds otherwise, only while it is shown.
 Each reload asks GitHub for every pull request in one `gh api graphql` call
-and reads `panel.background` with `project config get`. The skills never
-depend on the panel, and Codex has no equivalent.
+and reads `panel.background` with `project config get`. That call costs one
+point of the account's hourly GraphQL quota for each 50 or so pull
+requests, because it asks only whether each thread is resolved. An open
+drawer's threads cost a point of their own, because GitHub charges for each
+thread's first comment. So the panel asks for them in a second call, for
+that one pull request, when the drawer opens and on each reload while it
+stays open. It skips the call when the pull request has no unresolved
+thread. The skills never depend on the panel, and Codex has no equivalent.
 
 #### Choose the panel's color
 
@@ -359,41 +383,63 @@ shows within 30 seconds, without a restart.
 ### Read your inbox in Projector's panel
 
 An agent in Claude Code asks you a question with Projector's `ask` tool,
-which the model sees as `mcp__projector__ask`, and tells you something that
-needs no answer with the `tell` tool, `mcp__projector__tell`. Either way it
-keeps working. When an item it posted no longer needs you, such as a question
-your reply settled, the agent takes it back with the `withdraw` tool,
-`mcp__projector__withdraw`, by the number `ask` or `tell` returned. The panel
-never shows that number, so the agent names an item to you by what it asks or
-tells. When your reply shows that a question was unclear, the agent rewrites
-the question in place with the `revise` tool, `mcp__projector__revise`. When
-you tell it you dismissed or snoozed an item by mistake, the agent brings the
-item back under its number with the `restore` tool, `mcp__projector__restore`,
-rather than asking again. An agent that runs `project inbox ask`, `tell`,
+which the model sees as `mcp__projector__ask`, tells you something that
+needs no answer with the `tell` tool, `mcp__projector__tell`, and asks you to
+do something only you can do, such as running a command it may not run, with
+the `request` tool, `mcp__projector__request`. Either way it keeps working.
+When a request's start action is done, the agent marks it ready with the
+`ready` tool, `mcp__projector__ready`, or says why it could not with the
+`block` tool, `mcp__projector__block`.
+When an item it posted no longer needs you, such as a question your reply
+settled, the agent takes it back with the `withdraw` tool,
+`mcp__projector__withdraw`, by the number `ask`, `tell`, or `request`
+returned. The panel never shows that number, so the agent names an item to
+you by what it asks, tells, or requests. When your reply shows that a
+question or a request was unclear, the agent rewrites it in place with the
+`revise` tool, `mcp__projector__revise`. When you tell it you dismissed,
+declined, or snoozed an item by mistake, the agent brings the item back under
+its number with the `restore` tool, `mcp__projector__restore`, rather than
+asking again. An agent that runs `project inbox ask`, `tell`, `request`,
 `withdraw`, `revise`, or `restore` from the shell reaches the same inbox, as
 [Use the inbox](cli.md#use-the-inbox) describes.
 
-The items are a list below the pull requests, oldest first, each line
+The items are a list below the pull requests, newest first, each line
 starting with `-`. An open question's line is drawn in the theme's
 `permission` color, the one Claude Code gives its own permission prompts,
 because an agent's question usually asks leave to do something. An open
-notice's line is drawn in the theme's mid gray, `inactive`, apart from the
-`subtle` of a resolved or snoozed item, so you can tell which items want an
-answer and which want a read. Each line ends with the pull request the item
-is about, as the panel labels it, and how long ago it was posted. The panel
-appears when an item arrives or is restored, even after you hid it, and in
-a terminal the header counts the open questions and the open notices after
-the pull requests, before its time.
+request's line is drawn in the theme's `suggestion` blue. An open notice's
+line is drawn in the theme's mid gray, `inactive`, apart from the `subtle` of
+a resolved or snoozed item, so you can tell which items want an answer, which
+want work, and which want a read. Each line ends with the pull request the
+item is about, as the panel labels it, and how long ago it was posted. The
+panel appears when an item arrives or is restored, even after you hid it, and
+in a terminal the header counts the open questions, the open requests, and
+the open notices after the pull requests, before its time.
 
 ```text
   /projector                1 pull request · 2 questions · 1 notice  12s   [-]
    #337 draft Retry failed webhook deliveries with backoff            1h
 
+   - Force-pushed #337 to drop a stray debug file               #337  1m
    - Run project init to add the publish rule?                        2m
    - Decline the finding about the retry budget?                #337  5m
-   - Force-pushed #337 to drop a stray debug file               #337  1m
                                                      ctrl+x tab to focus
 ```
+
+Click a count in the header to collapse what it counts to one line, so a
+long list of pull requests or a burst of notices does not push the questions
+out of view. A collapsed line starts with `+`, where an item's starts with
+`-`, to say it expands. Collapsed pull requests become a line such as
+`+ #12 #14 #15` in their place, listing each in the rows' order and coloring
+it by status: red when a conflict, a change request, or failing checks hold
+it back, and otherwise yellow for a draft and green for a pull request that
+is ready. Click a pull request's number to expand them with its drawer
+open. A collapsed kind of item becomes a line such as `+ 2 questions` at
+the top of the items, drawn in the kind's color. Click the line, or the
+count again, to expand it. The pull requests, the questions, the requests,
+and the notices collapse apart from each other, and each stays collapsed,
+new ones included, until you expand it. While a collapsed kind has nothing
+open, the header has no count for it, so its muted items show in the list.
 
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press Enter on it from the keyboard instead. While
@@ -484,9 +530,8 @@ question's drawer has three actions:
   stay in view while you type. Type your reply under the quote, or on the
   quote's own line, and send the prompt. The reply reaches the agent and
   answers nothing.
-- **dismiss question** asks to be sure, as the paragraph after the next
-  describes, then sets the question aside without an answer and closes the
-  drawer.
+- **dismiss question** sets the question aside without an answer and
+  closes the drawer.
 - **snooze question** asks how long to put the question off, as the next
   paragraph but one describes.
 
@@ -498,20 +543,40 @@ stays in the panel until you dismiss it. **dismiss notice** clears the
 notice once you have read it and closes its drawer, and nothing goes back
 to the agent.
 
-**dismiss** dismisses nothing at once. It replaces the action lines with
-a confirmation, so a stray `8` only asks:
+A request's drawer shows its steps, then **Done** on `1` and **Declined** on
+`2` in the options' place, then **discuss request** and **snooze request**.
+There is no **dismiss request**, because declining says the same no. Like an
+option, **Done** and **Declined** record nothing at once: each puts the quoted
+request, a blank line, and its word in the prompt, with the cursor below for
+any notes. Sending the prompt records the outcome, closes the drawer, and
+carries your notes to the agent, so nothing else goes back. Only that word
+alone on the first line under the quote counts as the outcome. Anything else
+there, such as `done?` or a question about which build to test, is a reply:
+the request stays open, and the reply reaches the agent as your prompt. A
+done or declined request's drawer marks its outcome, and a declined one offers
+**restore request**.
 
-```text
-   8: yes, dismiss question
-   9: no, keep it
-```
+A request the agent must prepare for, such as installing a build on your
+phone, has a start action. Its drawer says `Start:` and what the agent will
+do, and offers **start request** on `8`. Opening the drawer, reading the
+steps, or leaving it open sends nothing. Press **start request** when you are
+ready to begin: the panel records the start action its drawer shows, and the
+agent hears `STARTED` with that action. If the agent revised the start action
+since the panel drew the drawer, the press records nothing, and the drawer
+shows the new action for you to read and press again. While the agent works,
+the drawer says `Starting:`, and the line ends with `starting`. Once the
+agent is done, they read `Ready:` and `ready`, in green, and you begin. When
+the agent could not do it, they read `Blocked:` with its reason and
+`blocked`, in yellow, and **retry request** takes the place of start, for you
+to press once you have done what the reason says. **Done** and **Declined**
+work throughout. A request without a start action shows none of this.
 
-Press `8` again, or click the first line, to dismiss; a notice's reads
-`yes, dismiss notice`. `9`, closing the drawer, or opening another keeps
-the item and puts the actions back. **restore** and **unsnooze** act at
-once.
+**dismiss**, **restore**, and **unsnooze** act at once. A dismissed item
+stays in the list a while, struck through, as the paragraph on resolved
+items below describes, so you undo a dismissal you did not mean by opening
+its line again and choosing **restore**.
 
-**snooze** snoozes nothing at once either. A question's options give way
+**snooze** snoozes nothing at once. A question's options give way
 to the lengths it offers, and the action lines to a way back:
 
 ```text
@@ -598,8 +663,8 @@ the options and the actions. Enter on the open line closes the drawer and
 leaves the ring on the line. A click opens and closes a drawer without
 moving the ring. In the same way, Enter on the **snooze** line moves the
 ring onto the first length, and Enter on **cancel** moves it back onto the
-**snooze** line. Enter on **dismiss** moves it onto the confirmation, and
-Enter on `no, keep it` back onto **dismiss**.
+**snooze** line. Enter on a pull request's **dismiss** moves it onto the
+confirmation, and Enter on `no, keep it` back onto **dismiss**.
 
 An open question's options read `1:` to `6:`, the digit in the accent
 color. Press a digit while the panel has the keyboard, or type it first into
@@ -610,7 +675,7 @@ so nothing reaches the agent until you send. A resolved question's options
 have no digits.
 
 An open item's own line, at the top of its drawer, reads `0:` before it,
-for every item, open or resolved, question or notice. Press `0` the same
+for every item, open or resolved, of every kind. Press `0` the same
 two ways, while the panel has the keyboard or first into an empty prompt
 while the line is wholly in view in the panel, and the drawer closes, as a
 click or Enter on that line closes it. A pull

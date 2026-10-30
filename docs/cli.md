@@ -56,13 +56,22 @@ what it did to each:
   where the Projector plugin is installed: build every change with the
   `implement` skill, so a watch loop starts on its pull request, open every
   pull request as a draft until a clean review marks it ready, and, where the
-  `ask` and `tell` tools are available, post anything the person must not
-  miss to the inbox as well as saying it in the conversation. It tells an
-  agent whose question the person replied to, rather than picking an option,
-  to answer what they asked and then withdraw the question with the
-  `withdraw` tool, revise it with the `revise` tool, or leave it open, and to
-  withdraw any other item that no longer needs them each time the person
-  writes. `init` appends the section to an existing file or creates
+  `ask`, `tell`, and `request` tools are available, post anything the person
+  must not miss to the inbox as well as saying it in the conversation. It
+  tells an agent to post a request only for work it cannot do itself, such as
+  running a command it is not allowed to run or checking a change on the
+  person's phone, with numbered steps that each say what the person should
+  see, and to read a done request's notes and not post a declined one again.
+  It tells an agent to give a request a start action only when it must
+  prepare something first, to do the slow part, such as a build, before it
+  posts the request so the start is quick, to do the start action only once
+  `STARTED` arrives, exactly as that message quotes it, and then to mark the
+  request ready or blocked.
+  It tells an agent whose question or request the person replied to, rather
+  than resolving it, to answer what they asked and then withdraw the item
+  with the `withdraw` tool, revise it with the `revise` tool, or leave it
+  open, and to withdraw any other item that no longer needs them each time
+  the person writes. `init` appends the section to an existing file or creates
   the file with only that section, and refreshes the section when it falls
   behind the template this command ships. Everything outside the markers is
   yours and is never changed.
@@ -92,7 +101,10 @@ what it did to each:
     "Bash(project site *prepare*)",
     "Bash(project inbox answer *)",
     "Bash(project inbox dismiss *)",
-    "Bash(project inbox snooze *)"
+    "Bash(project inbox snooze *)",
+    "Bash(project inbox done *)",
+    "Bash(project inbox decline *)",
+    "Bash(project inbox start *)"
   ]
   ```
 
@@ -104,17 +116,20 @@ what it did to each:
   `Bash(project site *prepare*)` asks before either flag, as `--prepare x` or
   `--prepare=x`, and before `--no-prepare` too. Those two commands refuse an
   abbreviated option such as `--prep`, so no shorter spelling slips past the
-  rule. `project inbox answer`, `dismiss`, and `snooze` record your answer to
-  an item an agent posted, or your choice to dismiss or put it off, so an
-  agent running one could answer its own question. Projector's panel runs
-  them itself, not through an agent's shell, so answering from the panel never
-  asks. Claude Code checks ask rules before allow rules, so an ask rule
-  prompts for a command that `Bash(project *)` also allows, and a trailing
-  ` *` matches the command with no arguments too. `project` refuses an option
-  before the command, so every command line it runs starts with its command,
-  and that command's ask rule matches wherever the options go:
-  `Bash(project init *)` asks before `project init --root .`. A line such as
-  `project --root . init` matches no ask rule, and `project` refuses it.
+  rule. `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, and
+  `start` record your answer to an item an agent posted, your outcome for a
+  request, your consent to a request's start action, or your choice to
+  dismiss or put it off, so an agent running one could answer its own
+  question, mark its own request done, or consent to its own start action.
+  Projector's panel runs them itself, not through an agent's shell, so
+  answering from the panel never asks. Claude Code checks ask rules before
+  allow rules, so an ask rule prompts for a command that `Bash(project *)`
+  also allows, and a trailing ` *` matches the command with no arguments
+  too. `project` refuses an option before the command, so every command line
+  it runs starts with its command, and that command's ask rule matches
+  wherever the options go: `Bash(project init *)` asks before
+  `project init --root .`. A line such as `project --root . init` matches no
+  ask rule, and `project` refuses it.
 
   `project edit`, and `project create` without `--no-edit`, open your
   `$VISUAL` or `$EDITOR`, and need no ask rule. They open it only at a
@@ -197,7 +212,7 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "inbox", ["ask", "claim", "delivered", "list", "reopen", "restore", "revise", "show", "tell", "watch", "withdraw"]],
+      pattern = ["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore", "revise", "show", "tell", "watch", "withdraw"]],
       decision = "allow",
   )
   prefix_rule(
@@ -213,8 +228,9 @@ what it did to each:
   No rule matches `project init`, `project upgrade`, `project config set` or
   `unset`, `project create` or `project edit`, whose editor an agent could
   drive, `project review gate`, `project site build` or `serve`,
-  `project inbox answer`, `dismiss`, or `snooze`, which record your choice,
-  or a command line that starts with an option, so Codex's usual approval
+  `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, or
+  `start`, which record your choice, or a command line that starts with an
+  option, so Codex's usual approval
   decides them, in its sandbox. A command added to Projector later reaches
   Codex once Projector names it and you run `init` again. To see what the
   rules allow, run
@@ -1909,7 +1925,8 @@ do.
 ## Use the inbox
 
 `project inbox` keeps what an agent puts in front of you: questions, which
-you answer, and notices, which you read. The agent keeps working while an
+you answer, notices, which you read, and requests, work only you can do,
+which you mark done or decline. The agent keeps working while an
 item waits, and you can deal with it from any host. Each session's inbox is
 its own directory under `$XDG_STATE_HOME/projector/inbox/`, or under
 `~/.local/state/projector/inbox/` when `XDG_STATE_HOME` is unset, and every
@@ -1926,7 +1943,7 @@ $ project inbox ask "Decline the finding about the retry budget?" \
 ```
 
 The command prints the question's number at once. Each session numbers its
-items 1, 2, 3, and on, in one count that questions and notices share, so `3`
+items 1, 2, 3, and on, in one count that every kind of item shares, so `3`
 is the third item the session posted. `--pr` records the pull request the
 item is about, as `owner/repo#number`, and does not change its number.
 Projector's panel never shows the number, so in what you write to the person,
@@ -1987,12 +2004,14 @@ your prompt. The agent then withdraws the question if the reply settles it,
 revises it if the reply shows it was unclear, or leaves it open while it still
 needs you.
 
-`answer`, `dismiss`, and `snooze` record your choice, so the permission rules
-`project init` adds ask you before an agent runs one, in Claude Code, and
-leave them to Codex's usual approval. Otherwise an agent could answer its own
-question. Projector's panel runs them itself, so answering there never asks.
-`restore` takes no choice from you, so an agent runs it without asking, in
-either host, when you say a dismissal was a mistake.
+`answer`, `dismiss`, `snooze`, `done`, `decline`, and `start` record your
+choice, so the permission rules `project init` adds ask you before an agent
+runs one, in Claude Code, and leave them to Codex's usual approval. Otherwise
+an agent could answer its own question, mark its own request done, or press
+start for you. Projector's
+panel runs them itself, so answering there never asks. `restore` takes no
+choice from you, so an agent runs it without asking, in either host, when
+you say a dismissal was a mistake.
 
 Every command refuses any other form of reference, such as `#337.3`,
 `octo/web#12.1`, or `q2`, with exit code 65, and no command lists, delivers,
@@ -2033,7 +2052,7 @@ halfway leaves the answer for the next one. A lapsed claim's token still
 works until another `claim` takes the answer. `watch` marks an answer
 delivered only after its line prints, so when nothing reads the watcher any
 more, the answer waits for the next deliverer rather than being lost. Each
-session keeps its 100 most recently delivered items, of either kind.
+session keeps its 100 most recently delivered items, of any kind.
 
 An agent tells you something that needs no answer with `tell`, such as the
 answer to a question you asked it or something it did that you should know
@@ -2052,6 +2071,75 @@ line or 120 characters, a notice that holds a tab, and a `--pr` that is not
 one with exit code 65. Once you have read it, run `project inbox dismiss 4`.
 Nothing goes back to the agent, so the dismissal also marks the notice
 delivered, and `list` shows it, as `dismissed`, only with `--all`.
+
+An agent asks you to do something only you can do with `request`, such as
+running a command it may not run, signing in to a service, or checking a
+change on your own device. A request takes one line, the steps you follow as
+`--detail` or `--detail-file`, the same `--pr` and `--agent` as a question,
+and the next number in the session's count:
+
+```console
+$ project inbox request "Test the gutters on your phone" \
+    --detail "1. Open Fyra. 2. Hold a track." --session "$SESSION"
+5
+```
+
+Once you have done the work, run `project inbox done 5`, or
+`project inbox decline 5` when you will not do it. Either takes `--text`
+with one line for the agent. The deliverer sends the agent `DONE 5` or
+`DECLINED 5` and the request, with an arrow and your text after them when you
+gave one:
+
+```console
+$ project inbox done 5 --text "Step 4 didn't work" --session "$SESSION"
+done 5
+$ project inbox watch --once --session "$SESSION"
+DONE 5 Test the gutters on your phone → Step 4 didn't work
+```
+
+`request` refuses a request by the checks `tell` makes of a notice. A request
+takes no answer, so `answer` refuses one with exit code 65, and `done` and
+`decline` refuse any other kind of item, a resolved request, and a `--text` of
+more than one line. `dismiss` declines a request with no text. A decline is a
+dismissal, so `restore` reopens a declined request, and the agent that heard
+`DECLINED` hears `RESTORED`. `list` shows a request as `open`, `started`,
+`ready`, `blocked`, `done`, `declined`, or `withdrawn`.
+
+When the agent must prepare something before you can begin, such as
+installing a build on your phone, it gives the request a start action with
+`--start`. Nothing happens until you say you are ready with `start`, which
+takes the start action as you read it and refuses one that no longer
+matches, so you consent only to what you read. The deliverer then sends the
+agent `STARTED` with that action, and the agent does it and marks the
+request `ready`, or `block`s it with what you should do first. Run `start`
+again to retry a blocked request:
+
+```console
+$ project inbox request "Test the gutters" \
+    --start "Install build c0d62a3b on your iPhone" --session "$SESSION"
+6
+$ project inbox start 6 --action "Install build c0d62a3b on your iPhone"
+started 6
+$ project inbox watch --once --session "$SESSION"
+STARTED 6 Test the gutters → Install build c0d62a3b on your iPhone
+$ project inbox block 6 --session "$SESSION" \
+    --reason "The phone is locked. Unlock it and press retry."
+blocked 6
+```
+
+`start` refuses, with exit code 65, a request with no start action, one
+already started and not blocked, a resolved one, and an `--action` that
+differs from the stored start action. `ready` and `block` refuse a request
+that is not started or that is already ready or blocked, and `block` refuses
+an empty reason or one longer than one line. `revise` takes `--start` to
+change the start action, and an empty `--start ""` removes it. Revising a
+started, ready, or blocked request returns it to open, so a start you
+pressed for the old text never covers the new. A restored request returns to
+open the same way. When you mark a request done or decline it before its
+`STARTED` reaches the agent, the outcome takes its place, and the agent hears
+only the outcome. A `STARTED` already on its way still arrives, and the
+outcome follows it. When `STARTED` cannot be delivered, the start is taken
+back, so you press start again.
 
 To put off an item you cannot deal with yet, snooze it. `snooze` hides it for
 an hour, or for the whole minutes that `--for` gives, up to a day (1440
@@ -2113,10 +2201,11 @@ $ project inbox withdraw 3 --session "$SESSION"
 withdrew 3
 ```
 
-`withdraw` takes either kind. In one write, it records the item as dismissed
+`withdraw` takes any kind. In one write, it records the item as dismissed
 and withdrawn and marks it delivered, so nothing goes back to the agent, not
-even a `DISMISSED` line for a question. Projector's panel drops the item at
-once, and `list --all` shows it as `withdrawn`. `withdraw` refuses what
+even a `DISMISSED` line for a question or a `DECLINED` line for a request.
+Projector's panel drops the item at once, and `list --all` shows it as
+`withdrawn`. `withdraw` refuses what
 `dismiss` refuses: an answer letter, such as `3.a`, and an item already
 answered, dismissed, or withdrawn, with exit code 65, and a number no session
 holds, with exit code 66. In Claude Code, the agent withdraws an item with
@@ -2140,7 +2229,10 @@ order given, and `--no-options` drops them all, which leaves only the
 recommendation. `--detail`, or `--detail-file`, replaces the detail, and
 `--detail ""` clears it. The question keeps its number, the pull request it is
 about, when it was posted, the subagent that asked, and any snooze, so its
-answer reaches the same agent as before. Only a question can be revised:
+answer reaches the same agent as before. A request is revised the same way,
+with `--request` in place of `--question` and with `--detail`, and `revise`
+refuses `--question`, `--recommend`, and `--option` for a request and
+`--request` for a question. Only a question or a request can be revised:
 `revise` refuses a notice with exit code 65. It also refuses, with exit code
 65, a revision that fails a check `ask` makes, such as a line of 121
 characters or a sixth option, a revision with nothing to change, an answer

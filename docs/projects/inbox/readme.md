@@ -2181,3 +2181,118 @@ theme.
 | --- | --- |
 | `#abc`, `#FFFFFF`, `rgb(0,0,0)`, `rgb(255, 255, 255)`, `rgb( 30,30,40 )`, `ansi256(0)`, and `ansi256(255)` draw as written, and `sidebar`, `black`, and `white` draw `composerSidebarBackground`, `rgb(0,0,0)`, and `rgb(255,255,255)` | `panel.background colors the panel, and auto or no value leaves the color to the theme` in `hooks/panel.test.tsx` |
 | `rgb(256,0,0)`, `rgb(1,2)`, `ansi256(256)`, `#12345`, `#abcd`, `inverseText`, `composerSidebarBackground`, `text`, `subtle`, `sidebr`, `gray`, an empty string, and a number each draw the theme's color, with one toast per value naming what the panel takes | `a panel.background the panel does not take leaves the color to the theme, and the panel says so once` |
+
+## 24. Dismiss an item at once
+
+§ 18 made an item's **dismiss** ask to be sure, so a stray `8` only asked.
+Issue #354 found the step guards against a mistake that is already easy to
+undo: a dismissed item stays in the list, struck through, and its drawer
+offers **restore** on the same digit. The step slowed down clearing a busy
+inbox, most of all when several sessions post at once.
+
+### 24.1 What changes
+
+- **An item's dismiss acts at once.** `8` on an open question or notice
+  runs `project inbox dismiss` and closes the drawer, as `yes, dismiss` did.
+  This supersedes § 18's confirmation for items.
+- **A pull request's dismiss still asks.** A dismissed pull request leaves
+  the panel at once and comes back only through `project loop restore`, so
+  its `8: yes, dismiss PR` and `9: no, keep it` stay.
+
+### 24.2 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| An item's `8` dismisses at once and closes the drawer, a notice's too; restore and unsnooze act at once; a pull request's dismiss shows its confirmation, `9` keeps it, and the ring moves onto the confirmation and back | `an item’s dismiss, restore, and unsnooze act at once, and a pull request’s dismiss asks to be sure` in `hooks/panel.test.tsx` |
+
+## 25. List the items newest first
+
+The panel listed its items oldest first, so when a session posted several
+in a row, the one that just arrived, usually the one to act on next, landed
+at the bottom and could be missed. Issue #353 asked for the newest on top.
+
+### 25.1 What changes
+
+- **Newest first.** The panel lists every item it shows, questions and
+  notices from every session, by when it was posted, newest at the top.
+  This supersedes the oldest-first order of § 2.6 of the `questions` plan.
+- **A revision keeps its place.** `revise` leaves `postedAt` as it was, so
+  a revised question stays where it was first posted rather than looking
+  new.
+- **Matching keeps its order.** A typed quote that more than one open
+  question shares still goes to the oldest, as `readPrompt` decides; only
+  the drawn order changes.
+
+### 25.2 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| Three items list newest first, a revised question keeps its place, and an item posted later goes on top | `the panel lists its items newest first, and a revised question keeps its place` in `hooks/panel.test.tsx` |
+
+## 26. Collapse a kind of item from the header's counts
+
+When several sessions post at once, a burst of notices can push the
+questions, the items waiting on an answer, out of view. Issue #355 asked to
+collapse either kind to one line from the counts the header already shows.
+
+### 26.1 What changes
+
+- **Each count is a button.** In a terminal, the header's `2 questions` and
+  `1 notice` are plain Buttons, in `subtle` as before. When the header counts
+  no items it stays one `Text`.
+- **A collapsed kind is one line.** Its items leave the list, and a line
+  such as `- 2 questions`, in the kind's color, takes their place at the top
+  of the items, questions before notices. Pressing the line, or the count
+  again, expands the kind.
+- **The panel remembers it.** `panelCollapsed` holds the collapsed kinds for
+  the session, so a new item of a collapsed kind stays folded away.
+- **Nothing open, nothing folded.** A kind with no open item has no count to
+  expand it from, so its muted items show until another one arrives.
+
+### 26.2 Why this design
+
+- **Filtering, not grouping.** The list keeps one newest-first order, as
+  § 25 set; collapsing only filters a kind out and puts its count on top, so
+  no section headers are needed.
+
+### 26.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| A notice count collapses notices to `- 1 notice` in `inactive` at the top while the header keeps counting; questions collapse apart, their line first; the line and the count each expand; a kind with nothing open shows its items, and a new item collapses again | `a count in the header collapses its kind to one line at the top of the items, and the line expands it` in `hooks/panel.test.tsx` |
+| The header reads the same, its age ending at the panel's edge, with its counts as Buttons | `asks through the tool, and the panel lists the question below the pull requests` |
+
+## 27. Collapse the pull requests from the header's count
+
+Several pull requests can push the items below them out of view as surely
+as a burst of notices can. The header counts the pull requests as it counts
+each kind of item, so that count collapses them the same way.
+
+### 27.1 What changes
+
+- **The count is a button.** In a terminal, the header's `2 pull requests`
+  is a plain Button, in `subtle`, as the item counts are. The header stays
+  one `Text` only when it counts nothing.
+- **Collapsed pull requests are one line.** Their rows, drawers included,
+  leave the panel, and a line such as `- 2 pull requests`, in the rows'
+  default color, takes their place above the items. Pressing the line, or
+  the count again, expands them.
+- **The panel remembers it.** `panelCollapsed` holds `pr` beside the kinds
+  of item, so the pull requests stay collapsed across reloads until you
+  expand them.
+
+### 27.2 Why this design
+
+- **One mechanism for every count.** The pull requests, the questions, and
+  the notices are a `Section` each, and the header's counts and the
+  collapsed lines are drawn from one list of them, so the three behave
+  alike.
+- **In their place, not at the top of the items.** The pull requests come
+  before the items, so their line stays where their rows were.
+
+### 27.3 Evidence
+
+| Behavior | Test |
+| --- | --- |
+| The pull requests' count collapses them to `- 1 pull request` in the default color while the header keeps counting; they collapse apart from the questions and stay collapsed across a reload; the line and the count each expand | `the pull requests’ count in the header collapses them to one line in their place, and the line expands them` in `hooks/panel.test.tsx` |
+| A header that counts only pull requests reads as before, in `subtle`, its age ending at the panel's edge | `draws one line per open pull request of the session’s own loops` and `the header’s age, a pull request’s age, and the key hint end in one column` |

@@ -1,7 +1,7 @@
 import type { AgentInfo, ConfigRow, FsEntry, On, PromptEditInput, PromptEditResult } from 'claude-code'
 import { expect, mock, test, type Engine, type Mounted } from 'claude-code/testing'
 
-import type { Notice, Question } from './types'
+import type { Notice, Question, Request } from './types'
 
 const HOME = '/home/ada'
 const REVIEW = `${HOME}/loops/review/tracked`
@@ -77,6 +77,9 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       reviewDecision: 'CHANGES_REQUESTED',
       reviewThreads: { nodes: [{ isResolved: false }] },
     }),
+    p12: pr(12, 'Change failing its checks', {
+      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+    }),
     p11: pr(11, 'Approved change', {
       reviewDecision: 'APPROVED',
       reviewThreads: { nodes: [{ isResolved: false }, { isResolved: false }, { isResolved: false }] },
@@ -87,7 +90,36 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       url: SEVEN,
       isDraft: true,
       mergeable: 'CONFLICTING',
-      reviewThreads: { nodes: [{ isResolved: false }, { isResolved: false }] },
+      reviewThreads: {
+        nodes: [
+          {
+            isResolved: false,
+            isOutdated: false,
+            path: 'src/fetch.ts',
+            line: 40,
+            comments: {
+              nodes: [
+                {
+                  url: `${SEVEN}#discussion_r1`,
+                  bodyText: 'P2 · The retry loop never sleeps between attempts, so a flaky server gets hammered\nMore.',
+                  author: { login: 'grace' },
+                },
+              ],
+            },
+          },
+          { isResolved: true, path: 'src/old.ts', line: 1 },
+          {
+            isResolved: false,
+            isOutdated: true,
+            path: 'src/[draft]_notes.md',
+            line: null,
+            originalLine: 3,
+            comments: {
+              nodes: [{ url: `${SEVEN}#discussion_r2`, bodyText: 'Why *this*?', author: { login: 'bob' } }],
+            },
+          },
+        ],
+      },
       author: { login: 'ada' },
       headRefName: 'fix-branch',
       additions: 12,
@@ -224,13 +256,19 @@ test('draws one line per open pull request of the session’s own loops', async 
   // panel reloaded as the rows say their ages: in the short form, `0s` for a reload just now as for an item posted
   // just now. The two sit two spaces apart, so the time ends in the rows' age column, at the edge of the panel's
   // lines. All of it is `subtle`, and no rule runs through it.
-  const header = await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  0s$/ })
-  expect(header?.text).toBe(`/projector${'2 pull requests  0s'.padStart(EDGE - '/projector'.length)}`)
-  expect(header?.props.color).toBe('subtle')
+  // The count is a button of its own, so the header is three pieces.
+  const header = await headerOf(ui)
+  expect(header).toBe(`/projector${'2 pull requests  0s'.padStart(EDGE - '/projector'.length)}`)
+  const texts = await ui.findAll({ type: 'Text' })
+  expect(texts.slice(0, 3).map(found => found.text)).toEqual([
+    `/projector${' '.repeat(EDGE - '/projector'.length - '2 pull requests  0s'.length)}`,
+    '2 pull requests',
+    '  0s',
+  ])
+  expect(texts.slice(0, 3).map(found => found.props.color)).toEqual(['subtle', 'subtle', 'subtle'])
   expect(await ui.find({ type: 'Text', text: /─|updated|ago|just now/ })).toBeUndefined()
   // The rows start on the line under the header, with no blank line between.
-  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts.slice(0, 3)).toEqual([header?.text, 'ready', ''])
+  expect(texts.slice(3, 5).map(found => found.text)).toEqual(['ready', ''])
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
@@ -382,7 +420,7 @@ test('the header’s age, a pull request’s age, and the key hint end in one co
   type Drawn = { type: string; props: Record<string, unknown>; children: (Drawn | string)[] }
   const inset = (await ui.findAll({ type: 'Box' }))[0]?.props ?? {}
   const panel = (await ui.find({ key: 'panel' })) as Drawn | undefined
-  const [header, rows, hint] = (panel?.children ?? []) as Drawn[]
+  const [, rows, hint] = (panel?.children ?? []) as Drawn[]
   expect(rows?.props).toMatchObject({ flexDirection: 'column', paddingLeft: 1, paddingRight: 1 })
   const width = (value: unknown) => (typeof value === 'number' ? value : NaN)
   const textOf = (element: Drawn | undefined) => (element?.children ?? []).join('')
@@ -390,8 +428,8 @@ test('the header’s age, a pull request’s age, and the key hint end in one co
   const end = width(inset.paddingLeft) + width(panel?.props.width) - width(panel?.props.paddingRight)
   const rowsEnd = end - width(rows?.props.paddingRight)
   expect(rowsEnd - start - width(rows?.props.paddingLeft)).toBe(COLUMNS)
-  expect(textOf(header)).toMatch(/^\/projector +1 pull request  \d+s$/)
-  expect(start + textOf(header).length).toBe(rowsEnd)
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
+  expect(start + (await headerOf(ui)).length).toBe(rowsEnd)
   expect(start + textOf(hint).length).toBe(rowsEnd)
   // A row fills the rows' width, its title giving way, so its age ends at their edge.
   expect(await ui.find({ type: 'Text', text: '45s' })).toBeDefined()
@@ -413,17 +451,18 @@ type PanelOptions = {
   env?: Record<string, string>
   files?: Record<string, string>
   settings?: Record<string, unknown>
+  github?: Beneath['github']
 }
 
 /**
  * A session on a Claude Code theme whose review loop tracks o/r#1, with the
- * theme's `/config` row, the files and the settings beneath the plugin. A
- * change of theme to `dark-ansi` is refused.
+ * theme's `/config` row, the files, the settings and GitHub's answers beneath
+ * the plugin. A change of theme to `dark-ansi` is refused.
  */
-function panelWorld(on: On, { theme = 'dark', env = {}, files = {}, settings = {} }: PanelOptions = {}) {
+function panelWorld(on: On, { theme = 'dark', env = {}, files = {}, settings = {}, github }: PanelOptions = {}) {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME, ...env })
-  const { commands } = world(on, { [REVIEW]: 'o/r#1\n', ...files }, undefined, { settings })
+  const { commands } = world(on, { [REVIEW]: 'o/r#1\n', ...files }, undefined, { settings, github })
   const toasts = toastsOf(on)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'projector' } }))
@@ -635,6 +674,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   ])
 
   await ui.press({ key: 'pr:x/y#7' })
+  await clock.settle()
   // The drawer's facts name no author, whoever wrote the pull request.
   const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files · checks passing$/ })
   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
@@ -663,16 +703,32 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect(opened).toBeDefined()
   expect(opened?.props.marginLeft).toBe(4)
   // Under the facts come the actions, a line each, then the links, each on a line of its own, so a terminal without hyperlinks shows the whole URL.
-  const lines = (opened?.children ?? []) as { type: string; props: { key?: string } }[]
-  expect(lines.map(line => line.props.key ?? line.type)).toEqual([
+  // The thread lines come as one list among the children, so the children are flattened first. A thread's line
+  // is a Text, which carries no key of its own.
+  type Line = { type: string; props?: { key?: string }; children?: unknown[] }
+  const lines = ((opened?.children ?? []) as unknown[]).flat() as Line[]
+  expect(lines.map(line => line.props?.key ?? line.type)).toEqual([
     'Text',
     'discuss:x/y#7',
     'dismiss:x/y#7',
     'github:x/y#7',
     'projector:x/y#7',
+    'Text',
+    'Text',
   ])
   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
+  // Each unresolved thread links to its first comment: where it is, who opened it, how it starts, cut to fit,
+  // and whether a push left it outdated. Its text is a Link's children, so brackets and stars stay as written.
+  const links = lines.slice(-2).map(line => (line.children as { type: string; props: { href: string }; children: string[] }[])[0])
+  expect(links.map(link => [link?.type, link?.props.href, link?.children.join('')])).toEqual([
+    [
+      'Link',
+      `${SEVEN}#discussion_r1`,
+      'src/fetch.ts:40 · grace · P2 · The retry loop never sleeps between attempts, so a fla…',
+    ],
+    ['Link', `${SEVEN}#discussion_r2`, 'src/[draft]_notes.md:3 · bob · Why *this*? · outdated'],
+  ])
   expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
 
   // discuss is a plain Button, so Enter fills the prompt on the main screen too.
@@ -682,6 +738,84 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
 
   await ui.press({ key: 'pr:x/y#7' })
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('reads a pull request’s threads only while its drawer is open, and only when the poll counted one', async ($, on) => {
+  const { clock, commands } = panelWorld(on, { files: { [WATCH]: 'x/y#7\n' } })
+  // The queries the panel sent GitHub since the last call.
+  let read = 0
+  const fresh = () => {
+    const sent = commands.filter(argv => argv[0] === 'gh').map(argv => argv.join(' '))
+    const since = sent.slice(read)
+    read = sent.length
+    return since
+  }
+  const isThreads = (query: string) => query.includes('comments(')
+
+  await startSession($, clock)
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+  // Each thread's first comment is a connection of its own, which would cost a point per pull request on every poll,
+  // so the poll asks only whether each thread is resolved.
+  const polls = fresh()
+  expect(polls.length).toBeGreaterThan(0)
+  expect(polls.filter(isThreads)).toEqual([])
+
+  const ui = await $.ui.mount(PANEL)
+  // GitHub counted no open thread on #1, so its drawer asks it nothing.
+  await ui.press({ key: 'pr:o/r#1' })
+  await clock.settle()
+  expect(fresh()).toEqual([])
+
+  // #7's drawer asks for #7's threads alone as it opens, and again on each poll while it stays open.
+  await ui.press({ key: 'pr:x/y#7' })
+  await clock.settle()
+  const [opening, ...rest] = fresh()
+  expect(rest).toEqual([])
+  expect(opening).toContain('r0: repository(owner: "x", name: "y") { p7: pullRequest(number: 7) { reviewThreads')
+  expect(opening).not.toContain('name: "r"')
+  expect(isThreads(opening ?? '')).toBe(true)
+  expect((await ui.findAll({ type: 'Link' })).map(link => link.props.href)).toEqual([
+    `${SEVEN}#discussion_r1`,
+    `${SEVEN}#discussion_r2`,
+  ])
+  await clock.advance(30_000 + TICK)
+  await clock.settle()
+  expect(fresh().map(isThreads)).toEqual([false, true])
+
+  // Once it closes, the poll reads no threads.
+  await ui.press({ key: 'pr:x/y#7' })
+  await clock.settle()
+  await clock.advance(30_000 + TICK)
+  await clock.settle()
+  expect(fresh().map(isThreads)).toEqual([false])
+  await ui.unmount()
+})
+
+test('keeps listing a drawer’s threads when GitHub cannot say what they are now', async ($, on) => {
+  let isOffline = false
+  const offline = { ...ran(''), exitCode: 1, stderr: 'error connecting to api.github.com\n' }
+  const { clock } = panelWorld(on, {
+    files: { [WATCH]: 'x/y#7\n' },
+    github: query => (isOffline && query.includes('comments(') ? offline : ran(answer(query))),
+  })
+
+  await startSession($, clock)
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'pr:x/y#7' })
+  await clock.settle()
+  expect(await ui.findAll({ type: 'Link' })).toHaveLength(2)
+
+  isOffline = true
+  await clock.advance(30_000 + TICK)
+  await clock.settle()
+  expect(await ui.findAll({ type: 'Link' })).toHaveLength(2)
   await ui.unmount()
 })
 
@@ -730,7 +864,7 @@ test('lists your pull requests first, then everyone else’s by author, naming t
   const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
   expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
   // The header counts everyone's pull requests the panel lists, the session's own and others'.
-  expect(await ui.find({ type: 'Text', text: /^\/projector +5 pull requests  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +5 pull requests  \d+s$/)
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts.filter(text => text === ' ')).toEqual([])
 
@@ -772,7 +906,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
   await clock.settle()
 
   const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: /^\/projector +2 pull requests  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests  \d+s$/)
   await ui.press({ key: 'pr:x/y#7' })
   // The drawer's actions are lines of their own, as an item's are.
   expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
@@ -792,7 +926,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
   // The header stops counting the dismissed pull request.
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
   await ui.unmount()
 })
 
@@ -905,7 +1039,7 @@ test('lists a pull request both loops track once, as watched and reviewed, and c
 
   const ui = await $.ui.mount(PANEL)
   // The header counts its one line once, in the singular.
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
   await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
   // Each loop takes its own color, and the `and` between them the default color.
@@ -1129,7 +1263,8 @@ const TICK = 5_000
 
 type HeldQuestion = Omit<Question, 'session'>
 type HeldNotice = Omit<Notice, 'session'>
-type Held = HeldQuestion | HeldNotice
+type HeldRequest = Omit<Request, 'session'>
+type Held = HeldQuestion | HeldNotice | HeldRequest
 type Clock = ReturnType<typeof mock.clock>
 
 const HOUR = 3_600_000
@@ -1157,12 +1292,26 @@ const notice = (fields: Partial<HeldNotice> = {}): HeldNotice => ({
   ...fields,
 })
 
+const requested = (fields: Partial<HeldRequest> = {}): HeldRequest => ({
+  ref: '3',
+  kind: 'request',
+  number: 3,
+  pr: null,
+  postedAt: NOW - 30_000,
+  subject: 'Test the gutters',
+  detail: '1. Open Fyra.',
+  ...fields,
+})
+
+/** A held item when it is a request, so a test reads a request's own fields. */
+const heldRequest = (item: Held | undefined): HeldRequest | undefined => (item?.kind === 'request' ? item : undefined)
+
 /** An item with the named fields cleared. */
 const without = <T extends Held>(item: T, ...keys: string[]): T =>
   Object.fromEntries(Object.entries(item).filter(([key]) => !keys.includes(key))) as T
 
-/** A question with its answer and claim cleared, as `reopen` leaves it. */
-const reopened = (question: HeldQuestion): HeldQuestion => without(question, 'answer', 'claim')
+/** A question or request with its answer and claim cleared, as `reopen` leaves it. */
+const reopened = <T extends HeldQuestion | HeldRequest>(item: T): T => without(item, 'answer', 'claim')
 
 /** `project inbox`, answered from items held in memory the way the CLI keeps them. */
 function questionStore(clock: Clock, seed: readonly Held[]) {
@@ -1196,12 +1345,22 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     const at = args.indexOf(`--${name}`)
     return at === -1 ? undefined : args[at + 1]
   }
-  const textOf = (question: HeldQuestion) =>
-    question.restoredAt !== undefined
-      ? `RESTORED ${question.ref} ${question.subject}`
-      : question.answer !== undefined && 'letter' in question.answer
-        ? `ANSWER ${question.ref}.${question.answer.letter} ${question.subject} → ${question.answer.text}`
-        : `DISMISSED ${question.ref} ${question.subject}`
+  /** Whether an open request's start waits for its `STARTED` line, as the CLI owes it. */
+  const owesStart = (item: Held): item is HeldRequest =>
+    item.kind === 'request' && item.answer === undefined && item.started !== undefined && item.started.deliveredAt === undefined
+  const textOf = (item: HeldQuestion | HeldRequest) => {
+    const { answer, ref, subject } = item
+    if (item.kind === 'request' && item.claim?.line === 'started') {
+      return `STARTED ${ref} ${subject} → ${item.started?.action ?? ''}`
+    }
+    if (item.restoredAt !== undefined) return `RESTORED ${ref} ${subject}`
+    if (answer !== undefined && 'letter' in answer) return `ANSWER ${ref}.${answer.letter} ${subject} → ${answer.text}`
+    if (answer !== undefined && ('done' in answer || 'declined' in answer)) {
+      const said = answer.text === undefined ? '' : ` → ${answer.text}`
+      return `${'done' in answer ? 'DONE' : 'DECLINED'} ${ref} ${subject}${said}`
+    }
+    return `DISMISSED ${ref} ${subject}`
+  }
 
   const run = (argv: string[]): Outcome | Promise<Outcome> => {
     const [, group, command = '', ...args] = argv
@@ -1229,11 +1388,11 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         })
         .then(() => listed)
     }
-    if (['ask', 'tell', 'withdraw', 'revise', 'restore'].includes(command)) {
+    if (['ask', 'tell', 'request', 'withdraw', 'revise', 'restore'].includes(command)) {
       if (refusal.rejection !== undefined) return { deny: refusal.rejection }
       if (refusal.code !== undefined) return failed(refusal.code, refusal.message ?? '')
     }
-    if (command === 'ask' || command === 'tell') {
+    if (command === 'ask' || command === 'tell' || command === 'request') {
       posted += 1
       const ref = String(posted)
       const agentId = flag(args, 'agent')
@@ -1247,10 +1406,13 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         ...(agentId === undefined ? {} : { agentId }),
       }
       const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
+      const start = flag(args, 'start')
       put(
         command === 'ask'
           ? { ...common, kind: 'question', choices: [flag(args, 'recommend') ?? '', ...options] }
-          : { ...common, kind: 'notice' },
+          : command === 'tell'
+            ? { ...common, kind: 'notice' }
+            : { ...common, kind: 'request', ...(start === undefined ? {} : { start }) },
       )
       return ran(`${ref}\n`)
     }
@@ -1263,7 +1425,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       failing.locks -= 1
       return failed(75, BUSY)
     }
-    if (item.answer !== undefined && ['answer', 'dismiss', 'withdraw', 'revise', 'snooze'].includes(command)) {
+    if (item.answer !== undefined && ['answer', 'dismiss', 'done', 'decline', 'withdraw', 'revise', 'snooze'].includes(command)) {
       return failed(65, `${ref} is already answered`)
     }
     if (command === 'restore') {
@@ -1278,7 +1440,7 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       }
       if (!('dismissed' in item.answer)) return failed(65, `${ref} is already answered`)
       const restored = without(item, 'answer', 'deliveredAt', 'claim')
-      if (restored.kind === 'question' && (item.deliveredAt !== undefined || 'claim' in item)) {
+      if (restored.kind !== 'notice' && (item.deliveredAt !== undefined || 'claim' in item)) {
         return printed(put({ ...restored, restoredAt: time }))
       }
       return printed(put(restored))
@@ -1289,7 +1451,39 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
     if (command === 'dismiss') {
       const answer = { dismissed: true as const, answeredAt: time }
       const isDelivered = awake.kind === 'notice' || isUnsaid
-      return printed(put(isDelivered ? { ...awake, answer, deliveredAt: time } : { ...awake, answer }))
+      const declined = awake.kind === 'request' ? { declined: true as const } : {}
+      const recorded = { ...awake, answer: { ...answer, ...declined } } as Held
+      return printed(put(isDelivered ? { ...recorded, deliveredAt: time } : recorded))
+    }
+    if (command === 'start' || command === 'ready' || command === 'block') {
+      if (awake.kind !== 'request') return failed(65, `${ref} is a ${awake.kind}, and only a request can be marked ${command}`)
+      if (item.answer !== undefined) return failed(65, `${ref} is already resolved`)
+      if (command === 'start') {
+        if (item.kind !== 'request' || item.start === undefined) return failed(65, `${ref} has no start action`)
+        if (flag(args, 'action') !== item.start) {
+          return failed(65, `${ref}'s start action is now '${item.start}'; read it and press start again`)
+        }
+        return printed(put({ ...without(item, 'progress'), started: { action: item.start, startedAt: time } }))
+      }
+      if (item.kind !== 'request' || item.started === undefined || item.progress !== undefined) {
+        return failed(65, `${ref} is not started`)
+      }
+      const reason = flag(args, 'reason')
+      const progress =
+        command === 'ready'
+          ? { state: 'ready' as const, at: time }
+          : { state: 'blocked' as const, ...(reason === undefined ? {} : { reason }), at: time }
+      return printed(put({ ...item, progress }))
+    }
+    if (command === 'done' || command === 'decline') {
+      if (awake.kind !== 'request') return failed(65, `${ref} is a ${awake.kind}, and only a request can be marked ${command}`)
+      const said = flag(args, 'text')
+      const text = said === undefined ? {} : { text: said }
+      const answer =
+        command === 'done'
+          ? { done: true as const, ...text, answeredAt: time }
+          : { dismissed: true as const, declined: true as const, ...text, answeredAt: time }
+      return printed(put({ ...awake, answer }))
     }
     if (command === 'withdraw') {
       const answer = { dismissed: true as const, withdrawn: true as const, answeredAt: time }
@@ -1300,7 +1494,23 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
       return printed(put({ ...item, snoozedAt: time, snoozedUntil: time + minutes * 60_000 }))
     }
     if (item.kind === 'notice') return failed(65, `${ref} is a notice; dismiss it with \`project inbox dismiss\``)
-    if (command === 'revise') {
+    if (command === 'revise' && item.kind === 'request') {
+      // A revised request returns to open, as the CLI resets it.
+      const start = flag(args, 'start') ?? item.start
+      const revised = without(item, 'started', 'progress', 'start')
+      return printed(
+        put({
+          ...revised,
+          subject: flag(args, 'request') ?? item.subject,
+          detail: flag(args, 'detail') ?? item.detail,
+          ...(start === undefined || start === '' ? {} : { start }),
+        }),
+      )
+    }
+    if (command === 'answer' && item.kind === 'request') {
+      return failed(65, `${ref} is a request, which takes no answer; record its outcome with \`project inbox done\``)
+    }
+    if (command === 'revise' && item.kind === 'question') {
       const options = args.filter(arg => arg.startsWith('--option=')).map(arg => arg.slice('--option='.length))
       const [recommended = '', ...others] = item.choices
       const kept = args.includes('--no-options') ? [] : options.length > 0 ? options : others
@@ -1313,15 +1523,14 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         }),
       )
     }
-    if (command === 'answer') {
+    if (command === 'answer' && item.kind === 'question') {
       const letter = written.slice(written.lastIndexOf('.') + 1)
       const text = flag(args, 'text') ?? item.choices[letter.charCodeAt(0) - 'a'.charCodeAt(0)] ?? ''
       return printed(put({ ...(awake as HeldQuestion), answer: { letter, text, answeredAt: time } }))
     }
     if (command === 'claim') {
-      if (item.restoredAt === undefined && (item.answer === undefined || item.deliveredAt !== undefined)) {
-        return failed(65, 'nothing to deliver')
-      }
+      const isOwed = item.restoredAt !== undefined || (item.answer !== undefined && item.deliveredAt === undefined)
+      if (!isOwed && !owesStart(item) && flag(args, 'renew') === undefined) return failed(65, 'nothing to deliver')
       const renew = flag(args, 'renew')
       if (renew !== undefined) {
         if (item.claim?.token !== renew) return failed(65, 'not claimed with that token')
@@ -1329,11 +1538,23 @@ function questionStore(clock: Clock, seed: readonly Held[]) {
         return ran('')
       }
       if (item.claim !== undefined && time - item.claim.renewedAt < 60_000) return failed(65, 'already claimed')
-      const claim = { token: `token-${writes}`, renewedAt: time }
-      return printed(put({ ...item, claim }), { token: claim.token, text: textOf(item) })
+      const line = isOwed ? (item.restoredAt !== undefined && item.answer === undefined ? 'restored' : 'answer') : 'started'
+      const claimed = { ...item, claim: { token: `token-${writes}`, renewedAt: time, line } } as HeldQuestion | HeldRequest
+      return printed(put(claimed), { token: claimed.claim?.token, text: textOf(claimed) })
     }
     if (command === 'delivered' || command === 'reopen') {
       if (item.claim?.token !== flag(args, 'claim')) return failed(65, 'not claimed with that token')
+      // A start's line marks the start delivered, or takes it back when it failed.
+      if (item.kind === 'request' && item.claim?.line === 'started') {
+        const settled = without(item, 'claim')
+        return printed(
+          put(
+            command === 'delivered' && item.started !== undefined
+              ? { ...settled, started: { ...item.started, deliveredAt: time } }
+              : without(settled, 'started'),
+          ),
+        )
+      }
       // A restore's line is done either way.
       if (item.restoredAt !== undefined) return printed(put(without(item, 'claim', 'restoredAt')))
       return printed(put(command === 'delivered' ? { ...item, deliveredAt: time } : reopened(item)))
@@ -1400,6 +1621,11 @@ function questionWorld(on: On, clock: Clock, seed: readonly Held[] = [], options
   return { store, registered, notified, toasts, sent, submitted, filled, project, release }
 }
 
+/** The panel's header as it reads, pieced together when its counts are buttons. */
+async function headerOf(ui: Pick<Mounted, 'find'>): Promise<string> {
+  return (await ui.find({ key: 'header' }))?.text ?? ''
+}
+
 async function startSession($: Engine, clock: Clock, isShown = true) {
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   // A shown panel belongs to a session that started its review loop's watcher.
@@ -1430,6 +1656,9 @@ test('asks through the tool, and the panel lists the question below the pull req
   expect(session.registered).toEqual([
     expect.objectContaining({ name: 'ask', isDeferred: false }),
     expect.objectContaining({ name: 'tell', isDeferred: false }),
+    expect.objectContaining({ name: 'request', isDeferred: false }),
+    expect.objectContaining({ name: 'ready', isDeferred: false }),
+    expect.objectContaining({ name: 'block', isDeferred: false }),
     expect.objectContaining({ name: 'withdraw', isDeferred: false }),
     expect.objectContaining({ name: 'revise', isDeferred: false }),
     expect.objectContaining({ name: 'restore', isDeferred: false }),
@@ -1444,8 +1673,9 @@ test('asks through the tool, and the panel lists the question below the pull req
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
   // The header counts the pull request and then the question before the reload's age, ending at the panel's edge.
-  const header = await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })
-  expect(header?.text.length).toBe(EDGE)
+  const header = await headerOf(ui)
+  expect(header).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
+  expect(header.length).toBe(EDGE)
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts).toContain('Conflicting change')
   expect(texts.indexOf('Conflicting change')).toBeLessThan(texts.indexOf('Decline the finding?'))
@@ -1607,7 +1837,7 @@ test('an idle session with no questions runs no inbox command', async ($, on) =>
   // Listing the store's directory starts no process; only a reload of the shown panel reads its setting.
   expect(session.project().filter(command => !command.startsWith('config get'))).toEqual([])
   const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
   await ui.unmount()
 })
 
@@ -1690,10 +1920,261 @@ test('an option puts the question and its answer in the prompt, and sending it a
 
   await ui.press({ key: 'close:1' })
   expect(await ui.find({ type: 'Text', text: 'Rebase first?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
   await clock.advance(30_000 + TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('requests through the tool, and a request’s drawer offers Done and Declined in the options’ place and no dismiss', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock)
+  await startSession($, clock)
+
+  const called = await $.tool.call({ tool: 'mcp__projector__request', request: 'Test the gutters', detail: '1. Open Fyra.' })
+  expect(String(called.text ?? called.result)).toBe(
+    'Requested 1. Keep working on anything the result does not block. Its outcome arrives as the person’s prompt, quoting the request with Done or Declined, or as a message that starts DONE 1 or DECLINED 1. Projector’s panel never shows this number, so name the request to the person by what it asks them to do.',
+  )
+  expect(session.project()).toContain('inbox request --session=s1 --detail=1. Open Fyra. -- Test the gutters')
+  expect(session.notified).toEqual(['Test the gutters'])
+
+  await clock.advance(1)
+  await clock.settle()
+  const ui = await $.ui.mount(PANEL)
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 request  \d+s$/)
+  expect((await ui.find({ type: 'Text', text: 'Test the gutters' }))?.props.color).toBe('suggestion')
+  await ui.press({ key: 'item:1' })
+  expect((await ui.find({ key: 'detail:1' }))?.props.text).toBe('1. Open Fyra.')
+  const outcomes = (await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))
+  expect(outcomes.map(button => [button.key, button.props.hotkey, button.props.plain, button.text])).toEqual([
+    ['outcome:1.done', '1', true, 'Done'],
+    ['outcome:1.declined', '2', true, 'Declined'],
+  ])
+  expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss request', 'snooze:1 9 snooze request'])
+  await ui.unmount()
+})
+
+test('Done puts the request and Done in the prompt, and sending it with notes records the outcome once', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [requested({ agentId: 'agent-1' })], { agents: [running('running')] })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:3' })
+  // Choosing an outcome records nothing yet: it fills the prompt, with room for notes under it.
+  await ui.press({ key: 'outcome:3.done' })
+  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nDone\n\n'])
+  expect(session.store.store.get('3')?.answer).toBeUndefined()
+
+  const text = '"Test the gutters"\n\nDone\n\nStep 4 didn’t work.\n'
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.submitted).toEqual([
+    { text, context: ['The subagent Fix #7 (agent-1) requested "Test the gutters"; send it the outcome this prompt gives.'] },
+  ])
+  expect(session.project().filter(command => command.startsWith('inbox done'))).toEqual(['inbox done 3 --session s1 --json'])
+  expect(session.store.store.get('3')?.answer).toEqual(expect.objectContaining({ done: true }))
+  expect(session.store.store.get('3')?.deliveredAt).toBeDefined()
+  // The prompt carried the outcome and the notes, so the panel sends nothing more.
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.sent).toEqual([])
+  expect(session.submitted).toHaveLength(1)
+
+  // The done request still opens, Done marked, the rest muted, and nothing left to press.
+  await ui.press({ key: 'item:3' })
+  expect(await ui.find({ type: 'Text', text: ' ✓' })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /^Declined/ }))?.props.color).toBe('subtle')
+  expect((await ui.findAll({ type: 'Button' })).filter(button => button.key?.startsWith('outcome:'))).toEqual([])
+  await ui.unmount()
+})
+
+test('a reply under a quoted request leaves it open, and a decline from a terminal reaches the agent as DECLINED', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [requested()])
+  await startSession($, clock)
+
+  await $.prompt.submit({ text: '"Test the gutters"\n\nWhich build?', wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.store.store.get('3')?.answer).toBeUndefined()
+  expect(session.project().filter(command => /^inbox (done|decline)/.test(command))).toEqual([])
+
+  const answer = { dismissed: true as const, declined: true as const, text: 'No phone today', answeredAt: NOW }
+  session.store.write({ ...requested(), answer })
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.submitted.at(-1)?.text).toBe('DECLINED 3 Test the gutters → No phone today')
+  expect(session.store.store.get('3')?.deliveredAt).toBeDefined()
+})
+
+const INSTALL = 'Install build c0d62a3b on your iPhone'
+
+test('start on 8 records the start action the drawer shows, and STARTED reaches the agent that posted the request', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [requested({ start: INSTALL, agentId: 'agent-1' })], {
+    agents: [running('running')],
+  })
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:3' })
+  expect(await ui.find({ type: 'Text', text: `Start: ${INSTALL}` })).toBeDefined()
+  const start = await ui.find({ type: 'Button', key: 'start:3' })
+  expect([start?.props.hotkey, start?.text]).toEqual(['8', 'start request'])
+  // Opening the drawer records nothing and sends nothing.
+  expect(session.project().filter(command => command.startsWith('inbox start'))).toEqual([])
+
+  await ui.press({ key: 'start:3' })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox start'))).toEqual([
+    `inbox start 3 --action=${INSTALL} --session s1 --json`,
+  ])
+  // The drawer stays open, saying the agent is at work, with nothing left to start.
+  expect(await ui.find({ type: 'Text', text: `Starting: ${INSTALL}` })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeUndefined()
+
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(session.sent).toEqual([{ to: 'agent-1', text: `STARTED 3 Test the gutters → ${INSTALL}` }])
+  expect(session.store.store.get('3')).toEqual(
+    expect.objectContaining({ started: expect.objectContaining({ deliveredAt: expect.any(Number) }) }),
+  )
+  await ui.press({ key: 'close:3' })
+  expect((await ui.find({ type: 'Text', text: 'starting' }))?.props.color).toBe('subtle')
+  await ui.unmount()
+})
+
+test('a press of start on a drawer the agent revised since records nothing and shows the new start action', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [requested({ start: INSTALL })])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:3' })
+  // The agent revises the start action from its shell, which the panel reads only on a later tick.
+  session.store.write(requested({ start: 'Install build d41f on your iPhone' }))
+  await ui.press({ key: 'start:3' })
+  await clock.settle()
+  expect(heldRequest(session.store.store.get('3'))?.started).toBeUndefined()
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: 'Start: Install build d41f on your iPhone' })).toBeDefined()
+  expect(session.sent).toEqual([])
+  expect(session.submitted).toEqual([])
+  await ui.unmount()
+})
+
+test('a blocked request shows its reason and retry on 8, and a ready one says so with nothing to start', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const started = { action: INSTALL, startedAt: NOW - 5_000, deliveredAt: NOW - 4_000 }
+  const blocked = { state: 'blocked' as const, reason: 'The phone is locked. Unlock it and press retry.', at: NOW - 1_000 }
+  const session = questionWorld(on, clock, [
+    requested({ start: INSTALL, started, progress: blocked }),
+    requested({ ref: '4', number: 4, subject: 'Sign in', start: 'Open the sign-in page', started, progress: { state: 'ready', at: NOW } }),
+  ])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  const marks = [await ui.find({ type: 'Text', text: 'blocked' }), await ui.find({ type: 'Text', text: 'ready' })]
+  expect(marks.map(mark => mark?.props.color)).toEqual(['warning', 'success'])
+  await ui.press({ key: 'item:3' })
+  expect(await ui.find({ type: 'Text', text: `Blocked: ${blocked.reason}` })).toBeDefined()
+  const retry = await ui.find({ type: 'Button', key: 'retry:3' })
+  expect([retry?.props.hotkey, retry?.text]).toEqual(['8', 'retry request'])
+  await ui.press({ key: 'retry:3' })
+  await clock.settle()
+  expect(session.project()).toContain(`inbox start 3 --action=${INSTALL} --session s1 --json`)
+  expect(heldRequest(session.store.store.get('3'))?.progress).toBeUndefined()
+
+  await ui.press({ key: 'close:3' })
+  await ui.press({ key: 'item:4' })
+  expect(await ui.find({ type: 'Text', text: `Ready: ${INSTALL}` })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'start:4' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'outcome:4.done' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a STARTED that cannot be delivered takes the start back, says so, and offers start again', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const started = { action: INSTALL, startedAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [requested({ start: INSTALL, started })], { drop: 'a hook refused it' })
+  await startSession($, clock)
+  await clock.advance(TICK)
+  await clock.settle()
+
+  expect(session.submitted.map(one => one.text)).toEqual([`STARTED 3 Test the gutters → ${INSTALL}`])
+  expect(session.toasts).toEqual([
+    'projector: the start of "Test the gutters" did not reach its agent (a hook refused it); press start again',
+  ])
+  expect(heldRequest(session.store.store.get('3'))?.started).toBeUndefined()
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'item:3' })
+  expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a request without a start action shows no start line, no start, and no mark', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  questionWorld(on, clock, [requested()])
+  await startSession($, clock)
+
+  const ui = await $.ui.mount(PANEL)
+  for (const mark of ['starting', 'ready', 'blocked']) expect(await ui.find({ type: 'Text', text: mark })).toBeUndefined()
+  await ui.press({ key: 'item:3' })
+  expect(await ui.find({ type: 'Text', text: /^(Start|Starting|Ready|Blocked): / })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'start:3' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'outcome:3.done' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the request, revise, and restore results say STARTED comes first for a request with a start action', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock)
+  await startSession($, clock)
+  const first =
+    'Once the person presses start, a message that starts STARTED 1 arrives first, quoting the start action; do exactly that, then mark the request ready or blocked.'
+
+  const posted = await $.tool.call({ tool: 'mcp__projector__request', request: 'Test the gutters', start: INSTALL })
+  expect(String(posted.text ?? posted.result)).toContain(first)
+  expect(session.project()).toContain(`inbox request --session=s1 --start=${INSTALL} -- Test the gutters`)
+  const revised = await $.tool.call({ tool: 'mcp__projector__revise', number: 1, detail: '1. Open Fyra.' })
+  expect(String(revised.text ?? revised.result)).toBe(
+    `Revised 1. Projector’s panel shows the new text, and the request is open again. ${first} Its outcome arrives as a message that starts DONE 1 or DECLINED 1.`,
+  )
+  session.store.write({ ...requested({ ref: '1', number: 1, start: INSTALL }), answer: { dismissed: true, declined: true, answeredAt: NOW } })
+  const restored = await $.tool.call({ tool: 'mcp__projector__restore', number: 1 })
+  expect(String(restored.text ?? restored.result)).toContain(first)
+
+  const plain = await $.tool.call({ tool: 'mcp__projector__request', request: 'Sign in' })
+  expect(String(plain.text ?? plain.result)).not.toContain('STARTED')
+})
+
+test('the ready and block tools mark a started request, and the panel shows it at once', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const started = { action: INSTALL, startedAt: NOW - 5_000, deliveredAt: NOW - 4_000 }
+  const session = questionWorld(on, clock, [requested({ start: INSTALL, started })])
+  await startSession($, clock)
+
+  const blocked = await $.tool.call({ tool: 'mcp__projector__block', number: 3, reason: 'Unlock the phone' })
+  expect(String(blocked.text ?? blocked.result)).toBe(
+    'Marked 3 blocked. Projector’s panel shows the person your reason; when they press retry, a new message that starts STARTED 3 arrives.',
+  )
+  expect(session.project()).toContain('inbox block 3 --reason=Unlock the phone --session s1 --json')
+  const ui = await $.ui.mount(PANEL)
+  expect((await ui.find({ type: 'Text', text: 'blocked' }))?.props.color).toBe('warning')
+  const refused = await $.tool.call({ tool: 'mcp__projector__ready', number: 3 })
+  expect(refused.deny ?? refused.text).toBe('3 is not started')
   await ui.unmount()
 })
 
@@ -1800,7 +2281,6 @@ test('discuss keeps the drawer open with the question above a blank line, a repl
   await ui.press({ key: 'close:3' })
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'dismiss:2' })
-  await ui.press({ key: 'confirm:2' })
   expect(session.project()).toContain('inbox dismiss 2 --session s1 --json')
   await clock.advance(1)
   await clock.settle()
@@ -1834,7 +2314,7 @@ test('a sent reply leaves the question listed, closes its drawer, and records no
   expect(session.store.store.get('1')).toEqual(asked)
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
 
   // The question waits for its agent to settle it, and the panel sends nothing.
   await clock.advance(TICK)
@@ -1980,6 +2460,22 @@ test('a dropped RESTORED says so without asking for an answer, and is not sent a
   await clock.advance(TICK)
   await clock.settle()
   expect(session.submitted).toHaveLength(1)
+})
+
+test('a dropped outcome reopens its request and asks you to mark it again', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const answer = { done: true as const, answeredAt: NOW - 1_000 }
+  const session = questionWorld(on, clock, [requested({ answer })], { drop: 'a hook refused it' })
+  await startSession($, clock)
+  await clock.advance(TICK)
+  await clock.settle()
+
+  expect(session.submitted.map(one => one.text)).toEqual(['DONE 3 Test the gutters'])
+  expect(session.toasts).toEqual([
+    'projector: the outcome of "Test the gutters" did not reach its agent (a hook refused it); mark it done or declined again',
+  ])
+  expect(session.store.store.get('3')?.answer).toBeUndefined()
 })
 
 test('an answer from a terminal waits behind a long turn on one claim, renewed without reading the store', async ($, on) => {
@@ -2155,7 +2651,7 @@ test('a subagent tells through the tool, and the panel lists the notice in gray'
   await clock.advance(1)
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 notice  \d+s$/)
   expect((await ui.find({ type: 'Text', text: FORCE_PUSHED }))?.props.color).toBe('inactive')
   expect(await ui.find({ type: 'Text', text: '#7' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
@@ -2226,7 +2722,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   await startSession($, clock)
 
   const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question · 1 notice  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question · 1 notice  \d+s$/)
   await ui.press({ key: 'item:2' })
   // An open notice has the panel to itself, its header included, as an open question does.
   expect(await ui.drawn()).toMatchObject(inPanel('inverseText'))
@@ -2247,8 +2743,6 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   expect(session.filled).toEqual([`insert:"${FORCE_PUSHED}"\n\n`])
 
   await ui.press({ key: 'dismiss:2' })
-
-  await ui.press({ key: 'confirm:2' })
   await clock.settle()
   expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([
     'inbox dismiss 2 --session s1 --json',
@@ -2271,7 +2765,7 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   expect(session.project().filter(command => command.startsWith('inbox claim'))).toEqual([])
 
   await ui.press({ key: 'close:2' })
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
   await clock.advance(30_000 - 2 * TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
@@ -2299,7 +2793,7 @@ test('the withdraw tool takes an item out of the panel at once, and nothing goes
   // Before the panel reads the store again, the item has gone and its drawer with it.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 notice  \d+s$/)
   expect(await ui.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
 
   await clock.advance(TICK)
@@ -2342,6 +2836,169 @@ test('the withdraw tool refuses what the CLI refuses, asks an old CLI to upgrade
   expect(session.store.store.get('1')).toEqual(answered)
 })
 
+test('a count in the header collapses its kind to one line at the top of the items, and the line expands it', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [
+    held(),
+    notice(),
+    held({ ref: '3', number: 3, subject: 'Rebase first?', postedAt: NOW - 30_000 }),
+  ])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  /** The lines under the pull requests, an item by its key and a collapsed kind by what it reads. */
+  const lines = async () =>
+    (await ui.findAll({ type: 'Button' }))
+      .filter(button => /^(item|expand):/.test(button.key ?? ''))
+      .map(button => (button.key?.startsWith('expand:') === true ? button.text : (button.key ?? '')))
+
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/)
+  expect(await lines()).toEqual(['item:3', 'item:2', 'item:1'])
+
+  // The notices collapse to one line in their color, and the header keeps counting them.
+  await ui.press({ key: 'count:notice' })
+  expect(await lines()).toEqual(['+ 1 notice', 'item:3', 'item:1'])
+  expect((await ui.find({ type: 'Text', text: '+ 1 notice' }))?.props.color).toBe('inactive')
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/)
+
+  // The questions collapse apart from the notices, their line first.
+  await ui.press({ key: 'count:question' })
+  expect(await lines()).toEqual(['+ 2 questions', '+ 1 notice'])
+
+  // The line expands its kind, and so does the count again.
+  await ui.press({ key: 'expand:question' })
+  expect(await lines()).toEqual(['+ 1 notice', 'item:3', 'item:1'])
+  await ui.press({ key: 'count:question' })
+  await ui.press({ key: 'count:question' })
+  expect(await lines()).toEqual(['+ 1 notice', 'item:3', 'item:1'])
+
+  // A kind with nothing open has no count to expand it from, so its items show; a new one collapses again.
+  session.store.run(['project', 'inbox', 'dismiss', '2', '--session', SESSION])
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await lines()).toEqual(['item:3', 'item:2', 'item:1'])
+  session.store.write(notice({ ref: '4', number: 4, subject: 'Merged #6', postedAt: clock.now() }))
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await lines()).toEqual(['+ 1 notice', 'item:3', 'item:1'])
+  await ui.unmount()
+})
+
+test('the pull requests’ count in the header collapses them to one line in their place, and the line expands them', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  questionWorld(on, clock, [held()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  /** The panel's lines, a pull request or an item by its key, and a collapsed section by what it reads. */
+  const lines = async () => {
+    const collapsed = (await ui.find({ key: 'collapsed:pr' }))?.text ?? ''
+    return (await ui.findAll({ type: 'Button' }))
+      .filter(button => /^(pr|item|expand):/.test(button.key ?? ''))
+      .map(button =>
+        button.key === 'expand:pr'
+          ? collapsed
+          : button.key?.startsWith('expand:') === true
+            ? button.text
+            : (button.key ?? ''),
+      )
+  }
+
+  expect(await lines()).toEqual(['pr:x/y#7', 'item:1'])
+
+  // The pull requests collapse to one line, bulleted `+`, that lists them, and the header keeps counting them.
+  await ui.press({ key: 'count:pr' })
+  expect(await lines()).toEqual(['+ #7', 'item:1'])
+  expect((await ui.find({ type: 'Text', text: '#7' }))?.props.color).toBe('error')
+  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
+
+  // They collapse apart from the items, and stay collapsed when the panel reloads.
+  await ui.press({ key: 'count:question' })
+  expect(await lines()).toEqual(['+ #7', '+ 1 question'])
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await lines()).toEqual(['+ #7', '+ 1 question'])
+
+  // The line expands them, and so does the count again.
+  await ui.press({ key: 'expand:pr' })
+  expect(await lines()).toEqual(['pr:x/y#7', '+ 1 question'])
+  await ui.press({ key: 'count:pr' })
+  await ui.press({ key: 'count:pr' })
+  expect(await lines()).toEqual(['pr:x/y#7', '+ 1 question'])
+  await ui.unmount()
+})
+
+test('collapsed pull requests list their labels in the rows’ order and status colors, and a label opens its drawer', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#10\no/r#12\n' })
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+  const ui = await $.ui.mount(PANEL)
+
+  await ui.press({ key: 'count:pr' })
+  expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #1 #2 #10 #12')
+  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
+  // Ready is green and a draft yellow, as their rows' states are; a conflict, a change request, or failing checks is red.
+  const colors = await Promise.all(
+    ['#1', '#2', '#10', '#12'].map(async text => (await ui.find({ type: 'Text', text }))?.props.color),
+  )
+  expect(colors).toEqual(['success', 'warning', 'error', 'error'])
+  // Each label is a Button that expands the pull requests and opens its own drawer.
+  expect((await ui.findAll({ type: 'Button' })).map(button => button.key).filter(key => /^open:/.test(key ?? ''))).toEqual([
+    'open:o/r#1',
+    'open:o/r#2',
+    'open:o/r#10',
+    'open:o/r#12',
+  ])
+  await ui.press({ key: 'open:o/r#10' })
+  expect(await ui.find({ key: 'collapsed:pr' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+  expect(await ui.find({ key: 'drawer:o/r#10' })).toBeDefined()
+  expect(await ui.find({ key: 'drawer:o/r#1' })).toBeUndefined()
+
+  // A label opens its drawer even when another drawer was open before the pull requests collapsed.
+  await ui.press({ key: 'count:pr' })
+  await ui.press({ key: 'open:o/r#2' })
+  expect(await ui.find({ key: 'drawer:o/r#2' })).toBeDefined()
+  expect(await ui.find({ key: 'drawer:o/r#10' })).toBeUndefined()
+  // A label whose drawer was already open keeps it open, rather than toggling it shut.
+  await ui.press({ key: 'count:pr' })
+  await ui.press({ key: 'open:o/r#2' })
+  expect(await ui.find({ key: 'drawer:o/r#2' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the panel lists its items newest first, and a revised question keeps its place', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [
+    held(),
+    notice(),
+    held({ ref: '3', number: 3, subject: 'Rebase first?', postedAt: NOW - 30_000 }),
+  ])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  const order = async () =>
+    (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('item:'))
+
+  expect(await order()).toEqual(['item:3', 'item:2', 'item:1'])
+
+  // Revising the oldest question leaves it where it was posted.
+  await $.tool.call({ tool: 'mcp__projector__revise', number: 1, question: 'Decline the retry finding?' })
+  await clock.settle()
+  expect(await order()).toEqual(['item:3', 'item:2', 'item:1'])
+
+  // An item posted now goes on top.
+  session.store.write(notice({ ref: '4', number: 4, subject: 'Merged #6', postedAt: clock.now() }))
+  await clock.advance(TICK)
+  await clock.settle()
+  expect(await order()).toEqual(['item:4', 'item:3', 'item:2', 'item:1'])
+  await ui.unmount()
+})
+
 test('the revise tool redraws the question with its new text at once, keeping its number', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -2374,7 +3031,7 @@ test('the revise tool redraws the question with its new text at once, keeping it
   expect(await ui.find({ type: 'Text', text: 'Decline the retry finding?' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'item:1' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
 
   // The answer you chose from the old text answers nothing.
   await $.prompt.submit({ text: '"Decline the finding?"\n\nAdd a budget\n', wait: false, origin: { kind: 'composer' } })
@@ -2512,7 +3169,6 @@ test('a pick made before a revise, for a question dismissed before you send, ans
   await ui.press({ key: 'answer:2.a' })
   await $.tool.call({ tool: 'mcp__projector__revise', number: 2, detail: 'The cap is three.' })
   await ui.press({ key: 'dismiss:2' })
-  await ui.press({ key: 'confirm:2' })
   await clock.settle()
   expect(session.store.store.get('2')?.answer).toEqual(expect.objectContaining({ dismissed: true }))
   await $.prompt.submit({ text: DECLINE, wait: false, origin: { kind: 'composer' } })
@@ -2538,7 +3194,7 @@ test('the revise tool refuses what the CLI refuses, asks an old CLI to upgrade, 
   expect(unknown.deny ?? unknown.text).toBe('no item 9')
 
   const empty = await $.tool.call({ tool: 'mcp__projector__revise', number: 1 })
-  expect(empty.deny ?? empty.text).toBe('give what changes: `question`, `detail`, `recommendation`, or `options`')
+  expect(empty.deny ?? empty.text).toBe('give what changes: `question`, `request`, `start`, `detail`, `recommendation`, or `options`')
 
   session.store.failing.locks = 1
   const busy = await $.tool.call(revise)
@@ -2573,7 +3229,7 @@ test('snooze hides either kind for an hour, then brings a hidden panel back', as
   expect(session.project()).toContain('inbox snooze 2 --for 60 --session s1 --json')
   // Each stays listed for 30 seconds, out of the header's counts, and then leaves the panel.
   expect(await ui.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
   await clock.advance(30_000 + TICK)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /Decline the finding|Force-pushed/ })).toBeUndefined()
@@ -2594,7 +3250,7 @@ test('snooze hides either kind for an hour, then brings a hidden panel back', as
   expect(await woken.find({ type: 'Text', text: ENGINE_SITE })).toBeUndefined()
   expect(await woken.find({ type: 'Text', text: 'Decline the finding?' })).toBeDefined()
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
-  expect(await woken.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question · 1 notice  \d+s$/ })).toBeDefined()
+  expect(await headerOf(woken)).toMatch(/^\/projector +1 pull request · 1 question · 1 notice  \d+s$/)
   await woken.unmount()
 })
 
@@ -2607,7 +3263,7 @@ test('a dismiss or snooze that finds the store locked says so and leaves the ite
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:1' })
   session.store.failing.locks = 2
-  for (const keys of [['dismiss:1', 'confirm:1'], ['snooze:1', 'snooze-60:1']]) {
+  for (const keys of [['dismiss:1'], ['snooze:1', 'snooze-60:1']]) {
     for (const key of keys) await ui.press({ key })
     await clock.settle()
   }
@@ -2719,7 +3375,7 @@ test('an item whose snooze ends while the panel is hidden is drawn the moment th
   await clock.settle()
   const woken = await $.ui.mount(PANEL)
   expect(await woken.find({ type: 'Text', text: FORCE_PUSHED })).toBeDefined()
-  expect(await woken.find({ type: 'Text', text: /^\/projector +1 pull request · 1 notice  \d+s$/ })).toBeDefined()
+  expect(await headerOf(woken)).toMatch(/^\/projector +1 pull request · 1 notice  \d+s$/)
 
   await clock.advance(10 * TICK)
   await clock.settle()
@@ -2744,7 +3400,6 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
   await ui.press({ key: 'item:1' })
   expect(await actionsOf(ui, '1')).toEqual(['discuss:1', 'dismiss:1', 'snooze:1'])
   await ui.press({ key: 'dismiss:1' })
-  await ui.press({ key: 'confirm:1' })
   await clock.settle()
   // The drawer closes, and the line stays, muted in the subtle color and struck through.
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
@@ -2776,7 +3431,6 @@ test('dismiss closes an item’s drawer and strikes it through, and its drawer o
 
   // Once the agent has heard DISMISSED, a restore sends RESTORED after it.
   await ui.press({ key: 'dismiss:1' })
-  await ui.press({ key: 'confirm:1' })
   await clock.advance(1)
   await clock.settle()
   expect(session.submitted.map(one => one.text)).toEqual(['DISMISSED 1 Decline the finding?'])
@@ -2819,7 +3473,7 @@ test('snooze closes an item’s drawer and mutes it for 30 seconds, and its draw
     undefined,
     false,
   ])
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
 
   // Its line opens the drawer again, where unsnooze takes snooze's place.
   await ui.press({ key: 'item:2' })
@@ -2872,7 +3526,7 @@ test('the restore tool brings a dismissed item back at once, its old drawer clos
   const line = await ui.find({ type: 'Text', text: 'Decline the finding?' })
   expect([line?.props.color, line?.props.strikethrough]).toEqual(['permission', false])
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 1 question  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 1 question  \d+s$/)
   await clock.advance(TICK)
   await clock.settle()
   expect(session.submitted.map(one => one.text)).toEqual(['RESTORED 1 Decline the finding?'])
@@ -2927,7 +3581,7 @@ test('a restore brings a hidden panel back, from the tool or from a terminal, as
     expect(await isHidden()).toBe(false)
   }
   const ui = await $.ui.mount(PANEL)
-  expect(await ui.find({ type: 'Text', text: /^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/ })).toBeDefined()
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request · 2 questions · 1 notice  \d+s$/)
   await ui.unmount()
 })
 
@@ -3139,7 +3793,6 @@ test('a drawer’s actions follow its options a line each, on 7, 8 and 9, named 
 
   // Dismissed, restore takes dismiss's place, and a resolved item has nothing to snooze.
   await ui.press({ key: 'dismiss:1' })
-  await ui.press({ key: 'confirm:1' })
   await clock.settle()
   await ui.press({ key: 'item:1' })
   expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss question', 'restore:1 8 restore question'])
@@ -3376,7 +4029,7 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length 
   await ui.unmount()
 })
 
-test('dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once', async ($, on) => {
+test('an item’s dismiss, restore, and unsnooze act at once, and a pull request’s dismiss asks to be sure', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const dismissed = { dismissed: true as const, answeredAt: NOW - 1_000 }
@@ -3402,45 +4055,24 @@ test('dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once',
   const keys = (await ui.findAll({ type: 'Button' })).map(button => String(button.props.hotkey ?? ''))
   expect(keys.filter(key => key !== '' && !/^\d$/.test(key))).toEqual([])
 
-  // Dismiss runs nothing: it asks, on 8 to dismiss and 9 to keep the item.
-  await ui.press({ key: 'dismiss:1' })
-  expect(await lines('1')).toEqual(['confirm:1 8 yes, dismiss question', 'keep:1 9 no, keep it'])
-  expect(ran('dismiss')).toEqual([])
-  // 9 keeps it and puts the actions back.
-  await ui.press({ key: 'keep:1' })
+  // 8 dismisses at once, and closes the drawer.
   expect(await lines('1')).toEqual([
     'discuss:1 7 discuss question',
     'dismiss:1 8 dismiss question',
     'snooze:1 9 snooze question',
   ])
-  // Closing the drawer puts them back too.
   await ui.press({ key: 'dismiss:1' })
-  await ui.press({ key: 'close:1' })
-  await ui.press({ key: 'item:1' })
-  expect((await lines('1'))[1]).toBe('dismiss:1 8 dismiss question')
-  expect(ran('dismiss')).toEqual([])
-
-  // From the keyboard, the ring goes onto the confirmation, and from 9 back onto dismiss.
-  await tab($, 'dismiss:1')
-  await ui.press({ key: 'dismiss:1' })
-  await tab($, 'keep:1')
-  await ui.press({ key: 'keep:1' })
-  expect(tried).toEqual(['confirm:1', 'dismiss:1'])
-
-  // 8 then 8 dismisses.
-  await ui.press({ key: 'dismiss:1' })
-  await ui.press({ key: 'confirm:1' })
   await clock.settle()
   expect(ran('dismiss')).toEqual(['inbox dismiss 1 --session s1 --json'])
   expect(await ui.find({ key: 'detail:1' })).toBeUndefined()
 
-  // A notice's confirmation names a notice.
+  // A notice's dismiss acts at once too.
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'dismiss:2' })
-  expect(await lines('2')).toEqual(['confirm:2 8 yes, dismiss notice', 'keep:2 9 no, keep it'])
-  await ui.press({ key: 'close:2' })
+  await clock.settle()
+  expect(ran('dismiss')).toEqual(['inbox dismiss 1 --session s1 --json', 'inbox dismiss 2 --session s1 --json'])
 
-  // Restore and unsnooze need no confirmation.
+  // Restore and unsnooze act at once.
   await ui.press({ key: 'item:3' })
   await ui.press({ key: 'restore:3' })
   await clock.settle()
@@ -3452,7 +4084,7 @@ test('dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once',
   expect(ran('restore')).toEqual(['inbox restore 3 --session s1 --json', 'inbox restore 4 --session s1 --json'])
   await ui.press({ key: 'close:4' })
 
-  // A pull request's dismiss asks the same, and 9 keeps it in its loops.
+  // A pull request's dismiss asks to be sure, and 9 keeps it in its loops.
   await ui.press({ key: 'pr:x/y#7' })
   expect(await lines('x/y#7')).toEqual(['discuss:x/y#7 7 discuss PR', 'dismiss:x/y#7 8 dismiss PR'])
   await ui.press({ key: 'dismiss:x/y#7' })
@@ -3460,6 +4092,13 @@ test('dismiss asks to be sure on 8 and 9, and restore and unsnooze act at once',
   await ui.press({ key: 'keep:x/y#7' })
   expect(await lines('x/y#7')).toEqual(['discuss:x/y#7 7 discuss PR', 'dismiss:x/y#7 8 dismiss PR'])
   expect(session.project().filter(line => line.startsWith('loop drop'))).toEqual([])
+
+  // From the keyboard, the ring goes onto the confirmation, and from 9 back onto dismiss.
+  await tab($, 'dismiss:x/y#7')
+  await ui.press({ key: 'dismiss:x/y#7' })
+  await tab($, 'keep:x/y#7')
+  await ui.press({ key: 'keep:x/y#7' })
+  expect(tried).toEqual(['confirm:x/y#7', 'dismiss:x/y#7'])
   await ui.unmount()
 })
 
@@ -3476,14 +4115,16 @@ test('a question a drawer asked is forgotten once its item is resolved or snooze
       .filter(key => key.endsWith(':1') && !key.startsWith('close:') && !key.startsWith('answer:'))
   const actions = ['discuss:1', 'dismiss:1', 'snooze:1']
 
-  // Dismiss asks, and a terminal dismisses the question meanwhile; restoring it opens its drawer on its actions.
+  // A terminal dismisses the question while its drawer asks how long to snooze; restoring it from a terminal opens
+  // its drawer on its actions, not on the snooze it was asking about.
   await ui.press({ key: 'item:1' })
-  await ui.press({ key: 'dismiss:1' })
+  await ui.press({ key: 'snooze:1' })
   session.store.run(['project', 'inbox', 'dismiss', '1', '--session', SESSION])
   await clock.advance(TICK)
   await clock.settle()
   expect(await lines()).toEqual(['discuss:1', 'restore:1'])
-  await ui.press({ key: 'restore:1' })
+  session.store.run(['project', 'inbox', 'restore', '1', '--session', SESSION])
+  await clock.advance(TICK)
   await clock.settle()
   expect(await lines()).toEqual(actions)
   expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([])
@@ -3528,28 +4169,4 @@ test('an open item’s line draws its title with no rule after it', async ($, on
   await desktop.press({ key: 'item:1' })
   expect(await desktop.find({ type: 'Text', text: /─/ })).toBeUndefined()
   await desktop.unmount()
-})
-
-test('a dismiss confirmation on a snoozed item survives an unrelated change to the store', async ($, on) => {
-  const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
-  const session = questionWorld(on, clock, [held({ snoozedAt: NOW - 1_000, snoozedUntil: NOW + HOUR })])
-  await startSession($, clock)
-  const ui = await $.ui.mount(PANEL)
-  const lines = async () =>
-    (await ui.findAll({ type: 'Button' }))
-      .map(button => button.key ?? '')
-      .filter(key => /^(discuss|dismiss|unsnooze|confirm|keep):1$/.test(key))
-
-  // The item is snoozed already when dismiss asks to be sure.
-  await ui.press({ key: 'item:1' })
-  await ui.press({ key: 'dismiss:1' })
-  expect(await lines()).toEqual(['confirm:1', 'keep:1'])
-
-  // Another item arriving makes the panel read the store, and the question stands.
-  session.store.write(notice())
-  await clock.advance(TICK)
-  await clock.settle()
-  expect(await lines()).toEqual(['confirm:1', 'keep:1'])
-  await ui.unmount()
 })

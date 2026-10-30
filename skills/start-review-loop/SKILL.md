@@ -190,6 +190,12 @@ reads the new head against that history instead of rediscovering it.
   mode, the loop's id to pass as `--loop`, the model ID to pass as
   `--model`, and the path of
   `../review-pr/SKILL.md`, and have it run that skill for the head.
+- Start each subagent with a working directory of its own where the host
+  offers one; in Claude Code, pass `isolation: "worktree"` to the Agent
+  tool. Otherwise tell the subagent never to change the session's
+  directory: it reaches the worktree `project review setup` prints by path,
+  with `git -C <worktree>` and absolute paths for file tools. A subagent
+  that moves a shared directory moves every other subagent with it.
 - Send every later `NEW HEAD` and `RESPONDED` for that pull request to the
   same subagent as a message; never start a second one for it. Each message
   is another run of `review-pr`, for the head it names; a `RESPONDED`

@@ -31,6 +31,7 @@ DECISIONS = (
     ("project summary publish --summary summary.json", "allow", "allow"),
     ("project inbox ask question --recommend yes --session s1", "allow", "allow"),
     ("project inbox tell notice --session s1", "allow", "allow"),
+    ("project inbox request 'Test the gutters' --detail '1. Open Fyra.' --session s1", "allow", "allow"),
     ("project inbox withdraw 3 --session s1", "allow", "allow"),
     ("project inbox restore 3 --session s1", "allow", "allow"),
     ("project inbox revise 3 --question 'Merge it now?' --session s1", "allow", "allow"),
@@ -41,6 +42,12 @@ DECISIONS = (
     ("PROJECTOR_SESSION=s1 project inbox answer 3.a", "ask", "none"),
     ("project inbox dismiss 3 --session s1", "ask", "none"),
     ("project inbox snooze 3 --for 30", "ask", "none"),
+    ("project inbox done 3 --session s1", "ask", "none"),
+    ("project inbox done 3 --text 'All good'", "ask", "none"),
+    ("project inbox decline 3 --session s1", "ask", "none"),
+    ("project inbox start 3 --action 'Install the build' --session s1", "ask", "none"),
+    ("project inbox ready 3 --session s1", "allow", "allow"),
+    ("project inbox block 3 --reason 'Unlock the phone' --session s1", "allow", "allow"),
     ("project list --json", "allow", "allow"),
     ("project config get review.username", "allow", "allow"),
     ("project config list", "allow", "allow"),
@@ -89,7 +96,7 @@ DECISIONS = (
 # What the Codex rules leave to Codex's usual approval: each command with the
 # subcommands left out, or None where the whole command is.
 CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None,
-                  "config": {"set", "unset"}, "inbox": {"answer", "dismiss", "snooze"}, "review": {"gate"},
+                  "config": {"set", "unset"}, "inbox": {"answer", "decline", "dismiss", "done", "snooze", "start"}, "review": {"gate"},
                   "site": {"build", "serve"}}
 
 # Some of the variables Claude Code lets an allow rule match past. Its list is

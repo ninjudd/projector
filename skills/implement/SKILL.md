@@ -83,9 +83,11 @@ When the work has a plan, update it in the same change whenever
 implementation settles a decision, changes scope, reveals a new constraint,
 or completes an acceptance criterion. Follow the writing guide in
 `../writing.md` when you write the update, as `spec` does. Append numbered
-sections rather than renumbering cited sections. Create a nested project
-only when it has an independently useful lifecycle. Put details that belong
-to the parent in a supplemental document.
+sections rather than renumbering cited sections. When this change alters
+behavior that a `completed` plan describes, update the living documentation
+and leave that plan as it is, because it records what was decided and built.
+Create a nested project only when it has an independently useful lifecycle.
+Put details that belong to the parent in a supplemental document.
 
 Do not infer a parent's status or priority from a child or vice versa. Do not
 move project directories, generate a tracked status index, or duplicate either
@@ -114,7 +116,10 @@ description for work without a plan. If required work on a project
 remains, record the exact state, leave the status `in-progress`, and set the
 priority to `now`, `next`, or `later` as the user's real scheduling intent
 requires. If every criterion in the plan is proven, continue with `finish`
-in the same implementation change.
+in the same implementation change. Do not wait for a release or open a
+separate pull request: the pull request that carries the last of the
+project's code runs `project done`, so the project is completed when it
+merges.
 
 ## Hand the work over
 

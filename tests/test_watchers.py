@@ -24,6 +24,7 @@ PRS = ROOT / "skills" / "start-review-loop" / "scripts" / "watch-prs.sh"
 SHA_A = "a" * 40
 SHA_B = "b" * 40
 DONE = "DONE every tracked pull request has merged or closed; the watch is exiting"
+MERGED_1 = "MERGED acme/app#1 into main"
 
 FAKE_GH = r"""#!/usr/bin/env bash
 # Serves fixtures from $FAKE_GH_DIR:
@@ -168,6 +169,8 @@ class WatcherCase(unittest.TestCase):
         ref="feature",
         base="main",
         mergeable="MERGEABLE",
+        merged_at=None,
+        merge_commit=None,
         author="operator",
         requested=(),
         verdict=None,
@@ -186,6 +189,8 @@ class WatcherCase(unittest.TestCase):
             "headRefName": ref,
             "baseRefName": base,
             "mergeable": mergeable,
+            "mergedAt": merged_at,
+            "mergeCommit": {"oid": merge_commit} if merge_commit else None,
             "author": {"login": author},
             "reviewRequests": {"nodes": [{"requestedReviewer": {"login": login}} for login in requested]},
             "reviews": {"nodes": ([verdict] if verdict else []) + list(verdicts)},
@@ -404,18 +409,59 @@ class WatchThreadsTests(WatcherCase):
         self.assertEqual("", result.stdout)
         self.assertEqual([], self.state_rows())
 
-    def test_a_merged_pull_request_falls_silent_and_out_of_the_state(self) -> None:
+    def test_a_merged_pull_request_is_announced_once_and_its_work_falls_out_of_the_state(self) -> None:
         self.pull_request(1, draft=True, threads=[thread("T1")])
         self.track("acme/app#1")
         self.assert_ok(self.run_watcher(THREADS))
         self.assertEqual(2, len(self.state_rows()))
 
-        self.pull_request(1, state="MERGED", draft=True, threads=[thread("T1")])
+        self.pull_request(1, state="MERGED", draft=True, threads=[thread("T1")],
+                          merged_at="2026-10-23T01:36:44Z", merge_commit="ea9a364" + "0" * 33)
+        result = self.run_watcher(THREADS)
+
+        self.assert_ok(result)
+        self.assertEqual(["MERGED acme/app#1 into main at 2026-10-23T01:36:44Z (merge commit ea9a3640)"],
+                         result.stdout.splitlines())
+        self.assertEqual([["closed:acme/app#1", "acme/app", "1"]], [row[:3] for row in self.state_rows()])
+
+        # The next pass, a restart on the same state included, says nothing more.
         result = self.run_watcher(THREADS)
 
         self.assert_ok(result)
         self.assertEqual("", result.stdout)
+        self.assertEqual(1, len(self.state_rows()))
+
+    def test_a_closed_pull_request_is_announced_once_without_a_merge(self) -> None:
+        self.pull_request(2, state="CLOSED", threads=[thread("T2")])
+        self.track("acme/app#2")
+
+        result = self.run_watcher(THREADS)
+
+        self.assert_ok(result)
+        self.assertEqual(["CLOSED acme/app#2 without merging"], result.stdout.splitlines())
+        self.assertEqual("", self.run_watcher(THREADS).stdout)
+
+    def test_a_removed_line_drops_its_closed_row(self) -> None:
+        self.pull_request(1, state="MERGED")
+        self.pull_request(2)
+        self.track("acme/app#1", "acme/app#2")
+        self.assert_ok(self.run_watcher(THREADS))
+
+        self.track("acme/app#2")
+        self.assert_ok(self.run_watcher(THREADS))
+
         self.assertEqual([], self.state_rows())
+
+    def test_a_failed_query_announces_no_merge(self) -> None:
+        self.pull_request(1, state="MERGED")
+        self.track("acme/app#1")
+
+        # One entry costs one verification call; every call after it fails.
+        result = self.run_watcher(THREADS, down_after=1)
+
+        self.assert_ok(result)
+        self.assertEqual("", result.stdout)
+        self.assertEqual([MERGED_1], self.run_watcher(THREADS).stdout.splitlines())
 
     def test_exit_when_closed_ends_the_watch_once_every_tracked_pull_request_closed(self) -> None:
         self.pull_request(1, state="MERGED")
@@ -425,7 +471,7 @@ class WatchThreadsTests(WatcherCase):
         result = self.run_watcher(THREADS, "--exit-when-closed")
 
         self.assert_ok(result)
-        self.assertEqual([DONE], result.stdout.splitlines())
+        self.assertEqual([MERGED_1, "CLOSED acme/app#2 without merging", DONE], result.stdout.splitlines())
 
     def test_exit_when_closed_keeps_watching_while_one_is_open(self) -> None:
         self.pull_request(1, state="MERGED")
@@ -435,7 +481,7 @@ class WatchThreadsTests(WatcherCase):
         result = self.run_watcher(THREADS, "--exit-when-closed")
 
         self.assert_ok(result)
-        self.assertEqual("", result.stdout)
+        self.assertEqual([MERGED_1], result.stdout.splitlines())
 
     def test_exit_when_closed_ends_a_watch_whose_file_names_none(self) -> None:
         self.tracked.write_text("# every pull request merged\n")
@@ -464,7 +510,8 @@ class WatchThreadsTests(WatcherCase):
         result = self.run_watcher(THREADS, "--exit-when-closed", late_line="2013")
 
         self.assert_ok(result)
-        self.assertEqual([f"TRACKED {self.tracked}:2 is not owner/repo#number: 2013"], result.stdout.splitlines())
+        self.assertEqual([f"TRACKED {self.tracked}:2 is not owner/repo#number: 2013", MERGED_1],
+                         result.stdout.splitlines())
 
     def test_exit_when_closed_stops_a_running_watch(self) -> None:
         self.pull_request(1, state="MERGED")
@@ -480,7 +527,7 @@ class WatchThreadsTests(WatcherCase):
         )
 
         self.assert_ok(result)
-        self.assertEqual([DONE], result.stdout.splitlines())
+        self.assertEqual([MERGED_1, DONE], result.stdout.splitlines())
 
     def test_the_tracked_file_is_read_again_on_every_pass(self) -> None:
         self.pull_request(1, threads=[thread("T1")])

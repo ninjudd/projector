@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { buildQuery, parseResponse } from './github'
+import { buildQuery, buildThreadsQuery, parseResponse, parseThreads } from './github'
 import { findWatchers, parseTracked } from './parse'
 
 const VARIABLES: Record<string, string> = { HOME: '/home/ada' }
@@ -85,6 +85,13 @@ describe('GitHub', () => {
     expect(query.text).toContain('r1: repository(owner: "x", name: "y") { p3: pullRequest(number: 3)')
   })
 
+  test('asks the poll only whether each thread is resolved, which costs no point per pull request', () => {
+    // A connection under `reviewThreads(first: 100)`, such as each thread's comments, makes GitHub count 100 more
+    // requests, a point more, for each pull request. The poll reads every tracked pull request every 30 seconds.
+    expect(query.text).toContain('reviewThreads(first: 100) { nodes { isResolved } }')
+    expect(query.text).not.toContain('comments(')
+  })
+
   test('reads what came back even when one pull request is missing', () => {
     const body = {
       data: {
@@ -160,5 +167,72 @@ describe('GitHub', () => {
       stderr: '',
     })
     expect(refused).toEqual({ prs: new Map(), viewer: null, error: 'Bad credentials' })
+  })
+
+  describe('an open drawer’s threads', () => {
+    const threadsQuery = buildThreadsQuery({ repo: 'o/r', number: 1 })
+
+    test('asks for one pull request’s threads and each one’s first comment', () => {
+      expect(threadsQuery.text).toMatch(
+        /^query \{ r0: repository\(owner: "o", name: "r"\) \{ p1: pullRequest\(number: 1\) \{ reviewThreads/,
+      )
+      expect(threadsQuery.text).toContain('comments(first: 1) { nodes { url bodyText author { login } } }')
+      expect(threadsQuery.text).not.toContain('viewer')
+    })
+
+    test('reads the unresolved threads, oldest first', () => {
+      const body = {
+        data: {
+          r0: {
+            p1: {
+              reviewThreads: {
+                nodes: [
+                  {
+                    isResolved: false,
+                    isOutdated: false,
+                    path: 'src/app.ts',
+                    line: 12,
+                    originalLine: 10,
+                    comments: {
+                      nodes: [
+                        {
+                          url: 'https://github.com/o/r/pull/1#discussion_r1',
+                          bodyText: 'P2 · Retry the fetch\nIt gives up after one try.',
+                          author: { login: 'grace' },
+                        },
+                      ],
+                    },
+                  },
+                  { isResolved: true, path: 'src/done.ts', line: 3 },
+                  { isResolved: false, isOutdated: true, path: 'README.md', line: null, originalLine: 7 },
+                  { isResolved: false, path: 'docs/guide.md', line: null, originalLine: null },
+                ],
+              },
+            },
+          },
+        },
+      }
+      const threads = parseThreads(threadsQuery, { exitCode: 0, stdout: JSON.stringify(body), stderr: '' })
+      // An outdated thread keeps the line it was on, and a comment on the whole file has none.
+      expect(threads).toEqual([
+        {
+          path: 'src/app.ts',
+          line: 12,
+          isOutdated: false,
+          author: 'grace',
+          excerpt: 'P2 · Retry the fetch',
+          url: 'https://github.com/o/r/pull/1#discussion_r1',
+        },
+        { path: 'README.md', line: 7, isOutdated: true, author: null, excerpt: '', url: null },
+        { path: 'docs/guide.md', line: null, isOutdated: false, author: null, excerpt: '', url: null },
+      ])
+    })
+
+    test('reads nothing when GitHub gave no threads', () => {
+      const missing = { data: { r0: { p1: null } }, errors: [{ message: 'Could not resolve to a PullRequest' }] }
+      expect(parseThreads(threadsQuery, { exitCode: 1, stdout: JSON.stringify(missing), stderr: '' })).toBeNull()
+      const offline = { exitCode: 1, stdout: '', stderr: 'error connecting to api.github.com\n' }
+      expect(parseThreads(threadsQuery, offline)).toBeNull()
+    })
   })
 })
