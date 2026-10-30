@@ -1498,8 +1498,10 @@ thread whose first comment carries the `projector-finding` marker, reading
 every page, and prints how many are resolved and open and each open thread's
 `path:line`; with `--json` each thread also carries its comments. It counts
 every model's threads alike and takes `--model` like the commands around it,
-so a review loop passes the same flags to each. `release` clears the locks of
-one model's review of the pull request.
+so a review loop passes the same flags to each. `--model` and `--loop` also
+pick the review whose lock `census` touches, as the lock paragraph below
+describes. `release` clears the locks of one model's review of the pull
+request.
 
 `settle` answers one finding thread once the review has verified it at the
 head under review. `--thread` is the thread's `id` from `census --json`,
@@ -1950,11 +1952,39 @@ A review holds a lock for its pull request, head, and model from `setup` until
 it is published, recording the host, the loop, and when it was taken, so a
 second instance of the same model for the same head exits. A refused `setup`
 releases it, a lock older than a day is stale, and `release` clears the locks
-of one model's review left by a session that stopped. `--loop <id>` names the
-review loop; each loop keeps its record of published reviews under that id,
-and each entry names its model. State, locks, loop records, and scratch
-worktrees live under `$XDG_STATE_HOME/projector/reviews`, or
-`~/.local/state/projector/reviews`, and `--state-dir` moves them. A model's
+of one model's review left by a session that stopped. `setup`, `census`,
+`settle`, `move`, and `publish` touch the lock as they run, so its
+modification time shows when the review last made progress. `census` touches
+the lock of the review that `--model` names, or of the one model with a
+review set up here, and only while the lock names its loop.
+
+`--loop <id>` names the review loop; each loop keeps its record of published
+reviews under that id, and each entry names its model. `publish` adds to the
+record under a lock on the record's folder, so a copy that `project watch`
+makes into the same record at the same moment loses no entry. A command
+without `--loop` runs in the loop that `setup` recorded, and a review set up
+without `--loop` runs in no loop.
+
+`project watch` hands a review to another loop by clearing its lock, when the
+review stalls or the session that owns it lapses. So `settle`, `move`, and
+`publish` refuse, exiting 1, when the head's lock names another loop than the
+one they run in, or when the lock of a review that runs in a loop is gone:
+
+```
+project: the review of example/app#66 at 4f2a9c1 by model claude-opus-5-5 was handed over to another loop: its lock names loop 5f0c2d4e-91ab-4c3d-8e7f-2a6b1c9d0e3f, and this command runs in loop 08270a6c-e8dd-42c9-851b-ae1e507aa6dc; stop and report this rather than running `project review setup` again
+```
+
+Stop the review and report the refusal. Running `setup` again would take the
+review back from the loop that owns it now. `publish` checks the lock again
+before each write of the review's state and before it releases the lock, so
+a hand-over that lands after it submitted the review leaves the new owner's
+state and lock alone; the refusal then names the review it submitted. A
+review that runs in no loop works as before: `settle` and `move` run without
+a lock, and `publish` without one refuses and says to run `setup` again.
+
+State, locks, loop records, and scratch worktrees live under
+`$XDG_STATE_HOME/projector/reviews`, or `~/.local/state/projector/reviews`,
+and `--state-dir` moves them. A model's
 state and locks are under `prs/<owner>/<repo>/<pr>/<model-key>/` and its
 worktrees under `worktrees/<owner>/<repo>/<pr>/<model-key>/`. The model key
 is the ID lowercased and without its bracketed variant, with every character

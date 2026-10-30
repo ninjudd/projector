@@ -1346,10 +1346,11 @@ def run_review(arguments: argparse.Namespace) -> int:
     else:
         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
         if command == "census":
-            # Every model's threads are counted alike, so the model a loop passes is only checked.
+            # Every model's threads are counted alike, so the model a loop passes only picks the review whose
+            # lock census touches, a lookup that refuses nothing, and is checked here.
             if arguments.model is not None:
                 review.model_key(arguments.model)
-            result = review.census(repo, arguments.pr)
+            result = review.census(repo, arguments.pr, root, arguments.model, loop)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:
@@ -1366,7 +1367,7 @@ def run_review(arguments: argparse.Namespace) -> int:
             return 0
         paths = review.review_paths(root, repo, arguments.pr, arguments.model)
         if command == "settle":
-            result = review.settle(paths, arguments.thread, arguments.result, arguments.body)
+            result = review.settle(paths, arguments.thread, arguments.result, arguments.body, loop)
             print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.settle_lines(result)))
             return 0
         if command == "interdiff":
