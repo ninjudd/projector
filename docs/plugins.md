@@ -699,10 +699,11 @@ A drawer's actions follow its options, a line each, with the digit that
 presses it before the label in the accent color, such as
 `7: discuss question`. The digits count down from 9, so the options keep
 `1` to `6` and the item's line `0`. Each label ends with what the action
-acts on: `question`, `notice`, or `PR`.
+acts on: `question`, `notice`, `request`, or `PR`.
 
 - **7** presses **discuss**.
-- **8** presses **dismiss**, or **restore** in its place. Dismiss asks to
+- **8** presses **dismiss**, or **decline** on a request, or **restore** in
+  their place. Dismiss asks to
   be sure, on `8` again to dismiss and `9` to keep the item, so dismissing
   from the keyboard is `8` `8`.
 - **9** presses **snooze**, or **unsnooze** in its place, which a pull

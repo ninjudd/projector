@@ -179,6 +179,8 @@ declare module 'claude-code' {
       bandSending: Record<string, Sending>
       /** The panel's background for the session's Claude Code theme, which `panel.background = "auto"` takes. */
       panelThemeBackground: string
+      /** The color of an open request's line for the session's Claude Code theme, which `paint` sets with the background. */
+      panelThemeRequestColor: string
       /** `panel.background` as the panel last read it: `auto`, or the color it draws for the value. */
       panelBackground: string
       /** Whether the panel took the keyboard since the last keystroke in the prompt, so its hint names its own keys. */
