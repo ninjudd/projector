@@ -54,12 +54,16 @@ done and decline, and layer 2 adds the start action.
 2. You open its drawer: the steps, then the actions. A request without a
    start action, or one that is ready, shows `done | decline | discuss |
    snooze`. A request with a start action shows **start** before them.
-3. **start** runs `project inbox start <number>`, which records the start
-   action as it reads at that moment. The panel's deliverer then claims the
-   line it owes and sends `STARTED 5 <request> → <start action>`, to the
-   subagent that posted the request while it runs, or otherwise to the main
-   loop, exactly as it delivers `DISMISSED` today. When the delivery fails,
-   `reopen` removes the start, a toast says why, and **start** comes back.
+3. **start** runs `project inbox start <number> --action <action>`, passing
+   the start action its drawer shows, which `start` records. When an agent
+   revised the start action since the panel last read the store, the two
+   differ, and `start` exits `65` without recording anything. The panel then
+   reads the store again and shows the new action, which needs a new press.
+   Otherwise the panel's deliverer claims the line it owes and sends
+   `STARTED 5 <request> → <start action>`, to the subagent that posted the
+   request while it runs, or otherwise to the main loop, exactly as it
+   delivers `DISMISSED` today. When the delivery fails, `reopen` removes the
+   start, a toast says why, and **start** comes back.
 4. While the agent works, the request's line says `starting`, and its drawer
    shows the start action in place of **start**.
 5. The agent finishes and runs `project inbox ready <number>`, through the
@@ -126,7 +130,7 @@ above in reverse order of that list.
 | `project inbox request <request> [--detail <markdown> \| --detail-file <path>] [--start <action>] [--pr <owner/repo#number>] [--agent <id>]` | New. Checks the subject as `tell` does, and `--start` by the same rules. Prints the number |
 | `project inbox done <number> [--text <line>]` | New. Records the outcome; exits `65` for an item that isn't an open request |
 | `project inbox decline <number> [--text <line>]` | New. As `done`, recording a decline |
-| `project inbox start <number>` | Layer 2, new. Exits `65` for a request with no start action, one already started and not blocked, and a resolved one |
+| `project inbox start <number> --action <action>` | Layer 2, new. Records `--action` as the start action you consented to. Exits `65` when `--action` differs from the stored start action, and for a request with no start action, one already started and not blocked, and a resolved one |
 | `project inbox ready <number>` | Layer 2, new. Exits `65` unless the request is started |
 | `project inbox block <number> --reason <line>` | Layer 2, new. As `ready`, recording the reason |
 | `project inbox dismiss <number>` | A request records a decline with no text |
@@ -171,7 +175,7 @@ A refusal follows `ask`'s rules: exit `65` gives the check that failed.
 | `src/projector/permissions.py` | `start`, `done`, and `decline` among the ask rules; `request`, `ready`, and `block` among the allowed commands |
 | `hooks/types.d.ts` | A `Request` type in `Item` |
 | `hooks/inbox.ts` | `needsDelivery` for a request's owed lines; `readPrompt` reads `Done` and `Declined` under a quoted request; `relayNote` and `replyNote` word their notes for a request; the tools' descriptions and argument builders |
-| `hooks/register.tsx` | The tools; the request's line, color, and state mark; its drawer's actions; `act` runs `start`; `deliver` and the prompt hook take a request |
+| `hooks/register.tsx` | The tools; the request's line, color, and state mark; its drawer's actions; `act` runs `start` with the action the drawer shows, and reads the store again on exit `65`; `deliver` and the prompt hook take a request |
 | `tests/test_inbox.py`, `tests/test_permissions.py`, `hooks/inbox.test.ts`, `hooks/panel.test.tsx` | Tests for the criteria in § 4 |
 | `docs/cli.md` | "Use the inbox" describes requests and the new commands |
 | `docs/plugins.md` | "Read your inbox in Projector's panel" describes a request's drawer and the tools |
@@ -208,9 +212,13 @@ A refusal follows `ask`'s rules: exit `65` gives the check that failed.
   only when the text after its quote is exactly one of its options. A
   request takes its outcome only when the first line under the quote is
   exactly the word, so a reply that happens to begin "done?" stays a reply.
-- **Consent covers the start action as it read.** `STARTED` quotes the text
-  recorded when you pressed start, and revising a started request returns it
-  to open, so a press for one build never covers installing another. Making
+- **Consent covers the start action as it read.** **start** passes the
+  action its drawer shows, and `start` refuses it when the stored action
+  differs, so a press on a drawer the panel hasn't redrawn since a revision
+  records nothing. `STARTED` quotes the text recorded when you pressed start,
+  and revising a started request returns it to open, so a press for one build
+  never covers installing another. The panel guards a question's answer the
+  same way: `readPrompt` reads an `isStale` pick as a reply. Making
   `start`, `done`, and `decline` ask rules keeps an agent from recording
   your consent itself.
 - **Agent events are writes, not messages.** ready and blocked change what
@@ -237,6 +245,7 @@ A refusal follows `ask`'s rules: exit `65` gives the check that failed.
 | Layer 2: `project inbox block 5 --reason "Unlock the phone"`, then **retry** | The drawer shows the reason; retry records a new `started` and removes `progress` |
 | Layer 2: `revise 5 --start "Install build d41f…"` after start | The request is open, and only a new press sends `STARTED` with the new action |
 | Layer 2: `start` on a request with no start action, or twice before ready | Exits `65` |
+| Layer 2: `revise 5 --start "Install build d41f…"`, then **start** on a drawer that still shows the old action | `start` exits `65` and records nothing; the drawer shows the new action, and no `STARTED` is sent |
 | An agent's `project inbox start`, `done`, or `decline` | Prompts for permission under Projector's rules; `request`, `ready`, and `block` do not |
 | Press **done** before a pending `STARTED` is delivered | The agent hears the outcome only |
 
