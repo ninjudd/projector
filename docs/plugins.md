@@ -474,7 +474,7 @@ the item's first letter:
       (recommended)
       2: Add a budget of two retries per host, and keep the total cap
 
-      6: I don't understand this question
+      6: I don't understand
       7: discuss question
       8: dismiss question
       9: snooze question
@@ -537,9 +537,8 @@ Claude Code's own `: ` after the key always takes, so under the pointer or
 the focus ring the line inverts as the key and one block after it. A
 question's drawer has four actions:
 
-- **I don't understand this question** tells the agent that you don't
-  follow the question, in one press, as the paragraph after this list
-  describes.
+- **I don't understand** tells the agent that you don't follow the
+  question, in one press, as the paragraph after this list describes.
 - **discuss question** puts the quoted question in the prompt, followed
   by a blank line, and leaves the drawer open, so the options and detail
   stay in view while you type. Type your reply under the quote, or on the
@@ -568,16 +567,16 @@ sends `UNCLEAR` takes its place, so the agent hears only that. To say what
 you don't understand, use **discuss** instead.
 
 A notice's drawer shows its detail, then the same four actions: **I don't
-understand this notice**, **discuss notice**, **dismiss notice**, and
-**snooze notice**. **discuss notice** puts the quoted notice in the prompt.
+understand**, **discuss notice**, **dismiss notice**, and **snooze
+notice**. **discuss notice** puts the quoted notice in the prompt.
 A prompt you send that quotes a notice answers nothing, but it closes the
 notice's drawer; the notice stays in the panel until you dismiss it.
 **dismiss notice** clears the notice once you have read it and closes its
 drawer, and nothing goes back to the agent.
 
 A request's drawer shows its steps, then the options its agent gave, on `1`
-and on, in the options' place, then **I don't understand this request**,
-**discuss request**, **dismiss request**, and **snooze request**. A test's
+and on, in the options' place, then **I don't understand**, **discuss
+request**, **dismiss request**, and **snooze request**. A test's
 options might be **Looks good** and **Some feedback**, and a request posted
 without options offers a single **Done**.
 Like a question's option, each records nothing at once: it puts the quoted
@@ -731,8 +730,8 @@ A drawer's actions follow its options, a line each, with the digit that
 presses it before the label in the accent color, such as
 `7: discuss question`. The digits count down from 9, so a question's choices
 and a request's, after any **Start** or **Retry**, end at `5`, and the
-item's line keeps `0`. Each label ends with what the action acts on:
-`question`, `notice`, `request`, or `PR`.
+item's line keeps `0`. Each label but **I don't understand** ends with
+what the action acts on: `question`, `notice`, `request`, or `PR`.
 
 - **6** presses **I don't understand**, which an open item's drawer offers
   until you press it.
