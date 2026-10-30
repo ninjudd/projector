@@ -1,0 +1,2101 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index e9e7874a..49057eb4 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -214,12 +214,13 @@ run `npm ci` in `site/`, before the first check, as
+ worktree that has no declarations or no `tsc` of its own uses the main
+ checkout's.
+ 
+-### See your loops' pull requests in Projector's panel
++### See your session's pull requests in Projector's panel
+ 
+-In Claude Code, the plugin also ships a hooks module in `hooks/` that lists
+-the open pull requests your loops track in the panel above the prompt, one
+-line each. Run `/projector` to show or hide the panel. It also appears when the
+-session starts a loop's watcher for the first time.
++In Claude Code, the plugin also ships a mod, the hooks module in `hooks/`,
++which lists the open pull requests your session fixes or reviews in the
++panel above the prompt, one line each. Run `/projector` to show or hide the
++panel. It also appears when the session subscribes to a pull request it had
++not subscribed to before.
+ 
+ ```text
+   /projector                                              2 pull requests  12s   [-]
+@@ -242,14 +243,15 @@ and last the number of unresolved review threads before a `*` in yellow,
+ such as `2*`. The ` · ` between two notes keeps the default text color. The
+ line ends with how long ago the pull request last changed, in the column
+ where the inbox's items end with their ages. Only the title shortens on a
+-narrow terminal.
++narrow terminal. A pull request that the watch daemon has not queried yet
++reads `loading…` in place of its title, with no state, author, or age, until
++the daemon's first result for it arrives.
+ 
+ Your own pull requests come first, then everyone else's, each author's
+ together and the authors in order of login, with no line between the groups.
+-The panel tells which are yours by the account `gh` is signed in as, which it
+-asks for in the same query as the pull requests. A pull request that both a
+-`start-watch-loop` watcher, `watch-threads.sh`, and a `start-review-loop`
+-watcher, `watch-prs.sh`, track is listed once.
++The panel tells which are yours by the operator, the account `gh` is signed
++in as, which it reads from the daemon's `daemon.json`. A pull request that
++the session both fixes and reviews is listed once.
+ 
+ In a terminal, the panel draws on a background of its own, so a line that
+ moves as the panel scrolls is plainly the panel's. It is inset one column
+@@ -298,20 +300,16 @@ Claude Desktop, VS Code, and the mobile app do not set the panel's text in a
+ terminal's columns, so they draw no background, no header, and no hint, and
+ there the panel starts with its first row.
+ 
+-When a poll cannot reach GitHub, the panel keeps showing the pull requests
+-GitHub gave last, and the header's time shows how old they are. It shows
+-GitHub's error only when it has none of them to show.
+-
+ Click a pull request's number to open a drawer under it, and click it again
+ to close the drawer; opening one drawer closes any other. The drawer starts
+-one column past the number, under `draft` or `ready`. It says whether your
+-loops are watching the pull request, in the terminal palette's blue, or
+-reviewing it, in Claude's orange, then its branch, in the palette's cyan,
+-its size, and its checks. The size reads as a diff stat: the insertions,
+-such as `+84`, in green and the deletions, such as `−12`, in red. The
+-checks' state takes a color of its own, and the rest, ` in 5 files` and
+-each `·` included, keeps the default text color. Below that come two
+-actions, a line each, on the digits `7` and `8`, as
++one column past the number, under `draft` or `ready`. It names the session's
++roles on the pull request: `fixing` in the terminal palette's blue,
++`reviewing` in Claude's orange, or `fixing and reviewing`. Then come its
++branch, in the palette's cyan, its size, and its checks. The size reads as a
++diff stat: the insertions, such as `+84`, in green and the deletions, such
++as `−12`, in red. The checks' state takes a color of its own, and the rest,
++` in 5 files` and each `·` included, keeps the default text color. Below
++that come two actions, a line each, on the digits `7` and `8`, as
+ [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+ describes, and then the links:
+ 
+@@ -321,10 +319,10 @@ describes, and then the links:
+ - **dismiss PR** asks to be sure first, because a dismissed pull request
+   leaves the panel at once. It replaces the action lines with
+   `8: yes, dismiss PR` and `9: no, keep it`, so a stray `8` only asks.
+-  Press `8` again to keep the pull request out of every loop of this
+-  session that tracks it, and the panel drops its line and says which
+-  loops stopped, such as `stopped watching and reviewing acme/app#258`.
+-  `9`, closing the drawer, or opening another keeps it.
++  Press `8` again to keep the pull request out of every role the session
++  holds on it, and the panel drops its line and says which roles stopped,
++  such as `stopped fixing and reviewing acme/app#258`. `9`, closing the
++  drawer, or opening another keeps it.
+ - **open in github** opens the pull request on GitHub.
+ - **open in projector** opens its Projector summary, when the pull
+   request's description links one.
+@@ -342,15 +340,15 @@ Each link has a line of its own, because a terminal that does not draw
+ hyperlinks shows a link's URL after its text, and a line shared with
+ another link would cut the URL off.
+ 
+-**dismiss** runs `project loop drop` once for each tracked file that lists
+-the pull request, which appends a `!owner/repo#number` line that both
+-watchers honor, so the loops stop acting on it. When the command fails, the
+-panel shows its error and keeps the line. To bring a dismissed pull request
+-back, run `project loop restore` with the same reference and tracked file,
+-as [Change a loop's tracked file](cli.md#change-a-loops-tracked-file)
+-describes. A drawer closes whenever its pull request leaves the panel,
+-dismissed here, dropped from a terminal, or merged, so the line comes back
+-with its drawer closed.
++**dismiss** runs `project watch drop` once for each role the session holds
++on the pull request, as `--role fix` or `--role review`. Each writes a `!`
++line to the session's subscriptions, so the daemon tells this session
++nothing more about the pull request in that role. When the command fails,
++the panel shows its error and keeps the line. To bring a dismissed pull
++request back, run `project watch restore` with the same reference and role,
++such as `project watch restore acme/app#258 --role fix`. A drawer closes
++whenever its pull request leaves the panel, dismissed here, dropped from a
++terminal, or merged, so the line comes back with its drawer closed.
+ 
+ On the main screen, which Claude Code uses under tmux and when
+ `CLAUDE_CODE_NO_FLICKER=0` is set, use the panel from the keyboard, as
+@@ -358,24 +356,74 @@ On the main screen, which Claude Code uses under tmux and when
+ describes. The **open in github**, **open in projector**, and thread links take
+ no press there; the terminal opens them the way it opens any other link.
+ 
+-The panel lists only this session's loops. It finds a loop by the
+-`--tracked` file its watcher reads, and learns that file when the session
+-runs the watcher. A loop another session runs stays out of this session's
+-panel. When the panel cannot tell which file a watcher's `--tracked` argument
++The panel lists only this session's subscriptions. The CLI keeps them in
++`sessions/<session>/subscriptions` under the daemon's folder,
++`$XDG_STATE_HOME/projector/watch/`, which is
++`~/.local/state/projector/watch/` by default. A session subscribes to fix a
++pull request when it pushes to it or opens it, and to review one when it
++runs `review-pr` on it. When the session reviews a whole repository with
++`review-repo`, the panel also lists each open pull request the daemon
++adopted for that subscription: one you wrote, or one that requests your
++review. The daemon names them in the session's `state.json`. Another
++session's subscriptions stay out of this session's panel.
++
++The panel reads each pull request's line from the daemon's cache,
++`cache/<owner>/<repo>/pulls/<number>.json`, which the daemon rewrites each
++time it queries the pull request. So the list costs no GraphQL query of its
++own. While the panel is shown, it reads the session's subscriptions and the
++cache every 5 seconds, so a change shows within a few seconds of the
++daemon's query. Every 30 seconds it also reads `panel.background` with
++`project config get`. An open drawer's threads cost a point of the
++account's hourly GraphQL quota, because GitHub charges for each thread's
++first comment. So the panel asks for them in a `gh api graphql` call of
++their own, for that one pull request, when the drawer opens and every 30
++seconds while it stays open. It skips the call when the pull request has no
++unresolved thread. The skills never depend on the panel, and Codex has no
++equivalent.
++
++A session that started a `watch-threads.sh` or `watch-prs.sh` watcher under
++an earlier release keeps it until the session ends, and the panel lists the
++pull requests in that watcher's `--tracked` file
++meanwhile: `watch-threads.sh`'s as `fixing`, and `watch-prs.sh`'s as
++`reviewing`. For such a pull request that the daemon has no result for, the
++panel asks GitHub itself, in one `gh api graphql` call every 30 seconds.
++When that call cannot reach GitHub, the panel keeps showing what GitHub gave
++last, and shows GitHub's error only when it has no pull request to show.
++Dismissing such a pull request also runs `project loop drop` on the tracked
++file. When the panel cannot tell which file a watcher's `--tracked` argument
+ names, such as a path built from a variable the session does not set, it
+-says so once and leaves that loop out.
+-
+-The panel reloads when one of the session's watchers reports a change and
+-when a turn ends, and every 30 seconds otherwise, only while it is shown.
+-Each reload asks GitHub for every pull request in one `gh api graphql` call
+-and reads `panel.background` with `project config get`. That call costs one
+-point of the account's hourly GraphQL quota for each 50 or so pull
+-requests, because it asks only whether each thread is resolved. An open
+-drawer's threads cost a point of their own, because GitHub charges for each
+-thread's first comment. So the panel asks for them in a second call, for
+-that one pull request, when the drawer opens and on each reload while it
+-stays open. It skips the call when the pull request has no unresolved
+-thread. The skills never depend on the panel, and Codex has no equivalent.
++says so once and leaves that watcher out.
++
++#### Get the daemon's events as prompts
++
++In Claude Code, the mod keeps the session's subscriptions alive and brings
++the daemon's events into the conversation, so no watcher runs in it:
++
++- **At the session's start**, the mod runs
++  `project watch renew --deliverer mod --session <id>`, which marks the
++  session live and starts the daemon when none runs.
++- **Every 5 seconds**, it checks the session's `events` file. When the file
++  holds events, the mod runs `project watch take --json`, which empties the
++  file, and submits the events as one prompt. The prompt waits until the
++  session is idle, as an inbox answer for the main loop does. Events that
++  arrive while a prompt waits go together in the next one. When no event
++  comes for a minute, the mod runs `renew` again, because the daemon lets a
++  session lapse after 5 minutes without a renewal. When the session moves to
++  a new id, as `/clear` moves it, the mod renews the new id at the next
++  check, so a skill that subscribes the session there finds the mod
++  delivering its events.
++- **After a Bash command that runs `git push`, `gh pr create`, or a
++  `gh stack` command**, the mod passes the command's output to
++  `project watch add --from-output -`. The CLI subscribes the session to fix
++  each pull request that the output shows it opened or pushed to, and adds
++  nothing when `watch.auto_start` is `false`. The command's result does not
++  wait for it.
++
++Each event line names what to do, such as
++`CONFLICT acme/app#12 conflicts with main — run fix-pr on acme/app#12 in subagent fix-12`,
++so a session that loaded no skill can act on it. On a host without the mod,
++such as Codex, or in a Claude Code session with mods off,
++`project watch stream` renews the session and prints its events instead.
+ 
+ #### Choose the panel's color
+ 
+diff --git a/docs/projects/panel-themes/readme.md b/docs/projects/panel-themes/readme.md
+index 14c394ae..4e6503c5 100644
+--- a/docs/projects/panel-themes/readme.md
++++ b/docs/projects/panel-themes/readme.md
+@@ -32,7 +32,7 @@ background is a setting, `panel.background`, and that causes three problems:
+   Code theme puts the pull request titles, drawn in the theme's light text
+   color, on white.
+ - **No other color can change.** Someone whose terminal palette makes the
+-  `watching` blue, `ansi256(4)`, hard to read on the panel, or who wants
++  `fixing` blue, `ansi256(4)`, hard to read on the panel, or who wants
+   questions in another color, has no setting to reach for.
+ - **Colors have no names.** A new element picks a color where it draws.
+   `success` means both a pull request that is ready and a count of inserted
+@@ -66,7 +66,7 @@ variants, the ANSI themes, and a custom theme's overrides. No color leaves
+ the text to the engine. So one default serves every theme, and only the
+ background's default depends on the theme, by its base.
+ 
+-`watching` and `branch` draw in the terminal palette's blue and cyan today,
++`fixing` and `branch` draw in the terminal palette's blue and cyan today,
+ `ansi256(4)` and `ansi256(6)`, which follow the terminal's palette but not
+ the Claude Code theme. They move to theme keys, so they adapt to light and
+ dark themes like every other role. The owner picks the two keys by preview,
+@@ -84,7 +84,7 @@ as § 7 says, and until then step 1 of § 6 keeps the palette slots.
+ | `error` | `conflict`, `changes requested`, `checks failing`, a GitHub error | `error` |
+ | `added` | A drawer's insertions, such as `+84` | `success` |
+ | `removed` | A drawer's deletions, such as `−12` | `error` |
+-| `watching` | `watching` in a pull request's drawer | A theme key, picked by preview |
++| `fixing` | `fixing` in a pull request's drawer | A theme key, picked by preview |
+ | `reviewing` | `reviewing` in a pull request's drawer | `claude` |
+ | `branch` | A pull request's branch in its drawer | A theme key, picked by preview |
+ 
+@@ -279,7 +279,7 @@ once, as § 2.4 says.
+   defaults keep today's choices, so step 1 of § 6 changes nothing anyone
+   sees. Only the background needs a table by base, because no theme key
+   means "a step darker than the terminal".
+-- **`watching` and `branch` follow the theme too.** A palette slot keeps the
++- **`fixing` and `branch` follow the theme too.** A palette slot keeps the
+   terminal's own blue or cyan on every theme, and those can be faint on the
+   light background. The owner chose theme keys for both, so they adapt to
+   light and dark as the other roles do.
+@@ -329,7 +329,7 @@ once, as § 2.4 says.
+ | Do | Expect | Test |
+ | --- | --- | --- |
+ | Draw the panel with no settings on `dark`, `light`, both daltonized themes, both ANSI themes, custom themes on each base, one with no `base`, and one with no file | Every element draws exactly the color it draws before the change | `with no settings every role draws today's color on the <theme> theme` in `hooks/panel.test.tsx`, one test per theme |
+-| Open a pull request's drawer with no settings on `dark`, then on `light` | `watching` and the branch draw the theme keys the owner picked, not `ansi256(4)` or `ansi256(6)` | `watching and the branch draw theme keys, so they follow the theme` |
++| Open a pull request's drawer with no settings on `dark`, then on `light` | `fixing` and the branch draw the theme keys the owner picked, not `ansi256(4)` or `ansi256(6)` | `fixing and the branch draw theme keys, so they follow the theme` |
+ | Set `panel.colors.muted` to `ansi256(244)` | The header, hint, ages, author, labels, and resolved items draw `ansi256(244)` | `panel.colors overrides the elements of its role` |
+ | Set `panel.colors.question` to `suggestion` | An open question's line draws `suggestion` | the same test |
+ | Set `panel.colors.mutd`, or `panel.theme` to `nope` | Defaults draw, and one toast names the roles or the themes | `an unknown role or theme leaves the defaults and says so once` |
+@@ -349,7 +349,7 @@ once, as § 2.4 says.
+ 
+ The first row's tests pass before the change and after step 1 of § 6,
+ because they pin today's look. Step 2 changes the colors they expect for
+-`watching` and the branch to the picked theme keys. Every other test fails
++`fixing` and the branch to the picked theme keys. Every other test fails
+ before the change.
+ 
+ ## 5. Cost
+@@ -371,7 +371,7 @@ matter here.
+    the key until `project upgrade`, while the panel still reads a table
+    written by hand. From this step, the panel refuses `white` on a dark
+    theme and `black` on a light one, which #341 draws, so `docs/plugins.md`
+-   says so in the same change. The step also moves `watching` and `branch`
++   says so in the same change. The step also moves `fixing` and `branch`
+    to the theme keys the owner picks by preview.
+ 3. Add `panel.theme` and the first built-in theme the owner chooses. It
+    needs step 2.
+@@ -382,7 +382,7 @@ matter here.
+   owner decides by previewing both candidates in a session mod: `none`,
+   which draws no background so the panel sits on the terminal's own, and
+   `sidebar`, which draws on Claude Code's side-panel grey and looks raised.
+-- **Which theme keys `watching` and `branch` take.** Owner, before step 2.
++- **Which theme keys `fixing` and `branch` take.** Owner, before step 2.
+   Both move to theme keys, as § 2.1 says, and the owner picks the two keys
+   by preview.
+ - **Whether a repository can set the panel's colors.** Deferred. The CLI
+diff --git a/docs/projects/watch-daemon/readme.md b/docs/projects/watch-daemon/readme.md
+index 855c084b..e0972491 100644
+--- a/docs/projects/watch-daemon/readme.md
++++ b/docs/projects/watch-daemon/readme.md
+@@ -644,7 +644,9 @@ change its tracked file, and the release after removes them.
+   with them the tracked files a conversation chose, `--exit-when-closed` and
+   `DONE`, because a subscription ends with its pull request, and `BRANCH`,
+   because a push subscribes the session. `MOVED` replaces the lease's
+-  `ROLE`. The panel's own polling goes. Every caller moves: `implement`,
++  `ROLE`. The panel's own polling goes, except for the pull requests of a
++  watcher started before the upgrade, which the daemon does not cache
++  (§ 9.3). Every caller moves: `implement`,
+   `fix-pr`, `review-pr`, `spec`, the agent instructions template, the panel,
+   the docs, the homepage, and the tests that read the old files.
+ - **The name `review-repo`.** It pairs with `review-pr`: one reviews a pull
+@@ -979,3 +981,36 @@ Building the daemon settled these choices, which the design above left open.
+   asked that session to fix it.
+ - **A guard.** `tests/test_packaging.py` fails when any file under `skills/`
+   names a removed loop skill, `project loop`, or `--tracked`.
++
++### 9.3 The panel and the mod
++
++- **An earlier watcher's pull requests.** The daemon caches only subscribed
++  pull requests, so the panel still fetches the pull requests of an earlier
++  watcher's tracked file, and only those, with its 30-second GraphQL query.
++  A session with only subscriptions sends no query for its list.
++- **How often it reads.** While the panel is shown, it reads the
++  subscriptions and the cache on every 5-second tick. The fallback query,
++  the drawer's threads, and `panel.background` stay on the 30-second poll.
++- **Showing the panel.** It appears when the session gains a subscription it
++  lacked, as a new watcher showed it before. The mod keeps the set it has
++  seen in its `panelSubscribed` state.
++- **Batches.** While a submitted batch still waits for the session, the mod
++  takes no more events, and those that arrive meanwhile go as one prompt
++  afterwards. The prompt is the event lines alone.
++- **Push detection.** The mod splits a command with its existing tokenizer,
++  skipping variable assignments, `env`, `command`, `exec`, `nohup`, `time`,
++  and git's global options such as `-C <dir>`. It does not look inside
++  `bash -c '…'`. It sends the call's standard output and standard error to
++  `project watch add --from-output -` on standard input through
++  `$.process.run`, and does not wait for it.
++- **A loading row.** A pull request with no cache file yet shows no state,
++  author, or age, and its drawer names only its roles.
++- **Reading the subscriptions as the daemon does.** The panel parses the
++  `subscriptions` file with the daemon's `LINE` grammar and compares models
++  by `review.identity`. It keeps an adopted pull request only while one of
++  the session's repository lines reviews it with a model that no `!` line
++  names, so a dismissed pull request leaves at once rather than after the
++  daemon's next pass rewrites `adopted`.
++- **A new session id.** The mod records which session id it last renewed.
++  When the engine moves the session to a new id, as `/clear` does, the mod
++  renews the new id at the next tick.
+diff --git a/hooks/github.ts b/hooks/github.ts
+index a0cc58f1..8e0ff453 100644
+--- a/hooks/github.ts
++++ b/hooks/github.ts
+@@ -1,5 +1,5 @@
+ import type { Checks, PullRequest, Thread } from './types'
+-import { keyOf, type TrackedPr } from './parse'
++import { isRecord, keyOf, type TrackedPr } from './parse'
+ 
+ /** Where one pull request's node sits in the response. */
+ type Slot = { pr: TrackedPr; repoAlias: string; prAlias: string }
+@@ -75,9 +75,6 @@ function queryOf(prs: readonly TrackedPr[], fields: string): Query {
+   return { text: repos.join(' '), slots }
+ }
+ 
+-const isRecord = (value: unknown): value is Record<string, unknown> =>
+-  typeof value === 'object' && value !== null && !Array.isArray(value)
+-
+ const firstLine = (text: string) => text.trim().split('\n')[0] ?? ''
+ 
+ function messageOf(body: unknown): string | undefined {
+@@ -146,6 +143,29 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
+   }
+ }
+ 
++/**
++ * Reads the daemon's cache file for a pull request,
++ * `{"repository": {"pullRequest": {...}}, ...}`, where `pullRequest` holds
++ * every field `FIELDS` asks for. Null when the file holds no pull request.
++ */
++export function parseCache(pr: TrackedPr, text: string): PullRequest | null {
++  let cached: unknown
++  try {
++    cached = JSON.parse(text)
++  } catch {
++    return null
++  }
++  const repository = isRecord(cached) ? cached.repository : undefined
++  const node = isRecord(repository) ? repository.pullRequest : undefined
++  return isRecord(node) ? toPullRequest(pr, node) : null
++}
++
++/** A pull request the session subscribes to that the daemon has no result for yet. */
++export const loadingOf = (pr: TrackedPr): PullRequest => ({
++  ...toPullRequest(pr, {}),
++  isLoading: true,
++})
++
+ type Result = { exitCode: number; stdout: string; stderr: string }
+ 
+ /**
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index aa26426d..73a07d5f 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -164,10 +164,15 @@ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
+ 
+ /**
+  * GitHub's answer to a query, where a test needs another, or needs it late,
+- * and the settings `.projector.toml` holds, by dotted key, which a test may
+- * change between reloads.
++ * the settings `.projector.toml` holds, by dotted key, which a test may
++ * change between reloads, and what a Bash command prints, where a test needs
++ * it to print something.
+  */
+-type Beneath = { github?: (query: string) => Ran | Promise<Ran>; settings?: Record<string, unknown> }
++type Beneath = {
++  github?: (query: string) => Ran | Promise<Ran>
++  settings?: Record<string, unknown>
++  bash?: (command: string) => { stdout: string; stderr: string }
++}
+ 
+ /** `project config get <key> [--default <value>] --json`, answered from `settings` as the CLI answers it. */
+ function configGet(argv: readonly string[], settings: Record<string, unknown>): Ran {
+@@ -180,20 +185,24 @@ function configGet(argv: readonly string[], settings: Record<string, unknown>):
+ 
+ /**
+  * Answers the files, GitHub, prompt and Bash calls beneath the plugin,
+- * `project config get` from `settings`, and any other `project` command when
+- * given.
++ * `project config get` from `settings`, and any other `project` command, with
++ * what it reads on standard input, when given. A file that `files` does not
++ * hold is missing.
+  */
+ function world(
+   on: On,
+   files: Record<string, string>,
+-  project?: (argv: string[]) => Outcome | Promise<Outcome>,
+-  { github = query => ran(answer(query)), settings = {} }: Beneath = {},
++  project?: (argv: string[], stdin?: string) => Outcome | Promise<Outcome>,
++  { github = query => ran(answer(query)), settings = {}, bash = () => ({ stdout: '', stderr: '' }) }: Beneath = {},
+ ) {
+   const commands: string[][] = []
+   const filled: string[] = []
+-  on('fs.stat', ($, e) => ({
+-    value: { kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false, realPath: e.path },
+-  }))
++  on('fs.stat', ($, e) => {
++    const text = files[e.path]
++    return text === undefined
++      ? { deny: `ENOENT: no such file, stat '${e.path}'` }
++      : { value: { kind: 'file' as const, size: text.length, mtimeMs: 0, isLink: false, realPath: e.path } }
++  })
+   on('fs.read', ($, e) => ({ value: files[e.path] ?? '' }))
+   on('process.run', ($, e) => {
+     commands.push([...e.argv])
+@@ -205,7 +214,7 @@ function world(
+         : group === 'config' && verb === 'get'
+           ? configGet(e.argv, settings)
+           : project !== undefined
+-            ? project([...e.argv])
++            ? project([...e.argv], e.init?.stdin)
+             : github(e.argv.join(' '))
+     return outcome instanceof Promise ? outcome.then(answered) : answered(outcome)
+   })
+@@ -213,10 +222,10 @@ function world(
+     filled.push(`${e.mode}:${e.text}`)
+     return { isFilled: true }
+   })
+-  on('tool.call', { tool: 'Bash' }, () => ({
+-    result: { stdout: '', stderr: '', interrupted: false },
+-    text: '',
+-  }))
++  on('tool.call', { tool: 'Bash' }, ($, e) => {
++    const printed = bash(e.command)
++    return { result: { ...printed, interrupted: false }, text: printed.stdout }
++  })
+   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+     const { Text } = $.ui.resolve(e)
+     return <Text>{ENGINE_SITE}</Text>
+@@ -676,7 +685,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   await ui.press({ key: 'pr:x/y#7' })
+   await clock.settle()
+   // The drawer's facts name no author, whoever wrote the pull request.
+-  const facts = await ui.find({ type: 'Text', text: /^watching · fix-branch · \+12 −3 in 2 files · checks passing$/ })
++  const facts = await ui.find({ type: 'Text', text: /^fixing · fix-branch · \+12 −3 in 2 files · checks passing$/ })
+   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
+   // What the loop does takes its loop's color, the branch the palette's cyan, and the size reads as a diff stat:
+   // insertions green, deletions red. The checks take theirs, and the files and each `·` keep the default color.
+@@ -685,7 +694,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   expect(
+     pieces.map(piece => (typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.color])),
+   ).toEqual([
+-    ['watching', 'ansi256(4)'],
++    ['fixing', 'ansi256(4)'],
+     ' · ',
+     ['fix-branch', 'ansi256(6)'],
+     ' · ',
+@@ -921,7 +930,7 @@ test('dismiss drops a pull request from each loop that tracks it, and its line g
+     ['project', 'loop', 'drop', 'x/y#7', '--tracked', REVIEW],
+     ['project', 'loop', 'drop', 'x/y#7', '--tracked', WATCH],
+   ])
+-  expect(toasts).toEqual(['projector: stopped watching and reviewing x/y#7'])
++  expect(toasts).toEqual(['projector: stopped fixing and reviewing x/y#7'])
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeUndefined()
+   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+@@ -1018,16 +1027,16 @@ test('opening one drawer closes the one that was open', async ($, on) => {
+ 
+   const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'pr:x/y#7' })
+-  expect(await loopsOf(ui, 'x/y#7')).toEqual([['watching', 'ansi256(4)']])
++  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixing', 'ansi256(4)']])
+   await ui.press({ key: 'pr:o/r#1' })
+   expect(await ui.find({ key: 'github:o/r#1' })).toBeDefined()
+   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+-  // Reviewing takes the theme's `claude` orange, as watching takes the palette's blue.
++  // Reviewing takes the theme's `claude` orange, as fixing takes the palette's blue.
+   expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewing', 'claude']])
+   await ui.unmount()
+ })
+ 
+-test('lists a pull request both loops track once, as watched and reviewed, and counts it once', async ($, on) => {
++test('lists a pull request both loops track once, as fixed and reviewed, and counts it once', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'o/r#1\n' })
+@@ -1041,9 +1050,9 @@ test('lists a pull request both loops track once, as watched and reviewed, and c
+   // The header counts its one line once, in the singular.
+   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
+   await ui.press({ key: 'pr:o/r#1' })
+-  expect(await ui.find({ type: 'Text', text: /^watching and reviewing/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^fixing and reviewing/ })).toBeDefined()
+   // Each loop takes its own color, and the `and` between them the default color.
+-  expect(await loopsOf(ui, 'o/r#1')).toEqual([['watching', 'ansi256(4)'], ' and ', ['reviewing', 'claude']])
++  expect(await loopsOf(ui, 'o/r#1')).toEqual([['fixing', 'ansi256(4)'], ' and ', ['reviewing', 'claude']])
+   await ui.unmount()
+ })
+ 
+@@ -1888,8 +1897,9 @@ test('an idle session with no questions runs no inbox command', async ($, on) =>
+   await clock.advance(3 * TICK)
+   await clock.settle()
+ 
+-  // Listing the store's directory starts no process; only a reload of the shown panel reads its setting.
+-  expect(session.project().filter(command => !command.startsWith('config get'))).toEqual([])
++  // Listing the store's directory starts no process; only a reload of the shown panel reads its setting, and the
++  // session's start renews its subscriptions.
++  expect(session.project().filter(command => !/^(config get|watch renew)/.test(command))).toEqual([])
+   const ui = await $.ui.mount(PANEL)
+   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
+   await ui.unmount()
+@@ -4576,3 +4586,475 @@ test('an open item’s line draws its title with no rule after it', async ($, on
+   expect(await desktop.find({ type: 'Text', text: /─/ })).toBeUndefined()
+   await desktop.unmount()
+ })
++
++// The daemon's files: the session's subscriptions, each pull request's cached
++// result, and the events the mod delivers.
++
++const WATCH_ROOT = `${HOME}/.local/state/projector/watch`
++const MODEL = 'claude-opus-5-5'
++/** What the panel delivers when the daemon reports a finding and a conflict. */
++const EVENT_LINES = [
++  'FINDING x/y#7 src/fetch.ts:40 by grace — run fix-pr on x/y#7 in subagent fix-7',
++  'CONFLICT x/y#7 conflicts with main — run fix-pr on x/y#7 in subagent fix-7',
++]
++
++/** The files of `SESSION` under the daemon's folder `root`. */
++const sessionFiles = (root = WATCH_ROOT) => {
++  const folder = `${root}/sessions/${SESSION}`
++  return { subscriptions: `${folder}/subscriptions`, events: `${folder}/events`, state: `${folder}/state.json` }
++}
++const { subscriptions: SUBSCRIPTIONS, events: EVENTS, state: STATE } = sessionFiles()
++
++/** The daemon's cache file for a pull request of `repo`, holding the pull request as its query gave it. */
++const cached = (repo: string, node: Record<string, unknown>) => ({
++  [`${WATCH_ROOT}/cache/${repo.toLowerCase()}/pulls/${String(node.number)}.json`]: JSON.stringify({
++    fetched_at: new Date(NOW - 60_000).toISOString(),
++    etags: { pull: 'W/"1"' },
++    repository: { visibility: 'PUBLIC', pullRequest: node },
++    reviews: [],
++  }),
++})
++
++/** What GitHub gives for a pull request of `BY_REPO`. */
++const given = (repo: string, number: number) => (BY_REPO[repo]?.[`p${number}`] ?? {}) as Record<string, unknown>
++
++type WatchOptions = {
++  files?: Record<string, string>
++  env?: Record<string, string>
++  bash?: Beneath['bash']
++  /** Why `project watch drop` refuses, exiting 75, when it does. */
++  refusal?: string
++  /** The session's id each time the mod asks for it, `SESSION` unless a test moves the session. */
++  sessionId?: () => string
++}
++
++/**
++ * A session of ada's, whose daemon runs, with the `project watch` and
++ * `project loop drop` commands the panel runs answered as the CLI answers
++ * them: `take` prints and empties the events, `add --from-output` subscribes
++ * to fix the pull request each URL on standard input names, and each `drop`
++ * writes its exclusion. A prompt the panel submits waits while `hold` holds
++ * it, until `release`.
++ */
++function watchWorld(on: On, { files = {}, env = {}, bash, refusal, sessionId = () => SESSION }: WatchOptions = {}) {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME, ...env })
++  const root = env.XDG_STATE_HOME === undefined ? WATCH_ROOT : `${env.XDG_STATE_HOME}/projector/watch`
++  const own = sessionFiles(root)
++  const all: Record<string, string> = {
++    [`${root}/daemon.json`]: JSON.stringify({ pid: 41, version: '0.9.0', started_at: '2026-10-12T11:00:00Z', operator: VIEWER }),
++    ...files,
++  }
++  const piped: { argv: string[]; stdin: string }[] = []
++  const append = (path: string, line: string) => {
++    all[path] = `${all[path] ?? ''}${line}\n`
++  }
++  const cli = (argv: string[], stdin?: string): Outcome => {
++    const [, group, verb, target = '', , value = ''] = argv
++    if (group === 'loop' && verb === 'drop') {
++      append(value, `!${target}`)
++      return ran(`dropped ${target} from ${value}\n`)
++    }
++    if (group !== 'watch') return { ...ran(''), exitCode: 2, stderr: `project: invalid choice: '${group ?? ''}'\n` }
++    if (verb === 'take') {
++      const events = (all[own.events] ?? '').split('\n').filter(line => line !== '')
++      all[own.events] = ''
++      return ran(JSON.stringify({ session: SESSION, events }))
++    }
++    if (verb === 'add') {
++      piped.push({ argv, stdin: stdin ?? '' })
++      for (const [, repo, number] of (stdin ?? '').matchAll(/https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g)) {
++        append(own.subscriptions, `${repo ?? ''}#${number ?? ''} fix auto`)
++      }
++      return ran('events: mod\n')
++    }
++    if (verb === 'drop') {
++      if (refusal !== undefined) return { ...ran(''), exitCode: 75, stderr: `project: ${refusal}\n` }
++      append(own.subscriptions, value === 'review' ? `!${target} review ${MODEL} ${VIEWER}` : `!${target} ${value}`)
++      return ran('')
++    }
++    return ran('')
++  }
++  const { commands } = world(on, all, cli, { bash })
++  on('session.start', ($, e) => ({ cwd: e.cwd }))
++  on('session.id', () => ({ value: sessionId() }))
++  on('command.register', () => ({ value: { command: 'projector' } }))
++  const toasts = toastsOf(on)
++  const submitted: string[] = []
++  let isHeld = false
++  let release = () => undefined as void
++  on('prompt.submit', async ($, e) => {
++    submitted.push(e.text)
++    if (isHeld) await new Promise<void>(resolve => (release = resolve))
++    return { text: e.text }
++  })
++  return {
++    clock,
++    files: all,
++    piped,
++    submitted,
++    toasts,
++    hold: () => {
++      isHeld = true
++    },
++    release: () => {
++      isHeld = false
++      release()
++    },
++    /** The `project` commands the panel ran, less `project`. */
++    project: () => commands.filter(argv => argv[0] === 'project').map(argv => argv.slice(1).join(' ')),
++    /** The `gh` commands the panel ran, each one line. */
++    gh: () => commands.filter(argv => argv[0] === 'gh').map(argv => argv.join(' ')),
++  }
++}
++
++/** Starts the session, and lets the timers its start sets run: the first renewal, and any panel it shows. */
++async function begin($: Engine, clock: Clock) {
++  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
++  for (let step = 0; step < 3; step += 1) {
++    await clock.advance(1)
++    await clock.settle()
++  }
++}
++
++/** The pull requests the panel lists, by their lines' Buttons, in its order. */
++async function rowsOf(ui: Pick<Mounted, 'findAll'>) {
++  return (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
++}
++
++test('lists the session’s subscriptions from the daemon’s cache, with their roles, and asks GitHub nothing', async ($, on) => {
++  const session = watchWorld(on, {
++    files: {
++      [SUBSCRIPTIONS]: [
++        'x/y#7 fix',
++        `x/y#7 review ${MODEL} ${VIEWER}`,
++        `O/R#4 review ${MODEL} ${VIEWER}`,
++        'o/r#13 fix auto',
++        'o/r#5 fix',
++        '!o/r#5 fix',
++        '',
++      ].join('\n'),
++      ...cached('x/y', given('x/y', 7)),
++      ...cached('o/r', given('o/r', 4)),
++      ...cached('o/r', given('o/r', 5)),
++    },
++  })
++  await begin($, session.clock)
++
++  // The session's new subscriptions showed the panel. The operator daemon.json names is ada, so her pull request
++  // comes first; then the one still loading, whose author nobody knows yet; then grace's, whose cache file the panel
++  // finds under the repository's name in lowercase. The `!` line keeps #5 out.
++  const ui = await $.ui.mount(PANEL)
++  expect(await rowsOf(ui)).toEqual(['pr:x/y#7', 'pr:o/r#13', 'pr:o/r#4'])
++  expect(await headerOf(ui)).toMatch(/^\/projector +3 pull requests  \d+s$/)
++  expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
++  expect(await ui.find({ key: 'author:x/y#7' })).toBeUndefined()
++  expect((await ui.find({ key: 'author:o/r#4' }))?.text).toBe('grace')
++  expect(await ui.find({ type: 'Text', text: 'Change by bob' })).toBeUndefined()
++  // A pull request the daemon has no result for yet says so in its title's place, with no state, author, or age.
++  expect((await ui.find({ type: 'Text', text: 'loading…' }))?.props.color).toBe('subtle')
++  expect(await ui.find({ key: 'author:o/r#13' })).toBeUndefined()
++  expect((await ui.find({ key: 'age:o/r#13' }))?.text).toBe('')
++  expect((await ui.find({ key: 'age:x/y#7' }))?.text).toBe('5m')
++  expect(session.gh()).toEqual([])
++
++  // A drawer names each role the session holds, fixing in blue and reviewing in orange, with the pull request's
++  // changed lines from the cache. The open drawer still asks GitHub for its threads, and nothing else does.
++  await ui.press({ key: 'pr:x/y#7' })
++  await session.clock.settle()
++  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixing', 'ansi256(4)'], ' and ', ['reviewing', 'claude']])
++  expect(
++    await ui.find({ type: 'Text', text: /^fixing and reviewing · fix-branch · \+12 −3 in 2 files · checks passing$/ }),
++  ).toBeDefined()
++  expect(session.gh()).toHaveLength(1)
++  expect(session.gh()[0]).toContain('r0: repository(owner: "x", name: "y") { p7: pullRequest(number: 7) { reviewThreads')
++  await ui.press({ key: 'pr:o/r#4' })
++  expect(await loopsOf(ui, 'o/r#4')).toEqual([['reviewing', 'claude']])
++  // A loading pull request's drawer names its role and nothing the daemon has yet to say.
++  await ui.press({ key: 'pr:o/r#13' })
++  expect(await ui.find({ type: 'Text', text: /^fixing$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /in 0 files/ })).toBeUndefined()
++  expect(session.gh()).toHaveLength(1)
++  await ui.unmount()
++})
++
++test('lists the pull requests the daemon adopted for a repository the session reviews', async ($, on) => {
++  const session = watchWorld(on, {
++    files: {
++      [SUBSCRIPTIONS]: `o/r review ${MODEL} ${VIEWER}\n`,
++      [STATE]: JSON.stringify({ adopted: { 'o/r': [1, 11] }, heads: { 'o/r#1': 'a'.repeat(40) } }),
++      ...cached('o/r', given('o/r', 1)),
++      ...cached('o/r', given('o/r', 11)),
++    },
++  })
++  await begin($, session.clock)
++
++  const ui = await $.ui.mount(PANEL)
++  expect(await rowsOf(ui)).toEqual(['pr:o/r#1', 'pr:o/r#11'])
++  expect(session.gh()).toEqual([])
++  await ui.press({ key: 'pr:o/r#11' })
++  expect(await loopsOf(ui, 'o/r#11')).toEqual([['reviewing', 'claude']])
++  await ui.unmount()
++})
++
++test('reads its rows from the cache on each tick, and asks GitHub only for an earlier watcher’s pull request the daemon has no result for', async ($, on) => {
++  const daemonSaw = (title: string) => cached('o/r', { ...given('o/r', 1), title })
++  const session = watchWorld(on, { files: { [REVIEW]: 'o/r#1\no/r#2\n', ...daemonSaw('Signed off, as the daemon saw it') } })
++  await begin($, session.clock)
++  // An earlier watcher this session started before the upgrade lists its tracked file by its kind.
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await session.clock.advance(1)
++  await session.clock.settle()
++
++  const ui = await $.ui.mount(PANEL)
++  expect(await ui.find({ type: 'Text', text: 'Signed off, as the daemon saw it' })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: 'Change under review' })).toBeDefined()
++  const [poll, ...others] = session.gh()
++  expect(others).toEqual([])
++  expect(poll).toContain('p2: pullRequest(number: 2)')
++  expect(poll).not.toContain('p1: pullRequest')
++  await ui.press({ key: 'pr:o/r#1' })
++  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewing', 'claude']])
++
++  // The daemon's next result shows within a tick, with no query of the panel's own.
++  Object.assign(session.files, daemonSaw('Signed off, after the next pass'))
++  await session.clock.advance(TICK)
++  await session.clock.settle()
++  expect(await ui.find({ type: 'Text', text: 'Signed off, after the next pass' })).toBeDefined()
++  expect(session.gh()).toHaveLength(1)
++  // GitHub is asked again for the earlier watcher's pull request once the poll is due.
++  await session.clock.advance(30_000)
++  await session.clock.settle()
++  expect(session.gh().filter(query => query.includes('p2: pullRequest(number: 2)'))).toHaveLength(2)
++  await ui.unmount()
++})
++
++test('renews the session at its start, which starts the daemon, and once a minute while no event comes', async ($, on) => {
++  const session = watchWorld(on)
++  const watched = () => session.project().filter(command => command.startsWith('watch'))
++  await begin($, session.clock)
++  expect(watched()).toEqual(['watch renew --deliverer mod --session s1'])
++
++  await session.clock.advance(55_000)
++  await session.clock.settle()
++  expect(watched()).toHaveLength(1)
++  await session.clock.advance(10_000)
++  await session.clock.settle()
++  expect(watched()).toEqual(['watch renew --deliverer mod --session s1', 'watch renew --deliverer mod --session s1'])
++  // A session with no events takes none, and its idle panel stays hidden.
++  const ui = await $.ui.mount(PANEL)
++  expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
++  await ui.unmount()
++})
++
++test('renews a new session id at the next tick, as after /clear, rather than a minute after the old id', async ($, on) => {
++  let id = 's1'
++  const session = watchWorld(on, { sessionId: () => id })
++  const watched = () => session.project().filter(command => command.startsWith('watch'))
++  await begin($, session.clock)
++  expect(watched()).toEqual(['watch renew --deliverer mod --session s1'])
++
++  await session.clock.advance(20_000)
++  await session.clock.settle()
++  id = 's2'
++  await session.clock.advance(TICK)
++  await session.clock.settle()
++  expect(watched()).toEqual(['watch renew --deliverer mod --session s1', 'watch renew --deliverer mod --session s2'])
++  // The new id then renews once a minute, like any other.
++  await session.clock.advance(30_000)
++  await session.clock.settle()
++  expect(watched()).toHaveLength(2)
++})
++
++test('submits the daemon’s events as one prompt and empties the file, which renews the session', async ($, on) => {
++  const session = watchWorld(on, { files: { [EVENTS]: EVENT_LINES.map(line => `${line}\n`).join('') } })
++  const watched = () => session.project().filter(command => command.startsWith('watch'))
++  await begin($, session.clock)
++
++  expect(session.submitted).toEqual([EVENT_LINES.join('\n')])
++  expect(session.files[EVENTS]).toBe('')
++  expect(watched()).toEqual(['watch take --json --session s1'])
++  // The take renewed the session, so the next renewal comes a minute after it.
++  await session.clock.advance(55_000)
++  await session.clock.settle()
++  expect(watched()).toEqual(['watch take --json --session s1'])
++  await session.clock.advance(10_000)
++  await session.clock.settle()
++  expect(watched()).toEqual(['watch take --json --session s1', 'watch renew --deliverer mod --session s1'])
++  expect(session.submitted).toHaveLength(1)
++})
++
++test('finds the session’s events under XDG_STATE_HOME when it is set', async ($, on) => {
++  const { events } = sessionFiles('/state/projector/watch')
++  const session = watchWorld(on, {
++    env: { XDG_STATE_HOME: '/state' },
++    files: { [events]: 'MERGED x/y#7 merged — finish subagent fix-7\n', [EVENTS]: `${EVENT_LINES[0] ?? ''}\n` },
++  })
++  await begin($, session.clock)
++  expect(session.submitted).toEqual(['MERGED x/y#7 merged — finish subagent fix-7'])
++})
++
++test('holds the events that arrive while a batch waits for the session, and sends them as one prompt after it', async ($, on) => {
++  const first = 'NEW HEAD o/r#4 9f3c2a1 — run review-pr on o/r#4 in subagent review-4 with --loop s1'
++  const session = watchWorld(on, { files: { [EVENTS]: `${first}\n` } })
++  const takes = () => session.project().filter(command => command.startsWith('watch take')).length
++  session.hold()
++  await begin($, session.clock)
++  expect(session.submitted).toEqual([first])
++
++  // The session is busy, so the daemon's next events stay in the file.
++  session.files[EVENTS] = EVENT_LINES.map(line => `${line}\n`).join('')
++  await session.clock.advance(2 * TICK)
++  await session.clock.settle()
++  expect(takes()).toBe(1)
++  expect(session.submitted).toHaveLength(1)
++
++  session.release()
++  await session.clock.settle()
++  await session.clock.advance(TICK)
++  await session.clock.settle()
++  expect(takes()).toBe(2)
++  expect(session.submitted).toEqual([first, EVENT_LINES.join('\n')])
++  expect(session.files[EVENTS]).toBe('')
++})
++
++test('passes the output of a push, a new pull request, or a stack command to project watch add --from-output', async ($, on) => {
++  const pushed = { stdout: '', stderr: 'To github.com:x/y.git\n   1111111..2222222  fix-branch -> fix-branch\n' }
++  const opened = { stdout: 'https://github.com/x/y/pull/7\n', stderr: 'Creating pull request for fix-branch into main in x/y\n' }
++  const session = watchWorld(on, {
++    files: cached('x/y', given('x/y', 7)),
++    bash: command =>
++      command.startsWith('gh pr create') ? opened : command.includes('push') ? pushed : { stdout: 'push\n', stderr: '' },
++  })
++  await begin($, session.clock)
++  const ui = await $.ui.mount(PANEL)
++  expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
++
++  for (const command of ['git status', 'echo git push', 'cd /w && git push -u origin fix-branch', 'gh pr create --fill', 'gh stack push']) {
++    await $.tool.call({ tool: 'Bash', command })
++  }
++  await session.clock.settle()
++  const add = ['project', 'watch', 'add', '--from-output', '-', '--session', SESSION]
++  expect(session.piped).toEqual([
++    { argv: add, stdin: `\n${pushed.stderr}` },
++    { argv: add, stdin: `${opened.stdout}\n${opened.stderr}` },
++    { argv: add, stdin: `\n${pushed.stderr}` },
++  ])
++
++  // The new pull request's subscription shows the panel, which lists it as fixing.
++  for (let step = 0; step < 2; step += 1) {
++    await session.clock.advance(1)
++    await session.clock.settle()
++  }
++  expect(await rowsOf(ui)).toEqual(['pr:x/y#7'])
++  await ui.press({ key: 'pr:x/y#7' })
++  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixing', 'ansi256(4)']])
++  await ui.unmount()
++})
++
++test('a new subscription shows a panel you hid, and one the panel knew keeps it hidden', async ($, on) => {
++  const session = watchWorld(on, {
++    files: {
++      [SUBSCRIPTIONS]: 'x/y#7 fix\n',
++      ...cached('x/y', given('x/y', 7)),
++      ...cached('o/r', given('o/r', 4)),
++    },
++  })
++  await begin($, session.clock)
++  const ui = await $.ui.mount(PANEL)
++  expect(await rowsOf(ui)).toEqual(['pr:x/y#7'])
++
++  await $.command.run(COMMAND)
++  await session.clock.advance(2 * TICK)
++  await session.clock.settle()
++  expect(await ui.find({ type: 'Text', text: ENGINE_SITE })).toBeDefined()
++
++  session.files[SUBSCRIPTIONS] = `x/y#7 fix\no/r#4 review ${MODEL} ${VIEWER}\n`
++  await session.clock.advance(TICK)
++  await session.clock.settle()
++  await session.clock.advance(1)
++  await session.clock.settle()
++  expect(await rowsOf(ui)).toEqual(['pr:x/y#7', 'pr:o/r#4'])
++  await ui.unmount()
++})
++
++test('dismiss drops a pull request from each role the session holds and from an earlier watcher, and its line goes', async ($, on) => {
++  const session = watchWorld(on, {
++    files: {
++      [SUBSCRIPTIONS]: `x/y#7 fix auto\nx/y#7 review ${MODEL} ${VIEWER}\no/r#4 fix\n`,
++      [WATCH]: 'x/y#7\n',
++      ...cached('x/y', given('x/y', 7)),
++      ...cached('o/r', given('o/r', 4)),
++    },
++  })
++  await begin($, session.clock)
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
++  await session.clock.advance(1)
++  await session.clock.settle()
++
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'pr:x/y#7' })
++  await ui.press({ key: 'dismiss:x/y#7' })
++  await ui.press({ key: 'confirm:x/y#7' })
++  await session.clock.settle()
++
++  expect(session.project().filter(command => /^(watch|loop) drop/.test(command))).toEqual([
++    'watch drop x/y#7 --role fix --session s1',
++    'watch drop x/y#7 --role review --session s1',
++    `loop drop x/y#7 --tracked ${WATCH}`,
++  ])
++  expect(session.toasts).toEqual(['projector: stopped fixing and reviewing x/y#7'])
++  expect(await rowsOf(ui)).toEqual(['pr:o/r#4'])
++  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
++  await ui.unmount()
++})
++
++test('dismissing a pull request the daemon adopted takes its line away at once, before the daemon’s next pass', async ($, on) => {
++  // The repository line names the model with a context-window variant, and the drop names it without one: the
++  // daemon takes both for one reviewer, and so does the panel.
++  const session = watchWorld(on, {
++    files: {
++      [SUBSCRIPTIONS]: `o/r review ${MODEL}[1m] ${VIEWER}\n`,
++      [STATE]: JSON.stringify({ adopted: { 'o/r': [1, 11] } }),
++      ...cached('o/r', given('o/r', 1)),
++      ...cached('o/r', given('o/r', 11)),
++    },
++  })
++  await begin($, session.clock)
++
++  const ui = await $.ui.mount(PANEL)
++  expect(await rowsOf(ui)).toEqual(['pr:o/r#1', 'pr:o/r#11'])
++  await ui.press({ key: 'pr:o/r#11' })
++  await ui.press({ key: 'dismiss:o/r#11' })
++  await ui.press({ key: 'confirm:o/r#11' })
++  await session.clock.settle()
++
++  // The daemon's state still lists #11 as adopted, as it does until its next pass.
++  expect(session.project().filter(command => command.startsWith('watch drop'))).toEqual([
++    'watch drop o/r#11 --role review --session s1',
++  ])
++  expect(session.files[STATE]).toContain('11')
++  expect(session.toasts).toEqual(['projector: stopped reviewing o/r#11'])
++  expect(await rowsOf(ui)).toEqual(['pr:o/r#1'])
++  await ui.unmount()
++})
++
++test('a drop the CLI refuses says why and keeps the line', async ($, on) => {
++  const busy = `another command holds ${SUBSCRIPTIONS}.lock; try again once it finishes`
++  const session = watchWorld(on, {
++    refusal: busy,
++    files: { [SUBSCRIPTIONS]: 'x/y#7 fix\n', ...cached('x/y', given('x/y', 7)) },
++  })
++  await begin($, session.clock)
++
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'pr:x/y#7' })
++  await ui.press({ key: 'dismiss:x/y#7' })
++  await ui.press({ key: 'confirm:x/y#7' })
++  await session.clock.settle()
++
++  expect(session.toasts).toEqual([`projector: ${busy}`])
++  expect(await rowsOf(ui)).toEqual(['pr:x/y#7'])
++  expect(await ui.find({ key: 'github:x/y#7' })).toBeDefined()
++  await ui.unmount()
++})
+diff --git a/hooks/parse.test.ts b/hooks/parse.test.ts
+index bb009791..161e01c0 100644
+--- a/hooks/parse.test.ts
++++ b/hooks/parse.test.ts
+@@ -1,7 +1,17 @@
+ import { describe, expect, test } from 'claude-code/testing'
+ 
+-import { buildQuery, buildThreadsQuery, parseResponse, parseThreads } from './github'
+-import { findWatchers, parseTracked } from './parse'
++import { buildQuery, buildThreadsQuery, loadingOf, parseCache, parseResponse, parseThreads } from './github'
++import {
++  cachePathOf,
++  findWatchers,
++  isPushCommand,
++  parseAdopted,
++  parseOperator,
++  parseSubscriptions,
++  parseTracked,
++  subscribedOf,
++  watchRootOf,
++} from './parse'
+ 
+ const VARIABLES: Record<string, string> = { HOME: '/home/ada' }
+ const env = (name: string) => VARIABLES[name]
+@@ -236,3 +246,221 @@ describe('GitHub', () => {
+     })
+   })
+ })
++
++describe('isPushCommand', () => {
++  test('finds a push, a new pull request, or a stack command, wherever it sits in the line', () => {
++    for (const command of [
++      'git push',
++      'git push -u origin HEAD',
++      'cd /w && git -C sub --no-pager push origin feature',
++      'GIT_TRACE=1 git push',
++      'env GH_TOKEN=x gh pr create --draft --title "Add a thing" --body-file b.md',
++      '/usr/bin/git push --force-with-lease',
++      'gh stack submit',
++      'npm test; gh stack push',
++      '(cd sub && git push)',
++    ]) {
++      expect([command, isPushCommand(command)]).toEqual([command, true])
++    }
++  })
++
++  test('leaves out a command that only mentions one, or runs another subcommand', () => {
++    for (const command of [
++      'echo git push',
++      "git commit -m 'git push later'",
++      'git status',
++      'git log --grep push',
++      'git -C push status',
++      'gh pr view 12',
++      'gh pr list',
++      'grep -r "gh pr create" skills',
++      'my-git push',
++      '# git push',
++    ]) {
++      expect([command, isPushCommand(command)]).toEqual([command, false])
++    }
++  })
++})
++
++describe('subscriptions', () => {
++  test('reads each line of the grammar and skips any other, as the daemon does', () => {
++    const text = [
++      'acme/app#12 fix',
++      'acme/app#13 fix auto',
++      'acme/app#14 review claude-opus-5-5 octocat',
++      'acme/app review claude-opus-5-5 octocat',
++      '!acme/app#9 review claude-opus-5-5 octocat',
++      '!acme/app#12 fix',
++      'acme/app fix',
++      'acme/app#16 fixer',
++      'acme/app#16 fix later',
++      'acme/app#16 fix auto now',
++      '!acme/app#16 fix auto',
++      'acme/app#17 review',
++      'acme/app#17 review claude-opus-5-5',
++      'acme/app#17 review claude-opus-5-5 octo_cat',
++      'acme/app#17 review claude-opus-5-5 octocat now',
++      '!acme/app#17 review',
++      '!acme/app review claude-opus-5-5 octocat',
++      'not a line',
++      '',
++    ].join('\n')
++    expect(parseSubscriptions(text)).toEqual([
++      { repo: 'acme/app', number: 12, role: 'fix', model: null, isExcluded: false },
++      { repo: 'acme/app', number: 13, role: 'fix', model: null, isExcluded: false },
++      { repo: 'acme/app', number: 14, role: 'review', model: 'claude-opus-5-5', isExcluded: false },
++      { repo: 'acme/app', number: null, role: 'review', model: 'claude-opus-5-5', isExcluded: false },
++      { repo: 'acme/app', number: 9, role: 'review', model: 'claude-opus-5-5', isExcluded: true },
++      { repo: 'acme/app', number: 12, role: 'fix', model: null, isExcluded: true },
++    ])
++  })
++
++  test('lists each pull request once with its roles, less the excluded ones, then the adopted ones', () => {
++    const lines = parseSubscriptions(
++      [
++        'acme/app#13 fix auto',
++        'Acme/App#13 review claude-opus-5-5 octocat',
++        'acme/app#12 fix',
++        '!ACME/APP#12 fix',
++        'acme/app#14 review claude-opus-5-5 octocat',
++        'acme/app#14 review claude-sonnet-5 octocat',
++        '!acme/app#14 review claude-opus-5-5 octocat',
++        'acme/app#15 review claude-opus-5-5 octocat',
++        '!acme/app#15 review Claude-Opus-5-5[1m] octocat',
++        'acme/app review claude-opus-5-5[1m] octocat',
++        '!acme/app#21 review claude-opus-5-5 octocat',
++      ].join('\n'),
++    )
++    const adopted = [
++      { repo: 'acme/app', number: 13 },
++      { repo: 'acme/app', number: 20 },
++      { repo: 'acme/app', number: 21 },
++      { repo: 'x/y', number: 3 },
++    ]
++    expect(subscribedOf(lines, adopted)).toEqual([
++      { pr: { repo: 'acme/app', number: 13 }, roles: ['fix', 'review'] },
++      // One model's exclusion leaves another model's review. Models compare as the daemon compares them, in
++      // lowercase and without a context-window variant, so #15's `!` line takes it out.
++      { pr: { repo: 'acme/app', number: 14 }, roles: ['review'] },
++      // A `!` line takes an adopted pull request out before the daemon's next pass drops it from `adopted`, and
++      // one adopted for a repository no line reviews any longer goes too.
++      { pr: { repo: 'acme/app', number: 20 }, roles: ['review'] },
++    ])
++  })
++
++  test('keeps an adopted pull request that one model of the repository still reviews', () => {
++    const lines = parseSubscriptions(
++      [
++        'acme/app review claude-opus-5-5 octocat',
++        'acme/app review claude-sonnet-5 octocat',
++        '!acme/app#20 review claude-opus-5-5 octocat',
++      ].join('\n'),
++    )
++    expect(subscribedOf(lines, [{ repo: 'acme/app', number: 20 }])).toEqual([
++      { pr: { repo: 'acme/app', number: 20 }, roles: ['review'] },
++    ])
++  })
++
++  test('reads the adopted pull requests from the daemon’s state, and nothing else of it', () => {
++    const state = JSON.stringify({
++      adopted: { 'acme/app': [12, 14], 'x/y': [3, 0, 'four', 2.5], 'not a repository': [1] },
++      announced: { 'acme/app#12': {} },
++    })
++    expect(parseAdopted(state)).toEqual([
++      { repo: 'acme/app', number: 12 },
++      { repo: 'acme/app', number: 14 },
++      { repo: 'x/y', number: 3 },
++    ])
++    expect(parseAdopted('')).toEqual([])
++    expect(parseAdopted('{"adopted": []}')).toEqual([])
++  })
++
++  test('reads the operator from daemon.json', () => {
++    const daemon = { pid: 12, version: '0.9.0', started_at: '2026-10-30T12:00:00Z', operator: 'octocat' }
++    expect(parseOperator(JSON.stringify(daemon))).toBe('octocat')
++    expect(parseOperator(JSON.stringify({ ...daemon, operator: '' }))).toBeNull()
++    expect(parseOperator('{')).toBeNull()
++  })
++})
++
++describe('the daemon’s files', () => {
++  test('live under XDG_STATE_HOME, else ~/.local/state, as the CLI finds them', () => {
++    expect(watchRootOf(env)).toBe('/home/ada/.local/state/projector/watch')
++    const variables: Record<string, string> = { HOME: '/home/ada', XDG_STATE_HOME: '/state' }
++    expect(watchRootOf(name => variables[name])).toBe('/state/projector/watch')
++    expect(watchRootOf(() => undefined)).toBeUndefined()
++  })
++
++  test('file a pull request’s result under its repository in lowercase', () => {
++    expect(cachePathOf('/w', { repo: 'Acme/App', number: 12 })).toBe('/w/cache/acme/app/pulls/12.json')
++  })
++
++  test('give a pull request’s row from its cached result', () => {
++    // Every field the daemon's query names, as the cache holds them.
++    const pullRequest = {
++      number: 12,
++      title: 'Add a thing',
++      url: 'https://github.com/acme/app/pull/12',
++      body: '',
++      state: 'OPEN',
++      isDraft: true,
++      reviewDecision: null,
++      mergeable: 'CONFLICTING',
++      updatedAt: '2026-10-30T11:00:00Z',
++      headRefOid: 'a'.repeat(40),
++      headRefName: 'add-a-thing',
++      baseRefName: 'main',
++      author: { login: 'octocat' },
++      additions: 30,
++      deletions: 4,
++      changedFiles: 3,
++      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'PENDING' } } }] },
++      comments: { nodes: [] },
++      reviews: { nodes: [] },
++      changesRequested: { nodes: [] },
++      reviewThreads: {
++        nodes: [
++          { id: 'T1', isResolved: false, path: 'a.py', line: 3, first: { nodes: [] }, last: { nodes: [] } },
++          { id: 'T2', isResolved: true, path: 'b.py', line: 9, first: { nodes: [] }, last: { nodes: [] } },
++        ],
++      },
++    }
++    const cached = JSON.stringify({
++      fetched_at: '2026-10-30T11:59:00Z',
++      etags: { pull: 'W/"1"' },
++      repository: { visibility: 'PUBLIC', pullRequest },
++      reviews: [],
++    })
++    expect(parseCache({ repo: 'Acme/App', number: 12 }, cached)).toEqual({
++      repo: 'Acme/App',
++      number: 12,
++      title: 'Add a thing',
++      url: 'https://github.com/acme/app/pull/12',
++      state: 'OPEN',
++      isDraft: true,
++      reviewDecision: null,
++      isConflicting: true,
++      openThreads: 1,
++      author: 'octocat',
++      branch: 'add-a-thing',
++      additions: 30,
++      deletions: 4,
++      changedFiles: 3,
++      checks: 'pending',
++      updatedAt: Date.UTC(2026, 9, 30, 11),
++      summaryUrl: null,
++    })
++    expect(parseCache({ repo: 'acme/app', number: 12 }, '')).toBeNull()
++    expect(parseCache({ repo: 'acme/app', number: 12 }, '{"repository": {"pullRequest": null}}')).toBeNull()
++  })
++
++  test('give a pull request with no result yet a loading row that holds only its reference', () => {
++    expect(loadingOf({ repo: 'acme/app', number: 12 })).toMatchObject({
++      repo: 'acme/app',
++      number: 12,
++      url: 'https://github.com/acme/app/pull/12',
++      state: 'OPEN',
++      isLoading: true,
++    })
++  })
++})
+diff --git a/hooks/parse.ts b/hooks/parse.ts
+index 53df9de9..5f448ab9 100644
+--- a/hooks/parse.ts
++++ b/hooks/parse.ts
+@@ -190,6 +190,41 @@ export function findWatchers(command: string, env: Env): Watcher[] {
+   return found
+ }
+ 
++const GIT_OPTIONS_WITH_VALUES = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env'])
++const WRAPPERS = new Set(['command', 'env', 'exec', 'nohup', 'time'])
++
++/** The words of each simple command in a command line, as the shell would split them. */
++function commandsOf(command: string): string[][] {
++  const commands: string[][] = [[]]
++  for (const token of tokenize(command)) {
++    if ('parts' in token) commands[commands.length - 1]?.push(raw(token.parts))
++    else commands.push([])
++  }
++  return commands.filter(words => words.length > 0)
++}
++
++/**
++ * Whether a command line runs `git push`, `gh pr create`, or a `gh stack`
++ * command, whose output can name a pull request the session opened or pushed
++ * to. A command only mentioned, as in `echo git push`, does not count.
++ */
++export function isPushCommand(command: string): boolean {
++  return commandsOf(command).some(words => {
++    let at = 0
++    while (at < words.length && (ASSIGNMENT.test(words[at] ?? '') || WRAPPERS.has(words[at] ?? ''))) at += 1
++    const name = (words[at] ?? '').split('/').pop()
++    const rest = words.slice(at + 1)
++    if (name === 'gh') return rest[0] === 'stack' || (rest[0] === 'pr' && rest[1] === 'create')
++    if (name !== 'git') return false
++    for (let next = 0; next < rest.length; next += 1) {
++      const word = rest[next] ?? ''
++      if (GIT_OPTIONS_WITH_VALUES.has(word)) next += 1
++      else if (!word.startsWith('-')) return word === 'push'
++    }
++    return false
++  })
++}
++
+ const ENTRY = /^(!?)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$/
+ 
+ /** Names a pull request without regard to case, as GitHub and the watchers do. */
+@@ -221,3 +256,151 @@ export function parseTracked(text: string): TrackedPr[] {
+     .filter(([key]) => !excluded.has(key))
+     .map(([, pr]) => pr)
+ }
++
++export const isRecord = (value: unknown): value is Record<string, unknown> =>
++  typeof value === 'object' && value !== null && !Array.isArray(value)
++
++/** What a subscription asks of the session, in the CLI's words: to fix the pull request, or to review it. */
++export type SubscriptionRole = 'fix' | 'review'
++
++/** One line of a session's `subscriptions` file. */
++export type Subscription = {
++  repo: string
++  /** Null for a line that reviews every pull request of the repository. */
++  number: number | null
++  role: SubscriptionRole
++  /** The model a `review` line reviews with; null for a `fix` line. */
++  model: string | null
++  isExcluded: boolean
++}
++
++/** A pull request the session subscribes to, and the roles it holds on it. */
++export type Subscribed = { pr: TrackedPr; roles: SubscriptionRole[] }
++
++/** The daemon's `LINE` grammar: `fix`, optionally `auto`, or `review` with a model and a reviewer, and nothing after. */
++const SUBSCRIPTION =
++  /^(!?)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#([1-9][0-9]*))?\s+(?:fix(?:\s+(auto))?|review\s+(\S+)\s+[A-Za-z0-9-]+)$/
++const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
++
++/**
++ * The reviewer a model ID names, as the daemon compares models: the ID
++ * lowercased, without a trailing bracketed variant such as `[1m]`, so one
++ * model at another context window is the same reviewer.
++ */
++export const modelIdentityOf = (model: string) => model.toLowerCase().replace(/\[[^[\]]*\]$/, '')
++
++/**
++ * Reads a session's `subscriptions` file as the daemon reads it:
++ * `owner/repo#N fix`, optionally followed by `auto`,
++ * `owner/repo#N review <model> <reviewer>`, and
++ * `owner/repo review <model> <reviewer>`, with a pull request's `fix` or
++ * `review` line behind `!` to keep the pull request out of that role. The
++ * daemon skips a line of any other shape, so the panel skips it too.
++ */
++export function parseSubscriptions(text: string): Subscription[] {
++  return text.split('\n').flatMap(line => {
++    const match = SUBSCRIPTION.exec(line.trim())
++    if (match === null) return []
++    const [, bang, repo, number, auto, model] = match as unknown as [
++      string,
++      string,
++      string,
++      string | undefined,
++      string | undefined,
++      string | undefined,
++    ]
++    const isExcluded = bang === '!'
++    if (model === undefined && (number === undefined || (isExcluded && auto !== undefined))) return []
++    if (model !== undefined && isExcluded && number === undefined) return []
++    return [
++      {
++        repo,
++        number: number === undefined ? null : Number(number),
++        role: model === undefined ? 'fix' : 'review',
++        model: model ?? null,
++        isExcluded,
++      },
++    ]
++  })
++}
++
++/**
++ * The pull requests a session subscribes to, in the order its lines name
++ * them, then those its repository subscriptions adopted, each once with the
++ * roles it holds. A `!` line takes the pull request out of that role, and for
++ * `review` out of that model, wherever the line sits. An adopted pull request
++ * stays only while a repository line of the session reviews it with a model no
++ * `!` line names, as the daemon decides, so a dismissed one goes at once
++ * rather than when the daemon's next pass rewrites `adopted`.
++ */
++export function subscribedOf(lines: readonly Subscription[], adopted: readonly TrackedPr[]): Subscribed[] {
++  const roleOf = (line: Subscription) => (line.model === null ? line.role : `review ${modelIdentityOf(line.model)}`)
++  const claimOf = (pr: TrackedPr, role: string) => `${keyOf(pr)} ${role}`
++  const excluded = new Set(
++    lines.flatMap(line =>
++      line.isExcluded && line.number !== null ? [claimOf({ repo: line.repo, number: line.number }, roleOf(line))] : [],
++    ),
++  )
++  const live = lines.filter(line => !line.isExcluded)
++
++  const found = new Map<string, Subscribed>()
++  const add = (pr: TrackedPr, role: SubscriptionRole) => {
++    const was = found.get(keyOf(pr)) ?? { pr, roles: [] }
++    found.set(keyOf(pr), was.roles.includes(role) ? was : { ...was, roles: [...was.roles, role] })
++  }
++  for (const line of live) {
++    if (line.number === null) continue
++    const pr = { repo: line.repo, number: line.number }
++    if (!excluded.has(claimOf(pr, roleOf(line)))) add(pr, line.role)
++  }
++  const repositories = live.filter(line => line.number === null)
++  for (const pr of adopted) {
++    const isReviewed = repositories.some(
++      line => line.repo.toLowerCase() === pr.repo.toLowerCase() && !excluded.has(claimOf(pr, roleOf(line))),
++    )
++    if (isReviewed) add(pr, 'review')
++  }
++  return [...found.values()]
++}
++
++/**
++ * Reads the pull requests the daemon adopted for the session's repository
++ * subscriptions from its `state.json`: `{"adopted": {"owner/repo": [12, 14]}}`.
++ * The file holds other keys, which belong to the daemon.
++ */
++export function parseAdopted(text: string): TrackedPr[] {
++  let state: unknown
++  try {
++    state = JSON.parse(text)
++  } catch {
++    return []
++  }
++  const adopted = isRecord(state) ? state.adopted : undefined
++  if (!isRecord(adopted)) return []
++  return Object.entries(adopted).flatMap(([repo, numbers]) =>
++    REPO.test(repo) && Array.isArray(numbers)
++      ? numbers.filter((number): number is number => Number.isInteger(number) && number > 0).map(number => ({ repo, number }))
++      : [],
++  )
++}
++
++/** The login the daemon's `daemon.json` names as the operator, or null when it names none. */
++export function parseOperator(text: string): string | null {
++  try {
++    const daemon: unknown = JSON.parse(text)
++    return isRecord(daemon) && typeof daemon.operator === 'string' && daemon.operator !== '' ? daemon.operator : null
++  } catch {
++    return null
++  }
++}
++
++/** Where the watch daemon keeps its files, as the CLI finds it: under `XDG_STATE_HOME`, else `~/.local/state`. */
++export function watchRootOf(env: Env): string | undefined {
++  const home = env('HOME')
++  const base = env('XDG_STATE_HOME') ?? (home === undefined ? undefined : `${home}/.local/state`)
++  return base === undefined ? undefined : `${base}/projector/watch`
++}
++
++/** The daemon's last result for a pull request, which it files under the repository's name in lowercase. */
++export const cachePathOf = (root: string, pr: TrackedPr) =>
++  `${root}/cache/${pr.repo.toLowerCase()}/pulls/${pr.number}.json`
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 1cb46e71..7fd588c0 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -10,6 +10,7 @@ import type {
+   PullRequest,
+   Question,
+   Request,
++  Role,
+   Row,
+   Section,
+   SeenLoop,
+@@ -17,8 +18,23 @@ import type {
+   Snapshot,
+   Thread,
+ } from './types'
+-import { buildQuery, buildThreadsQuery, parseResponse, parseThreads, type Fetched } from './github'
+-import { findWatchers, keyOf, parseTracked, type Env, type TrackedPr } from './parse'
++import { buildQuery, buildThreadsQuery, loadingOf, parseCache, parseResponse, parseThreads, type Fetched } from './github'
++import {
++  cachePathOf,
++  findWatchers,
++  isPushCommand,
++  keyOf,
++  parseAdopted,
++  parseOperator,
++  parseSubscriptions,
++  parseTracked,
++  subscribedOf,
++  watchRootOf,
++  type Env,
++  type Subscribed,
++  type SubscriptionRole,
++  type TrackedPr,
++} from './parse'
+ import {
+   ASK_DESCRIPTION,
+   ASK_SCHEMA,
+@@ -68,6 +84,8 @@ type Ran = { exitCode: number; stdout: string; stderr: string }
+ 
+ const TICK_MS = 5_000
+ const POLL_MS = 30_000
++/** How often the session tells the daemon it is live when no event came, well inside the 5 minutes it lapses after. */
++const RENEW_MS = 60_000
+ const EMPTY: Snapshot = { rows: [], viewer: null, fetchedAt: null, error: null }
+ const ASK_TOOL = 'mcp__projector__ask'
+ const TELL_TOOL = 'mcp__projector__tell'
+@@ -79,10 +97,19 @@ const REVISE_TOOL = 'mcp__projector__revise'
+ const RESTORE_TOOL = 'mcp__projector__restore'
+ const TAGLINE = 'Our minds are projectors, casting ideas onto the world.'
+ 
+-// Watching first: a pull request both loops track is listed once, where its
+-// watch loop puts it.
+ const KINDS: readonly LoopKind[] = ['watching', 'reviewing']
+ 
++/** The roles in the order a drawer names them. */
++const ROLES: readonly Role[] = ['fixing', 'reviewing']
++
++/** The role a subscription's role, or an earlier watcher's kind, holds. */
++const ROLE_OF: Record<SubscriptionRole | LoopKind, Role> = {
++  fix: 'fixing',
++  review: 'reviewing',
++  watching: 'fixing',
++  reviewing: 'reviewing',
++}
++
+ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
+   passing: 'success',
+   failing: 'error',
+@@ -149,11 +176,11 @@ const kindColors = (requestColor: string): Record<Item['kind'], string> => ({
+ const BRANCH_COLOR = 'ansi256(6)'
+ 
+ /**
+- * The color of what a loop does with a pull request, on its drawer's facts
+- * line: watching in the terminal palette's blue, slot 4, in the same form as
+- * `BRANCH_COLOR`, and reviewing in the theme's `claude` orange.
++ * The color of each role on a pull request's drawer's facts line: fixing in
++ * the terminal palette's blue, slot 4, in the same form as `BRANCH_COLOR`, and
++ * reviewing in the theme's `claude` orange.
+  */
+-const LOOP_COLORS: Record<LoopKind, string> = { watching: 'ansi256(4)', reviewing: 'claude' }
++const ROLE_COLORS: Record<Role, string> = { fixing: 'ansi256(4)', reviewing: 'claude' }
+ 
+ /** The key that closes an open item's drawer, from its line at the drawer's top. */
+ const CLOSE_HOTKEY = '0'
+@@ -248,6 +275,7 @@ const SNOOZES = [
+ ] as const
+ 
+ const seen = atom({ plugin: 'projector', key: 'seenLoops' } as const, [])
++const subscribed = atom({ plugin: 'projector', key: 'panelSubscribed' } as const, [])
+ const snapshot = atom({ plugin: 'projector', key: 'panelSnapshot' } as const, EMPTY)
+ const now = atom({ plugin: 'projector', key: 'panelNow' } as const, 0)
+ const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, false)
+@@ -274,14 +302,27 @@ const oldSending = atom({ plugin: 'projector', key: 'bandSending' } as const, {}
+ // so a value an earlier version wrote can have another shape.
+ const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
+ const current = (value: Snapshot): Snapshot =>
+-  Array.isArray(value.rows) ? { ...value, viewer: value.viewer ?? null } : EMPTY
++  Array.isArray(value.rows) && value.rows.every(row => Array.isArray(row.roles))
++    ? { ...value, viewer: value.viewer ?? null }
++    : EMPTY
+ 
+ const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+ 
+ let envLoad: Promise<Env> | undefined
+ let inFlight: Promise<void> | undefined
+-let isQueued = false
++/** Whether the refresh queued behind the one in flight asks GitHub; undefined when none is queued. */
++let queuedPoll: boolean | undefined
++/** When the panel last polled GitHub. A shown panel polls every `POLL_MS`, and reads the daemon's files on every tick. */
+ let attemptedAt = 0
++/**
++ * Which session id the daemon last heard renew, by this copy of the module,
++ * and when. The engine moves the session to a new id on `/clear`, and that id
++ * renews at once rather than a minute after the old one.
++ */
++let renewed: { session: string; at: number } | undefined
++let isWatching = false
++/** Whether the daemon's last batch of events waits to reach the session, so the next batch waits behind it and goes as one prompt. */
++let isSubmitting = false
+ const unreadable = new Set<string>()
+ 
+ /** The store's directory as the panel last read it, so it reads again only after a change. */
+@@ -348,9 +389,18 @@ async function canonical($: Engine, path: string): Promise<string | undefined> {
+   }
+ }
+ 
+-/** Runs the `project` CLI; rejects when it cannot start or is still running at the 15-second timeout. */
+-const project = ($: Engine, args: readonly string[]): Promise<Ran> =>
+-  $.process.run(['project', ...args], { timeoutMs: 15_000 })
++/**
++ * Runs the `project` CLI, with `stdin` on its standard input when given;
++ * rejects when it cannot start or is still running at the 15-second timeout.
++ */
++const project = ($: Engine, args: readonly string[], stdin?: string): Promise<Ran> =>
++  $.process.run(['project', ...args], { timeoutMs: 15_000, ...(stdin === undefined ? {} : { stdin }) })
++
++/** The session's id, or undefined when the engine cannot say. */
++const sessionOf = ($: Engine): Promise<string | undefined> => $.session.id().catch(() => undefined)
++
++/** A file's text, or undefined when it cannot be read, as one not written yet. */
++const textOf = ($: Engine, path: string): Promise<string | undefined> => $.fs.read(path).catch(() => undefined)
+ 
+ /** The CLI's error, as its last line of standard error says it. */
+ const errorOf = (ran: Ran) =>
+@@ -508,60 +558,104 @@ async function trackedSets($: Engine): Promise<(SeenLoop & { entries: TrackedPr[
+   )
+ }
+ 
+-async function load($: Engine): Promise<void> {
+-  const sets = await trackedSets($)
++/** The folder the daemon and the CLI keep a session's subscriptions and events in. */
++const folderOf = (root: string, session: string) => `${root}/sessions/${session}`
++
++/**
++ * The pull requests the session subscribes to, from the CLI's
++ * `subscriptions` file and the pull requests the daemon adopted for its
++ * repository subscriptions.
++ */
++async function subscriptionsOf($: Engine, root: string | undefined, session: string | undefined): Promise<Subscribed[]> {
++  if (root === undefined || session === undefined) return []
++  const folder = folderOf(root, session)
++  const [lines, state] = await Promise.all([textOf($, `${folder}/subscriptions`), textOf($, `${folder}/state.json`)])
++  return subscribedOf(parseSubscriptions(lines ?? ''), parseAdopted(state ?? ''))
++}
++
++/** The daemon's last result for a pull request, or null when it has none yet. */
++async function cachedOf($: Engine, root: string | undefined, pr: TrackedPr): Promise<PullRequest | null> {
++  const text = root === undefined ? undefined : await textOf($, cachePathOf(root, pr))
++  return text === undefined ? null : parseCache(pr, text)
++}
+ 
+-  const kindsOf = new Map<string, LoopKind[]>()
++/**
++ * Lists the pull requests the session subscribes to, and those an earlier
++ * watcher's tracked file lists, each with its roles. Each pull request's row
++ * comes from the daemon's cache, and a subscribed one the daemon has no result
++ * for yet draws as loading. An earlier watcher's pull request that the daemon
++ * has no result for comes from GitHub, asked only when `isPolled`, and
++ * between polls keeps what GitHub said last.
++ */
++async function load($: Engine, isPolled: boolean): Promise<void> {
++  const root = watchRootOf(await envOf($))
++  const [subscriptions, sets, daemon] = await Promise.all([
++    sessionOf($).then(session => subscriptionsOf($, root, session)),
++    trackedSets($),
++    root === undefined ? undefined : textOf($, `${root}/daemon.json`),
++  ])
++
++  const rolesOf = new Map<string, Role[]>()
+   const tracked = new Map<string, TrackedPr>()
++  const add = (pr: TrackedPr, role: Role) => {
++    const key = keyOf(pr)
++    tracked.set(key, tracked.get(key) ?? pr)
++    const roles = rolesOf.get(key) ?? []
++    if (!roles.includes(role)) rolesOf.set(key, ROLES.filter(one => one === role || roles.includes(one)))
++  }
++  for (const { pr, roles } of subscriptions) for (const role of roles) add(pr, ROLE_OF[role])
+   for (const kind of KINDS) {
+-    for (const entry of sets.filter(set => set.kind === kind).flatMap(set => set.entries)) {
+-      const key = keyOf(entry)
+-      tracked.set(key, tracked.get(key) ?? entry)
+-      const kinds = kindsOf.get(key) ?? []
+-      if (!kinds.includes(kind)) kindsOf.set(key, [...kinds, kind])
+-    }
++    for (const entry of sets.filter(set => set.kind === kind).flatMap(set => set.entries)) add(entry, ROLE_OF[kind])
+   }
+ 
+-  // Each reload reads the panel's setting too, so an edit to it shows without a restart.
+-  const [fetched] = await Promise.all([fetchPrs($, [...tracked.values()]), readBackground($)])
+-
+-  // When GitHub cannot be reached, keep drawing what it said last time.
++  const cached = new Map(
++    await Promise.all([...tracked].map(async ([key, pr]) => [key, await cachedOf($, root, pr)] as const)),
++  )
++  const isSubscribed = new Set(subscriptions.map(({ pr }) => keyOf(pr)))
++  const unknown = [...tracked].filter(([key]) => cached.get(key) === null && !isSubscribed.has(key))
++  // Each poll reads the panel's setting too, so an edit to it shows without a restart.
++  const [fetched] = isPolled
++    ? await Promise.all([fetchPrs($, unknown.map(([, pr]) => pr)), readBackground($)])
++    : [undefined]
++
++  // When GitHub cannot be reached, or is not asked, keep drawing what it said last time.
+   const last = current(await read($, snapshot))
+   const previous = new Map(last.rows.map(row => [keyOf(row.pr), row.pr]))
+-  const isFetched = fetched.error === null
++  const error = fetched === undefined ? last.error : fetched.error
++  const fromGitHub = (key: string) => (fetched?.error === null ? fetched.prs.get(key) : previous.get(key))
+ 
+-  const rows: Row[] = [...kindsOf].flatMap(([key, kinds]) => {
+-    const pr = fetched.prs.get(key) ?? (isFetched ? undefined : previous.get(key))
+-    return pr !== undefined && pr.state === 'OPEN' ? [{ pr, kinds }] : []
++  const rows: Row[] = [...tracked].flatMap(([key, entry]) => {
++    const pr = cached.get(key) ?? (isSubscribed.has(key) ? loadingOf(entry) : fromGitHub(key))
++    return pr !== undefined && pr.state === 'OPEN' ? [{ pr, roles: rolesOf.get(key) ?? [] }] : []
+   })
+ 
+   const time = await $.clock.now()
+   await update($, snapshot, () => ({
+     rows,
+-    viewer: fetched.viewer ?? last.viewer,
+-    fetchedAt: isFetched ? time : last.fetchedAt,
+-    error: fetched.error,
++    viewer: parseOperator(daemon ?? '') ?? fetched?.viewer ?? last.viewer,
++    fetchedAt: error === null ? time : last.fetchedAt,
++    error,
+   }))
+   await update($, now, () => time)
+   await closeLeftDrawer($, time)
+-  await loadThreads($)
++  if (isPolled) await loadThreads($)
+ }
+ 
+ /**
+- * Reloads the loops and their pull requests, only while the panel is shown
+- * unless forced. A request that arrives mid-load runs once more after it,
+- * so a change it was told about is never missed.
++ * Reloads the session's pull requests, only while the panel is shown unless
++ * forced, asking GitHub only when `isPolled`. A request that arrives mid-load
++ * runs once more after it, so a change it was told about is never missed.
+  */
+-function refresh($: Engine, isForced = false): Promise<void> {
++function refresh($: Engine, isForced = false, isPolled = true): Promise<void> {
+   if (inFlight !== undefined) {
+-    isQueued = true
++    queuedPoll = queuedPoll === true || isPolled
+     return inFlight
+   }
+   inFlight = (async () => {
+     try {
+       if (isForced || (await read($, isShown))) {
+-        attemptedAt = await $.clock.now()
+-        await load($)
++        if (isPolled) attemptedAt = await $.clock.now()
++        await load($, isPolled)
+       }
+     } catch (error) {
+       const message = messageOf(error)
+@@ -569,9 +663,10 @@ function refresh($: Engine, isForced = false): Promise<void> {
+     }
+   })().finally(() => {
+     inFlight = undefined
+-    if (isQueued) {
+-      isQueued = false
+-      void refresh($)
++    if (queuedPoll !== undefined) {
++      const isQueuedPoll = queuedPoll
++      queuedPoll = undefined
++      void refresh($, false, isQueuedPoll)
+     }
+   })
+   return inFlight
+@@ -862,8 +957,9 @@ async function act(
+ }
+ 
+ /**
+- * Dismisses a pull request from the session's loops: `project loop drop`
+- * keeps it out of each tracked file that lists it, and the panel reloads
++ * Dismisses a pull request from the session: `project watch drop` keeps it
++ * out of each role the session subscribes to it in, `project loop drop` out
++ * of each earlier watcher's tracked file that lists it, and the panel reloads
+  * without it. A failure says why, and the line stays.
+  */
+ async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
+@@ -871,28 +967,133 @@ async function dismissPr($: Engine, pr: PullRequest): Promise<void> {
+   const named = `${pr.repo}#${pr.number}`
+   if (acting.has(key)) return
+   acting.add(key)
+-  const stopped: LoopKind[] = []
++  const stopped: Role[] = []
++  const drop = async (args: string[], role: Role) => {
++    const ran = await project($, args)
++    if (ran.exitCode !== 0) throw new Error(errorOf(ran))
++    stopped.push(role)
++  }
+   try {
++    const session = await sessionOf($)
++    const subscription = (await subscriptionsOf($, watchRootOf(await envOf($)), session)).find(
++      one => keyOf(one.pr) === key,
++    )
++    for (const role of subscription?.roles ?? []) {
++      if (session !== undefined) await drop(['watch', 'drop', named, '--role', role, '--session', session], ROLE_OF[role])
++    }
+     for (const loop of await trackedSets($)) {
+-      if (!loop.entries.some(entry => keyOf(entry) === key)) continue
+-      const ran = await project($, ['loop', 'drop', named, '--tracked', loop.tracked])
+-      if (ran.exitCode !== 0) {
+-        void $.ui.toast(`projector: ${errorOf(ran)}`)
+-        return
++      if (loop.entries.some(entry => keyOf(entry) === key)) {
++        await drop(['loop', 'drop', named, '--tracked', loop.tracked], ROLE_OF[loop.kind])
+       }
+-      stopped.push(loop.kind)
+     }
+     await closeDrawer($, key)
+   } catch (error) {
+     void $.ui.toast(`projector: ${messageOf(error)}`)
+   } finally {
+     acting.delete(key)
+-    const kinds = KINDS.filter(kind => stopped.includes(kind))
+-    if (kinds.length > 0) void $.ui.toast(`projector: stopped ${kinds.join(' and ')} ${named}`)
++    const roles = ROLES.filter(role => stopped.includes(role))
++    if (roles.length > 0) void $.ui.toast(`projector: stopped ${roles.join(' and ')} ${named}`)
+     await refresh($)
+   }
+ }
+ 
++/**
++ * Tells the daemon the session is live and that the mod delivers its
++ * events, which also starts the daemon when none runs. A CLI too old to know
++ * `project watch` leaves the session unsubscribed, and the debug log says so.
++ */
++async function renew($: Engine, session: string, time: number): Promise<void> {
++  const ran = await project($, ['watch', 'renew', '--deliverer', 'mod', '--session', session])
++  if (ran.exitCode === 0) renewed = { session, at: time }
++  else $.ui.log(`projector: project watch renew failed: ${errorOf(ran)}`, { to: 'debug' })
++}
++
++/** Whether the daemon heard this session id renew within the last minute. */
++const isRenewed = (session: string, time: number) =>
++  renewed !== undefined && renewed.session === session && time - renewed.at < RENEW_MS
++
++/**
++ * Takes the daemon's events for the session once its `events` file holds
++ * any, and submits them as one prompt, which waits until the session is
++ * idle, as an inbox answer for the main loop does. `take` renews the session,
++ * so only a minute without an event renews it alone. Events that arrive while
++ * a batch waits stay in the file, and go as one prompt after it.
++ */
++async function deliverEvents($: Engine, root: string, session: string, time: number): Promise<void> {
++  const events = await $.fs.stat(`${folderOf(root, session)}/events`).catch(() => undefined)
++  if (events === undefined || events.size === 0 || isSubmitting) {
++    if (!isRenewed(session, time)) await renew($, session, time)
++    return
++  }
++  const ran = await project($, ['watch', 'take', '--json', '--session', session])
++  if (ran.exitCode !== 0) return
++  renewed = { session, at: time }
++  const { events: lines } = JSON.parse(ran.stdout) as { events?: unknown }
++  const text = (Array.isArray(lines) ? lines : []).filter(line => typeof line === 'string').join('\n')
++  if (text === '') return
++  isSubmitting = true
++  void $.prompt
++    .submit({ text })
++    .then(
++      submitted => {
++        if (submitted.drop !== undefined) {
++          $.ui.log(`projector: the daemon's events did not reach the session: ${submitted.drop}`, { to: 'debug' })
++        }
++      },
++      () => undefined,
++    )
++    .finally(() => {
++      isSubmitting = false
++    })
++}
++
++/**
++ * Shows the panel when the session subscribes to a pull request it had not
++ * subscribed to when the panel last looked, as a new watcher shows it.
++ */
++async function noticeSubscriptions($: Engine, root: string, session: string): Promise<void> {
++  const keys = (await subscriptionsOf($, root, session)).map(({ pr }) => keyOf(pr))
++  const known = await read($, subscribed)
++  const isKnown = (key: string) => Array.isArray(known) && known.includes(key)
++  if (keys.length === known.length && keys.every(isKnown)) return
++  await update($, subscribed, () => keys)
++  if (keys.some(key => !isKnown(key)) && !(await read($, isShown))) show($)
++}
++
++/** Delivers the daemon's events and keeps the session live, whether or not the panel is shown. */
++async function checkWatch($: Engine, time: number): Promise<void> {
++  if (isWatching) return
++  isWatching = true
++  try {
++    const root = watchRootOf(await envOf($))
++    const session = await sessionOf($)
++    if (root === undefined || session === undefined) return
++    // A CLI that cannot run leaves the subscriptions the panel can still read.
++    await deliverEvents($, root, session, time).catch(() => undefined)
++    await noticeSubscriptions($, root, session)
++  } catch {
++    // The next tick tries again.
++  } finally {
++    isWatching = false
++  }
++}
++
++/** Runs `checkWatch` now rather than at the next tick. */
++const watchSoon = ($: Engine) => $.clock.after(1, () => void $.clock.now().then(time => checkWatch($, time)))
++
++/**
++ * Subscribes the session to fix each pull request a command's output shows
++ * it opened or pushed to. The CLI finds them, and adds nothing when
++ * `watch.auto_start` is off.
++ */
++async function subscribeFrom($: Engine, output: string): Promise<void> {
++  const session = await sessionOf($)
++  if (session === undefined || output.trim() === '') return
++  const ran = await project($, ['watch', 'add', '--from-output', '-', '--session', session], output)
++  if (ran.exitCode === 0) watchSoon($)
++  else $.ui.log(`projector: project watch add --from-output failed: ${errorOf(ran)}`, { to: 'debug' })
++}
++
+ /**
+  * Records an answer or outcome a sent prompt gave, with `record`, such as
+  * `['answer', '3.a']` or `['done', '5']`, and marks it delivered, because the
+@@ -918,16 +1119,18 @@ async function recordFromPrompt($: Engine, item: Answerable, record: readonly st
+ }
+ 
+ /**
+- * Reads the inbox whether or not the panel is shown, closes the drawer of an
+- * item that left the panel, and brings a hidden panel back for an item whose
+- * snooze ended since the last tick. A shown panel moves
+- * its clock on, which returns that item to the list, and polls GitHub once
+- * the last load is old enough.
++ * Reads the inbox and delivers the daemon's events whether or not the panel
++ * is shown, closes the drawer of an item that left the panel, and brings a
++ * hidden panel back for an item whose snooze ended since the last tick. A
++ * shown panel moves its clock on, which returns that item to the list, reads
++ * its pull requests again from the daemon's files, and polls GitHub once the
++ * last poll is old enough.
+  */
+ async function tick($: Engine): Promise<void> {
+   // Read before the store, so a snooze that ends while the store is read
+   // falls in the next tick's window.
+   const time = await $.clock.now()
++  void checkWatch($, time)
+   await checkInbox($)
+   await closeLeftDrawer($, time).catch(() => undefined)
+   const since = tickedAt ?? time
+@@ -937,7 +1140,7 @@ async function tick($: Engine): Promise<void> {
+     return
+   }
+   await update($, now, () => time)
+-  if (time - attemptedAt >= POLL_MS) await refresh($)
++  await refresh($, false, time - attemptedAt >= POLL_MS)
+ }
+ 
+ /**
+@@ -1003,9 +1206,10 @@ function notesOf(pr: PullRequest): Note[] {
+ /**
+  * A pull request's color on the line its collapsed rows give way to: red
+  * when a note or its checks hold it back, else its state's, as its row draws
+- * `draft` or `ready`.
++ * `draft` or `ready`, and muted while it loads.
+  */
+-function statusColor(pr: PullRequest): Note['color'] {
++function statusColor(pr: PullRequest): Note['color'] | 'subtle' {
++  if (pr.isLoading === true) return 'subtle'
+   if (pr.isConflicting || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.checks === 'failing') return 'error'
+   return pr.isDraft ? 'warning' : 'success'
+ }
+@@ -1101,7 +1305,7 @@ export const register: Register = on => {
+   on('session.start', async ($, e, next) => {
+     await $.command.register({
+       name: 'projector',
+-      description: 'Show or hide Projector’s panel of your loops’ pull requests and your inbox',
++      description: 'Show or hide Projector’s panel of the pull requests you fix or review, and your inbox',
+     })
+     // A session whose engine cannot serve the tools keeps the panel.
+     for (const tool of [
+@@ -1123,6 +1327,8 @@ export const register: Register = on => {
+       .then(rows => paint($, rows.find(row => row.key === 'theme')?.value))
+       .catch(() => undefined)
+     $.clock.after(1, () => void readBackground($))
++    // Renewing starts the daemon, so it runs from a timer too.
++    watchSoon($)
+     $.clock.every(TICK_MS, () => void tick($))
+     soon($)
+     checkSoon($)
+@@ -1258,10 +1464,16 @@ export const register: Register = on => {
+   }))
+ 
+   // These hooks only watch: the catch hands back what the event settled to,
+-  // so a failure here never runs a tool twice or refuses anything.
++  // so a failure here never runs a tool twice or refuses anything. A push's
++  // subscription waits on GitHub, so the tool's result does not wait on it.
+   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+     const ran = await next(e)
+-    if (ran.deny === undefined) await adopt($, e.command)
++    if (ran.deny !== undefined) return ran
++    await adopt($, e.command)
++    if (isPushCommand(e.command)) {
++      const output = ran.isError === true ? (ran.text ?? '') : `${ran.result.stdout}\n${ran.result.stderr}`
++      void subscribeFrom($, output).catch(() => undefined)
++    }
+     return ran
+   }).catch(($, e, next) => next(e))
+ 
+@@ -1965,9 +2177,12 @@ export const register: Register = on => {
+       )
+     }
+ 
+-    const drawRow = ({ pr, kinds }: Row) => {
++    const drawRow = ({ pr, roles }: Row) => {
+       const key = keyOf(pr)
+       const notes = notesOf(pr)
++      // A pull request the daemon has no result for yet holds only its
++      // reference, so its line says it is loading in its title's place.
++      const isLoaded = pr.isLoading !== true
+       return (
+         <Box key={key} flexDirection="column">
+           {/* Only the title gives way when the line is short; the label column
+@@ -1986,16 +2201,18 @@ export const register: Register = on => {
+                 onPress={() => toggle(key, `pr:${key}`, opened === key ? undefined : `discuss:${key}`)}
+               />
+             </Box>
+-            <Box flexShrink={0}>
+-              <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
+-            </Box>
+-            {!isOwn(pr, shown.viewer) && (
++            {isLoaded && (
++              <Box flexShrink={0}>
++                <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
++              </Box>
++            )}
++            {isLoaded && !isOwn(pr, shown.viewer) && (
+               <Box key={`author:${key}`} flexShrink={0} width={authorWidth}>
+                 <Text color="subtle">{pr.author ?? ''}</Text>
+               </Box>
+             )}
+             <Box flexGrow={1} flexShrink={1}>
+-              <Text wrap="truncate-end">{pr.title}</Text>
++              {isLoaded ? <Text wrap="truncate-end">{pr.title}</Text> : <Text color="subtle">loading…</Text>}
+             </Box>
+             {notes.length > 0 && (
+               <Box flexShrink={0}>
+@@ -2017,18 +2234,19 @@ export const register: Register = on => {
+               {/* Each `·` keeps the default color, so a piece's color, such
+                   as the checks', stops at its own text. */}
+               <Text wrap="truncate-end">
+-                {kinds.flatMap((kind, at) => [
++                {roles.flatMap((role, at) => [
+                   ...(at === 0 ? [] : [' and ']),
+-                  <Text key={`loop:${kind}`} color={LOOP_COLORS[kind]}>
+-                    {kind}
++                  <Text key={`role:${role}`} color={ROLE_COLORS[role]}>
++                    {role}
+                   </Text>,
+                 ])}
+                 {pr.branch !== '' && ' · '}
+                 {pr.branch !== '' && <Text color={BRANCH_COLOR}>{pr.branch}</Text>}
+-                {' · '}
+-                <Text color="success">{`+${pr.additions}`}</Text>{' '}
+-                <Text color="error">{`−${pr.deletions}`}</Text>
+-                {` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
++                {isLoaded && ' · '}
++                {isLoaded && <Text color="success">{`+${pr.additions}`}</Text>}
++                {isLoaded && ' '}
++                {isLoaded && <Text color="error">{`−${pr.deletions}`}</Text>}
++                {isLoaded && ` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
+                 {pr.checks !== null && ' · '}
+                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
+               </Text>
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 4073e32a..3423947c 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -1,9 +1,16 @@
+-/** What a loop does with its pull requests: `watch-threads.sh` watches, `watch-prs.sh` reviews. */
++/**
++ * What an earlier watcher did with the pull requests its tracked file lists:
++ * `watch-threads.sh` watches, `watch-prs.sh` reviews. A session that started
++ * one before the daemon keeps it until the session ends.
++ */
+ export type LoopKind = 'watching' | 'reviewing'
+ 
+-/** A tracked file this session started a watcher on. */
++/** A tracked file this session started an earlier watcher on. */
+ export type SeenLoop = { kind: LoopKind; tracked: string }
+ 
++/** What the session does with a pull request, as its drawer names it. */
++export type Role = 'fixing' | 'reviewing'
++
+ export type Checks = 'passing' | 'failing' | 'pending'
+ 
+ /** A review thread no one has resolved, as a pull request's drawer lists it. */
+@@ -42,14 +49,16 @@ export type PullRequest = {
+   updatedAt: number | null
+   /** The Projector summary the description links, when one was published. */
+   summaryUrl: string | null
++  /** Whether the daemon has yet to give a result for the pull request, which then holds only its reference. */
++  isLoading?: boolean
+ }
+ 
+-/** One line of the panel: an open pull request and what the loops do with it. */
+-export type Row = { pr: PullRequest; kinds: LoopKind[] }
++/** One line of the panel: an open pull request and what the session does with it. */
++export type Row = { pr: PullRequest; roles: Role[] }
+ 
+ export type Snapshot = {
+   rows: Row[]
+-  /** The login of the account the panel's `gh` is signed in as; null until GitHub says. */
++  /** The operator's login, from the daemon or else from GitHub; null until one says. */
+   viewer: string | null
+   fetchedAt: number | null
+   error: string | null
+@@ -159,6 +168,8 @@ declare module 'claude-code' {
+   interface PluginState {
+     projector: {
+       seenLoops: SeenLoop[]
++      /** The pull requests the session subscribed to when the panel last looked, by `keyOf`, so a new one shows the panel. */
++      panelSubscribed: string[]
+       panelSnapshot: Snapshot
+       panelNow: number
+       isPanelShown: boolean
