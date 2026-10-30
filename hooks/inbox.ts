@@ -362,6 +362,8 @@ export const REQUEST_DESCRIPTION = described([
   'Name the pull request it is about in `pr`, as owner/repo#number.',
   'Give `start` only when you must do something before they can begin, such as installing a build on their phone:',
   'one line saying what you will do. Leave it out otherwise, and the request goes straight to done or declined.',
+  'Do the slow part before you post the request, such as building the app, so the start action only installs and',
+  'launches it and the person is not left waiting once they press start.',
   'With `start`, the person presses start when they are ready, and a message that starts `STARTED 3` arrives quoting',
   'the start action. Do the start action only after it arrives, and do exactly what it quotes and nothing more.',
   'Then mark the request ready with `ready`, or, when you cannot finish, `block` it with what they should do first.',

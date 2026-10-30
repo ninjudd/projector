@@ -83,8 +83,10 @@ they should see, so their notes can name the step that failed. Post one
 request for the whole hand-off rather than a question and a notice for its
 parts, and keep working on anything it does not block. Give the request a
 start action only when you must prepare something before they can begin,
-such as installing a build on their phone, and leave it out otherwise. They
-press start when they are ready, and a message that starts `STARTED`
+such as installing a build on their phone, and leave it out otherwise. Do
+the slow part before you post the request, such as building the app, so the
+start action only installs and launches it and they are not left waiting
+once they press start. They press start when they are ready, and a message that starts `STARTED`
 arrives quoting the start action. Do the start action only then, do exactly
 what that message quotes and nothing more, and mark the request ready with
 the `ready` tool, or blocked with the `block` tool and what they should do

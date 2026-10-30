@@ -63,8 +63,10 @@ what it did to each:
   person's phone, with numbered steps that each say what the person should
   see, and to read a done request's notes and not post a declined one again.
   It tells an agent to give a request a start action only when it must
-  prepare something first, to do it only once `STARTED` arrives, exactly as
-  that message quotes it, and then to mark the request ready or blocked.
+  prepare something first, to do the slow part, such as a build, before it
+  posts the request so the start is quick, to do the start action only once
+  `STARTED` arrives, exactly as that message quotes it, and then to mark the
+  request ready or blocked.
   It tells an agent whose question or request the person replied to, rather
   than resolving it, to answer what they asked and then withdraw the item
   with the `withdraw` tool, revise it with the `revise` tool, or leave it
