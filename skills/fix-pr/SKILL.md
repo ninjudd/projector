@@ -81,9 +81,9 @@ Findings arrive from two kinds of reviewer and both are answered the same way.
 A **cross-author** reviewer — a teammate, Codex, Bugbot, or a Projector review
 run by someone else — posts real `CHANGES_REQUESTED` verdicts. A
 **self-review**, which GitHub allows only to post `COMMENT` reviews on the
-operator's own pull requests, records its outcome in the review body's verdict line and in draft
-state instead. Read both signals; never treat an unmoved `reviewDecision` as
-evidence that nothing is outstanding.
+operator's own pull requests, records its outcome in the review body's verdict
+line and in draft state instead. Read both signals; never treat an unmoved
+`reviewDecision` as evidence that nothing is outstanding.
 
 Read review bodies and compare them with the thread set. A Projector review
 body carries a verdict line; read it rather than inferring the outcome. Dispose

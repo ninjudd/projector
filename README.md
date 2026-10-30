@@ -73,9 +73,9 @@ which the session that pushed a pull request runs again whenever a review
 finds something; `summarize-pr`, which summarizes a pull request's changes
 as a guided review page; `write`, which writes any prose so that it follows
 Projector's writing guide; and `rewrite`, which revises existing text by
-that guide and writes it back where it lives. Claude invokes a skill as `/projector:<skill>` and Codex as
-`$<skill>`. See [Install Projector](docs/plugins.md) for how the skills
-work together.
+that guide and writes it back where it lives. Claude invokes a skill as
+`/projector:<skill>` and Codex as `$<skill>`. See
+[Install Projector](docs/plugins.md) for how the skills work together.
 
 In Claude Code, the plugin also shows Projector's panel above the prompt.
 It lists the pull requests your session fixes and reviews, and your inbox:

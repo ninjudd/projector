@@ -743,11 +743,12 @@ The command opens the reply with
 `<!-- projector-verify v=1 result=<result> sha=<full-sha> model=<model-id> -->`,
 filled from the review's state with the head under review and the model
 running it, so neither the watch daemon nor `fix-pr` reads the reply back as
-a new finding or as the author answering. It posts the reply as the reviewer, resolves or unresolves
-the thread as the result asks, and reads both back. It refuses a thread that
-is not a Projector finding thread on this pull request. Never write the
-marker yourself or resolve a thread through `gh api`: a reply whose marker
-is mistyped reads to the watch daemon as the author answering.
+a new finding or as the author answering. It posts the reply as the
+reviewer, resolves or unresolves the thread as the result asks, and reads
+both back. It refuses a thread that is not a Projector finding thread on
+this pull request. Never write the marker yourself or resolve a thread
+through `gh api`: a reply whose marker is mistyped reads to the watch daemon
+as the author answering.
 
 - **Fixed:** the head addresses the finding. Run `--result fixed` on an open
   thread, saying what at this head settles it; the command resolves the
