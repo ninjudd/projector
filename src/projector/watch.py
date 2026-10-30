@@ -1296,8 +1296,8 @@ class Pass:
 
     def route_fix(self, session: str, pull: tuple[str, int], repo: str, pr: dict, reviews: list[dict],
                   reviewers: set[str]) -> list[str]:
-        """What a `fix` owner should hear, kept level-triggered as `watch-threads.sh` was: each piece of work
-        still outstanding is announced when it is new and again every `watch.renotify` seconds."""
+        """What a `fix` owner should hear, kept level-triggered: each piece of work still outstanding is
+        announced when it is new and again every `watch.renotify` seconds."""
         number = pull[1]
         ref = f"{repo}#{number}"
         label = role_label(pull, "fix")
@@ -1373,8 +1373,8 @@ class Pass:
 
     def route_review(self, session: str, pull: tuple[str, int], name: str, repo: str, repository: dict,
                      line: Subscription) -> list[str]:
-        """What a `review` owner should hear, as `watch-prs.sh` said it, with a reminder while the head waits
-        on its review and the stalled review's NEW HEAD."""
+        """What a `review` owner should hear, with a reminder while the head waits on its review and the
+        stalled review's NEW HEAD."""
         pr = repository["pullRequest"]
         number = pull[1]
         ref = f"{repo}#{number}"
