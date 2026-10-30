@@ -38,9 +38,10 @@ work, such as running a command or signing in, and press **done** or
 **decline**. Only when the agent must do something before you can begin does
 it add a start action: a one-line description of what it does when you're
 ready, such as "Install build `c0d62a3b` on your iPhone and launch it." A
-request with a start action first shows **start**. Pressing it sends the
-agent `STARTED`, quoting the start action, and is your consent to that action
-and nothing more. The agent does it, then marks the request ready, or blocked
+request with a start action first shows **start**, and nothing happens
+until you press it when you're ready to begin. Your press sends the agent
+`STARTED`, quoting the start action, and is your consent to that action and
+nothing more. The agent does it, then marks the request ready, or blocked
 with a reason, such as "The phone is locked. Unlock it and press retry."
 **done** and **decline** put the quoted request in your prompt with `Done` or
 `Declined` under it, so you can add notes and send them. Build it in two
@@ -56,15 +57,18 @@ start action.
 2. You open its drawer: the steps, then the actions. A request without a
    start action, or one that is ready, shows `done | decline | discuss |
    snooze`. A request with a start action shows **start** before them.
+   Opening the drawer, reading the steps, or leaving the drawer open sends
+   nothing and records nothing.
 Steps 3 to 5 apply only to a request with a start action. A request without
 one goes from step 2 straight to step 6, and never shows **start**,
 `starting`, `ready`, or `blocked`.
 
-3. **start** runs `project inbox start <number> --action <action>`, passing
-   the start action its drawer shows, which `start` records. When an agent
-   revised the start action since the panel last read the store, the two
-   differ, and `start` exits `65` without recording anything. The panel then
-   reads the store again and shows the new action, which needs a new press.
+3. When you're ready to begin, you press **start**. It runs `project inbox
+   start <number> --action <action>`, passing the start action its drawer
+   shows, which `start` records. When an agent revised the start action
+   since the panel last read the store, the two differ, and `start` exits
+   `65` without recording anything. The panel then reads the store again and
+   shows the new action, which needs a new press.
    Otherwise the panel's deliverer claims the line it owes and sends
    `STARTED 5 <request> → <start action>`, to the subagent that posted the
    request while it runs, or otherwise to the main loop, exactly as it
@@ -76,7 +80,8 @@ one goes from step 2 straight to step 6, and never shows **start**,
    `ready` tool. The line says `ready`. If it can't finish, it runs `project
    inbox block <number> --reason <line>`, through the `block` tool. The line
    says `blocked`, the drawer shows the reason, and **start** returns as
-   **retry**, which records a new start as step 3 does.
+   **retry**. You press **retry** when you've fixed the problem, which
+   records a new start as step 3 does.
 6. **done** puts `"<request>"`, a blank line, `Done`, and a blank line in the
    prompt, with the cursor at the end. **decline** does the same with
    `Declined`. You type any notes and send the prompt, or send it as it
@@ -224,12 +229,12 @@ A refusal follows `ask`'s rules: exit `65` gives the check that failed.
   dismissed item work without new branches. A request's drawer shows
   **decline** in place of **dismiss**, because two ways to say no to the same
   request would mean the same thing.
-- **start is a button; done and decline fill the prompt.** start carries
-  nothing but consent, so it records the event directly, as **dismiss** does,
-  and the deliverer sends the line. A prompt would cost you an Enter and
-  would let the quoted start action be edited on its way. done and decline
-  usually carry notes, which you type in the prompt, so they follow a
-  question's answer.
+- **start is a button; done and decline fill the prompt.** Your press of
+  start carries nothing but consent, so it records the event directly, as
+  **dismiss** does, and the deliverer sends the line. A prompt would cost
+  you an Enter and would let the quoted start action be edited on its way.
+  done and decline usually carry notes, which you type in the prompt, so
+  they follow a question's answer.
 - **Exactly `Done` or `Declined`.** `readPrompt` takes a question's answer
   only when the text after its quote is exactly one of its options. A
   request takes its outcome only when the first line under the quote is
@@ -263,6 +268,7 @@ A refusal follows `ask`'s rules: exit `65` gives the check that failed.
 | `project inbox decline 5 --text "No phone today"` | The deliverer sends `DECLINED 5 Test the gutters → No phone today` once |
 | `project inbox answer 5.a` on a request | Exits `65`, naming `done` and `decline` |
 | `restore` a declined request | It is open in place; an agent that heard `DECLINED` hears `RESTORED` |
+| Layer 2: open a request's drawer and close it without pressing anything | No `started` is recorded and no `STARTED` is sent |
 | Layer 2: press **start** | `STARTED 5 Test the gutters → Install build c0d62a3b…` reaches the subagent while it runs, else the main loop; the line says `starting` |
 | Layer 2: a failed `STARTED` submit | `started` is removed, a toast says why, and **start** returns |
 | Layer 2: `project inbox block 5 --reason "Unlock the phone"`, then **retry** | The drawer shows the reason; retry records a new `started` and removes `progress` |
