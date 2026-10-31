@@ -1,0 +1,236 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 8418ea14..3459e5fc 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2526,8 +2526,8 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
+ | `FINDING` | `fix` | An unresolved review thread |
+ | `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
+ | `CONFLICT` | `fix` | A branch that conflicts with its base |
+-| `REVIEW` | `fix` | A comment review with a body, with the count of suggestions a Projector review lists |
+-| `DRAFT` | `fix`, when the session does not also review the pull request | A head that no review has signed off, and whether any session on this machine reviews the pull request |
++| `REVIEW` | `fix` | A comment review of the current head with a body: a person's, or a Projector review that lists suggestions, with their count |
++| `DRAFT` | `fix`, when no session on this machine reviews the pull request | A head that no review has signed off and that no session here will review, once per head |
+ | `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed |
+ | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled |
+ | `RESPONDED` | `review` | The author answered every finding on an unmoved head, or lifted a hold |
+@@ -2535,7 +2535,11 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
+ | `MERGED`, `CLOSED` | any | The pull request merged or closed |
+ | `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |
+ 
+-`FINDING`, `VERDICT`, `CONFLICT`, `DRAFT`, and `NEW HEAD` report work that
++A review of an earlier head is history, so it reports nothing, and a draft
++that a session on this machine reviews waits for that review without a line
++of its own.
++
++`FINDING`, `VERDICT`, `CONFLICT`, and `NEW HEAD` report work that
+ stands until it is done, so the daemon announces each again, with
+ `(still open)` after the reference, every `watch.renotify` seconds while it
+ stands. A `NEW HEAD` stands while the head has no verdict by the model from
+diff --git a/docs/projects/watch-daemon/readme.md b/docs/projects/watch-daemon/readme.md
+index e0972491..26fe401a 100644
+--- a/docs/projects/watch-daemon/readme.md
++++ b/docs/projects/watch-daemon/readme.md
+@@ -950,6 +950,17 @@ Building the daemon settled these choices, which the design above left open.
+   machine sleeping from the end of its last turn, not its start. A pass that
+   runs past a minute, as a pass over a few dozen pull requests does, then
+   forgives no lock and keeps no closed session live.
++- **Only work wakes a session.** Each event reaches a Claude Code session as
++  a prompt, so the daemon announces only what asks something of it. `REVIEW`
++  reports a review of the current head alone: a person's body, or a
++  Projector review that lists suggestions. A review of an earlier head is
++  history, and a Projector review that lists none asks for nothing.
++  `DRAFT` reports a draft only when no session on this machine reviews it,
++  once per head, because a draft that a session reviews just waits for that
++  review. Before this, a session that pushed to a pull request with a long
++  history was woken by a line for every review that pull request ever had,
++  each telling it to run `fix-pr`, and by a `DRAFT` reminder every 15
++  minutes.
+ 
+ ### 9.2 The skills
+ 
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 03691142..96a87ace 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -534,20 +534,20 @@ role are these:
+   findings exist only in its body.
+ - **`CONFLICT`** reports a branch that conflicts with its base. It clears
+   when a push makes the branch mergeable again.
+-- **`REVIEW`** reports a review body that has no inline thread, the shape
+-  every `COMMENT` review posts. A Projector review that lists suggestions is
+-  work even under a clean verdict, because this skill implements or defers
+-  each one. The line says how many the review's `projector-suggestions` line
+-  counts, as `listing 2 suggestions`. A review an earlier release published
+-  has no such line, so its line names no count, and
+-  `project review suggestions` still finds its suggestions.
+-- **`DRAFT`** reports a head that no clean review has signed off. It is not
+-  work: any work behind it arrives as its own `FINDING`, `VERDICT`,
+-  `CONFLICT`, or `REVIEW` line, and a pull request that a hold keeps in
+-  draft has its work with the subagent already. A draft with nothing else
+-  outstanding waits for a review. When the line says that no session on
+-  this machine reviews the pull request, tell the user once, and say that
+-  `review-pr` or `review-repo` in a session would review it.
++- **`REVIEW`** reports a review body of the current head that has no inline
++  thread, the shape every `COMMENT` review posts: a person's, or a Projector
++  review that lists suggestions. A Projector review that lists suggestions
++  is work even under a clean verdict, because this skill implements or
++  defers each one. The line says how many the review's
++  `projector-suggestions` line counts, as `listing 2 suggestions`. A review
++  of an earlier head, and a Projector review that lists none, report
++  nothing.
++- **`DRAFT`** reports, once per head, a draft that no clean review has
++  signed off and that no session on this machine reviews. Tell the user
++  once, and say that `review-pr` or `review-repo` in a session would review
++  it. It is not work: any work behind it arrives as its own `FINDING`,
++  `VERDICT`, `CONFLICT`, or `REVIEW` line. A draft that a session here
++  reviews reports nothing; it waits for that review.
+ - **`MOVED`** reports that another session now owns the pull request's
+   `fix` role. Stop its subagent at once, because two fixers would push the
+   same branch, and tell the user.
+@@ -560,8 +560,8 @@ role are these:
+   operator cannot see it, and that the daemon removed the subscription.
+   Tell the user.
+ 
+-`FINDING`, `VERDICT`, `CONFLICT`, and `DRAFT` report work that stands until
+-it is done, and the daemon announces each again every `watch.renotify`
++`FINDING`, `VERDICT`, and `CONFLICT` report work that stands until it is
++done, and the daemon announces each again every `watch.renotify`
+ seconds, 15 minutes by default, while it stands. So a line about work a
+ subagent already has is a reminder: send it on. A thread the subagent
+ declined stays unresolved, because declining leaves the decision to the
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index cda25e4a..b60e3909 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -79,6 +79,7 @@
+ HTML_COMMENT = re.compile(r"<!--(?:[^-]|-[^-]|--[^>])*-->")
+ HTML_TAG = re.compile(r"<[^>]*>")
+ ANSWERED = re.compile(r"projector-(?:finding|verify)")
++PROJECTOR_REVIEW = re.compile(r"^<!-- projector-review ", re.M)
+ 
+ # The query § 2.6 of the watch-daemon plan gives, which Projector's panel reads from the cache too, with
+ # the fields the events name: `mergedAt` and `mergeCommit` for MERGED, each comment's id and times for a
+@@ -1317,16 +1318,11 @@ def standing(key: str, first: str, again: Optional[str]) -> None:
+             kept[key] = last
+ 
+         head = pr.get("headRefOid") or ""
+-        if pr.get("isDraft") and session not in reviewers:
+-            if reviewers:
+-                unreviewed, wait = "", "wait for its review"
+-            else:
+-                unreviewed, wait = ", and no session on this machine reviews it", \
+-                    f"tell the user that no session reviews {ref}"
++        if pr.get("isDraft") and not reviewers:
+             standing(f"draft:{number}:{head}",
+-                     f"DRAFT {ref} head={head[:8]}: no review has signed off this head{unreviewed}; the work, if any, "
+-                     f"is in its threads and review bodies — {wait}",
+-                     f"DRAFT {ref} (still open) head={head[:8]}: still not signed off{unreviewed} — {wait}")
++                     f"DRAFT {ref} head={head[:8]}: no review has signed off this head, and no session on this "
++                     f"machine reviews it — tell the user that no session reviews {ref}",
++                     None)
+         conflict = f"conflict:{number}:{head}"
+         mergeable = pr.get("mergeable") or "UNKNOWN"
+         if mergeable == "UNKNOWN" and conflict in announced:
+@@ -1355,7 +1351,7 @@ def standing(key: str, first: str, again: Optional[str]) -> None:
+             standing(thread["id"], f"FINDING {ref} {place} [{who}]{said} — {action}",
+                      f"FINDING {ref} (still open) {place} [{who}]{said} — {action}")
+         for found in reviews:
+-            if found.get("state") != "COMMENTED" or found.get("id") is None:
++            if found.get("state") != "COMMENTED" or found.get("id") is None or found.get("commit_id") != head:
+                 continue
+             body = found.get("body") or ""
+             text = re.sub(r"[\r\n]+", " ", HTML_TAG.sub("", HTML_COMMENT.sub("", body)))
+@@ -1363,6 +1359,8 @@ def standing(key: str, first: str, again: Optional[str]) -> None:
+                 continue
+             counted = review.SUGGESTIONS_COUNT.search(body)
+             count = int(counted.group(1)) if counted else 0
++            if count == 0 and PROJECTOR_REVIEW.search(body):
++                continue
+             listing = "" if count == 0 else f", listing {count} suggestion{'' if count == 1 else 's'}"
+             who = (found.get("user") or {}).get("login") or "?"
+             sha = (found.get("commit_id") or "?")[:8]
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index f290a7fd..07019d34 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -419,8 +419,8 @@ def test_reports_every_kind_of_outstanding_work_on_a_fixed_pull_request(self) ->
+         events = self.cycle()
+ 
+         self.assertEqual([
+-            f"DRAFT acme/app#1 head=aaaaaaaa: no review has signed off this head{NO_REVIEWER}; the work, if any, is "
+-            "in its threads and review bodies — tell the user that no session reviews acme/app#1",
++            f"DRAFT acme/app#1 head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user that no "
++            "session reviews acme/app#1",
+             f"VERDICT acme/app#1 CHANGES_REQUESTED on aaaaaaaa [teammate]: Please split this — {fix_action(1)}",
+             f"FINDING acme/app#1 src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}",
+             f"REVIEW acme/app#1 by [codex] on aaaaaaaa: Body-only concern — {fix_action(1)}",
+@@ -428,7 +428,7 @@ def test_reports_every_kind_of_outstanding_work_on_a_fixed_pull_request(self) ->
+         self.assertEqual({f"draft:1:{SHA_A}", f"verdict:teammate:{SHA_A}", "T1", "review:77"},
+                          set(self.state("fixer")["fix"]["acme/app#1 fix"]))
+ 
+-    def test_a_draft_that_a_session_reviews_waits_for_its_review(self) -> None:
++    def test_a_draft_another_session_reviews_asks_the_fixer_for_nothing(self) -> None:
+         self.github.pull_request(1, draft=True)
+         self.fixer("acme/app#1 fix")
+         self.subscribe("reviewer", f"acme/app#1 review {MODEL} operator")
+@@ -436,8 +436,7 @@ def test_a_draft_that_a_session_reviews_waits_for_its_review(self) -> None:
+ 
+         events = self.cycle()
+ 
+-        self.assertEqual(["DRAFT acme/app#1 head=aaaaaaaa: no review has signed off this head; the work, if any, is in "
+-                          "its threads and review bodies — wait for its review"], events["fixer"])
++        self.assertEqual([], events["fixer"])
+ 
+     def test_a_session_that_fixes_and_reviews_a_pull_request_hears_no_draft(self) -> None:
+         self.github.pull_request(1, draft=True)
+@@ -447,7 +446,7 @@ def test_a_session_that_fixes_and_reviews_a_pull_request_hears_no_draft(self) ->
+ 
+         self.assertEqual([new_pr(1, "feature", "fixer")], events["fixer"])
+ 
+-    def test_a_projector_review_says_how_many_suggestions_its_body_counts(self) -> None:
++    def test_a_projector_review_is_work_only_when_it_lists_suggestions(self) -> None:
+         def projector_review(review_id, count):
+             marker = (f"<!-- projector-review v=1 verdict=clean projector=0.7.20 model={MODEL} sha={SHA_A} "
+                       "findings=0 seconds=60 covered=1/1 -->")
+@@ -463,8 +462,25 @@ def projector_review(review_id, count):
+         self.assertEqual([
+             f"REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 2 suggestions: Projector review Clean. — {fix_action(1)}",
+             f"REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 1 suggestion: Projector review Clean. — {fix_action(1)}",
+-            f"REVIEW acme/app#1 by [operator] on aaaaaaaa: Projector review Clean. — {fix_action(1)}",
+-            f"REVIEW acme/app#1 by [operator] on aaaaaaaa: Projector review Clean. — {fix_action(1)}",
++        ], events["fixer"])
++
++    def test_a_review_of_an_earlier_head_is_history(self) -> None:
++        def projector_review(review_id, sha):
++            marker = (f"<!-- projector-review v=1 verdict=clean projector=0.7.20 model={MODEL} sha={sha} "
++                      "findings=0 seconds=60 covered=1/1 -->")
++            return rest_review(review_id, who="operator", sha=sha,
++                               body=f"Projector review\n\n{marker}\n\n<!-- projector-suggestions v=1 count=1 -->\nClean.")
++
++        self.github.pull_request(1, head=SHA_B, reviews=[
++            rest_review(71, body="Old concern"), projector_review(72, SHA_A),
++            rest_review(73, body="Current concern", sha=SHA_B), projector_review(74, SHA_B)])
++        self.fixer("acme/app#1 fix")
++
++        events = self.cycle()
++
++        self.assertEqual([
++            f"REVIEW acme/app#1 by [codex] on bbbbbbbb: Current concern — {fix_action(1)}",
++            f"REVIEW acme/app#1 by [operator] on bbbbbbbb, listing 1 suggestion: Projector review Clean. — {fix_action(1)}",
+         ], events["fixer"])
+ 
+     def test_a_later_pass_repeats_only_after_the_renotify_interval(self) -> None:
+@@ -479,11 +495,8 @@ def test_a_later_pass_repeats_only_after_the_renotify_interval(self) -> None:
+ 
+         self.assertEqual(3, len(first), first)
+         self.assertEqual([], second)
+-        self.assertEqual([
+-            f"DRAFT acme/app#1 (still open) head=aaaaaaaa: still not signed off{NO_REVIEWER} — tell the user that no "
+-            "session reviews acme/app#1",
+-            f"FINDING acme/app#1 (still open) src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}",
+-        ], third)
++        self.assertEqual([f"FINDING acme/app#1 (still open) src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}"],
++                         third)
+ 
+     def test_reports_a_conflict_with_the_base_until_a_push_clears_it(self) -> None:
+         self.github.pull_request(1, base="parent", mergeable="CONFLICTING")
