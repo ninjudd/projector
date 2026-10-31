@@ -534,14 +534,15 @@ role are these:
   findings exist only in its body.
 - **`CONFLICT`** reports a branch that conflicts with its base. It clears
   when a push makes the branch mergeable again.
-- **`REVIEW`** reports a review body of the current head that has no inline
-  thread, the shape every `COMMENT` review posts: a person's, or a Projector
-  review that lists suggestions. A Projector review that lists suggestions
-  is work even under a clean verdict, because this skill implements or
-  defers each one. The line says how many the review's
-  `projector-suggestions` line counts, as `listing 2 suggestions`. A review
-  of an earlier head, and a Projector review that lists none, report
-  nothing.
+- **`REVIEW`** reports a Projector review whose suggestions
+  `project review suggestions` lists, or any other reviewer's review body
+  of the current head that has no inline thread, the shape every `COMMENT`
+  review posts. A Projector review that lists suggestions is work even
+  under a clean verdict, because this skill implements or defers each one.
+  The line says how many the review lists, as `listing 2 suggestions`, and
+  names an earlier head when an incremental review of the current head
+  builds on that head's full review. Any other review of an earlier head,
+  and a Projector review that lists none, report nothing.
 - **`DRAFT`** reports, once per head, a draft that no clean review has
   signed off and that no session on this machine reviews. Tell the user
   once, and say that `review-pr` or `review-repo` in a session would review

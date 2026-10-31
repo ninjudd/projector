@@ -2211,9 +2211,15 @@ def verdicts(repo: str, number: int, reviewer: str, visibility: Optional[str]) -
                    "--jq", '.[] | select(.body // "" | contains("projector-review")) '
                            '| {id, url: .html_url, at: .submitted_at, login: .user.login, '
                            'association: .author_association, body} | @json']).splitlines()
-    found = [json.loads(row) for row in rows if row.strip()]
-    return [r for r in found
-            if (r.get("login") or "").lower() == reviewer.lower() or review_counts(r.get("association"), visibility)]
+    return counted_reviews([json.loads(row) for row in rows if row.strip()], reviewer, visibility)
+
+
+def counted_reviews(reviews: list[dict], reviewer: str, visibility: Optional[str]) -> list[dict]:
+    """The reviews among `reviews` that can give a verdict: the reviewer's, and any other that `review_counts`
+    counts by its `association` in a repository of `visibility`. Each review names its author as `login`."""
+    return [r for r in reviews
+            if reviewer and (r.get("login") or "").lower() == reviewer.lower()
+            or review_counts(r.get("association"), visibility)]
 
 
 def newest_verdicts(head: str, reviews: list[dict]) -> list[dict]:

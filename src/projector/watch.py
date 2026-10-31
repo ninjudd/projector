@@ -545,8 +545,20 @@ def decode_pages(text: str) -> Optional[list]:
 
 def trim_review(found: dict) -> dict:
     return {"id": found.get("id"), "state": found.get("state"), "user": {"login": (found.get("user") or {}).get("login")},
-            "body": found.get("body") or "", "commit_id": found.get("commit_id"),
+            "body": found.get("body") or "", "commit_id": found.get("commit_id"), "html_url": found.get("html_url"),
             "submitted_at": found.get("submitted_at"), "author_association": found.get("author_association")}
+
+
+def standing_suggestions(reviews: list[dict], head: str, operator: str, visibility: Optional[str]) -> dict:
+    """How many suggestions each review lists, for the reviews whose suggestions `project review suggestions`,
+    run by the operator, lists on `head`: each account's newest Projector verdict on it by each model, and the
+    full review an incremental one among them builds on, which can be of an earlier head. `reviews` are the
+    pull request's reviews as `trim_review` keeps them."""
+    rows = [{"id": found.get("id"), "url": found.get("html_url"), "at": found.get("submitted_at"),
+             "login": (found.get("user") or {}).get("login"), "association": found.get("author_association"),
+             "body": found.get("body") or ""} for found in reviews if found.get("id") is not None]
+    chosen = review.suggesting_reviews(head, review.counted_reviews(rows, operator, visibility))
+    return {found["id"]: review.listed_suggestions(found) for found in chosen}
 
 
 def open_pull(found: dict) -> dict:
@@ -1288,7 +1300,7 @@ class Pass:
                 continue
             if name == "fix":
                 lines = self.route_fix(owner, pull, spellings[pull], pr, results[pull].get("reviews") or [],
-                                       reviewers.get(pull, set()))
+                                       reviewers.get(pull, set()), results[pull]["repository"].get("visibility"))
             else:
                 lines = self.route_review(owner, pull, name, spellings[pull], results[pull]["repository"],
                                           claim.line)
@@ -1296,9 +1308,11 @@ class Pass:
         return closing
 
     def route_fix(self, session: str, pull: tuple[str, int], repo: str, pr: dict, reviews: list[dict],
-                  reviewers: set[str]) -> list[str]:
+                  reviewers: set[str], visibility: Optional[str]) -> list[str]:
         """What a `fix` owner should hear, kept level-triggered: each piece of work still outstanding is
-        announced when it is new and again every `watch.renotify` seconds."""
+        announced when it is new and again every `watch.renotify` seconds. A review is announced once, so its
+        key is kept after it stops standing, as a full review's suggestions do while a push waits for the
+        incremental review that carries them."""
         number = pull[1]
         ref = f"{repo}#{number}"
         label = role_label(pull, "fix")
@@ -1350,22 +1364,30 @@ class Pass:
             said = snippet(re.sub(r"[\r\n\t]+", " ", HTML_COMMENT.sub("", last.get("body") or "")).lstrip(" "))
             standing(thread["id"], f"FINDING {ref} {place} [{who}]{said} — {action}",
                      f"FINDING {ref} (still open) {place} [{who}]{said} — {action}")
+        suggesting = standing_suggestions(reviews, head, self.daemon.operator or "", visibility)
         for found in reviews:
-            if found.get("state") != "COMMENTED" or found.get("id") is None or found.get("commit_id") != head:
+            if found.get("id") is None:
                 continue
             body = found.get("body") or ""
+            if PROJECTOR_REVIEW.search(body):
+                count = suggesting.get(found["id"], 0)
+                if count == 0:
+                    continue
+            elif found.get("state") != "COMMENTED" or found.get("commit_id") != head:
+                continue
+            else:
+                count = 0
             text = re.sub(r"[\r\n]+", " ", HTML_TAG.sub("", HTML_COMMENT.sub("", body)))
             if not text.strip():
-                continue
-            counted = review.SUGGESTIONS_COUNT.search(body)
-            count = int(counted.group(1)) if counted else 0
-            if count == 0 and PROJECTOR_REVIEW.search(body):
                 continue
             listing = "" if count == 0 else f", listing {count} suggestion{'' if count == 1 else 's'}"
             who = (found.get("user") or {}).get("login") or "?"
             sha = (found.get("commit_id") or "?")[:8]
             standing(f"review:{found['id']}", f"REVIEW {ref} by [{who}] on {sha}{listing}{snippet(text)} — {action}",
                      None)
+        for key, last in announced.items():
+            if key.startswith("review:"):
+                kept.setdefault(key, last)
         self.states[session].data["fix"][label] = kept
         return lines
 

@@ -952,15 +952,27 @@ Building the daemon settled these choices, which the design above left open.
   forgives no lock and keeps no closed session live.
 - **Only work wakes a session.** Each event reaches a Claude Code session as
   a prompt, so the daemon announces only what asks something of it. `REVIEW`
-  reports a review of the current head alone: a person's body, or a
-  Projector review that lists suggestions. A review of an earlier head is
-  history, and a Projector review that lists none asks for nothing.
-  `DRAFT` reports a draft only when no session on this machine reviews it,
-  once per head, because a draft that a session reviews just waits for that
-  review. Before this, a session that pushed to a pull request with a long
-  history was woken by a line for every review that pull request ever had,
-  each telling it to run `fix-pr`, and by a `DRAFT` reminder every 15
-  minutes.
+  reports a Projector review only for the suggestions that stand on the
+  current head, and any other reviewer's body on that head. The daemon
+  finds those suggestions as `project review suggestions` does, through
+  `suggesting_reviews` over the reviews whose verdict counts, the
+  operator's and those of the accounts the repository lets in: the newest
+  verdict on the head by each account and model, and the full review that
+  an incremental one builds on, which can be of an earlier head. So a
+  session that gains the role at an incremental review's head, or a push
+  that lands before the full review is announced, still hears its
+  suggestions. The cache keeps each review's `html_url`, which an
+  incremental review's link names, so this adds no request to § 5's
+  budget. The daemon announces each review once and keeps its key after it
+  stops standing, so a full review is not announced again when the
+  incremental review of the next head carries it forward. Any other review
+  of an earlier head is history, and a Projector review that lists none
+  asks for nothing. `DRAFT` reports a draft only when no session on this
+  machine reviews it, once per head, because a draft that a session
+  reviews just waits for that review. Before this, a session that pushed
+  to a pull request with a long history was woken by a line for every
+  review that pull request ever had, each telling it to run `fix-pr`, and
+  by a `DRAFT` reminder every 15 minutes.
 
 ### 9.2 The skills
 

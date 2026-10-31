@@ -63,8 +63,27 @@ def thread(thread_id, *, path="src/x.py", line=3, who="bugbot", body="P1 nil der
             "first": {"nodes": comments[:1]}, "last": {"nodes": comments[-1:]}}
 
 
-def rest_review(review_id, *, who="codex", body="Body-only concern", sha=SHA_A, state="COMMENTED"):
-    return {"id": review_id, "state": state, "user": {"login": who}, "body": body, "commit_id": sha}
+def rest_review(review_id, *, who="codex", body="Body-only concern", sha=SHA_A, state="COMMENTED",
+                at="2026-10-30T00:00:00Z", association="COLLABORATOR"):
+    return {"id": review_id, "state": state, "user": {"login": who}, "body": body, "commit_id": sha,
+            "html_url": review_url(review_id), "submitted_at": at, "author_association": association}
+
+
+def review_url(review_id: int) -> str:
+    return f"https://github.com/acme/app/pull/1#pullrequestreview-{review_id}"
+
+
+def projector_body(sha, *, model=MODEL, count=1, builds_on=None, body="Clean."):
+    """A Projector review body of `sha` with the line counting `count` suggestions, none when `count` is None, and,
+    for an incremental review, the lines that name the full review `builds_on`, a `(sha, review id)` pair."""
+    marker = (f"<!-- projector-review v=1 verdict=clean projector=0.8.2 model={model} sha={sha} "
+              "findings=0 seconds=60 covered=1/1 -->")
+    if builds_on is not None:
+        marker += (f"\n<!-- projector-incremental v=1 from={builds_on[0]} kind=push insertions=1 deletions=1 files=1 "
+                   f"conflicts=0 -->\n\nIncremental review of the change since the full review of "
+                   f"[`{builds_on[0][:7]}`]({review_url(builds_on[1])}): one push.")
+    counted = "" if count is None else f"<!-- projector-suggestions v=1 count={count} -->\n"
+    return f"Projector review\n\n{marker}\n\n{counted}{body}"
 
 
 def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:00Z", association="COLLABORATOR",
@@ -447,33 +466,31 @@ class FixRoleTests(WatchCase):
         self.assertEqual([new_pr(1, "feature", "fixer")], events["fixer"])
 
     def test_a_projector_review_is_work_only_when_it_lists_suggestions(self) -> None:
-        def projector_review(review_id, count):
-            marker = (f"<!-- projector-review v=1 verdict=clean projector=0.7.20 model={MODEL} sha={SHA_A} "
-                      "findings=0 seconds=60 covered=1/1 -->")
-            counted = "" if count is None else f"<!-- projector-suggestions v=1 count={count} -->\n"
-            return rest_review(review_id, who="operator", body=f"Projector review\n\n{marker}\n\n{counted}Clean.")
-
-        self.github.pull_request(1, reviews=[projector_review(81, 2), projector_review(82, 1), projector_review(83, 0),
-                                             projector_review(84, None)])
+        # One review by each model, since only each model's newest verdict on the head stands. The last comes
+        # from a release that wrote no count line, so its section is counted.
+        earlier = projector_body(SHA_A, model="model-d", count=None,
+                                 body="### Suggestions\n\n- `src/x.py:3`: Inline the helper.")
+        self.github.pull_request(1, reviews=[
+            rest_review(81, who="operator", body=projector_body(SHA_A, model="model-a", count=2)),
+            rest_review(82, who="operator", body=projector_body(SHA_A, model="model-b", count=0)),
+            rest_review(83, who="operator", body=projector_body(SHA_A, model="model-c", count=None)),
+            rest_review(84, who="operator", body=earlier)])
         self.fixer("acme/app#1 fix")
 
         events = self.cycle()
 
         self.assertEqual([
             f"REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 2 suggestions: Projector review Clean. — {fix_action(1)}",
-            f"REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 1 suggestion: Projector review Clean. — {fix_action(1)}",
+            f"REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 1 suggestion: Projector review ### Suggestions - "
+            f"`src/x.py:3`: Inline the helper. — {fix_action(1)}",
         ], events["fixer"])
 
     def test_a_review_of_an_earlier_head_is_history(self) -> None:
-        def projector_review(review_id, sha):
-            marker = (f"<!-- projector-review v=1 verdict=clean projector=0.7.20 model={MODEL} sha={sha} "
-                      "findings=0 seconds=60 covered=1/1 -->")
-            return rest_review(review_id, who="operator", sha=sha,
-                               body=f"Projector review\n\n{marker}\n\n<!-- projector-suggestions v=1 count=1 -->\nClean.")
-
         self.github.pull_request(1, head=SHA_B, reviews=[
-            rest_review(71, body="Old concern"), projector_review(72, SHA_A),
-            rest_review(73, body="Current concern", sha=SHA_B), projector_review(74, SHA_B)])
+            rest_review(71, body="Old concern"),
+            rest_review(72, who="operator", body=projector_body(SHA_A), at="2026-10-30T00:00:00Z"),
+            rest_review(73, body="Current concern", sha=SHA_B),
+            rest_review(74, who="operator", sha=SHA_B, body=projector_body(SHA_B), at="2026-10-30T01:00:00Z")])
         self.fixer("acme/app#1 fix")
 
         events = self.cycle()
@@ -481,6 +498,53 @@ class FixRoleTests(WatchCase):
         self.assertEqual([
             f"REVIEW acme/app#1 by [codex] on bbbbbbbb: Current concern — {fix_action(1)}",
             f"REVIEW acme/app#1 by [operator] on bbbbbbbb, listing 1 suggestion: Projector review Clean. — {fix_action(1)}",
+        ], events["fixer"])
+
+    def test_suggestions_an_incremental_review_carries_from_its_full_review_are_work(self) -> None:
+        # The fixer gains the role at head B, whose incremental review lists none of its own, so only the
+        # full review of A says what stands, as `project review suggestions` reads it.
+        self.github.pull_request(1, head=SHA_B, reviews=[
+            rest_review(81, who="operator", body=projector_body(SHA_A, count=2), at="2026-10-30T00:00:00Z"),
+            rest_review(82, who="operator", sha=SHA_B, body=projector_body(SHA_B, count=None, builds_on=(SHA_A, 81)),
+                        at="2026-10-30T01:00:00Z")])
+        self.fixer("acme/app#1 fix")
+
+        events = self.cycle()
+
+        self.assertEqual([
+            f"REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 2 suggestions: Projector review Clean. — {fix_action(1)}",
+        ], events["fixer"])
+
+    def test_a_full_reviews_suggestions_are_announced_once_across_the_heads_they_stand_on(self) -> None:
+        self.github.pull_request(1, reviews=[
+            rest_review(81, who="operator", body=projector_body(SHA_A, count=2), at="2026-10-30T00:00:00Z")])
+        self.fixer("acme/app#1 fix")
+        first = self.cycle()["fixer"]
+
+        pull = self.github.repository()["pulls"][1]
+        pull["node"]["headRefOid"] = SHA_B
+        between = self.cycle()["fixer"]
+        pull["reviews"].append(rest_review(82, who="operator", sha=SHA_B, at="2026-10-30T01:00:00Z",
+                                           body=projector_body(SHA_B, count=None, builds_on=(SHA_A, 81))))
+        self.advance(60)
+        after = self.cycle()["fixer"]
+
+        self.assertEqual(1, len(first), first)
+        self.assertEqual([], between)
+        self.assertEqual([], after)
+
+    def test_a_projector_review_counts_as_project_review_suggestions_counts_it(self) -> None:
+        # In a public repository, an account the repository does not let in gives no verdict, so its
+        # suggestions stand only when it is the operator's.
+        self.github.pull_request(1, reviews=[
+            rest_review(81, who="stranger", association="NONE", body=projector_body(SHA_A, model="model-a")),
+            rest_review(82, who="operator", association="NONE", body=projector_body(SHA_A, model="model-b"))])
+        self.fixer("acme/app#1 fix")
+
+        events = self.cycle()
+
+        self.assertEqual([
+            f"REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 1 suggestion: Projector review Clean. — {fix_action(1)}",
         ], events["fixer"])
 
     def test_a_later_pass_repeats_only_after_the_renotify_interval(self) -> None:
