@@ -1,0 +1,105 @@
+{
+ "version": 1,
+ "name": "Quiet watch daemon history",
+ "project": "watch-daemon",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 395,
+  "title": "Announce only the review work that stands on a pull request's current head",
+  "head": "7dd2beabc773b0ebebdb708a889b601a36c9d666",
+  "headRef": "watch-quiet-history",
+  "base": "17279cded64869bc9dabf15a772ed11a5629d5d2",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The watch daemon is the one background process per machine that polls the pull requests agent sessions subscribe to. It writes one line per event, such as <code>FINDING</code> or <code>REVIEW</code>, and Projector's Claude Code mod submits each line to the session as a prompt. Every line therefore wakes an agent.",
+   "Before this change, the session that owns a pull request's <code>fix</code> role, the session that runs <code>fix-pr</code> on it, heard two kinds of line that asked nothing of it. The first pass over a pull request announced a <code>REVIEW</code> line for every comment review the pull request ever had, on every head, each ending \"run fix-pr\". A draft also produced a <code>DRAFT</code> line, repeated every 15 minutes, even while another session was reviewing it.",
+   "This change narrows both rules:",
+   "<ul><li><b><code>REVIEW</code></b> reports another reviewer's comment review only on the current head. It reports a Projector review only while its suggestions stand, as <code>project review suggestions</code> decides: the newest verdict on the current head by each account and model, plus the full review an incremental one builds on, which can be of an earlier head. Each review is announced once.</li><li><b><code>DRAFT</code></b> reports only a draft that no session on this machine reviews, and only once per head.</li></ul>",
+   "<code>FINDING</code>, <code>VERDICT</code>, and <code>CONFLICT</code> still report standing work from any head and still repeat every <code>watch.renotify</code> seconds. The review-role events, <code>NEW PR</code>, <code>NEW HEAD</code>, <code>RESPONDED</code>, and <code>MOVED</code>, do not change."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The Projector review of <code>15125fd</code> found that an incremental review's carried suggestions were never announced. <code>7dd2bea</code> fixes it by reusing <code>suggesting_reviews</code>, and the thread is resolved.</li><li>The Projector review of <code>7dd2bea</code> is clean, and the full validation gate passes at this head.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Role</b>: the daemon's assignment of a pull request to one session, <code>fix</code> for the session that fixes it and <code>review &lt;model&gt;</code> for each reviewing model.</li><li><b>Incremental review</b>: a short clean verdict on a new head that builds on a review loop's last full review and lists no suggestions of its own.</li><li><b>Suggestion</b>: a P3 item a Projector review lists in its body, which <code>fix-pr</code> implements or defers.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "The fix role hears only current-head work",
+   "kicker": "Two filters in route_fix, the suggestion lookup they share with the CLI, and their tests",
+   "intro": [
+    "<code>route_fix</code> in <code>watch.py</code> builds the lines a <code>fix</code> owner hears on each pass. It calls <code>standing</code> once per piece of work, keyed so that each key is announced when it first appears and, when the call passes a reminder, again after <code>watch.renotify</code> seconds.",
+    "The <code>DRAFT</code> call now runs only when no session owns a review role for the pull request, and passes no reminder. Its key includes the head, so a push announces the draft again.",
+    "For reviews, the new <code>standing_suggestions</code> asks <code>review.suggesting_reviews</code> which Projector reviews' suggestions stand on the head, the same lookup <code>project review suggestions</code> runs, over the reviews <code>review.counted_reviews</code> lets give a verdict. A Projector review is reported only when it is among them and lists at least one. Any other review is reported only on the current head. <code>route_fix</code> keeps every announced <code>review:</code> key, so a full review is not announced again when the next head's incremental review carries it forward."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Reran the earlier finding's reproductions against this head with the fake <code>gh</code>. A fixer that gains the role at an incremental head hears the full review's 2 suggestions. A push that lands before the full review is announced holds the line until the incremental review lands, then announces it once. A review an earlier release wrote without a count line is reported with 1 suggestion."
+    },
+    {
+     "kind": "verify",
+     "text": "A fixer that heard the full review at head A hears nothing more when the incremental review of head B lands."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "The narrowed <code>DRAFT</code> condition, <code>standing_suggestions</code>, the rewritten <code>REVIEW</code> loop, and <code>trim_review</code> keeping <code>html_url</code>, which an incremental review's link names.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A daemon cache written before this change has no <code>html_url</code>, so an incremental review's link matches nothing until the next full pass reads the reviews again, every <code>watch.full_every</code> seconds."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/review.py",
+     "note": "Splits the filter out of <code>verdicts</code> as <code>counted_reviews</code>, so the daemon can apply it to the reviews in its cache. It now also refuses to match an empty reviewer login."
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "Adds <code>projector_body</code> and richer <code>rest_review</code> fixtures, and tests for carried suggestions, announcing them once across heads, earlier-release reviews, and which accounts' reviews count."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The docs and fix-pr describe the new rules",
+   "kicker": "The CLI event table, fix-pr's event notes, and the plan's record",
+   "intro": [
+    "Three documents describe the events. <code>docs/cli.md</code> holds the reference table, <code>skills/fix-pr/SKILL.md</code> tells a fixing agent how to act on each event, and the watch-daemon plan records decisions made while building the daemon in § 9.1."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "All three now say a <code>REVIEW</code> reports any other reviewer's body on the current head, including a bot's, such as Codex's."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The <code>REVIEW</code> and <code>DRAFT</code> rows, and <code>DRAFT</code> leaves the list of events that repeat."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "The <code>REVIEW</code> and <code>DRAFT</code> notes, and <code>DRAFT</code> leaves the list of reminders. It drops the note about reviews an earlier release published, which the daemon no longer reports."
+    },
+    {
+     "path": "docs/projects/watch-daemon/readme.md",
+     "note": "A new bullet at the end of § 9.1, \"Only work wakes a session\". The plan stays <code>in-progress</code>, and no section is renumbered."
+    }
+   ]
+  }
+ ]
+}
