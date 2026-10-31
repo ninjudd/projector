@@ -1835,14 +1835,15 @@ export const register: Register = on => {
     // keyed line's label is a plain string, drawn and inverted with the `: `
     // as one block after the key.
     //
-    // A drawer's actions follow its options, a line each: a plain Button on
-    // its digit, as `7: discuss question`. The digits count down from 9, so
-    // the options keep 1 to 5 and the item's line 0: `6` says you don't
-    // understand the item, `7` discusses, `8` sets the line aside or brings
-    // it back, and `9` puts it off or ends the snooze. A digit presses its
-    // line as an option's digit presses it, and a line without one takes a
-    // click or Enter. What a drawer asks in its actions' place draws the same
-    // way.
+    // A drawer's actions follow its options: a plain Button on its digit,
+    // capitalized as an option is, as `7: Discuss`. The digits count down
+    // from 9, so the options keep 1 to 5 and the item's line 0: `6` says you
+    // don't understand the item, on a line of its own, and `7` discusses, `8`
+    // sets the line aside or brings it back, and `9` puts it off or ends the
+    // snooze, side by side on the drawer's last line. A digit presses its
+    // action as an option's digit presses it, and an action without one takes
+    // a click or Enter. What a drawer asks in its actions' place draws the
+    // same way.
     type Line = { name: string; label: string; hotkey: string | undefined; onPress: () => void }
     const drawLines = (id: string, lines: readonly Line[]) =>
       lines.map(({ name, label, hotkey, onPress }) => (
@@ -1850,6 +1851,11 @@ export const register: Register = on => {
           {label}
         </Button>
       ))
+    const drawActions = (id: string, lines: readonly Line[]) => (
+      <Box key={`actions:${id}`} flexDirection="row" columnGap={2}>
+        {drawLines(id, lines)}
+      </Box>
+    )
     // An open question's options are plain Buttons on the digits from 1,
     // which the engine draws before them, as `1: Decline it`. A digit presses
     // its option from the panel, or typed first into an empty prompt, as a
@@ -1988,14 +1994,13 @@ export const register: Register = on => {
       const isOpened = opened === key
       const color = !isOpen || isSnoozed ? 'subtle' : colorOf[item.kind]
       const pull = pullOf(item)
-      // Each action but I don't understand, which says only that, names the
-      // kind of item it acts on. A dismissed or snoozed item's drawer offers
-      // to bring it back where it offered to dismiss or snooze it, on the same
-      // digit; a resolved item cannot be snoozed.
+      // A dismissed or snoozed item's drawer offers to bring it back where it
+      // offered to dismiss or snooze it, on the same digit; a resolved item
+      // cannot be snoozed.
       // Dismissing a request declines it, so its agent hears `DECLINED`.
-      const restore = (name: string, hotkey: string): Line => ({
+      const restore = (name: string, label: string, hotkey: string): Line => ({
         name,
-        label: `${name} ${item.kind}`,
+        label,
         hotkey,
         onPress: () => {
           ask(key, null)
@@ -2027,10 +2032,9 @@ export const register: Register = on => {
             ]
           : []
       const actions: Line[] = [
-        ...unclear,
         {
           name: 'discuss',
-          label: `discuss ${item.kind}`,
+          label: 'Discuss',
           hotkey: '7',
           onPress: () => {
             if (item.kind !== 'notice') propose(item, '')
@@ -2041,17 +2045,17 @@ export const register: Register = on => {
           ? [
               {
                 name: 'dismiss',
-                label: `dismiss ${item.kind}`,
+                label: 'Dismiss',
                 hotkey: '8',
                 onPress: () => {
                   void act($, item, 'dismiss')
                 },
               },
               isSnoozed
-                ? restore('unsnooze', '9')
+                ? restore('unsnooze', 'Unsnooze', '9')
                 : {
                     name: 'snooze',
-                    label: `snooze ${item.kind}`,
+                    label: 'Snooze',
                     hotkey: '9',
                     onPress: () => {
                       ask(key, 'snooze')
@@ -2060,7 +2064,7 @@ export const register: Register = on => {
                   },
             ]
           : isDismissed
-            ? [restore('restore', '8')]
+            ? [restore('restore', 'Restore', '8')]
             : []),
       ]
       // Snooze asks how long before it snoozes anything. While it asks, the
@@ -2076,16 +2080,16 @@ export const register: Register = on => {
             void act($, item, 'snooze', minutes)
           },
         })),
-        {
-          name: 'cancel',
-          label: 'cancel',
-          hotkey: '9',
-          onPress: () => {
-            ask(key, null)
-            carry(`cancel:${ref}`, `snooze:${ref}`)
-          },
-        },
       ]
+      const cancel: Line = {
+        name: 'cancel',
+        label: 'Cancel',
+        hotkey: '9',
+        onPress: () => {
+          ask(key, null)
+          carry(`cancel:${ref}`, `snooze:${ref}`)
+        },
+      }
       const isChoosingLength = isOpen && !isSnoozed && isAsked(key, 'snooze')
       // An open item's line has the panel to itself, so closing its drawer
       // puts the line back lower in the list. The engine keeps the ring by
@@ -2170,7 +2174,8 @@ export const register: Register = on => {
               {item.kind === 'question' && !isChoosingLength && drawAnswers(item)}
               {item.kind === 'request' && !isChoosingLength && drawOutcomes(item)}
               <Text key={`before-buttons:${ref}`}> </Text>
-              {drawLines(ref, isChoosingLength ? lengths : actions)}
+              {drawLines(ref, isChoosingLength ? lengths : unclear)}
+              {drawActions(ref, isChoosingLength ? [cancel] : actions)}
             </Box>
           )}
         </Box>
@@ -2250,17 +2255,17 @@ export const register: Register = on => {
                 {pr.checks !== null && ' · '}
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
               </Text>
-              {/* Under the facts come the actions, a line each, and then the
-                  links. Each link has a line of its own: a terminal without
-                  hyperlinks draws a link's URL after its text, and a shared
-                  line would cut the URL off. */}
-              {drawLines(
+              {/* Under the facts come the actions, side by side on one line,
+                  and then the links. Each link has a line of its own: a
+                  terminal without hyperlinks draws a link's URL after its
+                  text, and a shared line would cut the URL off. */}
+              {drawActions(
                 key,
                 isAsked(key, 'dismiss')
                   ? [
                       {
                         name: 'confirm',
-                        label: 'yes, dismiss PR',
+                        label: 'Yes, dismiss it',
                         hotkey: '8',
                         onPress: () => {
                           ask(key, null)
@@ -2269,7 +2274,7 @@ export const register: Register = on => {
                       },
                       {
                         name: 'keep',
-                        label: 'no, keep it',
+                        label: 'No, keep it',
                         hotkey: '9',
                         onPress: () => {
                           ask(key, null)
@@ -2278,10 +2283,10 @@ export const register: Register = on => {
                       },
                     ]
                   : [
-                      { name: 'discuss', label: 'discuss PR', hotkey: '7', onPress: () => fill(`${reference(pr)} `) },
+                      { name: 'discuss', label: 'Discuss', hotkey: '7', onPress: () => fill(`${reference(pr)} `) },
                       {
                         name: 'dismiss',
-                        label: 'dismiss PR',
+                        label: 'Dismiss',
                         hotkey: '8',
                         onPress: () => {
                           ask(key, 'dismiss')
