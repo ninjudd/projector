@@ -79,6 +79,7 @@ HEADER_END = re.compile(r"\r?\n\r?\n")
 HTML_COMMENT = re.compile(r"<!--(?:[^-]|-[^-]|--[^>])*-->")
 HTML_TAG = re.compile(r"<[^>]*>")
 ANSWERED = re.compile(r"projector-(?:finding|verify)")
+PROJECTOR_REVIEW = re.compile(r"^<!-- projector-review ", re.M)
 
 # The query § 2.6 of the watch-daemon plan gives, which Projector's panel reads from the cache too, with
 # the fields the events name: `mergedAt` and `mergeCommit` for MERGED, each comment's id and times for a
@@ -1317,16 +1318,11 @@ class Pass:
             kept[key] = last
 
         head = pr.get("headRefOid") or ""
-        if pr.get("isDraft") and session not in reviewers:
-            if reviewers:
-                unreviewed, wait = "", "wait for its review"
-            else:
-                unreviewed, wait = ", and no session on this machine reviews it", \
-                    f"tell the user that no session reviews {ref}"
+        if pr.get("isDraft") and not reviewers:
             standing(f"draft:{number}:{head}",
-                     f"DRAFT {ref} head={head[:8]}: no review has signed off this head{unreviewed}; the work, if any, "
-                     f"is in its threads and review bodies — {wait}",
-                     f"DRAFT {ref} (still open) head={head[:8]}: still not signed off{unreviewed} — {wait}")
+                     f"DRAFT {ref} head={head[:8]}: no review has signed off this head, and no session on this "
+                     f"machine reviews it — tell the user that no session reviews {ref}",
+                     None)
         conflict = f"conflict:{number}:{head}"
         mergeable = pr.get("mergeable") or "UNKNOWN"
         if mergeable == "UNKNOWN" and conflict in announced:
@@ -1355,7 +1351,7 @@ class Pass:
             standing(thread["id"], f"FINDING {ref} {place} [{who}]{said} — {action}",
                      f"FINDING {ref} (still open) {place} [{who}]{said} — {action}")
         for found in reviews:
-            if found.get("state") != "COMMENTED" or found.get("id") is None:
+            if found.get("state") != "COMMENTED" or found.get("id") is None or found.get("commit_id") != head:
                 continue
             body = found.get("body") or ""
             text = re.sub(r"[\r\n]+", " ", HTML_TAG.sub("", HTML_COMMENT.sub("", body)))
@@ -1363,6 +1359,8 @@ class Pass:
                 continue
             counted = review.SUGGESTIONS_COUNT.search(body)
             count = int(counted.group(1)) if counted else 0
+            if count == 0 and PROJECTOR_REVIEW.search(body):
+                continue
             listing = "" if count == 0 else f", listing {count} suggestion{'' if count == 1 else 's'}"
             who = (found.get("user") or {}).get("login") or "?"
             sha = (found.get("commit_id") or "?")[:8]

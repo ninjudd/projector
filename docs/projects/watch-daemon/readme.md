@@ -950,6 +950,17 @@ Building the daemon settled these choices, which the design above left open.
   machine sleeping from the end of its last turn, not its start. A pass that
   runs past a minute, as a pass over a few dozen pull requests does, then
   forgives no lock and keeps no closed session live.
+- **Only work wakes a session.** Each event reaches a Claude Code session as
+  a prompt, so the daemon announces only what asks something of it. `REVIEW`
+  reports a review of the current head alone: a person's body, or a
+  Projector review that lists suggestions. A review of an earlier head is
+  history, and a Projector review that lists none asks for nothing.
+  `DRAFT` reports a draft only when no session on this machine reviews it,
+  once per head, because a draft that a session reviews just waits for that
+  review. Before this, a session that pushed to a pull request with a long
+  history was woken by a line for every review that pull request ever had,
+  each telling it to run `fix-pr`, and by a `DRAFT` reminder every 15
+  minutes.
 
 ### 9.2 The skills
 

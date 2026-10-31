@@ -534,20 +534,20 @@ role are these:
   findings exist only in its body.
 - **`CONFLICT`** reports a branch that conflicts with its base. It clears
   when a push makes the branch mergeable again.
-- **`REVIEW`** reports a review body that has no inline thread, the shape
-  every `COMMENT` review posts. A Projector review that lists suggestions is
-  work even under a clean verdict, because this skill implements or defers
-  each one. The line says how many the review's `projector-suggestions` line
-  counts, as `listing 2 suggestions`. A review an earlier release published
-  has no such line, so its line names no count, and
-  `project review suggestions` still finds its suggestions.
-- **`DRAFT`** reports a head that no clean review has signed off. It is not
-  work: any work behind it arrives as its own `FINDING`, `VERDICT`,
-  `CONFLICT`, or `REVIEW` line, and a pull request that a hold keeps in
-  draft has its work with the subagent already. A draft with nothing else
-  outstanding waits for a review. When the line says that no session on
-  this machine reviews the pull request, tell the user once, and say that
-  `review-pr` or `review-repo` in a session would review it.
+- **`REVIEW`** reports a review body of the current head that has no inline
+  thread, the shape every `COMMENT` review posts: a person's, or a Projector
+  review that lists suggestions. A Projector review that lists suggestions
+  is work even under a clean verdict, because this skill implements or
+  defers each one. The line says how many the review's
+  `projector-suggestions` line counts, as `listing 2 suggestions`. A review
+  of an earlier head, and a Projector review that lists none, report
+  nothing.
+- **`DRAFT`** reports, once per head, a draft that no clean review has
+  signed off and that no session on this machine reviews. Tell the user
+  once, and say that `review-pr` or `review-repo` in a session would review
+  it. It is not work: any work behind it arrives as its own `FINDING`,
+  `VERDICT`, `CONFLICT`, or `REVIEW` line. A draft that a session here
+  reviews reports nothing; it waits for that review.
 - **`MOVED`** reports that another session now owns the pull request's
   `fix` role. Stop its subagent at once, because two fixers would push the
   same branch, and tell the user.
@@ -560,8 +560,8 @@ role are these:
   operator cannot see it, and that the daemon removed the subscription.
   Tell the user.
 
-`FINDING`, `VERDICT`, `CONFLICT`, and `DRAFT` report work that stands until
-it is done, and the daemon announces each again every `watch.renotify`
+`FINDING`, `VERDICT`, and `CONFLICT` report work that stands until it is
+done, and the daemon announces each again every `watch.renotify`
 seconds, 15 minutes by default, while it stands. So a line about work a
 subagent already has is a reminder: send it on. A thread the subagent
 declined stays unresolved, because declining leaves the decision to the

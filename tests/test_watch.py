@@ -419,8 +419,8 @@ class FixRoleTests(WatchCase):
         events = self.cycle()
 
         self.assertEqual([
-            f"DRAFT acme/app#1 head=aaaaaaaa: no review has signed off this head{NO_REVIEWER}; the work, if any, is "
-            "in its threads and review bodies — tell the user that no session reviews acme/app#1",
+            f"DRAFT acme/app#1 head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user that no "
+            "session reviews acme/app#1",
             f"VERDICT acme/app#1 CHANGES_REQUESTED on aaaaaaaa [teammate]: Please split this — {fix_action(1)}",
             f"FINDING acme/app#1 src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}",
             f"REVIEW acme/app#1 by [codex] on aaaaaaaa: Body-only concern — {fix_action(1)}",
@@ -428,7 +428,7 @@ class FixRoleTests(WatchCase):
         self.assertEqual({f"draft:1:{SHA_A}", f"verdict:teammate:{SHA_A}", "T1", "review:77"},
                          set(self.state("fixer")["fix"]["acme/app#1 fix"]))
 
-    def test_a_draft_that_a_session_reviews_waits_for_its_review(self) -> None:
+    def test_a_draft_another_session_reviews_asks_the_fixer_for_nothing(self) -> None:
         self.github.pull_request(1, draft=True)
         self.fixer("acme/app#1 fix")
         self.subscribe("reviewer", f"acme/app#1 review {MODEL} operator")
@@ -436,8 +436,7 @@ class FixRoleTests(WatchCase):
 
         events = self.cycle()
 
-        self.assertEqual(["DRAFT acme/app#1 head=aaaaaaaa: no review has signed off this head; the work, if any, is in "
-                          "its threads and review bodies — wait for its review"], events["fixer"])
+        self.assertEqual([], events["fixer"])
 
     def test_a_session_that_fixes_and_reviews_a_pull_request_hears_no_draft(self) -> None:
         self.github.pull_request(1, draft=True)
@@ -447,7 +446,7 @@ class FixRoleTests(WatchCase):
 
         self.assertEqual([new_pr(1, "feature", "fixer")], events["fixer"])
 
-    def test_a_projector_review_says_how_many_suggestions_its_body_counts(self) -> None:
+    def test_a_projector_review_is_work_only_when_it_lists_suggestions(self) -> None:
         def projector_review(review_id, count):
             marker = (f"<!-- projector-review v=1 verdict=clean projector=0.7.20 model={MODEL} sha={SHA_A} "
                       "findings=0 seconds=60 covered=1/1 -->")
@@ -463,8 +462,25 @@ class FixRoleTests(WatchCase):
         self.assertEqual([
             f"REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 2 suggestions: Projector review Clean. — {fix_action(1)}",
             f"REVIEW acme/app#1 by [operator] on aaaaaaaa, listing 1 suggestion: Projector review Clean. — {fix_action(1)}",
-            f"REVIEW acme/app#1 by [operator] on aaaaaaaa: Projector review Clean. — {fix_action(1)}",
-            f"REVIEW acme/app#1 by [operator] on aaaaaaaa: Projector review Clean. — {fix_action(1)}",
+        ], events["fixer"])
+
+    def test_a_review_of_an_earlier_head_is_history(self) -> None:
+        def projector_review(review_id, sha):
+            marker = (f"<!-- projector-review v=1 verdict=clean projector=0.7.20 model={MODEL} sha={sha} "
+                      "findings=0 seconds=60 covered=1/1 -->")
+            return rest_review(review_id, who="operator", sha=sha,
+                               body=f"Projector review\n\n{marker}\n\n<!-- projector-suggestions v=1 count=1 -->\nClean.")
+
+        self.github.pull_request(1, head=SHA_B, reviews=[
+            rest_review(71, body="Old concern"), projector_review(72, SHA_A),
+            rest_review(73, body="Current concern", sha=SHA_B), projector_review(74, SHA_B)])
+        self.fixer("acme/app#1 fix")
+
+        events = self.cycle()
+
+        self.assertEqual([
+            f"REVIEW acme/app#1 by [codex] on bbbbbbbb: Current concern — {fix_action(1)}",
+            f"REVIEW acme/app#1 by [operator] on bbbbbbbb, listing 1 suggestion: Projector review Clean. — {fix_action(1)}",
         ], events["fixer"])
 
     def test_a_later_pass_repeats_only_after_the_renotify_interval(self) -> None:
@@ -479,11 +495,8 @@ class FixRoleTests(WatchCase):
 
         self.assertEqual(3, len(first), first)
         self.assertEqual([], second)
-        self.assertEqual([
-            f"DRAFT acme/app#1 (still open) head=aaaaaaaa: still not signed off{NO_REVIEWER} — tell the user that no "
-            "session reviews acme/app#1",
-            f"FINDING acme/app#1 (still open) src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}",
-        ], third)
+        self.assertEqual([f"FINDING acme/app#1 (still open) src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}"],
+                         third)
 
     def test_reports_a_conflict_with_the_base_until_a_push_clears_it(self) -> None:
         self.github.pull_request(1, base="parent", mergeable="CONFLICTING")
