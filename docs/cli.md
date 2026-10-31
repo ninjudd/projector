@@ -2526,8 +2526,8 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
 | `FINDING` | `fix` | An unresolved review thread |
 | `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
 | `CONFLICT` | `fix` | A branch that conflicts with its base |
-| `REVIEW` | `fix` | A comment review with a body, with the count of suggestions a Projector review lists |
-| `DRAFT` | `fix`, when the session does not also review the pull request | A head that no review has signed off, and whether any session on this machine reviews the pull request |
+| `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
+| `DRAFT` | `fix`, when no session on this machine reviews the pull request | A head that no review has signed off and that no session here will review, once per head |
 | `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed |
 | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled |
 | `RESPONDED` | `review` | The author answered every finding on an unmoved head, or lifted a hold |
@@ -2535,7 +2535,15 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
 | `MERGED`, `CLOSED` | any | The pull request merged or closed |
 | `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |
 
-`FINDING`, `VERDICT`, `CONFLICT`, `DRAFT`, and `NEW HEAD` report work that
+A Projector review is work only through its suggestions, and they stand
+where `project review suggestions` lists them: in each account's newest
+verdict on the current head by each model, and in the full review that an
+incremental one builds on, which can be of an earlier head. Any other review
+of an earlier head is history, so it reports nothing. The daemon announces
+each review once. A draft that a session on this machine reviews waits for
+that review without a line of its own.
+
+`FINDING`, `VERDICT`, `CONFLICT`, and `NEW HEAD` report work that
 stands until it is done, so the daemon announces each again, with
 `(still open)` after the reference, every `watch.renotify` seconds while it
 stands. A `NEW HEAD` stands while the head has no verdict by the model from
