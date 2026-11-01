@@ -595,13 +595,13 @@ quotes one does neither. Your prompt is what carries the answer or the reply
 to the main loop, and when a subagent asked, the main loop also reads a note
 naming it, so it can pass the answer or the reply on.
 
-The options and the actions form one list under the options, after a blank
-line: **I don't understand** on a line of its own, then **Discuss**,
-**Dismiss**, and **Snooze** side by side on the drawer's last line. Each
-key is drawn in Claude Code's accent color and its label in the default
-text color, which Claude Code's own `: ` after the key always takes, so
-under the pointer or the focus ring an action inverts as the key and one
-block after it. A question's drawer has four actions:
+The actions follow the options after a blank line: **I don't understand**
+on a line of its own, then **Discuss**, **Dismiss**, and **Snooze** side
+by side on the drawer's last line. Each key is drawn in Claude Code's
+accent color and its label in the default text color, which Claude Code's
+own `: ` after the key always takes, so under the pointer or the focus
+ring an action inverts as the key and one block after it. A question's
+drawer has four actions:
 
 - **I don't understand** tells the agent that you don't follow the
   question, in one press, as the paragraph after this list describes.
