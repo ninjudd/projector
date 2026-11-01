@@ -4244,7 +4244,6 @@ async function drawerRowsOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
   )
 }
 
-/** The buttons a drawer's actions row draws side by side, named as `actionLinesOf` names them. */
 /**
  * What x/y#7's open drawer lists: each file's name, and each of its threads' link and text. Each thread's line sits
  * inside its file's. It leaves its Text free to wrap, because a terminal without hyperlinks draws the URL after the
@@ -4272,6 +4271,7 @@ async function threadsOf(ui: Pick<Mounted, 'find'>) {
   })
 }
 
+/** The buttons a drawer's actions row draws side by side, named as `actionLinesOf` names them. */
 async function rowOf(ui: Pick<Mounted, 'find'>, key: string): Promise<string[]> {
   const row = await ui.find({ key })
   expect(row?.props.flexDirection).toBe('row')
