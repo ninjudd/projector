@@ -309,8 +309,8 @@ as `−12`, in red. The checks' state takes a color of its own, and the rest,
 ` in 5 files` and each `·` included, keeps the default text color. Below
 that come two actions, side by side on one line, on the digits `7` and `8`,
 as [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
-describes. The two links to the pull request follow, side by side on the
-next line, and then a line for each unresolved review thread:
+describes. The links to the pull request follow, side by side on the next
+line, and then a line for each unresolved review thread:
 
 - **Discuss** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
