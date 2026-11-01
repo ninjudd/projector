@@ -1704,11 +1704,18 @@ export const register: Register = on => {
         return { drawer: key, paths: paths.includes(path) ? paths.filter(one => one !== path) : [...paths, path] }
       }).catch(() => undefined)
     }
+    // A drawer's files start collapsed each time it opens, so a press that
+    // opens one forgets the files opened before. A press on the drawer that is
+    // already open keeps them, because they stay open while it does.
+    const collapseFilesFor = (key: string) => {
+      if (opened !== key) update($, openFiles, () => null).catch(() => undefined)
+    }
     // A line's press opens or closes its drawer, and the ring goes onto the
     // drawer's first control or back onto the line. A drawer always opens on
     // its actions, never on a question it asked before. A pull request's
     // drawer reads its threads as it opens.
     const toggle = (key: string, line: string, onto?: string) => {
+      collapseFilesFor(key)
       update($, drawer, was => (was === key ? null : key))
         .then(() => loadThreads($))
         .catch(() => undefined)
@@ -1768,6 +1775,7 @@ export const register: Register = on => {
     // Buttons: the `+` expands them, and each label after it, in the rows'
     // order and its status's color, expands them with its drawer open.
     const expandOnto = (key: string) => {
+      collapseFilesFor(key)
       Promise.all([
         update($, collapsed, was => (Array.isArray(was) ? was.filter(one => one !== 'pr') : [])),
         update($, drawer, () => key),

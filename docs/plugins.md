@@ -330,8 +330,9 @@ line, and then the unresolved review threads, gathered under their files:
   request's line. Every file starts collapsed, marked `+`, so the drawer
   opens as a short list. Click a file, or press Enter with the focus ring
   on it, to show its threads and mark it `-`, and again to hide them. A file
-  stays open while its drawer does, through each poll. One open file and
-  one collapsed file look like this:
+  stays open while its drawer does, through each poll, and starts collapsed
+  again the next time the drawer opens. One open file and one collapsed file
+  look like this:
 
   ```text
   - ios/Field/Audio/TrackPlayer.swift 2*

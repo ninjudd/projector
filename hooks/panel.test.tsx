@@ -867,7 +867,8 @@ test('collapses each file in a drawer to its name and count, until a press opens
   await ui.unmount()
 })
 
-test('keeps a drawer’s open file open through a poll, and starts another pull request’s drawer collapsed', async ($, on) => {
+/** A panel listing x/y#7 and o/r#2, with no drawer open, whose drawers each list one thread on `src/a.ts`. */
+async function twoDrawersListing($: Engine, on: On) {
   const nodes = [threadNode('src/a.ts', 1, 'First', 'ann', 1)]
   const { clock } = panelWorld(on, {
     files: { [WATCH]: 'x/y#7\n', [REVIEW]: 'o/r#2\n' },
@@ -885,7 +886,11 @@ test('keeps a drawer’s open file open through a poll, and starts another pull 
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
-  const ui = await $.ui.mount(PANEL)
+  return { clock, ui: await $.ui.mount(PANEL) }
+}
+
+test('keeps a drawer’s open file open through a poll, and starts another pull request’s drawer collapsed', async ($, on) => {
+  const { clock, ui } = await twoDrawersListing($, on)
 
   await ui.press({ key: 'pr:x/y#7' })
   await clock.settle()
@@ -898,6 +903,47 @@ test('keeps a drawer’s open file open through a poll, and starts another pull 
   await clock.settle()
   expect((await ui.find({ type: 'Button', key: 'toggle-file:o/r#2:src/a.ts' }))?.text).toBe('+ src/a.ts 1*')
   expect(await ui.findAll({ type: 'Link' })).toHaveLength(0)
+  await ui.unmount()
+})
+
+test('starts a drawer’s files collapsed each time it opens, and keeps them while it stays open', async ($, on) => {
+  const { clock, ui } = await twoDrawersListing($, on)
+  const press = async (key: string) => {
+    await ui.press({ key })
+    await clock.settle()
+  }
+  const fileOfSeven = async () => (await ui.find({ type: 'Button', key: 'toggle-file:x/y#7:src/a.ts' }))?.text
+  const openFile = async () => {
+    await press('toggle-file:x/y#7:src/a.ts')
+    expect(await fileOfSeven()).toBe('- src/a.ts 1*')
+  }
+
+  // Closing the drawer and pressing its line again opens it collapsed.
+  await press('pr:x/y#7')
+  await openFile()
+  await press('pr:x/y#7')
+  await press('pr:x/y#7')
+  expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
+  expect(await ui.findAll({ type: 'Link' })).toHaveLength(0)
+
+  // So does coming back from another drawer in which no file was opened.
+  await openFile()
+  await press('pr:o/r#2')
+  await press('pr:x/y#7')
+  expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
+
+  // A collapsed section's label for the drawer already open only shows it again, so its file stays open.
+  await openFile()
+  await press('count:pr')
+  await press('open:x/y#7')
+  expect(await fileOfSeven()).toBe('- src/a.ts 1*')
+
+  // A label that opens the drawer anew starts it collapsed, as its line does.
+  await press('count:pr')
+  await press('open:o/r#2')
+  await press('count:pr')
+  await press('open:x/y#7')
+  expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
   await ui.unmount()
 })
 
