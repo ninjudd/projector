@@ -1217,20 +1217,37 @@ function statusColor(pr: PullRequest): Note['color'] | 'subtle' {
   return pr.isDraft ? 'warning' : 'success'
 }
 
-/** How much of a thread's first line its drawer line shows. */
-const EXCERPT_LENGTH = 60
+/** How far a thread's line sits inside the line that names its file. */
+const THREAD_INDENT = 2
 
 /**
- * A thread's line in its pull request's drawer: where it is, who opened it,
- * how it starts, and whether a later push left it outdated.
+ * A thread's line under its file in a pull request's drawer, cut to `columns`:
+ * where in the file it is, who opened it, whether a later push left it
+ * outdated, and how it starts. The excerpt comes last so the cut takes it
+ * first, and `file`, for a comment on the whole file, means the line is never
+ * empty.
+ *
+ * The label is cut here rather than by `wrap="truncate-end"` because a terminal
+ * without hyperlinks draws a Link's URL after its text. Truncating the Text
+ * would cut the URL, which is the only way to the thread in that terminal.
  */
-function threadLabel(thread: Thread): string {
-  const place = thread.line === null ? thread.path : `${thread.path}:${thread.line}`
-  const excerpt =
-    thread.excerpt.length > EXCERPT_LENGTH ? `${thread.excerpt.slice(0, EXCERPT_LENGTH - 1).trimEnd()}…` : thread.excerpt
-  return [place, thread.author, excerpt, thread.isOutdated ? 'outdated' : null]
+function threadLabel(thread: Thread, columns: number): string {
+  const label = [
+    thread.line === null ? 'file' : `:${thread.line}`,
+    thread.author,
+    thread.isOutdated ? 'outdated' : null,
+    thread.excerpt,
+  ]
     .filter(piece => piece !== null && piece !== '')
     .join(' · ')
+  return label.length > columns ? `${label.slice(0, Math.max(0, columns - 1)).trimEnd()}…` : label
+}
+
+/** Threads gathered under their files, which come in the order of each file's first thread. */
+function threadsByFile(threads: readonly Thread[]): [string, Thread[]][] {
+  const files = new Map<string, Thread[]>()
+  for (const thread of threads) files.set(thread.path, [...(files.get(thread.path) ?? []), thread])
+  return [...files]
 }
 
 /** Whether the account the panel's `gh` is signed in as wrote a pull request. */
@@ -2323,10 +2340,19 @@ export const register: Register = on => {
                   folds an outdated thread and an old one on a long timeline away.
                   The text goes in as a Link's children, so nothing in it is read
                   as markdown. */}
-              {(shownThreads?.drawer === key ? shownThreads.threads : []).map((thread, at) => (
-                <Text key={`thread:${key}:${at}`}>
-                  <Link href={thread.url ?? pr.url}>{threadLabel(thread)}</Link>
-                </Text>
+              {threadsByFile(shownThreads?.drawer === key ? shownThreads.threads : []).map(([path, threads]) => (
+                <Box key={`file:${key}:${path}`} flexDirection="column">
+                  <Text>{path}</Text>
+                  <Box flexDirection="column" marginLeft={THREAD_INDENT}>
+                    {threads.map((thread, at) => (
+                      <Text key={`thread:${key}:${path}:${at}`}>
+                        <Link href={thread.url ?? pr.url}>
+                          {threadLabel(thread, columns - (labelWidth + 1) - THREAD_INDENT)}
+                        </Link>
+                      </Text>
+                    ))}
+                  </Box>
+                </Box>
               ))}
             </Box>
           )}

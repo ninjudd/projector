@@ -310,7 +310,7 @@ as `−12`, in red. The checks' state takes a color of its own, and the rest,
 that come two actions, side by side on one line, on the digits `7` and `8`,
 as [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
 describes. The links to the pull request follow, side by side on the next
-line, and then a line for each unresolved review thread:
+line, and then the unresolved review threads, gathered under their files:
 
 - **Discuss** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
@@ -325,15 +325,30 @@ line, and then a line for each unresolved review thread:
 - **open in github** opens the pull request on GitHub.
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
-- **Each unresolved review thread**, oldest first, opens the thread's first
-  comment on GitHub. Its line names the file and line the thread is on, who
-  opened it, and the first line of its first comment, cut to 60 characters,
-  and ends in `outdated` when a later push changed the lines it is on. These
-  are the threads the yellow `*` counts. GitHub folds an outdated thread
-  away, and hides an older one on a long timeline behind **Load more**, so
-  the link reaches a thread the pull request's page does not show. The
-  threads appear once GitHub answers the drawer's own query, a moment
-  after the drawer opens.
+- **Each file with an unresolved review thread** is a line that names the
+  file once, with its threads indented under it, so a file's threads leave
+  more of the line for their text. A file with several threads looks like
+  this:
+
+  ```text
+  ios/Field/Audio/TrackPlayer.swift
+    :1875 · grace · P2 · One song's failed rebuild blocks other songs from recovering
+    :1902 · grace · outdated · P2 · A background rebuild can overwrite a newer imported track
+  ```
+
+  The threads run oldest first within a file, and the files come in the
+  order of each file's oldest thread.
+- **Each unresolved review thread** opens the thread's first comment on
+  GitHub. Its line starts with the line number the thread is on, such as
+  `:1875`, or `file` for a comment on the whole file. Next comes who opened
+  it, then `outdated` when a later push changed the lines it is on, and
+  then the first line of its first comment, cut to end at the panel's edge.
+  A terminal without hyperlinks draws the thread's URL after the text. These
+  are the threads the yellow `*` counts. GitHub folds an outdated
+  thread away, and hides an older one on a long timeline behind **Load
+  more**, so the link reaches a thread the pull request's page does not
+  show. The threads appear once GitHub answers the drawer's own query, a
+  moment after the drawer opens.
 
 **Dismiss** runs `project watch drop` once for each role the session holds
 on the pull request, as `--role fix` or `--role review`. Each writes a `!`

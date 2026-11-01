@@ -711,11 +711,16 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   const opened = await ui.find({ key: 'drawer:x/y#7' })
   expect(opened).toBeDefined()
   expect(opened?.props.marginLeft).toBe(4)
-  // The thread lines come as one list among the children, so the children are flattened first. A thread's line is a
-  // Text, which carries no key of its own.
+  // The files come as one list among the children, so the children are flattened first.
   type Line = { type: string; props?: { key?: string }; children?: unknown[] }
   const lines = ((opened?.children ?? []) as unknown[]).flat() as Line[]
-  expect(lines.map(line => line.props?.key ?? line.type)).toEqual(['Text', 'actions:x/y#7', 'links:x/y#7', 'Text', 'Text'])
+  expect(lines.map(line => line.props?.key ?? line.type)).toEqual([
+    'Text',
+    'actions:x/y#7',
+    'links:x/y#7',
+    'file:x/y#7:src/fetch.ts',
+    'file:x/y#7:src/[draft]_notes.md',
+  ])
   expect(await rowOf(ui, 'actions:x/y#7')).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
   const linksOf = async (key: string) => {
     const row = await ui.find({ key: `links:${key}` })
@@ -725,16 +730,14 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect(await linksOf('x/y#7')).toEqual(['github:x/y#7', 'projector:x/y#7'])
   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
-  // Each unresolved thread links to its first comment: where it is, who opened it, how it starts, cut to fit,
-  // and whether a push left it outdated. Its text is a Link's children, so brackets and stars stay as written.
-  const links = lines.slice(-2).map(line => (line.children as { type: string; props: { href: string }; children: string[] }[])[0])
-  expect(links.map(link => [link?.type, link?.props.href, link?.children.join('')])).toEqual([
-    [
-      'Link',
-      `${SEVEN}#discussion_r1`,
-      'src/fetch.ts:40 · grace · P2 · The retry loop never sleeps between attempts, so a fla…',
-    ],
-    ['Link', `${SEVEN}#discussion_r2`, 'src/[draft]_notes.md:3 · bob · Why *this*? · outdated'],
+  expect(await threadsOf(ui)).toEqual([
+    {
+      file: 'src/fetch.ts',
+      threads: [
+        [`${SEVEN}#discussion_r1`, ':40 · grace · P2 · The retry loop never sleeps between attempts, so a flaky server gets hammered'],
+      ],
+    },
+    { file: 'src/[draft]_notes.md', threads: [[`${SEVEN}#discussion_r2`, ':3 · bob · outdated · Why *this*?']] },
   ])
 
   // discuss is a plain Button, so Enter fills the prompt on the main screen too.
@@ -802,6 +805,79 @@ test('reads a pull request’s threads only while its drawer is open, and only w
   await clock.advance(30_000 + TICK)
   await clock.settle()
   expect(fresh().map(isThreads)).toEqual([false])
+  await ui.unmount()
+})
+
+/** An unresolved thread as GitHub answers it, whose first comment is `discussion_r<at>` on x/y#7. */
+const threadNode = (path: string, line: number | null, body: string, login: string | null, at: number) => ({
+  isResolved: false,
+  isOutdated: false,
+  path,
+  line,
+  comments: {
+    nodes: [{ url: `${SEVEN}#discussion_r${at}`, bodyText: body, author: login === null ? null : { login } }],
+  },
+})
+
+/** A panel with x/y#7's drawer open, listing `nodes` as its threads. */
+async function drawerListing($: Engine, on: On, nodes: unknown[]) {
+  const { clock } = panelWorld(on, {
+    files: { [WATCH]: 'x/y#7\n' },
+    github: query =>
+      ran(query.includes('comments(') ? JSON.stringify({ data: { r0: { p7: { reviewThreads: { nodes } } } } }) : answer(query)),
+  })
+
+  await startSession($, clock)
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'pr:x/y#7' })
+  await clock.settle()
+  return ui
+}
+
+test('cuts a thread’s line to the drawer’s width, so a line that fits stays whole', async ($, on) => {
+  // The drawer starts past the label `y#7` and the gap after it, and a thread sits two columns inside its file.
+  const width = COLUMNS - 4 - 2
+  const lead = ':8 · ann · '
+  const fits = 'x'.repeat(width - lead.length)
+  const ui = await drawerListing($, on, [
+    threadNode('src/a.ts', 8, fits, 'ann', 1),
+    threadNode('src/a.ts', 8, `${fits}y`, 'ann', 2),
+  ])
+
+  const [file] = await threadsOf(ui)
+  const shown = (file?.threads ?? []).map(thread => thread[1])
+  expect(shown).toEqual([`${lead}${fits}`, `${lead}${fits.slice(0, -1)}…`])
+  expect(shown.map(line => line?.length)).toEqual([width, width])
+  await ui.unmount()
+})
+
+test('gathers a drawer’s threads under their files, each file where its oldest thread comes', async ($, on) => {
+  const ui = await drawerListing($, on, [
+    threadNode('ios/Field/Audio/TrackPlayer.swift', 1875, 'One song’s failed rebuild blocks other songs', 'grace', 1),
+    threadNode('docs/notes.md', null, 'Why this file?', 'bob', 2),
+    threadNode('ios/Field/Audio/TrackPlayer.swift', 1902, 'A background rebuild can overwrite a newer track', 'grace', 3),
+    threadNode('ios/Field/Audio/TrackPlayer.swift', 1897, 'Rebuilding a stereo render can change its pan', 'bob', 4),
+    threadNode('docs/empty.md', null, '', null, 5),
+  ])
+
+  // A thread keeps its place within its file, so the lines stay oldest first rather than sorted by number, and a
+  // comment on a whole file, which has no line, still has text for its link.
+  expect(await threadsOf(ui)).toEqual([
+    {
+      file: 'ios/Field/Audio/TrackPlayer.swift',
+      threads: [
+        [`${SEVEN}#discussion_r1`, ':1875 · grace · One song’s failed rebuild blocks other songs'],
+        [`${SEVEN}#discussion_r3`, ':1902 · grace · A background rebuild can overwrite a newer track'],
+        [`${SEVEN}#discussion_r4`, ':1897 · bob · Rebuilding a stereo render can change its pan'],
+      ],
+    },
+    { file: 'docs/notes.md', threads: [[`${SEVEN}#discussion_r2`, 'file · bob · Why this file?']] },
+    { file: 'docs/empty.md', threads: [[`${SEVEN}#discussion_r5`, 'file']] },
+  ])
   await ui.unmount()
 })
 
@@ -4169,6 +4245,33 @@ async function drawerRowsOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
 }
 
 /** The buttons a drawer's actions row draws side by side, named as `actionLinesOf` names them. */
+/**
+ * What x/y#7's open drawer lists: each file's name, and each of its threads' link and text. Each thread's line sits
+ * inside its file's. It leaves its Text free to wrap, because a terminal without hyperlinks draws the URL after the
+ * text, and a Text that truncates would cut the URL.
+ */
+async function threadsOf(ui: Pick<Mounted, 'find'>) {
+  type Node = { type: string; props?: { key?: string; href?: string; wrap?: string; marginLeft?: number }; children: Node[] }
+  const drawer = await ui.find({ key: 'drawer:x/y#7' })
+  const files = ((drawer?.children ?? []) as unknown[]).flat() as (Node | false | null)[]
+  return files.flatMap(file => {
+    if (!file || !file.props?.key?.startsWith('file:')) return []
+    const [name, inner] = file.children.flat()
+    expect(inner?.props?.marginLeft).toBe(2)
+    return [
+      {
+        file: name?.children.join(''),
+        threads: (inner?.children ?? []).flat().map(line => {
+          expect(line.props?.wrap).toBeUndefined()
+          const link = line.children[0]
+          expect(link?.type).toBe('Link')
+          return [link?.props?.href, link?.children.join('')]
+        }),
+      },
+    ]
+  })
+}
+
 async function rowOf(ui: Pick<Mounted, 'find'>, key: string): Promise<string[]> {
   const row = await ui.find({ key })
   expect(row?.props.flexDirection).toBe('row')
