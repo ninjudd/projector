@@ -1,0 +1,111 @@
+{
+ "version": 1,
+ "name": "Panel drawer action row",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 397,
+  "title": "Put a drawer's discuss, dismiss, and snooze on one line, and capitalize the actions",
+  "head": "722d031b98db24a1209ff715a0a736880d6467fc",
+  "headRef": "panel-action-row",
+  "base": "17ef5fc978b219d32ddbcced3f6f7d410cd3ad44",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel lists open pull requests and inbox items (questions, notices, and requests an agent posts) above the Claude Code prompt. Opening a line shows its <b>drawer</b>: the item's detail, its options on the digits <code>1</code> to <code>5</code>, and then its actions on <code>6</code> to <code>9</code>.",
+   "Before this change, each action took its own line and named the item's kind in lowercase, such as <code>7: discuss question</code>, <code>8: dismiss question</code>, and <code>9: snooze question</code>. Those lines took as much height as the options and read unlike them, since options are capitalized.",
+   "This change puts <b>Discuss</b>, <b>Dismiss</b>, and <b>Snooze</b> side by side on the drawer's last line, as <code>7: Discuss  8: Dismiss  9: Snooze</code>, and capitalizes every action. <b>I don't understand</b> keeps its own line on <code>6</code> above them. <b>Restore</b>, <b>Unsnooze</b>, and <b>Cancel</b> take the same place on the same digits. A pull request's drawer gets the same row, <code>7: Discuss  8: Dismiss</code>, and its confirmation reads <code>8: Yes, dismiss it  9: No, keep it</code>. The digits, Button keys, and press handlers stay the same, so only the drawer's look changes."
+  ],
+  "cards": [
+   {
+    "id": "labels",
+    "title": "Labels before and after",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Digit</th><th>Before</th><th>After</th></tr></thead><tbody><tr><td><code>6</code></td><td>I don't understand</td><td class=\"r\">I don't understand, on its own line</td></tr><tr><td><code>7</code></td><td>discuss question, notice, request, or PR</td><td class=\"r\">Discuss</td></tr><tr><td><code>8</code></td><td>dismiss or restore, with the kind</td><td class=\"r\">Dismiss or Restore</td></tr><tr><td><code>9</code></td><td>snooze or unsnooze, with the kind, or cancel</td><td class=\"r\">Snooze, Unsnooze, or Cancel</td></tr><tr><td><code>8</code> and <code>9</code> in a PR's confirmation</td><td>yes, dismiss PR and no, keep it</td><td class=\"r\">Yes, dismiss it and No, keep it</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>A full Projector review of <code>c50e2e4</code>: clean, no finding threads, two suggestions.</li><li>The author took both suggestions: one reworded paragraph in <code>docs/plugins.md</code>, and the example label in the draft <code>panel-themes</code> plan.</li><li>An incremental review of <code>722d031</code>: clean.</li><li>Not measured: how the new row wraps in a narrow terminal.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "drawer",
+   "title": "The drawer draws its actions in one row",
+   "kicker": "How the panel lays out an item's and a pull request's actions",
+   "intro": [
+    "The panel draws each action as a plain <code>Button</code>, which Claude Code renders as its hotkey, a colon, and the label, such as <code>7: Discuss</code>. Before, a helper called <code>drawLines</code> returned those Buttons as siblings in the drawer's column, so each took a line.",
+    "A new helper, <code>drawActions</code>, wraps the same Buttons in a <code>Box</code> with <code>flexDirection=\"row\"</code> and a two-column gap, keyed <code>actions:&lt;id&gt;</code>. An item's drawer now draws <b>I don't understand</b> through <code>drawLines</code> on its own line, then the other actions through <code>drawActions</code>. While snooze asks how long, the lengths take the options' place through <code>drawLines</code>, and <b>Cancel</b> moves into the row. A pull request's drawer draws its two actions, or its confirmation, through <code>drawActions</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every Button keeps its key, hotkey, and order in the tree, so the focus ring, which <code>carry</code> and <code>toggle</code> move by key, behaves as before. The full <code>claude plugin test .</code> suite passes at this head, including the keyboard-ring tests for snooze, cancel, and a pull request's dismiss confirmation."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds <code>drawActions</code>, splits <b>I don't understand</b> from the other actions, pulls <b>Cancel</b> out of the snooze lengths, and capitalizes every action label.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The row Box sets no <code>flexWrap</code>. In a terminal too narrow for the whole row, about 33 columns past the drawer's indent for an item and about 34 past the label column for a pull request's confirmation, its Buttons share the width instead of each wrapping on a line of its own. No live run measured this.",
+       "line": 1855
+      },
+      {
+       "kind": "context",
+       "text": "<code>restore</code> now takes its label as an argument, so <b>Restore</b> and <b>Unsnooze</b> no longer append the item's kind.",
+       "line": 2001
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests read the row and the new labels",
+   "kicker": "The panel tests check the row's layout and every label",
+   "intro": [
+    "The panel tests run the hooks module against a simulated Claude Code engine and inspect the element tree the panel returns. A new helper, <code>rowOf</code>, finds an <code>actions:</code> Box, checks that it lays out as a row, and lists its Buttons with their hotkeys and labels. The drawer-layout assertions now expect one <code>actions:</code> entry where they expected a line per action, and every label assertion expects the capitalized text."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "With the base <code>hooks/register.tsx</code>, 10 panel tests fail. With the new labels but one action per line, the two layout tests fail: the pull request drawer test and the drawer-actions test. So the tests catch both the old labels and the old layout."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Adds <code>rowOf</code>, renames the drawer-actions test, and updates every expected label and drawer row."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Docs describe the new row and labels",
+   "kicker": "The panel guide and the CLI reference use the new labels",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the panel. Its drawer examples now end with the one-line row, and its prose names every action by its capitalized label. <code>docs/cli.md</code> changes one sentence about <b>Restore</b> and <b>Unsnooze</b>. The draft <code>panel-themes</code> plan updates one example label. The completed plans under <code>docs/projects/inbox/</code> keep the old labels, because a completed plan records what was built at the time."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Updates the drawer examples, the action list, the keyboard section, and every action label."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Capitalizes <b>Restore</b> and <b>Unsnooze</b> in the <code>inbox restore</code> section."
+    },
+    {
+     "path": "docs/projects/panel-themes/readme.md",
+     "note": "Changes the example label <code>7: discuss PR</code> to <code>7: Discuss</code> in this draft plan's note on text a plugin cannot color."
+    }
+   ]
+  }
+ ]
+}
