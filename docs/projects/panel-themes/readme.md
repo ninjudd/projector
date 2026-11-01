@@ -90,7 +90,7 @@ as § 7 says, and until then step 1 of § 6 keeps the palette slots.
 
 Some text stays outside every role, because Claude Code draws it and a
 plugin cannot set its color: a plain `Button`'s label and its key, such as
-`7: discuss PR` and a pull request's number, and a Markdown link, such as
+`7: Discuss` and a pull request's number, and a Markdown link, such as
 `open in github`. No role uses `dimColor`, which some terminals draw at full
 strength.
 
