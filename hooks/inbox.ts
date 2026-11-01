@@ -347,7 +347,7 @@ const described = (lines: readonly string[]) => [...lines, UNSEEN_NUMBER].join('
 
 /** What `ask`, `tell`, and `request` each say about I don't understand, for the kind of item it posts. */
 const unclearArrives = (kind: Item['kind']) =>
-  `When the person presses I don’t understand, a message that starts \`UNCLEAR 3\` arrives: revise the ${kind} to explain it more simply or to add the context they lack, keeping its number.`
+  `When the person presses I don’t understand and sends the prompt it fills, a message that starts \`UNCLEAR 3\` arrives with what they don’t follow: revise the ${kind} to explain it more simply or to add the context they lack, keeping its number.`
 
 export const ASK_DESCRIPTION = described([
   'Ask the person a question without stopping: it appears in Projector’s panel above their prompt, and you keep working.',

@@ -925,7 +925,7 @@ test('ask, tell, and request tell the agent that UNCLEAR asks it to revise the i
     [REQUEST_DESCRIPTION, 'request'],
   ] as const) {
     expect(description).toContain(
-      `When the person presses I don’t understand, a message that starts \`UNCLEAR 3\` arrives: revise the ${kind} to explain it more simply or to add the context they lack, keeping its number.`,
+      `When the person presses I don’t understand and sends the prompt it fills, a message that starts \`UNCLEAR 3\` arrives with what they don’t follow: revise the ${kind} to explain it more simply or to add the context they lack, keeping its number.`,
     )
   }
   expect(TELL_DESCRIPTION).toContain('The call returns the notice’s number, such as 3.')

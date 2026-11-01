@@ -1275,7 +1275,7 @@ const startsFirst = (hasStart: boolean, ref: string) =>
     ? ` Once the person presses start, a message that starts STARTED ${ref} arrives first, quoting the start action; do exactly that, then mark the request ready or blocked.`
     : ''
 
-/** What a tool's result says about `UNCLEAR`, which arrives when the person presses I don't understand on the item. */
+/** What a tool's result says about `UNCLEAR`, which arrives once the person sends the prompt that I don't understand fills for the item. */
 const whenUnclear = (kind: Item['kind'], ref: string) =>
   ` When a message that starts UNCLEAR ${ref} arrives, the person does not understand the ${kind}: revise it to explain it more simply or to add the context they lack.`
 
