@@ -145,10 +145,12 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
  *
  * A quote whose text below starts with `I don't understand` says you don't
  * understand an open item of any kind not already marked unclear: the item
- * whose drawer last put those words under that quote, or, when none did, the
- * oldest with that text. A press made before its item was revised, or on a
- * subject or detail that has changed since, says nothing of the kind, so its
- * quote replies as any other text would.
+ * whose drawer last put those words under that quote, or else the item whose
+ * drawer last put the quote there, or, when no drawer did, the oldest with
+ * that text. A drawer's item takes it or nothing, so it never falls through
+ * to another item with that text. A drawer's pick made before its item was
+ * revised, or on a subject or detail that has changed since, says nothing of
+ * the kind, so its quote replies as any other text would.
  */
 export function readPrompt(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Read {
   const byAge = (one: Item, other: Item) => one.postedAt - other.postedAt
@@ -170,21 +172,21 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
   const answered = new Set<string>()
   const replied = new Set<string>()
   const unclear = new Set<string>()
-  const canMark = (ref: string) =>
-    markable.some(item => item.ref === ref) && !answered.has(ref) && !replied.has(ref) && !unclear.has(ref)
-  // The item a quote followed by `I don't understand` speaks to, if any: the
-  // one whose drawer last put the words there, while what you read then still
-  // stands, or else the oldest with that text.
+  const isSettled = (ref: string) => answered.has(ref) || replied.has(ref) || unclear.has(ref)
+  // A drawer whose item an earlier quote in this prompt settled leaves the
+  // quote to another drawer, so a prompt can say it of two items that share
+  // a subject.
   const unclearAt = (quote: string) => {
-    const pressed = proposed.findLast(one => one.quote === quote && one.answer === UNCLEAR_WORDS)
-    if (pressed === undefined) return markable.find(item => quoteOf(item) === quote && canMark(item.ref))?.ref
-    const item = markable.find(one => one.ref === pressed.ref)
+    const drawn = proposed.filter(one => one.quote === quote && !isSettled(one.ref))
+    const source = drawn.findLast(one => one.answer === UNCLEAR_WORDS) ?? drawn.at(-1)
+    if (source === undefined) return markable.find(item => quoteOf(item) === quote && !isSettled(item.ref))?.ref
+    const item = markable.find(one => one.ref === source.ref)
     const isAsRead =
       item !== undefined &&
-      pressed.isStale !== true &&
-      quoteOf(item) === pressed.quote &&
-      (pressed.detail === undefined || pressed.detail === item.detail)
-    return isAsRead && canMark(pressed.ref) ? pressed.ref : undefined
+      source.isStale !== true &&
+      quoteOf(item) === source.quote &&
+      (source.detail === undefined || source.detail === item.detail)
+    return isAsRead ? source.ref : undefined
   }
   const isOpen = (ref: string) => open.some(item => item.ref === ref) && !answered.has(ref)
   const isFree = (ref: string) => isOpen(ref) && !replied.has(ref)

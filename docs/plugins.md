@@ -640,7 +640,9 @@ drawer offers **I don't understand** again for the new text. If the agent
 revised the item after you pressed, your prompt still carries your words,
 but it carries no `UNCLEAR` note and marks nothing, so press again to say
 it of the new text. A prompt that starts the text under an item's quote with
-`I don't understand` says the same when you type it yourself.
+`I don't understand` says the same when you type it yourself. When two items
+share a subject, it speaks to the one whose drawer put the quote in your
+prompt, through **Discuss** or an option, and otherwise to the older one.
 
 When `project inbox unclear` is run from a terminal instead, the panel
 delivers its `UNCLEAR` line: to a subagent that is still running directly,

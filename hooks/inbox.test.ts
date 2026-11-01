@@ -441,6 +441,33 @@ test('word that you don’t understand goes to the item whose drawer put it ther
   })
 })
 
+test('I don’t understand typed under a quote another drawer put in the prompt goes to that drawer’s item', () => {
+  const first = question({ postedAt: NOW - 120_000, agentId: 'agent-a', subject: 'Merge it?', choices: ['Yes', 'No'] })
+  const second = question({ ref: '2', number: 2, agentId: 'agent-b', subject: 'Merge it?', choices: ['Yes', 'No'] })
+  const merge = (ref: string, answer: string, fields: Partial<Proposal> = {}): Proposal => ({
+    ref,
+    quote: '"Merge it?"',
+    answer,
+    ...fields,
+  })
+  const text = '"Merge it?"\n\nI don\'t understand why now'
+  // Typed under the quote Discuss put there, or under an option it replaced, it goes to the question you discussed.
+  expect(readPrompt(text, [first, second], [merge('2', '')]).unclears).toEqual([second])
+  expect(readPrompt(text, [first, second], [merge('2', 'No')]).unclears).toEqual([second])
+  // Discussed before a revision, or once already marked unclear, the quote replies to that question and says
+  // nothing to the other.
+  const none = { answers: [], outcomes: [], unclears: [] }
+  expect(readPrompt(text, [first, second], [merge('2', '', { isStale: true })])).toEqual({ ...none, replies: [second] })
+  const marked = question({ ...second, unclear: { at: NOW } })
+  expect(readPrompt(text, [first, marked], [merge('2', '')])).toEqual({ ...none, replies: [marked] })
+  // Pressed in one drawer and discussed in the other, each quote goes to its own drawer's question.
+  const both = [merge('1', UNCLEAR_WORDS, { detail: '' }), merge('2', '')]
+  expect(readPrompt(`"Merge it?"\n\nI don't understand the base\n${text}`, [first, second], both).unclears).toEqual([
+    first,
+    second,
+  ])
+})
+
 test('the note beside word that you don’t understand an item gives the main loop the UNCLEAR line, and names a subagent that posted it', () => {
   const said = (kind: string) => `\n\nThe person does not understand this ${kind}, and this prompt says what they do not follow.`
   const relay = (who: string) =>
