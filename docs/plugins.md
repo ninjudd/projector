@@ -326,14 +326,18 @@ line, and then the unresolved review threads, gathered under their files:
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
 - **Each file with an unresolved review thread** is a line that names the
-  file once, with its threads indented under it, so a file's threads leave
-  more of the line for their text. A file with several threads looks like
-  this:
+  file and counts its threads, in the same yellow as the `*` on the pull
+  request's line. Every file starts collapsed, marked `+`, so the drawer
+  opens as a short list. Click a file, or press Enter with the focus ring
+  on it, to show its threads and mark it `-`, and again to hide them. A file
+  stays open while its drawer does, through each poll. One open file and
+  one collapsed file look like this:
 
   ```text
-  ios/Field/Audio/TrackPlayer.swift
+  - ios/Field/Audio/TrackPlayer.swift 2*
     :1875 · grace · P2 · One song's failed rebuild blocks other songs from recovering
     :1902 · grace · outdated · P2 · A background rebuild can overwrite a newer imported track
+  + docs/notes.md 1*
   ```
 
   The threads run oldest first within a file, and the files come in the

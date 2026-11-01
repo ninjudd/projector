@@ -791,6 +791,7 @@ test('reads a pull request’s threads only while its drawer is open, and only w
   expect(opening).toContain('r0: repository(owner: "x", name: "y") { p7: pullRequest(number: 7) { reviewThreads')
   expect(opening).not.toContain('name: "r"')
   expect(isThreads(opening ?? '')).toBe(true)
+  await threadsOf(ui)
   expect((await ui.findAll({ type: 'Link' })).map(link => link.props.href)).toEqual([
     `${SEVEN}#discussion_r1`,
     `${SEVEN}#discussion_r2`,
@@ -837,6 +838,68 @@ async function drawerListing($: Engine, on: On, nodes: unknown[]) {
   await clock.settle()
   return ui
 }
+
+test('collapses each file in a drawer to its name and count, until a press opens it', async ($, on) => {
+  const ui = await drawerListing($, on, [
+    threadNode('src/a.ts', 1, 'First', 'ann', 1),
+    threadNode('src/b.ts', 2, 'Second', 'ann', 2),
+    threadNode('src/a.ts', 3, 'Third', 'bob', 3),
+  ])
+  const files = async () => (await fileLinesOf(ui)).map(file => file.text)
+  const links = async () => (await ui.findAll({ type: 'Link' })).map(link => link.props.href)
+
+  // The count of 2 and of 1 add up to the row's own count of threads, and no thread draws until its file opens.
+  expect(await files()).toEqual(['+ src/a.ts 2*', '+ src/b.ts 1*'])
+  expect(await links()).toEqual([])
+  const toggle = await ui.find({ type: 'Button', key: 'toggle-file:x/y#7:src/a.ts' })
+  const parts = (toggle?.children ?? []) as (string | { props?: { color?: string } })[]
+  expect(parts.flatMap(part => (typeof part === 'string' ? [] : [part.props?.color]))).toEqual(['warning'])
+
+  // A press opens that file alone, and another closes it.
+  await ui.press({ key: 'toggle-file:x/y#7:src/a.ts' })
+  expect(await files()).toEqual(['- src/a.ts 2*', '+ src/b.ts 1*'])
+  expect(await links()).toEqual([`${SEVEN}#discussion_r1`, `${SEVEN}#discussion_r3`])
+  await ui.press({ key: 'toggle-file:x/y#7:src/b.ts' })
+  expect(await links()).toEqual([`${SEVEN}#discussion_r1`, `${SEVEN}#discussion_r3`, `${SEVEN}#discussion_r2`])
+  await ui.press({ key: 'toggle-file:x/y#7:src/a.ts' })
+  expect(await files()).toEqual(['+ src/a.ts 2*', '- src/b.ts 1*'])
+  expect(await links()).toEqual([`${SEVEN}#discussion_r2`])
+  await ui.unmount()
+})
+
+test('keeps a drawer’s open file open through a poll, and starts another pull request’s drawer collapsed', async ($, on) => {
+  const nodes = [threadNode('src/a.ts', 1, 'First', 'ann', 1)]
+  const { clock } = panelWorld(on, {
+    files: { [WATCH]: 'x/y#7\n', [REVIEW]: 'o/r#2\n' },
+    github: query =>
+      ran(
+        query.includes('comments(')
+          ? JSON.stringify({
+              data: { r0: { p7: { reviewThreads: { nodes } }, p2: { reviewThreads: { nodes } } } },
+            })
+          : answer(query),
+      ),
+  })
+  await startSession($, clock)
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+  const ui = await $.ui.mount(PANEL)
+
+  await ui.press({ key: 'pr:x/y#7' })
+  await clock.settle()
+  await ui.press({ key: 'toggle-file:x/y#7:src/a.ts' })
+  await clock.advance(30_000 + TICK)
+  await clock.settle()
+  expect(await ui.findAll({ type: 'Link' })).toHaveLength(1)
+
+  await ui.press({ key: 'pr:o/r#2' })
+  await clock.settle()
+  expect((await ui.find({ type: 'Button', key: 'toggle-file:o/r#2:src/a.ts' }))?.text).toBe('+ src/a.ts 1*')
+  expect(await ui.findAll({ type: 'Link' })).toHaveLength(0)
+  await ui.unmount()
+})
 
 test('cuts a thread’s line to the drawer’s width, so a line that fits stays whole', async ($, on) => {
   // The drawer starts past the label `y#7` and the gap after it, and a thread sits two columns inside its file.
@@ -897,6 +960,7 @@ test('keeps listing a drawer’s threads when GitHub cannot say what they are no
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'pr:x/y#7' })
   await clock.settle()
+  await threadsOf(ui)
   expect(await ui.findAll({ type: 'Link' })).toHaveLength(2)
 
   isOffline = true
@@ -4244,22 +4308,34 @@ async function drawerRowsOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
   )
 }
 
+/** The Button that names each file in x/y#7's open drawer, with its key and the text it draws. */
+async function fileLinesOf(ui: Pick<Mounted, 'findAll'>) {
+  const buttons = await ui.findAll({ type: 'Button' })
+  return buttons.flatMap(button => {
+    const key = button.props.key
+    return typeof key === 'string' && key.startsWith('toggle-file:x/y#7:') ? [{ key, text: button.text }] : []
+  })
+}
+
 /**
- * What x/y#7's open drawer lists: each file's name, and each of its threads' link and text. Each thread's line sits
- * inside its file's. It leaves its Text free to wrap, because a terminal without hyperlinks draws the URL after the
- * text, and a Text that truncates would cut the URL.
+ * What x/y#7's open drawer lists once every file is open: each file's name, and each of its threads' link and text.
+ * Each thread's line sits inside its file's. It leaves its Text free to wrap, because a terminal without hyperlinks
+ * draws the URL after the text, and a Text that truncates would cut the URL.
  */
-async function threadsOf(ui: Pick<Mounted, 'find'>) {
+async function threadsOf(ui: Pick<Mounted, 'find' | 'findAll' | 'press'>) {
   type Node = { type: string; props?: { key?: string; href?: string; wrap?: string; marginLeft?: number }; children: Node[] }
+  for (const toggle of await fileLinesOf(ui)) {
+    if (toggle.text.startsWith('+')) await ui.press({ key: toggle.key })
+  }
   const drawer = await ui.find({ key: 'drawer:x/y#7' })
   const files = ((drawer?.children ?? []) as unknown[]).flat() as (Node | false | null)[]
   return files.flatMap(file => {
     if (!file || !file.props?.key?.startsWith('file:')) return []
-    const [name, inner] = file.children.flat()
+    const inner = file.children.flat().find(child => child && child.type === 'Box')
     expect(inner?.props?.marginLeft).toBe(2)
     return [
       {
-        file: name?.children.join(''),
+        file: file.props.key.slice('file:x/y#7:'.length),
         threads: (inner?.children ?? []).flat().map(line => {
           expect(line.props?.wrap).toBeUndefined()
           const link = line.children[0]

@@ -285,6 +285,7 @@ const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, fals
 const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
 const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
 const drawerThreads = atom({ plugin: 'projector', key: 'panelThreads' } as const, null)
+const openFiles = atom({ plugin: 'projector', key: 'panelOpenFiles' } as const, null)
 const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
 const collapsed = atom({ plugin: 'projector', key: 'panelCollapsed' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
@@ -1640,6 +1641,7 @@ export const register: Register = on => {
     const opened = await read($, drawer)
     const shownThreads = await read($, drawerThreads)
     const asking = await read($, asked)
+    const opening = await read($, openFiles)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
     // Each count in the header is a button that collapses its pull requests
     // or its kind of item to one line at the top of their place in the list,
@@ -1695,6 +1697,13 @@ export const register: Register = on => {
       update($, asked, () => (about === null ? null : { drawer: key, about })).catch(() => undefined)
     }
     const isAsked = (key: string, about: 'snooze' | 'dismiss') => asking?.drawer === key && asking.about === about
+    const isFileOpen = (key: string, path: string) => opening?.drawer === key && opening.paths.includes(path)
+    const toggleFile = (key: string, path: string) => {
+      update($, openFiles, was => {
+        const paths = was?.drawer === key ? was.paths : []
+        return { drawer: key, paths: paths.includes(path) ? paths.filter(one => one !== path) : [...paths, path] }
+      }).catch(() => undefined)
+    }
     // A line's press opens or closes its drawer, and the ring goes onto the
     // drawer's first control or back onto the line. A drawer always opens on
     // its actions, never on a question it asked before. A pull request's
@@ -2342,16 +2351,21 @@ export const register: Register = on => {
                   as markdown. */}
               {threadsByFile(shownThreads?.drawer === key ? shownThreads.threads : []).map(([path, threads]) => (
                 <Box key={`file:${key}:${path}`} flexDirection="column">
-                  <Text>{path}</Text>
-                  <Box flexDirection="column" marginLeft={THREAD_INDENT}>
-                    {threads.map((thread, at) => (
-                      <Text key={`thread:${key}:${path}:${at}`}>
-                        <Link href={thread.url ?? pr.url}>
-                          {threadLabel(thread, columns - (labelWidth + 1) - THREAD_INDENT)}
-                        </Link>
-                      </Text>
-                    ))}
-                  </Box>
+                  <Button key={`toggle-file:${key}:${path}`} plain onPress={() => toggleFile(key, path)}>
+                    {`${isFileOpen(key, path) ? '-' : '+'} ${path} `}
+                    <Text color="warning">{`${threads.length}*`}</Text>
+                  </Button>
+                  {isFileOpen(key, path) && (
+                    <Box flexDirection="column" marginLeft={THREAD_INDENT}>
+                      {threads.map((thread, at) => (
+                        <Text key={`thread:${key}:${path}:${at}`}>
+                          <Link href={thread.url ?? pr.url}>
+                            {threadLabel(thread, columns - (labelWidth + 1) - THREAD_INDENT)}
+                          </Link>
+                        </Text>
+                      ))}
+                    </Box>
+                  )}
                 </Box>
               ))}
             </Box>

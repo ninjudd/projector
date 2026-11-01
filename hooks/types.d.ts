@@ -190,6 +190,11 @@ declare module 'claude-code' {
        * GitHub last gave them. `drawer` is the key `panelDrawer` holds.
        */
       panelThreads: { drawer: string; threads: Thread[] } | null
+      /**
+       * The files whose threads a drawer shows, by path. Every other file is
+       * collapsed. `drawer` is the key `panelDrawer` holds.
+       */
+      panelOpenFiles: { drawer: string; paths: string[] } | null
       /** The session's inbox, as the panel last read it. */
       panelInbox: Item[]
       /** The pull requests and the kinds of item collapsed to one line, from the header's counts. */
