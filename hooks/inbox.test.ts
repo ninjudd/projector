@@ -466,6 +466,24 @@ test('I don’t understand typed under a quote another drawer put in the prompt 
     first,
     second,
   ])
+  // Only the press's quote says it, so the words stay with the press and the discussed question takes the reply.
+  const reply = '"Merge it?"\n\nI don\'t understand the base\n"Merge it?"\n\nwhy now?'
+  expect(readPrompt(reply, [first, second], both)).toEqual({ ...none, replies: [second], unclears: [first] })
+  // Beside an option picked in the other drawer, the press keeps its words, and the option answers its own question.
+  const picked = [merge('2', UNCLEAR_WORDS, { detail: '' }), merge('1', 'Yes')]
+  expect(readPrompt('"Merge it?"\n\nI don\'t understand the base\n"Merge it?"\n\nYes', [first, second], picked)).toEqual({
+    answers: [{ question: first, letter: 'a' }],
+    outcomes: [],
+    replies: [],
+    unclears: [second],
+  })
+  // Quoted once, a press you cleared from the prompt gives way to the Discuss you acted in after it, either way round.
+  expect(readPrompt(text, [first, second], both).unclears).toEqual([second])
+  expect(readPrompt(text, [first, second], [merge('2', UNCLEAR_WORDS, { detail: '' }), merge('1', '')]).unclears).toEqual([first])
+  // Pressed after that Discuss, the press wins.
+  expect(readPrompt(text, [first, second], [merge('2', ''), merge('1', UNCLEAR_WORDS, { detail: '' })]).unclears).toEqual([first])
+  // Quoted once with words the option did not put there, the press outranks an option picked after it.
+  expect(readPrompt(text, [first, second], [merge('1', UNCLEAR_WORDS, { detail: '' }), merge('2', 'No')]).unclears).toEqual([first])
 })
 
 test('the note beside word that you don’t understand an item gives the main loop the UNCLEAR line, and names a subagent that posted it', () => {

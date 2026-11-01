@@ -643,6 +643,8 @@ it of the new text. A prompt that starts the text under an item's quote with
 `I don't understand` says the same when you type it yourself. When two items
 share a subject, it speaks to the one whose drawer put the quote in your
 prompt, through **Discuss** or an option, and otherwise to the older one.
+When your prompt holds the quote once and both drawers put it there, the one
+you acted in last wins, unless it put an option there.
 
 When `project inbox unclear` is run from a terminal instead, the panel
 delivers its `UNCLEAR` line: to a subagent that is still running directly,
