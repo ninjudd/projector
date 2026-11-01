@@ -1,0 +1,503 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 81adcd99..726fa7bd 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -310,7 +310,7 @@ as `−12`, in red. The checks' state takes a color of its own, and the rest,
+ that come two actions, side by side on one line, on the digits `7` and `8`,
+ as [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+ describes. The links to the pull request follow, side by side on the next
+-line, and then a line for each unresolved review thread:
++line, and then the unresolved review threads, gathered under their files:
+ 
+ - **Discuss** puts the pull request's number in the prompt at the
+   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
+@@ -325,15 +325,35 @@ line, and then a line for each unresolved review thread:
+ - **open in github** opens the pull request on GitHub.
+ - **open in projector** opens its Projector summary, when the pull
+   request's description links one.
+-- **Each unresolved review thread**, oldest first, opens the thread's first
+-  comment on GitHub. Its line names the file and line the thread is on, who
+-  opened it, and the first line of its first comment, cut to 60 characters,
+-  and ends in `outdated` when a later push changed the lines it is on. These
+-  are the threads the yellow `*` counts. GitHub folds an outdated thread
+-  away, and hides an older one on a long timeline behind **Load more**, so
+-  the link reaches a thread the pull request's page does not show. The
+-  threads appear once GitHub answers the drawer's own query, a moment
+-  after the drawer opens.
++- **Each file with an unresolved review thread** is a line that names the
++  file and counts its threads, in the same yellow as the `*` on the pull
++  request's line. Every file starts collapsed, marked `+`, so the drawer
++  opens as a short list. Click a file, or press Enter with the focus ring
++  on it, to show its threads and mark it `-`, and again to hide them. A file
++  stays open while its drawer does, through each poll, and starts collapsed
++  again the next time the drawer opens. One open file and one collapsed file
++  look like this:
++
++  ```text
++  - ios/Field/Audio/TrackPlayer.swift 2*
++    :1875 · grace · P2 · One song's failed rebuild blocks other songs from recovering
++    :1902 · grace · outdated · P2 · A background rebuild can overwrite a newer imported track
++  + docs/notes.md 1*
++  ```
++
++  The threads run oldest first within a file, and the files come in the
++  order of each file's oldest thread.
++- **Each unresolved review thread** opens the thread's first comment on
++  GitHub. Its line starts with the line number the thread is on, such as
++  `:1875`, or `file` for a comment on the whole file. Next comes who opened
++  it, then `outdated` when a later push changed the lines it is on, and
++  then the first line of its first comment, cut to end at the panel's edge.
++  A terminal without hyperlinks draws the thread's URL after the text. These
++  are the threads the yellow `*` counts. GitHub folds an outdated
++  thread away, and hides an older one on a long timeline behind **Load
++  more**, so the link reaches a thread the pull request's page does not
++  show. The threads appear once GitHub answers the drawer's own query, a
++  moment after the drawer opens.
+ 
+ **Dismiss** runs `project watch drop` once for each role the session holds
+ on the pull request, as `--role fix` or `--role review`. Each writes a `!`
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index d0ba2936..70a9c37b 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -711,11 +711,16 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   const opened = await ui.find({ key: 'drawer:x/y#7' })
+   expect(opened).toBeDefined()
+   expect(opened?.props.marginLeft).toBe(4)
+-  // The thread lines come as one list among the children, so the children are flattened first. A thread's line is a
+-  // Text, which carries no key of its own.
++  // The files come as one list among the children, so the children are flattened first.
+   type Line = { type: string; props?: { key?: string }; children?: unknown[] }
+   const lines = ((opened?.children ?? []) as unknown[]).flat() as Line[]
+-  expect(lines.map(line => line.props?.key ?? line.type)).toEqual(['Text', 'actions:x/y#7', 'links:x/y#7', 'Text', 'Text'])
++  expect(lines.map(line => line.props?.key ?? line.type)).toEqual([
++    'Text',
++    'actions:x/y#7',
++    'links:x/y#7',
++    'file:x/y#7:src/fetch.ts',
++    'file:x/y#7:src/[draft]_notes.md',
++  ])
+   expect(await rowOf(ui, 'actions:x/y#7')).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
+   const linksOf = async (key: string) => {
+     const row = await ui.find({ key: `links:${key}` })
+@@ -725,16 +730,14 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   expect(await linksOf('x/y#7')).toEqual(['github:x/y#7', 'projector:x/y#7'])
+   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
+   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
+-  // Each unresolved thread links to its first comment: where it is, who opened it, how it starts, cut to fit,
+-  // and whether a push left it outdated. Its text is a Link's children, so brackets and stars stay as written.
+-  const links = lines.slice(-2).map(line => (line.children as { type: string; props: { href: string }; children: string[] }[])[0])
+-  expect(links.map(link => [link?.type, link?.props.href, link?.children.join('')])).toEqual([
+-    [
+-      'Link',
+-      `${SEVEN}#discussion_r1`,
+-      'src/fetch.ts:40 · grace · P2 · The retry loop never sleeps between attempts, so a fla…',
+-    ],
+-    ['Link', `${SEVEN}#discussion_r2`, 'src/[draft]_notes.md:3 · bob · Why *this*? · outdated'],
++  expect(await threadsOf(ui)).toEqual([
++    {
++      file: 'src/fetch.ts',
++      threads: [
++        [`${SEVEN}#discussion_r1`, ':40 · grace · P2 · The retry loop never sleeps between attempts, so a flaky server gets hammered'],
++      ],
++    },
++    { file: 'src/[draft]_notes.md', threads: [[`${SEVEN}#discussion_r2`, ':3 · bob · outdated · Why *this*?']] },
+   ])
+ 
+   // discuss is a plain Button, so Enter fills the prompt on the main screen too.
+@@ -788,6 +791,7 @@ test('reads a pull request’s threads only while its drawer is open, and only w
+   expect(opening).toContain('r0: repository(owner: "x", name: "y") { p7: pullRequest(number: 7) { reviewThreads')
+   expect(opening).not.toContain('name: "r"')
+   expect(isThreads(opening ?? '')).toBe(true)
++  await threadsOf(ui)
+   expect((await ui.findAll({ type: 'Link' })).map(link => link.props.href)).toEqual([
+     `${SEVEN}#discussion_r1`,
+     `${SEVEN}#discussion_r2`,
+@@ -805,6 +809,187 @@ test('reads a pull request’s threads only while its drawer is open, and only w
+   await ui.unmount()
+ })
+ 
++/** An unresolved thread as GitHub answers it, whose first comment is `discussion_r<at>` on x/y#7. */
++const threadNode = (path: string, line: number | null, body: string, login: string | null, at: number) => ({
++  isResolved: false,
++  isOutdated: false,
++  path,
++  line,
++  comments: {
++    nodes: [{ url: `${SEVEN}#discussion_r${at}`, bodyText: body, author: login === null ? null : { login } }],
++  },
++})
++
++/** A panel with x/y#7's drawer open, listing `nodes` as its threads. */
++async function drawerListing($: Engine, on: On, nodes: unknown[]) {
++  const { clock } = panelWorld(on, {
++    files: { [WATCH]: 'x/y#7\n' },
++    github: query =>
++      ran(query.includes('comments(') ? JSON.stringify({ data: { r0: { p7: { reviewThreads: { nodes } } } } }) : answer(query)),
++  })
++
++  await startSession($, clock)
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(PANEL)
++  await ui.press({ key: 'pr:x/y#7' })
++  await clock.settle()
++  return ui
++}
++
++test('collapses each file in a drawer to its name and count, until a press opens it', async ($, on) => {
++  const ui = await drawerListing($, on, [
++    threadNode('src/a.ts', 1, 'First', 'ann', 1),
++    threadNode('src/b.ts', 2, 'Second', 'ann', 2),
++    threadNode('src/a.ts', 3, 'Third', 'bob', 3),
++  ])
++  const files = async () => (await fileLinesOf(ui)).map(file => file.text)
++  const links = async () => (await ui.findAll({ type: 'Link' })).map(link => link.props.href)
++
++  // The count of 2 and of 1 add up to the row's own count of threads, and no thread draws until its file opens.
++  expect(await files()).toEqual(['+ src/a.ts 2*', '+ src/b.ts 1*'])
++  expect(await links()).toEqual([])
++  const toggle = await ui.find({ type: 'Button', key: 'toggle-file:x/y#7:src/a.ts' })
++  const parts = (toggle?.children ?? []) as (string | { props?: { color?: string } })[]
++  expect(parts.flatMap(part => (typeof part === 'string' ? [] : [part.props?.color]))).toEqual(['warning'])
++
++  // A press opens that file alone, and another closes it.
++  await ui.press({ key: 'toggle-file:x/y#7:src/a.ts' })
++  expect(await files()).toEqual(['- src/a.ts 2*', '+ src/b.ts 1*'])
++  expect(await links()).toEqual([`${SEVEN}#discussion_r1`, `${SEVEN}#discussion_r3`])
++  await ui.press({ key: 'toggle-file:x/y#7:src/b.ts' })
++  expect(await links()).toEqual([`${SEVEN}#discussion_r1`, `${SEVEN}#discussion_r3`, `${SEVEN}#discussion_r2`])
++  await ui.press({ key: 'toggle-file:x/y#7:src/a.ts' })
++  expect(await files()).toEqual(['+ src/a.ts 2*', '- src/b.ts 1*'])
++  expect(await links()).toEqual([`${SEVEN}#discussion_r2`])
++  await ui.unmount()
++})
++
++/** A panel listing x/y#7 and o/r#2, with no drawer open, whose drawers each list one thread on `src/a.ts`. */
++async function twoDrawersListing($: Engine, on: On) {
++  const nodes = [threadNode('src/a.ts', 1, 'First', 'ann', 1)]
++  const { clock } = panelWorld(on, {
++    files: { [WATCH]: 'x/y#7\n', [REVIEW]: 'o/r#2\n' },
++    github: query =>
++      ran(
++        query.includes('comments(')
++          ? JSON.stringify({
++              data: { r0: { p7: { reviewThreads: { nodes } }, p2: { reviewThreads: { nodes } } } },
++            })
++          : answer(query),
++      ),
++  })
++  await startSession($, clock)
++  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++  return { clock, ui: await $.ui.mount(PANEL) }
++}
++
++test('keeps a drawer’s open file open through a poll, and starts another pull request’s drawer collapsed', async ($, on) => {
++  const { clock, ui } = await twoDrawersListing($, on)
++
++  await ui.press({ key: 'pr:x/y#7' })
++  await clock.settle()
++  await ui.press({ key: 'toggle-file:x/y#7:src/a.ts' })
++  await clock.advance(30_000 + TICK)
++  await clock.settle()
++  expect(await ui.findAll({ type: 'Link' })).toHaveLength(1)
++
++  await ui.press({ key: 'pr:o/r#2' })
++  await clock.settle()
++  expect((await ui.find({ type: 'Button', key: 'toggle-file:o/r#2:src/a.ts' }))?.text).toBe('+ src/a.ts 1*')
++  expect(await ui.findAll({ type: 'Link' })).toHaveLength(0)
++  await ui.unmount()
++})
++
++test('starts a drawer’s files collapsed each time it opens, and keeps them while it stays open', async ($, on) => {
++  const { clock, ui } = await twoDrawersListing($, on)
++  const press = async (key: string) => {
++    await ui.press({ key })
++    await clock.settle()
++  }
++  const fileOfSeven = async () => (await ui.find({ type: 'Button', key: 'toggle-file:x/y#7:src/a.ts' }))?.text
++  const openFile = async () => {
++    await press('toggle-file:x/y#7:src/a.ts')
++    expect(await fileOfSeven()).toBe('- src/a.ts 1*')
++  }
++
++  // Closing the drawer and pressing its line again opens it collapsed.
++  await press('pr:x/y#7')
++  await openFile()
++  await press('pr:x/y#7')
++  await press('pr:x/y#7')
++  expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
++  expect(await ui.findAll({ type: 'Link' })).toHaveLength(0)
++
++  // So does coming back from another drawer in which no file was opened.
++  await openFile()
++  await press('pr:o/r#2')
++  await press('pr:x/y#7')
++  expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
++
++  // A collapsed section's label for the drawer already open only shows it again, so its file stays open.
++  await openFile()
++  await press('count:pr')
++  await press('open:x/y#7')
++  expect(await fileOfSeven()).toBe('- src/a.ts 1*')
++
++  // A label that opens the drawer anew starts it collapsed, as its line does.
++  await press('count:pr')
++  await press('open:o/r#2')
++  await press('count:pr')
++  await press('open:x/y#7')
++  expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
++  await ui.unmount()
++})
++
++test('cuts a thread’s line to the drawer’s width, so a line that fits stays whole', async ($, on) => {
++  // The drawer starts past the label `y#7` and the gap after it, and a thread sits two columns inside its file.
++  const width = COLUMNS - 4 - 2
++  const lead = ':8 · ann · '
++  const fits = 'x'.repeat(width - lead.length)
++  const ui = await drawerListing($, on, [
++    threadNode('src/a.ts', 8, fits, 'ann', 1),
++    threadNode('src/a.ts', 8, `${fits}y`, 'ann', 2),
++  ])
++
++  const [file] = await threadsOf(ui)
++  const shown = (file?.threads ?? []).map(thread => thread[1])
++  expect(shown).toEqual([`${lead}${fits}`, `${lead}${fits.slice(0, -1)}…`])
++  expect(shown.map(line => line?.length)).toEqual([width, width])
++  await ui.unmount()
++})
++
++test('gathers a drawer’s threads under their files, each file where its oldest thread comes', async ($, on) => {
++  const ui = await drawerListing($, on, [
++    threadNode('ios/Field/Audio/TrackPlayer.swift', 1875, 'One song’s failed rebuild blocks other songs', 'grace', 1),
++    threadNode('docs/notes.md', null, 'Why this file?', 'bob', 2),
++    threadNode('ios/Field/Audio/TrackPlayer.swift', 1902, 'A background rebuild can overwrite a newer track', 'grace', 3),
++    threadNode('ios/Field/Audio/TrackPlayer.swift', 1897, 'Rebuilding a stereo render can change its pan', 'bob', 4),
++    threadNode('docs/empty.md', null, '', null, 5),
++  ])
++
++  // A thread keeps its place within its file, so the lines stay oldest first rather than sorted by number, and a
++  // comment on a whole file, which has no line, still has text for its link.
++  expect(await threadsOf(ui)).toEqual([
++    {
++      file: 'ios/Field/Audio/TrackPlayer.swift',
++      threads: [
++        [`${SEVEN}#discussion_r1`, ':1875 · grace · One song’s failed rebuild blocks other songs'],
++        [`${SEVEN}#discussion_r3`, ':1902 · grace · A background rebuild can overwrite a newer track'],
++        [`${SEVEN}#discussion_r4`, ':1897 · bob · Rebuilding a stereo render can change its pan'],
++      ],
++    },
++    { file: 'docs/notes.md', threads: [[`${SEVEN}#discussion_r2`, 'file · bob · Why this file?']] },
++    { file: 'docs/empty.md', threads: [[`${SEVEN}#discussion_r5`, 'file']] },
++  ])
++  await ui.unmount()
++})
++
+ test('keeps listing a drawer’s threads when GitHub cannot say what they are now', async ($, on) => {
+   let isOffline = false
+   const offline = { ...ran(''), exitCode: 1, stderr: 'error connecting to api.github.com\n' }
+@@ -821,6 +1006,7 @@ test('keeps listing a drawer’s threads when GitHub cannot say what they are no
+   const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'pr:x/y#7' })
+   await clock.settle()
++  await threadsOf(ui)
+   expect(await ui.findAll({ type: 'Link' })).toHaveLength(2)
+ 
+   isOffline = true
+@@ -4168,6 +4354,45 @@ async function drawerRowsOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
+   )
+ }
+ 
++/** The Button that names each file in x/y#7's open drawer, with its key and the text it draws. */
++async function fileLinesOf(ui: Pick<Mounted, 'findAll'>) {
++  const buttons = await ui.findAll({ type: 'Button' })
++  return buttons.flatMap(button => {
++    const key = button.props.key
++    return typeof key === 'string' && key.startsWith('toggle-file:x/y#7:') ? [{ key, text: button.text }] : []
++  })
++}
++
++/**
++ * What x/y#7's open drawer lists once every file is open: each file's name, and each of its threads' link and text.
++ * Each thread's line sits inside its file's. It leaves its Text free to wrap, because a terminal without hyperlinks
++ * draws the URL after the text, and a Text that truncates would cut the URL.
++ */
++async function threadsOf(ui: Pick<Mounted, 'find' | 'findAll' | 'press'>) {
++  type Node = { type: string; props?: { key?: string; href?: string; wrap?: string; marginLeft?: number }; children: Node[] }
++  for (const toggle of await fileLinesOf(ui)) {
++    if (toggle.text.startsWith('+')) await ui.press({ key: toggle.key })
++  }
++  const drawer = await ui.find({ key: 'drawer:x/y#7' })
++  const files = ((drawer?.children ?? []) as unknown[]).flat() as (Node | false | null)[]
++  return files.flatMap(file => {
++    if (!file || !file.props?.key?.startsWith('file:')) return []
++    const inner = file.children.flat().find(child => child && child.type === 'Box')
++    expect(inner?.props?.marginLeft).toBe(2)
++    return [
++      {
++        file: file.props.key.slice('file:x/y#7:'.length),
++        threads: (inner?.children ?? []).flat().map(line => {
++          expect(line.props?.wrap).toBeUndefined()
++          const link = line.children[0]
++          expect(link?.type).toBe('Link')
++          return [link?.props?.href, link?.children.join('')]
++        }),
++      },
++    ]
++  })
++}
++
+ /** The buttons a drawer's actions row draws side by side, named as `actionLinesOf` names them. */
+ async function rowOf(ui: Pick<Mounted, 'find'>, key: string): Promise<string[]> {
+   const row = await ui.find({ key })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index e48d1008..eebd1350 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -285,6 +285,7 @@ const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, fals
+ const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
+ const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
+ const drawerThreads = atom({ plugin: 'projector', key: 'panelThreads' } as const, null)
++const openFiles = atom({ plugin: 'projector', key: 'panelOpenFiles' } as const, null)
+ const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
+ const collapsed = atom({ plugin: 'projector', key: 'panelCollapsed' } as const, [])
+ const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
+@@ -1217,20 +1218,37 @@ function statusColor(pr: PullRequest): Note['color'] | 'subtle' {
+   return pr.isDraft ? 'warning' : 'success'
+ }
+ 
+-/** How much of a thread's first line its drawer line shows. */
+-const EXCERPT_LENGTH = 60
++/** How far a thread's line sits inside the line that names its file. */
++const THREAD_INDENT = 2
+ 
+ /**
+- * A thread's line in its pull request's drawer: where it is, who opened it,
+- * how it starts, and whether a later push left it outdated.
++ * A thread's line under its file in a pull request's drawer, cut to `columns`:
++ * where in the file it is, who opened it, whether a later push left it
++ * outdated, and how it starts. The excerpt comes last so the cut takes it
++ * first, and `file`, for a comment on the whole file, means the line is never
++ * empty.
++ *
++ * The label is cut here rather than by `wrap="truncate-end"` because a terminal
++ * without hyperlinks draws a Link's URL after its text. Truncating the Text
++ * would cut the URL, which is the only way to the thread in that terminal.
+  */
+-function threadLabel(thread: Thread): string {
+-  const place = thread.line === null ? thread.path : `${thread.path}:${thread.line}`
+-  const excerpt =
+-    thread.excerpt.length > EXCERPT_LENGTH ? `${thread.excerpt.slice(0, EXCERPT_LENGTH - 1).trimEnd()}…` : thread.excerpt
+-  return [place, thread.author, excerpt, thread.isOutdated ? 'outdated' : null]
++function threadLabel(thread: Thread, columns: number): string {
++  const label = [
++    thread.line === null ? 'file' : `:${thread.line}`,
++    thread.author,
++    thread.isOutdated ? 'outdated' : null,
++    thread.excerpt,
++  ]
+     .filter(piece => piece !== null && piece !== '')
+     .join(' · ')
++  return label.length > columns ? `${label.slice(0, Math.max(0, columns - 1)).trimEnd()}…` : label
++}
++
++/** Threads gathered under their files, which come in the order of each file's first thread. */
++function threadsByFile(threads: readonly Thread[]): [string, Thread[]][] {
++  const files = new Map<string, Thread[]>()
++  for (const thread of threads) files.set(thread.path, [...(files.get(thread.path) ?? []), thread])
++  return [...files]
+ }
+ 
+ /** Whether the account the panel's `gh` is signed in as wrote a pull request. */
+@@ -1623,6 +1641,7 @@ export const register: Register = on => {
+     const opened = await read($, drawer)
+     const shownThreads = await read($, drawerThreads)
+     const asking = await read($, asked)
++    const opening = await read($, openFiles)
+     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
+     // Each count in the header is a button that collapses its pull requests
+     // or its kind of item to one line at the top of their place in the list,
+@@ -1678,11 +1697,25 @@ export const register: Register = on => {
+       update($, asked, () => (about === null ? null : { drawer: key, about })).catch(() => undefined)
+     }
+     const isAsked = (key: string, about: 'snooze' | 'dismiss') => asking?.drawer === key && asking.about === about
++    const isFileOpen = (key: string, path: string) => opening?.drawer === key && opening.paths.includes(path)
++    const toggleFile = (key: string, path: string) => {
++      update($, openFiles, was => {
++        const paths = was?.drawer === key ? was.paths : []
++        return { drawer: key, paths: paths.includes(path) ? paths.filter(one => one !== path) : [...paths, path] }
++      }).catch(() => undefined)
++    }
++    // A drawer's files start collapsed each time it opens, so a press that
++    // opens one forgets the files opened before. A press on the drawer that is
++    // already open keeps them, because they stay open while it does.
++    const collapseFilesFor = (key: string) => {
++      if (opened !== key) update($, openFiles, () => null).catch(() => undefined)
++    }
+     // A line's press opens or closes its drawer, and the ring goes onto the
+     // drawer's first control or back onto the line. A drawer always opens on
+     // its actions, never on a question it asked before. A pull request's
+     // drawer reads its threads as it opens.
+     const toggle = (key: string, line: string, onto?: string) => {
++      collapseFilesFor(key)
+       update($, drawer, was => (was === key ? null : key))
+         .then(() => loadThreads($))
+         .catch(() => undefined)
+@@ -1742,6 +1775,7 @@ export const register: Register = on => {
+     // Buttons: the `+` expands them, and each label after it, in the rows'
+     // order and its status's color, expands them with its drawer open.
+     const expandOnto = (key: string) => {
++      collapseFilesFor(key)
+       Promise.all([
+         update($, collapsed, was => (Array.isArray(was) ? was.filter(one => one !== 'pr') : [])),
+         update($, drawer, () => key),
+@@ -2323,10 +2357,24 @@ export const register: Register = on => {
+                   folds an outdated thread and an old one on a long timeline away.
+                   The text goes in as a Link's children, so nothing in it is read
+                   as markdown. */}
+-              {(shownThreads?.drawer === key ? shownThreads.threads : []).map((thread, at) => (
+-                <Text key={`thread:${key}:${at}`}>
+-                  <Link href={thread.url ?? pr.url}>{threadLabel(thread)}</Link>
+-                </Text>
++              {threadsByFile(shownThreads?.drawer === key ? shownThreads.threads : []).map(([path, threads]) => (
++                <Box key={`file:${key}:${path}`} flexDirection="column">
++                  <Button key={`toggle-file:${key}:${path}`} plain onPress={() => toggleFile(key, path)}>
++                    {`${isFileOpen(key, path) ? '-' : '+'} ${path} `}
++                    <Text color="warning">{`${threads.length}*`}</Text>
++                  </Button>
++                  {isFileOpen(key, path) && (
++                    <Box flexDirection="column" marginLeft={THREAD_INDENT}>
++                      {threads.map((thread, at) => (
++                        <Text key={`thread:${key}:${path}:${at}`}>
++                          <Link href={thread.url ?? pr.url}>
++                            {threadLabel(thread, columns - (labelWidth + 1) - THREAD_INDENT)}
++                          </Link>
++                        </Text>
++                      ))}
++                    </Box>
++                  )}
++                </Box>
+               ))}
+             </Box>
+           )}
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 21aa3bf9..41635b7d 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -190,6 +190,11 @@ declare module 'claude-code' {
+        * GitHub last gave them. `drawer` is the key `panelDrawer` holds.
+        */
+       panelThreads: { drawer: string; threads: Thread[] } | null
++      /**
++       * The files whose threads a drawer shows, by path. Every other file is
++       * collapsed. `drawer` is the key `panelDrawer` holds.
++       */
++      panelOpenFiles: { drawer: string; paths: string[] } | null
+       /** The session's inbox, as the panel last read it. */
+       panelInbox: Item[]
+       /** The pull requests and the kinds of item collapsed to one line, from the header's counts. */

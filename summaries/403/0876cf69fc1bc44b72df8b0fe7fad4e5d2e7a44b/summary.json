@@ -1,0 +1,110 @@
+{
+ "version": 1,
+ "name": "Drawer threads by file",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 403,
+  "title": "Gather a drawer's review threads under their files",
+  "head": "0876cf69fc1bc44b72df8b0fe7fad4e5d2e7a44b",
+  "headRef": "panel-group-findings-by-file",
+  "base": "442c9a9cc58ef3effecbfe0c0228e5243a22c094",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel sits above Claude Code's prompt and lists the pull requests a session fixes or reviews. Pressing a pull request's number opens its <b>drawer</b>: a few lines under the pull request that show its branch and size, two actions, links to GitHub and to its Projector summary, and the pull request's unresolved review threads.",
+   "Each thread's line used to repeat the full file path and then cut the finding's first line at 60 characters. On a pull request with several findings in one deeply nested file, the path filled most of each line, and the cut removed the words that told the findings apart.",
+   "This change names each file once, as a line that counts the file's threads, and indents that file's threads two columns under it. Every file starts collapsed, marked <code>+</code>. Click a file, or press Enter with the focus ring on it, to show its threads and mark it <code>-</code>. A thread's line starts with <code>:&lt;line&gt;</code>, or <code>file</code> for a comment on the whole file, and runs to the panel's edge:",
+   "<pre>- ios/Field/Audio/TrackPlayer.swift 2*\n  :1875 · grace · P2 · One song's failed rebuild blocks other songs from recovering\n  :1902 · grace · outdated · P2 · A background rebuild can overwrite a newer imported track\n+ docs/notes.md 1*</pre>",
+   "Threads keep their oldest-first order within a file, and files come in the order of each file's oldest thread. The drawer's other rows do not change."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Drawer</b>: the lines a pull request's row opens under itself in the panel.</li><li><b>Thread label</b>: the text of one thread's link, built by <code>threadLabel</code>.</li><li><b><code>columns</code></b>: how wide the panel's rows are, the terminal's width less the panel's inset and padding.</li><li><b><code>labelWidth</code></b>: the width of the column of pull request numbers. The drawer starts one column past it.</li><li><b><code>panelOpenFiles</code></b>: the session state that holds which files are open, for one drawer at a time.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The review of <code>20aa773</code> was clean, with one suggestion: move <code>rowOf</code>'s doc comment back above <code>rowOf</code>. A later commit does that.</li><li>The review of <code>7939433</code> found that a closed and reopened drawer kept the files you had opened. <code>0876cf6</code> fixes that, and the thread is resolved.</li><li>The review of <code>0876cf6</code> is clean. Its new test fails against the previous head's code, and the full gate passes.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "render",
+   "title": "Threads gathered under collapsible files",
+   "kicker": "How the drawer groups threads, collapses each file, and cuts each thread's line",
+   "intro": [
+    "<code>threadsByFile</code> groups the drawer's threads by their full path in a <code>Map</code>, which keeps the order in which each path first appears. The threads come from GitHub oldest first, so each file lands where its oldest thread does, and each file's threads stay oldest first.",
+    "Each file draws as a plain <code>Button</code> that reads <code>+ &lt;path&gt; &lt;n&gt;*</code>, with the count in <code>warning</code>, the same yellow as the <code>*</code> on the pull request's row. The button has no hotkey, so it takes no digit. In the focus ring it comes after <b>Dismiss</b>. A press calls <code>toggleFile</code>, which adds the path to or removes it from <code>panelOpenFiles</code> for that drawer. A drawer's files start collapsed each time it opens: <code>toggle</code> and <code>expandOnto</code>, the two routes that open a drawer, call <code>collapseFilesFor</code>, which clears <code>panelOpenFiles</code> when the press opens a drawer other than the one already open.",
+    "<code>threadLabel</code> builds a thread's text from its line, its author, <code>outdated</code>, and its excerpt, in that order, and cuts it with <code>…</code> at the width it is given. The excerpt comes last so that the cut takes it first. The label falls back to <code>file</code> when the thread has no line, so a comment on a whole file never draws an empty link.",
+    "The panel cuts the text itself instead of setting <code>wrap=\"truncate-end\"</code> on the <code>Text</code>. A terminal without hyperlinks draws a link as its text followed by its URL, and a truncating <code>Text</code> would cut that URL off."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Replaces the 60-character excerpt cut with a cut at the drawer's width, adds <code>threadsByFile</code> and the <code>panelOpenFiles</code> state, and draws each file as a toggle <code>Button</code> with an indented column of thread links under it while the file is open.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2371,
+       "text": "The width passed here subtracts the same <code>labelWidth + 1</code> that the drawer's <code>marginLeft</code> uses, and <code>THREAD_INDENT</code>, from the rows' <code>columns</code>. A probe at 120 columns cut a 300-character excerpt to exactly 109 columns, and a label one column short of that stayed whole."
+      },
+      {
+       "kind": "verify",
+       "line": 1250,
+       "text": "Probe tests showed two <code>index.ts</code> files in different directories in separate groups, 40 interleaved threads across 13 files in 13 groups ordered by each file's first thread, and resolved threads left out of both the list and the count."
+      },
+      {
+       "kind": "verify",
+       "line": 1710,
+       "text": "Only <code>toggle</code>, <code>expandOnto</code>, and <code>closeDrawer</code> write the drawer state, and <code>closeDrawer</code> only closes one. A probe that opened <code>src/a.ts</code>, then closed and reopened the drawer, or visited o/r#2's drawer and came back, drew <code>+ src/a.ts 1*</code> with no thread link."
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Declares the <code>panelOpenFiles</code> state key: the drawer it belongs to and the paths of its open files."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "The drawer test, and new tests for grouping, collapse, and the width cut",
+   "intro": [
+    "The existing drawer test now expects one <code>file:</code> box per file after the links row. <code>threadsOf</code> opens every collapsed file first, then reads each file's threads' link targets and text, and checks that each thread sits two columns in and leaves its <code>Text</code> free to wrap. <code>fileLinesOf</code> reads each file's toggle button.",
+    "New tests use <code>drawerListing</code>, which opens x/y#7's drawer over a list of threads you give it, and <code>twoDrawersListing</code>, which lists x/y#7 and o/r#2. They pin the grouping and the <code>file</code> label, the boundary of the width cut, the collapse and expand of each file, an open file that stays open through a poll, and files that start collapsed each time a drawer opens, by its line or by a collapsed section's label."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "With <code>20aa773</code>'s code, the two collapse tests fail. With <code>7939433</code>'s <code>hooks/register.tsx</code>, the test that reopens a drawer fails. The rest pass in each case."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The drawer's description in docs/plugins.md",
+   "intro": [
+    "<code>docs/plugins.md</code> now describes a line for each file that counts its threads and starts collapsed, how a click or Enter shows and hides the threads, that files start collapsed again each time the drawer opens, the order of files and threads, and the parts of a thread's line. It also says that a terminal without hyperlinks draws the thread's URL after the text."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
