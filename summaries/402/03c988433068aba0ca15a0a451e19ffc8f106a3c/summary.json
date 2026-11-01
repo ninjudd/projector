@@ -1,0 +1,80 @@
+{
+ "version": 1,
+ "name": "Installer Python check",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 402,
+  "title": "Check python3 only when the installer creates a venv",
+  "head": "03c988433068aba0ca15a0a451e19ffc8f106a3c",
+  "headRef": "worktree-installer-python-check",
+  "base": "0268a2a54ebb87c71f2cbafe6f19c0653292deed",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>install.sh</code> is Projector's public installer, and <code>project upgrade</code> runs it again to update the CLI. When <code>pipx</code> is missing, the installer gives the CLI a virtual environment (venv) of its own and installs into it with pip. A venv keeps running on the Python that created it, so an upgrade of an existing venv never uses the <code>python3</code> on <code>PATH</code>.",
+   "Before this change the installer still required <code>PROJECTOR_PYTHON</code>, which defaults to <code>python3</code>, to be 3.11 or newer on every run. So an upgrade from a shell whose <code>python3</code> was older, such as one with an old venv activated or a version-manager override, stopped with exit 69 although the install was healthy. The message also hid the cause: it discarded the interpreter's stderr and never said which Python answered.",
+   "The installer now checks <code>PROJECTOR_PYTHON</code> only when it has to create the venv. A venv that already exists but is too old still fails, because <code>pyproject.toml</code> declares <code>requires-python = \"&gt;=3.11\"</code> and pip refuses the install. A refusal now adds a second line with the version and path that answered, or the interpreter's own error."
+  ],
+  "cards": [
+   {
+    "id": "paths",
+    "title": "What each install path does now",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Path</th><th>Before</th><th>After</th></tr></thead><tbody><tr><td>New venv, Python older than 3.11 or missing</td><td>exit 69</td><td class=\"r\">exit 69, with what answered</td></tr><tr><td>Existing venv, old or no <code>python3</code></td><td>exit 69</td><td class=\"r\">upgrades</td></tr><tr><td>Existing venv made by an old Python</td><td>pip refuses</td><td class=\"r\">pip refuses</td></tr><tr><td><code>pipx</code> installs</td><td>no check</td><td class=\"r\">no check</td></tr><tr><td>Plugin-only <code>claude</code>, <code>codex</code></td><td>no check</td><td class=\"r\">no check</td></tr></tbody></table></div><p class=\"note\">Each row was run in a sandbox at both heads; the review lists the runs.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "installer",
+   "title": "The installer checks Python only to create a venv",
+   "kicker": "Where the version check runs, and what its refusal says",
+   "intro": [
+    "<code>install_venv</code> is the installer's path when <code>pipx</code> is not on <code>PATH</code>. It creates the venv when <code>$VENV_DIR/bin/python</code> is missing, installs the CLI into it with pip, and links <code>project</code> into the bin directory.",
+    "The version check moves inside the branch that creates the venv, into a new function, <code>require_python</code>. That function runs a short Python script that prints the interpreter's version and path and exits non-zero below 3.11. It captures both output streams, so a refusal can show either the version that answered or the error from an interpreter that could not run."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "install.sh",
+     "note": "Moves the Python version check into the venv-creation branch and adds <code>require_python</code>, which reports what answered.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 123,
+       "text": "An existing venv now skips the check. In a sandbox, an existing Python 3.12 venv upgraded with <code>PROJECTOR_PYTHON=/usr/bin/python3</code> (3.9), and with no <code>python3</code> on <code>PATH</code>, exits 0 at this head and 69 on <code>main</code>. A venv made by Python 3.9 still fails at both, with pip's <code>requires a different Python</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 146,
+       "text": "The refusal still exits 69 under <code>set -e</code>: the failing substitution sits left of <code>&amp;&amp;</code>, so the function reaches its messages. Checked with an old Python, a missing path, and no <code>python3</code> on <code>PATH</code>; each prints the second <code>reports:</code> line and creates no venv."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests run the installer's real check",
+   "kicker": "A fake interpreter that runs the real script under a chosen version",
+   "intro": [
+    "The installer tests use a fake <code>python3</code> that logs its arguments and makes a fake venv. Before this change its <code>-c</code> branch simply exited 0 or 1. Now it runs the installer's real check script with the real Python, after setting <code>sys.version</code> and <code>sys.version_info</code> to the version the test chooses, so the tests exercise the real comparison and the real message.",
+    "Three tests cover the change: an old Python is refused with the version it reported, an interpreter that cannot run shows its error, and an upgrade of an existing venv runs only the venv's pip under an old <code>python3</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_install.py",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1019,
+       "text": "The three new tests fail against <code>main</code>'s <code>install.sh</code>: this one with <code>0 != 69</code>, the other two because the <code>reports:</code> line is missing. All 53 installer tests pass at this head."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,122 @@
+diff --git a/install.sh b/install.sh
+index 39ab9278..0a64bc43 100755
+--- a/install.sh
++++ b/install.sh
+@@ -118,11 +118,12 @@ install_cli() {
+ # system Python, which Homebrew's and Debian's refuse (PEP 668).
+ install_venv() {
+   local source="$1"
+-  if ! "$PROJECTOR_PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
+-    echo "install.sh: Projector needs Python 3.11 or newer as $PROJECTOR_PYTHON; set PROJECTOR_PYTHON to use another" >&2
+-    return 69
++  # A venv runs on the Python it was made with, and pip refuses one too old for
++  # `requires-python`, so only making a venv depends on PROJECTOR_PYTHON.
++  if [ ! -x "$VENV_DIR/bin/python" ]; then
++    require_python
++    "$PROJECTOR_PYTHON" -m venv "$VENV_DIR"
+   fi
+-  [ -x "$VENV_DIR/bin/python" ] || "$PROJECTOR_PYTHON" -m venv "$VENV_DIR"
+   "$VENV_DIR/bin/python" -m pip install --quiet --upgrade --no-cache-dir "$source"
+   mkdir -p "$BIN_DIR"
+   ln -sf "$VENV_DIR/bin/project" "$BIN_DIR/project"
+@@ -133,6 +134,21 @@ install_venv() {
+   esac
+ }
+ 
++# A version manager can put another Python behind `python3` in one directory or
++# shell, and can fail outright with its reason on stderr, so a refusal shows
++# what actually answered: the version and path, or that reason.
++require_python() {
++  local found
++  found="$("$PROJECTOR_PYTHON" -c '
++import sys
++print("%s at %s" % (sys.version.split()[0], sys.executable))
++sys.exit(sys.version_info < (3, 11))
++' 2>&1)" && return 0
++  echo "install.sh: Projector needs Python 3.11 or newer as $PROJECTOR_PYTHON; set PROJECTOR_PYTHON to use another" >&2
++  echo "install.sh: $PROJECTOR_PYTHON reports: $found" >&2
++  return 69
++}
++
+ run_claude() { CLAUDE_CONFIG_DIR="$CLAUDE_DIR" "$CLAUDE_COMMAND" "$@"; }
+ run_codex() { CODEX_HOME="$CODEX_DIR" "$CODEX_COMMAND" "$@"; }
+ 
+diff --git a/tests/test_install.py b/tests/test_install.py
+index 6a3f1832..74e6fccd 100644
+--- a/tests/test_install.py
++++ b/tests/test_install.py
+@@ -2,8 +2,10 @@
+ 
+ import json
+ import os
++import shlex
+ import shutil
+ import subprocess
++import sys
+ import tempfile
+ import unittest
+ from pathlib import Path
+@@ -954,18 +956,20 @@ def test_status_offline_reports_versions_without_a_verdict(self) -> None:
+                 self.assertIn("cli-installed  9.9.9 (no release version to compare against)", result.stdout)
+                 self.assertNotIn("repo-", result.stdout, "no checkout, so nothing to compare with an upstream")
+ 
+-    def fake_python(self, *, new_enough: bool = True) -> Path:
+-        """A python3 that passes or fails the version check and makes a fake venv."""
++    def fake_python(self, *, version: str = "3.12.5") -> Path:
++        """A python3 that runs the installer's real check as `version` and makes a fake venv."""
+ 
+         path = self.user_root / "python3"
+         template = self.user_root / "venv-python"
+         template.write_text('#!/bin/sh\nprintf "venv-python %s\\n" "$*" >> "$PROJECTOR_TEST_LOG"\n')
+         template.chmod(0o755)
++        version_info = tuple(int(part) for part in version.split("."))
++        disguise = f"import sys; sys.version = {version!r}; sys.version_info = {version_info!r}; exec(sys.argv[1])"
+         path.write_text(
+             "#!/bin/sh\n"
+             'printf "python3 %s\\n" "$*" >> "$PROJECTOR_TEST_LOG"\n'
+             'case "$1" in\n'
+-            f"  -c) exit {0 if new_enough else 1} ;;\n"
++            f'  -c) exec "{sys.executable}" -c {shlex.quote(disguise)} "$2" ;;\n'
+             f'  -m) mkdir -p "$3/bin" && cp "{template}" "$3/bin/python" && cp "{template}" "$3/bin/project" ;;\n'
+             "esac\n"
+         )
+@@ -991,14 +995,38 @@ def test_without_pipx_the_cli_gets_a_venv_and_a_link(self) -> None:
+         self.assertIn("not-on-path", result.stdout, "the link's directory is not on this PATH")
+ 
+     def test_without_pipx_an_old_python_is_refused(self) -> None:
+-        environment = self.without_pipx(self.fake_python(new_enough=False))
++        python = self.fake_python(version="3.10.14")
++        environment = self.without_pipx(python)
+ 
+         result = self.piped("cli", environment=environment)
+ 
+         self.assertEqual(69, result.returncode)
+         self.assertIn("Projector needs Python 3.11 or newer", result.stderr)
++        self.assertIn(f"{python} reports: 3.10.14 at /", result.stderr)
+         self.assertFalse((self.user_root / "venv").exists())
+ 
++    def test_without_pipx_a_python_that_cannot_run_says_why(self) -> None:
++        python = self.fake_python()
++        environment = self.without_pipx(python)
++        python.write_text("#!/bin/sh\necho \"pyenv: version '3.8' is not installed\" >&2\nexit 127\n")
++
++        result = self.piped("cli", environment=environment)
++
++        self.assertEqual(69, result.returncode)
++        self.assertIn(f"{python} reports: pyenv: version '3.8' is not installed", result.stderr)
++        self.assertFalse((self.user_root / "venv").exists())
++
++    def test_without_pipx_an_upgrade_needs_nothing_from_an_old_python3(self) -> None:
++        environment = self.without_pipx(self.fake_python())
++        self.assertEqual(0, self.piped("cli", environment=environment).returncode)
++        self.log.unlink()
++        self.fake_python(version="3.10.14")
++
++        result = self.piped("cli", environment=environment)
++
++        self.assertEqual(0, result.returncode, result.stderr)
++        self.assertEqual([f"venv-python -m pip install --quiet --upgrade --no-cache-dir {ARCHIVE}"], self.logged())
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
