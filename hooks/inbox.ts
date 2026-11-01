@@ -67,6 +67,21 @@ export const quoteOf = (item: Item) => `"${item.subject}"`
 /** What the panel puts in the prompt for an answer or an outcome: the quoted item, a blank line, and the answer's text. */
 export const proposalOf = (item: Answerable, answer: string) => `${quoteOf(item)}\n\n${answer}`
 
+/** The words that say you don't understand the item quoted above them. */
+export const UNCLEAR_WORDS = "I don't understand"
+
+/**
+ * What I don't understand puts in the prompt: the quoted item, a blank line,
+ * and the words, followed by a space so you can say what you don't follow.
+ */
+export const unclearOf = (item: Item) => `${quoteOf(item)}\n\n${UNCLEAR_WORDS} `
+
+/** Whether the text under a quote says you don't understand the item, with either apostrophe. */
+const saysUnclear = (said: string | undefined) => said?.replace('’', "'").startsWith(UNCLEAR_WORDS) === true
+
+/** Whether a prompt holds the words anywhere, with either apostrophe, so it may say you don't understand an item. */
+export const mayBeUnclear = (text: string) => text.replaceAll('’', "'").includes(UNCLEAR_WORDS)
+
 /** One answer a sent prompt gives: the letter of the option it picks. */
 export type Given = { question: Question; letter: string }
 
@@ -93,17 +108,19 @@ function outcomeIn(request: Request, said: string | undefined): Omit<Finished, '
 }
 
 /**
- * What a question's or request's drawer put in the prompt: the item's quote
- * as it read then, and the option or outcome chosen, or an empty answer for
- * discuss. `isStale` marks one put there before the item was revised.
+ * What an item's drawer put in the prompt: the item's quote as it read then,
+ * and the option or outcome chosen, an empty answer for discuss, or
+ * `UNCLEAR_WORDS` for I don't understand, which also keeps the detail you
+ * read. `isStale` marks one put there before the item was revised.
  */
-export type Proposal = { ref: string; quote: string; answer: string; isStale?: boolean }
+export type Proposal = { ref: string; quote: string; answer: string; detail?: string; isStale?: boolean }
 
 /**
- * What a sent prompt says to the open questions and requests: the answers and
- * outcomes it gives, and the items it replies to.
+ * What a sent prompt says to the open items: the answers and outcomes it
+ * gives, the questions and requests it replies to, and the items of any kind
+ * it says you don't understand.
  */
-export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable[] }
+export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable[]; unclears: Item[] }
 
 /**
  * Reads a sent prompt as the panel writes it, each quote speaking to one
@@ -125,11 +142,23 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
  * takes what follows it, and otherwise replies to the one whose drawer last
  * put that quote in the prompt, or else to the oldest with that text. Only
  * questions and requests take answers and replies, snoozed ones included.
+ *
+ * A quote whose text below starts with `I don't understand` says you don't
+ * understand an open item of any kind not already marked unclear: the item
+ * whose drawer last put those words under that quote or, when the prompt
+ * holds that quote once, put it there alone through discuss. Failing those it
+ * is the item whose drawer last put the quote there, or, when no drawer did,
+ * the oldest with that text. A drawer's item takes it or nothing, so it never
+ * falls through to another item with that text. A drawer's pick made before
+ * its item was revised, or on a subject or detail that has changed since,
+ * says nothing of the kind, so its quote replies as any other text would.
  */
 export function readPrompt(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Read {
+  const byAge = (one: Item, other: Item) => one.postedAt - other.postedAt
   const open = items
     .filter((item): item is Answerable => item.kind !== 'notice' && item.answer === undefined)
-    .sort((one, other) => one.postedAt - other.postedAt)
+    .sort(byAge)
+  const markable = items.filter(item => item.answer === undefined && item.unclear === undefined).sort(byAge)
   const quotes = [...new Set([...items.map(quoteOf), ...proposed.map(one => one.quote)])]
     .flatMap(quote => {
       const found: { at: number; end: number; quote: string }[] = []
@@ -143,6 +172,26 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
   const outcomes: Finished[] = []
   const answered = new Set<string>()
   const replied = new Set<string>()
+  const unclear = new Set<string>()
+  const isSettled = (ref: string) => answered.has(ref) || replied.has(ref) || unclear.has(ref)
+  // A drawer whose item an earlier quote in this prompt settled leaves the
+  // quote to another drawer, so a prompt can say it of two items that share
+  // a subject. A prompt that holds the quote once holds one drawer's fill, so
+  // a press you cleared gives way to a later discuss. One that holds it twice
+  // can hold both fills, and the words are the press's.
+  const unclearAt = (quote: string) => {
+    const drawn = proposed.filter(one => one.quote === quote && !isSettled(one.ref))
+    const isQuotedOnce = quotes.filter(one => one.quote === quote).length === 1
+    const source = drawn.findLast(one => one.answer === UNCLEAR_WORDS || (isQuotedOnce && one.answer === '')) ?? drawn.at(-1)
+    if (source === undefined) return markable.find(item => quoteOf(item) === quote && !isSettled(item.ref))?.ref
+    const item = markable.find(one => one.ref === source.ref)
+    const isAsRead =
+      item !== undefined &&
+      source.isStale !== true &&
+      quoteOf(item) === source.quote &&
+      (source.detail === undefined || source.detail === item.detail)
+    return isAsRead ? source.ref : undefined
+  }
   const isOpen = (ref: string) => open.some(item => item.ref === ref) && !answered.has(ref)
   const isFree = (ref: string) => isOpen(ref) && !replied.has(ref)
   const isRequest = (ref: string) => items.some(item => item.ref === ref && item.kind === 'request')
@@ -162,6 +211,12 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
   for (const { end, quote } of quotes) {
     const after = text.slice(end, quotes.find(next => next.at >= end)?.at)
     const said = /^[ \t]*\n/.test(after) ? after.trim() : undefined
+    const isAnswer = open.some(item => quoteOf(item) === quote && isOpen(item.ref) && takes(item, said))
+    const unclearRef = saysUnclear(said) && !isAnswer ? unclearAt(quote) : undefined
+    if (unclearRef !== undefined) {
+      unclear.add(unclearRef)
+      continue
+    }
     // The drawer that put this text in the prompt: the last to put this
     // quote there with this answer or alone, through discuss, leaving out an
     // item an earlier quote in this prompt resolved. A request's drawer owns
@@ -193,7 +248,12 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
     const replying = intended?.ref ?? open.find(one => quoteOf(one) === quote && isFree(one.ref))?.ref
     if (replying !== undefined) replied.add(replying)
   }
-  return { answers, outcomes, replies: open.filter(item => replied.has(item.ref) && !answered.has(item.ref)) }
+  return {
+    answers,
+    outcomes,
+    replies: open.filter(item => replied.has(item.ref) && !answered.has(item.ref) && !unclear.has(item.ref)),
+    unclears: markable.filter(item => unclear.has(item.ref)),
+  }
 }
 
 /** Names the subagent that posted an item, by its description and id when the session still lists it. */
@@ -215,6 +275,18 @@ export const relayNote = (item: Answerable, agents: readonly AgentInfo[]) =>
 /** What the main loop reads beside a prompt that replies to a subagent's item: whom to send the reply to. */
 export const replyNote = (item: Answerable, agents: readonly AgentInfo[]) =>
   `The subagent ${whoAsked(item, agents)} ${wording(item).posted} ${quoteOf(item)}; send it the reply this prompt gives, which leaves the ${wording(item).noun} open.`
+
+/**
+ * What the main loop reads beside a prompt that says you don't understand an
+ * item: the `UNCLEAR` line its agent revises the item on, and, for a
+ * subagent's item, whom to send that line and your words to.
+ */
+export function unclearNote(item: Item, agents: readonly AgentInfo[]): string {
+  const line = `UNCLEAR ${item.ref} ${item.subject}\n\nThe person does not understand this ${item.kind}, and this prompt says what they do not follow.`
+  return item.agentId === undefined
+    ? line
+    : `${line} The subagent ${whoAsked(item, agents)} posted it; send it this UNCLEAR line with what the prompt says, or revise the item yourself.`
+}
 
 /** The subagent that posted an item, while it can still read a message; undefined sends the line to the main loop. */
 export function liveAgent(item: Item, agents: readonly AgentInfo[]): string | undefined {
@@ -279,7 +351,7 @@ const described = (lines: readonly string[]) => [...lines, UNSEEN_NUMBER].join('
 
 /** What `ask`, `tell`, and `request` each say about I don't understand, for the kind of item it posts. */
 const unclearArrives = (kind: Item['kind']) =>
-  `When the person presses I don’t understand, a message that starts \`UNCLEAR 3\` arrives: revise the ${kind} to explain it more simply or to add the context they lack, keeping its number.`
+  `When the person presses I don’t understand and sends the prompt it fills, a message that starts \`UNCLEAR 3\` arrives with what they don’t follow: revise the ${kind} to explain it more simply or to add the context they lack, keeping its number.`
 
 export const ASK_DESCRIPTION = described([
   'Ask the person a question without stopping: it appears in Projector’s panel above their prompt, and you keep working.',

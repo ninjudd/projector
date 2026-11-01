@@ -97,7 +97,11 @@ export type Posted = {
   snoozedUntil?: number
   /** When the item was last snoozed, in milliseconds; absent when it is not snoozed. */
   snoozedAt?: number
-  /** When you pressed I don't understand, until the agent revises the item; `deliveredAt` once `UNCLEAR` reached the agent. */
+  /**
+   * When you sent the prompt I don't understand filled, or ran `project inbox
+   * unclear`, until the agent revises the item; `deliveredAt` once `UNCLEAR`
+   * reached the agent.
+   */
   unclear?: { at: number; deliveredAt?: number }
   /**
    * A deliverer's hold on the line the item owes its agent: `line` says

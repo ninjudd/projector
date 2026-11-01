@@ -2331,9 +2331,11 @@ also refuses an item already marked unclear and one already answered,
 dismissed, or withdrawn. An answer, outcome, or dismissal recorded before
 the `UNCLEAR` line goes out takes its place, so the agent hears only that.
 When the line cannot be delivered, the mark is taken back, so you say it
-again. Projector's panel runs `unclear` when you press **I don't
-understand** in an item's drawer. To say what confuses you, reply to the
-item in your own words instead.
+again. In Projector's panel, **I don't understand** in an item's drawer
+fills the prompt for you to say what you don't follow. Once you send that
+prompt, the panel runs `unclear` with the text you read and marks the line
+delivered, because your prompt carried the `UNCLEAR` line and your words to
+the agent.
 
 When your reply shows that an open question was unclear, or that the choice
 has changed, the agent rewrites the question in place with `revise`. Only the

@@ -2359,7 +2359,11 @@ async function itemOrderOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
   return (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('item:'))
 }
 
-test('I don’t understand on a running subagent’s notice records it, sends UNCLEAR once, and marks the line until a revise', async ($, on) => {
+/** What the main loop reads beside a prompt that says you don't understand an item: its `UNCLEAR` line first. */
+const unclearNoteOf = (line: string, kind: string, relay = '') =>
+  `${line}\n\nThe person does not understand this ${kind}, and this prompt says what they do not follow.${relay}`
+
+test('I don’t understand fills the prompt, and sending it marks a running subagent’s notice unclear until a revise', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [held(), notice({ agentId: 'agent-1' })], { agents: [running('running')] })
@@ -2370,18 +2374,33 @@ test('I don’t understand on a running subagent’s notice records it, sends UN
   await ui.press({ key: 'item:2' })
   const action = await ui.find({ type: 'Button', key: 'unclear:2' })
   expect([action?.props.hotkey, action?.props.plain, action?.text]).toEqual(['6', true, "I don't understand"])
+  // The press only puts the quoted notice and the words in the prompt, and the drawer stays open while you say what
+  // you don't follow. Nothing is recorded or sent yet.
   await ui.press({ key: 'unclear:2' })
   await clock.advance(1)
   await clock.settle()
-  // The panel passes the subject and detail its drawer showed, and closes the drawer.
+  expect(session.filled).toEqual([`insert:"${FORCE_PUSHED}"\n\nI don't understand `])
+  expect(session.project().filter(command => command.startsWith('inbox unclear'))).toEqual([])
+  expect(session.store.store.get('2')?.unclear).toBeUndefined()
+  expect(session.sent).toEqual([])
+  expect(session.submitted).toEqual([])
+  expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe('The file held a debug token.')
+
+  // Sending it carries your words to the main loop, beside the UNCLEAR line and the subagent to pass it to, and
+  // marks the notice unclear with the subject and detail you read. The prompt delivered the line, so the panel sends
+  // the subagent nothing itself, and the drawer closes.
+  const text = `"${FORCE_PUSHED}"\n\nI don't understand which file held the token`
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  const relay =
+    ' The subagent Fix #7 (agent-1) posted it; send it this UNCLEAR line with what the prompt says, or revise the item yourself.'
+  expect(session.submitted).toEqual([{ text, context: [unclearNoteOf(`UNCLEAR 2 ${FORCE_PUSHED}`, 'notice', relay)] }])
   expect(session.project().filter(command => command.startsWith('inbox unclear'))).toEqual([
     `inbox unclear 2 --subject=${FORCE_PUSHED} --detail=The file held a debug token. --session s1 --json`,
   ])
+  expect(session.store.store.get('2')?.unclear).toEqual({ at: expect.any(Number), deliveredAt: expect.any(Number) })
+  expect(session.sent).toEqual([])
   expect(await ui.find({ key: 'detail:2' })).toBeUndefined()
-  // The subagent hears UNCLEAR, and the line is marked delivered.
-  expect(session.sent).toEqual([{ to: 'agent-1', text: `UNCLEAR 2 ${FORCE_PUSHED}` }])
-  expect(session.submitted).toEqual([])
-  expect(session.store.store.get('2')?.unclear).toEqual({ at: NOW + 1, deliveredAt: expect.any(Number) })
 
   // The line ends with `unclear` in the warning color, and its drawer no longer offers the action.
   expect((await ui.find({ type: 'Text', text: 'unclear' }))?.props.color).toBe('warning')
@@ -2394,7 +2413,8 @@ test('I don’t understand on a running subagent’s notice records it, sends UN
   await ui.press({ key: 'close:2' })
   await clock.advance(TICK)
   await clock.settle()
-  expect(session.sent).toHaveLength(1)
+  expect(session.sent).toEqual([])
+  expect(session.submitted).toHaveLength(1)
 
   // The agent revises the notice: it keeps its number and its place, shows the new text without the mark, and
   // offers I don't understand again.
@@ -2412,26 +2432,24 @@ test('I don’t understand on a running subagent’s notice records it, sends UN
   await ui.unmount()
 })
 
-test('I don’t understand on an item whose subagent finished reaches the main loop, naming the subagent, and marks it beside its stage', async ($, on) => {
+test('I don’t understand sent as filled on the main loop’s own request gives it the UNCLEAR line and marks it beside its stage', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const started = { action: INSTALL, startedAt: NOW - 5_000, deliveredAt: NOW - 4_000 }
-  const ready = requested({ agentId: 'agent-1', start: INSTALL, started, progress: { state: 'ready', at: NOW - 1_000 } })
-  const session = questionWorld(on, clock, [ready], { agents: [running('completed')] })
+  const ready = requested({ start: INSTALL, started, progress: { state: 'ready', at: NOW - 1_000 } })
+  const session = questionWorld(on, clock, [ready])
   await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
 
   await ui.press({ key: 'item:3' })
   await ui.press({ key: 'unclear:3' })
-  await clock.advance(1)
+  expect(session.filled).toEqual(['insert:"Test the gutters"\n\nI don\'t understand '])
+  // Sent with nothing added, it still says you don't understand the request, and names no subagent.
+  const text = '"Test the gutters"\n\nI don\'t understand '
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.sent).toEqual([])
-  expect(session.submitted).toEqual([
-    {
-      text: 'UNCLEAR 3 Test the gutters\n\nThe subagent Fix #7 (agent-1) posted this, and the message could not reach it; send it this message, or revise the item yourself.',
-      context: [],
-    },
-  ])
+  expect(session.submitted).toEqual([{ text, context: [unclearNoteOf('UNCLEAR 3 Test the gutters', 'request')] }])
   expect(session.store.store.get('3')?.unclear?.deliveredAt).toBeDefined()
 
   // The line reads `unclear` and then the request's stage, each in its own color.
@@ -2443,15 +2461,14 @@ test('I don’t understand on an item whose subagent finished reaches the main l
   await ui.unmount()
 })
 
-test('an UNCLEAR that cannot be delivered takes the mark back, says so, and offers I don’t understand again', async ($, on) => {
+test('an UNCLEAR from a terminal that cannot be delivered takes the mark back, says so, and a dropped prompt records nothing', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  const session = questionWorld(on, clock, [held()], { drop: 'a hook refused it' })
+  // `project inbox unclear` from a terminal leaves the line for the panel to deliver.
+  const session = questionWorld(on, clock, [held({ unclear: { at: NOW - 1_000 } })], { drop: 'a hook refused it' })
   await startSession($, clock)
   const ui = await $.ui.mount(PANEL)
 
-  await ui.press({ key: 'item:1' })
-  await ui.press({ key: 'unclear:1' })
   await clock.advance(1)
   await clock.settle()
   expect(session.submitted.map(one => one.text)).toEqual(['UNCLEAR 1 Decline the finding?'])
@@ -2465,10 +2482,18 @@ test('an UNCLEAR that cannot be delivered takes the mark back, says so, and offe
   await clock.advance(TICK)
   await clock.settle()
   expect(session.submitted).toHaveLength(1)
+
+  // A prompt that says you don't understand the question but does not enter records nothing.
+  await ui.press({ key: 'unclear:1' })
+  const text = '"Decline the finding?"\n\nI don\'t understand the cap'
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.project().filter(command => command.startsWith('inbox unclear'))).toEqual([])
+  expect(session.store.store.get('1')).toEqual(held())
   await ui.unmount()
 })
 
-test('a press of I don’t understand on a drawer the agent revised since records nothing and shows the new text', async ($, on) => {
+test('I don’t understand pressed on a drawer the agent revised since says nothing when sent, and a new press says it of what you read now', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const session = questionWorld(on, clock, [notice()])
@@ -2476,29 +2501,68 @@ test('a press of I don’t understand on a drawer the agent revised since record
   const ui = await $.ui.mount(PANEL)
 
   await ui.press({ key: 'item:2' })
-  // The agent revises the notice's detail from its shell, which the panel reads only on a later tick.
+  await ui.press({ key: 'unclear:2' })
+  // The agent revises the notice's detail from its shell, and the panel reads it on its next tick. The drawer stays
+  // open on the new text.
   const detail = 'The file held a debug token, which is now rotated.'
   session.store.write(notice({ detail }))
-  await ui.press({ key: 'unclear:2' })
-  await clock.advance(1)
+  await clock.advance(TICK)
   await clock.settle()
-  expect(session.project()).toContain(
-    `inbox unclear 2 --subject=${FORCE_PUSHED} --detail=The file held a debug token. --session s1 --json`,
-  )
-  expect(session.store.store.get('2')).toEqual(notice({ detail }))
-  // The drawer stays open on the new text, still offering the action.
   expect((await ui.find({ key: 'detail:2' }))?.props.text).toBe(detail)
-  expect((await ui.find({ type: 'Button', key: 'unclear:2' }))?.props.hotkey).toBe('6')
-  expect(await ui.find({ type: 'Text', text: 'unclear' })).toBeUndefined()
-  expect(session.sent).toEqual([])
-  expect(session.submitted).toEqual([])
 
-  // Pressed again, it records what you read now.
+  // What you read is gone, so the prompt carries your words with no UNCLEAR line, and the panel records nothing.
+  const text = `"${FORCE_PUSHED}"\n\nI don't understand which token`
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.submitted).toEqual([{ text, context: [] }])
+  expect(session.project().filter(command => command.startsWith('inbox unclear'))).toEqual([])
+  expect(session.store.store.get('2')).toEqual(notice({ detail }))
+  expect(await ui.find({ type: 'Text', text: 'unclear' })).toBeUndefined()
+
+  // Pressed again, it says so of what you read now.
+  await ui.press({ key: 'item:2' })
   await ui.press({ key: 'unclear:2' })
-  await clock.advance(1)
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.project()).toContain(`inbox unclear 2 --subject=${FORCE_PUSHED} --detail=${detail} --session s1 --json`)
-  expect(session.submitted.map(one => one.text)).toEqual([`UNCLEAR 2 ${FORCE_PUSHED}`])
+  expect(session.submitted.at(-1)).toEqual({ text, context: [unclearNoteOf(`UNCLEAR 2 ${FORCE_PUSHED}`, 'notice')] })
+  expect(session.store.store.get('2')?.unclear?.deliveredAt).toBeDefined()
+  expect(session.sent).toEqual([])
+  await ui.unmount()
+})
+
+test('I don’t understand pressed before a revision of only the subject, or one the panel has yet to read, says nothing when sent', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [notice()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  const unclearRuns = () => session.project().filter(command => command.startsWith('inbox unclear'))
+
+  // The agent revises only the notice's subject from its shell, and the panel reads it on its next tick.
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'unclear:2' })
+  const reworded = 'Force-pushed #7 to drop a file that held a token'
+  session.store.write(notice({ subject: reworded }))
+  await clock.advance(TICK)
+  await clock.settle()
+  const old = `"${FORCE_PUSHED}"\n\nI don't understand which token`
+  await $.prompt.submit({ text: old, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.submitted).toEqual([{ text: old, context: [] }])
+  expect(unclearRuns()).toEqual([])
+  expect(session.store.store.get('2')?.unclear).toBeUndefined()
+
+  // Pressed on the new subject, then revised again before the panel's next tick: the panel reads the store before
+  // it reads the prompt, so the prompt carries no UNCLEAR line for text the notice no longer holds.
+  await ui.press({ key: 'unclear:2' })
+  session.store.write(notice({ subject: reworded, detail: 'The token is rotated.' }))
+  const text = `"${reworded}"\n\nI don't understand which token`
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.submitted.at(-1)).toEqual({ text, context: [] })
+  expect(unclearRuns()).toEqual([])
+  expect(session.store.store.get('2')?.unclear).toBeUndefined()
   await ui.unmount()
 })
 
@@ -4027,8 +4091,10 @@ test('a question stored with six choices, or a request with Start and five optio
     'dismiss:3 8',
     'snooze:3 9',
   ])
-  // A click or Enter still presses it.
+  // A click or Enter still presses it, and what it puts in the prompt says so once sent.
   await ui.press({ key: 'unclear:3' })
+  expect(session.filled.at(-1)).toBe('insert:"Test the gutters"\n\nI don\'t understand ')
+  await $.prompt.submit({ text: '"Test the gutters"\n\nI don\'t understand ', wait: false, origin: { kind: 'composer' } })
   await clock.settle()
   expect(session.project()).toContain('inbox unclear 3 --subject=Test the gutters --detail=1. Open Fyra. --session s1 --json')
   expect(session.store.store.get('3')?.unclear).toBeDefined()
