@@ -2,7 +2,6 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, FsEntry, Register, RenderChildren } from 'claude-code'
 
 import type {
-  Answerable,
   Checks,
   Item,
   LoopKind,
@@ -72,6 +71,9 @@ import {
   TELL_SCHEMA,
   tellArguments,
   typedLetter,
+  UNCLEAR_WORDS,
+  unclearNote,
+  unclearOf,
   WITHDRAW_DESCRIPTION,
   WITHDRAW_SCHEMA,
   withdrawArguments,
@@ -335,11 +337,12 @@ const acting = new Set<string>()
 /** When the last tick ran, so an item whose snooze ends between two ticks wakes once. */
 let tickedAt: number | undefined
 /**
- * The answers questions' drawers put in the prompt, oldest first, so a sent
- * quote answers the question you chose when another shares its text. A
- * revision marks its question's proposals stale, so an answer chosen from the
- * old text answers nothing. A proposal lasts until a prompt you send quotes
- * its question or holds the quote it was chosen under.
+ * What items' drawers put in the prompt, oldest first, so a sent quote
+ * answers the question you chose, or says you don't understand the item you
+ * pressed that on, when another shares its text. A revision marks its item's
+ * proposals stale, so an answer chosen from the old text answers nothing. A
+ * proposal lasts until a prompt you send quotes its item or holds the quote
+ * it was chosen under.
  */
 let proposed: Proposal[] = []
 /**
@@ -352,16 +355,18 @@ let proposed: Proposal[] = []
 let ring: { requestId: string; key: string | undefined } | undefined
 
 /**
- * Records what a question's or request's drawer put in the prompt: an option
- * or an outcome, or an empty answer for discuss. It takes the place of the
- * item's last fresh pick, and of any stale pick that put the same text in the
- * prompt, since a sent prompt cannot tell the two apart.
+ * Records what an item's drawer put in the prompt: an option or an outcome,
+ * an empty answer for discuss, or `UNCLEAR_WORDS` for I don't understand,
+ * with the detail you read. It takes the place of the item's last fresh pick,
+ * and of any stale pick that put the same text in the prompt, since a sent
+ * prompt cannot tell the two apart.
  */
-function propose(item: Answerable, answer: string): void {
+function propose(item: Item, answer: string): void {
   const quote = quoteOf(item)
   const isKept = (one: Proposal) =>
     one.isStale === true ? one.quote !== quote || one.answer !== answer : one.ref !== item.ref
-  proposed = [...proposed.filter(isKept), { ref: item.ref, quote, answer }]
+  const read = answer === UNCLEAR_WORDS ? { detail: item.detail } : {}
+  proposed = [...proposed.filter(isKept), { ref: item.ref, quote, answer, ...read }]
 }
 
 /** The few variables the panel's paths are written with, read once per load. */
@@ -912,19 +917,18 @@ async function checkInbox($: Engine): Promise<void> {
 const checkSoon = ($: Engine) => $.clock.after(1, () => void checkInbox($))
 
 /**
- * Dismisses, snoozes for `minutes`, or restores an item from the panel, or
- * records that you don't understand it; a second press finds it changed and
- * does nothing. Dismissing, snoozing, or saying you don't understand closes
- * the item's drawer, and a dismissed or snoozed item stays listed, muted, for
- * 30 seconds, so its line opens the drawer again to restore it. Restoring
- * keeps the drawer open on the item, open again. A press the CLI refuses
- * because the item changed since the panel drew it leaves the drawer open, to
- * show the item as it is now.
+ * Dismisses, snoozes for `minutes`, restores, or starts an item from the
+ * panel; a second press finds it changed and does nothing. Dismissing or
+ * snoozing closes the item's drawer, and a dismissed or snoozed item stays
+ * listed, muted, for 30 seconds, so its line opens the drawer again to
+ * restore it. Restoring keeps the drawer open on the item, open again. A
+ * press the CLI refuses because the item changed since the panel drew it
+ * leaves the drawer open, to show the item as it is now.
  */
 async function act(
   $: Engine,
   item: Item,
-  command: 'dismiss' | 'snooze' | 'restore' | 'start' | 'unclear',
+  command: 'dismiss' | 'snooze' | 'restore' | 'start',
   minutes?: number,
 ): Promise<void> {
   const { ref, session } = item
@@ -933,12 +937,9 @@ async function act(
   try {
     const length = minutes === undefined ? [] : ['--for', String(minutes)]
     // Start passes the start action the drawer shows, which is what you
-    // consented to, and I don't understand passes the subject and detail it
-    // shows, which are what you read. The CLI refuses either when the agent
-    // has revised what it passes.
+    // consented to. The CLI refuses it when the agent has revised the action.
     const action = command === 'start' && item.kind === 'request' ? [`--action=${item.start ?? ''}`] : []
-    const asShown = command === 'unclear' ? [`--subject=${item.subject}`, `--detail=${item.detail}`] : []
-    const ran = await project($, ['inbox', command, ref, ...length, ...action, ...asShown, '--session', session, '--json'])
+    const ran = await project($, ['inbox', command, ref, ...length, ...action, '--session', session, '--json'])
     if (ran.exitCode === 0) {
       await replace($, itemOf(ran.stdout, session))
       if (command !== 'restore' && command !== 'start') await closeDrawer($, `item:${ref}`)
@@ -1095,12 +1096,13 @@ async function subscribeFrom($: Engine, output: string): Promise<void> {
 }
 
 /**
- * Records an answer or outcome a sent prompt gave, with `record`, such as
- * `['answer', '3.a']` or `['done', '5']`, and marks it delivered, because the
- * prompt itself carries it to the main loop. The panel's own deliverer leaves
- * the item alone meanwhile, so the agent hears it once.
+ * Records an answer or outcome a sent prompt gave, or that you don't
+ * understand an item, with `record`, such as `['answer', '3.a']`,
+ * `['done', '5']`, or `['unclear', '2', ...]`, and marks the line delivered,
+ * because the prompt itself carries it to the main loop. The panel's own
+ * deliverer leaves the item alone meanwhile, so the agent hears it once.
  */
-async function recordFromPrompt($: Engine, item: Answerable, record: readonly string[]): Promise<void> {
+async function recordFromPrompt($: Engine, item: Item, record: readonly string[]): Promise<void> {
   const { ref, session } = item
   delivering.add(ref)
   try {
@@ -1508,17 +1510,21 @@ export const register: Register = on => {
     // An option the panel put in the prompt answers its question, and `Done`
     // or `Declined` under a quoted request is its outcome: the prompt carries
     // the answer or the outcome, with any notes after it, to the main loop,
-    // and once the prompt has entered, the panel records it. Any other text
-    // under a quoted question or request replies to it, and the prompt
-    // carries the reply while the item stays open. Either way the prompt is
-    // done with the item's drawer. A subagent's item gets a note naming it,
-    // so the main loop can pass the answer, the outcome, or the reply on. Only a prompt you sent, at the terminal or through Remote
-    // Control, counts: an agent's message or a notification can quote a
-    // question it is still waiting on.
+    // and once the prompt has entered, the panel records it. `I don't
+    // understand` under a quoted item says you don't follow it: a note gives
+    // the main loop the `UNCLEAR` line its agent revises on, the prompt
+    // carries your words, and once the prompt has entered, the panel marks
+    // the item unclear. Any other text under a quoted question or request
+    // replies to it, and the prompt carries the reply while the item stays
+    // open. Either way the prompt is done with the item's drawer. A
+    // subagent's item gets a note naming it, so the main loop can pass the
+    // answer, the outcome, the reply, or your words on. Only a prompt you
+    // sent, at the terminal or through Remote Control, counts: an agent's
+    // message or a notification can quote a question it is still waiting on.
     const session = await $.session.id()
     const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
     const mine = isYours ? (await read($, items)).filter(item => item.session === session) : []
-    const { answers, outcomes, replies } = readPrompt(e.text, mine, isYours ? proposed : [])
+    const { answers, outcomes, replies, unclears } = readPrompt(e.text, mine, isYours ? proposed : [])
     // An open question or request is done only when the prompt resolves or
     // replies to it, so a quote two of them share closes one drawer, not both.
     const isOpenAnswerable = (item: Item) => item.kind !== 'notice' && item.answer === undefined
@@ -1527,16 +1533,19 @@ export const register: Register = on => {
       ...answers.map(one => one.question.ref),
       ...outcomes.map(one => one.request.ref),
       ...replies.map(item => item.ref),
+      ...unclears.map(item => item.ref),
     ])
     if (isYours) proposed = proposed.filter(proposal => !done.has(proposal.ref) && !e.text.includes(proposal.quote))
     const answered = [...answers.map(one => one.question), ...outcomes.map(one => one.request)].filter(
       item => item.agentId !== undefined,
     )
     const replied = replies.filter(item => item.agentId !== undefined)
-    const agents = answered.length + replied.length === 0 ? [] : await $.agent.list().catch(() => [])
+    const relayed = answered.length + replied.length + unclears.filter(item => item.agentId !== undefined).length
+    const agents = relayed === 0 ? [] : await $.agent.list().catch(() => [])
     const notes = [
       ...answered.map(item => relayNote(item, agents)),
       ...replied.map(item => replyNote(item, agents)),
+      ...unclears.map(item => unclearNote(item, agents)),
     ]
     const entered = await next(notes.length === 0 ? e : { ...e, context: [...(e.context ?? []), ...notes] })
     if (entered.drop === undefined) {
@@ -1547,6 +1556,12 @@ export const register: Register = on => {
       for (const { request, outcome, word } of outcomes) {
         const said = outcome === 'done' && word !== 'Done' ? [`--text=${word}`] : []
         void recordFromPrompt($, request, [outcome === 'done' ? 'done' : 'decline', request.ref, ...said])
+      }
+      // The subject and detail are the ones you read, which the CLI checks
+      // against the store, so a revision it has and the panel had not read
+      // yet leaves the item unmarked.
+      for (const item of unclears) {
+        void recordFromPrompt($, item, ['unclear', item.ref, `--subject=${item.subject}`, `--detail=${item.detail}`])
       }
     }
     return entered
@@ -2007,8 +2022,10 @@ export const register: Register = on => {
           void act($, item, 'restore')
         },
       })
-      // An open item offers I don't understand above discuss until you press
-      // it, and again once its agent revises the item. A question's choices
+      // An open item offers I don't understand above discuss until a prompt
+      // you send says so, and again once its agent revises the item. Like
+      // discuss, it only fills the prompt, under the item's quote, so you can
+      // say what you don't follow before you send it. A question's choices
       // and a request's, after any Start or Retry, end at `5`, leaving it `6`.
       // An item stored before that cap can hold a choice on `6`, so there it
       // takes no digit.
@@ -2026,7 +2043,8 @@ export const register: Register = on => {
                 label: "I don't understand",
                 hotkey: choiceDigits < 6 ? '6' : undefined,
                 onPress: () => {
-                  void act($, item, 'unclear')
+                  propose(item, UNCLEAR_WORDS)
+                  fill(unclearOf(item))
                 },
               },
             ]
@@ -2095,8 +2113,8 @@ export const register: Register = on => {
       // puts the line back lower in the list. The engine keeps the ring by
       // position, and the open line's key is one the list never draws, so a
       // move onto the line in the list waits for the panel to draw the list.
-      // A notice's drawer puts the ring on discuss, below I don't understand,
-      // so a second Enter only fills the prompt and sends its agent nothing.
+      // A notice has no options, so its drawer puts the ring on discuss,
+      // below I don't understand.
       const line = isOpened ? `close:${ref}` : key
       const first = !isOpen
         ? `discuss:${ref}`

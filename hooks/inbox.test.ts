@@ -31,6 +31,9 @@ import {
   TELL_DESCRIPTION,
   tellArguments,
   typedLetter,
+  UNCLEAR_WORDS,
+  unclearNote,
+  unclearOf,
   WITHDRAW_DESCRIPTION,
   WITHDRAW_SCHEMA,
   withdrawArguments,
@@ -178,7 +181,7 @@ test('anything after a quoted question but one of its options replies to it with
     expect(repliesIn(text, open)).toEqual(open.filter(one => text.includes(quoteOf(one))))
   }
   const text = '"Decline the finding?"\n\nDecline it\n"Rebase first?"\n\nwhy rebase?'
-  expect(readPrompt(text, open)).toEqual({ answers: [{ question: open[0], letter: 'a' }], outcomes: [], replies: [open[1]] })
+  expect(readPrompt(text, open)).toEqual({ answers: [{ question: open[0], letter: 'a' }], outcomes: [], replies: [open[1]], unclears: [] })
   // A notice or a resolved question takes no reply.
   const answered = question({ answer: { letter: 'a', text: 'Decline it', answeredAt: NOW } })
   expect(repliesIn(`"${notice().subject}"\n\nThanks`, [notice()])).toEqual([])
@@ -232,34 +235,39 @@ test('a quote two questions share speaks to one of them: an answer replies to ne
     answers: [{ question: second, letter: 'b' }],
     outcomes: [],
     replies: [],
+    unclears: [],
   })
-  expect(readPrompt('"Merge it?"\n\nNo\n', both)).toEqual({ answers: [{ question: first, letter: 'b' }], outcomes: [], replies: [] })
+  expect(readPrompt('"Merge it?"\n\nNo\n', both)).toEqual({ answers: [{ question: first, letter: 'b' }], outcomes: [], replies: [], unclears: [] })
   // A reply goes to the question whose drawer put the quote there, by discuss or by a pick you added to, else the oldest.
-  expect(readPrompt('"Merge it?"\n\nwhy now?', both, [merge('2', '')])).toEqual({ answers: [], outcomes: [], replies: [second] })
-  expect(readPrompt('"Merge it?"\n\nNo, not yet', both, [merge('2', 'No')])).toEqual({ answers: [], outcomes: [], replies: [second] })
-  expect(readPrompt('"Merge it?"\n\nwhy now?', both)).toEqual({ answers: [], outcomes: [], replies: [first] })
+  expect(readPrompt('"Merge it?"\n\nwhy now?', both, [merge('2', '')])).toEqual({ answers: [], outcomes: [], replies: [second], unclears: [] })
+  expect(readPrompt('"Merge it?"\n\nNo, not yet', both, [merge('2', 'No')])).toEqual({ answers: [], outcomes: [], replies: [second], unclears: [] })
+  expect(readPrompt('"Merge it?"\n\nwhy now?', both)).toEqual({ answers: [], outcomes: [], replies: [first], unclears: [] })
   // An option typed under discuss answers the question you discussed.
   expect(readPrompt('"Merge it?"\n\nYes', both, [merge('2', '')])).toEqual({
     answers: [{ question: second, letter: 'a' }],
     outcomes: [],
     replies: [],
+    unclears: [],
   })
   // The drawer you acted in last wins: a pick in the second, then a discuss in the first.
   expect(readPrompt('"Merge it?"\n\nYes', both, [merge('2', 'Yes'), merge('1', '')])).toEqual({
     answers: [{ question: first, letter: 'a' }],
     outcomes: [],
     replies: [],
+    unclears: [],
   })
   expect(readPrompt('"Merge it?"\n\nYes', both, [merge('1', ''), merge('2', 'Yes')])).toEqual({
     answers: [{ question: second, letter: 'a' }],
     outcomes: [],
     replies: [],
+    unclears: [],
   })
   // Quoted twice, each quote speaks to its own question.
   expect(readPrompt('"Merge it?"\n\nYes\n"Merge it?"\n\nwhy now?', both)).toEqual({
     answers: [{ question: first, letter: 'a' }],
     outcomes: [],
     replies: [second],
+    unclears: [],
   })
 })
 
@@ -269,21 +277,23 @@ test('a pick made before its question was revised answers no question, and repli
   const stale = [pick('2', 'Decline it', { isStale: true })]
   const decline = '"Decline the finding?"\n\nDecline it\n'
   // The older question shares the text and offers the option, and still does not take the pick.
-  expect(readPrompt(decline, [older, revised], stale)).toEqual({ answers: [], outcomes: [], replies: [revised] })
+  expect(readPrompt(decline, [older, revised], stale)).toEqual({ answers: [], outcomes: [], replies: [revised], unclears: [] })
   // Revised to new words, the question is still the one the pick replies to.
   const reworded = question({ ref: '2', number: 2, subject: 'Decline the retry finding?' })
-  expect(readPrompt(decline, [older, reworded], stale)).toEqual({ answers: [], outcomes: [], replies: [reworded] })
+  expect(readPrompt(decline, [older, reworded], stale)).toEqual({ answers: [], outcomes: [], replies: [reworded], unclears: [] })
   // Text the stale pick does not hold answers as before.
   expect(readPrompt('"Decline the finding?"\n\nAdd a budget\n', [older, revised], stale)).toEqual({
     answers: [{ question: older, letter: 'b' }],
     outcomes: [],
     replies: [],
+    unclears: [],
   })
   // A pick from the revised question's new drawer answers it.
   expect(readPrompt(decline, [older, revised], [pick('2', 'Decline it')])).toEqual({
     answers: [{ question: revised, letter: 'a' }],
     outcomes: [],
     replies: [],
+    unclears: [],
   })
 })
 
@@ -293,20 +303,22 @@ test('an option typed under a quote discussed before its question was revised an
   const reworded = question({ ref: '2', number: 2, subject: 'Decline the retry finding?' })
   const discussed = [pick('2', '', { isStale: true })]
   const decline = '"Decline the finding?"\n\nDecline it\n'
-  expect(readPrompt(decline, [older, revised], discussed)).toEqual({ answers: [], outcomes: [], replies: [revised] })
-  expect(readPrompt(decline, [older, reworded], discussed)).toEqual({ answers: [], outcomes: [], replies: [reworded] })
+  expect(readPrompt(decline, [older, revised], discussed)).toEqual({ answers: [], outcomes: [], replies: [revised], unclears: [] })
+  expect(readPrompt(decline, [older, reworded], discussed)).toEqual({ answers: [], outcomes: [], replies: [reworded], unclears: [] })
   // A pick you then make in the older question's drawer still answers it.
   const both = [...discussed, pick('1', 'Decline it')]
   expect(readPrompt(`"Decline the finding?"\n\nwhy?\n${decline}`, [older, revised], both)).toEqual({
     answers: [{ question: older, letter: 'a' }],
     outcomes: [],
     replies: [revised],
+    unclears: [],
   })
   // Discussed again in the revised drawer, the quote answers the revised question.
   expect(readPrompt(decline, [older, revised], [pick('2', '')])).toEqual({
     answers: [{ question: revised, letter: 'a' }],
     outcomes: [],
     replies: [],
+    unclears: [],
   })
 })
 
@@ -319,7 +331,7 @@ test('a quote a drawer put in the prompt for a question resolved before you send
   const picks = [drawer('Yes', true), drawer('Yes', false), drawer('', true), drawer('', false)]
   for (const resolved of [[dismissed], [withdrawn], []]) {
     for (const proposal of picks) {
-      expect(readPrompt('"Merge it?"\n\nYes\n', [open, ...resolved], [proposal])).toEqual({ answers: [], outcomes: [], replies: [] })
+      expect(readPrompt('"Merge it?"\n\nYes\n', [open, ...resolved], [proposal])).toEqual({ answers: [], outcomes: [], replies: [], unclears: [] })
     }
   }
   // A quote no drawer put there still answers the open question.
@@ -327,6 +339,7 @@ test('a quote a drawer put in the prompt for a question resolved before you send
     answers: [{ question: open, letter: 'a' }],
     outcomes: [],
     replies: [],
+    unclears: [],
   })
 })
 
@@ -339,6 +352,102 @@ test('the note beside an answer or a reply names the subagent that asked', () =>
   expect(replyNote(asked, [agent('running')])).toBe(
     'The subagent Fix #7 (agent-1) asked "Decline the finding?"; send it the reply this prompt gives, which leaves the question open.',
   )
+})
+
+test('I don’t understand puts the quoted item and the words in the prompt, for you to say what you don’t follow', () => {
+  expect(unclearOf(notice())).toBe(`"Force-pushed #7 to drop a stray file"\n\n${UNCLEAR_WORDS} `)
+  expect(unclearOf(question())).toBe('"Decline the finding?"\n\nI don\'t understand ')
+})
+
+test('a sent prompt says you don’t understand any open kind of item whose quote the words follow, and replies to none', () => {
+  const asked = question()
+  const told = notice()
+  const requested = request()
+  const read = (text: string, items: readonly Item[] = [asked, told, requested]) => readPrompt(text, items)
+  // The words as I don't understand put them, sent alone or with what you don't follow, and with either apostrophe.
+  expect(read('"Decline the finding?"\n\nI don\'t understand ')).toEqual({
+    answers: [],
+    outcomes: [],
+    replies: [],
+    unclears: [asked],
+  })
+  expect(read('"Force-pushed #7 to drop a stray file"\n\nI don’t understand which file').unclears).toEqual([told])
+  expect(read('"Test the gutters"\n\nI don\'t understand which build\n')).toEqual({
+    answers: [],
+    outcomes: [],
+    replies: [],
+    unclears: [requested],
+  })
+  // Several items in one prompt each take their own.
+  expect(read('"Decline the finding?"\n\nI don\'t understand the cap\n"Test the gutters"\n\nDone')).toEqual({
+    answers: [],
+    outcomes: [{ request: requested, outcome: 'done', word: 'Done' }],
+    replies: [],
+    unclears: [asked],
+  })
+  // The words must start the text on the lines under the quote; anywhere else, they only reply.
+  for (const text of ['"Decline the finding?"\n\nWhy? I don\'t understand', '"Decline the finding?" I don\'t understand']) {
+    expect(read(text)).toEqual({ answers: [], outcomes: [], replies: [asked], unclears: [] })
+  }
+  // An item already marked unclear, or resolved, takes no second word of it.
+  const marked = question({ unclear: { at: NOW } })
+  expect(read('"Decline the finding?"\n\nI don\'t understand', [marked])).toEqual({
+    answers: [],
+    outcomes: [],
+    replies: [marked],
+    unclears: [],
+  })
+  const answered = question({ answer: { letter: 'a', text: 'Decline it', answeredAt: NOW } })
+  expect(read('"Decline the finding?"\n\nI don\'t understand', [answered]).unclears).toEqual([])
+  // A question whose option is those very words takes the answer.
+  const literal = question({ choices: ['Decline it', "I don't understand"] })
+  expect(read('"Decline the finding?"\n\nI don\'t understand', [literal])).toEqual({
+    answers: [{ question: literal, letter: 'b' }],
+    outcomes: [],
+    replies: [],
+    unclears: [],
+  })
+})
+
+test('word that you don’t understand goes to the item whose drawer put it there, while what you read there stands', () => {
+  const first = notice({ postedAt: NOW - 120_000, subject: 'Merged #7' })
+  const second = notice({ ref: '4', number: 4, subject: 'Merged #7', detail: 'Into main.' })
+  const text = '"Merged #7"\n\nI don\'t understand which branch'
+  const pressed = (fields: Partial<Proposal> = {}): Proposal => ({
+    ref: '4',
+    quote: '"Merged #7"',
+    answer: UNCLEAR_WORDS,
+    detail: 'Into main.',
+    ...fields,
+  })
+  // Typed by hand, it goes to the oldest item with that text; pressed, to the item you pressed it on.
+  expect(readPrompt(text, [first, second]).unclears).toEqual([first])
+  expect(readPrompt(text, [first, second], [pressed()]).unclears).toEqual([second])
+  // A press made before the item was revised, or on a detail that has changed since, says nothing, and falls
+  // through to no other item.
+  expect(readPrompt(text, [first, second], [pressed({ isStale: true })]).unclears).toEqual([])
+  expect(readPrompt(text, [first, second], [pressed({ detail: 'Into release.' })]).unclears).toEqual([])
+  // A stale press on a question leaves its quote to reply to it, as a stale pick does.
+  const asked = question()
+  const stale = pick('1', UNCLEAR_WORDS, { detail: 'Old.', isStale: true })
+  expect(readPrompt('"Decline the finding?"\n\nI don\'t understand', [asked], [stale])).toEqual({
+    answers: [],
+    outcomes: [],
+    replies: [asked],
+    unclears: [],
+  })
+})
+
+test('the note beside word that you don’t understand an item gives the main loop the UNCLEAR line, and names a subagent that posted it', () => {
+  const said = (kind: string) => `\n\nThe person does not understand this ${kind}, and this prompt says what they do not follow.`
+  const relay = (who: string) =>
+    ` The subagent ${who} posted it; send it this UNCLEAR line with what the prompt says, or revise the item yourself.`
+  expect(unclearNote(question(), [])).toBe(`UNCLEAR 1 Decline the finding?${said('question')}`)
+  expect(unclearNote(request(), [])).toBe(`UNCLEAR 3 Test the gutters${said('request')}`)
+  expect(unclearNote(notice({ agentId: 'agent-1' }), [agent('running')])).toBe(
+    `UNCLEAR 2 Force-pushed #7 to drop a stray file${said('notice')}${relay('Fix #7 (agent-1)')}`,
+  )
+  expect(unclearNote(question({ agentId: 'gone' }), [])).toBe(`UNCLEAR 1 Decline the finding?${said('question')}${relay('gone')}`)
 })
 
 test('a delivered question leaves the panel after 30 seconds', () => {
@@ -615,6 +724,7 @@ test('a choice on the line under a quoted request is its outcome, a typed Done t
     answers: [],
     outcomes: [{ request: open, outcome: 'done', word: 'Looks good' }],
     replies: [],
+    unclears: [],
   })
 })
 
@@ -638,10 +748,10 @@ test('anything else under a quoted request replies to it and leaves it open', ()
     '"Test the gutters" Done',
     '"Test the gutters"\n\n',
   ]) {
-    expect(readPrompt(text, [open])).toEqual({ answers: [], outcomes: [], replies: [open] })
+    expect(readPrompt(text, [open])).toEqual({ answers: [], outcomes: [], replies: [open], unclears: [] })
   }
   const done = request({ answer: { done: true, answeredAt: NOW } })
-  expect(readPrompt('"Test the gutters"\n\nDone', [done])).toEqual({ answers: [], outcomes: [], replies: [] })
+  expect(readPrompt('"Test the gutters"\n\nDone', [done])).toEqual({ answers: [], outcomes: [], replies: [], unclears: [] })
 })
 
 test('a request’s drawer owns its quote whatever follows, and a pick from before a revise only replies', () => {
@@ -658,11 +768,13 @@ test('a request’s drawer owns its quote whatever follows, and a pick from befo
     answers: [],
     outcomes: [{ request: open, outcome: 'done', word: 'Done' }],
     replies: [],
+    unclears: [],
   })
   expect(readPrompt('"Test the gutters"\n\nDone', [open, shared], [{ ...done, isStale: true }])).toEqual({
     answers: [],
     outcomes: [],
     replies: [shared],
+    unclears: [],
   })
 })
 
@@ -673,6 +785,7 @@ test('a quoted request and a quoted question in one prompt each take their own',
     answers: [{ question: asked, letter: 'a' }],
     outcomes: [{ request: open, outcome: 'done', word: 'Done' }],
     replies: [],
+    unclears: [],
   })
 })
 

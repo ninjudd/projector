@@ -467,7 +467,7 @@ settled, the agent takes it back with the `withdraw` tool,
 `mcp__projector__withdraw`, by the number `ask`, `tell`, or `request`
 returned. The panel never shows that number, so the agent names an item to
 you by what it asks, tells, or requests. When your reply shows that an item
-was unclear, or you press **I don't understand** on it, the agent rewrites
+was unclear, or you send **I don't understand** for it, the agent rewrites
 it in place with the `revise` tool, `mcp__projector__revise`, keeping its
 number. When you tell it you dismissed, declined, or snoozed an item by
 mistake, the agent brings the item back under its number with the `restore`
@@ -603,8 +603,9 @@ own `: ` after the key always takes, so under the pointer or the focus
 ring an action inverts as the key and one block after it. A question's
 drawer has four actions:
 
-- **I don't understand** tells the agent that you don't follow the
-  question, in one press, as the paragraph after this list describes.
+- **I don't understand** puts the quoted question in the prompt with
+  `I don't understand` under it, for you to say what you don't follow, as
+  the paragraph after this list describes.
 - **Discuss** puts the quoted question in the prompt, followed
   by a blank line, and leaves the drawer open, so the options and detail
   stay in view while you type. Type your reply under the quote, or on the
@@ -616,21 +617,37 @@ drawer has four actions:
   paragraph on **Snooze** below describes.
 
 **I don't understand** is in the drawer of every open item, above
-**Discuss**, until you press it. One press runs `project inbox unclear`
-with the subject and detail the drawer shows, and closes the drawer. The
-item's line then ends with `unclear`, in yellow, and the agent that posted
-the item hears `UNCLEAR` with its subject: a subagent that is still running
-receives it directly, and otherwise the main loop receives it as a prompt,
-with the name of the subagent that posted the item. The agent revises the
-item to explain it more simply or to add the context you lack. The item
-keeps its place in the list, its line drops `unclear`, and its drawer offers
-**I don't understand** again for the new text. If the agent revised the item
-since the panel drew the drawer, the press records nothing, and the drawer
-shows the new text for you to read and press again. When `UNCLEAR` cannot
-reach the agent, the panel takes the mark back and says why, so you can
-press again. An answer, outcome, or dismissal you give before the panel
-sends `UNCLEAR` takes its place, so the agent hears only that. To say what
-you don't understand, use **Discuss** instead.
+**Discuss**, until you send it. A press sends nothing. It puts the quoted
+item in the prompt, followed by a blank line and `I don't understand `, and
+leaves the drawer open, so you can finish the sentence with what you don't
+follow before you send the prompt:
+
+```text
+"Force-pushed #7 to drop a stray file"
+
+I don't understand which file held the token
+```
+
+When you send it, your prompt carries your words to the main loop, beside a
+note that starts with `UNCLEAR` and the item's number and subject. When a
+subagent posted the item, the note names the subagent, so the main loop can
+pass the line and your words on. Once the prompt has entered, the panel runs
+`project inbox unclear` with the subject and detail you read, and closes the
+drawer. The item's line then ends with `unclear`, in yellow. The agent
+revises the item to explain it more simply or to add the context you lack.
+The item keeps its place in the list, its line drops `unclear`, and its
+drawer offers **I don't understand** again for the new text. If the agent
+revised the item after you pressed, your prompt still carries your words,
+but it carries no `UNCLEAR` note and marks nothing, so press again to say
+it of the new text. A prompt that starts the text under an item's quote with
+`I don't understand` says the same when you type it yourself.
+
+When `project inbox unclear` is run from a terminal instead, the panel
+delivers its `UNCLEAR` line: to a subagent that is still running directly,
+and otherwise to the main loop as a prompt, with the name of the subagent
+that posted the item. When that line cannot reach the agent, the panel takes
+the mark back and says why. An answer, outcome, or dismissal you give before
+the panel sends `UNCLEAR` takes its place, so the agent hears only that.
 
 A notice's drawer shows its detail, then the same four actions: **I don't
 understand**, **Discuss**, **Dismiss**, and **Snooze**. **Discuss** puts
@@ -674,7 +691,7 @@ do it, they read `Blocked:` with its reason and `blocked`, in yellow, and
 **Retry** takes the place of **Start**, for you to press once you have done
 what the reason says. The options and **Dismiss** work throughout,
 the options from `1` while there is no **Start** or **Retry** to press. A
-request you pressed **I don't understand** on reads `unclear` before
+request you sent **I don't understand** for reads `unclear` before
 `starting`, `ready`, or `blocked`, so its line still says whether you can
 begin. A request without a start action shows none of this.
 
@@ -766,8 +783,7 @@ keyboard in, and once the panel has it, Esc and Enter.
 Enter on a line opens its drawer and moves the ring onto the drawer's first
 control: a question's first option, a request's **Start** or **Retry** when
 it has one and its first option otherwise, and **Discuss** for any other item.
-For a notice, the ring skips **I don't understand** above **Discuss**, so a
-second Enter only fills the prompt and sends the agent nothing.
+For a notice, the ring skips **I don't understand** above **Discuss**.
 Tab then walks the options and the actions. Enter on the open line closes the
 drawer and leaves the ring on the line. A click opens and closes a drawer
 without moving the ring. In the same way, Enter on **Snooze** moves the
@@ -798,7 +814,7 @@ so a question's choices and a request's, after any **Start** or **Retry**,
 end at `5`, and the item's line keeps `0`.
 
 - **6** presses **I don't understand**, which an open item's drawer offers
-  until you press it.
+  until you send it. Like **Discuss**, it only fills the prompt.
 - **7** presses **Discuss**.
 - **8** presses **Dismiss**, or **Restore** in its place. An item's
   **Dismiss** acts at once. A pull request's asks to be sure, on `8` again
