@@ -2290,7 +2290,7 @@ agent's to post again, and an answer letter such as `3.a`. A number no
 session holds exits 66, a busy store exits 75, and `restore` changes nothing
 when it refuses. In Claude Code, the agent restores an item with Projector's
 `restore` tool when you tell it a dismissal was a mistake, and the panel
-offers **restore** and **unsnooze** in the item's drawer.
+offers **Restore** and **Unsnooze** in the item's drawer.
 
 An agent takes back an open item that no longer needs you with `withdraw`,
 such as a question your reply settled or news that has gone stale:

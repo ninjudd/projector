@@ -711,20 +711,20 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   const opened = await ui.find({ key: 'drawer:x/y#7' })
   expect(opened).toBeDefined()
   expect(opened?.props.marginLeft).toBe(4)
-  // Under the facts come the actions, a line each, then the links, each on a line of its own, so a terminal without hyperlinks shows the whole URL.
+  // Under the facts come the actions, side by side on one line, then the links, each on a line of its own, so a terminal without hyperlinks shows the whole URL.
   // The thread lines come as one list among the children, so the children are flattened first. A thread's line
   // is a Text, which carries no key of its own.
   type Line = { type: string; props?: { key?: string }; children?: unknown[] }
   const lines = ((opened?.children ?? []) as unknown[]).flat() as Line[]
   expect(lines.map(line => line.props?.key ?? line.type)).toEqual([
     'Text',
-    'discuss:x/y#7',
-    'dismiss:x/y#7',
+    'actions:x/y#7',
     'github:x/y#7',
     'projector:x/y#7',
     'Text',
     'Text',
   ])
+  expect(await rowOf(ui, 'actions:x/y#7')).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
   // Each unresolved thread links to its first comment: where it is, who opened it, how it starts, cut to fit,
@@ -2025,9 +2025,9 @@ test('requests through the tool, and a request’s drawer offers the agent’s o
   ])
   expect(await actionLinesOf(ui)).toEqual([
     "unclear:1 6 I don't understand",
-    'discuss:1 7 discuss request',
-    'dismiss:1 8 dismiss request',
-    'snooze:1 9 snooze request',
+    'discuss:1 7 Discuss',
+    'dismiss:1 8 Dismiss',
+    'snooze:1 9 Snooze',
   ])
   await ui.unmount()
 })
@@ -2078,7 +2078,7 @@ test('dismiss request on 8 declines it at once, strikes the line through, and of
 
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'item:3' })
-  expect((await ui.find({ type: 'Button', key: 'dismiss:3' }))?.text).toBe('dismiss request')
+  expect((await ui.find({ type: 'Button', key: 'dismiss:3' }))?.text).toBe('Dismiss')
   await ui.press({ key: 'dismiss:3' })
   await clock.settle()
   expect(session.project().filter(command => command.startsWith('inbox dismiss'))).toEqual([
@@ -2196,9 +2196,9 @@ test('start, first on 1, records the start action the drawer shows, and STARTED 
   ])
   expect(await actionLinesOf(ui)).toEqual([
     "unclear:3 6 I don't understand",
-    'discuss:3 7 discuss request',
-    'dismiss:3 8 dismiss request',
-    'snooze:3 9 snooze request',
+    'discuss:3 7 Discuss',
+    'dismiss:3 8 Dismiss',
+    'snooze:3 9 Snooze',
   ])
   // Opening the drawer records nothing and sends nothing.
   expect(session.project().filter(command => command.startsWith('inbox start'))).toEqual([])
@@ -2385,9 +2385,9 @@ test('I don’t understand on a running subagent’s notice records it, sends UN
   expect((await ui.find({ type: 'Text', text: 'unclear' }))?.props.color).toBe('warning')
   await ui.press({ key: 'item:2' })
   expect(await actionLinesOf(ui)).toEqual([
-    'discuss:2 7 discuss notice',
-    'dismiss:2 8 dismiss notice',
-    'snooze:2 9 snooze notice',
+    'discuss:2 7 Discuss',
+    'dismiss:2 8 Dismiss',
+    'snooze:2 9 Snooze',
   ])
   await ui.press({ key: 'close:2' })
   await clock.advance(TICK)
@@ -3057,9 +3057,9 @@ test('a notice’s drawer quotes it, and dismiss clears it without sending anyth
   }
   expect(await actionLinesOf(ui)).toEqual([
     "unclear:2 6 I don't understand",
-    'discuss:2 7 discuss notice',
-    'dismiss:2 8 dismiss notice',
-    'snooze:2 9 snooze notice',
+    'discuss:2 7 Discuss',
+    'dismiss:2 8 Dismiss',
+    'snooze:2 9 Snooze',
   ])
 
   await ui.press({ key: 'discuss:2' })
@@ -4100,7 +4100,20 @@ async function drawerRowsOf(ui: Pick<Mounted, 'findAll'>): Promise<string[]> {
   )
 }
 
-test('a drawer’s actions follow its options a line each, on 6 to 9, named for what they act on', async ($, on) => {
+/** The buttons a drawer's actions row draws side by side, named as `actionLinesOf` names them. */
+async function rowOf(ui: Pick<Mounted, 'find'>, key: string): Promise<string[]> {
+  const row = await ui.find({ key })
+  expect(row?.props.flexDirection).toBe('row')
+  const keys = ((row?.children ?? []) as unknown[]).flat().map(part => (part as { props: { key?: string } }).props.key)
+  return Promise.all(
+    keys.map(async name => {
+      const button = await ui.find({ type: 'Button', key: name })
+      return `${name ?? ''} ${String(button?.props.hotkey ?? '')} ${button?.text ?? ''}`
+    }),
+  )
+}
+
+test('a drawer’s actions follow its options: I don’t understand on 6, then discuss, dismiss, and snooze on one line', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   const declined = { dismissed: true as const, declined: true as const, answeredAt: NOW - 1_000 }
@@ -4130,14 +4143,15 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for 
   ])
   expect(await actionLinesOf(ui)).toEqual([
     "unclear:1 6 I don't understand",
-    'discuss:1 7 discuss question',
-    'dismiss:1 8 dismiss question',
-    'snooze:1 9 snooze question',
+    'discuss:1 7 Discuss',
+    'dismiss:1 8 Dismiss',
+    'snooze:1 9 Snooze',
   ])
   // The drawer starts under the item's text, past the `0: ` the engine draws before it, so `1:` and the detail sit
   // under the question's first letter.
   expect(await drawerIndentOf(ui, '1')).toEqual([3, 3])
   // A blank line sets the actions apart from the options, as one sets the detail apart, and no `|` joins them.
+  // I don't understand has a line of its own, and discuss, dismiss, and snooze share the drawer's last line.
   expect(await drawerRowsOf(ui)).toEqual([
     'text: ',
     'detail:1',
@@ -4146,10 +4160,9 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for 
     'answer:1.b',
     'text: ',
     'unclear:1',
-    'discuss:1',
-    'dismiss:1',
-    'snooze:1',
+    'actions:1',
   ])
+  expect(await rowOf(ui, 'actions:1')).toEqual(['discuss:1 7 Discuss', 'dismiss:1 8 Dismiss', 'snooze:1 9 Snooze'])
   expect(await ui.findAll({ type: 'Text', text: '|' })).toEqual([])
 
   // The lengths snooze offers take the options' place, under the detail, with the blank line above them.
@@ -4162,8 +4175,9 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for 
     'snooze-60:1',
     'snooze-240:1',
     'snooze-1440:1',
-    'cancel:1',
+    'actions:1',
   ])
+  expect(await rowOf(ui, 'actions:1')).toEqual(['cancel:1 9 Cancel'])
 
   // Snoozed, unsnooze takes snooze's place.
   await ui.press({ key: 'snooze-60:1' })
@@ -4171,56 +4185,56 @@ test('a drawer’s actions follow its options a line each, on 6 to 9, named for 
   await ui.press({ key: 'item:1' })
   expect(await actionLinesOf(ui)).toEqual([
     "unclear:1 6 I don't understand",
-    'discuss:1 7 discuss question',
-    'dismiss:1 8 dismiss question',
-    'unsnooze:1 9 unsnooze question',
+    'discuss:1 7 Discuss',
+    'dismiss:1 8 Dismiss',
+    'unsnooze:1 9 Unsnooze',
   ])
 
   // Dismissed, restore takes dismiss's place, and a resolved item has nothing to snooze and nothing to explain.
   await ui.press({ key: 'dismiss:1' })
   await clock.settle()
   await ui.press({ key: 'item:1' })
-  expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 discuss question', 'restore:1 8 restore question'])
+  expect(await actionLinesOf(ui)).toEqual(['discuss:1 7 Discuss', 'restore:1 8 Restore'])
   // A resolved question still lists its options, with the blank line under them, under the item's text.
   expect((await drawerRowsOf(ui)).slice(2)).toEqual([
     'text: ',
     'text:Decline it',
     'text:Add a budget',
     'text: ',
-    'discuss:1',
-    'restore:1',
+    'actions:1',
   ])
+  expect(await rowOf(ui, 'actions:1')).toEqual(['discuss:1 7 Discuss', 'restore:1 8 Restore'])
   expect(await drawerIndentOf(ui, '1')).toEqual([3, 3])
   await ui.press({ key: 'close:1' })
 
-  // A notice's actions name a notice.
+  // A notice's drawer offers the same actions.
   await ui.press({ key: 'item:2' })
   expect(await actionLinesOf(ui)).toEqual([
     "unclear:2 6 I don't understand",
-    'discuss:2 7 discuss notice',
-    'dismiss:2 8 dismiss notice',
-    'snooze:2 9 snooze notice',
+    'discuss:2 7 Discuss',
+    'dismiss:2 8 Dismiss',
+    'snooze:2 9 Snooze',
   ])
-  expect(await drawerRowsOf(ui)).toEqual(['text: ', 'detail:2', 'text: ', 'unclear:2', 'discuss:2', 'dismiss:2', 'snooze:2'])
+  expect(await drawerRowsOf(ui)).toEqual(['text: ', 'detail:2', 'text: ', 'unclear:2', 'actions:2'])
   expect(await drawerIndentOf(ui, '2')).toEqual([3, 3])
   await ui.press({ key: 'close:2' })
 
-  // A request's actions name a request, and a declined one, being resolved, offers no I don't understand.
+  // A request's drawer offers them too, and a declined one, being resolved, offers no I don't understand.
   await ui.press({ key: 'item:3' })
   expect(await actionLinesOf(ui)).toEqual([
     "unclear:3 6 I don't understand",
-    'discuss:3 7 discuss request',
-    'dismiss:3 8 dismiss request',
-    'snooze:3 9 snooze request',
+    'discuss:3 7 Discuss',
+    'dismiss:3 8 Dismiss',
+    'snooze:3 9 Snooze',
   ])
   await ui.press({ key: 'close:3' })
   await ui.press({ key: 'item:4' })
-  expect(await actionLinesOf(ui)).toEqual(['discuss:4 7 discuss request', 'restore:4 8 restore request'])
+  expect(await actionLinesOf(ui)).toEqual(['discuss:4 7 Discuss', 'restore:4 8 Restore'])
   await ui.press({ key: 'close:4' })
 
   // A pull request's drawer has its actions above its links, the links with no letters.
   await ui.press({ key: 'pr:x/y#7' })
-  expect(await actionLinesOf(ui)).toEqual(['discuss:x/y#7 7 discuss PR', 'dismiss:x/y#7 8 dismiss PR'])
+  expect(await actionLinesOf(ui)).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
   await ui.unmount()
 })
 
@@ -4261,7 +4275,7 @@ test('a keyed line’s label takes the color of the `: ` before it, so it invert
     key: '8',
     plain: true,
     line: [undefined, undefined, undefined],
-    label: ['dismiss question', []],
+    label: ['Dismiss', []],
   })
   await ui.press({ key: 'close:1' })
 
@@ -4270,7 +4284,7 @@ test('a keyed line’s label takes the color of the `: ` before it, so it invert
     key: '7',
     plain: true,
     line: [undefined, undefined, undefined],
-    label: ['discuss PR', []],
+    label: ['Discuss', []],
   })
   await ui.unmount()
 })
@@ -4373,7 +4387,7 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length 
     `snooze-60:${ref} 2 1 hour`,
     `snooze-240:${ref} 3 4 hours`,
     `snooze-1440:${ref} 4 1 day`,
-    `cancel:${ref} 9 cancel`,
+    `cancel:${ref} 9 Cancel`,
   ]
   const snoozes = () => session.project().filter(command => command.startsWith('inbox snooze'))
 
@@ -4396,18 +4410,18 @@ test('snooze asks how long on 1 to 4 in the options’ place, and only a length 
   expect((await optionsOf(ui)).map(option => option.key)).toEqual(['answer:1.a', 'answer:1.b'])
   expect(await actionLinesOf(ui)).toEqual([
     "unclear:1 6 I don't understand",
-    'discuss:1 7 discuss question',
-    'dismiss:1 8 dismiss question',
-    'snooze:1 9 snooze question',
+    'discuss:1 7 Discuss',
+    'dismiss:1 8 Dismiss',
+    'snooze:1 9 Snooze',
   ])
   await ui.press({ key: 'close:1' })
 
   // A notice shows the same lines, and snoozes nothing yet.
   const actions = [
     "unclear:2 6 I don't understand",
-    'discuss:2 7 discuss notice',
-    'dismiss:2 8 dismiss notice',
-    'snooze:2 9 snooze notice',
+    'discuss:2 7 Discuss',
+    'dismiss:2 8 Dismiss',
+    'snooze:2 9 Snooze',
   ]
   await ui.press({ key: 'item:2' })
   await ui.press({ key: 'snooze:2' })
@@ -4473,9 +4487,9 @@ test('an item’s dismiss, restore, and unsnooze act at once, and a pull request
 
   // 8 dismisses at once, and closes the drawer.
   expect(await lines('1')).toEqual([
-    'discuss:1 7 discuss question',
-    'dismiss:1 8 dismiss question',
-    'snooze:1 9 snooze question',
+    'discuss:1 7 Discuss',
+    'dismiss:1 8 Dismiss',
+    'snooze:1 9 Snooze',
   ])
   await ui.press({ key: 'dismiss:1' })
   await clock.settle()
@@ -4502,11 +4516,11 @@ test('an item’s dismiss, restore, and unsnooze act at once, and a pull request
 
   // A pull request's dismiss asks to be sure, and 9 keeps it in its loops.
   await ui.press({ key: 'pr:x/y#7' })
-  expect(await lines('x/y#7')).toEqual(['discuss:x/y#7 7 discuss PR', 'dismiss:x/y#7 8 dismiss PR'])
+  expect(await lines('x/y#7')).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
   await ui.press({ key: 'dismiss:x/y#7' })
-  expect(await lines('x/y#7')).toEqual(['confirm:x/y#7 8 yes, dismiss PR', 'keep:x/y#7 9 no, keep it'])
+  expect(await lines('x/y#7')).toEqual(['confirm:x/y#7 8 Yes, dismiss it', 'keep:x/y#7 9 No, keep it'])
   await ui.press({ key: 'keep:x/y#7' })
-  expect(await lines('x/y#7')).toEqual(['discuss:x/y#7 7 discuss PR', 'dismiss:x/y#7 8 dismiss PR'])
+  expect(await lines('x/y#7')).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
   expect(session.project().filter(line => line.startsWith('loop drop'))).toEqual([])
 
   // From the keyboard, the ring goes onto the confirmation, and from 9 back onto dismiss.
