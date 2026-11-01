@@ -711,20 +711,18 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   const opened = await ui.find({ key: 'drawer:x/y#7' })
   expect(opened).toBeDefined()
   expect(opened?.props.marginLeft).toBe(4)
-  // Under the facts come the actions, side by side on one line, then the links, each on a line of its own, so a terminal without hyperlinks shows the whole URL.
-  // The thread lines come as one list among the children, so the children are flattened first. A thread's line
-  // is a Text, which carries no key of its own.
+  // The thread lines come as one list among the children, so the children are flattened first. A thread's line is a
+  // Text, which carries no key of its own.
   type Line = { type: string; props?: { key?: string }; children?: unknown[] }
   const lines = ((opened?.children ?? []) as unknown[]).flat() as Line[]
-  expect(lines.map(line => line.props?.key ?? line.type)).toEqual([
-    'Text',
-    'actions:x/y#7',
-    'github:x/y#7',
-    'projector:x/y#7',
-    'Text',
-    'Text',
-  ])
+  expect(lines.map(line => line.props?.key ?? line.type)).toEqual(['Text', 'actions:x/y#7', 'links:x/y#7', 'Text', 'Text'])
   expect(await rowOf(ui, 'actions:x/y#7')).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
+  const linksOf = async (key: string) => {
+    const row = await ui.find({ key: `links:${key}` })
+    expect([row?.props.flexDirection, row?.props.columnGap]).toEqual(['row', 2])
+    return ((row?.children ?? []) as unknown[]).flat().map(part => (part as Line).props?.key)
+  }
+  expect(await linksOf('x/y#7')).toEqual(['github:x/y#7', 'projector:x/y#7'])
   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
   // Each unresolved thread links to its first comment: where it is, who opened it, how it starts, cut to fit,
@@ -738,7 +736,6 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
     ],
     ['Link', `${SEVEN}#discussion_r2`, 'src/[draft]_notes.md:3 · bob · Why *this*? · outdated'],
   ])
-  expect(await ui.find({ key: 'projector:o/r#1' })).toBeUndefined()
 
   // discuss is a plain Button, so Enter fills the prompt on the main screen too.
   expect((await ui.find({ type: 'Button', key: 'discuss:x/y#7' }))?.props.plain).toBe(true)
@@ -747,6 +744,11 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
 
   await ui.press({ key: 'pr:x/y#7' })
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+
+  // #1's description links no Projector summary, so its drawer's links line holds the GitHub link alone.
+  await ui.press({ key: 'pr:o/r#1' })
+  await clock.settle()
+  expect(await linksOf('o/r#1')).toEqual(['github:o/r#1'])
   await ui.unmount()
 })
 

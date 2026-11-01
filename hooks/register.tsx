@@ -2255,10 +2255,6 @@ export const register: Register = on => {
                 {pr.checks !== null && ' · '}
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
               </Text>
-              {/* Under the facts come the actions, side by side on one line,
-                  and then the links. Each link has a line of its own: a
-                  terminal without hyperlinks draws a link's URL after its
-                  text, and a shared line would cut the URL off. */}
               {drawActions(
                 key,
                 isAsked(key, 'dismiss')
@@ -2295,10 +2291,12 @@ export const register: Register = on => {
                       },
                     ],
               )}
-              <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
-              {pr.summaryUrl !== null && (
-                <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
-              )}
+              <Box key={`links:${key}`} flexDirection="row" columnGap={2}>
+                <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
+                {pr.summaryUrl !== null && (
+                  <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
+                )}
+              </Box>
               {/* Each unresolved thread links to its first comment, since GitHub
                   folds an outdated thread and an old one on a long timeline away.
                   The text goes in as a Link's children, so nothing in it is read
