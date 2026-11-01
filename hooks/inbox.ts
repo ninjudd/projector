@@ -79,6 +79,9 @@ export const unclearOf = (item: Item) => `${quoteOf(item)}\n\n${UNCLEAR_WORDS} `
 /** Whether the text under a quote says you don't understand the item, with either apostrophe. */
 const saysUnclear = (said: string | undefined) => said?.replace('’', "'").startsWith(UNCLEAR_WORDS) === true
 
+/** Whether a prompt holds the words anywhere, with either apostrophe, so it may say you don't understand an item. */
+export const mayBeUnclear = (text: string) => text.replaceAll('’', "'").includes(UNCLEAR_WORDS)
+
 /** One answer a sent prompt gives: the letter of the option it picks. */
 export type Given = { question: Question; letter: string }
 
@@ -144,8 +147,8 @@ export type Read = { answers: Given[]; outcomes: Finished[]; replies: Answerable
  * understand an open item of any kind not already marked unclear: the item
  * whose drawer last put those words under that quote, or, when none did, the
  * oldest with that text. A press made before its item was revised, or on a
- * detail that has changed since, says nothing of the kind, so its quote
- * replies as any other text would.
+ * subject or detail that has changed since, says nothing of the kind, so its
+ * quote replies as any other text would.
  */
 export function readPrompt(text: string, items: readonly Item[], proposed: readonly Proposal[] = []): Read {
   const byAge = (one: Item, other: Item) => one.postedAt - other.postedAt
@@ -176,7 +179,11 @@ export function readPrompt(text: string, items: readonly Item[], proposed: reado
     const pressed = proposed.findLast(one => one.quote === quote && one.answer === UNCLEAR_WORDS)
     if (pressed === undefined) return markable.find(item => quoteOf(item) === quote && canMark(item.ref))?.ref
     const item = markable.find(one => one.ref === pressed.ref)
-    const isAsRead = pressed.isStale !== true && (pressed.detail === undefined || pressed.detail === item?.detail)
+    const isAsRead =
+      item !== undefined &&
+      pressed.isStale !== true &&
+      quoteOf(item) === pressed.quote &&
+      (pressed.detail === undefined || pressed.detail === item.detail)
     return isAsRead && canMark(pressed.ref) ? pressed.ref : undefined
   }
   const isOpen = (ref: string) => open.some(item => item.ref === ref) && !answered.has(ref)

@@ -427,6 +427,9 @@ test('word that you don’t understand goes to the item whose drawer put it ther
   // through to no other item.
   expect(readPrompt(text, [first, second], [pressed({ isStale: true })]).unclears).toEqual([])
   expect(readPrompt(text, [first, second], [pressed({ detail: 'Into release.' })]).unclears).toEqual([])
+  // So does a press on a subject the item no longer has, when a revision changed only the subject.
+  const renamed = notice({ ref: '4', number: 4, subject: 'Merged #7 into main', detail: 'Into main.' })
+  expect(readPrompt(text, [first, renamed], [pressed()]).unclears).toEqual([])
   // A stale press on a question leaves its quote to reply to it, as a stale pick does.
   const asked = question()
   const stale = pick('1', UNCLEAR_WORDS, { detail: 'Old.', isStale: true })

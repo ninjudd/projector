@@ -2529,6 +2529,41 @@ test('I don’t understand pressed on a drawer the agent revised since says noth
   await ui.unmount()
 })
 
+test('I don’t understand pressed before a revision of only the subject, or one the panel has yet to read, says nothing when sent', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const session = questionWorld(on, clock, [notice()])
+  await startSession($, clock)
+  const ui = await $.ui.mount(PANEL)
+  const unclearRuns = () => session.project().filter(command => command.startsWith('inbox unclear'))
+
+  // The agent revises only the notice's subject from its shell, and the panel reads it on its next tick.
+  await ui.press({ key: 'item:2' })
+  await ui.press({ key: 'unclear:2' })
+  const reworded = 'Force-pushed #7 to drop a file that held a token'
+  session.store.write(notice({ subject: reworded }))
+  await clock.advance(TICK)
+  await clock.settle()
+  const old = `"${FORCE_PUSHED}"\n\nI don't understand which token`
+  await $.prompt.submit({ text: old, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.submitted).toEqual([{ text: old, context: [] }])
+  expect(unclearRuns()).toEqual([])
+  expect(session.store.store.get('2')?.unclear).toBeUndefined()
+
+  // Pressed on the new subject, then revised again before the panel's next tick: the panel reads the store before
+  // it reads the prompt, so the prompt carries no UNCLEAR line for text the notice no longer holds.
+  await ui.press({ key: 'unclear:2' })
+  session.store.write(notice({ subject: reworded, detail: 'The token is rotated.' }))
+  const text = `"${reworded}"\n\nI don't understand which token`
+  await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+  await clock.settle()
+  expect(session.submitted.at(-1)).toEqual({ text, context: [] })
+  expect(unclearRuns()).toEqual([])
+  expect(session.store.store.get('2')?.unclear).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a question another shares the text of takes only the answer its own drawer put in the prompt', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })

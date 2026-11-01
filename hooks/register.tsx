@@ -46,6 +46,7 @@ import {
   isSnoozedAt,
   letterAt,
   liveAgent,
+  mayBeUnclear,
   needsDelivery,
   proposalOf,
   quoteOf,
@@ -1523,6 +1524,9 @@ export const register: Register = on => {
     // message or a notification can quote a question it is still waiting on.
     const session = await $.session.id()
     const isYours = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+    // A revision made since the last tick would otherwise send the `UNCLEAR`
+    // line for text the item no longer holds, which the CLI then refuses to mark.
+    if (isYours && mayBeUnclear(e.text)) await readStore($, session).catch(() => undefined)
     const mine = isYours ? (await read($, items)).filter(item => item.session === session) : []
     const { answers, outcomes, replies, unclears } = readPrompt(e.text, mine, isYours ? proposed : [])
     // An open question or request is done only when the prompt resolves or
