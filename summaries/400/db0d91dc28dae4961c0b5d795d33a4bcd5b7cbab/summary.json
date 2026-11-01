@@ -1,0 +1,123 @@
+{
+ "version": 1,
+ "name": "I don't understand fills the prompt",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 400,
+  "title": "Fill the prompt when you press I don't understand",
+  "head": "db0d91dc28dae4961c0b5d795d33a4bcd5b7cbab",
+  "headRef": "panel-unclear-fill",
+  "base": "e826fde8c39cb93c911ac891a62916ff73e4ff3a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel lists the items agents post to your inbox: questions, notices, and requests. Each item opens a drawer of actions. One of them, <b>I don't understand</b> (hotkey <code>6</code>), tells the agent that posted the item to rewrite it more simply. Before this change, one press ran <code>project inbox unclear</code> at once and sent the agent the line <code>UNCLEAR &lt;number&gt; &lt;subject&gt;</code>. You had no way to say what you didn't follow.",
+   "Now the press works like <b>Discuss</b>: it only fills the prompt with the quoted item, a blank line, and <code>I don't understand </code>, and you finish the sentence. When you send the prompt, the panel's <code>prompt.submit</code> hook recognizes the words under the quote. It adds a note for the main loop that starts with the <code>UNCLEAR</code> line, and once the prompt has entered, it records <code>project inbox unclear</code> and marks the line delivered, so the agent hears it once.",
+   "<ul><li><b>Proposal.</b> What a drawer put in the prompt, kept so a sent quote goes to the item you acted on. A press of <b>I don't understand</b> now records one, with the detail you read.</li><li><b>Stale.</b> A proposal made before its item was revised. A stale press should add no note and mark nothing.</li><li><b>Main loop.</b> The conversation you type into, as opposed to a subagent that posted the item.</li></ul>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first Projector review, of <code>21e1cc0</code>, opened three findings. Three commits answered them, and the review of <code>a1a4a0a</code> was clean, with one suggestion. <code>db0d91d</code> implements that suggestion, and its incremental review is clean:</p><ul class=\"tight\"><li>A press made before a revision says nothing when sent. That holds when only the subject changed, and when the panel had not yet read the revision.</li><li>Typed <code>I don't understand</code> goes to the item whose drawer put the quote in the prompt. When the prompt quotes it once, the drawer you acted in last wins, unless that drawer put an option there.</li><li><code>docs/cli.md</code>, the tool descriptions, and two comments say that <code>UNCLEAR</code> goes out when you send the filled prompt.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "reading",
+   "title": "Reading I don't understand in a sent prompt",
+   "kicker": "How readPrompt recognizes the words under a quote and which item they go to",
+   "intro": [
+    "<code>readPrompt</code> reads each prompt you send against the open items. Before this change it found answers, request outcomes, and replies. It now also returns <code>unclears</code>: the items a quote followed by <code>I don't understand</code> speaks to. The words must start the text under the quote, with either apostrophe, and an option whose text is those words still answers.",
+    "The words go to the item whose drawer put the quote in the prompt. When the prompt quotes the subject once, the last press of <b>I don't understand</b> or <b>Discuss</b> wins, so a press you cleared gives way to a later <b>Discuss</b>. When the prompt quotes it twice, a press comes first. Failing those, any drawer that put the quote there counts, such as an option. That item takes the words only while what you read there still stands: the press is not stale, and the item's quote and detail are unchanged. Otherwise the quote replies as before, and the words never fall through to another item. Only a quote that no drawer put in the prompt goes to the oldest item with that text. <code>unclearNote</code> writes the note the main loop reads, and names the subagent to pass it to when one posted the item."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Items of every kind can be marked unclear, notices included, while only questions and requests take answers and replies. That is why the new code keeps a separate <code>markable</code> list beside <code>open</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/inbox.ts",
+     "note": "Adds <code>UNCLEAR_WORDS</code>, <code>unclearOf</code>, <code>mayBeUnclear</code>, the <code>unclears</code> result of <code>readPrompt</code>, a <code>detail</code> on <code>Proposal</code>, and <code>unclearNote</code>, and rewords <code>unclearArrives</code> for the tool descriptions.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 191,
+       "text": "A probe test pressed <code>6</code>, then rewrote only the subject in the store and advanced one tick. Sending the old fill then added no note and ran no <code>project inbox unclear</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 185,
+       "text": "With two <code>\"Merge it?\"</code> questions, a probe made an abandoned press on the older one, then a <b>Discuss</b> on the newer one, and typed <code>I don't understand why now</code>. That marks the newer one. The new <code>readPrompt</code> cases fail against the previous head's <code>inbox.ts</code>."
+      }
+     ]
+    },
+    {
+     "path": "hooks/inbox.test.ts",
+     "note": "Adds the <code>unclears: []</code> field to existing expectations, and new tests for what a press fills, how the words are read, which item they go to, a subject-only revision, and the note's wording."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "The panel's press and the prompt hook",
+   "kicker": "The press fills the prompt; sending it records and delivers once",
+   "intro": [
+    "The drawer's <b>I don't understand</b> button now calls <code>propose</code> and <code>fill</code>, like <b>Discuss</b>, instead of <code>act</code>, which no longer takes <code>unclear</code>. The hotkey, the fallback for a stored item whose choice holds <code>6</code>, and the keyboard ring are unchanged.",
+    "In <code>prompt.submit</code>, a prompt that holds the words first reads the store, so that a revision since the last tick counts. Then each item in <code>unclears</code> adds an <code>unclearNote</code> to the prompt's context and closes its drawer. Once the prompt has entered, the hook runs <code>recordFromPrompt</code> with <code>unclear</code>, <code>--subject</code>, and <code>--detail</code>. <code>recordFromPrompt</code> holds the item in <code>delivering</code> and marks the line delivered, so the panel's own deliverer never sends it a second time."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "A probe test sent the filled prompt twice for a running subagent's question. <code>project inbox unclear</code> ran once, the panel sent the subagent nothing itself, and the second prompt only replied."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Moves I don't understand from an immediate <code>act</code> call to a prompt fill, and records it from <code>prompt.submit</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1529,
+       "text": "A probe test pressed <code>6</code>, rewrote the detail in the store, and sent the prompt before the next tick. The prompt carried no note, and no mark was attempted."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Rewrites the I don't understand tests for the fill-then-send flow: a running subagent's notice, a prompt sent as filled, a terminal <code>unclear</code> that cannot be delivered, a dropped prompt, and a press made before a revision. Adds a test for a subject-only revision and for a revision the panel has yet to read."
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Rewords the <code>unclear</code> field's comment: you send the filled prompt, or run <code>project inbox unclear</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "docs/plugins.md describes the new press",
+   "intro": [
+    "<code>docs/plugins.md</code> now says the press fills the prompt, shows an example, and describes the note, the record, the stale case, and which item typed words speak to when two items share a subject. It keeps a separate paragraph for <code>project inbox unclear</code> run from a terminal, which the panel still delivers. <code>docs/cli.md</code>'s <code>unclear</code> section now describes the same press. The completed <code>inbox/unclear</code> plan stays as the record of what that project shipped."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Rewrites the I don't understand paragraph, says which item typed words speak to when two items share a subject, and updates the lines about hotkey <code>6</code> and the keyboard ring.",
+     "checks": []
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Says the panel's press fills the prompt, and that <code>unclear</code> runs once you send it."
+    }
+   ]
+  }
+ ]
+}
