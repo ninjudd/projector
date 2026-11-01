@@ -118,11 +118,12 @@ install_cli() {
 # system Python, which Homebrew's and Debian's refuse (PEP 668).
 install_venv() {
   local source="$1"
-  if ! "$PROJECTOR_PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
-    echo "install.sh: Projector needs Python 3.11 or newer as $PROJECTOR_PYTHON; set PROJECTOR_PYTHON to use another" >&2
-    return 69
+  # A venv runs on the Python it was made with, and pip refuses one too old for
+  # `requires-python`, so only making a venv depends on PROJECTOR_PYTHON.
+  if [ ! -x "$VENV_DIR/bin/python" ]; then
+    require_python
+    "$PROJECTOR_PYTHON" -m venv "$VENV_DIR"
   fi
-  [ -x "$VENV_DIR/bin/python" ] || "$PROJECTOR_PYTHON" -m venv "$VENV_DIR"
   "$VENV_DIR/bin/python" -m pip install --quiet --upgrade --no-cache-dir "$source"
   mkdir -p "$BIN_DIR"
   ln -sf "$VENV_DIR/bin/project" "$BIN_DIR/project"
@@ -131,6 +132,21 @@ install_venv() {
     *":$BIN_DIR:"*) ;;
     *) warn_row "not-on-path" "$BIN_DIR is not on PATH -- add it to your shell's PATH to run project" ;;
   esac
+}
+
+# A version manager can put another Python behind `python3` in one directory or
+# shell, and can fail outright with its reason on stderr, so a refusal shows
+# what actually answered: the version and path, or that reason.
+require_python() {
+  local found
+  found="$("$PROJECTOR_PYTHON" -c '
+import sys
+print("%s at %s" % (sys.version.split()[0], sys.executable))
+sys.exit(sys.version_info < (3, 11))
+' 2>&1)" && return 0
+  echo "install.sh: Projector needs Python 3.11 or newer as $PROJECTOR_PYTHON; set PROJECTOR_PYTHON to use another" >&2
+  echo "install.sh: $PROJECTOR_PYTHON reports: $found" >&2
+  return 69
 }
 
 run_claude() { CLAUDE_CONFIG_DIR="$CLAUDE_DIR" "$CLAUDE_COMMAND" "$@"; }

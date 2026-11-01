@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -954,18 +956,20 @@ class ReleaseInstallTests(unittest.TestCase):
                 self.assertIn("cli-installed  9.9.9 (no release version to compare against)", result.stdout)
                 self.assertNotIn("repo-", result.stdout, "no checkout, so nothing to compare with an upstream")
 
-    def fake_python(self, *, new_enough: bool = True) -> Path:
-        """A python3 that passes or fails the version check and makes a fake venv."""
+    def fake_python(self, *, version: str = "3.12.5") -> Path:
+        """A python3 that runs the installer's real check as `version` and makes a fake venv."""
 
         path = self.user_root / "python3"
         template = self.user_root / "venv-python"
         template.write_text('#!/bin/sh\nprintf "venv-python %s\\n" "$*" >> "$PROJECTOR_TEST_LOG"\n')
         template.chmod(0o755)
+        version_info = tuple(int(part) for part in version.split("."))
+        disguise = f"import sys; sys.version = {version!r}; sys.version_info = {version_info!r}; exec(sys.argv[1])"
         path.write_text(
             "#!/bin/sh\n"
             'printf "python3 %s\\n" "$*" >> "$PROJECTOR_TEST_LOG"\n'
             'case "$1" in\n'
-            f"  -c) exit {0 if new_enough else 1} ;;\n"
+            f'  -c) exec "{sys.executable}" -c {shlex.quote(disguise)} "$2" ;;\n'
             f'  -m) mkdir -p "$3/bin" && cp "{template}" "$3/bin/python" && cp "{template}" "$3/bin/project" ;;\n'
             "esac\n"
         )
@@ -991,13 +995,37 @@ class ReleaseInstallTests(unittest.TestCase):
         self.assertIn("not-on-path", result.stdout, "the link's directory is not on this PATH")
 
     def test_without_pipx_an_old_python_is_refused(self) -> None:
-        environment = self.without_pipx(self.fake_python(new_enough=False))
+        python = self.fake_python(version="3.10.14")
+        environment = self.without_pipx(python)
 
         result = self.piped("cli", environment=environment)
 
         self.assertEqual(69, result.returncode)
         self.assertIn("Projector needs Python 3.11 or newer", result.stderr)
+        self.assertIn(f"{python} reports: 3.10.14 at /", result.stderr)
         self.assertFalse((self.user_root / "venv").exists())
+
+    def test_without_pipx_a_python_that_cannot_run_says_why(self) -> None:
+        python = self.fake_python()
+        environment = self.without_pipx(python)
+        python.write_text("#!/bin/sh\necho \"pyenv: version '3.8' is not installed\" >&2\nexit 127\n")
+
+        result = self.piped("cli", environment=environment)
+
+        self.assertEqual(69, result.returncode)
+        self.assertIn(f"{python} reports: pyenv: version '3.8' is not installed", result.stderr)
+        self.assertFalse((self.user_root / "venv").exists())
+
+    def test_without_pipx_an_upgrade_needs_nothing_from_an_old_python3(self) -> None:
+        environment = self.without_pipx(self.fake_python())
+        self.assertEqual(0, self.piped("cli", environment=environment).returncode)
+        self.log.unlink()
+        self.fake_python(version="3.10.14")
+
+        result = self.piped("cli", environment=environment)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual([f"venv-python -m pip install --quiet --upgrade --no-cache-dir {ARCHIVE}"], self.logged())
 
 
 if __name__ == "__main__":
