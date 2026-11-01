@@ -1,0 +1,101 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 5f2aa5d3..f9faa501 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -228,8 +228,7 @@ not subscribed to before.
+    #258 draft grace Name the reviewed head in a review's sig… conflict · 2* 5m
+         reviewing · review-signature · +84 −12 in 5 files · checks passing
+         7: Discuss  8: Dismiss
+-        open in github
+-        open in projector
++        open in github  open in projector
+         src/review.py:412 · ada · P2 · The signature names the base, not the head
+         docs/cli.md:88 · ada · P3 · Say which head the line names · outdated
+                                                            ctrl+x tab to focus
+@@ -310,7 +309,8 @@ as `−12`, in red. The checks' state takes a color of its own, and the rest,
+ ` in 5 files` and each `·` included, keeps the default text color. Below
+ that come two actions, side by side on one line, on the digits `7` and `8`,
+ as [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+-describes, and then the links:
++describes. The two links to the pull request follow, side by side on the
++next line, and then a line for each unresolved review thread:
+ 
+ - **Discuss** puts the pull request's number in the prompt at the
+   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
+@@ -335,10 +335,6 @@ describes, and then the links:
+   threads appear once GitHub answers the drawer's own query, a moment
+   after the drawer opens.
+ 
+-Each link has a line of its own, because a terminal that does not draw
+-hyperlinks shows a link's URL after its text, and a line shared with
+-another link would cut the URL off.
+-
+ **Dismiss** runs `project watch drop` once for each role the session holds
+ on the pull request, as `--role fix` or `--role review`. Each writes a `!`
+ line to the session's subscriptions, so the daemon tells this session
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 233d0c20..d7c82e71 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -711,20 +711,19 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   const opened = await ui.find({ key: 'drawer:x/y#7' })
+   expect(opened).toBeDefined()
+   expect(opened?.props.marginLeft).toBe(4)
+-  // Under the facts come the actions, side by side on one line, then the links, each on a line of its own, so a terminal without hyperlinks shows the whole URL.
+-  // The thread lines come as one list among the children, so the children are flattened first. A thread's line
+-  // is a Text, which carries no key of its own.
++  // Under the facts come the actions, side by side on one line, then the links, side by side on the next, spaced as
++  // the actions are. The thread lines come as one list among the children, so the children are flattened first. A
++  // thread's line is a Text, which carries no key of its own.
+   type Line = { type: string; props?: { key?: string }; children?: unknown[] }
+   const lines = ((opened?.children ?? []) as unknown[]).flat() as Line[]
+-  expect(lines.map(line => line.props?.key ?? line.type)).toEqual([
+-    'Text',
+-    'actions:x/y#7',
++  expect(lines.map(line => line.props?.key ?? line.type)).toEqual(['Text', 'actions:x/y#7', 'links:x/y#7', 'Text', 'Text'])
++  expect(await rowOf(ui, 'actions:x/y#7')).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
++  const linkRow = await ui.find({ key: 'links:x/y#7' })
++  expect([linkRow?.props.flexDirection, linkRow?.props.columnGap]).toEqual(['row', 2])
++  expect(((linkRow?.children ?? []) as unknown[]).flat().map(part => (part as Line).props?.key)).toEqual([
+     'github:x/y#7',
+     'projector:x/y#7',
+-    'Text',
+-    'Text',
+   ])
+-  expect(await rowOf(ui, 'actions:x/y#7')).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
+   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
+   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
+   // Each unresolved thread links to its first comment: where it is, who opened it, how it starts, cut to fit,
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index a1ad6de0..b9a957c5 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -2256,9 +2256,8 @@ export const register: Register = on => {
+                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
+               </Text>
+               {/* Under the facts come the actions, side by side on one line,
+-                  and then the links. Each link has a line of its own: a
+-                  terminal without hyperlinks draws a link's URL after its
+-                  text, and a shared line would cut the URL off. */}
++                  and then the links to the pull request, side by side on the
++                  next, spaced as the actions are. */}
+               {drawActions(
+                 key,
+                 isAsked(key, 'dismiss')
+@@ -2295,10 +2294,12 @@ export const register: Register = on => {
+                       },
+                     ],
+               )}
+-              <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
+-              {pr.summaryUrl !== null && (
+-                <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
+-              )}
++              <Box key={`links:${key}`} flexDirection="row" columnGap={2}>
++                <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
++                {pr.summaryUrl !== null && (
++                  <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
++                )}
++              </Box>
+               {/* Each unresolved thread links to its first comment, since GitHub
+                   folds an outdated thread and an old one on a long timeline away.
+                   The text goes in as a Link's children, so nothing in it is read
