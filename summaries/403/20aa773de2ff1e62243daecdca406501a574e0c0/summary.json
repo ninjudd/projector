@@ -1,0 +1,112 @@
+{
+ "version": 1,
+ "name": "Drawer threads by file",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 403,
+  "title": "Gather a drawer's review threads under their files",
+  "head": "20aa773de2ff1e62243daecdca406501a574e0c0",
+  "headRef": "panel-group-findings-by-file",
+  "base": "442c9a9cc58ef3effecbfe0c0228e5243a22c094",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel sits above Claude Code's prompt and lists the pull requests a session fixes or reviews. Pressing a pull request's number opens its <b>drawer</b>: a few lines under the pull request that show its branch and size, two actions, links to GitHub and to its Projector summary, and one link for each unresolved review thread.",
+   "Each thread's line used to repeat the full file path and then cut the finding's first line at 60 characters. On a pull request with several findings in one deeply nested file, the path filled most of each line, and the cut removed the words that told the findings apart.",
+   "This change names each file once, on a line of its own, and indents that file's threads two columns under it. A thread's line now starts with <code>:&lt;line&gt;</code>, or <code>file</code> for a comment on the whole file, and runs to the panel's edge:",
+   "<pre>ios/Field/Audio/TrackPlayer.swift\n  :1875 · grace · P2 · One song's failed rebuild blocks other songs from recovering\n  :1902 · grace · outdated · P2 · A background rebuild can overwrite a newer imported track</pre>",
+   "Threads keep their oldest-first order within a file, and files come in the order of each file's oldest thread. Nothing else in the drawer changes."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Drawer</b>: the lines a pull request's row opens under itself in the panel.</li><li><b>Thread label</b>: the text of one thread's link, built by <code>threadLabel</code>.</li><li><b><code>columns</code></b>: how wide the panel's rows are, the terminal's width less the panel's inset and padding.</li><li><b><code>labelWidth</code></b>: the width of the column of pull request numbers. The drawer starts one column past it.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, of <code>20aa773</code>, is clean with one suggestion: move <code>rowOf</code>'s doc comment back above <code>rowOf</code> in <code>hooks/panel.test.tsx</code>.</li><li>The new tests fail against the base's <code>hooks/register.tsx</code>, and the full gate passes at the head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "render",
+   "title": "Threads gathered under their files",
+   "kicker": "How the drawer groups threads and cuts each thread's line",
+   "intro": [
+    "<code>threadsByFile</code> groups the drawer's threads by their full path in a <code>Map</code>, which keeps the order in which each path first appears. The threads come from GitHub oldest first, so each file lands where its oldest thread does, and each file's threads stay oldest first.",
+    "<code>threadLabel</code> builds a thread's text from its line, its author, <code>outdated</code>, and its excerpt, in that order, and cuts it with <code>…</code> at the width it is given. The excerpt comes last so that the cut takes it first. The label falls back to <code>file</code> when the thread has no line, so a comment on a whole file never draws an empty link.",
+    "The panel cuts the text itself instead of setting <code>wrap=\"truncate-end\"</code> on the <code>Text</code>. A terminal without hyperlinks draws a link as its text followed by its URL, and a truncating <code>Text</code> would cut that URL off."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Replaces the 60-character excerpt cut with a cut at the drawer's width, adds <code>threadsByFile</code>, and draws each file as a <code>Box</code> holding its name and an indented column of thread links.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2350,
+       "text": "The width passed here subtracts the same <code>labelWidth + 1</code> that the drawer's <code>marginLeft</code> uses, and <code>THREAD_INDENT</code>, from the rows' <code>columns</code>. A probe at 120 columns cut a 300-character excerpt to exactly 109 columns, and a label one column short of that stayed whole."
+      },
+      {
+       "kind": "verify",
+       "line": 1249,
+       "text": "Probe tests showed two <code>index.ts</code> files in different directories in separate groups, 40 interleaved threads across 13 files in 13 groups ordered by each file's first thread, and resolved threads left out."
+      },
+      {
+       "kind": "context",
+       "line": 2345,
+       "text": "The file's name is a plain <code>Text</code> that the panel does not cut, so a path longer than the drawer wraps onto a second line. Only the thread lines are cut to the width."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "The drawer test, and two new tests for grouping and the width cut",
+   "intro": [
+    "The existing drawer test now expects one <code>file:</code> box per file after the links row. A new helper, <code>threadsOf</code>, reads each file's name and its threads' link targets and text, and checks that each thread sits two columns in and leaves its <code>Text</code> free to wrap.",
+    "Two new tests use <code>drawerListing</code>, which opens x/y#7's drawer over a list of threads you give it. One pins the boundary of the cut: a label exactly as wide as the drawer stays whole, and one column more is cut. The other pins the grouping, the oldest-first order within a file, and the <code>file</code> label."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "With the base's <code>hooks/register.tsx</code>, these three tests fail and the other 220 pass."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 4247,
+       "text": "This doc comment belongs to <code>rowOf</code>, further down. Adding <code>threadsOf</code> between them left it above <code>threadsOf</code>'s own doc comment. The review lists moving it back as a suggestion."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The drawer's description in docs/plugins.md",
+   "intro": [
+    "<code>docs/plugins.md</code> now describes a line for each file with its threads indented under it, with an example, the order of files and threads, and the parts of a thread's line. It also says that a terminal without hyperlinks draws the thread's URL after the text."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md"
+    }
+   ]
+  }
+ ]
+}
