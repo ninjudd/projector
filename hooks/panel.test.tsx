@@ -711,20 +711,19 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   const opened = await ui.find({ key: 'drawer:x/y#7' })
   expect(opened).toBeDefined()
   expect(opened?.props.marginLeft).toBe(4)
-  // Under the facts come the actions, side by side on one line, then the links, each on a line of its own, so a terminal without hyperlinks shows the whole URL.
-  // The thread lines come as one list among the children, so the children are flattened first. A thread's line
-  // is a Text, which carries no key of its own.
+  // Under the facts come the actions, side by side on one line, then the links, side by side on the next, spaced as
+  // the actions are. The thread lines come as one list among the children, so the children are flattened first. A
+  // thread's line is a Text, which carries no key of its own.
   type Line = { type: string; props?: { key?: string }; children?: unknown[] }
   const lines = ((opened?.children ?? []) as unknown[]).flat() as Line[]
-  expect(lines.map(line => line.props?.key ?? line.type)).toEqual([
-    'Text',
-    'actions:x/y#7',
+  expect(lines.map(line => line.props?.key ?? line.type)).toEqual(['Text', 'actions:x/y#7', 'links:x/y#7', 'Text', 'Text'])
+  expect(await rowOf(ui, 'actions:x/y#7')).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
+  const linkRow = await ui.find({ key: 'links:x/y#7' })
+  expect([linkRow?.props.flexDirection, linkRow?.props.columnGap]).toEqual(['row', 2])
+  expect(((linkRow?.children ?? []) as unknown[]).flat().map(part => (part as Line).props?.key)).toEqual([
     'github:x/y#7',
     'projector:x/y#7',
-    'Text',
-    'Text',
   ])
-  expect(await rowOf(ui, 'actions:x/y#7')).toEqual(['discuss:x/y#7 7 Discuss', 'dismiss:x/y#7 8 Dismiss'])
   expect((await ui.find({ key: 'github:x/y#7' }))?.props.text).toBe(`[open in github](${SEVEN})`)
   expect((await ui.find({ key: 'projector:x/y#7' }))?.props.text).toBe(`[open in projector](${SUMMARY})`)
   // Each unresolved thread links to its first comment: where it is, who opened it, how it starts, cut to fit,

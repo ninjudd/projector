@@ -228,8 +228,7 @@ not subscribed to before.
    #258 draft grace Name the reviewed head in a review's sig… conflict · 2* 5m
         reviewing · review-signature · +84 −12 in 5 files · checks passing
         7: Discuss  8: Dismiss
-        open in github
-        open in projector
+        open in github  open in projector
         src/review.py:412 · ada · P2 · The signature names the base, not the head
         docs/cli.md:88 · ada · P3 · Say which head the line names · outdated
                                                            ctrl+x tab to focus
@@ -310,7 +309,8 @@ as `−12`, in red. The checks' state takes a color of its own, and the rest,
 ` in 5 files` and each `·` included, keeps the default text color. Below
 that come two actions, side by side on one line, on the digits `7` and `8`,
 as [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
-describes, and then the links:
+describes. The two links to the pull request follow, side by side on the
+next line, and then a line for each unresolved review thread:
 
 - **Discuss** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
@@ -334,10 +334,6 @@ describes, and then the links:
   the link reaches a thread the pull request's page does not show. The
   threads appear once GitHub answers the drawer's own query, a moment
   after the drawer opens.
-
-Each link has a line of its own, because a terminal that does not draw
-hyperlinks shows a link's URL after its text, and a line shared with
-another link would cut the URL off.
 
 **Dismiss** runs `project watch drop` once for each role the session holds
 on the pull request, as `--role fix` or `--role review`. Each writes a `!`
