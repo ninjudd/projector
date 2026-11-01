@@ -1,0 +1,76 @@
+{
+ "version": 1,
+ "name": "Panel drawer link row",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 399,
+  "title": "Put a pull request drawer's GitHub and Projector links on one line",
+  "head": "c354c3c2f775d7fbbd42b28e5133b600193c8114",
+  "headRef": "panel-link-row",
+  "base": "e826fde8c39cb93c911ac891a62916ff73e4ff3a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel lists the pull requests a Claude Code session fixes or reviews, one line each, above the prompt. Clicking a pull request's number opens a <b>drawer</b> under it: a line of facts, the <b>Discuss</b> and <b>Dismiss</b> actions, links to the pull request, and a line for each unresolved review thread.",
+   "#397 put the two actions on one line. The two links, <code>open in github</code> and <code>open in projector</code>, still took a line each, because a terminal that does not draw hyperlinks prints a link's URL after its text, and a shared line leaves less room for the URL. This change puts both links on one line under the actions, two columns apart, as the actions are. The pull request body accepts that a terminal without hyperlinks now prints both URLs on that line.",
+   "<pre>reviewing · review-signature · +84 −12 in 5 files · checks passing\n7: Discuss  8: Dismiss\nopen in github  open in projector\nsrc/review.py:412 · ada · P2 · The signature names the base, not the head</pre>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The Projector review of <code>2143ba6</code> asked to delete a drawer comment that only described the layout beneath it, to say \"the links\" rather than \"the two links\" in <code>docs/plugins.md</code>, and to test the row for a pull request without a summary link.</li><li>Three commits answer all three, and the review of <code>c354c3c</code> found the head clean.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Drawer</b>: the lines the panel opens under a pull request when you click its number.</li><li><b>Summary link</b>: the Projector summary URL that the pull request's description links, which the panel reads as <code>summaryUrl</code>.</li><li><b>Focus ring</b>: the highlight that Tab moves between the panel's lines and actions when the panel has the keyboard.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "links",
+   "title": "The drawer draws its two links in one row",
+   "kicker": "The drawer's links move from a line each into one row, with a test and the docs",
+   "intro": [
+    "In <code>hooks/register.tsx</code>, the pull request drawer drew each link as a <code>Markdown</code> element of its own in the drawer's column, so each took a line. The change wraps both in a <code>Box</code> keyed <code>links:&lt;key&gt;</code> with <code>flexDirection=\"row\"</code> and <code>columnGap={2}</code>, the same spacing that <code>drawActions</code> gives the action row. The comment above the actions goes, since what it said the code shows. The <code>open in projector</code> link still appears only when the description links a summary, so a pull request without one shows only <code>open in github</code> on that line.",
+    "The links take no press and no hotkey: the terminal opens them as it opens any link. So the focus ring and the <code>7</code>, <code>8</code>, and <code>9</code> hotkeys work as before."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "With <code>hooks/register.tsx</code> reverted to <code>main</code>, the drawer test fails, listing <code>github:x/y#7</code> and <code>projector:x/y#7</code> where it expects <code>links:x/y#7</code>. At this head, the full gate passes, including <code>claude plugin test .</code> and <code>hooks/typecheck.sh</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Wraps the two link elements in the <code>links:</code> row and deletes the comment above the actions.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 2294,
+       "text": "The test kit does not lay out text, so no run measured how this row wraps on a narrow terminal or in a terminal without hyperlinks, which prints both URLs on it."
+      },
+      {
+       "kind": "verify",
+       "line": 2296,
+       "text": "When <code>summaryUrl</code> is null, the row holds only <code>github:</code>. With this guard replaced by <code>true</code>, the drawer test fails on the drawer of <code>o/r#1</code>, which has no summary link."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "The drawer test expects the facts, the <code>actions:</code> row, the <code>links:</code> row, and the thread lines, in that order. A helper, <code>linksOf</code>, checks that a <code>links:</code> row is a row with a gap of 2 and returns its keys: <code>github:</code> then <code>projector:</code> for <code>x/y#7</code>, and <code>github:</code> alone for <code>o/r#1</code>, whose description links no summary."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Shows both links on one line in the drawer example, says the links follow the actions side by side, and drops the paragraph that gave each link a line of its own."
+    }
+   ]
+  }
+ ]
+}
