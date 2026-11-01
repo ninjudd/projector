@@ -711,9 +711,8 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   const opened = await ui.find({ key: 'drawer:x/y#7' })
   expect(opened).toBeDefined()
   expect(opened?.props.marginLeft).toBe(4)
-  // Under the facts come the actions, side by side on one line, then the links, side by side on the next, spaced as
-  // the actions are. The thread lines come as one list among the children, so the children are flattened first. A
-  // thread's line is a Text, which carries no key of its own.
+  // The thread lines come as one list among the children, so the children are flattened first. A thread's line is a
+  // Text, which carries no key of its own.
   type Line = { type: string; props?: { key?: string }; children?: unknown[] }
   const lines = ((opened?.children ?? []) as unknown[]).flat() as Line[]
   expect(lines.map(line => line.props?.key ?? line.type)).toEqual(['Text', 'actions:x/y#7', 'links:x/y#7', 'Text', 'Text'])

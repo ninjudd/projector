@@ -2255,9 +2255,6 @@ export const register: Register = on => {
                 {pr.checks !== null && ' · '}
                 {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
               </Text>
-              {/* Under the facts come the actions, side by side on one line,
-                  and then the links to the pull request, side by side on the
-                  next, spaced as the actions are. */}
               {drawActions(
                 key,
                 isAsked(key, 'dismiss')
