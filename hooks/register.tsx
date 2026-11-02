@@ -285,6 +285,7 @@ const isShown = atom({ plugin: 'projector', key: 'isPanelShown' } as const, fals
 const drawer = atom({ plugin: 'projector', key: 'panelDrawer' } as const, null)
 const asked = atom({ plugin: 'projector', key: 'panelAsked' } as const, null)
 const drawerThreads = atom({ plugin: 'projector', key: 'panelThreads' } as const, null)
+const openFiles = atom({ plugin: 'projector', key: 'panelOpenFiles' } as const, null)
 const items = atom({ plugin: 'projector', key: 'panelInbox' } as const, [])
 const collapsed = atom({ plugin: 'projector', key: 'panelCollapsed' } as const, [])
 const sending = atom({ plugin: 'projector', key: 'panelSending' } as const, {})
@@ -1217,20 +1218,37 @@ function statusColor(pr: PullRequest): Note['color'] | 'subtle' {
   return pr.isDraft ? 'warning' : 'success'
 }
 
-/** How much of a thread's first line its drawer line shows. */
-const EXCERPT_LENGTH = 60
+/** How far a thread's line sits inside the line that names its file. */
+const THREAD_INDENT = 2
 
 /**
- * A thread's line in its pull request's drawer: where it is, who opened it,
- * how it starts, and whether a later push left it outdated.
+ * A thread's line under its file in a pull request's drawer, cut to `columns`:
+ * where in the file it is, who opened it, whether a later push left it
+ * outdated, and how it starts. The excerpt comes last so the cut takes it
+ * first, and `file`, for a comment on the whole file, means the line is never
+ * empty.
+ *
+ * The label is cut here rather than by `wrap="truncate-end"` because a terminal
+ * without hyperlinks draws a Link's URL after its text. Truncating the Text
+ * would cut the URL, which is the only way to the thread in that terminal.
  */
-function threadLabel(thread: Thread): string {
-  const place = thread.line === null ? thread.path : `${thread.path}:${thread.line}`
-  const excerpt =
-    thread.excerpt.length > EXCERPT_LENGTH ? `${thread.excerpt.slice(0, EXCERPT_LENGTH - 1).trimEnd()}…` : thread.excerpt
-  return [place, thread.author, excerpt, thread.isOutdated ? 'outdated' : null]
+function threadLabel(thread: Thread, columns: number): string {
+  const label = [
+    thread.line === null ? 'file' : `:${thread.line}`,
+    thread.author,
+    thread.isOutdated ? 'outdated' : null,
+    thread.excerpt,
+  ]
     .filter(piece => piece !== null && piece !== '')
     .join(' · ')
+  return label.length > columns ? `${label.slice(0, Math.max(0, columns - 1)).trimEnd()}…` : label
+}
+
+/** Threads gathered under their files, which come in the order of each file's first thread. */
+function threadsByFile(threads: readonly Thread[]): [string, Thread[]][] {
+  const files = new Map<string, Thread[]>()
+  for (const thread of threads) files.set(thread.path, [...(files.get(thread.path) ?? []), thread])
+  return [...files]
 }
 
 /** Whether the account the panel's `gh` is signed in as wrote a pull request. */
@@ -1623,6 +1641,7 @@ export const register: Register = on => {
     const opened = await read($, drawer)
     const shownThreads = await read($, drawerThreads)
     const asking = await read($, asked)
+    const opening = await read($, openFiles)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
     // Each count in the header is a button that collapses its pull requests
     // or its kind of item to one line at the top of their place in the list,
@@ -1678,11 +1697,25 @@ export const register: Register = on => {
       update($, asked, () => (about === null ? null : { drawer: key, about })).catch(() => undefined)
     }
     const isAsked = (key: string, about: 'snooze' | 'dismiss') => asking?.drawer === key && asking.about === about
+    const isFileOpen = (key: string, path: string) => opening?.drawer === key && opening.paths.includes(path)
+    const toggleFile = (key: string, path: string) => {
+      update($, openFiles, was => {
+        const paths = was?.drawer === key ? was.paths : []
+        return { drawer: key, paths: paths.includes(path) ? paths.filter(one => one !== path) : [...paths, path] }
+      }).catch(() => undefined)
+    }
+    // A drawer's files start collapsed each time it opens, so a press that
+    // opens one forgets the files opened before. A press on the drawer that is
+    // already open keeps them, because they stay open while it does.
+    const collapseFilesFor = (key: string) => {
+      if (opened !== key) update($, openFiles, () => null).catch(() => undefined)
+    }
     // A line's press opens or closes its drawer, and the ring goes onto the
     // drawer's first control or back onto the line. A drawer always opens on
     // its actions, never on a question it asked before. A pull request's
     // drawer reads its threads as it opens.
     const toggle = (key: string, line: string, onto?: string) => {
+      collapseFilesFor(key)
       update($, drawer, was => (was === key ? null : key))
         .then(() => loadThreads($))
         .catch(() => undefined)
@@ -1742,6 +1775,7 @@ export const register: Register = on => {
     // Buttons: the `+` expands them, and each label after it, in the rows'
     // order and its status's color, expands them with its drawer open.
     const expandOnto = (key: string) => {
+      collapseFilesFor(key)
       Promise.all([
         update($, collapsed, was => (Array.isArray(was) ? was.filter(one => one !== 'pr') : [])),
         update($, drawer, () => key),
@@ -2323,10 +2357,24 @@ export const register: Register = on => {
                   folds an outdated thread and an old one on a long timeline away.
                   The text goes in as a Link's children, so nothing in it is read
                   as markdown. */}
-              {(shownThreads?.drawer === key ? shownThreads.threads : []).map((thread, at) => (
-                <Text key={`thread:${key}:${at}`}>
-                  <Link href={thread.url ?? pr.url}>{threadLabel(thread)}</Link>
-                </Text>
+              {threadsByFile(shownThreads?.drawer === key ? shownThreads.threads : []).map(([path, threads]) => (
+                <Box key={`file:${key}:${path}`} flexDirection="column">
+                  <Button key={`toggle-file:${key}:${path}`} plain onPress={() => toggleFile(key, path)}>
+                    {`${isFileOpen(key, path) ? '-' : '+'} ${path} `}
+                    <Text color="warning">{`${threads.length}*`}</Text>
+                  </Button>
+                  {isFileOpen(key, path) && (
+                    <Box flexDirection="column" marginLeft={THREAD_INDENT}>
+                      {threads.map((thread, at) => (
+                        <Text key={`thread:${key}:${path}:${at}`}>
+                          <Link href={thread.url ?? pr.url}>
+                            {threadLabel(thread, columns - (labelWidth + 1) - THREAD_INDENT)}
+                          </Link>
+                        </Text>
+                      ))}
+                    </Box>
+                  )}
+                </Box>
               ))}
             </Box>
           )}
