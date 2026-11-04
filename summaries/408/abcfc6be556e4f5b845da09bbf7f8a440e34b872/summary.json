@@ -1,0 +1,120 @@
+{
+ "version": 1,
+ "name": "Session cleanup skill",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 408,
+  "title": "Add a cleanup skill that checks a session's work and releases what it holds",
+  "head": "abcfc6be556e4f5b845da09bbf7f8a440e34b872",
+  "headRef": "cleanup-skill",
+  "base": "bffca2afba4164fbe18aad3abf55fc5e7c836a8b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's skills are written instructions that an agent session in Claude Code or Codex follows. A session that fixes or reviews pull requests holds things that outlive the conversation: <b>watch subscriptions</b> (lines in Projector's state directory that tell its watch daemon to send the session events about a pull request), open <b>inbox items</b> (questions and notices shown above the user's prompt), review locks and scratch worktrees, its own Git worktrees and stash entries, and subagents and background commands. Until now nothing checked, before the user shut a session down, that its work was finished or that these were released.",
+   "This pull request adds a <code>cleanup</code> skill for that moment. It runs in four stages:",
+   "<ol><li><b>Take stock.</b> List what the user asked for and what the session promised, with evidence of delivery, and list what the session holds, using <code>project watch list</code>, <code>project inbox list</code>, <code>git worktree list</code>, and <code>git stash list</code>.</li><li><b>Find gaps.</b> Unpushed changes, open review work, a hold comment, a stale plan status, and similar work the session still owes.</li><li><b>Ask per gap.</b> Do it now, open an issue for it, or leave it, with one recommended.</li><li><b>Release and confirm.</b> Stop subagents, finish reviews, remove subscriptions, withdraw inbox items, and remove worktrees, branches, and stash entries the session made, keeping any change that exists nowhere else. Then run the inventory again, and say the session is safe to shut down only when it comes back empty.</li></ol>",
+   "The rest of the change lists the new skill in <code>README.md</code>, <code>docs/plugins.md</code>, and the packaging test's set of published skills."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review, of <code>abcfc6b</code>, requested changes with five findings, each reproduced in a sandbox:</p><ul class=\"tight\"><li>The unpushed-work check lists every local branch's commits, not the worktree's.</li><li><code>project review status</code> does not report merge conflicts, and no step reads failing checks.</li><li><code>project watch list</code> without <code>--session</code> lists every session's subscriptions on a host with no id in the environment.</li><li>A dismissed pull request's <code>!</code> line survives <code>project watch remove</code>, so the final check never passes.</li><li><code>git stash drop</code> refuses a SHA.</li></ul><p class=\"note\">The full validation gate passes at this head.</p>"
+   },
+   {
+    "id": "overlap",
+    "title": "Overlap with #407",
+    "html": "<p>The open pull request #407, which adds a <code>write-tests</code> skill, edits the same skill-list sentence in <code>README.md</code>, the same list in <code>docs/plugins.md</code>, and <code>PUBLISHED_SKILLS</code> in <code>tests/test_packaging.py</code>. Whichever merges second resolves a small conflict in each.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "skill",
+   "title": "The cleanup skill",
+   "kicker": "The instructions a session follows to wrap up, and its Codex metadata",
+   "intro": [
+    "<code>skills/cleanup/SKILL.md</code> is the whole skill. Both hosts read it from the shared <code>skills/</code> tree, so it names Projector's own commands and plain <code>git</code> and <code>gh</code> commands, and treats host tools such as Projector's <code>ask</code> and <code>withdraw</code> tools as optional.",
+    "Read it as a sequence an agent will run literally. The questions to hold while reading are whether each command does what the skill says, and whether each release step touches only what this session owns. A <b>session id</b> is the key Projector files a session's subscriptions and inbox items under: Claude Code sets it in <code>CLAUDE_CODE_SESSION_ID</code>, and another host chooses one and may export it as <code>PROJECTOR_SESSION</code>."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The skill's authorization rules hold throughout: it releases only what the session created, asks before discarding any change that exists nowhere else, posts an issue only after the user picks that answer, and never merges."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/cleanup/SKILL.md",
+     "note": "The skill: find the session id, take stock, find gaps, ask about each, release in order, and confirm.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 40,
+       "text": "Run without <code>--session</code>, <code>project watch list</code> lists every session's subscriptions when neither <code>PROJECTOR_SESSION</code> nor <code>CLAUDE_CODE_SESSION_ID</code> is set, as on Codex, and release step 3 then runs <code>project watch remove</code> for each line printed. Pass <code>--session &lt;id&gt;</code> to both."
+      },
+      {
+       "kind": "flag",
+       "line": 54,
+       "text": "<code>git log --branches --not --remotes</code> walks every local branch, so it reports other branches' unpushed commits in every worktree, and misses commits on a detached <code>HEAD</code>. Check <code>git log HEAD --not --remotes</code> per worktree instead."
+      },
+      {
+       "kind": "flag",
+       "line": 57,
+       "text": "<code>project review status --json</code> has no field for a merge conflict, and no step reads failing checks, though both are listed as gaps. Add <code>gh pr view &lt;number&gt; --json mergeable,statusCheckRollup</code>."
+      },
+      {
+       "kind": "flag",
+       "line": 156,
+       "text": "A pull request the user dismissed leaves a <code>!</code> line that <code>project watch remove</code> does not remove, so the final check, which expects no line, never passes."
+      },
+      {
+       "kind": "flag",
+       "line": 176,
+       "text": "<code>git stash drop &lt;sha&gt;</code> fails with <code>is not a stash reference</code>. Find the entry's current <code>stash@{n}</code> by its SHA just before dropping it."
+      },
+      {
+       "kind": "verify",
+       "text": "Every other command the skill names exists with the flags it uses at this head: <code>project inbox list</code>/<code>withdraw</code> (which read only <code>PROJECTOR_SESSION</code>, as the skill says), <code>project review hold --drop</code>, <code>project review finish</code>, <code>project show</code>, and <code>project check</code>, checked against their <code>--help</code> and source."
+      }
+     ]
+    },
+    {
+     "path": "skills/cleanup/agents/openai.yaml",
+     "note": "Codex's display name, short description, and default prompt, in the same shape as the other skills' files."
+    }
+   ]
+  },
+  {
+   "id": "listing",
+   "title": "Listing and packaging",
+   "kicker": "Where the new skill is named for readers and for the packaging test",
+   "intro": [
+    "Both plugin manifests package the whole <code>skills/</code> directory, so the new skill ships without a manifest change. The packaging test keeps an exact set of published skills and fails when the tree and the set disagree, so the set gains <code>cleanup</code>. The README and the plugin guide list the skill, and the guide adds a paragraph on when to run it and what it releases."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The full gate passes at this head: 1222 unit tests, <code>project check</code>, <code>claude plugin validate .</code>, <code>claude plugin validate skills</code>, <code>claude plugin test .</code>, <code>hooks/typecheck.sh</code>, and <code>git diff --check</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "README.md",
+     "note": "Adds <code>cleanup</code> to the sentence that lists the skills."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Lists <code>cleanup</code> and describes what it checks and releases."
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "Adds <code>cleanup</code> to <code>PUBLISHED_SKILLS</code>."
+    }
+   ]
+  }
+ ]
+}
