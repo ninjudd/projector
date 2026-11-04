@@ -58,9 +58,20 @@ or posted, it has no id and holds nothing under Projector's state directory.
    the repository, the user's and other sessions' included, and misses
    commits on a detached `HEAD`.
 5. For each open pull request the session opened, pushed to, or reviews, run
-   `project review status <number> --json`. It reports the verdict on the
-   current head, whether the pull request conflicts with its base, and each
-   hold comment its author has open.
+   these commands:
+
+   ```sh
+   project review status <number> --repo <owner>/<repo> --json
+   gh pr view <number> --repo <owner>/<repo> --json mergeable,statusCheckRollup
+   ```
+
+   `project review status` reports the verdict on the current head, the
+   open finding threads, and each hold comment the author has open.
+   `gh pr view` reports whether the pull request conflicts with its base,
+   as `mergeable` reading `CONFLICTING`, and the result of each check, as a
+   check run's `conclusion` or a commit status's `state`. When
+   `mergeable` reads `UNKNOWN`, GitHub has not computed it yet, so ask again
+   after a few seconds.
 6. When the session worked on a project, run `project show <name> --json`
    and `project check`.
 
