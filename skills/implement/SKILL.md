@@ -59,7 +59,8 @@ change:
 - **Correctness.** Trace each change past the happy path: what happens when
   an input is missing, when the call repeats, when the operation fails or is
   cancelled, and at zero, empty, and maximum. Write the test that pins the
-  answer while the reasoning is fresh.
+  answer while the reasoning is fresh, by the testing guide in
+  `../testing.md`: name the bug each test catches, and watch it fail.
 - **Performance**, the Cost pass. Know how often the code you touch runs
   before you add work to it. Measure the paths the plan named as hot, and
   put no new read, allocation, or request inside a loop or a per-request

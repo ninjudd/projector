@@ -72,9 +72,10 @@ same way; `fix-pr` to fix a pull request's findings and merge conflicts,
 which the session that pushed a pull request runs again whenever a review
 finds something; `summarize-pr`, which summarizes a pull request's changes
 as a guided review page; `write`, which writes any prose so that it follows
-Projector's writing guide; and `rewrite`, which revises existing text by
-that guide and writes it back where it lives. Claude invokes a skill as
-`/projector:<skill>` and Codex as `$<skill>`. See
+Projector's writing guide; `rewrite`, which revises existing text by
+that guide and writes it back where it lives; and `write-tests`, which
+writes tests that catch real bugs and prunes the ones that catch nothing.
+Claude invokes a skill as `/projector:<skill>` and Codex as `$<skill>`. See
 [Install Projector](docs/plugins.md) for how the skills work together.
 
 In Claude Code, the plugin also shows Projector's panel above the prompt.

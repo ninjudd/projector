@@ -34,3 +34,17 @@ this section; the fix is to delete the comment, or to simplify the code until
 nothing is left to explain. A comment that misstates what the code does is a
 correctness finding, because a maintainer who trusts it changes the wrong
 thing.
+
+## 2. Tests
+
+Write and judge tests by the testing guide in `testing.md`. Its first rule
+is that a test must be able to catch a bug. Before you write a test, name a
+plausible change that leaves the code wrong and turns the test red. Write
+no test for which you cannot. A test that restates a value the code holds,
+tests a mock or a library, or cannot fail catches nothing, and it costs time
+on every run (`testing.md` § 2 and § 4).
+
+A review flags such a test as a violation of a written rule, a P2 thread
+under the written-rules pass that cites the section of `testing.md` the
+test breaks. The fix is to delete the test, or to rewrite it to check
+behavior that the code computes.
