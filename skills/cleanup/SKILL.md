@@ -42,16 +42,17 @@ holds nothing under Projector's state directory.
    project watch list --session <id> --json
    project inbox list --session <id> --json
    git worktree list --porcelain
-   git stash list
+   git stash list --format='%H %gd %gs'
    ```
 
    `project watch list` prints each pull request and repository the session
    fixes or reviews. `project inbox list` prints each question, notice, and
    request still open in the inbox. From `git worktree list`, keep only the
    worktrees this session created. From `git stash list`, keep only the
-   entries it pushed. Add each subagent, background command, monitor,
-   `project watch stream`, and scheduled wakeup or job that the session
-   started, and each temporary file it wrote outside its scratch directory.
+   entries it pushed, and note each one's SHA. Add each subagent,
+   background command, monitor, `project watch stream`, and scheduled
+   wakeup or job that the session started, and each temporary file it wrote
+   outside its scratch directory.
 4. For each worktree the session created, run `git status --porcelain` and
    `git log HEAD --not --remotes --oneline` in it. For each local branch the
    session created, run `git log <branch> --not --remotes --oneline`. Output
@@ -193,9 +194,17 @@ recreates what you released.
    pull request has merged or closed, or when the user said to discard it.
    Keep the branch of an open pull request.
 7. **Stashes and temporary files.** Drop each stash entry the session
-   pushed and no gap kept, by its SHA, never by its `stash@{n}` position,
-   which another session can shift. Delete each temporary file the session
-   wrote outside its scratch directory.
+   pushed and no gap kept. Another session can shift an entry's
+   `stash@{n}` position, and `git stash drop` refuses a SHA, so find the
+   entry's current reference by its SHA just before you drop it:
+
+   ```sh
+   git stash list --format='%H %gd'
+   git stash drop 'stash@{<n>}'
+   ```
+
+   Delete each temporary file the session wrote outside its scratch
+   directory.
 
 ## Confirm that the session can shut down
 
