@@ -61,9 +61,22 @@ holds nothing under Projector's state directory.
    the repository, the user's and other sessions' included, and misses
    commits on a detached `HEAD`. A branch whose pull request was
    squash-merged still prints its commits once its remote branch is
-   deleted, because the squash put different commits on the base. When
-   `gh pr list --head <branch> --state merged` finds its pull request, the
-   work is delivered, not a gap.
+   deleted, because the squash put different commits on the base. Such a
+   branch is delivered only up to the head its pull request merged at:
+
+   ```sh
+   gh pr list --head <branch> --state merged --json number,headRefOid
+   git merge-base --is-ancestor <headRefOid> <branch>
+   git log <headRefOid>..<branch> --oneline
+   ```
+
+   The commits up to `headRefOid` are delivered. Each commit that
+   `git log <headRefOid>..<branch>` prints, such as a follow-up made after
+   the merge, is a change that exists nowhere else. When the lookup finds no
+   merged pull request, or `git merge-base --is-ancestor` fails, as it does
+   when the merged pull request came from an unrelated branch of the same
+   name or its head is not in the local repository, the branch's unpushed
+   commits are all changes that exist nowhere else.
 5. For each open pull request the session opened, pushed to, or reviews, run
    these commands:
 
@@ -199,7 +212,9 @@ recreates what you released.
    then `git worktree prune`. Never pass `--force` unless the user said to
    discard the worktree's changes.
 6. **Branches.** Delete a local branch the session created only when its
-   pull request has merged or closed, or when the user said to discard it.
+   pull request has merged or closed and step 4 of
+   [Take stock of the session](#take-stock-of-the-session) found no change
+   on it that exists nowhere else, or when the user said to discard it.
    Keep the branch of an open pull request.
 7. **Stashes and temporary files.** Drop each stash entry the session
    pushed and no gap kept. Another session can shift an entry's
