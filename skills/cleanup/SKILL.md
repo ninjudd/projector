@@ -163,21 +163,25 @@ session will lift keeps the pull request a draft however clean its review.
 Release each kind of resource in this order, so that nothing still running
 recreates what you released.
 
-1. **Subagents and background work.** Stop each subagent, background
-   command, monitor, `project watch stream`, and scheduled wakeup or job the
-   session started.
-2. **Reviews.** For each pull request the session reviews, finish its review
-   so another session can take it over at once, as
-   `../review-repo/SKILL.md` describes under "Stop reviewing the repository".
-   `project review finish` removes the review's scratch worktrees, so they
-   need no step of their own.
-3. **Subscriptions.** For each line `project watch list` printed, run
+1. **Subscriptions.** For each line `project watch list` printed, run
    `project watch remove <target> --role <role> --session <id>`, adding
    `--model <model>` for a `review` line. Another live session that
    subscribes to the same pull request then owns its role at once. Skip each
    line that `project watch list` marks `excluded: true`, a `!` line that
    keeps a pull request the user dismissed out of the session.
    `project watch remove` leaves those lines, and they deliver nothing.
+   Remove the subscriptions first, because a live one can announce a new
+   head and start another review or fix after you stop the subagents.
+2. **Subagents and background work.** Stop each subagent, background
+   command, monitor, `project watch stream`, and scheduled wakeup or job the
+   session started. A fixing subagent subscribes again after each push, so
+   once they have stopped, run `project watch list --session <id> --json`
+   again and remove any line a subagent added.
+3. **Reviews.** For each pull request the session reviews, finish its review
+   so another session can take it over at once, as
+   `../review-repo/SKILL.md` describes under "Stop reviewing the repository".
+   `project review finish` removes the review's scratch worktrees, so they
+   need no step of their own.
 4. **Inbox items.** Withdraw each item the session still has open, with
    Projector's `withdraw` tool or with
    `project inbox withdraw <number> --session <id>`. No session will read
