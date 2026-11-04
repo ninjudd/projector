@@ -59,7 +59,11 @@ holds nothing under Projector's state directory.
    from any of them means changes that exist nowhere else. Name `HEAD` or the
    branch rather than passing `--branches`, which walks every local branch in
    the repository, the user's and other sessions' included, and misses
-   commits on a detached `HEAD`.
+   commits on a detached `HEAD`. A branch whose pull request was
+   squash-merged still prints its commits once its remote branch is
+   deleted, because the squash put different commits on the base. When
+   `gh pr list --head <branch> --state merged` finds its pull request, the
+   work is delivered, not a gap.
 5. For each open pull request the session opened, pushed to, or reviews, run
    these commands:
 
