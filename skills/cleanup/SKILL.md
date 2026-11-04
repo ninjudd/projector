@@ -51,8 +51,12 @@ or posted, it has no id and holds nothing under Projector's state directory.
    `project watch stream`, and scheduled wakeup or job that the session
    started, and each temporary file it wrote outside its scratch directory.
 4. For each worktree the session created, run `git status --porcelain` and
-   `git log --branches --not --remotes --oneline` in it. Output from either
-   means changes that exist nowhere else.
+   `git log HEAD --not --remotes --oneline` in it. For each local branch the
+   session created, run `git log <branch> --not --remotes --oneline`. Output
+   from any of them means changes that exist nowhere else. Name `HEAD` or the
+   branch rather than passing `--branches`, which walks every local branch in
+   the repository, the user's and other sessions' included, and misses
+   commits on a detached `HEAD`.
 5. For each open pull request the session opened, pushed to, or reviews, run
    `project review status <number> --json`. It reports the verdict on the
    current head, whether the pull request conflicts with its base, and each
