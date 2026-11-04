@@ -1,0 +1,143 @@
+{
+ "version": 1,
+ "name": "Testing guide and skill",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 407,
+  "title": "Add a testing guide and a write-tests skill",
+  "head": "c881dd7534dd12d7c73d03fa561a58ab19156e29",
+  "headRef": "worktree-test-writing-guide",
+  "base": "bffca2afba4164fbe18aad3abf55fc5e7c836a8b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's skills write tests and judge them: <code>implement</code> adds tests to a change, <code>fix-pr</code> writes regression tests, and <code>review-pr</code> reads changed tests in its written-rules pass, the pass that checks a change against the rules a repository wrote down. Until now no skill said what makes a test worth keeping, so agents wrote tests such as one that asserts a default limit equals the literal the code sets it to. Such a test is a second copy of the source. It fails only when someone changes the value on purpose.",
+   "This pull request adds a testing guide, <code>skills/testing.md</code>, in ten numbered sections a review can cite as <code>testing.md § 2</code>. Its first rule is that each test must name the bug it catches: a plausible change that leaves the code wrong and turns the test red. A new section of the shared code guidelines, <code>guidelines.md § 2</code>, makes the guide a written rule, so a review flags a test that catches nothing as a blocking P2 finding. A new <code>write-tests</code> skill applies the guide on request, either to write tests for a change or to audit existing tests.",
+   "The change is all prose and packaging. No Python or TypeScript behavior changes; the one code edit adds the skill's name to the packaging test's published skill set."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Written-rules pass</b>: the part of the review method that checks a change against <code>skills/guidelines.md</code> and the repository's own rule documents.</li><li><b>P2</b>: a blocking review finding with bounded impact, or a break of a written rule. <b>P3</b> is a non-blocking suggestion.</li><li><b>Skill</b>: a folder under <code>skills/</code> with a <code>SKILL.md</code> that Claude Code and Codex both load from the one tree.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review at <code>c881dd7</code>: clean, no finding threads.</li><li>One suggestion: say in <code>guidelines.md § 2</code> which sections of <code>testing.md</code> a review files as P2.</li><li>The full gate passed: 1222 unit tests, <code>project check</code>, both <code>claude plugin validate</code> runs, <code>claude plugin test .</code>, and <code>hooks/typecheck.sh</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "guide",
+   "title": "The testing guide",
+   "kicker": "Ten numbered rules for writing and judging tests",
+   "intro": [
+    "<code>skills/testing.md</code> is a shared document beside <code>writing.md</code> and <code>guidelines.md</code>, not a skill of its own. Every skill that writes or judges tests reads it.",
+    "<ol><li><b>§ 1 to § 4</b> say what a test is for and which tests catch nothing: restated values, tests of a mock, tests that cannot fail, coverage-only tests, change detectors, unread snapshots, and duplicates.</li><li><b>§ 5 to § 7</b> say where to aim tests, to test through the interface callers use, and to watch each new test fail by breaking the code it covers.</li><li><b>§ 8 to § 10</b> cover readable failures, a fast and deterministic suite, and deleting tests that catch nothing.</li></ol>"
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/testing.md",
+     "note": "The guide itself. § 2 and § 3 carry the main argument: test what a value must agree with, not the literal.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 91,
+       "text": "Pinning an exact value is still allowed when code outside the repository depends on it, such as an exit code that scripts check. Read this before you flag a literal assertion."
+      },
+      {
+       "kind": "verify",
+       "line": 192,
+       "text": "A test that stays green when the code is broken is a § 4 test. This matches the review method's rule that a finding needs a concrete failing sequence, so such a finding is reproducible. I read both documents side by side."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rules",
+   "title": "Making the guide a written rule",
+   "kicker": "How implement, fix-pr, and the review method reach the guide",
+   "intro": [
+    "<code>guidelines.md</code> holds the code rules that <code>implement</code> follows, <code>fix-pr</code> fixes against, and the review's written-rules pass enforces. A new § 2 points tests at the guide, so all three skills reach it through the file they already read.",
+    "The review method now tells the written-rules pass to read <code>testing.md</code> when a change adds or edits a test, and gives <code>testing.md § 2</code> as a citation a finding can name. <code>implement</code> gets one sentence in its correctness check."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/guidelines.md",
+     "note": "New § 2: judge tests by the guide, and file a test that catches nothing as a P2.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 47,
+       "text": "The first paragraph says to judge tests by the whole guide, and this paragraph names a P2 only for a test that catches nothing. A break of another section alone, such as a vague test name under § 8, could read as either P2 or P3. The review left this as a suggestion."
+      }
+     ]
+    },
+    {
+     "path": "skills/review-pr/method.md",
+     "note": "The written-rules pass reads <code>testing.md</code> for changed tests and can cite its sections."
+    },
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "The correctness check now names the bug each test catches and watches it fail."
+    }
+   ]
+  },
+  {
+   "id": "skill",
+   "title": "The write-tests skill",
+   "kicker": "A skill that applies the guide on request",
+   "intro": [
+    "<code>write-tests</code> has two modes. It writes tests for a change: list the bugs, cross off what no bug turns red, write each test, and watch it fail. Or it audits existing tests: keep, rewrite, or delete each one, and list the gaps. It commits nothing unless the user asks."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/write-tests/SKILL.md",
+     "note": "The skill. Each step cites the guide section that holds its rule.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2,
+       "text": "The frontmatter <code>name</code> matches the directory, which <code>test_every_required_skill_has_matching_frontmatter_name</code> checks; the test passed at this head."
+      }
+     ]
+    },
+    {
+     "path": "skills/write-tests/agents/openai.yaml",
+     "note": "Codex metadata, with the same three <code>interface</code> keys as the other skills."
+    }
+   ]
+  },
+  {
+   "id": "listings",
+   "title": "Listings and packaging",
+   "kicker": "Where the new skill is named",
+   "intro": [
+    "Both plugin manifests publish the whole <code>skills/</code> tree, so no manifest changes. The README, <code>docs/plugins.md</code>, and the packaging test are the places that list skills by name, and each gains <code>write-tests</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "README.md",
+     "note": "Adds <code>write-tests</code> to the list of skills."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Lists the skill and says where the testing guide fits beside the code and writing guides."
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "Adds <code>write-tests</code> to <code>PUBLISHED_SKILLS</code>, which the test compares with the skills found on disk."
+    }
+   ]
+  }
+ ]
+}
