@@ -172,9 +172,11 @@ recreates what you released.
    need no step of their own.
 3. **Subscriptions.** For each line `project watch list` printed, run
    `project watch remove <target> --role <role> --session <id>`, adding
-   `--model <model>`
-   for a `review` line. Another live session that subscribes to the same
-   pull request then owns its role at once.
+   `--model <model>` for a `review` line. Another live session that
+   subscribes to the same pull request then owns its role at once. Skip each
+   line that `project watch list` marks `excluded: true`, a `!` line that
+   keeps a pull request the user dismissed out of the session.
+   `project watch remove` leaves those lines, and they deliver nothing.
 4. **Inbox items.** Withdraw each item the session still has open, with
    Projector's `withdraw` tool or with
    `project inbox withdraw <number> --session <id>`. No session will read
@@ -199,9 +201,9 @@ recreates what you released.
 
 Run the commands from
 [Take stock of the session](#take-stock-of-the-session) again. Expect no
-line from `project watch list` and no open item from `project inbox list`,
-and no worktree, stash entry, or running process the session started,
-except what a gap's answer kept.
+line from `project watch list` but those marked `excluded: true`, no open
+item from `project inbox list`, and no worktree, stash entry, or running
+process the session started, except what a gap's answer kept.
 
 Then report, as a list with one entry per thing:
 
