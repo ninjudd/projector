@@ -21,10 +21,12 @@ item, or a branch or pull request the session did not create.
 Projector's `project watch` and `project inbox` commands file what a session
 holds under its id. Claude Code sets the id in `CLAUDE_CODE_SESSION_ID`. On
 another host, it is the id the conversation chose when it first subscribed or
-posted to the inbox, which `PROJECTOR_SESSION` may hold. `project watch` reads
-either variable by itself, but `project inbox` reads only `PROJECTOR_SESSION`,
-so pass the id to it as `--session <id>`. When the session never subscribed
-or posted, it has no id and holds nothing under Projector's state directory.
+posted to the inbox, which `PROJECTOR_SESSION` may hold. Pass the id to every
+`project watch` and `project inbox` command as `--session <id>`. On a host
+that sets neither variable, `project watch list` without it lists every
+session's subscriptions, and `project inbox` reads only `PROJECTOR_SESSION`
+in any case. When the session never subscribed or posted, it has no id and
+holds nothing under Projector's state directory.
 
 ## Take stock of the session
 
@@ -37,7 +39,7 @@ or posted, it has no id and holds nothing under Projector's state directory.
 3. List what the session holds:
 
    ```sh
-   project watch list --json
+   project watch list --session <id> --json
    project inbox list --session <id> --json
    git worktree list --porcelain
    git stash list
@@ -169,7 +171,8 @@ recreates what you released.
    `project review finish` removes the review's scratch worktrees, so they
    need no step of their own.
 3. **Subscriptions.** For each line `project watch list` printed, run
-   `project watch remove <target> --role <role>`, adding `--model <model>`
+   `project watch remove <target> --role <role> --session <id>`, adding
+   `--model <model>`
    for a `review` line. Another live session that subscribes to the same
    pull request then owns its role at once.
 4. **Inbox items.** Withdraw each item the session still has open, with
