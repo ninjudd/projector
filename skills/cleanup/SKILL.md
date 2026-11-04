@@ -211,7 +211,12 @@ recreates what you released.
    git stash drop 'stash@{<n>}'
    ```
 
-   Delete each temporary file the session wrote outside its scratch
+   A push between the two commands still shifts the reference, so compare
+   the SHA in the `Dropped stash@{<n>} (<sha>)` line that `git stash drop`
+   prints with the entry's SHA. When they differ, you dropped another
+   session's entry: put it back with
+   `git stash store -m '<its message>' <dropped-sha>`, then find your entry
+   again. Delete each temporary file the session wrote outside its scratch
    directory.
 
 ## Confirm that the session can shut down
