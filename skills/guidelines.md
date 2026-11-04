@@ -44,7 +44,10 @@ no test for which you cannot. A test that restates a value the code holds,
 tests a mock or a library, or cannot fail catches nothing, and it costs time
 on every run (`testing.md` § 2 and § 4).
 
-A review flags such a test as a violation of a written rule, a P2 thread
-under the written-rules pass that cites the section of `testing.md` the
-test breaks. The fix is to delete the test, or to rewrite it to check
-behavior that the code computes.
+Every section of `testing.md` is a written rule. A review flags a test that
+breaks any of them as a P2 thread under the written-rules pass that cites
+the section the test breaks: a test that catches nothing, and also a test
+named `test_import_2` rather than after the rule it checks (`testing.md`
+§ 8). The fix for a test that catches nothing is to delete it, or to
+rewrite it to check behavior that the code computes; the fix for any other
+break is the one its section describes.
