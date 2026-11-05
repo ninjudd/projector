@@ -439,7 +439,7 @@ class FixRoleTests(WatchCase):
 
         self.assertEqual([
             f"DRAFT acme/app#1 head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user that no "
-            "session reviews acme/app#1",
+            "session on this machine reviews acme/app#1",
             f"VERDICT acme/app#1 CHANGES_REQUESTED on aaaaaaaa [teammate]: Please split this — {fix_action(1)}",
             f"FINDING acme/app#1 src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}",
             f"REVIEW acme/app#1 by [codex] on aaaaaaaa: Body-only concern — {fix_action(1)}",
@@ -456,6 +456,24 @@ class FixRoleTests(WatchCase):
         events = self.cycle()
 
         self.assertEqual([], events["fixer"])
+
+    def test_a_draft_another_machine_is_reviewing_asks_the_fixer_for_nothing(self) -> None:
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.clock.wall()))
+        start = {"databaseId": 501, "author": {"login": "operator"}, "createdAt": at, "updatedAt": at,
+                 "body": f"📽️ Reviewing\n<!-- projector-start v=1 sha={SHA_A} model={MODEL} -->"}
+        older = dict(start, databaseId=502, body=start["body"].replace(SHA_A, SHA_B))
+        self.github.pull_request(1, draft=True, comments=[start])
+        self.github.pull_request(2, draft=True, comments=[older])
+        self.fixer("acme/app#1 fix", "acme/app#2 fix")
+
+        events = self.cycle()
+
+        # A live start comment for the head means a review runs somewhere, so only #2, whose start comment is for
+        # another head, is reported.
+        self.assertEqual([
+            f"DRAFT acme/app#2 head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user that no "
+            "session on this machine reviews acme/app#2",
+        ], events["fixer"])
 
     def test_a_session_that_fixes_and_reviews_a_pull_request_hears_no_draft(self) -> None:
         self.github.pull_request(1, draft=True)
