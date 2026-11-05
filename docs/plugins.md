@@ -356,9 +356,9 @@ line, and then the unresolved review threads, gathered under their files:
   look like this:
 
   ```text
-  - ios/Field/Audio/TrackPlayer.swift 2*
-    :1875 · grace · P2 · One song's failed rebuild blocks other songs from recovering
-    :1902 · grace · outdated · P2 · A background rebuild can overwrite a newer imported track
+  - src/audio/player.ts 2*
+    :120 · grace · P2 · A failed retry blocks other downloads from recovering
+    :188 · grace · outdated · P2 · A background refresh can overwrite a newer cached file
   + docs/notes.md 1*
   ```
 
@@ -366,7 +366,7 @@ line, and then the unresolved review threads, gathered under their files:
   order of each file's oldest thread.
 - **Each unresolved review thread** opens the thread's first comment on
   GitHub. Its line starts with the line number the thread is on, such as
-  `:1875`, or `file` for a comment on the whole file. Next comes who opened
+  `:120`, or `file` for a comment on the whole file. Next comes who opened
   it, then `outdated` when a later push changed the lines it is on, and
   then the first line of its first comment, cut to end at the panel's edge.
   A terminal without hyperlinks draws the thread's URL after the text. These

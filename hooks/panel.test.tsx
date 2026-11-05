@@ -966,10 +966,10 @@ test('cuts a thread’s line to the drawer’s width, so a line that fits stays 
 
 test('gathers a drawer’s threads under their files, each file where its oldest thread comes', async ($, on) => {
   const ui = await drawerListing($, on, [
-    threadNode('ios/Field/Audio/TrackPlayer.swift', 1875, 'One song’s failed rebuild blocks other songs', 'grace', 1),
+    threadNode('src/audio/player.ts', 120, 'A failed retry blocks other downloads', 'grace', 1),
     threadNode('docs/notes.md', null, 'Why this file?', 'bob', 2),
-    threadNode('ios/Field/Audio/TrackPlayer.swift', 1902, 'A background rebuild can overwrite a newer track', 'grace', 3),
-    threadNode('ios/Field/Audio/TrackPlayer.swift', 1897, 'Rebuilding a stereo render can change its pan', 'bob', 4),
+    threadNode('src/audio/player.ts', 188, 'A background refresh can overwrite a newer file', 'grace', 3),
+    threadNode('src/audio/player.ts', 154, 'Reloading a playlist can reset its volume', 'bob', 4),
     threadNode('docs/empty.md', null, '', null, 5),
   ])
 
@@ -977,11 +977,11 @@ test('gathers a drawer’s threads under their files, each file where its oldest
   // comment on a whole file, which has no line, still has text for its link.
   expect(await threadsOf(ui)).toEqual([
     {
-      file: 'ios/Field/Audio/TrackPlayer.swift',
+      file: 'src/audio/player.ts',
       threads: [
-        [`${SEVEN}#discussion_r1`, ':1875 · grace · One song’s failed rebuild blocks other songs'],
-        [`${SEVEN}#discussion_r3`, ':1902 · grace · A background rebuild can overwrite a newer track'],
-        [`${SEVEN}#discussion_r4`, ':1897 · bob · Rebuilding a stereo render can change its pan'],
+        [`${SEVEN}#discussion_r1`, ':120 · grace · A failed retry blocks other downloads'],
+        [`${SEVEN}#discussion_r3`, ':188 · grace · A background refresh can overwrite a newer file'],
+        [`${SEVEN}#discussion_r4`, ':154 · bob · Reloading a playlist can reset its volume'],
       ],
     },
     { file: 'docs/notes.md', threads: [[`${SEVEN}#discussion_r2`, 'file · bob · Why this file?']] },
