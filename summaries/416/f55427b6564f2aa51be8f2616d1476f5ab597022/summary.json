@@ -1,0 +1,109 @@
+{
+ "version": 1,
+ "name": "Installer venv repair",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 416,
+  "title": "Rebuild an installer venv whose Python is gone",
+  "head": "f55427b6564f2aa51be8f2616d1476f5ab597022",
+  "headRef": "installer-venv-repair",
+  "base": "bb5aabe57fd57aef94e2d08920ffd653efde4d8e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>install.sh</code> installs Projector's <code>project</code> command. When <code>pipx</code> is on the machine it uses <code>pipx</code>. Without it, the installer makes a Python virtual environment (a <em>venv</em>) of its own, by default at <code>~/.local/share/projector/venv</code>, installs the CLI into it with pip, and links <code>venv/bin/project</code> into <code>~/.local/bin</code>.",
+   "A venv doesn't carry its own Python. Its <code>bin/python</code> is a link to the interpreter that made it, and its <code>pyvenv.cfg</code> file records where that interpreter lives. When a version manager or an OS upgrade removes that interpreter, <code>bin/python</code> points at nothing. Before this change, the installer then ran <code>python3 -m venv</code> over the old directory, which failed with a bare <code>No such file or directory</code>, so neither a reinstall nor <code>project upgrade</code> could recover (issue #412).",
+   "This pull request makes the installer recognize that state and make the venv again with <code>venv --clear</code>, after the same Python 3.11 check it runs for a new venv. It also fixes a daemon test that failed whenever a checkout install left build metadata in <code>src/</code> (issue #413)."
+  ],
+  "cards": [
+   {
+    "id": "cases",
+    "title": "What the installer does with an existing venv",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Venv state</th><th>Before</th><th>After</th></tr></thead><tbody><tr><td>None yet</td><td>Python check, then <code>venv</code></td><td class=\"r\">Unchanged</td></tr><tr><td><code>bin/python</code> runs</td><td>pip install into it</td><td class=\"r\">Unchanged</td></tr><tr><td><code>bin/python</code> gone, <code>pyvenv.cfg</code> present</td><td><code>venv</code> fails, exit 1</td><td class=\"r\">Python check, then <code>venv --clear</code> and a <code>rebuilt</code> row</td></tr><tr><td>Same, but no Python 3.11+</td><td>Exit 69</td><td class=\"r\">Exit 69, venv untouched</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review of <code>f55427b</code>: clean, with no finding threads.</li><li>One suggestion: say in <code>docs/plugins.md</code> what <code>PROJECTOR_PYTHON</code> is.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "venv",
+   "title": "Rebuild a venv whose Python is gone",
+   "kicker": "The installer's no-pipx path remakes a broken venv instead of failing",
+   "intro": [
+    "<code>install_venv</code> already skipped making a venv when <code>bin/python</code> was executable. That test is false for a link whose target is gone, so a broken venv reached the branch that makes a new venv. The change splits that branch: when <code>pyvenv.cfg</code> shows the directory is already a venv, it passes <code>--clear</code>, which empties the directory before Python's <code>venv</code> module builds it again, and prints a <code>rebuilt</code> row.",
+    "The venv holds only this install, so clearing it loses nothing that the following <code>pip install</code> doesn't put back. <code>require_python</code> still runs first, so a machine without Python 3.11 exits 69 with the venv as it was."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Reproduced in a temporary <code>HOME</code> with a real Python 3.12 venv whose interpreter link was then deleted: main's installer exits 1 with <code>[Errno 2] No such file or directory</code>, and this head prints <code>rebuilt</code>, exits 0, and leaves a working <code>project</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "install.sh",
+     "note": "The new branch in <code>install_venv</code> that clears and remakes an existing venv.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>require_python</code> runs before <code>--clear</code>: with <code>PROJECTOR_PYTHON</code> set to Python 3.9, or with no <code>python3</code> on <code>PATH</code>, the installer exits 69 and a file left in the broken venv survives.",
+       "line": 124
+      },
+      {
+       "kind": "verify",
+       "text": "<code>venv --clear</code> unlinks symlinks instead of following them: files outside the venv, linked from its top level and from <code>lib/</code>, were intact after a rebuild.",
+       "line": 128
+      },
+      {
+       "kind": "verify",
+       "text": "A healthy venv is left alone: no <code>venv</code> command runs and <code>pyvenv.cfg</code> keeps its inode and modification time.",
+       "line": 123
+      }
+     ]
+    },
+    {
+     "path": "tests/test_install.py",
+     "note": "The fake <code>python3</code> learns <code>--clear</code>, and a new test builds a venv with a dangling <code>bin/python</code> and checks the rebuild.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>test_without_pipx_a_venv_whose_python_is_gone_is_made_again</code> fails against main's <code>install.sh</code> and passes at this head."
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Says when <code>PROJECTOR_PYTHON</code> matters without <code>pipx</code>, and when the installer prints <code>rebuilt</code>."
+    }
+   ]
+  },
+  {
+   "id": "daemon-test",
+   "title": "Keep a daemon test independent of build metadata",
+   "kicker": "A test asks the daemon as the version it recorded, not a fixed one",
+   "intro": [
+    "Installing from a checkout leaves <code>src/projector_cli.egg-info/</code>, which is gitignored. With it on <code>PYTHONPATH</code>, the watch daemon a test starts records the real version, such as <code>0.8.12</code>, instead of <code>unknown</code>. <code>ensure_daemon</code> replaces a running daemon whose version is older than the caller's, and the test asked as <code>1.0</code>, so it got <code>replaced</code> where it expected <code>running</code>.",
+    "The test now asks as whatever version the daemon recorded, so it stays a test of starting and restarting a killed daemon."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_watch.py",
+     "note": "<code>test_a_command_starts_a_detached_daemon_and_a_killed_one_is_started_again</code> reads the recorded version from <code>daemon.json</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "With an egg-info in <code>src/</code>, main's version of this test fails with <code>('replaced', 'started')</code> and this head's passes."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

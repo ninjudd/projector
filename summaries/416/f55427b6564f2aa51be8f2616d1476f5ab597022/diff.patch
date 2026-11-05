@@ -1,0 +1,94 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 578f2f15..4ba1a667 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -988,6 +988,12 @@ itself, `pipx` builds under its default interpreter, which on some machines is
+ older than Projector's 3.11 floor and fails the reinstall even though the venv
+ already holds a Python that works.
+ 
++Without `pipx`, the installer's own venv keeps its Python too, so
++`PROJECTOR_PYTHON` matters only when the installer creates the venv. When the
++venv's Python no longer runs, such as after a version manager removes it, the
++installer makes the venv again with `PROJECTOR_PYTHON` and prints a `rebuilt`
++row.
++
+ ## Upgrade from agent-config
+ 
+ The old installer linked whole configuration and skill directories into each
+diff --git a/install.sh b/install.sh
+index 0a64bc43..8e6c6f80 100755
+--- a/install.sh
++++ b/install.sh
+@@ -122,7 +122,14 @@ install_venv() {
+   # `requires-python`, so only making a venv depends on PROJECTOR_PYTHON.
+   if [ ! -x "$VENV_DIR/bin/python" ]; then
+     require_python
+-    "$PROJECTOR_PYTHON" -m venv "$VENV_DIR"
++    # A venv whose Python was removed keeps its pyvenv.cfg, and venv fails to
++    # update it in place. It holds nothing but this install, so make it again.
++    if [ -f "$VENV_DIR/pyvenv.cfg" ]; then
++      "$PROJECTOR_PYTHON" -m venv --clear "$VENV_DIR"
++      printf '%-14s %s\n' "rebuilt" "$VENV_DIR -- the Python it was made with no longer runs"
++    else
++      "$PROJECTOR_PYTHON" -m venv "$VENV_DIR"
++    fi
+   fi
+   "$VENV_DIR/bin/python" -m pip install --quiet --upgrade --no-cache-dir "$source"
+   mkdir -p "$BIN_DIR"
+diff --git a/tests/test_install.py b/tests/test_install.py
+index 74e6fccd..cb1d3f8d 100644
+--- a/tests/test_install.py
++++ b/tests/test_install.py
+@@ -970,7 +970,9 @@ def fake_python(self, *, version: str = "3.12.5") -> Path:
+             'printf "python3 %s\\n" "$*" >> "$PROJECTOR_TEST_LOG"\n'
+             'case "$1" in\n'
+             f'  -c) exec "{sys.executable}" -c {shlex.quote(disguise)} "$2" ;;\n'
+-            f'  -m) mkdir -p "$3/bin" && cp "{template}" "$3/bin/python" && cp "{template}" "$3/bin/project" ;;\n'
++            '  -m) for venv; do :; done\n'
++            '      [ "$3" = --clear ] && rm -rf "$venv"\n'
++            f'      mkdir -p "$venv/bin" && cp "{template}" "$venv/bin/python" && cp "{template}" "$venv/bin/project" ;;\n'
+             "esac\n"
+         )
+         path.chmod(0o755)
+@@ -1027,6 +1029,20 @@ def test_without_pipx_an_upgrade_needs_nothing_from_an_old_python3(self) -> None
+         self.assertEqual(0, result.returncode, result.stderr)
+         self.assertEqual([f"venv-python -m pip install --quiet --upgrade --no-cache-dir {ARCHIVE}"], self.logged())
+ 
++    def test_without_pipx_a_venv_whose_python_is_gone_is_made_again(self) -> None:
++        environment = self.without_pipx(self.fake_python())
++        venv = self.user_root / "venv"
++        (venv / "bin").mkdir(parents=True)
++        (venv / "pyvenv.cfg").write_text("home = /gone\n")
++        (venv / "bin" / "python").symlink_to(self.user_root / "gone" / "python3")
++
++        result = self.piped("cli", environment=environment)
++
++        self.assertEqual(0, result.returncode, result.stderr)
++        self.assertIn(f"python3 -m venv --clear {venv}", self.logged())
++        self.assertIn(f"rebuilt        {venv} -- the Python it was made with no longer runs", result.stdout)
++        self.assertIn(f"venv-python -m pip install --quiet --upgrade --no-cache-dir {ARCHIVE}", self.logged())
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index 17f589cd..e4873573 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -1818,11 +1818,14 @@ def test_a_command_starts_a_detached_daemon_and_a_killed_one_is_started_again(se
+         self.wait_for(lambda: watch.held(self.root) and self.daemon_pid())
+         first = self.daemon_pid()
+         self.addCleanup(lambda: watch.held(self.root) and watch.stop_daemon(self.root))
++        # The daemon records the version it finds installed, which build metadata left in `src/` changes, so the
++        # command asks as that same version and never as a newer one.
++        recorded = str((read_json(self.root / "daemon.json") or {}).get("version"))
+ 
+-        again = watch.ensure_daemon(self.root, "1.0", cli.newer_release)
++        again = watch.ensure_daemon(self.root, recorded, cli.newer_release)
+         os.kill(first, signal.SIGKILL)
+         self.wait_for(lambda: not watch.held(self.root))
+-        restarted = watch.ensure_daemon(self.root, "1.0", cli.newer_release)
++        restarted = watch.ensure_daemon(self.root, recorded, cli.newer_release)
+         self.wait_for(lambda: watch.held(self.root) and self.daemon_pid() not in (None, first))
+         second = self.daemon_pid()
+         stopped = watch.stop_daemon(self.root)
