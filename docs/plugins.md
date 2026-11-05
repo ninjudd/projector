@@ -349,9 +349,9 @@ line, and then the unresolved review threads, gathered under their files:
   look like this:
 
   ```text
-  - ios/Field/Audio/TrackPlayer.swift 2*
-    :1875 · grace · P2 · One song's failed rebuild blocks other songs from recovering
-    :1902 · grace · outdated · P2 · A background rebuild can overwrite a newer imported track
+  - src/audio/player.ts 2*
+    :120 · grace · P2 · A failed retry blocks other downloads from recovering
+    :188 · grace · outdated · P2 · A background refresh can overwrite a newer cached file
   + docs/notes.md 1*
   ```
 
