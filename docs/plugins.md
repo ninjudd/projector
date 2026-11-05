@@ -359,7 +359,7 @@ line, and then the unresolved review threads, gathered under their files:
   order of each file's oldest thread.
 - **Each unresolved review thread** opens the thread's first comment on
   GitHub. Its line starts with the line number the thread is on, such as
-  `:1875`, or `file` for a comment on the whole file. Next comes who opened
+  `:120`, or `file` for a comment on the whole file. Next comes who opened
   it, then `outdated` when a later push changed the lines it is on, and
   then the first line of its first comment, cut to end at the panel's edge.
   A terminal without hyperlinks draws the thread's URL after the text. These
