@@ -1818,11 +1818,14 @@ class DetachedDaemonTests(unittest.TestCase):
         self.wait_for(lambda: watch.held(self.root) and self.daemon_pid())
         first = self.daemon_pid()
         self.addCleanup(lambda: watch.held(self.root) and watch.stop_daemon(self.root))
+        # The daemon records the version it finds installed, which build metadata left in `src/` changes, so the
+        # command asks as that same version and never as a newer one.
+        recorded = str((read_json(self.root / "daemon.json") or {}).get("version"))
 
-        again = watch.ensure_daemon(self.root, "1.0", cli.newer_release)
+        again = watch.ensure_daemon(self.root, recorded, cli.newer_release)
         os.kill(first, signal.SIGKILL)
         self.wait_for(lambda: not watch.held(self.root))
-        restarted = watch.ensure_daemon(self.root, "1.0", cli.newer_release)
+        restarted = watch.ensure_daemon(self.root, recorded, cli.newer_release)
         self.wait_for(lambda: watch.held(self.root) and self.daemon_pid() not in (None, first))
         second = self.daemon_pid()
         stopped = watch.stop_daemon(self.root)

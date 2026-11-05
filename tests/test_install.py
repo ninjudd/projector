@@ -970,7 +970,9 @@ class ReleaseInstallTests(unittest.TestCase):
             'printf "python3 %s\\n" "$*" >> "$PROJECTOR_TEST_LOG"\n'
             'case "$1" in\n'
             f'  -c) exec "{sys.executable}" -c {shlex.quote(disguise)} "$2" ;;\n'
-            f'  -m) mkdir -p "$3/bin" && cp "{template}" "$3/bin/python" && cp "{template}" "$3/bin/project" ;;\n'
+            '  -m) for venv; do :; done\n'
+            '      [ "$3" = --clear ] && rm -rf "$venv"\n'
+            f'      mkdir -p "$venv/bin" && cp "{template}" "$venv/bin/python" && cp "{template}" "$venv/bin/project" ;;\n'
             "esac\n"
         )
         path.chmod(0o755)
@@ -1026,6 +1028,20 @@ class ReleaseInstallTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual([f"venv-python -m pip install --quiet --upgrade --no-cache-dir {ARCHIVE}"], self.logged())
+
+    def test_without_pipx_a_venv_whose_python_is_gone_is_made_again(self) -> None:
+        environment = self.without_pipx(self.fake_python())
+        venv = self.user_root / "venv"
+        (venv / "bin").mkdir(parents=True)
+        (venv / "pyvenv.cfg").write_text("home = /gone\n")
+        (venv / "bin" / "python").symlink_to(self.user_root / "gone" / "python3")
+
+        result = self.piped("cli", environment=environment)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"python3 -m venv --clear {venv}", self.logged())
+        self.assertIn(f"rebuilt        {venv} -- the Python it was made with no longer runs", result.stdout)
+        self.assertIn(f"venv-python -m pip install --quiet --upgrade --no-cache-dir {ARCHIVE}", self.logged())
 
 
 if __name__ == "__main__":
