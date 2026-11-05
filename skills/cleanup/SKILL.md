@@ -205,17 +205,29 @@ recreates what you released.
    the answer once this one shuts down. Name each withdrawn question or
    request in the report, so nothing the user meant to answer is lost.
 5. **Worktrees.** Remove each worktree the session created that holds no
-   change that exists nowhere else. Leave it first when the session's
-   working directory is inside it. Remove it with the host tool that created
-   it, such as Claude Code's `ExitWorktree` for a worktree that
-   `EnterWorktree` made, or otherwise with `git worktree remove <path>` and
-   then `git worktree prune`. Never pass `--force` unless the user said to
-   discard the worktree's changes.
+   change that exists nowhere else, as step 4 of
+   [Take stock of the session](#take-stock-of-the-session) found. The
+   user's request to clean up is their consent, so remove these without
+   asking. Leave a worktree first when the session's working directory is
+   inside it. Remove it with the host tool that created it, such as Claude
+   Code's `ExitWorktree` for a worktree that `EnterWorktree` made, or
+   otherwise with `git worktree remove <path>` and then
+   `git worktree prune`. A host tool can refuse because the worktree's
+   commits are missing from a local branch, such as a stale local copy of
+   the default branch, and tell you to confirm with the user. Step 4
+   already checked those commits against the remotes and the merged pull
+   request, so pass the tool's override, such as `ExitWorktree`'s
+   `discard_changes: true`, instead of asking again. Pass an override or
+   `--force` for a worktree that holds a change that exists nowhere else
+   only when the user's answer to its gap said to discard the change.
 6. **Branches.** Delete a local branch the session created only when its
    pull request has merged or closed and step 4 of
    [Take stock of the session](#take-stock-of-the-session) found no change
    on it that exists nowhere else, or when the user said to discard it.
-   Keep the branch of an open pull request.
+   Delete it with `git branch -D`, without asking: `git branch -d` refuses
+   a squash-merged branch once its remote branch is gone, because the
+   squash put different commits on the base, and step 4 already proved
+   its commits delivered. Keep the branch of an open pull request.
 7. **Stashes and temporary files.** Drop each stash entry the session
    pushed and no gap kept. Another session can shift an entry's
    `stash@{n}` position, and `git stash drop` refuses a SHA, so find the
