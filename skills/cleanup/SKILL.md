@@ -216,10 +216,16 @@ recreates what you released.
    commits are missing from a local branch, such as a stale local copy of
    the default branch, and tell you to confirm with the user. Step 4
    already checked those commits against the remotes and the merged pull
-   request, so pass the tool's override, such as `ExitWorktree`'s
-   `discard_changes: true`, instead of asking again. Pass an override or
-   `--force` for a worktree that holds a change that exists nowhere else
-   only when the user's answer to its gap said to discard the change.
+   request, but it ran before step 2 stopped the subagents that could have
+   changed the worktree since. So run step 4's checks in the worktree again
+   just before you pass the tool's override, such as `ExitWorktree`'s
+   `discard_changes: true`. Pass it instead of asking again only when they
+   still find no change that exists nowhere else and the refusal names no
+   uncommitted file. Otherwise treat the worktree as a gap, and ask about
+   it as [Ask what to do with each gap](#ask-what-to-do-with-each-gap)
+   describes. Pass an override or `--force` for a worktree that holds a
+   change that exists nowhere else only when the user's answer to its gap
+   said to discard the change.
 6. **Branches.** Delete a local branch the session created only when its
    pull request has merged or closed and step 4 of
    [Take stock of the session](#take-stock-of-the-session) found no change
