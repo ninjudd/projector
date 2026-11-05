@@ -977,9 +977,9 @@ Building the daemon settled these choices, which the design above left open.
   reviews the draft, and stays quiet while a live start comment shows a
   review of the head under way elsewhere. On a public repository anyone can
   post that marker, so only a start comment from the operator or another
-  account whose review would count holds the event back. A head the event was held back for
-  keeps its key, so a review elsewhere that ends without signing the head
-  off does not announce it a second time.
+  account whose review would count holds the event back. A head the event
+  was held back for keeps its key, so a review elsewhere that ends without
+  signing the head off does not announce it a second time.
 
 ### 9.2 The skills
 
