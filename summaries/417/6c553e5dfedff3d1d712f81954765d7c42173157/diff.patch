@@ -1,0 +1,105 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 9848509b..98ce6c62 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -52,11 +52,14 @@ prose you ask for, such as `/projector:write a README section on the
+ site`. `rewrite` revises text that already exists, such as a file, a pull
+ request description, a comment, or a Slack message, and writes the result
+ back where the text lives when it can, such as
+-`/projector:rewrite the install section of the README`. The code guidelines
+-send tests to the testing guide in `skills/testing.md`, which asks each test
+-to name the bug it catches, and `write-tests` applies that guide to tests you
+-ask for, such as `/projector:write-tests audit tests/test_site.py`. The core
+-workflows use the local CLI and do not require MCP.
++`/projector:rewrite the install section of the README`. Every skill that
++plans, writes, judges, or accepts a test follows the testing guide in
++`skills/testing.md`, which asks each test to name the bug it catches: `spec`
++in its acceptance criteria, `implement` and `fix-pr` in the tests they write,
++`review-pr` in its written-rules pass, and `finish` in the evidence it
++accepts. `write-tests` applies the same guide to tests you ask for, such as
++`/projector:write-tests audit tests/test_site.py`. The core workflows use the
++local CLI and do not require MCP.
+ 
+ A session keeps fixing and reviewing pull requests through subscriptions,
+ so there is no loop for you to start. When `implement`, `spec`, or `fix-pr`
+diff --git a/skills/finish/SKILL.md b/skills/finish/SKILL.md
+index ce94c965..4fdfaa0b 100644
+--- a/skills/finish/SKILL.md
++++ b/skills/finish/SKILL.md
+@@ -16,11 +16,13 @@ the outcome.
+    external state.
+ 3. Prove the three things a review checks, whether or not a criterion
+    names them. Correctness: the tests or observations that pin each promised
+-   behavior exist and pass. Performance: the measurement the plan named was
+-   taken and is recorded, or the plan said cost does not matter and the
+-   change added no work to a hot path. Reuse: logic the plan said to build
+-   once exists once, nothing the change replaced is still present or
+-   referenced, and no stub, dead branch, or compatibility wrapper remains.
++   behavior exist and pass. A test that `../testing.md` § 2 or § 4 says
++   catches nothing pins nothing, so it is not evidence. Performance: the
++   measurement the plan named was taken and is recorded, or the plan said cost
++   does not matter and the change added no work to a hot path. Reuse: logic
++   the plan said to build once exists once, nothing the change replaced is
++   still present or referenced, and no stub, dead branch, or compatibility
++   wrapper remains.
+ 4. Run the repository's complete validation gate. Treat missing or indirect
+    evidence as incomplete rather than assuming intent proves delivery.
+ 5. Inspect nested projects. Their independent statuses do not automatically
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 2d0ec27b..777e5917 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -306,7 +306,10 @@ same code:
+    section, and declined only by showing the rule does not apply to the
+    quoted code. Read the lines around an insertion anchor before editing so
+    an attribute, decorator, or comment is not silently detached.
+-4. Prove a regression test fails without the fix and passes with it.
++4. Prove a regression test fails without the fix and passes with it. Write
++   it, and the failing test from step 2, by the testing guide in
++   `../testing.md`: the test catches the defect the finding names, through
++   behavior the code computes, never a value the fix sets.
+ 5. Run the repository's full test, lint, format, documentation, and validation
+    gate.
+ 6. Keep independent fixes in independent commits; batch findings that share one
+diff --git a/skills/spec/SKILL.md b/skills/spec/SKILL.md
+index d9ecb4ef..c1aac0e9 100644
+--- a/skills/spec/SKILL.md
++++ b/skills/spec/SKILL.md
+@@ -81,9 +81,12 @@ this order.
+   the behavior that must hold, the inputs and states that could break it,
+   and the test or observation that proves it. A table of what to do and
+   what to expect, followed by the tests that fail before the change, works
+-  well. A criterion nobody can observe is a hope, not evidence. Write
+-  criteria the merged code can meet, because the project is complete once its
+-  code merges; a release that follows is tracked outside Projector.
++  well. Name the bug each test catches, as `../testing.md` § 1 asks, and pin a
++  value through what depends on it (§ 3), so the plan never asks for a test
++  that restates the code. A criterion nobody can observe is a hope, not
++  evidence. Write criteria the merged code can meet, because the project is
++  complete once its code merges; a release that follows is tracked outside
++  Projector.
+ - **Cost.** The paths where cost matters, the load they carry, and how the
+   change is measured against it, or that cost does not matter here and
+   why. A plan silent on cost leaves the implementer and the reviewer to
+diff --git a/skills/testing.md b/skills/testing.md
+index 4d59ff06..36162aa4 100644
+--- a/skills/testing.md
++++ b/skills/testing.md
+@@ -1,10 +1,12 @@
+ # Testing guide
+ 
+-Projector's skills write tests and judge them. `implement` follows this
+-guide when it adds tests to a change, and `fix-pr` follows it when it writes
+-a regression test. The review method's written-rules pass reads changed
+-tests against it, and `write-tests` applies it to any tests you ask for. A
+-repository's own testing rules outrank this guide where the two disagree.
++Projector's skills plan tests, write them, and judge them. `spec` follows
++this guide when it writes acceptance criteria, `implement` when it adds tests
++to a change, and `fix-pr` when it writes a regression test. The review
++method's written-rules pass reads changed tests against it, `finish` accepts
++only tests it says catch something as evidence, and `write-tests` applies it
++to any tests you ask for. A repository's own testing rules outrank this guide
++where the two disagree.
+ Cite a section by this file and its section number, as `testing.md § 2`.
+ 
+ ## 1. Write a test only when it can catch a bug
