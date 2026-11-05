@@ -988,11 +988,12 @@ itself, `pipx` builds under its default interpreter, which on some machines is
 older than Projector's 3.11 floor and fails the reinstall even though the venv
 already holds a Python that works.
 
-Without `pipx`, the installer's own venv keeps its Python too, so
-`PROJECTOR_PYTHON` matters only when the installer creates the venv. When the
-venv's Python no longer runs, such as after a version manager removes it, the
-installer makes the venv again with `PROJECTOR_PYTHON` and prints a `rebuilt`
-row.
+Without `pipx`, the installer's own venv keeps its Python too. So
+`PROJECTOR_PYTHON`, the interpreter the installer makes the venv with
+(`python3` by default), matters only when the installer creates the venv. When
+the venv's Python no longer runs, such as after a version manager removes it,
+the installer makes the venv again with `PROJECTOR_PYTHON` and prints a
+`rebuilt` row.
 
 ## Upgrade from agent-config
 
