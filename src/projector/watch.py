@@ -91,7 +91,7 @@ QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
       headRefOid headRefName baseRefName author { login }
       additions deletions changedFiles
       commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
-      comments(last:100){ nodes{ databaseId author{ login } body createdAt updatedAt } }
+      comments(last:100){ nodes{ databaseId author{ login } authorAssociation body createdAt updatedAt } }
       reviews(last:100){ nodes{ author{ login } authorAssociation submittedAt body } }
       changesRequested: reviews(states:[CHANGES_REQUESTED], last:1){ nodes{ author{ login } body commit{ oid } } }
       reviewThreads(first:100){ nodes{ id isResolved path line
@@ -1333,12 +1333,20 @@ class Pass:
 
         head = pr.get("headRefOid") or ""
         # This machine sees only its own sessions, so a review running elsewhere shows only as its live start
-        # comment, and the event says nothing about a machine it cannot see.
-        if pr.get("isDraft") and not reviewers and not any(self.live_starts(pr, head)):
-            standing(f"draft:{number}:{head}",
-                     f"DRAFT {ref} head={head[:8]}: no review has signed off this head, and no session on this "
-                     f"machine reviews it — tell the user that no session on this machine reviews {ref}",
-                     None)
+        # comment, and the event says nothing about a machine it cannot see. Anyone can comment on a public
+        # repository, so only an account whose review would count can hold the event back. Held back, the head
+        # keeps its key, so it is still announced only once.
+        draft = f"draft:{number}:{head}"
+        if pr.get("isDraft") and not reviewers:
+            if any(review.review_counts(comment.get("authorAssociation"), visibility)
+                   for comment, _ in self.live_starts(pr, head)):
+                if draft in announced:
+                    kept[draft] = announced[draft]
+            else:
+                standing(draft,
+                         f"DRAFT {ref} head={head[:8]}: no review has signed off this head, and no session on this "
+                         f"machine reviews it — tell the user that no session on this machine reviews {ref}",
+                         None)
         conflict = f"conflict:{number}:{head}"
         mergeable = pr.get("mergeable") or "UNKNOWN"
         if mergeable == "UNKNOWN" and conflict in announced:

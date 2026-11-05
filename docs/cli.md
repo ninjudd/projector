@@ -2529,7 +2529,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
 | `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
 | `CONFLICT` | `fix` | A branch that conflicts with its base |
 | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
-| `DRAFT` | `fix`, when no session on this machine reviews the pull request | A head that no review has signed off, that no session here will review, and that no live start comment shows a review of elsewhere, once per head |
+| `DRAFT` | `fix`, when no session on this machine reviews the pull request | A head that no review has signed off, that no session here will review, and that no live start comment, from an account whose review would count, shows under review on any machine, once per head |
 | `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed |
 | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled |
 | `RESPONDED` | `review` | The author answered every finding on an unmoved head, or lifted a hold |

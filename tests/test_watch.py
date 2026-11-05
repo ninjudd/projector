@@ -457,23 +457,45 @@ class FixRoleTests(WatchCase):
 
         self.assertEqual([], events["fixer"])
 
-    def test_a_draft_another_machine_is_reviewing_asks_the_fixer_for_nothing(self) -> None:
+    def start_comment(self, sha: str = SHA_A, association: str = "OWNER") -> dict:
+        """A live start comment of a review of `sha`, as a review on another machine posts it."""
         at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.clock.wall()))
-        start = {"databaseId": 501, "author": {"login": "operator"}, "createdAt": at, "updatedAt": at,
-                 "body": f"📽️ Reviewing\n<!-- projector-start v=1 sha={SHA_A} model={MODEL} -->"}
-        older = dict(start, databaseId=502, body=start["body"].replace(SHA_A, SHA_B))
-        self.github.pull_request(1, draft=True, comments=[start])
-        self.github.pull_request(2, draft=True, comments=[older])
-        self.fixer("acme/app#1 fix", "acme/app#2 fix")
+        return {"databaseId": 501, "author": {"login": "operator"}, "authorAssociation": association,
+                "createdAt": at, "updatedAt": at,
+                "body": f"📽️ Reviewing\n<!-- projector-start v=1 sha={sha} model={MODEL} -->"}
+
+    def test_a_draft_another_machine_is_reviewing_asks_the_fixer_for_nothing(self) -> None:
+        self.github.pull_request(1, draft=True, comments=[self.start_comment()])
+        self.github.pull_request(2, draft=True, comments=[self.start_comment(SHA_B)])
+        self.github.pull_request(3, draft=True, comments=[self.start_comment(association="NONE")])
+        self.fixer("acme/app#1 fix", "acme/app#2 fix", "acme/app#3 fix")
 
         events = self.cycle()
 
-        # A live start comment for the head means a review runs somewhere, so only #2, whose start comment is for
-        # another head, is reported.
+        # A live start comment for the head means a review runs somewhere. #2's is for another head, and on a public
+        # repository #3's comes from an account whose review would not count, so both are reported.
         self.assertEqual([
-            f"DRAFT acme/app#2 head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user that no "
-            "session on this machine reviews acme/app#2",
+            f"DRAFT acme/app#{number} head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user "
+            f"that no session on this machine reviews acme/app#{number}"
+            for number in (2, 3)
         ], events["fixer"])
+
+    def test_a_review_elsewhere_does_not_announce_a_draft_head_twice(self) -> None:
+        self.github.pull_request(1, draft=True)
+        self.fixer("acme/app#1 fix")
+        announced = self.cycle()["fixer"]
+        self.github.pull_request(1, draft=True, comments=[self.start_comment()])
+        self.advance(900)
+        reviewing = self.cycle()["fixer"]
+        self.github.pull_request(1, draft=True, verdicts=[projector_verdict(SHA_A)])
+        self.advance(900)
+        reviewed = self.cycle()["fixer"]
+        self.advance(900)
+        later = self.cycle()["fixer"]
+
+        drafts = [line for line in announced + reviewing + reviewed + later if line.startswith("DRAFT")]
+        self.assertEqual(1, len(drafts), drafts)
+        self.assertEqual(drafts, [line for line in announced if line.startswith("DRAFT")])
 
     def test_a_session_that_fixes_and_reviews_a_pull_request_hears_no_draft(self) -> None:
         self.github.pull_request(1, draft=True)
