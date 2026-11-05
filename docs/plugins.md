@@ -13,7 +13,8 @@ instructions and supporting scripts without a generated copy or host-specific
 fork.
 
 The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
-`review-repo`, `summarize-pr`, `write`, `rewrite`, and `write-tests`.
+`review-repo`, `summarize-pr`, `write`, `rewrite`, `cleanup`, and
+`write-tests`.
 `summarize-pr` summarizes a pull request's changes as a guided review page.
 Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
 `$<skill>`.
@@ -89,6 +90,20 @@ subscribing a session, run
 `project config set watch.auto_start false --user`, or leave out `--user` to
 change only the current repository. [The CLI guide](cli.md) describes the
 `project watch` commands.
+
+When you are done with a session, run `/projector:cleanup` before you shut
+it down. It checks each thing you asked the session for against evidence
+that it was delivered, such as a pull request URL, and looks for work left
+over: uncommitted or unpushed changes, open review findings, a hold, a plan
+whose status is stale, or a promise to do something later. For each gap, it
+asks whether to do the work now, open an issue for it, or leave it. Then it
+stops the session's subagents and background commands, finishes its
+reviews, removes its subscriptions, withdraws its open inbox items, and
+removes the worktrees, branches, and stash entries it made. It keeps any
+change that exists nowhere else unless you say to discard it. Last, it
+checks that nothing is left and says that you can shut the session down.
+Pull requests that wait for your review or merge stay open, and no session
+fixes their findings until you run `fix-pr` on them again.
 
 When dependent work needs more than one pull request to stay reviewable,
 `implement` opens it as a stack that GitHub records, using the `gh stack`

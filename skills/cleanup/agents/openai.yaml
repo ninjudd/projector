@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cleanup"
+  short_description: "Check a session's work, release its resources, and confirm it can shut down"
+  default_prompt: "Use $cleanup to check that this session's work is done and clean up before I shut it down."

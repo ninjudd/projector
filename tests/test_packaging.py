@@ -18,6 +18,7 @@ PUBLISHED_SKILLS = {
     "summarize-pr",
     "write",
     "rewrite",
+    "cleanup",
     "write-tests",
 }
 # A skill cites another skill's section as: `../<skill>/SKILL.md` describes
