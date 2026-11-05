@@ -1,0 +1,102 @@
+{
+ "version": 1,
+ "name": "Testing guide in every skill",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 417,
+  "title": "Point spec, fix-pr, and finish at the testing guide",
+  "head": "d8179edc934586111e6cac19409043fdf17c8434",
+  "headRef": "testing-guide-in-every-skill",
+  "base": "3ff79a54f2d7bedf7edf1f9f319d324b42122d38",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's skills are Markdown instructions that an agent follows: <code>spec</code> writes a project's plan, <code>implement</code> builds it, <code>review-pr</code> reviews a pull request, <code>fix-pr</code> fixes review findings, and <code>finish</code> checks that a project is done. The testing guide in <code>skills/testing.md</code> is a shared rule document for tests. It asks every test to name the bug it catches, and it rejects a test that only restates a value the code holds.",
+   "Before this change, only <code>implement</code> and the review method cited the guide at the step where they handle a test. This change adds a citation at the matching step in three more skills, and updates <code>docs/plugins.md</code> to say which skills follow the guide and where:",
+   "<ul><li><b><code>spec</code></b> names the bug each acceptance test catches, so a plan never asks for a test that restates the code.</li><li><b><code>fix-pr</code></b> writes its failing test and its regression test by the guide.</li><li><b><code>finish</code></b> does not count a test that catches nothing as evidence that a project is done.</li></ul>",
+   "The review found one open problem: three edited lines do not match the line wrapping around them, which the repository's <code>CLAUDE.md</code> asks of every Markdown edit. Each file below flags its line."
+  ],
+  "cards": [
+   {
+    "id": "sections",
+    "title": "Testing guide sections the change cites",
+    "html": "<ul class=\"tight\"><li><b>§ 1.</b> Write a test only when you can name the bug it catches.</li><li><b>§ 2.</b> A test that asserts a value is what the code sets it to catches nothing.</li><li><b>§ 3.</b> Test what a value must agree with, not the value.</li><li><b>§ 4.</b> Other tests that catch nothing: tests of a mock, tests that cannot fail, change detectors, and more.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "skills",
+   "title": "Three skills cite the guide where they handle a test",
+   "kicker": "spec, fix-pr, and finish each gain one or two sentences at the step that plans, writes, or accepts a test.",
+   "intro": [
+    "Each skill reads <code>../testing.md</code> by a path relative to its own directory, which reaches <code>skills/testing.md</code>. Both the Claude Code and the Codex plugin package the same <code>skills/</code> tree, so one edit covers both hosts."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Each cited section holds the rule the skill cites it for. I read §§ 1 to 4 of <code>skills/testing.md</code> at this head against each citation."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/spec/SKILL.md",
+     "note": "The acceptance-criteria bullet now asks each planned test to name its bug (§ 1) and to pin a value through what depends on it (§ 3).",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "This line breaks the wrapping of the paragraph around it, which wraps at about 78 characters. The repository's <code>CLAUDE.md</code> asks a Markdown edit to match the wrapping around it. The review's finding thread covers all three lines.",
+       "line": 87
+      }
+     ]
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Step 4 of verifying and fixing findings now writes the regression test, and the failing test from step 2, by the guide. Steps 1 and 2 still verify and reproduce each finding before any fix.",
+     "checks": []
+    },
+    {
+     "path": "skills/finish/SKILL.md",
+     "note": "The correctness proof in step 3 now rejects a test that § 2 or § 4 says catches nothing.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "This line breaks the wrapping of the paragraph around it, which wraps at about 78 characters. The repository's <code>CLAUDE.md</code> asks a Markdown edit to match the wrapping around it. The review's finding thread covers all three lines.",
+       "line": 20
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The plugin docs list which skills follow the guide",
+   "kicker": "docs/plugins.md names each skill and the step where it uses the guide.",
+   "intro": [
+    "The paragraph on shared rule documents now lists <code>spec</code>, <code>implement</code>, <code>fix-pr</code>, <code>review-pr</code>, and <code>finish</code>, and keeps the <code>write-tests</code> example."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The list matches the skills that cite the guide at this head. I searched <code>skills/</code> for <code>testing.md</code>: <code>implement/SKILL.md</code> and <code>review-pr/method.md</code> already cite it, and this change adds the other three."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Rewrites one sentence of the paragraph on the code, writing, and testing guides.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "This 135-character line breaks the wrapping of the paragraph around it, which wraps at about 78 characters. The repository's <code>CLAUDE.md</code> asks a Markdown edit to match the wrapping around it. The review's finding thread covers all three lines.",
+       "line": 60
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
