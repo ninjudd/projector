@@ -1,0 +1,213 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 07a858b6..7f4b89af 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2529,7 +2529,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
+ | `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
+ | `CONFLICT` | `fix` | A branch that conflicts with its base |
+ | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
+-| `DRAFT` | `fix`, when no session on this machine reviews the pull request | A head that no review has signed off and that no session here will review, once per head |
++| `DRAFT` | `fix`, when no session on this machine reviews the pull request | A head that no review has signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
+ | `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed |
+ | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled |
+ | `RESPONDED` | `review` | The author answered every finding on an unmoved head, or lifted a hold |
+diff --git a/docs/projects/watch-daemon/readme.md b/docs/projects/watch-daemon/readme.md
+index 63551500..8692ef4b 100644
+--- a/docs/projects/watch-daemon/readme.md
++++ b/docs/projects/watch-daemon/readme.md
+@@ -396,7 +396,7 @@ what to do, after ` — `. A session that loaded no loop skill can act on it.
+ | `VERDICT` | `fix` | A real `CHANGES_REQUESTED`, including one whose findings are only in its body | The same |
+ | `CONFLICT` | `fix` | A branch that conflicts with its base | The same |
+ | `REVIEW` | `fix` | A review body with no inline thread, with the count of suggestions it lists | The same |
+-| `DRAFT` | `fix`, when the session does not also own `review` of it | No clean review has signed off the head. When no live session on this machine owns `review` of the pull request, the line says so. | Waits, or tells the user that no session reviews the pull request |
++| `DRAFT` | `fix`, when the session does not also own `review` of it | No clean review has signed off the head, and no live start comment from the operator or another account whose review would count shows a review of the head under way on any machine. When no live session on this machine owns `review` of the pull request, the line says so. | Waits, or tells the user that no session on this machine reviews the pull request |
+ | `NEW PR` | `review` | A pull request this session now owns, with a head this model has not reviewed | Runs `review-pr` in `review-<n>`, passing the session's id as `--loop` |
+ | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review in this session stalled (§ 2.5) | The same. After a stall, it first stops the stalled subagent, which shares the session's `--loop` and so would pass the fence. |
+ | `RESPONDED` | `review` | The author answered every finding on an unmoved head | Runs `review-pr` with `--rereview` |
+@@ -972,7 +972,14 @@ Building the daemon settled these choices, which the design above left open.
+   reviews just waits for that review. Before this, a session that pushed
+   to a pull request with a long history was woken by a line for every
+   review that pull request ever had, each telling it to run `fix-pr`, and
+-  by a `DRAFT` reminder every 15 minutes.
++  by a `DRAFT` reminder every 15 minutes. The daemon sees only this
++  machine's sessions, so `DRAFT` says only that no session on this machine
++  reviews the draft, and stays quiet while a live start comment shows a
++  review of the head under way elsewhere. On a public repository anyone can
++  post that marker, so only a start comment from the operator or another
++  account whose review would count holds the event back. A head the event was held back for
++  keeps its key, so a review elsewhere that ends without signing the head
++  off does not announce it a second time.
+ 
+ ### 9.2 The skills
+ 
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 2d0ec27b..89b67545 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -544,11 +544,16 @@ role are these:
+   builds on that head's full review. Any other review of an earlier head,
+   and a Projector review that lists none, report nothing.
+ - **`DRAFT`** reports, once per head, a draft that no clean review has
+-  signed off and that no session on this machine reviews. Tell the user
+-  once, and say that `review-pr` or `review-repo` in a session would review
+-  it. It is not work: any work behind it arrives as its own `FINDING`,
+-  `VERDICT`, `CONFLICT`, or `REVIEW` line. A draft that a session here
+-  reviews reports nothing; it waits for that review.
++  signed off and that no session on this machine reviews. The daemon sees
++  only this machine's sessions, so a session on another machine may review
++  the draft before it posts its start comment. Tell the user once that no
++  session on this machine reviews it, and that `review-pr` or `review-repo`
++  would, unless they review it elsewhere. Never say that no session reviews
++  it at all. It is not work: any work behind it arrives as its own
++  `FINDING`, `VERDICT`, `CONFLICT`, or `REVIEW` line. A draft that a session
++  here reviews, or that a live start comment from the operator or another
++  account whose review would count shows under review elsewhere, reports
++  nothing; it waits for that review.
+ - **`MOVED`** reports that another session now owns the pull request's
+   `fix` role. Stop its subagent at once, because two fixers would push the
+   same branch, and tell the user.
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 84ce7e2f..ad7a630c 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -42,7 +42,7 @@
+ from dataclasses import dataclass
+ from datetime import datetime, timezone
+ from pathlib import Path
+-from typing import Callable, Optional
++from typing import Callable, Iterator, Optional
+ from urllib.parse import quote
+ 
+ from . import review
+@@ -91,7 +91,7 @@
+       headRefOid headRefName baseRefName author { login }
+       additions deletions changedFiles
+       commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
+-      comments(last:100){ nodes{ databaseId author{ login } body createdAt updatedAt } }
++      comments(last:100){ nodes{ databaseId author{ login } authorAssociation body createdAt updatedAt } }
+       reviews(last:100){ nodes{ author{ login } authorAssociation submittedAt body } }
+       changesRequested: reviews(states:[CHANGES_REQUESTED], last:1){ nodes{ author{ login } body commit{ oid } } }
+       reviewThreads(first:100){ nodes{ id isResolved path line
+@@ -1332,11 +1332,22 @@ def standing(key: str, first: str, again: Optional[str]) -> None:
+             kept[key] = last
+ 
+         head = pr.get("headRefOid") or ""
++        # This machine sees only its own sessions, so a review running elsewhere shows only as its live start
++        # comment, and the event says nothing about a machine it cannot see. Anyone can comment on a public
++        # repository, so only an account whose review would count can hold the event back. Held back, the head
++        # keeps its key, so it is still announced only once.
++        draft = f"draft:{number}:{head}"
+         if pr.get("isDraft") and not reviewers:
+-            standing(f"draft:{number}:{head}",
+-                     f"DRAFT {ref} head={head[:8]}: no review has signed off this head, and no session on this "
+-                     f"machine reviews it — tell the user that no session reviews {ref}",
+-                     None)
++            starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
++                      for comment, _ in self.live_starts(pr, head)]
++            if review.counted_reviews(starts, self.daemon.operator or "", visibility):
++                if draft in announced:
++                    kept[draft] = announced[draft]
++            else:
++                standing(draft,
++                         f"DRAFT {ref} head={head[:8]}: no review has signed off this head, and no session on this "
++                         f"machine reviews it — tell the user that no session on this machine reviews {ref}",
++                         None)
+         conflict = f"conflict:{number}:{head}"
+         mergeable = pr.get("mergeable") or "UNKNOWN"
+         if mergeable == "UNKNOWN" and conflict in announced:
+@@ -1476,23 +1487,27 @@ def in_flight(self, repo: str, number: int, repository: dict, model: str, review
+             recorded = ((read_json(paths.state) or {}).get("start_comment") or {}).get("id")
+         except ProjectorError:
+             recorded = None
+-        pr = repository["pullRequest"]
++        return any(login(comment).lower() == reviewer and comment.get("databaseId") != recorded
++                   and review.identity(named) == model
++                   for comment, named in self.live_starts(repository["pullRequest"], head))
++
++    def live_starts(self, pr: dict, head: str) -> Iterator[tuple[dict, str]]:
++        """Each start comment on the pull request that says a review of the head is still under way, on any
++        machine, with the model it names."""
+         reviews = [{"body": node.get("body") or "", "at": node.get("submittedAt")} for node in nodes(pr, "reviews")]
+         at = datetime.fromtimestamp(self.now, timezone.utc)
+         for comment in nodes(pr, "comments"):
+             body = comment.get("body") or ""
+             marker = review.START_MARKER.search(body)
+-            if login(comment).lower() != reviewer or marker is None or marker.group(1) != head \
+-                    or comment.get("databaseId") == recorded or not comment.get("createdAt"):
++            if marker is None or marker.group(1) != head or not comment.get("createdAt"):
+                 continue
+             named = marker.group(2) or next(iter(review.START_MODEL.findall(body)), None)
+-            if named is None or review.identity(named) != model:
++            if named is None:
+                 continue
+             start = {"sha": head, "model": named, "created_at": comment["createdAt"],
+                      "updated_at": comment.get("updatedAt") or comment["createdAt"]}
+             if review.is_live(start, reviews, at):
+-                return True
+-        return False
++                yield comment, named
+ 
+ 
+ def key_of(model: str) -> str:
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index 17f589cd..1ef5820d 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -439,7 +439,7 @@ def test_reports_every_kind_of_outstanding_work_on_a_fixed_pull_request(self) ->
+ 
+         self.assertEqual([
+             f"DRAFT acme/app#1 head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user that no "
+-            "session reviews acme/app#1",
++            "session on this machine reviews acme/app#1",
+             f"VERDICT acme/app#1 CHANGES_REQUESTED on aaaaaaaa [teammate]: Please split this — {fix_action(1)}",
+             f"FINDING acme/app#1 src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}",
+             f"REVIEW acme/app#1 by [codex] on aaaaaaaa: Body-only concern — {fix_action(1)}",
+@@ -457,6 +457,48 @@ def test_a_draft_another_session_reviews_asks_the_fixer_for_nothing(self) -> Non
+ 
+         self.assertEqual([], events["fixer"])
+ 
++    def start_comment(self, sha: str = SHA_A, association: str = "OWNER", who: str = "teammate") -> dict:
++        """A live start comment of a review of `sha`, as a review on another machine posts it."""
++        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.clock.wall()))
++        return {"databaseId": 501, "author": {"login": who}, "authorAssociation": association,
++                "createdAt": at, "updatedAt": at,
++                "body": f"📽️ Reviewing\n<!-- projector-start v=1 sha={sha} model={MODEL} -->"}
++
++    def test_a_draft_another_machine_is_reviewing_asks_the_fixer_for_nothing(self) -> None:
++        self.github.pull_request(1, draft=True, comments=[self.start_comment()])
++        self.github.pull_request(2, draft=True, comments=[self.start_comment(SHA_B)])
++        self.github.pull_request(3, draft=True, comments=[self.start_comment(association="NONE")])
++        self.github.pull_request(4, draft=True, comments=[self.start_comment(association="CONTRIBUTOR", who="operator")])
++        self.fixer("acme/app#1 fix", "acme/app#2 fix", "acme/app#3 fix", "acme/app#4 fix")
++
++        events = self.cycle()
++
++        # A live start comment for the head means a review runs somewhere. #2's is for another head, and on a public
++        # repository #3's comes from an account whose review would not count, so both are reported. #4's comes from
++        # the operator, whose own reviews count whatever their association, as they do for a verdict.
++        self.assertEqual([
++            f"DRAFT acme/app#{number} head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user "
++            f"that no session on this machine reviews acme/app#{number}"
++            for number in (2, 3)
++        ], events["fixer"])
++
++    def test_a_review_elsewhere_does_not_announce_a_draft_head_twice(self) -> None:
++        self.github.pull_request(1, draft=True)
++        self.fixer("acme/app#1 fix")
++        announced = self.cycle()["fixer"]
++        self.github.pull_request(1, draft=True, comments=[self.start_comment()])
++        self.advance(900)
++        reviewing = self.cycle()["fixer"]
++        self.github.pull_request(1, draft=True, verdicts=[projector_verdict(SHA_A)])
++        self.advance(900)
++        reviewed = self.cycle()["fixer"]
++        self.advance(900)
++        later = self.cycle()["fixer"]
++
++        drafts = [line for line in announced + reviewing + reviewed + later if line.startswith("DRAFT")]
++        self.assertEqual(1, len(drafts), drafts)
++        self.assertEqual(drafts, [line for line in announced if line.startswith("DRAFT")])
++
+     def test_a_session_that_fixes_and_reviews_a_pull_request_hears_no_draft(self) -> None:
+         self.github.pull_request(1, draft=True)
+         self.fixer("acme/app#1 fix", f"acme/app#1 review {MODEL} operator")
