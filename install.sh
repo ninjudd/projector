@@ -122,7 +122,14 @@ install_venv() {
   # `requires-python`, so only making a venv depends on PROJECTOR_PYTHON.
   if [ ! -x "$VENV_DIR/bin/python" ]; then
     require_python
-    "$PROJECTOR_PYTHON" -m venv "$VENV_DIR"
+    # A venv whose Python was removed keeps its pyvenv.cfg, and venv fails to
+    # update it in place. It holds nothing but this install, so make it again.
+    if [ -f "$VENV_DIR/pyvenv.cfg" ]; then
+      "$PROJECTOR_PYTHON" -m venv --clear "$VENV_DIR"
+      printf '%-14s %s\n' "rebuilt" "$VENV_DIR -- the Python it was made with no longer runs"
+    else
+      "$PROJECTOR_PYTHON" -m venv "$VENV_DIR"
+    fi
   fi
   "$VENV_DIR/bin/python" -m pip install --quiet --upgrade --no-cache-dir "$source"
   mkdir -p "$BIN_DIR"
