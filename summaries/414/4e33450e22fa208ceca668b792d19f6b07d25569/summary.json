@@ -1,0 +1,60 @@
+{
+ "version": 1,
+ "name": "Neutral drawer thread example",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 414,
+  "title": "Use a neutral example for a drawer's grouped threads",
+  "head": "4e33450e22fa208ceca668b792d19f6b07d25569",
+  "headRef": "neutral-thread-examples",
+  "base": "bb5aabe57fd57aef94e2d08920ffd653efde4d8e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel lists the session's pull requests above the prompt. Opening a pull request's drawer shows its unresolved review threads, gathered under the file each thread is on. Each file is a line you can open to see its threads, one line per thread: the line number, who opened it, <code>outdated</code> when a later push moved the code, and the start of its first comment.",
+   "Both the user documentation for that drawer and the test that checks how threads are grouped used a real file path and real finding titles from another repository. Projector is a public framework that keeps its examples free of other people's projects, so this change replaces them with a made-up file, <code>src/audio/player.ts</code>, and made-up findings. Nothing else changes: the panel's code is untouched, and both examples keep their shape."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "example",
+   "title": "The drawer example in the docs and the test",
+   "kicker": "Swap the sample path, line numbers, and finding titles",
+   "intro": [
+    "The docs example shows one open file with two threads, the second outdated, above a collapsed file. The test feeds the drawer five threads across three files and checks the order the drawer draws them in: files in the order of each file's oldest thread, and threads oldest first within a file, not sorted by line number.",
+    "To prove the second rule, the test needs one file whose threads' line numbers sort differently from the order they arrived in. The old numbers, <code>1875</code>, <code>1902</code>, <code>1897</code>, did that, and the new ones, <code>120</code>, <code>188</code>, <code>154</code>, keep the same pattern."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The sample drawer under the section on a pull request's drawer, with the new path and finding titles, and the sample line number in the text after it, <code>:120</code>, which is the first thread line the example shows.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The reviewer rendered this example's input through the drawer in a temporary test: two threads on <code>src/audio/player.ts</code>, the second outdated, and one on <code>docs/notes.md</code>. With the first file opened, the drawer drew these four lines exactly.",
+       "line": 352
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "The grouping test's input threads and the lines it expects, with the new path, line numbers, and titles.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The test still catches a broken grouping. In the review, sorting each file's threads by line number made this test fail, and sorting files by path made it and two other drawer tests fail."
+      },
+      {
+       "kind": "verify",
+       "text": "The new data names no person, account, repository, or organization. <code>grace</code> and <code>bob</code> are placeholder logins used throughout this test file."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
