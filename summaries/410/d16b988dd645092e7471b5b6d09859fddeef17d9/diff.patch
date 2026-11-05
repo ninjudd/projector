@@ -1,0 +1,65 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 578f2f15..61bdbb1f 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -95,8 +95,11 @@ whose status is stale, or a promise to do something later. For each gap, it
+ asks whether to do the work now, open an issue for it, or leave it. Then it
+ stops the session's subagents and background commands, finishes its
+ reviews, removes its subscriptions, withdraws its open inbox items, and
+-removes the worktrees, branches, and stash entries it made. It keeps any
+-change that exists nowhere else unless you say to discard it. Last, it
++removes the worktrees, branches, and stash entries it made. Your request to
++clean up is the go-ahead, so it removes a worktree or branch without asking
++once it has checked that every commit on it is on a remote or in a merged
++pull request. It keeps any change that exists nowhere else unless you say
++to discard it. Last, it
+ checks that nothing is left and says that you can shut the session down.
+ Pull requests that wait for your review or merge stay open, and no session
+ fixes their findings until you run `fix-pr` on them again.
+diff --git a/skills/cleanup/SKILL.md b/skills/cleanup/SKILL.md
+index 1b743951..c86c748a 100644
+--- a/skills/cleanup/SKILL.md
++++ b/skills/cleanup/SKILL.md
+@@ -205,17 +205,35 @@ recreates what you released.
+    the answer once this one shuts down. Name each withdrawn question or
+    request in the report, so nothing the user meant to answer is lost.
+ 5. **Worktrees.** Remove each worktree the session created that holds no
+-   change that exists nowhere else. Leave it first when the session's
+-   working directory is inside it. Remove it with the host tool that created
+-   it, such as Claude Code's `ExitWorktree` for a worktree that
+-   `EnterWorktree` made, or otherwise with `git worktree remove <path>` and
+-   then `git worktree prune`. Never pass `--force` unless the user said to
+-   discard the worktree's changes.
++   change that exists nowhere else, as step 4 of
++   [Take stock of the session](#take-stock-of-the-session) found. The
++   user's request to clean up is their consent, so remove these without
++   asking. Leave a worktree first when the session's working directory is
++   inside it. Remove it with the host tool that created it, such as Claude
++   Code's `ExitWorktree` for a worktree that `EnterWorktree` made, or
++   otherwise with `git worktree remove <path>` and then
++   `git worktree prune`. A host tool can refuse because the worktree's
++   commits are missing from a local branch, such as a stale local copy of
++   the default branch, and tell you to confirm with the user. Step 4
++   already checked those commits against the remotes and the merged pull
++   request, but it ran before step 2 stopped the subagents that could have
++   changed the worktree since. So run step 4's checks in the worktree again
++   just before you pass the tool's override, such as `ExitWorktree`'s
++   `discard_changes: true`. Pass it instead of asking again only when they
++   still find no change that exists nowhere else and the refusal names no
++   uncommitted file. Otherwise treat the worktree as a gap, and ask about
++   it as [Ask what to do with each gap](#ask-what-to-do-with-each-gap)
++   describes. Pass an override or `--force` for a worktree that holds a
++   change that exists nowhere else only when the user's answer to its gap
++   said to discard the change.
+ 6. **Branches.** Delete a local branch the session created only when its
+    pull request has merged or closed and step 4 of
+    [Take stock of the session](#take-stock-of-the-session) found no change
+    on it that exists nowhere else, or when the user said to discard it.
+-   Keep the branch of an open pull request.
++   Delete it with `git branch -D`, without asking: `git branch -d` refuses
++   a squash-merged branch once its remote branch is gone, because the
++   squash put different commits on the base, and step 4 already proved
++   its commits delivered. Keep the branch of an open pull request.
+ 7. **Stashes and temporary files.** Drop each stash entry the session
+    pushed and no gap kept. Another session can shift an entry's
+    `stash@{n}` position, and `git stash drop` refuses a SHA, so find the
