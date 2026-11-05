@@ -1,0 +1,460 @@
+diff --git a/README.md b/README.md
+index 7382ea89..0a8d1bd9 100644
+--- a/README.md
++++ b/README.md
+@@ -73,9 +73,10 @@ which the session that pushed a pull request runs again whenever a review
+ finds something; `summarize-pr`, which summarizes a pull request's changes
+ as a guided review page; `write`, which writes any prose so that it follows
+ Projector's writing guide; `rewrite`, which revises existing text by
+-that guide and writes it back where it lives; and `cleanup`, which checks
+-that a session finished what you asked, releases what it holds, and tells you
+-when you can shut it down. Claude invokes a skill as
++that guide and writes it back where it lives; `cleanup`, which checks that
++a session finished what you asked, releases what it holds, and tells you
++when you can shut it down; and `write-tests`, which writes tests that catch
++real bugs and prunes the ones that catch nothing. Claude invokes a skill as
+ `/projector:<skill>` and Codex as `$<skill>`. See
+ [Install Projector](docs/plugins.md) for how the skills work together.
+ 
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 578f2f15..9848509b 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -13,7 +13,8 @@ instructions and supporting scripts without a generated copy or host-specific
+ fork.
+ 
+ The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
+-`review-repo`, `summarize-pr`, `write`, `rewrite`, and `cleanup`.
++`review-repo`, `summarize-pr`, `write`, `rewrite`, `cleanup`, and
++`write-tests`.
+ `summarize-pr` summarizes a pull request's changes as a guided review page.
+ Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
+ `$<skill>`.
+@@ -51,8 +52,11 @@ prose you ask for, such as `/projector:write a README section on the
+ site`. `rewrite` revises text that already exists, such as a file, a pull
+ request description, a comment, or a Slack message, and writes the result
+ back where the text lives when it can, such as
+-`/projector:rewrite the install section of the README`. The core workflows
+-use the local CLI and do not require MCP.
++`/projector:rewrite the install section of the README`. The code guidelines
++send tests to the testing guide in `skills/testing.md`, which asks each test
++to name the bug it catches, and `write-tests` applies that guide to tests you
++ask for, such as `/projector:write-tests audit tests/test_site.py`. The core
++workflows use the local CLI and do not require MCP.
+ 
+ A session keeps fixing and reviewing pull requests through subscriptions,
+ so there is no loop for you to start. When `implement`, `spec`, or `fix-pr`
+diff --git a/skills/guidelines.md b/skills/guidelines.md
+index ab27f1f9..46fb2506 100644
+--- a/skills/guidelines.md
++++ b/skills/guidelines.md
+@@ -34,3 +34,20 @@ this section; the fix is to delete the comment, or to simplify the code until
+ nothing is left to explain. A comment that misstates what the code does is a
+ correctness finding, because a maintainer who trusts it changes the wrong
+ thing.
++
++## 2. Tests
++
++Write and judge tests by the testing guide in `testing.md`. Its first rule
++is that a test must be able to catch a bug. Before you write a test, name a
++plausible change that leaves the code wrong and turns the test red. Write
++no test for which you cannot. A test that restates a value the code holds,
++tests a mock or a library, or cannot fail catches nothing, and it costs time
++on every run (`testing.md` § 2 and § 4).
++
++Every section of `testing.md` is a written rule. A review flags a test that
++breaks any of them as a P2 thread under the written-rules pass that cites
++the section the test breaks: a test that catches nothing, and also a test
++named `test_import_2` rather than after the rule it checks (`testing.md`
++§ 8). The fix for a test that catches nothing is to delete it, or to
++rewrite it to check behavior that the code computes; the fix for any other
++break is the one its section describes.
+diff --git a/skills/implement/SKILL.md b/skills/implement/SKILL.md
+index 79464261..41e5e1ba 100644
+--- a/skills/implement/SKILL.md
++++ b/skills/implement/SKILL.md
+@@ -59,7 +59,8 @@ change:
+ - **Correctness.** Trace each change past the happy path: what happens when
+   an input is missing, when the call repeats, when the operation fails or is
+   cancelled, and at zero, empty, and maximum. Write the test that pins the
+-  answer while the reasoning is fresh.
++  answer while the reasoning is fresh, by the testing guide in
++  `../testing.md`: name the bug each test catches, and watch it fail.
+ - **Performance**, the Cost pass. Know how often the code you touch runs
+   before you add work to it. Measure the paths the plan named as hot, and
+   put no new read, allocation, or request inside a loop or a per-request
+diff --git a/skills/review-pr/method.md b/skills/review-pr/method.md
+index 879d1f40..a2de27f4 100644
+--- a/skills/review-pr/method.md
++++ b/skills/review-pr/method.md
+@@ -173,12 +173,15 @@ Does the change follow what was written down, in Projector's code guidelines
+ and in the repository's own rule documents?
+ 
+ Read `../guidelines.md` first. It applies in every repository, and its
+-sections are the rules this pass enforces on comments and on whatever it adds
+-later; the repository's own documents outrank it where the two disagree. Then
++sections are the rules this pass enforces on comments, on tests, and on
++whatever it adds later; the repository's own documents outrank it where the
++two disagree. When the change adds or edits a test, read `../testing.md` too,
++which `guidelines.md § 2` makes one of those rules. Then
+ read the parts of the repository's rule documents that bear on the changed
+ files, and read the diff against both. A finding here names the document and
+-the section it enforces, `guidelines.md § 1` or the repository document and
+-heading, or it is a preference and does not ship. When the rule is one the
++the section it enforces, such as `guidelines.md § 1`, `testing.md § 2`, or
++the repository document and heading, or it is a preference and does not
++ship. When the rule is one the
+ repository's own merged commits keep breaking, report the gap between the
+ document and the practice as a P3 rather than as this change's fault.
+ 
+diff --git a/skills/testing.md b/skills/testing.md
+new file mode 100644
+index 00000000..4d59ff06
+--- /dev/null
++++ b/skills/testing.md
+@@ -0,0 +1,252 @@
++# Testing guide
++
++Projector's skills write tests and judge them. `implement` follows this
++guide when it adds tests to a change, and `fix-pr` follows it when it writes
++a regression test. The review method's written-rules pass reads changed
++tests against it, and `write-tests` applies it to any tests you ask for. A
++repository's own testing rules outrank this guide where the two disagree.
++Cite a section by this file and its section number, as `testing.md § 2`.
++
++## 1. Write a test only when it can catch a bug
++
++A test exists to fail when the code is wrong. Coverage, speed, and tidy
++setup all matter, but only in a test that does that first.
++
++Before you write a test, name the bug it catches. A bug here is a plausible
++change that someone could make, that leaves the code wrong, and that turns
++this test red. "Someone drops the empty-input check, and the parser crashes
++on a blank file" names a bug. "Someone changes the retry limit" names a
++decision, not a bug. When you cannot name a bug, do not write the test.
++
++Every test has a cost, and the cost never stops:
++
++- **Time.** The test runs on every contributor's machine and in every CI
++  job, on every change, for as long as it exists.
++- **Edits.** Each change to the code it covers can need a matching change
++  to the test.
++- **Trust.** A test that fails when nothing is wrong teaches people to
++  rerun the suite, or to ignore red, and then they miss the failure that
++  matters.
++
++Write a test when the bug it catches costs more than that.
++
++## 2. Do not restate the code
++
++The plainest test that catches nothing asserts that a value is what the
++code sets it to:
++
++```python
++def test_default_retry_limit(self):
++    self.assertEqual(3, client.DEFAULT_RETRY_LIMIT)
++
++def test_merged_label(self):
++    self.assertEqual("Merged", STATUS_LABELS["merged"])
++```
++
++Each of these tests is a second copy of a line of source. It catches
++nothing, for three reasons:
++
++- **It shares the code's mistake.** One belief produced both the value and
++  the assertion. When 3 is the wrong limit, the test says 3 too.
++- **It fails only on purpose.** A refactor does not move a literal, and
++  neither does a bug somewhere else in the code. The only change that turns
++  the test red is a deliberate change to the value. So every failure is a
++  false alarm, and the fix is always to edit the test to match.
++- **It doubles the cost of the change it guards.** A new value now needs two
++  edits. The second edit tells a reviewer nothing that the first did not.
++
++The same goes for a test that checks that a configuration has the keys
++written in it, that a component carries the class name in its template,
++that a route table lists a route, or that an enumeration has its members.
++When you could write the assertion by copying the source, the assertion is
++the source.
++
++A literal in a test is not the problem. `assertEqual("3 days ago",
++humanize(now - 3 * DAY))` compares a literal with a value that the code
++computes, so a bug in `humanize` turns it red. The problem is a literal
++compared with a literal that the code holds and does not compute.
++
++## 3. Test what a value must agree with
++
++A value matters when something else depends on it. Test that dependency
++instead of the literal. The test then fails when the dependency breaks, and
++keeps passing when someone changes the value correctly.
++
++| Instead of asserting | Assert |
++| --- | --- |
++| The logo path is `img/logo.svg` | Every asset path that a page references exists in the build output |
++| The version is `1.4.2` | The package, the plugin manifest, and the lock file carry the same version |
++| The default timeout is 30 seconds | A request that outlasts the timeout is cancelled, and its caller receives the timeout error |
++| The serializer writes the field `created_at` | A record survives a round trip through the serializer and the parser, and the parser reads a file that an older release wrote |
++| The label for `merged` is "Merged" | Every status that the server can send has a label, so no status renders blank |
++
++Each test in the right column fails on a change that breaks something, such
++as an asset deleted while a page still names it. Each one passes when
++someone chooses a new value on purpose.
++
++Some values depend on nothing. A color, a line of copy, or a default that
++someone picks is a judgment, and no test can say whether the judgment is
++right. A reviewer sees the new value in the diff. Leave it to the review.
++
++Pin an exact value only when code outside your control depends on it, such
++as an exit code that scripts check, a constant in a wire protocol, or a
++file format that other programs read. There, an accidental change is a real
++bug, because the person who makes it may not know that anything depends on
++the value. Pin the value where the outside code reads it, such as the exit
++code of the command, and not the constant behind it. Name the test after
++the dependency, so that whoever breaks it learns why the value cannot move.
++
++## 4. Recognize other tests that catch nothing
++
++Restated code is the plainest case. These tests catch nothing for the same
++reason: no plausible bug turns them red.
++
++- **A test of the mock.** It replaces the code under test, or everything
++  the code calls, with stubs. Then it asserts that the stubs returned what
++  the test told them to return. Fake only a boundary that is slow,
++  nondeterministic, or outside your control, and assert on what your code
++  does with the result.
++- **A test of the language or a library.** It checks that a data class
++  keeps a field, that a dictionary returns what you stored, or that the
++  database library saves a row. The library's own tests cover that. Test
++  your code's use of the library instead.
++- **A test that cannot fail.** Its assertions sit in a loop over an empty
++  collection. Or it catches the exception it means to check, never awaits
++  the coroutine it calls, or asserts that an object that always exists is
++  truthy. § 7 shows how to find these.
++- **A test for coverage.** It runs a line and asserts nothing about the
++  result, or asserts only that no exception escaped. A component test that
++  renders and checks nothing is one of these. Coverage measures what ran,
++  not what a test checked, so a line run by a test with no assertion is
++  still untested.
++- **A change detector.** It pins how the code works instead of what it
++  does: which private helper runs, the order of internal calls, or how many
++  times a method is called. It fails on every refactor and passes when the
++  output is wrong. Assert on the outcome that a caller sees.
++- **An unread snapshot.** People regenerate a large snapshot whenever it
++  fails, so it checks only that the output did not change. Keep a snapshot
++  when the output is the product itself, such as a generated file. Keep it
++  small enough to read in a diff, and read the diff when it changes.
++- **A duplicate.** It checks a behavior that another test already checks,
++  through the same path. Keep the test whose failure says the most, and
++  delete the other.
++
++## 5. Aim at the places bugs live
++
++Bugs gather where code makes a decision, and where it meets something that
++it does not control. Put tests there:
++
++- **Boundaries.** Zero, one, empty, missing, the maximum, and one past the
++  maximum.
++- **Branches.** Each side of a condition that changes the result,
++  especially the side that the happy path never takes.
++- **Failures.** What the caller sees when a file is missing, a command
++  exits with an error, a request times out, or the input is malformed.
++  Check that the error is the right one, and that the failure leaves
++  nothing half-written.
++- **Repetition and order.** The operation run twice, run after a partial
++  failure, and run twice at once when the code allows that.
++- **Round trips.** Data written and read back, parsed and printed, or
++  encoded and decoded.
++- **State changes.** Each allowed move from one state to another, and the
++  refusal of each move that is not allowed.
++- **Seams.** The place where two components meet, such as a caller and the
++  format that it expects from a callee. Each side's own tests can pass while
++  the two sides disagree.
++- **Regressions.** The exact input that broke the code once. Someone can
++  bring back a bug that happened once.
++
++When the input space is large, write one table-driven test instead of many
++copies of one test. Consider a property test that checks an invariant
++across generated inputs, such as "parsing the printed form returns the
++original".
++
++## 6. Test through the interface that callers use
++
++Test a behavior at the boundary where something depends on it: a public
++function, the output and exit code of a command, a file that the code
++writes, or the response of an endpoint. A test there passes after a
++refactor that keeps the behavior, and fails when the behavior breaks. A
++test of a private helper does the opposite.
++
++Use real collaborators when they are fast and deterministic. A temporary
++directory is a better file system than a mock of one, and a temporary Git
++repository is a better Git than a stub of its output. Replace a
++collaborator only when the real one is slow, nondeterministic, costs money,
++or reaches outside the machine, such as a network service or the system
++clock. Then replace it at the narrowest point you can.
++
++Test each behavior once, at the level where its failure is clearest. An
++end-to-end test proves that the parts connect. A unit test covers the
++combinations that would be slow to reach from outside. One behavior checked
++at every level costs several times as much, and catches nothing more.
++
++## 7. Watch each test fail
++
++A test that you have never seen fail has not shown that it can. After you
++write a test, break the code it covers in the way that the test claims to
++catch: invert the condition, drop the check, or return early. Run the test.
++See it fail with a message that names the problem, and then restore the
++code. For a regression test, run it against the code from before the fix.
++
++When the test still passes with the code broken, it is one of the tests in
++§ 4. Fix the test, or delete it.
++
++Do this by hand for each new test. Where a repository has a mutation
++testing tool, the tool does the same across a whole suite.
++
++## 8. Make each failure explain itself
++
++The person who reads a failed test is usually the person whose change made
++it fail. Write the test for them.
++
++- **Name the test after the rule it checks**, as a sentence:
++  `test_a_second_import_of_the_same_file_adds_no_rows`, not
++  `test_import_2`. When the test fails, its name says what stopped being
++  true.
++- **Check one behavior in each test.** A test can make several assertions
++  about one outcome. Split a test that checks two unrelated behaviors, so
++  that each failure names one.
++- **Keep the input in view.** Put the input data in the test, small and
++  literal, so that the reader sees what goes in beside what comes out. Move
++  setup into a helper only when the helper hides detail that the reader
++  does not need.
++- **Compare whole values.** `assertEqual(("merged", 2, 0), (state, added,
++  failed))` shows every field that differs in one failure. Three separate
++  assertions stop at the first difference.
++- **Write the expected value as a literal.** A test that computes its
++  expected value the way the code does repeats the code's bugs.
++- **Keep logic out of the test.** A loop that builds the expected values,
++  or a condition that picks which assertion runs, needs tests of its own.
++  Give many cases to one test as a table of subtests instead.
++
++## 9. Keep the suite fast and deterministic
++
++People run a slow suite less often, and they stop trusting a suite that
++fails at random. Either way, real failures get through.
++
++- **Control time and randomness.** Pass the clock and the random seed in
++  as inputs. To wait for an event, wait on the event itself with a timeout.
++  Never sleep for a fixed time.
++- **Isolate each test.** Give each test its own temporary directory,
++  repository, and environment, and leave nothing behind. A test that passes
++  only after another test, or only when it runs alone, is broken.
++- **Stay off the network.** Replace the service at its boundary (§ 6).
++- **Fix or delete a flaky test as soon as you see it.** A retry until the
++  test passes hides the failure, and the failure is often a real race in
++  the code.
++
++## 10. Delete tests that catch nothing
++
++A deleted test that caught nothing is a gain. The suite runs faster, each
++later change costs less, and nothing is lost, because the test never
++caught anything.
++
++When a change touches code that has such a test, delete the test in the
++same change. When you find one elsewhere, name it when you hand the work
++over, instead of widening the change. Before you delete a test, check
++whether it is the only test that runs some behavior. When it is, rewrite it
++to check that behavior instead.
++
++A review flags a new test that catches nothing as a violation of a written
++rule, and cites the section of this guide that the test breaks.
+diff --git a/skills/write-tests/SKILL.md b/skills/write-tests/SKILL.md
+new file mode 100644
+index 00000000..8e7148f4
+--- /dev/null
++++ b/skills/write-tests/SKILL.md
+@@ -0,0 +1,65 @@
++---
++name: write-tests
++description: Write tests that catch real bugs by Projector's testing guide, or audit existing tests and delete or rewrite the ones that catch nothing. Use when the user asks to write, add, improve, review, audit, or prune tests, or asks what a change needs tested.
++---
++
++# Write tests
++
++Every Projector skill that writes or judges tests follows the testing guide
++in `../testing.md`, and so does this one. Read the whole guide before you
++start. This skill says how to start and how to finish. The guide holds the
++rules.
++
++## Learn how the repository tests
++
++1. Read the repository's own testing rules, such as its `CLAUDE.md`,
++   `AGENTS.md`, or contributing guide. They outrank the guide where the two
++   disagree.
++2. Find the command that runs one test and the command that runs the whole
++   suite. Run the suite once before you change anything, so that you know
++   it passes and how long it takes.
++3. Read the tests beside the code you work on. Use their helpers, fixtures,
++   and naming instead of adding your own.
++
++## Write tests for a change
++
++1. **List the bugs first.** Read the code under test, or the diff, and list
++   what could go wrong in it: each boundary, branch, failure, repetition,
++   and seam (§ 5). Write each item as the bug that a test would catch.
++2. **Cross off each item that no plausible bug turns red** (§ 1 and § 2).
++   For a value, find what the value must agree with, and test that instead
++   (§ 3).
++3. **Write each test** through the interface that callers use (§ 6), and so
++   that its failure explains itself (§ 8).
++4. **Watch each test fail.** Break the code it covers, run the test, and
++   restore the code (§ 7). Keep no test that you have not seen fail.
++5. **Run the suite.** Check that it passes, and that it is not much slower
++   than your first run (§ 9).
++
++## Audit existing tests
++
++The user names the tests to audit, such as a file, a directory, or a pull
++request.
++
++1. **Read each test and the code it covers.** For each test, name the bug it
++   catches, or note that you found none.
++2. **Sort the tests.** Keep a test that catches a plausible bug. Rewrite a
++   test that runs real behavior but checks it badly, such as one that
++   asserts on a mock instead of the outcome. Delete a test that catches
++   nothing (§ 2 and § 4), after you check that no behavior is left untested
++   (§ 10).
++3. **List the gaps.** Name each place where bugs live (§ 5) that no test
++   reaches, with the bug a test there would catch. Write those tests only
++   when the user asks.
++4. **Make the changes and run the suite**, unless the user asked only for a
++   report. Compare the suite's time with your first run.
++
++## Hand it over
++
++Do not commit or push unless the user asks. Report, as a list:
++
++- **Each test you added**, with the bug it catches.
++- **Each test you deleted or rewrote**, with the section of the guide that
++  it broke.
++- **The suite's result and time**, from before and after your change.
++- **Each gap you left**, with the bug a test there would catch.
+diff --git a/skills/write-tests/agents/openai.yaml b/skills/write-tests/agents/openai.yaml
+new file mode 100644
+index 00000000..ece571f9
+--- /dev/null
++++ b/skills/write-tests/agents/openai.yaml
+@@ -0,0 +1,4 @@
++interface:
++  display_name: "Write tests"
++  short_description: "Write tests that catch real bugs, and prune the ones that do not"
++  default_prompt: "Use $write-tests to write tests for this change that catch real bugs."
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+index abdba328..87ea6787 100644
+--- a/tests/test_packaging.py
++++ b/tests/test_packaging.py
+@@ -19,6 +19,7 @@
+     "write",
+     "rewrite",
+     "cleanup",
++    "write-tests",
+ }
+ # A skill cites another skill's section as: `../<skill>/SKILL.md` describes
+ # under "<heading>". The heading may be at any level.
