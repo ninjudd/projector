@@ -52,10 +52,12 @@ prose you ask for, such as `/projector:write a README section on the
 site`. `rewrite` revises text that already exists, such as a file, a pull
 request description, a comment, or a Slack message, and writes the result
 back where the text lives when it can, such as
-`/projector:rewrite the install section of the README`. The code guidelines
-send tests to the testing guide in `skills/testing.md`, which asks each test
-to name the bug it catches, and `write-tests` applies that guide to tests you
-ask for, such as `/projector:write-tests audit tests/test_site.py`. The core
+`/projector:rewrite the install section of the README`. Every skill that
+plans, writes, judges, or accepts a test follows the testing guide in
+`skills/testing.md`, which asks each test to name the bug it catches: `spec`
+in its acceptance criteria, `implement` and `fix-pr` in the tests they write,
+`review-pr` in its written-rules pass, and `finish` in the evidence it
+accepts. `write-tests` applies the same guide to tests you ask for, such as `/projector:write-tests audit tests/test_site.py`. The core
 workflows use the local CLI and do not require MCP.
 
 A session keeps fixing and reviewing pull requests through subscriptions,

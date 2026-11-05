@@ -16,7 +16,8 @@ the outcome.
    external state.
 3. Prove the three things a review checks, whether or not a criterion
    names them. Correctness: the tests or observations that pin each promised
-   behavior exist and pass. Performance: the measurement the plan named was
+   behavior exist and pass. A test that `../testing.md` § 2 or § 4 says
+   catches nothing pins nothing, so it is not evidence. Performance: the measurement the plan named was
    taken and is recorded, or the plan said cost does not matter and the
    change added no work to a hot path. Reuse: logic the plan said to build
    once exists once, nothing the change replaced is still present or

@@ -81,7 +81,10 @@ this order.
   the behavior that must hold, the inputs and states that could break it,
   and the test or observation that proves it. A table of what to do and
   what to expect, followed by the tests that fail before the change, works
-  well. A criterion nobody can observe is a hope, not evidence. Write
+  well. Name the bug each test catches, as `../testing.md` § 1 asks, and
+  pin a value through what depends on it (§ 3), so the plan never asks for
+  a test that restates the code. A criterion nobody can observe is a hope,
+  not evidence. Write
   criteria the merged code can meet, because the project is complete once its
   code merges; a release that follows is tracked outside Projector.
 - **Cost.** The paths where cost matters, the load they carry, and how the
