@@ -173,12 +173,15 @@ Does the change follow what was written down, in Projector's code guidelines
 and in the repository's own rule documents?
 
 Read `../guidelines.md` first. It applies in every repository, and its
-sections are the rules this pass enforces on comments and on whatever it adds
-later; the repository's own documents outrank it where the two disagree. Then
+sections are the rules this pass enforces on comments, on tests, and on
+whatever it adds later; the repository's own documents outrank it where the
+two disagree. When the change adds or edits a test, read `../testing.md` too,
+which `guidelines.md § 2` makes one of those rules. Then
 read the parts of the repository's rule documents that bear on the changed
 files, and read the diff against both. A finding here names the document and
-the section it enforces, `guidelines.md § 1` or the repository document and
-heading, or it is a preference and does not ship. When the rule is one the
+the section it enforces, such as `guidelines.md § 1`, `testing.md § 2`, or
+the repository document and heading, or it is a preference and does not
+ship. When the rule is one the
 repository's own merged commits keep breaking, report the gap between the
 document and the practice as a P3 rather than as this change's fault.
 

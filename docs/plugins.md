@@ -13,7 +13,8 @@ instructions and supporting scripts without a generated copy or host-specific
 fork.
 
 The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
-`review-repo`, `summarize-pr`, `write`, `rewrite`, and `cleanup`.
+`review-repo`, `summarize-pr`, `write`, `rewrite`, `cleanup`, and
+`write-tests`.
 `summarize-pr` summarizes a pull request's changes as a guided review page.
 Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
 `$<skill>`.
@@ -51,8 +52,11 @@ prose you ask for, such as `/projector:write a README section on the
 site`. `rewrite` revises text that already exists, such as a file, a pull
 request description, a comment, or a Slack message, and writes the result
 back where the text lives when it can, such as
-`/projector:rewrite the install section of the README`. The core workflows
-use the local CLI and do not require MCP.
+`/projector:rewrite the install section of the README`. The code guidelines
+send tests to the testing guide in `skills/testing.md`, which asks each test
+to name the bug it catches, and `write-tests` applies that guide to tests you
+ask for, such as `/projector:write-tests audit tests/test_site.py`. The core
+workflows use the local CLI and do not require MCP.
 
 A session keeps fixing and reviewing pull requests through subscriptions,
 so there is no loop for you to start. When `implement`, `spec`, or `fix-pr`
