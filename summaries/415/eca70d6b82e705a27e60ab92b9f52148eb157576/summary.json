@@ -1,0 +1,117 @@
+{
+ "version": 1,
+ "name": "DRAFT event on this machine",
+ "project": "watch-daemon",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 415,
+  "title": "Say only what this machine knows in the DRAFT event",
+  "head": "eca70d6b82e705a27e60ab92b9f52148eb157576",
+  "headRef": "draft-event-this-machine",
+  "base": "bb5aabe57fd57aef94e2d08920ffd653efde4d8e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's watch daemon is one process per machine that polls the pull requests its agent sessions subscribe to, and sends each session event lines that say what to do. A session that pushed to a pull request holds its <code>fix</code> role, and hears <code>DRAFT</code> when the pull request is a draft that no review has signed off and no session on this machine reviews. Before this change, the line told the agent to \"tell the user that no session reviews\" the pull request. The daemon cannot see sessions on other machines, so a person who reviews from a second machine kept hearing that their pull request would go unreviewed (#411).",
+   "This change fixes that in three ways:",
+   "<ol><li><b>The wording says only what this machine knows.</b> The line now tells the agent to say that no session <em>on this machine</em> reviews the pull request, and <code>fix-pr</code> tells it never to say that no session reviews it at all.</li><li><b>A review running elsewhere holds the event back.</b> A review posts a start comment on the pull request when it begins and deletes it when it publishes. While such a comment for the current head is live, the daemon announces no <code>DRAFT</code>. The daemon already read those comments in <code>in_flight</code>, so the reading moves into a shared <code>live_starts</code> generator.</li><li><b>Only a trusted account's start comment counts, and a head is still announced once.</b> In a public repository anyone can comment, so only a start comment from an account whose review would count holds the event back. While the event is held back, the head keeps its key in the session's state, so a review that ends without signing the head off does not announce it a second time.</li></ol>",
+   "The first review, of <code>ae778fa</code>, found that a review elsewhere made the daemon announce <code>DRAFT</code> twice for one head. <code>eca70d6</code> fixes that and takes both suggestions from that review. The review of <code>eca70d6</code> is clean."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Start comment</b>: the comment <code>project review setup</code> posts when a review begins, carrying a <code>projector-start</code> marker with the head SHA and the model. <code>publish</code> deletes it.</li><li><b>Live</b>: a start comment that <code>review.is_live</code> says still means a review in progress. It stops being live once its model publishes a verdict on that head, or a day after it was last edited.</li><li><b><code>standing</code></b>: the helper in <code>route_fix</code> that announces a key once and records it in the session's state, so the next pass does not repeat it.</li><li><b>Counted account</b>: one whose review <code>review.review_counts</code> accepts. In a public repository that is an <code>OWNER</code>, <code>MEMBER</code>, or <code>COLLABORATOR</code>. In a private or internal repository it is every account.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>Review of <code>ae778fa</code>: changes requested. One finding: the daemon announced <code>DRAFT</code> twice for one head after a review elsewhere. Two suggestions: update the watch-daemon plan, and count only trusted accounts' start comments.</li><li><code>eca70d6</code> fixes the finding and takes both suggestions. Its review is clean, with one suggestion: also count the operator's own start comment.</li><li>Open question to the user: should a Projector verdict on the head also hold <code>DRAFT</code> back? Today it does not.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "The daemon holds DRAFT back while a review runs anywhere",
+   "kicker": "The event's condition and wording, and the shared start-comment reader",
+   "intro": [
+    "<code>route_fix</code> decides what a session with the <code>fix</code> role hears on each pass. Its <code>DRAFT</code> branch now holds the event back while a live start comment for the head comes from a counted account, and its line says \"no session on this machine reviews\". While the event is held back, the branch keeps the head's key from the last pass, as the <code>CONFLICT</code> branch does while GitHub has not computed mergeability. The GraphQL query now asks for each comment's <code>authorAssociation</code>, the field the check reads.",
+    "<code>live_starts</code> yields every live start comment for the head, from any account and model. <code>in_flight</code>, which keeps the <code>review</code> role from re-announcing a head a review is already working on, now filters that output to its own reviewer and model, and skips the start comment this machine's review state records. Its behavior does not change."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "The <code>DRAFT</code> condition, key, and wording in <code>route_fix</code>, the comment field in the query, and <code>live_starts</code> split out of <code>in_flight</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1341,
+       "text": "With the test harness's fake <code>gh</code>: in a public repository, a live start comment from <code>OWNER</code>, <code>MEMBER</code>, or <code>COLLABORATOR</code> holds <code>DRAFT</code> back, and one from <code>CONTRIBUTOR</code>, <code>FIRST_TIME_CONTRIBUTOR</code>, or <code>NONE</code> does not. In a private repository, any account's comment holds it back."
+      },
+      {
+       "kind": "verify",
+       "line": 1343,
+       "text": "Over four passes (no start comment, a live one, the review publishing changes-requested, a quiet pass), the daemon announces <code>DRAFT</code> once for the head, and the key stays in the state while the event is held back. The previous head announced it twice."
+      },
+      {
+       "kind": "context",
+       "line": 1341,
+       "text": "The check reads only the association. <code>review.counted_reviews</code> also counts the reviewer's own reviews by login, so in a public repository where the operator is only a <code>CONTRIBUTOR</code>, the operator's own review on another machine does not hold the event back. The review lists this as a suggestion."
+      },
+      {
+       "kind": "verify",
+       "line": 1489,
+       "text": "<code>in_flight</code> keeps the same filter as before: the reviewer's login, the model, and not the recorded start comment. The existing <code>in_flight</code> tests pass at this head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "instructions",
+   "title": "The fixer's instructions, the event table, and the plan",
+   "kicker": "What fix-pr tells the agent to say, the docs row for DRAFT, and the watch-daemon plan",
+   "intro": [
+    "<code>fix-pr</code> is the skill a fixing session runs, and its event notes say how to answer each event. The <code>DRAFT</code> note now explains that the daemon sees only this machine, and tells the agent to say that no session on this machine reviews the pull request, unless the user reviews it elsewhere. The event table in <code>docs/cli.md</code> names the start-comment condition, and the watch-daemon plan records the rule."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "The <code>DRAFT</code> note: the new wording, and that a live start comment elsewhere also silences the event.",
+     "collapsed": false
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "The <code>DRAFT</code> row of the event table names the start-comment condition."
+    },
+    {
+     "path": "docs/projects/watch-daemon/readme.md",
+     "note": "§ 2.7's <code>DRAFT</code> row gains the start-comment condition and the new wording. The § 9.1 bullet on announcing only work gains the rule at its end. No section is renumbered."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Tests for the new condition and the single announcement",
+   "intro": [
+    "<code>test_a_draft_another_machine_is_reviewing_asks_the_fixer_for_nothing</code> gives three drafts a live start comment each: one for the current head, one for an older head, and one from an account whose review would not count. It expects <code>DRAFT</code> for the second and third only. <code>test_a_review_elsewhere_does_not_announce_a_draft_head_twice</code> runs a review on another machine through to a changes-requested verdict and expects one <code>DRAFT</code>. The test of every event kind expects the new wording."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Against the previous head's <code>watch.py</code>, both start-comment tests fail. At this head all 107 watch tests pass."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_watch.py"
+    }
+   ]
+  }
+ ]
+}
