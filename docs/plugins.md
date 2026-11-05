@@ -57,8 +57,9 @@ plans, writes, judges, or accepts a test follows the testing guide in
 `skills/testing.md`, which asks each test to name the bug it catches: `spec`
 in its acceptance criteria, `implement` and `fix-pr` in the tests they write,
 `review-pr` in its written-rules pass, and `finish` in the evidence it
-accepts. `write-tests` applies the same guide to tests you ask for, such as `/projector:write-tests audit tests/test_site.py`. The core
-workflows use the local CLI and do not require MCP.
+accepts. `write-tests` applies the same guide to tests you ask for, such as
+`/projector:write-tests audit tests/test_site.py`. The core workflows use the
+local CLI and do not require MCP.
 
 A session keeps fixing and reviewing pull requests through subscriptions,
 so there is no loop for you to start. When `implement`, `spec`, or `fix-pr`
