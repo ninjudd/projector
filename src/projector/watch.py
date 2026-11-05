@@ -42,7 +42,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 from urllib.parse import quote
 
 from . import review
@@ -91,7 +91,7 @@ QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
       headRefOid headRefName baseRefName author { login }
       additions deletions changedFiles
       commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
-      comments(last:100){ nodes{ databaseId author{ login } body createdAt updatedAt } }
+      comments(last:100){ nodes{ databaseId author{ login } authorAssociation body createdAt updatedAt } }
       reviews(last:100){ nodes{ author{ login } authorAssociation submittedAt body } }
       changesRequested: reviews(states:[CHANGES_REQUESTED], last:1){ nodes{ author{ login } body commit{ oid } } }
       reviewThreads(first:100){ nodes{ id isResolved path line
@@ -1332,11 +1332,22 @@ class Pass:
             kept[key] = last
 
         head = pr.get("headRefOid") or ""
+        # This machine sees only its own sessions, so a review running elsewhere shows only as its live start
+        # comment, and the event says nothing about a machine it cannot see. Anyone can comment on a public
+        # repository, so only an account whose review would count can hold the event back. Held back, the head
+        # keeps its key, so it is still announced only once.
+        draft = f"draft:{number}:{head}"
         if pr.get("isDraft") and not reviewers:
-            standing(f"draft:{number}:{head}",
-                     f"DRAFT {ref} head={head[:8]}: no review has signed off this head, and no session on this "
-                     f"machine reviews it — tell the user that no session reviews {ref}",
-                     None)
+            starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
+                      for comment, _ in self.live_starts(pr, head)]
+            if review.counted_reviews(starts, self.daemon.operator or "", visibility):
+                if draft in announced:
+                    kept[draft] = announced[draft]
+            else:
+                standing(draft,
+                         f"DRAFT {ref} head={head[:8]}: no review has signed off this head, and no session on this "
+                         f"machine reviews it — tell the user that no session on this machine reviews {ref}",
+                         None)
         conflict = f"conflict:{number}:{head}"
         mergeable = pr.get("mergeable") or "UNKNOWN"
         if mergeable == "UNKNOWN" and conflict in announced:
@@ -1476,23 +1487,27 @@ class Pass:
             recorded = ((read_json(paths.state) or {}).get("start_comment") or {}).get("id")
         except ProjectorError:
             recorded = None
-        pr = repository["pullRequest"]
+        return any(login(comment).lower() == reviewer and comment.get("databaseId") != recorded
+                   and review.identity(named) == model
+                   for comment, named in self.live_starts(repository["pullRequest"], head))
+
+    def live_starts(self, pr: dict, head: str) -> Iterator[tuple[dict, str]]:
+        """Each start comment on the pull request that says a review of the head is still under way, on any
+        machine, with the model it names."""
         reviews = [{"body": node.get("body") or "", "at": node.get("submittedAt")} for node in nodes(pr, "reviews")]
         at = datetime.fromtimestamp(self.now, timezone.utc)
         for comment in nodes(pr, "comments"):
             body = comment.get("body") or ""
             marker = review.START_MARKER.search(body)
-            if login(comment).lower() != reviewer or marker is None or marker.group(1) != head \
-                    or comment.get("databaseId") == recorded or not comment.get("createdAt"):
+            if marker is None or marker.group(1) != head or not comment.get("createdAt"):
                 continue
             named = marker.group(2) or next(iter(review.START_MODEL.findall(body)), None)
-            if named is None or review.identity(named) != model:
+            if named is None:
                 continue
             start = {"sha": head, "model": named, "created_at": comment["createdAt"],
                      "updated_at": comment.get("updatedAt") or comment["createdAt"]}
             if review.is_live(start, reviews, at):
-                return True
-        return False
+                yield comment, named
 
 
 def key_of(model: str) -> str:

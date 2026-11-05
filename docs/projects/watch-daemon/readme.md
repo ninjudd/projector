@@ -396,7 +396,7 @@ what to do, after ` — `. A session that loaded no loop skill can act on it.
 | `VERDICT` | `fix` | A real `CHANGES_REQUESTED`, including one whose findings are only in its body | The same |
 | `CONFLICT` | `fix` | A branch that conflicts with its base | The same |
 | `REVIEW` | `fix` | A review body with no inline thread, with the count of suggestions it lists | The same |
-| `DRAFT` | `fix`, when the session does not also own `review` of it | No clean review has signed off the head. When no live session on this machine owns `review` of the pull request, the line says so. | Waits, or tells the user that no session reviews the pull request |
+| `DRAFT` | `fix`, when the session does not also own `review` of it | No clean review has signed off the head, and no live start comment from the operator or another account whose review would count shows a review of the head under way on any machine. When no live session on this machine owns `review` of the pull request, the line says so. | Waits, or tells the user that no session on this machine reviews the pull request |
 | `NEW PR` | `review` | A pull request this session now owns, with a head this model has not reviewed | Runs `review-pr` in `review-<n>`, passing the session's id as `--loop` |
 | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review in this session stalled (§ 2.5) | The same. After a stall, it first stops the stalled subagent, which shares the session's `--loop` and so would pass the fence. |
 | `RESPONDED` | `review` | The author answered every finding on an unmoved head | Runs `review-pr` with `--rereview` |
@@ -972,7 +972,14 @@ Building the daemon settled these choices, which the design above left open.
   reviews just waits for that review. Before this, a session that pushed
   to a pull request with a long history was woken by a line for every
   review that pull request ever had, each telling it to run `fix-pr`, and
-  by a `DRAFT` reminder every 15 minutes.
+  by a `DRAFT` reminder every 15 minutes. The daemon sees only this
+  machine's sessions, so `DRAFT` says only that no session on this machine
+  reviews the draft, and stays quiet while a live start comment shows a
+  review of the head under way elsewhere. On a public repository anyone can
+  post that marker, so only a start comment from the operator or another
+  account whose review would count holds the event back. A head the event
+  was held back for keeps its key, so a review elsewhere that ends without
+  signing the head off does not announce it a second time.
 
 ### 9.2 The skills
 

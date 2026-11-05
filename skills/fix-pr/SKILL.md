@@ -544,11 +544,16 @@ role are these:
   builds on that head's full review. Any other review of an earlier head,
   and a Projector review that lists none, report nothing.
 - **`DRAFT`** reports, once per head, a draft that no clean review has
-  signed off and that no session on this machine reviews. Tell the user
-  once, and say that `review-pr` or `review-repo` in a session would review
-  it. It is not work: any work behind it arrives as its own `FINDING`,
-  `VERDICT`, `CONFLICT`, or `REVIEW` line. A draft that a session here
-  reviews reports nothing; it waits for that review.
+  signed off and that no session on this machine reviews. The daemon sees
+  only this machine's sessions, so a session on another machine may review
+  the draft before it posts its start comment. Tell the user once that no
+  session on this machine reviews it, and that `review-pr` or `review-repo`
+  would, unless they review it elsewhere. Never say that no session reviews
+  it at all. It is not work: any work behind it arrives as its own
+  `FINDING`, `VERDICT`, `CONFLICT`, or `REVIEW` line. A draft that a session
+  here reviews, or that a live start comment from the operator or another
+  account whose review would count shows under review elsewhere, reports
+  nothing; it waits for that review.
 - **`MOVED`** reports that another session now owns the pull request's
   `fix` role. Stop its subagent at once, because two fixers would push the
   same branch, and tell the user.
