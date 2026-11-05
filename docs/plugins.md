@@ -99,8 +99,11 @@ whose status is stale, or a promise to do something later. For each gap, it
 asks whether to do the work now, open an issue for it, or leave it. Then it
 stops the session's subagents and background commands, finishes its
 reviews, removes its subscriptions, withdraws its open inbox items, and
-removes the worktrees, branches, and stash entries it made. It keeps any
-change that exists nowhere else unless you say to discard it. Last, it
+removes the worktrees, branches, and stash entries it made. Your request to
+clean up is the go-ahead, so it removes a worktree or branch without asking
+once it has checked that every commit on it is on a remote or in a merged
+pull request. It keeps any change that exists nowhere else unless you say
+to discard it. Last, it
 checks that nothing is left and says that you can shut the session down.
 Pull requests that wait for your review or merge stay open, and no session
 fixes their findings until you run `fix-pr` on them again.
