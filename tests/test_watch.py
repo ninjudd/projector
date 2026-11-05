@@ -457,10 +457,10 @@ class FixRoleTests(WatchCase):
 
         self.assertEqual([], events["fixer"])
 
-    def start_comment(self, sha: str = SHA_A, association: str = "OWNER") -> dict:
+    def start_comment(self, sha: str = SHA_A, association: str = "OWNER", who: str = "teammate") -> dict:
         """A live start comment of a review of `sha`, as a review on another machine posts it."""
         at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.clock.wall()))
-        return {"databaseId": 501, "author": {"login": "operator"}, "authorAssociation": association,
+        return {"databaseId": 501, "author": {"login": who}, "authorAssociation": association,
                 "createdAt": at, "updatedAt": at,
                 "body": f"📽️ Reviewing\n<!-- projector-start v=1 sha={sha} model={MODEL} -->"}
 
@@ -468,12 +468,14 @@ class FixRoleTests(WatchCase):
         self.github.pull_request(1, draft=True, comments=[self.start_comment()])
         self.github.pull_request(2, draft=True, comments=[self.start_comment(SHA_B)])
         self.github.pull_request(3, draft=True, comments=[self.start_comment(association="NONE")])
-        self.fixer("acme/app#1 fix", "acme/app#2 fix", "acme/app#3 fix")
+        self.github.pull_request(4, draft=True, comments=[self.start_comment(association="CONTRIBUTOR", who="operator")])
+        self.fixer("acme/app#1 fix", "acme/app#2 fix", "acme/app#3 fix", "acme/app#4 fix")
 
         events = self.cycle()
 
         # A live start comment for the head means a review runs somewhere. #2's is for another head, and on a public
-        # repository #3's comes from an account whose review would not count, so both are reported.
+        # repository #3's comes from an account whose review would not count, so both are reported. #4's comes from
+        # the operator, whose own reviews count whatever their association, as they do for a verdict.
         self.assertEqual([
             f"DRAFT acme/app#{number} head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user "
             f"that no session on this machine reviews acme/app#{number}"

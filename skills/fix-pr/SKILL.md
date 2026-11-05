@@ -551,9 +551,9 @@ role are these:
   would, unless they review it elsewhere. Never say that no session reviews
   it at all. It is not work: any work behind it arrives as its own
   `FINDING`, `VERDICT`, `CONFLICT`, or `REVIEW` line. A draft that a session
-  here reviews, or that a live start comment from an account whose review
-  would count shows under review elsewhere, reports nothing; it waits for
-  that review.
+  here reviews, or that a live start comment from the operator or another
+  account whose review would count shows under review elsewhere, reports
+  nothing; it waits for that review.
 - **`MOVED`** reports that another session now owns the pull request's
   `fix` role. Stop its subagent at once, because two fixers would push the
   same branch, and tell the user.

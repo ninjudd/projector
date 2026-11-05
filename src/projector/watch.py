@@ -1338,8 +1338,9 @@ class Pass:
         # keeps its key, so it is still announced only once.
         draft = f"draft:{number}:{head}"
         if pr.get("isDraft") and not reviewers:
-            if any(review.review_counts(comment.get("authorAssociation"), visibility)
-                   for comment, _ in self.live_starts(pr, head)):
+            starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
+                      for comment, _ in self.live_starts(pr, head)]
+            if review.counted_reviews(starts, self.daemon.operator or "", visibility):
                 if draft in announced:
                     kept[draft] = announced[draft]
             else:
