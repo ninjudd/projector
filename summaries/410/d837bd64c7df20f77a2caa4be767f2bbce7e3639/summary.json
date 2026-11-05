@@ -1,0 +1,73 @@
+{
+ "version": 1,
+ "name": "Cleanup without asking twice",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 410,
+  "title": "Remove a delivered worktree and branch without asking again during cleanup",
+  "head": "d837bd64c7df20f77a2caa4be767f2bbce7e3639",
+  "headRef": "cleanup-no-reask",
+  "base": "bb5aabe57fd57aef94e2d08920ffd653efde4d8e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The <code>cleanup</code> skill ends an agent session. It checks that the session finished its work, asks the user what to do with anything left, and then releases what the session holds, including the Git worktrees and local branches it created.",
+   "Before this change, two Git safety checks made the skill stop and ask the user about worktrees and branches whose work had already merged. Claude Code's <code>ExitWorktree</code> tool compares a worktree with the local copy of the branch it started from, so a stale local <code>main</code> made merged commits look unmerged. <code>git branch -d</code> refuses a squash-merged branch once its remote branch is deleted, because the squash put different commits on <code>main</code>.",
+   "The skill already proves delivery itself, in step 4 of \"Take stock of the session\": every commit is on a remote, or sits at or below the head of the merged pull request. This change makes the release steps rely on that proof. The user's request to clean up counts as consent, so the skill passes <code>ExitWorktree</code>'s <code>discard_changes: true</code> after such a refusal and deletes branches with <code>git branch -D</code>, both without asking. A change that exists nowhere else is still a gap that the user answers, and the skill discards it only when the user says to."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Gap:</b> work the session owes and has not delivered, such as a commit that exists only in a local worktree. The skill asks the user about each gap.</li><li><b>Step 4:</b> the delivery check in \"Take stock of the session\". It runs <code>git status --porcelain</code> and <code>git log HEAD --not --remotes</code> in each worktree, and for a squash-merged branch it looks up the merged pull request's <code>headRefOid</code> and counts each commit after it as undelivered.</li><li><b>Override:</b> a host tool's flag that removes a worktree despite its own safety check, such as <code>ExitWorktree</code>'s <code>discard_changes: true</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "What the review checked",
+    "html": "<ul class=\"tight\"><li>In a sandbox with a bare remote and a stubbed <code>gh</code>, step 4 reported a gap for a commit after the merged head, an untracked file, a staged change, a detached <code>HEAD</code> with an unpushed commit, and a reused branch name.</li><li><code>git branch -D</code> refuses a branch checked out in another worktree and refuses <code>main</code> while the main checkout has it.</li><li>The review was clean, with one suggestion: repeat step 4 just before passing the override, because step 4 runs before the skill stops the session's subagents.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "release",
+   "title": "Release steps rely on the delivery check",
+   "kicker": "Worktrees and branches that step 4 cleared go without a second question",
+   "intro": [
+    "The release section removes what the session holds in a fixed order: subscriptions, subagents and background work, reviews, inbox items, worktrees, branches, and stashes. This group changes the worktree and branch steps.",
+    "<ol><li><b>Worktrees.</b> The skill removes each worktree that step 4 cleared, without asking. When a host tool refuses because a stale local branch lacks the worktree's commits, the skill passes the tool's override. It passes an override or <code>--force</code> for a worktree that holds a gap only when the user's answer to that gap says to discard it.</li><li><b>Branches.</b> The skill deletes a cleared branch with <code>git branch -D</code>, because <code>git branch -d</code> refuses a squash-merged branch whose remote branch is gone. It still keeps the branch of an open pull request.</li></ol>",
+    "<code>docs/plugins.md</code> describes the same behavior for readers of the plugin documentation."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Both steps still apply only to worktrees and branches the session created. The skill's opening section forbids touching the user's checkout or another session's worktree, and this change leaves that rule as it was."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/cleanup/SKILL.md",
+     "note": "Release steps 5 (worktrees) and 6 (branches) now act on step 4's result without asking, and name the override to pass when a host tool refuses.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "On a squash-merged branch whose remote branch is deleted, <code>git branch -d</code> printed <code>not fully merged</code> in a sandbox, and <code>git branch -D</code> deleted it.",
+       "line": 227
+      },
+      {
+       "kind": "context",
+       "text": "<code>discard_changes: true</code> discards uncommitted files as well as commits. Step 4 ran before release step 2 stopped the session's subagents, so a file a subagent wrote in that window would go too. The review suggests repeating step 4 just before passing the override.",
+       "line": 220
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Says that cleanup removes a worktree or branch without asking once every commit on it is on a remote or in a merged pull request."
+    }
+   ]
+  }
+ ]
+}
