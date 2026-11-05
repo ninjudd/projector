@@ -306,7 +306,10 @@ same code:
    section, and declined only by showing the rule does not apply to the
    quoted code. Read the lines around an insertion anchor before editing so
    an attribute, decorator, or comment is not silently detached.
-4. Prove a regression test fails without the fix and passes with it.
+4. Prove a regression test fails without the fix and passes with it. Write
+   it, and the failing test from step 2, by the testing guide in
+   `../testing.md`: the test catches the defect the finding names, through
+   behavior the code computes, never a value the fix sets.
 5. Run the repository's full test, lint, format, documentation, and validation
    gate.
 6. Keep independent fixes in independent commits; batch findings that share one

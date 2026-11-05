@@ -1,10 +1,12 @@
 # Testing guide
 
-Projector's skills write tests and judge them. `implement` follows this
-guide when it adds tests to a change, and `fix-pr` follows it when it writes
-a regression test. The review method's written-rules pass reads changed
-tests against it, and `write-tests` applies it to any tests you ask for. A
-repository's own testing rules outrank this guide where the two disagree.
+Projector's skills plan tests, write them, and judge them. `spec` follows
+this guide when it writes acceptance criteria, `implement` when it adds tests
+to a change, and `fix-pr` when it writes a regression test. The review
+method's written-rules pass reads changed tests against it, `finish` accepts
+only tests it says catch something as evidence, and `write-tests` applies it
+to any tests you ask for. A repository's own testing rules outrank this guide
+where the two disagree.
 Cite a section by this file and its section number, as `testing.md § 2`.
 
 ## 1. Write a test only when it can catch a bug
