@@ -1,0 +1,118 @@
+{
+ "version": 1,
+ "name": "Collapsed pull request tabs",
+ "project": "inbox",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 419,
+  "title": "Open a collapsed pull request's drawer in place, as a tab",
+  "head": "04375d7c3de13b7e173c1575096f9d31d2eff63e",
+  "headRef": "panel-pr-tabs",
+  "base": "75dab0e449182aac40007dfe5becd958a7d91132",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the strip Claude Code draws above the prompt. It lists the pull requests the session fixes or reviews, one line each, and the agent's questions, requests, and notices below them. Pressing a pull request's number opens its <b>drawer</b>, a few lines under it with the pull request's branch, size, and checks, the <b>Discuss</b> and <b>Dismiss</b> actions, links to GitHub and to the Projector summary, and its unresolved review threads grouped by file.",
+   "Clicking the pull requests' count in the header <b>collapses</b> them to one line, such as <code>+ #12 #14 #15</code>, each number colored by status. Before this change, pressing one of those numbers expanded the whole list again to show that one drawer, which undid the point of collapsing it.",
+   "This change makes the numbers work as <b>tabs</b>. Pressing a number opens its drawer under the collapsed line and draws the number inverted, and the list stays collapsed. Pressing the same number closes the drawer, and pressing another moves the drawer to that pull request, because the panel only ever keeps one drawer open. The <code>+</code> still expands the list, and an open drawer moves onto its row. A drawer open before you collapse the list stays open under the line.",
+   "To draw one drawer in two places, the drawer's markup moves out of <code>drawRow</code> into a new <code>drawPrDrawer</code>, which takes the indent as an argument. <code>expandOnto</code>, the handler that expanded the list, is gone."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One review, of <code>04375d7</code>: changes requested, for one finding. A line in <code>docs/plugins.md</code> runs to 103 columns, against the repository's rule to match the wrapping around a Markdown edit.</li><li>Probe tests found the tab drawer identical to the row drawer, and the keyboard, a new head, a merge, and expanding all behaved as described.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Drawer</b>: the lines a pull request's number opens under it.</li><li><b>Collapsed line</b>: the single <code>+ #12 #14</code> line the pull requests become.</li><li><b>Tab</b>: a number on that line, which opens and closes its drawer in place.</li><li><b>Ring</b>: Claude Code's keyboard focus highlight in the panel.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "panel",
+   "title": "Numbers on the collapsed line become tabs",
+   "kicker": "The panel's render handler draws one drawer under the collapsed line or on its row",
+   "intro": [
+    "<code>expander</code> draws each collapsed section's line. For the pull requests it now finds the row whose key matches the open drawer, draws that number inverted, and appends the drawer after the line. Each number's press calls <code>toggle</code>, the same handler a row's number uses, so a press opens a closed drawer, closes an open one, forgets which files the last drawer had open, and clears a pending <b>Dismiss</b> question.",
+    "<code>drawPrDrawer</code> is the old drawer markup lifted out of <code>drawRow</code> unchanged, with the indent as an argument. A row passes the label column's width plus one. The collapsed line passes 2, which puts the drawer under its first number, past the <code>+ </code>. The thread lines are cut to the panel's width less that indent."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The tab drawer is the same as the row drawer: a probe opened <code>x/y#7</code> both ways and compared the facts line and its colors, the actions, both links, and every thread's link and text."
+    },
+    {
+     "kind": "verify",
+     "text": "A new head, a merge, and a reopen behave with a tab open: a probe through the daemon's cache saw the facts and the number's color update with the drawer still open, the number and drawer leave on a merge, and the number return with its drawer closed."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "<code>expander</code> draws the tabs and the drawer under them; <code>drawPrDrawer</code> holds the drawer the row used to draw inline.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1806,
+       "text": "Enter on a number moves the ring onto <b>Discuss</b>, and Enter on the open number closes the drawer and leaves the ring on it, as on a row. A probe recorded each move the panel tried."
+      },
+      {
+       "kind": "context",
+       "line": 1816,
+       "text": "The drawer follows the collapsed line in the list, so the keyboard reaches it after the numbers and before the items."
+      },
+      {
+       "kind": "verify",
+       "line": 2398,
+       "text": "Expanding with a tab open puts the drawer on its row at the row's indent, and collapsing again moves it back under the line at 2. A probe checked both indents."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests for the tabs",
+   "kicker": "Two panel tests rewritten for the new behavior",
+   "intro": [
+    "The test of the collapsed line now checks that a number opens its drawer with the list still collapsed, that only one drawer is open, that the open number is inverted, that a second press closes it, and that a drawer open before collapsing survives collapsing and expanding. The files-start-collapsed test now checks that collapsing keeps the open drawer's open file."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Both rewritten tests fail with main's <code>hooks/register.tsx</code> and pass at this head, and the other 224 pass either way."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The panel guide describes the numbers as tabs",
+   "intro": [
+    "The paragraph on collapsing in <code>docs/plugins.md</code> now says the numbers work as tabs, that the open number is drawn inverted, that a second press closes the drawer, and that the <code>+</code> expands the list."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 558,
+       "text": "This line runs to 103 columns while the rest of the paragraph wraps by 76. The repository's <code>CLAUDE.md</code> asks each Markdown edit to match the wrapping around it."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

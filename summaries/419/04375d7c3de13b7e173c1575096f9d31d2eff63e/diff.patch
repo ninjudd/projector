@@ -1,0 +1,404 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 03516593..24833cf7 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -551,8 +551,11 @@ out of view. A collapsed line starts with `+`, where an item's starts with
+ `+ #12 #14 #15` in their place, listing each in the rows' order and coloring
+ it by status: red when a conflict, a change request, or failing checks hold
+ it back, and otherwise yellow for a draft and green for a pull request that
+-is ready. Click a pull request's number to expand them with its drawer
+-open. A collapsed kind of item becomes a line such as `+ 2 questions` at
++is ready. The numbers work as tabs: click one to open that pull request's
++drawer below the line, with its number drawn inverted, and click it again
++to close the drawer. The pull requests stay collapsed, and only one drawer
++is open at a time, so clicking another number moves the drawer to it. Click
++the `+` to expand the pull requests. A collapsed kind of item becomes a line such as `+ 2 questions` at
+ the top of the items, drawn in the kind's color. Click the line, or the
+ count again, to expand it. The pull requests, the questions, the requests,
+ and the notices collapse apart from each other, and each stays collapsed,
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 8f1dc03b..298cf2c0 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -932,16 +932,13 @@ test('starts a drawer’s files collapsed each time it opens, and keeps them whi
+   await press('pr:x/y#7')
+   expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
+ 
+-  // A collapsed section's label for the drawer already open only shows it again, so its file stays open.
++  // Collapsing the pull requests keeps the open drawer, below their line, so its file stays open.
+   await openFile()
+   await press('count:pr')
+-  await press('open:x/y#7')
+   expect(await fileOfSeven()).toBe('- src/a.ts 1*')
+ 
+   // A label that opens the drawer anew starts it collapsed, as its line does.
+-  await press('count:pr')
+   await press('open:o/r#2')
+-  await press('count:pr')
+   await press('open:x/y#7')
+   expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
+   await ui.unmount()
+@@ -3504,7 +3501,7 @@ test('the pull requests’ count in the header collapses them to one line in the
+   await ui.unmount()
+ })
+ 
+-test('collapsed pull requests list their labels in the rows’ order and status colors, and a label opens its drawer', async ($, on) => {
++test('collapsed pull requests list their labels in the rows’ order and status colors, and each label is a tab for its drawer', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#10\no/r#12\n' })
+@@ -3512,37 +3509,57 @@ test('collapsed pull requests list their labels in the rows’ order and status
+   await clock.advance(1)
+   await clock.settle()
+   const ui = await $.ui.mount(PANEL)
++  const label = async (text: string) => (await ui.find({ type: 'Text', text }))?.props
++  const drawers = async () =>
++    (await ui.findAll({ type: 'Box' })).map(box => box.key ?? '').filter(key => key.startsWith('drawer:'))
+ 
+   await ui.press({ key: 'count:pr' })
+   expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #1 #2 #10 #12')
+   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
+   // Ready is green and a draft yellow, as their rows' states are; a conflict, a change request, or failing checks is red.
+-  const colors = await Promise.all(
+-    ['#1', '#2', '#10', '#12'].map(async text => (await ui.find({ type: 'Text', text }))?.props.color),
+-  )
++  const colors = await Promise.all(['#1', '#2', '#10', '#12'].map(async text => (await label(text))?.color))
+   expect(colors).toEqual(['success', 'warning', 'error', 'error'])
+-  // Each label is a Button that expands the pull requests and opens its own drawer.
++  expect(await Promise.all(['#1', '#2', '#10', '#12'].map(async text => (await label(text))?.inverse))).toEqual([
++    false,
++    false,
++    false,
++    false,
++  ])
+   expect((await ui.findAll({ type: 'Button' })).map(button => button.key).filter(key => /^open:/.test(key ?? ''))).toEqual([
+     'open:o/r#1',
+     'open:o/r#2',
+     'open:o/r#10',
+     'open:o/r#12',
+   ])
++
++  // A label opens its drawer below the line and draws inverted, and the pull requests stay collapsed.
+   await ui.press({ key: 'open:o/r#10' })
+-  expect(await ui.find({ key: 'collapsed:pr' })).toBeUndefined()
+-  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
+-  expect(await ui.find({ key: 'drawer:o/r#10' })).toBeDefined()
+-  expect(await ui.find({ key: 'drawer:o/r#1' })).toBeUndefined()
++  expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #1 #2 #10 #12')
++  expect(await ui.find({ key: 'pr:o/r#10' })).toBeUndefined()
++  expect(await drawers()).toEqual(['drawer:o/r#10'])
++  expect((await label('#10'))?.inverse).toBe(true)
++  expect((await ui.find({ key: 'drawer:o/r#10' }))?.props.marginLeft).toBe(2)
+ 
+-  // A label opens its drawer even when another drawer was open before the pull requests collapsed.
+-  await ui.press({ key: 'count:pr' })
++  // Another label moves the one open drawer onto its pull request.
+   await ui.press({ key: 'open:o/r#2' })
+-  expect(await ui.find({ key: 'drawer:o/r#2' })).toBeDefined()
+-  expect(await ui.find({ key: 'drawer:o/r#10' })).toBeUndefined()
+-  // A label whose drawer was already open keeps it open, rather than toggling it shut.
+-  await ui.press({ key: 'count:pr' })
++  expect(await drawers()).toEqual(['drawer:o/r#2'])
++  expect((await label('#2'))?.inverse).toBe(true)
++  expect((await label('#10'))?.inverse).toBe(false)
++
++  // The open label closes its drawer again.
+   await ui.press({ key: 'open:o/r#2' })
+-  expect(await ui.find({ key: 'drawer:o/r#2' })).toBeDefined()
++  expect(await drawers()).toEqual([])
++  expect((await label('#2'))?.inverse).toBe(false)
++
++  // A drawer opened before the pull requests collapsed stays open under their line, and expanding keeps it on its row.
++  await ui.press({ key: 'expand:pr' })
++  await ui.press({ key: 'pr:o/r#12' })
++  await ui.press({ key: 'count:pr' })
++  expect(await drawers()).toEqual(['drawer:o/r#12'])
++  expect((await label('#12'))?.inverse).toBe(true)
++  await ui.press({ key: 'expand:pr' })
++  expect(await drawers()).toEqual(['drawer:o/r#12'])
++  expect(await ui.find({ key: 'pr:o/r#12' })).toBeDefined()
+   await ui.unmount()
+ })
+ 
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index eebd1350..10de95d1 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1773,40 +1773,49 @@ export const register: Register = on => {
+     // where an item is bulleted `-`. A collapsed kind of item reads as its
+     // count, in the kind's color. Collapsed pull requests are a row of plain
+     // Buttons: the `+` expands them, and each label after it, in the rows'
+-    // order and its status's color, expands them with its drawer open.
+-    const expandOnto = (key: string) => {
+-      collapseFilesFor(key)
+-      Promise.all([
+-        update($, collapsed, was => (Array.isArray(was) ? was.filter(one => one !== 'pr') : [])),
+-        update($, drawer, () => key),
+-      ])
+-        .then(() => loadThreads($))
+-        .catch(() => undefined)
+-      ask(key, null)
+-      carry(`open:${key}`, `discuss:${key}`)
+-    }
++    // order and its status's color, works as a tab. Pressing a label opens
++    // its drawer below the line, the section still collapsed, and draws the
++    // label inverted while its drawer is open; pressing it again closes the
++    // drawer. Only one drawer is ever open, so opening one closes another.
+     const expander = (section: Section) =>
+       shownCounts
+         .filter(one => one.section === section && isCollapsed(section))
+-        .map(({ count }) =>
+-          section === 'pr' ? (
++        .flatMap(({ count }) => {
++          if (section !== 'pr') {
++            return [
++              <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
++                <Text color={colorOf[section]}>{`+ ${count}`}</Text>
++              </Button>,
++            ]
++          }
++          const rows = byAuthor(shown.rows, shown.viewer)
++          const tab = rows.find(row => keyOf(row.pr) === opened)
++          return [
+             <Box key="collapsed:pr" flexDirection="row">
+               <Button key="expand:pr" plain onPress={() => fold(section)}>
+                 <Text>+</Text>
+               </Button>
+-              {byAuthor(shown.rows, shown.viewer).flatMap(({ pr }) => [
+-                <Text key={`before:${keyOf(pr)}`}> </Text>,
+-                <Button key={`open:${keyOf(pr)}`} plain onPress={() => expandOnto(keyOf(pr))}>
+-                  <Text color={statusColor(pr)}>{label(pr)}</Text>
+-                </Button>,
+-              ])}
+-            </Box>
+-          ) : (
+-            <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
+-              <Text color={colorOf[section]}>{`+ ${count}`}</Text>
+-            </Button>
+-          ),
+-        )
++              {rows.flatMap(({ pr }) => {
++                const key = keyOf(pr)
++                const isOpened = opened === key
++                return [
++                  <Text key={`before:${key}`}> </Text>,
++                  <Button
++                    key={`open:${key}`}
++                    plain
++                    onPress={() => toggle(key, `open:${key}`, isOpened ? undefined : `discuss:${key}`)}
++                  >
++                    <Text color={statusColor(pr)} inverse={isOpened}>
++                      {label(pr)}
++                    </Text>
++                  </Button>,
++                ]
++              })}
++            </Box>,
++            // The drawer starts under the first label, past the `+ `.
++            ...(tab === undefined ? [] : [drawPrDrawer(tab, 2)]),
++          ]
++        })
+     const panel = (lines: RenderChildren, isHeaded = true) =>
+       isTerminal ? (
+         <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>
+@@ -2238,7 +2247,103 @@ export const register: Register = on => {
+       )
+     }
+ 
+-    const drawRow = ({ pr, roles }: Row) => {
++    // A pull request's open drawer, `indent` columns in from the lines: its
++    // facts, its actions, its links, and its unresolved threads by file. Its
++    // row draws it one column past the label, and the collapsed line under
++    // the first label.
++    const drawPrDrawer = ({ pr, roles }: Row, indent: number) => {
++      const key = keyOf(pr)
++      const isLoaded = pr.isLoading !== true
++      return (
++        <Box key={`drawer:${key}`} flexDirection="column" marginLeft={indent}>
++          {/* Each `·` keeps the default color, so a piece's color, such
++              as the checks', stops at its own text. */}
++          <Text wrap="truncate-end">
++            {roles.flatMap((role, at) => [
++              ...(at === 0 ? [] : [' and ']),
++              <Text key={`role:${role}`} color={ROLE_COLORS[role]}>
++                {role}
++              </Text>,
++            ])}
++            {pr.branch !== '' && ' · '}
++            {pr.branch !== '' && <Text color={BRANCH_COLOR}>{pr.branch}</Text>}
++            {isLoaded && ' · '}
++            {isLoaded && <Text color="success">{`+${pr.additions}`}</Text>}
++            {isLoaded && ' '}
++            {isLoaded && <Text color="error">{`−${pr.deletions}`}</Text>}
++            {isLoaded && ` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
++            {pr.checks !== null && ' · '}
++            {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
++          </Text>
++          {drawActions(
++            key,
++            isAsked(key, 'dismiss')
++              ? [
++                  {
++                    name: 'confirm',
++                    label: 'Yes, dismiss it',
++                    hotkey: '8',
++                    onPress: () => {
++                      ask(key, null)
++                      void dismissPr($, pr)
++                    },
++                  },
++                  {
++                    name: 'keep',
++                    label: 'No, keep it',
++                    hotkey: '9',
++                    onPress: () => {
++                      ask(key, null)
++                      carry(`keep:${key}`, `dismiss:${key}`)
++                    },
++                  },
++                ]
++              : [
++                  { name: 'discuss', label: 'Discuss', hotkey: '7', onPress: () => fill(`${reference(pr)} `) },
++                  {
++                    name: 'dismiss',
++                    label: 'Dismiss',
++                    hotkey: '8',
++                    onPress: () => {
++                      ask(key, 'dismiss')
++                      carry(`dismiss:${key}`, `confirm:${key}`)
++                    },
++                  },
++                ],
++          )}
++          <Box key={`links:${key}`} flexDirection="row" columnGap={2}>
++            <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
++            {pr.summaryUrl !== null && (
++              <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
++            )}
++          </Box>
++          {/* Each unresolved thread links to its first comment, since GitHub
++              folds an outdated thread and an old one on a long timeline away.
++              The text goes in as a Link's children, so nothing in it is read
++              as markdown. */}
++          {threadsByFile(shownThreads?.drawer === key ? shownThreads.threads : []).map(([path, threads]) => (
++            <Box key={`file:${key}:${path}`} flexDirection="column">
++              <Button key={`toggle-file:${key}:${path}`} plain onPress={() => toggleFile(key, path)}>
++                {`${isFileOpen(key, path) ? '-' : '+'} ${path} `}
++                <Text color="warning">{`${threads.length}*`}</Text>
++              </Button>
++              {isFileOpen(key, path) && (
++                <Box flexDirection="column" marginLeft={THREAD_INDENT}>
++                  {threads.map((thread, at) => (
++                    <Text key={`thread:${key}:${path}:${at}`}>
++                      <Link href={thread.url ?? pr.url}>{threadLabel(thread, columns - indent - THREAD_INDENT)}</Link>
++                    </Text>
++                  ))}
++                </Box>
++              )}
++            </Box>
++          ))}
++        </Box>
++      )
++    }
++
++    const drawRow = (row: Row) => {
++      const { pr } = row
+       const key = keyOf(pr)
+       const notes = notesOf(pr)
+       // A pull request the daemon has no result for yet holds only its
+@@ -2290,94 +2395,7 @@ export const register: Register = on => {
+             {ageColumn(key, pr.updatedAt)}
+           </Box>
+           {/* The drawer starts where the state does, one column past the label. */}
+-          {opened === key && (
+-            <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
+-              {/* Each `·` keeps the default color, so a piece's color, such
+-                  as the checks', stops at its own text. */}
+-              <Text wrap="truncate-end">
+-                {roles.flatMap((role, at) => [
+-                  ...(at === 0 ? [] : [' and ']),
+-                  <Text key={`role:${role}`} color={ROLE_COLORS[role]}>
+-                    {role}
+-                  </Text>,
+-                ])}
+-                {pr.branch !== '' && ' · '}
+-                {pr.branch !== '' && <Text color={BRANCH_COLOR}>{pr.branch}</Text>}
+-                {isLoaded && ' · '}
+-                {isLoaded && <Text color="success">{`+${pr.additions}`}</Text>}
+-                {isLoaded && ' '}
+-                {isLoaded && <Text color="error">{`−${pr.deletions}`}</Text>}
+-                {isLoaded && ` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
+-                {pr.checks !== null && ' · '}
+-                {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
+-              </Text>
+-              {drawActions(
+-                key,
+-                isAsked(key, 'dismiss')
+-                  ? [
+-                      {
+-                        name: 'confirm',
+-                        label: 'Yes, dismiss it',
+-                        hotkey: '8',
+-                        onPress: () => {
+-                          ask(key, null)
+-                          void dismissPr($, pr)
+-                        },
+-                      },
+-                      {
+-                        name: 'keep',
+-                        label: 'No, keep it',
+-                        hotkey: '9',
+-                        onPress: () => {
+-                          ask(key, null)
+-                          carry(`keep:${key}`, `dismiss:${key}`)
+-                        },
+-                      },
+-                    ]
+-                  : [
+-                      { name: 'discuss', label: 'Discuss', hotkey: '7', onPress: () => fill(`${reference(pr)} `) },
+-                      {
+-                        name: 'dismiss',
+-                        label: 'Dismiss',
+-                        hotkey: '8',
+-                        onPress: () => {
+-                          ask(key, 'dismiss')
+-                          carry(`dismiss:${key}`, `confirm:${key}`)
+-                        },
+-                      },
+-                    ],
+-              )}
+-              <Box key={`links:${key}`} flexDirection="row" columnGap={2}>
+-                <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
+-                {pr.summaryUrl !== null && (
+-                  <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
+-                )}
+-              </Box>
+-              {/* Each unresolved thread links to its first comment, since GitHub
+-                  folds an outdated thread and an old one on a long timeline away.
+-                  The text goes in as a Link's children, so nothing in it is read
+-                  as markdown. */}
+-              {threadsByFile(shownThreads?.drawer === key ? shownThreads.threads : []).map(([path, threads]) => (
+-                <Box key={`file:${key}:${path}`} flexDirection="column">
+-                  <Button key={`toggle-file:${key}:${path}`} plain onPress={() => toggleFile(key, path)}>
+-                    {`${isFileOpen(key, path) ? '-' : '+'} ${path} `}
+-                    <Text color="warning">{`${threads.length}*`}</Text>
+-                  </Button>
+-                  {isFileOpen(key, path) && (
+-                    <Box flexDirection="column" marginLeft={THREAD_INDENT}>
+-                      {threads.map((thread, at) => (
+-                        <Text key={`thread:${key}:${path}:${at}`}>
+-                          <Link href={thread.url ?? pr.url}>
+-                            {threadLabel(thread, columns - (labelWidth + 1) - THREAD_INDENT)}
+-                          </Link>
+-                        </Text>
+-                      ))}
+-                    </Box>
+-                  )}
+-                </Box>
+-              ))}
+-            </Box>
+-          )}
++          {opened === key && drawPrDrawer(row, labelWidth + 1)}
+         </Box>
+       )
+     }
