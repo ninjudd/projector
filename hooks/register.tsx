@@ -1773,40 +1773,49 @@ export const register: Register = on => {
     // where an item is bulleted `-`. A collapsed kind of item reads as its
     // count, in the kind's color. Collapsed pull requests are a row of plain
     // Buttons: the `+` expands them, and each label after it, in the rows'
-    // order and its status's color, expands them with its drawer open.
-    const expandOnto = (key: string) => {
-      collapseFilesFor(key)
-      Promise.all([
-        update($, collapsed, was => (Array.isArray(was) ? was.filter(one => one !== 'pr') : [])),
-        update($, drawer, () => key),
-      ])
-        .then(() => loadThreads($))
-        .catch(() => undefined)
-      ask(key, null)
-      carry(`open:${key}`, `discuss:${key}`)
-    }
+    // order and its status's color, works as a tab. Pressing a label opens
+    // its drawer below the line, the section still collapsed, and draws the
+    // label inverted while its drawer is open; pressing it again closes the
+    // drawer. Only one drawer is ever open, so opening one closes another.
     const expander = (section: Section) =>
       shownCounts
         .filter(one => one.section === section && isCollapsed(section))
-        .map(({ count }) =>
-          section === 'pr' ? (
+        .flatMap(({ count }) => {
+          if (section !== 'pr') {
+            return [
+              <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
+                <Text color={colorOf[section]}>{`+ ${count}`}</Text>
+              </Button>,
+            ]
+          }
+          const rows = byAuthor(shown.rows, shown.viewer)
+          const tab = rows.find(row => keyOf(row.pr) === opened)
+          return [
             <Box key="collapsed:pr" flexDirection="row">
               <Button key="expand:pr" plain onPress={() => fold(section)}>
                 <Text>+</Text>
               </Button>
-              {byAuthor(shown.rows, shown.viewer).flatMap(({ pr }) => [
-                <Text key={`before:${keyOf(pr)}`}> </Text>,
-                <Button key={`open:${keyOf(pr)}`} plain onPress={() => expandOnto(keyOf(pr))}>
-                  <Text color={statusColor(pr)}>{label(pr)}</Text>
-                </Button>,
-              ])}
-            </Box>
-          ) : (
-            <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
-              <Text color={colorOf[section]}>{`+ ${count}`}</Text>
-            </Button>
-          ),
-        )
+              {rows.flatMap(({ pr }) => {
+                const key = keyOf(pr)
+                const isOpened = opened === key
+                return [
+                  <Text key={`before:${key}`}> </Text>,
+                  <Button
+                    key={`open:${key}`}
+                    plain
+                    onPress={() => toggle(key, `open:${key}`, isOpened ? undefined : `discuss:${key}`)}
+                  >
+                    <Text color={statusColor(pr)} inverse={isOpened}>
+                      {label(pr)}
+                    </Text>
+                  </Button>,
+                ]
+              })}
+            </Box>,
+            // The drawer starts under the first label, past the `+ `.
+            ...(tab === undefined ? [] : [drawPrDrawer(tab, 2)]),
+          ]
+        })
     const panel = (lines: RenderChildren, isHeaded = true) =>
       isTerminal ? (
         <Box flexDirection="column" width={e.props.bodyColumns} paddingLeft={PANEL_INSET}>
@@ -2238,7 +2247,103 @@ export const register: Register = on => {
       )
     }
 
-    const drawRow = ({ pr, roles }: Row) => {
+    // A pull request's open drawer, `indent` columns in from the lines: its
+    // facts, its actions, its links, and its unresolved threads by file. Its
+    // row draws it one column past the label, and the collapsed line under
+    // the first label.
+    const drawPrDrawer = ({ pr, roles }: Row, indent: number) => {
+      const key = keyOf(pr)
+      const isLoaded = pr.isLoading !== true
+      return (
+        <Box key={`drawer:${key}`} flexDirection="column" marginLeft={indent}>
+          {/* Each `·` keeps the default color, so a piece's color, such
+              as the checks', stops at its own text. */}
+          <Text wrap="truncate-end">
+            {roles.flatMap((role, at) => [
+              ...(at === 0 ? [] : [' and ']),
+              <Text key={`role:${role}`} color={ROLE_COLORS[role]}>
+                {role}
+              </Text>,
+            ])}
+            {pr.branch !== '' && ' · '}
+            {pr.branch !== '' && <Text color={BRANCH_COLOR}>{pr.branch}</Text>}
+            {isLoaded && ' · '}
+            {isLoaded && <Text color="success">{`+${pr.additions}`}</Text>}
+            {isLoaded && ' '}
+            {isLoaded && <Text color="error">{`−${pr.deletions}`}</Text>}
+            {isLoaded && ` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
+            {pr.checks !== null && ' · '}
+            {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
+          </Text>
+          {drawActions(
+            key,
+            isAsked(key, 'dismiss')
+              ? [
+                  {
+                    name: 'confirm',
+                    label: 'Yes, dismiss it',
+                    hotkey: '8',
+                    onPress: () => {
+                      ask(key, null)
+                      void dismissPr($, pr)
+                    },
+                  },
+                  {
+                    name: 'keep',
+                    label: 'No, keep it',
+                    hotkey: '9',
+                    onPress: () => {
+                      ask(key, null)
+                      carry(`keep:${key}`, `dismiss:${key}`)
+                    },
+                  },
+                ]
+              : [
+                  { name: 'discuss', label: 'Discuss', hotkey: '7', onPress: () => fill(`${reference(pr)} `) },
+                  {
+                    name: 'dismiss',
+                    label: 'Dismiss',
+                    hotkey: '8',
+                    onPress: () => {
+                      ask(key, 'dismiss')
+                      carry(`dismiss:${key}`, `confirm:${key}`)
+                    },
+                  },
+                ],
+          )}
+          <Box key={`links:${key}`} flexDirection="row" columnGap={2}>
+            <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
+            {pr.summaryUrl !== null && (
+              <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
+            )}
+          </Box>
+          {/* Each unresolved thread links to its first comment, since GitHub
+              folds an outdated thread and an old one on a long timeline away.
+              The text goes in as a Link's children, so nothing in it is read
+              as markdown. */}
+          {threadsByFile(shownThreads?.drawer === key ? shownThreads.threads : []).map(([path, threads]) => (
+            <Box key={`file:${key}:${path}`} flexDirection="column">
+              <Button key={`toggle-file:${key}:${path}`} plain onPress={() => toggleFile(key, path)}>
+                {`${isFileOpen(key, path) ? '-' : '+'} ${path} `}
+                <Text color="warning">{`${threads.length}*`}</Text>
+              </Button>
+              {isFileOpen(key, path) && (
+                <Box flexDirection="column" marginLeft={THREAD_INDENT}>
+                  {threads.map((thread, at) => (
+                    <Text key={`thread:${key}:${path}:${at}`}>
+                      <Link href={thread.url ?? pr.url}>{threadLabel(thread, columns - indent - THREAD_INDENT)}</Link>
+                    </Text>
+                  ))}
+                </Box>
+              )}
+            </Box>
+          ))}
+        </Box>
+      )
+    }
+
+    const drawRow = (row: Row) => {
+      const { pr } = row
       const key = keyOf(pr)
       const notes = notesOf(pr)
       // A pull request the daemon has no result for yet holds only its
@@ -2290,94 +2395,7 @@ export const register: Register = on => {
             {ageColumn(key, pr.updatedAt)}
           </Box>
           {/* The drawer starts where the state does, one column past the label. */}
-          {opened === key && (
-            <Box key={`drawer:${key}`} flexDirection="column" marginLeft={labelWidth + 1}>
-              {/* Each `·` keeps the default color, so a piece's color, such
-                  as the checks', stops at its own text. */}
-              <Text wrap="truncate-end">
-                {roles.flatMap((role, at) => [
-                  ...(at === 0 ? [] : [' and ']),
-                  <Text key={`role:${role}`} color={ROLE_COLORS[role]}>
-                    {role}
-                  </Text>,
-                ])}
-                {pr.branch !== '' && ' · '}
-                {pr.branch !== '' && <Text color={BRANCH_COLOR}>{pr.branch}</Text>}
-                {isLoaded && ' · '}
-                {isLoaded && <Text color="success">{`+${pr.additions}`}</Text>}
-                {isLoaded && ' '}
-                {isLoaded && <Text color="error">{`−${pr.deletions}`}</Text>}
-                {isLoaded && ` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
-                {pr.checks !== null && ' · '}
-                {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
-              </Text>
-              {drawActions(
-                key,
-                isAsked(key, 'dismiss')
-                  ? [
-                      {
-                        name: 'confirm',
-                        label: 'Yes, dismiss it',
-                        hotkey: '8',
-                        onPress: () => {
-                          ask(key, null)
-                          void dismissPr($, pr)
-                        },
-                      },
-                      {
-                        name: 'keep',
-                        label: 'No, keep it',
-                        hotkey: '9',
-                        onPress: () => {
-                          ask(key, null)
-                          carry(`keep:${key}`, `dismiss:${key}`)
-                        },
-                      },
-                    ]
-                  : [
-                      { name: 'discuss', label: 'Discuss', hotkey: '7', onPress: () => fill(`${reference(pr)} `) },
-                      {
-                        name: 'dismiss',
-                        label: 'Dismiss',
-                        hotkey: '8',
-                        onPress: () => {
-                          ask(key, 'dismiss')
-                          carry(`dismiss:${key}`, `confirm:${key}`)
-                        },
-                      },
-                    ],
-              )}
-              <Box key={`links:${key}`} flexDirection="row" columnGap={2}>
-                <Markdown key={`github:${key}`} text={`[open in github](${pr.url})`} />
-                {pr.summaryUrl !== null && (
-                  <Markdown key={`projector:${key}`} text={`[open in projector](${pr.summaryUrl})`} />
-                )}
-              </Box>
-              {/* Each unresolved thread links to its first comment, since GitHub
-                  folds an outdated thread and an old one on a long timeline away.
-                  The text goes in as a Link's children, so nothing in it is read
-                  as markdown. */}
-              {threadsByFile(shownThreads?.drawer === key ? shownThreads.threads : []).map(([path, threads]) => (
-                <Box key={`file:${key}:${path}`} flexDirection="column">
-                  <Button key={`toggle-file:${key}:${path}`} plain onPress={() => toggleFile(key, path)}>
-                    {`${isFileOpen(key, path) ? '-' : '+'} ${path} `}
-                    <Text color="warning">{`${threads.length}*`}</Text>
-                  </Button>
-                  {isFileOpen(key, path) && (
-                    <Box flexDirection="column" marginLeft={THREAD_INDENT}>
-                      {threads.map((thread, at) => (
-                        <Text key={`thread:${key}:${path}:${at}`}>
-                          <Link href={thread.url ?? pr.url}>
-                            {threadLabel(thread, columns - (labelWidth + 1) - THREAD_INDENT)}
-                          </Link>
-                        </Text>
-                      ))}
-                    </Box>
-                  )}
-                </Box>
-              ))}
-            </Box>
-          )}
+          {opened === key && drawPrDrawer(row, labelWidth + 1)}
         </Box>
       )
     }

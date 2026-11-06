@@ -551,8 +551,11 @@ out of view. A collapsed line starts with `+`, where an item's starts with
 `+ #12 #14 #15` in their place, listing each in the rows' order and coloring
 it by status: red when a conflict, a change request, or failing checks hold
 it back, and otherwise yellow for a draft and green for a pull request that
-is ready. Click a pull request's number to expand them with its drawer
-open. A collapsed kind of item becomes a line such as `+ 2 questions` at
+is ready. The numbers work as tabs: click one to open that pull request's
+drawer below the line, with its number drawn inverted, and click it again
+to close the drawer. The pull requests stay collapsed, and only one drawer
+is open at a time, so clicking another number moves the drawer to it. Click
+the `+` to expand the pull requests. A collapsed kind of item becomes a line such as `+ 2 questions` at
 the top of the items, drawn in the kind's color. Click the line, or the
 count again, to expand it. The pull requests, the questions, the requests,
 and the notices collapse apart from each other, and each stays collapsed,

@@ -932,16 +932,13 @@ test('starts a drawer’s files collapsed each time it opens, and keeps them whi
   await press('pr:x/y#7')
   expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
 
-  // A collapsed section's label for the drawer already open only shows it again, so its file stays open.
+  // Collapsing the pull requests keeps the open drawer, below their line, so its file stays open.
   await openFile()
   await press('count:pr')
-  await press('open:x/y#7')
   expect(await fileOfSeven()).toBe('- src/a.ts 1*')
 
   // A label that opens the drawer anew starts it collapsed, as its line does.
-  await press('count:pr')
   await press('open:o/r#2')
-  await press('count:pr')
   await press('open:x/y#7')
   expect(await fileOfSeven()).toBe('+ src/a.ts 1*')
   await ui.unmount()
@@ -3504,7 +3501,7 @@ test('the pull requests’ count in the header collapses them to one line in the
   await ui.unmount()
 })
 
-test('collapsed pull requests list their labels in the rows’ order and status colors, and a label opens its drawer', async ($, on) => {
+test('collapsed pull requests list their labels in the rows’ order and status colors, and each label is a tab for its drawer', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#10\no/r#12\n' })
@@ -3512,37 +3509,57 @@ test('collapsed pull requests list their labels in the rows’ order and status 
   await clock.advance(1)
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
+  const label = async (text: string) => (await ui.find({ type: 'Text', text }))?.props
+  const drawers = async () =>
+    (await ui.findAll({ type: 'Box' })).map(box => box.key ?? '').filter(key => key.startsWith('drawer:'))
 
   await ui.press({ key: 'count:pr' })
   expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #1 #2 #10 #12')
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
   // Ready is green and a draft yellow, as their rows' states are; a conflict, a change request, or failing checks is red.
-  const colors = await Promise.all(
-    ['#1', '#2', '#10', '#12'].map(async text => (await ui.find({ type: 'Text', text }))?.props.color),
-  )
+  const colors = await Promise.all(['#1', '#2', '#10', '#12'].map(async text => (await label(text))?.color))
   expect(colors).toEqual(['success', 'warning', 'error', 'error'])
-  // Each label is a Button that expands the pull requests and opens its own drawer.
+  expect(await Promise.all(['#1', '#2', '#10', '#12'].map(async text => (await label(text))?.inverse))).toEqual([
+    false,
+    false,
+    false,
+    false,
+  ])
   expect((await ui.findAll({ type: 'Button' })).map(button => button.key).filter(key => /^open:/.test(key ?? ''))).toEqual([
     'open:o/r#1',
     'open:o/r#2',
     'open:o/r#10',
     'open:o/r#12',
   ])
-  await ui.press({ key: 'open:o/r#10' })
-  expect(await ui.find({ key: 'collapsed:pr' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
-  expect(await ui.find({ key: 'drawer:o/r#10' })).toBeDefined()
-  expect(await ui.find({ key: 'drawer:o/r#1' })).toBeUndefined()
 
-  // A label opens its drawer even when another drawer was open before the pull requests collapsed.
-  await ui.press({ key: 'count:pr' })
+  // A label opens its drawer below the line and draws inverted, and the pull requests stay collapsed.
+  await ui.press({ key: 'open:o/r#10' })
+  expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #1 #2 #10 #12')
+  expect(await ui.find({ key: 'pr:o/r#10' })).toBeUndefined()
+  expect(await drawers()).toEqual(['drawer:o/r#10'])
+  expect((await label('#10'))?.inverse).toBe(true)
+  expect((await ui.find({ key: 'drawer:o/r#10' }))?.props.marginLeft).toBe(2)
+
+  // Another label moves the one open drawer onto its pull request.
   await ui.press({ key: 'open:o/r#2' })
-  expect(await ui.find({ key: 'drawer:o/r#2' })).toBeDefined()
-  expect(await ui.find({ key: 'drawer:o/r#10' })).toBeUndefined()
-  // A label whose drawer was already open keeps it open, rather than toggling it shut.
-  await ui.press({ key: 'count:pr' })
+  expect(await drawers()).toEqual(['drawer:o/r#2'])
+  expect((await label('#2'))?.inverse).toBe(true)
+  expect((await label('#10'))?.inverse).toBe(false)
+
+  // The open label closes its drawer again.
   await ui.press({ key: 'open:o/r#2' })
-  expect(await ui.find({ key: 'drawer:o/r#2' })).toBeDefined()
+  expect(await drawers()).toEqual([])
+  expect((await label('#2'))?.inverse).toBe(false)
+
+  // A drawer opened before the pull requests collapsed stays open under their line, and expanding keeps it on its row.
+  await ui.press({ key: 'expand:pr' })
+  await ui.press({ key: 'pr:o/r#12' })
+  await ui.press({ key: 'count:pr' })
+  expect(await drawers()).toEqual(['drawer:o/r#12'])
+  expect((await label('#12'))?.inverse).toBe(true)
+  await ui.press({ key: 'expand:pr' })
+  expect(await drawers()).toEqual(['drawer:o/r#12'])
+  expect(await ui.find({ key: 'pr:o/r#12' })).toBeDefined()
   await ui.unmount()
 })
 
