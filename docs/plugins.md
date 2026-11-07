@@ -555,12 +555,13 @@ is ready. The numbers work as tabs: click one to open that pull request's
 drawer below the line, with its number drawn inverted, and click it again
 to close the drawer. The pull requests stay collapsed, and only one drawer
 is open at a time, so clicking another number moves the drawer to it. Click
-the `+` to expand the pull requests. A collapsed kind of item becomes a line such as `+ 2 questions` at
-the top of the items, drawn in the kind's color. Click the line, or the
-count again, to expand it. The pull requests, the questions, the requests,
-and the notices collapse apart from each other, and each stays collapsed,
-new ones included, until you expand it. While a collapsed kind has nothing
-open, the header has no count for it, so its muted items show in the list.
+the `+` to expand the pull requests. A collapsed kind of item becomes a
+line such as `+ 2 questions` at the top of the items, drawn in the kind's
+color. Click the line, or the count again, to expand it. The pull requests,
+the questions, the requests, and the notices collapse apart from each
+other, and each stays collapsed, new ones included, until you expand it.
+While a collapsed kind has nothing open, the header has no count for it, so
+its muted items show in the list.
 
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press Enter on it from the keyboard instead. While
