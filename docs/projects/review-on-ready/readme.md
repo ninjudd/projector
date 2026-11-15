@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -554,3 +554,26 @@ ready, and `init`'s setup of the required check.
 - **The tests live in `tests/test_projector.py`,** beside `init`'s other
   tests. The site's `init` tests run without a terminal, as an agent runs
   `init`, so they never meet the question.
+
+## 10. Outcome
+
+The project shipped as the three layers § 9 describes. Every acceptance
+criterion in § 4 has a test, except the end-to-end row, which ran once in a
+public scratch repository whose default branch is `trunk`:
+
+1. `project init --require-review` created the `Projector review` ruleset,
+   found the label workflow already on `trunk` and reported it `unchanged`,
+   and recorded `review.require_check = true`. The branch rules then
+   required `projector/review`.
+2. On a pull request, `project review setup` added `reviewing`, created with
+   its color and description, and the merge state read `BLOCKED`.
+3. A clean `project review publish` posted `projector/review` `success`
+   (`Clean: claude-opus-5-5`) on the reviewed commit, replaced `reviewing`
+   with `clean`, and the merge state read `CLEAN`.
+4. A push after the review started the workflow, which succeeded and took
+   `clean` off. The new head had no status, and the merge state read
+   `BLOCKED` again.
+
+The workflow went on `trunk` before the ruleset existed, because a ruleset
+that requires a status also refuses a direct push without one. A repository
+commits the workflow through a pull request, which a review signs off.
