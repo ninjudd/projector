@@ -132,7 +132,7 @@ not have.
 
 | File | Change |
 | --- | --- |
-| `skills/spec/SKILL.md` | Replace the "Leave the plan changes visible" paragraph and the paragraph after it with the flow in § 2.1 and the request in § 2.2. Keep the `## Validate and hand over` heading, and add `### Open the pull request` and `### Ask the user to review the plan` under it. |
+| `skills/spec/SKILL.md` | Replace the "Leave the plan changes visible" paragraph, and the "When you open a pull request for the plan" paragraph with its `project watch add` block, with the flow in § 2.1 and the request in § 2.2. Keep the "Subscribe as `../fix-pr/SKILL.md` describes" paragraph, moved under step 4. Keep the `## Validate and hand over` heading, and add `### Open the pull request` and `### Ask the user to review the plan` under it. |
 | `src/projector/templates/agents-block.md` | Say that a plan written with `spec` is opened as a pull request the same way, and widen "When the hand-over asks the person to test the change" to also cover a request to review a plan. Bump the begin marker from 25 to 26. |
 | `tests/test_instructions.py` | Pin version 26's hash in `PINNED`. |
 | `AGENTS.md`, `CLAUDE.md` | Refresh the generated section with `project init`. Widen "while a test request waits on the user" in the repository's own "Hand work over for review" section the same way. |
