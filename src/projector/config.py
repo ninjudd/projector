@@ -73,6 +73,9 @@ SETTINGS: dict[str, type] = {
     "panel.background": str,
     "agent.message_limit": int,
     "agent.key": str,
+    "ios.app": str,
+    "ios.project": str,
+    "ios.output": str,
 }
 
 # The least value `project config set` accepts for each whole-number key. The
