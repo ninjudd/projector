@@ -1,0 +1,79 @@
+{
+ "version": 1,
+ "name": "Stalled draft review notice",
+ "project": "review-on-ready",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 430,
+  "title": "Describe the stalled-review notice a draft gets",
+  "head": "b522f0a4f3deb4cbd4af4b6314958d308adc6ba6",
+  "headRef": "document-stalled-draft-notice",
+  "base": "8019d0d02f0b02d66d7430dff92a80f2fd47e4e2",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The watch daemon is the one background process per machine that polls the pull requests a session subscribes to and sends the session one-line events, such as <code>NEW HEAD</code> for a head no review has read. Under a repository subscription, which <code>review-repo</code> adds, the daemon announces nothing for a draft until its author marks it ready. One exception already exists in the code: when a review <em>stalls</em>, meaning its lock went unchanged for <code>watch.review_stall</code> seconds, while the pull request is a draft, the daemon sends a single <code>NEW HEAD</code> line that ends <code>stop subagent review-N, and review it once it is ready</code>.",
+   "This pull request documents that exception in the two places a session and a reader look for it. The <code>review-pr</code> skill now tells the reviewing session to stop the subagent and start none, because the daemon announces the head again once the draft is ready, and the <code>NEW HEAD</code> row of the events table in <code>docs/cli.md</code> names the exception. The same list in <code>review-pr</code> also corrects its <code>RESPONDED</code> bullet: the event fires when the author, without pushing, resolves every thread or replies on an open finding, and only for a head whose newest verdict requests changes.",
+   "The change is text only. No code runs differently."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Repository subscription</b>: a session's subscription to every pull request in a repository, as <code>review-repo</code> adds. A subscription to one pull request, as <code>review-pr</code> adds, outranks it and announces every head, draft or not.</li><li><b>Stalled review</b>: a review whose lock no <code>project review</code> command touched for <code>watch.review_stall</code> seconds, 30 minutes by default. The daemon clears the lock and tells the owner.</li><li><b><code>RESPONDED</code></b>: the event that asks for a re-review of an unmoved head after its author, without pushing, resolved every thread or replied on an open finding.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "skill",
+   "title": "The reviewing session's instructions",
+   "kicker": "What review-pr tells a session to do on a stalled draft and on RESPONDED",
+   "intro": [
+    "An agent follows <code>skills/review-pr/SKILL.md</code> as instructions, so each bullet in its list of events decides what the session does when that event arrives. Before this change, the bullet for a stalled <code>NEW HEAD</code> said only to stop the subagent and start a new one at once, which is right when the pull request is ready. On a draft under a repository subscription, starting a new subagent would review a head the daemon deliberately holds back until the author is done."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Adds the draft case to the stalled-review bullet, and rewrites the <code>RESPONDED</code> bullet.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The quoted ending matches the draft branch of <code>route_review</code> in <code>src/projector/watch.py</code> word for word, and that branch runs only for a draft whose owning subscription is a repository one (<code>line.number is None</code>). The draft-stall test in <code>tests/test_watch.py</code> asserts the line, a quiet pass after it, and the <code>(still open)</code> reminder once the pull request is ready.",
+       "line": 1098
+      },
+      {
+       "kind": "verify",
+       "text": "<code>route_review</code> sends <code>RESPONDED</code> only when the newest verdict on the head is <code>changes-requested</code>, and either no review thread is open or <code>newest_answer</code> finds an open Projector finding whose last comment carries neither the finding marker nor the reviewer's verify marker. The bullet names both triggers, which a review of the earlier head asked for.",
+       "line": 1101
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The events reference",
+   "kicker": "The NEW HEAD row of the daemon's events table",
+   "intro": [
+    "<code>docs/cli.md</code> lists each event the watch daemon sends, the role that hears it, and what it reports. Its prose under the table already described the stalled-draft line. The table row now names the same exception, so a reader who looks up only the row sees it too."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Extends the <code>NEW HEAD</code> row with the stalled-draft exception.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The daemon sends the line once per stall: it records stalled roles for one polling pass only and clears the stalled lock in that pass.",
+       "line": 2661
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
