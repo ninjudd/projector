@@ -79,8 +79,10 @@ CONFLICT acme/app#12 conflicts with main — run fix-pr on acme/app#12 in subage
 
 The session runs `fix-pr` or `review-pr` on it, in one subagent for each
 pull request, and one for each stack. In Claude Code, the mod delivers the
-lines as a prompt. On another host, such as Codex, `project watch stream`
-prints them, and a skill starts it under the host's monitor facility when
+lines as a prompt. In a local Codex session with trusted Projector hooks,
+the daemon queues them as prompts through `codex queue --resume`.
+On a host without automatic delivery, `project watch stream` prints them,
+and a skill starts it under the host's monitor facility when
 `project watch add` says that nothing delivers the session's events. Any
 `project watch` command starts the daemon, which exits a few minutes after
 the last session goes away, so you never start or stop it yourself. The
@@ -494,9 +496,14 @@ the daemon's events into the conversation, so no watcher runs in it:
 
 Each event line names what to do, such as
 `CONFLICT acme/app#12 conflicts with main — run fix-pr on acme/app#12 in subagent fix-12`,
-so a session that loaded no skill can act on it. On a host without the mod,
-such as Codex, or in a Claude Code session with mods off,
-`project watch stream` renews the session and prints its events instead.
+so a session that loaded no skill can act on it. In local Codex, trusted
+command hooks register the parent session, and the daemon submits batches
+with `codex queue --resume`. The session acknowledges each batch before
+the daemon sends another. See [Codex delivery](cli.md#deliver-events-to-codex)
+for hook setup, the idle lease, recovery, and status. On a host without
+automatic delivery, or in Claude Code with mods off, `project watch stream`
+renews the session and prints its events instead. A stream alone does not
+start an idle Codex turn.
 
 #### Choose the panel's color
 
@@ -935,8 +942,9 @@ Invoke a skill directly, for example:
 $spec a safer deploy workflow
 ```
 
-The Codex manifest exposes the same `skills/` path as Claude Code. It adds only
-install-surface metadata; it does not wrap or rewrite skill instructions.
+The Codex manifest exposes the same `skills/` path as Claude Code. It adds
+install-surface metadata and command hooks for local event delivery; it does
+not wrap or rewrite skill instructions.
 
 Codex has no plugin dependencies, so `gh-stack@projector` is a plugin of its
 own there, and the last command above installs it. Projector's skills work

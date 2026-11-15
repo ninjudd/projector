@@ -2578,11 +2578,73 @@ the session take the `fix` role from another session (see
 
 The last line of `add` says how the session's events arrive: `events: mod`
 when Projector's mod in Claude Code renews the session, `events: stream`
-when a running `project watch stream` renews it, or
+when a running `project watch stream` renews it, `events: codex` when the
+local Codex queue adapter handles it, or
 ``events: none — start `project watch stream --session <id>` under your
 host's monitor facility`` when nothing has renewed it in the last 5
 minutes. With `--json`, `add` prints the lines it `added` and the
-`delivery`, which is `mod`, `stream`, or `none`.
+`delivery`, which is `mod`, `stream`, `codex`, or `none`.
+
+### Deliver events to Codex
+
+With the Projector plugin installed in local Codex, review and trust its
+command hooks through `/hooks` or the desktop app's hook settings. Use
+Codex CLI 0.166.0 or newer with a running local daemon. Projector checks
+that the native executable supports `queue --thread`, `--message`, and
+`--resume`. Remote app-server selection and Windows batch-file shims are
+not supported by this adapter; use stream delivery where available.
+
+The hooks register the real parent session ID, which workers share, and
+subscribe after output from a push or PR creation confirms a target.
+`watch.auto_start = false` disables those automatic subscriptions.
+The same review and fix skills run on both hosts. Claude Code keeps its
+mod and requires no Codex executable.
+
+Codex receives one batch at a time, with standing work IDs that coalesce
+reminders even when their text differs. An acknowledgment marks a batch
+consumed. An idle session starts no model turn until an event arrives.
+The registration expires after 24 hours without host activity and ends
+when the host sends `SessionEnd`. A daemon exit while Codex is idle needs
+the next hook or a watch command to restart it:
+
+```sh
+project watch status --json
+```
+
+The `deliveries` object reports the state, expiry, batch ID, and diagnostic
+for each Codex registration. `queued` means Codex accepted the message;
+it does not prove the thread resumed. Resume that thread when its warning
+says it needs attention. `uncertain` means a timeout or interrupted
+submission left acceptance unknown. After checking the thread, use an
+explicit retry only when resending is intended:
+
+```sh
+project watch codex-retry --session <id>
+```
+
+A retry can duplicate an accepted message. Projector suppresses duplicate
+consumed batch IDs for at least 24 hours. To switch to a stream, stop any
+existing host deliverer, then disconnect before starting it:
+
+```sh
+project watch disconnect --session <id>
+project watch stream --session <id>
+```
+
+Disconnect keeps subscriptions and pending events. The stream takes
+unsent events, while accepted and uncertain batches stay separate until
+acknowledged or explicitly retried. Remove a PR's subscription to stop its
+work, rather than merely changing its transport. A message Codex already
+accepted cannot be recalled; the skills recheck subscriptions before acting.
+When hooks are unavailable, `events: none` reports the stream fallback.
+A background stream prints events but does not itself wake an idle Codex
+session.
+
+`project watch codex-hook` reads host hook JSON from standard input. The
+plugin runs it at session start and end, prompt submission, shell-tool
+completion, and turn stop. Malformed input produces advisory feedback;
+it cannot register a target or start the daemon. Hook registration alone
+adds no subscription and starts no watcher.
 
 ### Subscribe from a command's output
 

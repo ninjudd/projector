@@ -207,6 +207,9 @@ the pull request, and how its events arrive, from the `events:` line that
 
 - **`events: mod`** means Projector's mod in Claude Code submits them as a
   prompt.
+- **`events: codex`** means trusted Codex hooks register the parent session
+  and the daemon queues events as prompts. Start no stream. Use the recovery
+  rules in `../fix-pr/SKILL.md` if delivery needs attention.
 - **`events: stream`** means a `project watch stream` that the session
   runs prints them.
 - **`events: none`** means nothing delivers them yet. Start the

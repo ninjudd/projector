@@ -1,5 +1,5 @@
 ---
-status: ready
+status: completed
 priority: now
 ---
 
@@ -123,6 +123,7 @@ Keep additions under `sessions/<session>/`; accept all existing records.
 | Record or output | Fields and behavior |
 | --- | --- |
 | `codex.json` | `schema_version: 1`, `thread_id`, `executable`, `cwd`, `expires_at`, and `enabled`. A hook-supplied ID binds the registration to this session. Store no token or remote address. |
+| Capability and submission records | `codex.json` also caches `executable_signature`, `supported`, and `last_error`. `codex-submit.lock` is an OS lock held across the queue call, so recovery distinguishes a running submission from a crashed one. `codex-last.json` retains the consumed batch ID and its last delivery state. |
 | `codex-events.json` | `schema_version: 1` and an ordered `items` array. Each item holds a stable `key` and unchanged event `line`. Write the file atomically under the session lock; skip keys already queued or pending. Mod and stream sessions retain the plain `events` file. |
 | `codex-pending/<uuid>.json` | `batch_id`, claimed `items`, `state` (`prepared`, `submitting`, `queued`, `uncertain`, or `failed`), `attempts`, `next_attempt_at`, and bounded `last_error`. Claim under the lock: write the pending record before removing its keys from `codex-events.json`. Before another append or dispatch, recover an interrupted claim by removing those keys from the queue. New revisions have different keys and survive. Persist `submitting` before the call; recover it as `uncertain`. |
 | `codex-receipts/<uuid>.json` | `batch_id` and `consumed_at`. Write the receipt before removing its pending batch; recover a matching pending batch as consumed. Retain receipts for 24 hours and until any concurrent command result is settled, whichever is later. |
@@ -192,7 +193,8 @@ clocks, temporary Git repositories, and restartable state. Prove each new
 regression test fails when its claimed fault is introduced. Run the full
 repository validation gate from `AGENTS.md` before handover.
 
-Also test both hosts against a disposable repository and PR. In Codex,
+The operator defers the following checks until after merge, as § 8 records.
+Test both hosts against a disposable repository and PR. In Codex,
 trust the hooks, subscribe, let the session become idle, and trigger a new
 head and a finding. Observe automatic turns, hook acknowledgment, and reuse
 of the PR's worker. Exercise an unloaded thread with a running local daemon.
@@ -228,3 +230,65 @@ dependency or service is required.
   lifecycle events, hook trust, and the inability of async completion to
   start a turn. [Plugin packaging](https://developers.openai.com/plugins/build/plugins)
   permits an explicit `hooks` path in `.codex-plugin/plugin.json`.
+
+## 7. Implementation and verification
+
+The implementation adds the Codex adapter, command hooks, keyed producer
+events, bounded dispatch, recovery, CLI status, and the shared workflow and
+documentation changes. Claude's production hooks module is unchanged. Its
+test mount supplies the current host's required `isCollapsed` prop, so
+the hooks type-check against the generated declarations.
+
+The focused tests exercise actual producer reminder variants, new heads
+and replies, both roles, shared GitHub polling, transport isolation, batch
+limits, acknowledgment races, dropped work, retry timing, lease expiry,
+and a hung process beside another session. Native Codex `PostToolUse`
+supplies plain text in the tested client; the adapter also accepts
+structured completion results and filters authoring commands before
+passing their output to the existing subscription parser.
+
+After merging current `main`, the full Python suite passes 1,262 tests.
+The compiled-site JavaScript check is skipped because the linked worktree
+has no site npm install; no site source or assets changed. All 227 Claude
+hook tests pass. Both plugin validations, plan checks, and the hooks
+type-check pass. A live Claude session received a notice through its mod
+while idle and replied.
+
+The combined live Codex check passed with Codex 0.169.0 and Node 24.22.2:
+
+```sh
+PYTHONPATH=src python3 tests/codex_smoke.py --review-hooks
+```
+
+The operator authorized the temporary folder and hook trust. Each of the
+four generated hooks was approved individually in Codex's native hook
+browser. The test restarted its separate loopback server to unload the
+thread, then queued a batch through the real CLI. It exited successfully
+with `PASS: an unloaded Codex thread resumed and acknowledged its native
+queued batch`. Its `UserPromptSubmit` receipt proves that the hook's prompt
+matched the sent message exactly; the batch was consumed rather than left
+queued. The harness archived its test thread, stopped its server, and
+removed its temporary files. It changed no installed plugin and made no
+GitHub mutation. Folder and hook trust decisions persist in Codex's local
+settings.
+
+The implementation is complete. The operator accepts the remaining live
+workflow checks as validation after merge, as § 8 records.
+
+## 8. Completion and validation after merge
+
+Outcome: shipped. The Codex delivery implementation ships when
+[pull request 432](https://github.com/ninjudd/projector/pull/432) merges.
+That change carries all of this project's code and its completion record.
+
+The owner chose to run the remaining live workflow checks after merge.
+Those checks have not been performed: live new-head and finding events
+waking the subscribed review and fix workflows on both hosts, and reuse of
+the existing PR worker to execute that work. The automated producer tests,
+native exact-message acknowledgment smoke test, and Claude idle-notice
+observation remain the evidence already collected; they do not establish
+the deferred workflow results.
+
+This decision changes § 4's pre-merge validation scope. The pull request's
+Testing section tracks the operator's validation handoff after merge. It
+requires no further implementation or separate project-completion change.

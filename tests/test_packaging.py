@@ -106,14 +106,22 @@ class PackagingTests(unittest.TestCase):
 
     def test_only_claude_code_loads_the_hooks_module(self) -> None:
         # Claude Code finds hooks/hooks.json at the plugin root by itself; the
-        # manifest names the module's state contract. Codex has no hooks module.
+        # manifest names the module's state contract. Codex uses command hooks instead.
         hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text())
         [module] = hooks["modules"]
         self.assertTrue((ROOT / "hooks" / module).is_file())
         self.assertEqual("./hooks/types.d.ts", self.manifest("claude")["types"])
         self.assertTrue((ROOT / "hooks" / "types.d.ts").is_file())
         self.assertNotIn("types", self.manifest("codex"))
-        self.assertNotIn("hooks", self.manifest("codex"))
+        codex_hooks = json.loads((ROOT / self.manifest("codex")["hooks"]).read_text())
+        self.assertNotIn("modules", codex_hooks)
+        commands = [handler["command"] for groups in codex_hooks["hooks"].values()
+                    for group in groups for handler in group["hooks"]]
+        self.assertTrue(commands)
+        from projector import cli
+        for command in commands:
+            args = cli.parser().parse_args(command.split()[1:])
+            self.assertEqual("codex-hook", args.watch_command)
 
     def test_only_claude_code_declares_gh_stack_as_a_dependency(self) -> None:
         # Codex has no plugin dependencies; install.sh adds gh-stack there.
