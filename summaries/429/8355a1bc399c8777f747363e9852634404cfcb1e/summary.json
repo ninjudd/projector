@@ -1,0 +1,79 @@
+{
+ "version": 1,
+ "name": "Codex watch delivery",
+ "project": "watch-daemon/codex-delivery",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 429,
+  "title": "Plan Codex watch delivery while preserving Claude support",
+  "head": "8355a1bc399c8777f747363e9852634404cfcb1e",
+  "headRef": "spec/codex-watch-delivery",
+  "base": "bffca2afba4164fbe18aad3abf55fc5e7c836a8b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's watch daemon is one background process per machine. It polls GitHub for the pull requests that agent sessions review or fix, and it writes each piece of new work, such as a new head to review or a finding to fix, as an event line in the owning session's <code>events</code> file. In Claude Code, Projector's mod reads that file and submits the lines as a prompt, which starts a turn even when the conversation is idle. Codex has no such adapter. The skills tell a Codex session to run <code>project watch stream</code> in the background, but printing a line does not start a turn in an idle Codex conversation.",
+   "This pull request adds a plan, at status <code>ready</code>, for a Codex adapter inside the existing daemon. Codex plugin hooks register the session and acknowledge each delivered batch. The daemon wakes the session with <code>codex queue --thread &lt;id&gt; --message &lt;batch&gt; --resume</code>, a Codex CLI command that queues a message for an existing session and loads the session if it is not loaded. Claude Code's mod, the <code>stream</code> fallback, and the one shared skill tree stay as they are. The pull request adds no code.",
+   "This head answers the first Projector review. Codex delivery now merges repeated events by a key that names the piece of work, such as a review head or a finding thread, so the daemon's <code>(still open)</code> reminders no longer queue a second copy. The plan also says what restarts a daemon that exits while Codex is idle: the next hook or <code>project watch</code> command. Automatic restart without either is deferred. The Projector review of this head is clean, with no finding threads."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Watch daemon.</b> The process that <code>project watch serve</code> runs. It polls GitHub and writes events for each session.</li><li><b>Session.</b> One agent conversation, named by its id. Its folder under the daemon's state root holds its subscriptions and its <code>events</code>.</li><li><b>Deliverer.</b> What moves a session's events into its conversation: <code>mod</code> in Claude Code, <code>stream</code> elsewhere, and in this plan <code>codex</code>.</li><li><b>Lapse.</b> A mod or stream session that has not renewed for five minutes stops counting as live, and the daemon stops polling for it.</li><li><b>Batch.</b> In this plan, up to 8 KiB of event lines that the daemon claims and queues to Codex as one message, marked <code>PROJECTOR WATCH &lt;batch-id&gt;</code>.</li></ul>"
+   },
+   {
+    "id": "decisions",
+    "title": "What the plan decides",
+    "html": "<ul class=\"tight\"><li><b>Identity.</b> The hook's <code>session_id</code> is both the watch session and the <code>codex queue</code> target. A subagent's hooks carry its parent's id, so workers never become delivery targets.</li><li><b>Lease.</b> A Codex registration stays live for 24 hours after the last host activity, by wall clock, while it has subscriptions or pending events. <code>SessionEnd</code> ends it.</li><li><b>One batch at a time.</b> Each session has at most one unacknowledged batch. A <code>UserPromptSubmit</code> hook acknowledges the batch whose marker it sees.</li><li><b>Work keys.</b> Codex events wait in <code>codex-events.json</code>, each with a key built from the repository, the pull request, the role, and the standing item. A repeated key keeps its first line, and a new revision gets a new key.</li><li><b>Restart.</b> A daemon that exits while Codex is idle stays down until a hook or a <code>project watch</code> command, such as <code>project watch status</code>, starts it again.</li><li><b>Uncertain submissions stop.</b> Exit zero counts as queued. A timeout or crash during submission stops automatic retries until <code>project watch codex-retry</code> resends the batch.</li><li><b>Deferred.</b> Automatic daemon restart without host activity, remote app servers, credentials, scheduled tasks, and an MCP service.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The Codex delivery plan",
+   "kicker": "A child plan of the watch daemon that adds a third deliverer for Codex",
+   "intro": [
+    "The plan is one new file, a child of the <code>watch-daemon</code> plan. It is at status <code>ready</code>, which in this repository claims that every question blocking implementation is answered or deliberately deferred. The plan has no open question, and it names what it defers.",
+    "Read § 2.1 first. It walks one event from the hook that registers the session to the prompt that acknowledges the batch. Step 3 covers the lease and the daemon restart, and step 4 covers how repeated events merge by key. § 2.2 gives the files each step writes under the session's folder, and § 4 gives one acceptance check per failure the design guards against."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>project check</code> at this head prints <code>Project plans are valid.</code>, <code>project show watch-daemon/codex-delivery</code> reports <code>ready</code> and <code>now</code>, and <code>git diff --check</code> over the pull request's range prints nothing."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/watch-daemon/codex-delivery/readme.md",
+     "note": "The whole plan: problem, runtime flow, state files, components, reasons, acceptance checks, and cost.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The plan's statements about the current code hold at this head. <code>watch.DELIVERERS</code> is <code>(\"mod\", \"stream\")</code>, <code>LAPSE</code> is 300 seconds, <code>stream</code> renews every 30 seconds, <code>forget_sessions</code> deletes a folder after seven days, and <code>run_watch</code> starts the daemon before every command but <code>serve</code> and <code>stop</code>, <code>status</code> included.",
+       "line": 219
+      },
+      {
+       "kind": "verify",
+       "text": "All four links resolve. The Codex CLI reference documents <code>--thread</code>, <code>--message</code>, and <code>--resume</code>, and says that <code>codex queue</code> exits successfully when it cannot resume the session. The hooks page says that subagent hooks carry the parent's <code>session_id</code>.",
+       "line": 222
+      },
+      {
+       "kind": "verify",
+       "text": "Every key this step names has a source at this head. <code>route_fix</code> keys its standing items as <code>draft:</code>, <code>conflict:</code>, <code>verdict:&lt;login&gt;:&lt;sha&gt;</code>, <code>review:&lt;id&gt;</code>, and the thread ID. The GraphQL query fetches each thread's last comment with its <code>databaseId</code> and body. <code>route_review</code> keeps the <code>&lt;head&gt;:&lt;answer&gt;</code> flag that <code>RESPONDED</code> uses.",
+       "line": 64
+      },
+      {
+       "kind": "context",
+       "text": "Hold this restart rule in mind while you read the lease. A Codex registration can stay live for 24 hours, but nothing restarts the daemon during that time until a hook or a <code>project watch</code> command runs. The acceptance row in § 4 checks that no restart happens before that trigger.",
+       "line": 56
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
