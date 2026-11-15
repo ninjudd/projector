@@ -16,7 +16,7 @@
    "Projector's <b>watch daemon</b> is one background process per machine. It polls GitHub for the pull requests that live agent sessions review or fix, and it writes each piece of new work, such as a new head or a reviewer's finding, as an <b>event line</b> to the session that owns it. In Claude Code, Projector's mod submits those lines as prompts. Before this change, Codex had no such adapter. The skills told a Codex session to run <code>project watch stream</code>, which prints events but cannot start a turn in an idle conversation.",
    "This pull request adds a Codex adapter. Trusted Codex command hooks register the session with the daemon and acknowledge each delivery. The daemon sends events as a prompt with <code>codex queue --thread &lt;id&gt; --message &lt;batch&gt; --resume</code>, a CLI command that queues a message on a Codex thread and resumes the thread if it is not loaded. Claude Code's mod and the stream fallback keep working as before.",
    "<ol><li><b>Register.</b> The <code>SessionStart</code> hook runs <code>project watch codex-hook</code>. It records the session ID, the absolute <code>codex</code> executable, and the working directory in <code>codex.json</code>, with a 24-hour lease that each later hook renews.</li><li><b>Queue.</b> While the session is registered, the daemon writes its events to <code>codex-events.json</code>, each with a stable <b>key</b> that names the piece of work. A reminder of the same work in different words has the same key, so it never queues a second copy.</li><li><b>Claim and send.</b> On each tick, the daemon claims up to 8 KiB of events into one pending batch per session, and a pool of four worker threads runs <code>codex queue</code> with a 15-second timeout.</li><li><b>Acknowledge.</b> When Codex runs the queued prompt, the <code>UserPromptSubmit</code> hook matches its <code>PROJECTOR WATCH &lt;batch-id&gt;</code> marker, writes a receipt, and deletes the batch, so the next batch can go out.</li></ol>",
-   "This pull request completes the plan: its frontmatter is <code>status: completed</code>, and a new § 8 records the outcome as shipped. The native Codex smoke test in <code>tests/codex_smoke.py</code> passed: an unloaded thread resumed, and the real <code>UserPromptSubmit</code> hook acknowledged the exact queued batch. The operator accepted that test as enough for now, and deferred the full live review and fix workflow test on both hosts until after a wider release. The open review finding asks § 7 and § 8 to record that decision and its reason as given."
+   "This pull request completes the plan: its frontmatter is <code>status: completed</code>, and § 8 records the outcome as shipped. The native Codex smoke test in <code>tests/codex_smoke.py</code> passed: an unloaded thread resumed, and the real <code>UserPromptSubmit</code> hook acknowledged the exact queued batch. The owner accepted that evidence for now and deferred the live review and fix workflow checks on both hosts until after merge. § 8 says plainly that the evidence collected so far does not establish those results."
   ],
   "cards": [
    {
@@ -206,11 +206,6 @@
       {
        "kind": "verify",
        "text": "The frontmatter reads <code>status: completed</code> with <code>priority: now</code> kept, which is what <code>project done</code> writes, because it sets only the status. <code>project check</code> passes."
-      },
-      {
-       "kind": "flag",
-       "line": 284,
-       "text": "Open finding: § 8 says the remaining live checks run after merge, gives no reason, and does not say the smoke test was accepted in their place. The operator's decision is that the passing smoke test is enough for now, and the full workflow test on both hosts waits for a wider release. Record that, with the reason, in § 7 and § 8."
       }
      ]
     }
