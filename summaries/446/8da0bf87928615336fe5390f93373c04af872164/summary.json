@@ -1,0 +1,133 @@
+{
+ "version": 1,
+ "name": "Summary publish refusal",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 446,
+  "title": "Publish a summary as a call of its own and tell a refused publish from a missing rule",
+  "head": "8da0bf87928615336fe5390f93373c04af872164",
+  "headRef": "codex-summary-publish-refusal",
+  "base": "9574ab64cb96b335463fbeeee8646621cf7252fd",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector publishes a pull request summary with <code>project summary publish</code>, which pushes the summary to the repository's own Projector site. A host's automatic approval, such as Codex's approval reviewer, can refuse that command as sending repository content to another host unless the user's rules allow it. <code>project init</code> writes those rules into <code>~/.claude/settings.json</code> and <code>~/.codex/rules/projector.rules</code>.",
+   "In the case this change fixes, Codex refused a publish although the rule was installed. Codex checks each command of a shell chain, such as <code>gh repo view … &amp;&amp; project summary publish …</code>, on its own and takes the strictest result. So the visibility check, which no rule names, sent the whole call to the reviewer. The skill then told the user to run <code>project init</code>, which rewrote a rule that was already there.",
+   "This change does three things:",
+   "<ol><li><b>The skill runs the publish alone.</b> <code>summarize-pr</code> runs <code>project summary publish</code> as a call of its own, with nothing joined to it and no visibility check before it. A new <code>--checkout</code> option lets an agent whose shell is outside the checkout publish without a <code>cd</code>.</li><li><b>A refusal gets a diagnosis.</b> <code>project review rules --json</code> gains a per-file <code>summary_publish</code> field. A refusal of the lone publish leads to <code>project init</code> only when that field says the rule is missing, both in the subagent and in the session it reports to.</li><li><b>A refusal stops one head only.</b> <code>review-pr</code> keeps summarizing later heads and reports each one as published or blocked.</li></ol>",
+   "No allow or ask rule changes. The earlier review's two findings, a publish that could not run from outside the checkout and a session-level instruction that still named <code>project init</code>, are both fixed at this head."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Allow rule</b>: a line in the user's Claude Code settings or Codex rules that lets a command run without approval.</li><li><b>Chain</b>: several commands in one shell call, joined by <code>&amp;&amp;</code>, <code>;</code>, or <code>|</code>.</li><li><b><code>summary_publish</code></b>: the new per-file field that is <code>true</code> when the file allows <code>project summary publish</code>.</li><li><b>Stale file</b>: a rules file an earlier release wrote, which lacks newer rules but may still allow the publish.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "report",
+   "title": "Report whether each file allows the publish",
+   "kicker": "A new field in project review rules --json, and a clearer stderr note for a stale Codex file",
+   "intro": [
+    "<code>project review rules</code> already reported whether each of the user's rule files holds all of Projector's current rules. A file can lack newer rules and still allow <code>project summary publish</code>. That is the case where running <code>init</code> again changes nothing for a refused publish. So the command now also reports, per file, whether the file allows the publish.",
+    "For Claude Code, the publish is allowed when <code>permissions.allow</code> holds <code>Bash(project *)</code> or the older <code>Bash(project summary publish *)</code>. For Codex, <code>codex_allows</code> parses each <code>prefix_rule</code> pattern Projector wrote and checks whether it matches a prefix of <code>project summary publish</code>."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "No allow or ask rule changed. <code>ALLOW</code>, <code>ASK</code>, <code>CODEX_ALLOW</code> and the generated <code>CODEX_RULES</code> are the same as at the base, so the change gives no command more access."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Adds <code>codex_rules_path</code>, <code>codex_allows</code> and <code>publish_allowed</code>, and a stale Codex file's note now says when the file still allows the publish.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 335,
+       "text": "The regex in <code>codex_allows</code> parses every layout of <code>projector.rules</code> that Projector has written since its first Codex rule, both multi-line and one-line. I checked this against each earlier release's <code>permissions.py</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 362,
+       "text": "The keys of <code>publish_allowed</code> are the same <code>shown</code> paths that <code>allow_commands</code> reports, including under <code>CLAUDE_CONFIG_DIR</code> and <code>CODEX_HOME</code>. So the CLI's lookup by <code>entry.path</code> finds each file. A file that cannot be read, is not JSON, or has the wrong shape reports <code>false</code>."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds <code>summary_publish</code> to each file entry in <code>review rules --json</code>, and a <code>--checkout</code> option to <code>summary publish</code>. That option reads <code>--summary</code> and <code>--diff</code> from the caller's directory and runs the publish's git work in the checkout.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1945,
+       "text": "The publish runs inside <code>contextlib.chdir(checkout)</code>, so the <code>origin</code> check and every git command it runs use the named checkout. <code>--summary</code> and <code>--diff</code> are resolved before the directory changes. <code>--checkout</code> defaults to the current directory, as it does for <code>review setup</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "Publish alone, and diagnose a refusal",
+   "kicker": "The summarize-pr, review-pr and review-repo instructions an agent follows",
+   "intro": [
+    "The skills are instructions that agents follow, so a change to their text changes what agents do. <code>summarize-pr</code> now runs the publish alone and drops the visibility preflight, because <code>publish</code> already checks whether the repository hosts a site and keeps a private repository's summary local when its site is public.",
+    "When the host refuses the publish, the agent works out why. If the call ran more than the publish, the agent runs the publish again alone. If the publish ran alone, the agent reads <code>summary_publish</code>. When that field is <code>false</code>, the agent asks the user to run <code>project init</code>. When it is <code>true</code>, the agent asks for a new Codex session or for the user's authorization. Either way the summary stays in its work directory and is reported as unfinished."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/summarize-pr/SKILL.md",
+     "note": "The publish-alone rule, <code>--checkout</code> in place of a <code>cd</code>, and the steps for diagnosing a refusal.",
+     "checks": []
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "A refused summary holds back only its own head. A review set up with <code>--checkout</code> passes the same option to the publish. The session relays the subagent's diagnosis, and names <code>project init</code> only when the rule is missing.",
+     "checks": []
+    },
+    {
+     "path": "skills/review-repo/SKILL.md",
+     "note": "Notes that a file can lack newer rules and still allow the publish, which <code>--json</code> reports as <code>summary_publish</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs-tests",
+   "title": "Documentation and tests",
+   "kicker": "The CLI reference, and tests of the new field, the --checkout option and the skill's publish lines",
+   "intro": [
+    "<code>docs/cli.md</code> describes the new field, the <code>--checkout</code> option, and why Codex sends a whole chain to approval. The tests check the JSON field for Claude Code and for Codex files in several states. They also check that every publish line in the skill is one the generated rules allow and is never joined to another command, and that <code>--checkout</code> publishes from the named checkout."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "At this head, the full unit suite passed on Homebrew's Python 3.12. <code>project check</code>, <code>claude plugin validate</code> on the repository and on <code>skills</code>, <code>claude plugin test .</code>, and <code>git diff --check</code> also passed."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "Tests that each publish line in the skill passes the generated rules and is never chained. The tests that restated the skill's phrases are gone."
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "Tests <code>summary_publish</code> for Claude Code settings and for stale, one-line, missing and prompt-only Codex files."
+    },
+    {
+     "path": "tests/test_summary.py",
+     "note": "Tests that <code>--checkout</code> publishes into the named checkout from a repository whose <code>origin</code> differs, and that a path that is not a directory is refused."
+    }
+   ]
+  }
+ ]
+}
