@@ -211,6 +211,23 @@ and whose `origin` still names the repository. With none, the relay waits
 and `watch status` says why. Only the daemon pushes, and it pushes without
 `--no-verify`, as `summary.publish` does.
 
+The daemon never runs a relay Git command on its own loop. `Daemon.tick`
+finishes `run_pass` before it calls `codex.tick`, so a pre-push hook that
+runs a test suite, or a Git command waiting on a credential prompt, would
+otherwise hold up every other session's events. The relay's fetch, the
+opening and delivery that follow it, the commits it writes, and its push
+run as one job per repository on a pool of 2 worker threads, as the Codex
+`Dispatcher` runs its sends. A pass starts a repository's job only when
+none is running for it, and the next pass after the job ends reads its
+results, so one repository still gets at most one push at a time. Each
+Git command runs through `relay.git`, not `summary.git`, which takes no
+timeout: `relay.git` passes `cwd`, closes standard input, sets
+`GIT_TERMINAL_PROMPT=0`, and kills the command's process group after 2
+minutes for a fetch or 15 minutes for a push, keeping its changes queued
+with the timeout as their error. A push snapshots the items it carries.
+When it lands, the daemon removes each item that has not changed since,
+and gives one that has changed the pushed commit as its new `old`.
+
 1. **Make the key.** `project agent key init` creates an X25519 private
    key from `secrets.token_bytes(32)` and writes it to the user layer,
    `~/.projector.toml`, as `agent.key = "x25519:<base64>"`. It narrows the
@@ -300,8 +317,9 @@ and `watch status` says why. Only the daemon pushes, and it pushes without
    and when the worktree that queued a change has since been removed. It
    reads each ref's result from the porcelain output, removes the changes
    that landed, and keeps the rest for the next pass, with the error in
-   `watch status`. A slow pre-push hook therefore delays only the daemon,
-   and runs once per repository per pass however many changes are queued.
+   `watch status`. A slow pre-push hook therefore delays only that
+   repository's relay job, and runs once per push however many changes
+   are queued.
 4. **Publish presence.** When `register` changes a record, it queues
    `refs/projector/agents/<key-id>/<relay-id>` to the sealed `agent.json`
    with an `expires_at` one hour ahead. The daemon
@@ -395,8 +413,8 @@ one `sealed.json`.
 | --- | --- |
 | New `src/projector/agents.py` | Registration, name validation and uniqueness, listing, message records, `sent.json` and the rate limit, the event line, and the read notice. It reuses `watch.session_folder`, `watch.delivery`, `watch.append_events`, `codex_watch.Event`, `inbox.locked`, `inbox.write_json`, and `review.origin_repo`. |
 | New `src/projector/crypto.py` | X25519 from RFC 7748, ChaCha20 from RFC 8439, HKDF from RFC 5869 over `hmac`, and `seal` and `open` from § 2.2 step 2. Standard library only. |
-| New `src/projector/relay.py` | Presence and message records, the outbox, the choice of checkout, the commits written there and their batched push, the poll, the checks in § 2.2 step 6, the cache, and cleanup. It reuses `summary.git`, `summary.tracking_ref`, and the daemon's login. |
-| `src/projector/watch.py` | In `Daemon.scan`, add to `self.live` every session that holds `agent.json` and whose `delivery` is not `none`. Today `scan` adds a Codex session only while `codex_watch.has_work` holds, so an idle Codex agent would never be polled for or delivered to, its presence would be deleted as lapsed, and `tick` would stop the daemon after 5 minutes. Run the relay's poll, renewal, delivery, and cleanup on each pass, and its lease sweep on each full pass. Report each repository's relay state and rejected count in `watch status`. |
+| New `src/projector/relay.py` | Presence and message records, the outbox, the choice of checkout, the commits written there and their batched push, the poll, the checks in § 2.2 step 6, the cache, and cleanup. The per-repository job and its worker pool, and `relay.git`, which runs Git with a `cwd`, a closed standard input, `GIT_TERMINAL_PROMPT=0`, and a timeout. It reuses `summary.tracking_ref` and the daemon's login. |
+| `src/projector/watch.py` | In `Daemon.scan`, add to `self.live` every session that holds `agent.json` and whose `delivery` is not `none`. Today `scan` adds a Codex session only while `codex_watch.has_work` holds, so an idle Codex agent would never be polled for or delivered to, its presence would be deleted as lapsed, and `tick` would stop the daemon after 5 minutes. On each pass, start the relay job for each repository that has none running and read the results of each job that ended, and queue the lease sweep on each full pass, so no relay Git command runs on the loop that calls `codex.tick`. Report each repository's relay state and rejected count in `watch status`. |
 | `src/projector/codex_watch.py` | Let `eligible` accept a `["message", <id>]` key while the folder holds `messages/<id>.json` (§ 2.1 step 5), so `prepare`, `acknowledge`, `drain`, and `Dispatcher._send` keep a peer message. On `SessionEnd`, mark the session so the next pass deletes its relay refs. |
 | `src/projector/cli.py` | Add `project agent register`, `list`, `send`, `reply`, `read`, `key init`, `key show`, `key export`, and `key import`, with `--session` and `--json` as the watch commands take them. `register`, `send`, and `reply` run `ensure_daemon`. `key export` and `key import` refuse without a terminal on standard input and output (§ 2.2 step 1). `run_config`, `change_config`, and `report_override` pass every value they print through `config.redact`, so a secret key shows as `<redacted, key ID <id>>` in `config list`, `config get`, `config set`, and `config unset`, in text and in `--json`, whether the command names the key or a table that holds it. `config set` refuses `agent.key` and names `key import`. |
 | `src/projector/config.py` | Add `agent.message_limit` and `agent.key` to `SETTINGS`, and `agent.message_limit` to `MINIMUMS` with 1. `config.py` keeps no defaults, so the default of 12 lives in `agents.py`, which passes it when it reads the setting, as `watch.Settings` holds the watch defaults. Add a set of user-layer-only keys, holding `agent.key`, that the walk never supplies and the permission check guards, and a set of secret keys, also holding `agent.key`. Add `redact(key, value)`, which replaces each secret key at or under the dotted `key` inside `value`, a table or a scalar, with `<redacted, key ID <id>>`. |
@@ -442,9 +460,10 @@ one `sealed.json`.
   suite. Pushing from `send` would make every message wait that long, and
   pushing each change separately would run the hooks once per change.
   Queuing changes in an outbox lets the agent return at once. The daemon
-  then pays for the hooks and the round trip once per repository per pass,
-  and it notices new work within a second, so the batch adds about a
-  second of latency.
+  then pays for the hooks and the round trip once per push, on a worker
+  thread so no other session waits. It notices new work within a second,
+  so the batch adds about a second of latency, plus the rest of any push
+  already running for that repository.
 - **Keep private details out of public repositories by convention too.**
   Sealing protects the content today, but the ciphertext stays on GitHub
   permanently, and a leaked key would expose it. So in a public repository
@@ -537,7 +556,8 @@ config files standing in for two machines.
 | Run `key init` with standard output captured, then run `config list`, `config list --json`, `config get agent.key`, `config get agent.key --json`, `config get agent`, `config get agent --json`, `config unset agent.key --user --json`, and, after `key import` restores the key, `config unset agent --user --json`. | No output contains the key or its base64; each shows `<redacted, key ID <id>>` with the right ID, and `key init` prints the ID and the copy instructions. Catches a key printed by any command an agent may run, including through the table that holds it. |
 | Run `key export` and `key import` with standard input or output not a terminal, run `config set agent.key <value> --user`, and run `key import` from a pseudo-terminal on a second home with a line `key export` printed on the first. | The first three are refused and write nothing, and the refusals name the commands to run in a terminal. The import writes the same key with mode `0600`, prints the same key ID as the first home, and refuses a different key without `--replace`. Catches an export an agent can capture, a key routed through a command line, and an import that silently replaces a key. |
 | Set `agent.key` in a checkout's `.projector.toml` only. Separately, make `~/.projector.toml` readable by its group. | The first is ignored with a warning, and the relay stays off. The second is refused with the `chmod` that fixes it. Catches a repository planting a key, and a key other accounts can read. |
-| Give machine 1's checkout a pre-push hook that sleeps 30 seconds and logs each run. Send three messages from A, then run one pass that also renews A's lease and deletes a delivered ref. | Each `send` returns in under a second and prints `delivery: relay (queued)`. The hook logs one run for the pass, and all five ref changes land. Catches a send that pushes itself, and a pass that pushes once per change. |
+| Give machine 1's checkout a pre-push hook that sleeps 30 seconds and logs each run. Send three messages from A, then run one pass that also renews A's lease and deletes a delivered ref. While that push runs, queue a Codex event for a session in another repository on machine 1. | Each `send` returns in under a second and prints `delivery: relay (queued)`. The hook logs one run for the pass, and all five ref changes land. The other session's event reaches the fake `codex` within 2 seconds, before the hook finishes. Catches a send that pushes itself, a pass that pushes once per change, and a relay push that blocks the daemon's loop. |
+| Make the pre-push hook hang, with the push timeout lowered to 2 seconds for the test. | The push's process group is killed, its changes stay queued with the timeout as their error in `watch status`, and the next pass starts a new push. Catches a stuck hook that stops the relay for good. |
 | Clone the repository twice on machine 1 and add a worktree to the first clone. Register A in the worktree and C in the second clone, send a message from each, then remove the worktree and end A. Pass on machine 1. | Both messages and A's cleanup land in one push from the second clone, and the outbox is empty. Then end C and delete the second clone before the next pass: C's cleanup stays queued, nothing is pushed, and `watch status` says no recorded checkout of the repository remains. Catches a push that names an object its checkout lacks, and an outbox that pushes from a removed checkout. |
 | Before any pass, register A, change its summary twice, and send it nothing. Pass. Then let a renewal and A's cleanup both queue before the next pass, and pass again. | Each time the outbox holds one item for A's presence ref, and each push carries one refspec for it. The first pass publishes the last summary, and the second deletes the ref under a lease that expects the commit the first pass pushed. Catches a batch that names one ref twice and fails on every pass, and a coalesced change that loses its lease. |
 | Make one queued change's lease fail while two others are valid. | The two land and leave the outbox. The failed one stays, with its error in `watch status`, and lands on a later pass once its lease is right. Catches a batch that loses every change when one fails. |
@@ -578,7 +598,8 @@ sessions end. Confirm too that pushing the refs starts no workflow run.
   queued message, lease renewal (two an hour per agent), and deletion. The
   repository's pre-push hooks run once per push, in the daemon, never in
   an agent's command. A relayed message waits about a second in the
-  outbox before the daemon sees it.
+  outbox before the daemon sees it, and longer while a push for the same
+  repository is still running.
 - **Visibility.** One REST call per relayed repository on each full pass,
   for the reminder `send` prints.
 - **Each message.** The recipient's one model turn, which the rate limit
