@@ -1,0 +1,65 @@
+{
+ "version": 1,
+ "name": "Panel tests for band rows",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 431,
+  "title": "Stand in for the band's rows as Claude Code 2.1.325 stacks them",
+  "head": "4bd88125d5fd61e050c71b1e50496cc57509a4fe",
+  "headRef": "fix-panel-tests-for-band-rows",
+  "base": "6ca0733ce6b4e8bad095ea46bf3f5978b95a280b",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel draws itself in the band above Claude Code's prompt, and <code>hooks/panel.test.tsx</code> tests it with Claude Code's test kit, <code>claude plugin test .</code>. The tests stand in for parts of Claude Code with hooks of their own. Under Claude Code 2.1.325, two of those stand-ins follow rules that changed, so 25 panel tests fail on <code>main</code> while the panel itself draws correctly.",
+   "This pull request changes only the test file. It updates the stand-ins and gives the test's band mount the prop that 2.1.325 requires:",
+   "<ul><li><b>The band's stand-in.</b> Claude Code now asks each plugin's <code>AbovePrompt</code> hook for that plugin's own row, and stacks the rows through <code>AbovePromptList</code>. The old stand-in answered <code>AbovePrompt</code>, so it drew a second row under the panel every time. It now answers <code>AbovePromptList</code> and draws its sentinel line only when no plugin drew a row, which is exactly when the panel passes.</li><li><b>The focus stand-ins.</b> A <code>ui.focus</code> event names the plugin that asked, and a hook whose matcher leaves out <code>plugin</code> hears only its own plugin's events. The two test hooks that answer <code>ui.focus</code> now match <code>{ plugin: '*' }</code>, so they answer Projector's events.</li><li><b>The mount's props.</b> <code>PANEL</code>, the band mount every panel test uses, now sets <code>isCollapsed: false</code>. Claude Code 2.1.325 requires that prop, and without it <code>hooks/typecheck.sh</code> reports 115 errors. The panel's render hook never reads it, so no test's behavior changes.</li></ul>",
+   "No test or assertion is removed. At the merge base the suite prints 202 pass and 25 fail, and the type check reports 115 errors. At this head the suite prints 227 pass and 0 fail, and the type check passes."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Band</b>: the area directly above the prompt input, where plugins such as Projector each draw a row.</li><li><b>Stand-in</b>: a hook the test registers to play the part of Claude Code, so the test can see what the panel did.</li><li><b><code>ENGINE_SITE</code></b>: the sentinel text the band's stand-in draws when the panel passes. A test that finds it knows the panel stepped aside.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "stand-ins",
+   "title": "Test stand-ins that follow Claude Code 2.1.325",
+   "kicker": "Two test hooks and the band mount's props updated for Claude Code 2.1.325",
+   "intro": [
+    "The panel tests tell a hidden panel from a drawn one by looking for the <code>ENGINE_SITE</code> sentinel, the text the band's stand-in draws. That works only when the stand-in draws exactly when the panel passes. The change moves the stand-in to <code>AbovePromptList</code>, the hook that receives every plugin's settled row, and has it pass to <code>next(e)</code> whenever any row exists.",
+    "The focus tests move the panel's focus ring as a person would, through <code>$.ui.focus</code>. Their stand-in now names every plugin in its matcher, because the event names Projector and the test's hook belongs to the test.",
+    "The mount's props gain <code>isCollapsed</code>, which says whether the person has collapsed the band. The test sets it to <code>false</code>, the state every panel test draws in."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "The band's stand-in in <code>world()</code> answers <code>AbovePromptList</code>, two <code>ui.focus</code> stand-ins match every plugin, and <code>PANEL.props</code> sets <code>isCollapsed</code>.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 236,
+       "text": "The stand-in still catches a panel that draws when it should be hidden. In a copy of this head, making the panel draw an empty <code>Box</code> instead of passing while hidden turns 10 tests red, among them <code>stays hidden until the session starts a watcher or asks for it</code>. Making it ignore whether it is shown turns the same 10 red."
+      },
+      {
+       "kind": "verify",
+       "text": "<code>claude plugin test .</code> prints 202 pass and 25 fail at the merge base, and 227 pass and 0 fail at this head. Both runs count 227 tests, so none was deleted."
+      },
+      {
+       "kind": "verify",
+       "line": 18,
+       "text": "<code>hooks/typecheck.sh</code> exits 0 at this head, where it reported 115 errors without this line. A search of <code>hooks/register.tsx</code> finds no read of <code>e.props.isCollapsed</code>, so the value changes no test's outcome."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
