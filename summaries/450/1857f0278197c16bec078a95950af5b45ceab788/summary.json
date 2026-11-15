@@ -1,0 +1,75 @@
+{
+ "version": 1,
+ "name": "iOS device builds plan",
+ "project": "ios",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 450,
+  "title": "Plan putting a branch's iOS app on a device with project ios",
+  "head": "1857f0278197c16bec078a95950af5b45ceab788",
+  "headRef": "ios-spec",
+  "base": "fb67056e7a9c96bbf7e9cd25e63f1c61cba702d2",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox lets an agent ask the person to test a change on their phone. The agent posts a <i>request</i> whose <i>start action</i> is the one thing the agent does when the person presses start, such as installing a build. Projector supplies the request but nothing to build or install with, so each iOS repository writes its own script.",
+   "This pull request adds a plan, <code>docs/projects/ios/readme.md</code>, at <code>status: ready</code> and <code>priority: now</code>. It proposes a <code>project ios</code> command group that ports one repository's 500-line device-test shell script to a standard-library Python module. Nothing is implemented yet: the plan is the whole change, and a later two-layer stack carries the code and the skill text.",
+   "<ul class=\"tight\"><li><b><code>build &lt;branch-or-number&gt;</code></b> fetches a branch or a pull request's head into one worktree that Projector keeps per repository, builds it with <code>xcodebuild</code> into one shared DerivedData folder, keeps a copy of the built app for that target, and installs and opens it on the one connected device.</li><li><b><code>install</code></b> puts a kept build on a device again, so a start action installs the target it names rather than whatever was built last.</li><li><b><code>devices</code>, <code>crashes</code>, <code>logs</code>, and <code>cleanup</code></b> list paired devices, copy and summarize crash reports, write the app's recent log lines to a file, and remove the worktree and builds.</li></ul>",
+   "The app is found by convention: the scheme is <code>&lt;App&gt; Development</code>, or else <code>&lt;App&gt;</code>, where <code>&lt;App&gt;</code> defaults to the Xcode project's name. Three new settings, <code>ios.app</code>, <code>ios.project</code>, and <code>ios.output</code>, cover repositories that do not follow it."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Where the review stands",
+    "html": "<p>The review of <code>1857f02</code> requested changes with three findings, each flagged under its line below:</p><ul class=\"tight\"><li>The log filter rule in § 2.4 contradicts its acceptance row in § 4.</li><li>Building a fork's pull request runs the fork's Xcode build scripts with no prompt or trust check.</li><li>The planned tests call <code>cp -c</code> and <code>log</code>, which CI's Linux runner lacks.</li></ul><p class=\"note\">Six smaller suggestions are listed in the review body.</p>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Start action</b>: what the agent does when the person presses start on a request; the press is the person's consent.</li><li><b>Kept build</b>: a copy of the built app under <code>builds/&lt;App&gt;/&lt;key&gt;/</code>, with a <code>build.json</code> recording its commit and bundle ID.</li><li><b>DerivedData</b>: Xcode's build folder; sharing one lets a branch switch rebuild only what changed.</li><li><b><code>devicectl</code></b>: Apple's command-line tool, run through <code>xcrun</code>, that lists, installs on, and launches apps on paired devices.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The project ios plan",
+   "kicker": "A ready plan for building, installing, and debugging an iOS app from any branch",
+   "intro": [
+    "The plan's <code>ready</code> status claims that every question blocking implementation is answered. Read it with that claim in mind: the problem (§ 1), the commands and options (§ 2.1), the build flow (§ 2.2), how the app is found (§ 2.3), crashes and logs (§ 2.4), state on disk (§ 2.5), the skill changes (§ 2.6), the files it touches (§ 2.7), its reasons (§ 3), and its acceptance tests (§ 4).",
+    "The plan's claims about the code it builds on hold at this head: <code>review.fetch</code> writes no <code>FETCH_HEAD</code>, <code>review.fetch_head</code> already chooses between a pull request's branch and <code>refs/pull/&lt;n&gt;/head</code>, <code>config.SETTINGS</code> holds only flat typed keys, and the <code>implement</code> skill already keeps a pull request a draft during a device test."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>project check</code> passes, <code>git diff --check</code> against the merge base is clean, and the unit suite passes at this head (1,278 tests, one skipped)."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/ios/readme.md",
+     "collapsed": false,
+     "note": "The new plan for <code>project ios</code>: commands, build flow, app convention, state, skill changes, and acceptance tests.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 115,
+       "text": "§ 2.2 step 4 fetches a fork's pull request, and <code>xcodebuild</code> then runs the fork's Run Script build phases on the person's Mac. § 3 adds no ask rule, so <code>Bash(project *)</code> allows this without a prompt, while <code>project review gate</code> refuses untrusted heads and <code>site.prepare</code> needs <code>--allow-prepare</code>. The review asks for a trust check with an explicit opt-in flag that has an ask rule."
+      },
+      {
+       "kind": "flag",
+       "line": 193,
+       "text": "For bundle ID <code>com.example.myapp.dev</code>, \"any dotted prefix with at least two parts\" includes <code>com.example</code>, but the acceptance row in § 4 says the filter must not match <code>com.example</code>. The two sections need to agree, for example by requiring three parts."
+      },
+      {
+       "kind": "flag",
+       "line": 322,
+       "text": "CI runs the suite on <code>ubuntu-latest</code>, but the listed stand-ins cover only <code>xcrun</code>, <code>xcodebuild</code>, <code>gh</code>, and <code>osascript</code>. GNU <code>cp</code> rejects <code>cp -c</code> with exit 1, and Linux has no <code>log</code> command, so the kept-build and <code>logs</code> rows cannot pass as written."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
