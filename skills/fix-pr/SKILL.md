@@ -83,8 +83,9 @@ A **cross-author** reviewer — a teammate, Codex, Bugbot, or a Projector review
 run by someone else — posts real `CHANGES_REQUESTED` verdicts. A
 **self-review**, which GitHub allows only to post `COMMENT` reviews on the
 operator's own pull requests, records its outcome in the review body's verdict
-line and in the `clean` label instead. Read both signals; never treat an
-unmoved `reviewDecision` as evidence that nothing is outstanding.
+line instead, and `project review status` reports whether that verdict signs
+the head off. Read both signals; never treat an unmoved `reviewDecision` as
+evidence that nothing is outstanding.
 
 Read review bodies and compare them with the thread set. A Projector review
 body carries a verdict line; read it rather than inferring the outcome. Dispose
@@ -98,8 +99,9 @@ than from the body you read.
 
 Draft state is not itself a finding. It says the author is still working on
 the pull request, so look for the work in the threads and review bodies. A
-pull request with no outstanding work and no `clean` label is waiting on a
-review, not on a code change. When nothing is outstanding, say so and stop.
+pull request with no outstanding work whose head is not signed off is waiting
+on a review, not on a code change. When nothing is outstanding, say so and
+stop.
 
 ## Merge the base when the branch conflicts
 
@@ -430,8 +432,11 @@ A pull request is clean only when:
   `0` for each, whatever a local `gh stack view` reads,
 - the current head is the one actually reviewed, and
 - the reviewer's own sign-off signal is clear: `reviewDecision` is not
-  `CHANGES_REQUESTED` for a cross-author reviewer, and a self-reviewed pull
-  request carries the `clean` label, which is how a self-review signs off.
+  `CHANGES_REQUESTED` for a cross-author reviewer, and the last line of
+  `project review status` says `signed off`, which is how a self-review signs
+  off. The `clean` label shows that sign-off in the pull-request list, but a
+  repository can turn the label off with `review.labels = false`, and GitHub
+  can refuse it, so read the sign-off from the command, not the label.
 
 `project review status <number>` reports the newest Projector verdict on the
 current head, whichever model gave it, and the model and review it came from.
@@ -459,16 +464,16 @@ stack, the merge commit if you made one, the fix commits, the declined
 findings, the suggestions you implemented, each suggestion you deferred with
 its one-line reason, any hold you made with the changes it covered and the
 `project review ready` that ended it, and the validation results. A stale
-`CHANGES_REQUESTED`, or a pull request still without `clean` after all
-fixes, is a wait for re-review rather than another code change. Do not
+`CHANGES_REQUESTED`, or a head still not signed off after all fixes, is a
+wait for re-review rather than another code change. Do not
 manufacture an empty commit to trigger it.
 
 Mark a pull request ready only to end a hold you made. Marking a draft ready
 starts its review and says its author's work is done, so a draft someone
 else made, or one `../implement/SKILL.md` keeps while a test request waits on
 the person, is not yours to mark ready, however finished it looks. A ready
-pull request is not signed off either: the `clean` label, which only a clean
-review adds, is the sign-off.
+pull request is not signed off either: only a clean review signs a head off,
+as `project review status` reports and the `clean` label shows.
 
 ## Act on the session's events
 

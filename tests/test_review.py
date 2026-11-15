@@ -384,6 +384,19 @@ class SetupTests(ReviewCase):
         self.assertIn("removed the clean label", out)
         self.assertEqual([], self.github.created_labels, "a label the repository has is used as it is")
 
+    def test_a_verdict_read_that_fails_keeps_the_clean_label_and_finishes_the_setup(self) -> None:
+        # The start comment is already posted and the lock held when setup reads the verdicts.
+        self.github.repo_labels.update({"clean", "reviewing"})
+        self.github.pr["labels"] = [{"name": "clean"}]
+        self.github.fail = "author_association"
+
+        code, _, err = self.setup_review()
+
+        self.assertEqual(0, code, err)
+        self.assertIn("warning: kept the clean label on acme/app#1, because its verdicts could not be read", err)
+        self.assertEqual(["clean", "reviewing"], self.github.labels())
+        self.assertEqual(self.head, self.read_state()["sha"], "the review is set up, so the next setup is not refused")
+
     def test_keeps_a_clean_label_another_models_clean_verdict_on_the_head_supports(self) -> None:
         self.github.repo_labels.update({"clean", "reviewing"})
         self.github.pr["labels"] = [{"name": "clean"}]
@@ -3116,6 +3129,19 @@ class StatusTests(LatestWinsCase):
 
         self.assertEqual(("clean", teammate), (result["verdict"], result["newest"]["review"]),
                          "the operator's status sees the teammate's loop")
+
+    def test_fix_pr_reads_the_sign_off_status_prints_where_no_label_shows_it(self) -> None:
+        # With review.labels off, or a label GitHub refused, only the status line says a head is signed off.
+        self.add_verdict("claude-opus-5-5")
+        self.github.pr["draft"] = False
+        fix_pr = " ".join((Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text()
+                          .split())
+
+        last = self.status()[1].splitlines()[-1]
+
+        self.assertEqual("  signed off; no Projector label", last)
+        self.assertIn("the last line of `project review status` says `signed off`", fix_pr)
+        self.assertNotIn("carries the `clean` label, which is how a self-review signs off", fix_pr)
 
     def test_the_skills_move_draft_state_through_the_commands_alone(self) -> None:
         # A host's automatic approval can refuse a bare `gh pr ready` as self-approval, where the rule that
