@@ -248,11 +248,13 @@ way, and post the request only once the build has succeeded:
 4. In the request's steps, always give the command
    `project ios build <number>`, to run in any checkout of the repository on
    the Mac the device is plugged into. When no device is `installable`, you
-   are on another machine, so that command is the only way to install, and
-   the request has no start action.
+   cannot reach one from here, for example because you run on another
+   machine or the device is unplugged, so that command is the only way to
+   install, and the request has no start action.
 
-When the person reports a crash or odd behavior, run `project ios crashes`
-when you can reach the device. Otherwise, and for any device log, which
+When the person reports a crash or odd behavior, run
+`project ios crashes --device <udid>` with the UDID of the device they
+tested on, when you can reach it. Otherwise, and for any device log, which
 needs their password for `sudo`, ask them in a request to run
 `project ios crashes` or `project ios logs` and share the file it names.
 
