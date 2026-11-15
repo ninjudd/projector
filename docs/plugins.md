@@ -278,22 +278,21 @@ not subscribed to before.
 ```
 
 Each line is the pull request's number, its state, its author when someone
-else wrote it, and the title. The number is drawn in the theme's subtle color
-while the pull request is a draft, which means its author is still working on
-it, and in the default text color once it is ready for review. The state is
-the first of these that applies:
+else wrote it, and the title. The number is in the default text color, and
+in italic while the pull request is a draft, which means its author is still
+working on it. The state is the first of these that applies:
 
 - **`reviewing`**, in orange, while the pull request carries the
   `reviewing` label, which `project review setup` adds when a review starts.
 - **`clean`**, in green, while it carries the `clean` label, which
   `project review publish` adds once a review signs off the current head.
-- **`draft`**, in the subtle color, while it is a draft.
+- **`draft`**, in italic, while it is a draft.
 - **`ready`**, in light blue, while it is ready for review and carries
   neither label. That covers a pull request no review has read yet, and also
   one whose `clean` label a push removed or whose review requested changes.
 
 So a held draft, which keeps its `clean` label while a change is built,
-reads as a subtle number beside `clean`. The panel reads the draft state and
+reads as an italic number beside `clean`. The panel reads the draft state and
 the labels with the rest of the line, from the watch daemon's query of the
 pull request.
 
@@ -595,18 +594,19 @@ long list of pull requests or a burst of notices does not push the questions
 out of view. A collapsed line starts with `+`, where an item's starts with
 `-`, to say it expands. Collapsed pull requests become a line such as
 `+ #12 #14 #15` in their place, listing each in the rows' order. With no
-review label beside it, each number's color says what its row's number and
-label say together, taking the first of these that applies:
+review label beside it, each number's color says what its row's state says,
+taking the first of these that applies:
 
 - **Red** when a conflict, a change request, or failing checks hold it back.
 - **Yellow** while it has unresolved review threads, which its row counts in
   yellow.
-- **Muted** while it is a draft, even one that keeps its `clean` label.
 - **Orange** while it carries the `reviewing` label.
 - **Green** while it carries the `clean` label.
-- **The default text color** when it is ready and no review has labeled it.
+- **The default text color** when it carries neither label.
 
-A pull request that is still loading is muted. The numbers work as tabs:
+A draft's number is italic as well, as on its row, so a held draft that
+keeps its `clean` label reads as an italic green number. A pull request that
+is still loading is muted. The numbers work as tabs:
 click one to open that pull request's drawer below the line, with its number
 drawn inverted, and click it again to close the drawer. The pull requests
 stay collapsed, and only one drawer is open at a time, so clicking another
