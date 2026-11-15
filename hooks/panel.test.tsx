@@ -230,7 +230,10 @@ function world(
     const printed = bash(e.command)
     return { result: { ...printed, interrupted: false }, text: printed.stdout }
   })
-  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+  // The band is one row per plugin, which the engine stacks. This stands in for what the band shows when no
+  // plugin draws a row, so it shows exactly when the panel passes.
+  on('ui.render', { component: 'AbovePromptList' }, ($, e, next) => {
+    if (e.props.rows.length > 0) return next(e)
     const { Text } = $.ui.resolve(e)
     return <Text>{ENGINE_SITE}</Text>
   })
@@ -288,7 +291,7 @@ test('draws one line per open pull request of the session’s own loops', async 
   await ui.unmount()
 })
 
-test('a row says reviewing, draft, clean, or ready from its labels and draft state, and only clean is green', async ($, on) => {
+test('a row dims a draft number and says reviewing, clean, or nothing from its labels alone', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\no/r#13\no/r#14\no/r#15\n' })
@@ -297,29 +300,30 @@ test('a row says reviewing, draft, clean, or ready from its labels and draft sta
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
 
-  const states = new Map<string, [string, unknown]>()
-  for (const title of [
-    'Signed-off change',
-    'Change waiting for review',
-    'Change a review is reading',
-    'Signed-off change held for a suggestion',
-  ]) {
-    const row = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-    const at = row.indexOf(title)
-    const word = row
-      .slice(0, at)
-      .reverse()
-      .find(text => ['reviewing', 'draft', 'clean', 'ready'].includes(text))
-    const found = (await ui.findAll({ type: 'Text', text: word ?? '' })).map(text => text.props.color)
-    states.set(title, [word ?? '', found[0]])
+  const rows = new Map<string, { word: string; color: unknown; isDim: boolean }>()
+  for (const [number, title] of [
+    [1, 'Signed-off change'],
+    [13, 'Change waiting for review'],
+    [14, 'Change a review is reading'],
+    [15, 'Signed-off change held for a suggestion'],
+  ] as const) {
+    // The word sits right before the title, or before the author column of someone else's.
+    const texts = await ui.findAll({ type: 'Text' })
+    const at = texts.findIndex(found => found.text === title)
+    const word = texts
+      .slice(Math.max(0, at - 2), at)
+      .find(found => ['reviewing', 'clean', 'draft', 'ready'].includes(found.text))
+    const button = await ui.find({ type: 'Button', key: `pr:o/r#${number}` })
+    rows.set(title, { word: word?.text ?? '', color: word?.props.color, isDim: button?.props.dimColor === true })
   }
-  expect(Object.fromEntries(states)).toEqual({
-    'Signed-off change': ['clean', 'success'],
-    'Change waiting for review': ['ready', 'warning'],
+  expect(Object.fromEntries(rows)).toEqual({
+    'Signed-off change': { word: 'clean', color: 'success', isDim: false },
+    // A ready pull request no review has labeled says nothing of its review.
+    'Change waiting for review': { word: '', color: undefined, isDim: false },
     // A review in progress shows over a clean label an earlier head left.
-    'Change a review is reading': ['reviewing', 'warning'],
-    // A held pull request keeps its clean label, and reads as the draft its author is working on.
-    'Signed-off change held for a suggestion': ['draft', 'warning'],
+    'Change a review is reading': { word: 'reviewing', color: 'warning', isDim: false },
+    // A held pull request keeps its clean label beside the dim number of a draft.
+    'Signed-off change held for a suggestion': { word: 'clean', color: 'success', isDim: true },
   })
   await ui.unmount()
 })
@@ -390,7 +394,7 @@ test('the panel’s last line says how to focus the panel, and once the panel ha
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\n' })
-  on('ui.focus', () => ({}))
+  on('ui.focus', { plugin: '*' }, () => ({}))
   on('prompt.edit', ($, e) => ({ text: e.text, cursor: e.cursor }))
   on('prompt.submit', ($, e) => ({ text: e.text }))
   const invalidated: string[] = []
@@ -725,7 +729,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   await ui.press({ key: 'pr:x/y#7' })
   await clock.settle()
   // The drawer's facts name no author, whoever wrote the pull request.
-  const facts = await ui.find({ type: 'Text', text: /^fixing · fix-branch · \+12 −3 in 2 files · checks passing$/ })
+  const facts = await ui.find({ type: 'Text', text: /^fixer · fix-branch · \+12 −3 in 2 files · checks passing$/ })
   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
   // What the loop does takes its loop's color, the branch the palette's cyan, and the size reads as a diff stat:
   // insertions green, deletions red. The checks take theirs, and the files and each `·` keep the default color.
@@ -734,7 +738,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   expect(
     pieces.map(piece => (typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.color])),
   ).toEqual([
-    ['fixing', 'ansi256(4)'],
+    ['fixer', 'ansi256(4)'],
     ' · ',
     ['fix-branch', 'ansi256(6)'],
     ' · ',
@@ -1252,12 +1256,12 @@ test('opening one drawer closes the one that was open', async ($, on) => {
 
   const ui = await $.ui.mount(PANEL)
   await ui.press({ key: 'pr:x/y#7' })
-  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixing', 'ansi256(4)']])
+  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixer', 'ansi256(4)']])
   await ui.press({ key: 'pr:o/r#1' })
   expect(await ui.find({ key: 'github:o/r#1' })).toBeDefined()
   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
-  // Reviewing takes the theme's `claude` orange, as fixing takes the palette's blue.
-  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewing', 'claude']])
+  // The reviewer takes the theme's `claude` orange, as the fixer takes the palette's blue.
+  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewer', 'claude']])
   await ui.unmount()
 })
 
@@ -1275,9 +1279,9 @@ test('lists a pull request both loops track once, as fixed and reviewed, and cou
   // The header counts its one line once, in the singular.
   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
   await ui.press({ key: 'pr:o/r#1' })
-  expect(await ui.find({ type: 'Text', text: /^fixing and reviewing/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^fixer and reviewer/ })).toBeDefined()
   // Each loop takes its own color, and the `and` between them the default color.
-  expect(await loopsOf(ui, 'o/r#1')).toEqual([['fixing', 'ansi256(4)'], ' and ', ['reviewing', 'claude']])
+  expect(await loopsOf(ui, 'o/r#1')).toEqual([['fixer', 'ansi256(4)'], ' and ', ['reviewer', 'claude']])
   await ui.unmount()
 })
 
@@ -4647,7 +4651,7 @@ test('a keyed line’s label takes the color of the `: ` before it, so it invert
  */
 function keyboardOf(on: On) {
   const tried: string[] = []
-  on('ui.focus', () => ({}))
+  on('ui.focus', { plugin: '*' }, () => ({}))
   on('ui.log', ($, e) => {
     const element = /^projector: the focus stayed off (\S+): /.exec(e.text)?.[1]
     if (element !== undefined) tried.push(element)
@@ -5122,21 +5126,21 @@ test('lists the session’s subscriptions from the daemon’s cache, with their 
   expect((await ui.find({ key: 'age:x/y#7' }))?.text).toBe('5m')
   expect(session.gh()).toEqual([])
 
-  // A drawer names each role the session holds, fixing in blue and reviewing in orange, with the pull request's
+  // A drawer names each role the session holds, the fixer in blue and the reviewer in orange, with the pull request's
   // changed lines from the cache. The open drawer still asks GitHub for its threads, and nothing else does.
   await ui.press({ key: 'pr:x/y#7' })
   await session.clock.settle()
-  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixing', 'ansi256(4)'], ' and ', ['reviewing', 'claude']])
+  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixer', 'ansi256(4)'], ' and ', ['reviewer', 'claude']])
   expect(
-    await ui.find({ type: 'Text', text: /^fixing and reviewing · fix-branch · \+12 −3 in 2 files · checks passing$/ }),
+    await ui.find({ type: 'Text', text: /^fixer and reviewer · fix-branch · \+12 −3 in 2 files · checks passing$/ }),
   ).toBeDefined()
   expect(session.gh()).toHaveLength(1)
   expect(session.gh()[0]).toContain('r0: repository(owner: "x", name: "y") { p7: pullRequest(number: 7) { reviewThreads')
   await ui.press({ key: 'pr:o/r#4' })
-  expect(await loopsOf(ui, 'o/r#4')).toEqual([['reviewing', 'claude']])
+  expect(await loopsOf(ui, 'o/r#4')).toEqual([['reviewer', 'claude']])
   // A loading pull request's drawer names its role and nothing the daemon has yet to say.
   await ui.press({ key: 'pr:o/r#13' })
-  expect(await ui.find({ type: 'Text', text: /^fixing$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^fixer$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /in 0 files/ })).toBeUndefined()
   expect(session.gh()).toHaveLength(1)
   await ui.unmount()
@@ -5157,7 +5161,7 @@ test('lists the pull requests the daemon adopted for a repository the session re
   expect(await rowsOf(ui)).toEqual(['pr:o/r#1', 'pr:o/r#11'])
   expect(session.gh()).toEqual([])
   await ui.press({ key: 'pr:o/r#11' })
-  expect(await loopsOf(ui, 'o/r#11')).toEqual([['reviewing', 'claude']])
+  expect(await loopsOf(ui, 'o/r#11')).toEqual([['reviewer', 'claude']])
   await ui.unmount()
 })
 
@@ -5178,7 +5182,7 @@ test('reads its rows from the cache on each tick, and asks GitHub only for an ea
   expect(poll).toContain('p2: pullRequest(number: 2)')
   expect(poll).not.toContain('p1: pullRequest')
   await ui.press({ key: 'pr:o/r#1' })
-  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewing', 'claude']])
+  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewer', 'claude']])
 
   // The daemon's next result shows within a tick, with no query of the panel's own.
   Object.assign(session.files, daemonSaw('Signed off, after the next pass'))
@@ -5305,14 +5309,14 @@ test('passes the output of a push, a new pull request, or a stack command to pro
     { argv: add, stdin: `\n${pushed.stderr}` },
   ])
 
-  // The new pull request's subscription shows the panel, which lists it as fixing.
+  // The new pull request's subscription shows the panel, which names the session its fixer.
   for (let step = 0; step < 2; step += 1) {
     await session.clock.advance(1)
     await session.clock.settle()
   }
   expect(await rowsOf(ui)).toEqual(['pr:x/y#7'])
   await ui.press({ key: 'pr:x/y#7' })
-  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixing', 'ansi256(4)']])
+  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixer', 'ansi256(4)']])
   await ui.unmount()
 })
 

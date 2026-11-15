@@ -251,9 +251,9 @@ not subscribed to before.
 
 ```text
   /projector                                              2 pull requests  12s   [-]
-   #267 draft List a loop's open pull requests above the Claude Code prompt 2h
-   #258 draft grace Name the reviewed head in a review's sig… conflict · 2* 5m
-        reviewing · review-signature · +84 −12 in 5 files · checks passing
+   #267 List a loop's open pull requests above the Claude Code prompt       2h
+   #258 reviewing grace Name the reviewed head in a review's… conflict · 2* 5m
+        reviewer · review-signature · +84 −12 in 5 files · checks passing
         7: Discuss  8: Dismiss
         open in github  open in projector
         src/review.py:412 · ada · P2 · The signature names the base, not the head
@@ -261,22 +261,23 @@ not subscribed to before.
                                                            ctrl+x tab to focus
 ```
 
-Each line is the pull request's number, its review state, its author when
-someone else wrote it, and the title. The review state is the first of these
-that applies:
+Each line is the pull request's number, its review label, its author when
+someone else wrote it, and the title. The number is dim while the pull
+request is a draft, which means its author is still working on it, and drawn
+in the default text color once it is ready for review. The review label is
+the first of these that the pull request carries, and it is left out when
+the pull request carries neither:
 
 - **`reviewing`**, in yellow, while the pull request carries the `reviewing`
   label, which `project review setup` adds when a review starts.
-- **`draft`**, in yellow, while the pull request is a draft, which means its
-  author is still working on it.
 - **`clean`**, in green, while it carries the `clean` label, which
   `project review publish` adds once a review signs off the current head.
-- **`ready`**, in yellow, for a pull request that is ready for review and
-  carries neither label.
 
 So a held draft, which keeps its `clean` label while a change is built,
-reads as `draft`. The panel reads the labels with the rest of the line, from
-the watch daemon's query of the pull request.
+reads as a dim number beside `clean`, and a ready pull request with no label
+is waiting for its first review. The panel reads the draft state and the
+labels with the rest of the line, from the watch daemon's query of the pull
+request.
 
 Notes follow the title when the pull request
 has them: `conflict` or `changes requested` in red, `approved` in green,
@@ -285,7 +286,7 @@ such as `2*`. The ` · ` between two notes keeps the default text color. The
 line ends with how long ago the pull request last changed, in the column
 where the inbox's items end with their ages. Only the title shortens on a
 narrow terminal. A pull request that the watch daemon has not queried yet
-reads `loading…` in place of its title, with no review state, author, or
+reads `loading…` in place of its title, with no review label, author, or
 age, until the daemon's first result for it arrives.
 
 Your own pull requests come first, then everyone else's, each author's
@@ -343,11 +344,12 @@ there the panel starts with its first row.
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
-one column past the number, under the review state. It names the session's
-roles on the pull request: `fixing` in the terminal palette's blue,
-`reviewing` in Claude's orange, or `fixing and reviewing`. This `reviewing`
-says that this session reviews the pull request, whatever its labels say.
-Then come its
+one column past the number, under the review label. It names the session's
+roles on the pull request: `fixer` in the terminal palette's blue,
+`reviewer` in Claude's orange, or `fixer and reviewer`. `reviewer` says that
+this session is subscribed to review the pull request, whether or not a
+review is running, while the row's `reviewing` label says a review is
+running now, in any session. Then come its
 branch, in the palette's cyan, its size, and its checks. The size reads as a
 diff stat: the insertions, such as `+84`, in green and the deletions, such
 as `−12`, in red. The checks' state takes a color of its own, and the rest,
@@ -444,8 +446,8 @@ equivalent.
 A session that started a `watch-threads.sh` or `watch-prs.sh` watcher under
 an earlier release keeps it until the session ends, and the panel lists the
 pull requests in that watcher's `--tracked` file
-meanwhile: `watch-threads.sh`'s as `fixing`, and `watch-prs.sh`'s as
-`reviewing`. For such a pull request that the daemon has no result for, the
+meanwhile: `watch-threads.sh`'s as `fixer`, and `watch-prs.sh`'s as
+`reviewer`. For such a pull request that the daemon has no result for, the
 panel asks GitHub itself, in one `gh api graphql` call every 30 seconds.
 When that call cannot reach GitHub, the panel keeps showing what GitHub gave
 last, and shows GitHub's error only when it has no pull request to show.
@@ -562,7 +564,7 @@ the open notices after the pull requests, before its time.
 
 ```text
   /projector                1 pull request · 2 questions · 1 notice  12s   [-]
-   #337 draft Retry failed webhook deliveries with backoff            1h
+   #337 Retry failed webhook deliveries with backoff                  1h
 
    - Force-pushed #337 to drop a stray debug file               #337  1m
    - Run project init to add the publish rule?                        2m
@@ -576,8 +578,8 @@ out of view. A collapsed line starts with `+`, where an item's starts with
 `-`, to say it expands. Collapsed pull requests become a line such as
 `+ #12 #14 #15` in their place, listing each in the rows' order and coloring
 it by status: red when a conflict, a change request, or failing checks hold
-it back, and otherwise in its review state's color, green for `clean` and
-yellow for `reviewing`, `draft`, and `ready`. A pull request that is still
+it back, green when it is ready for review and labeled `clean` and not
+`reviewing`, and otherwise yellow. A pull request that is still
 loading is muted. The numbers work as tabs: click one to open that pull
 request's drawer below the line, with its number drawn inverted, and click it
 again to close the drawer. The pull requests stay collapsed, and only one

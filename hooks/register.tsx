@@ -185,6 +185,13 @@ const BRANCH_COLOR = 'ansi256(6)'
  */
 const ROLE_COLORS: Record<Role, string> = { fixing: 'ansi256(4)', reviewing: 'claude' }
 
+/**
+ * What a drawer calls the session in each role. A noun, so the session's
+ * `reviewer` role never reads as the `reviewing` label on the row above it,
+ * which says a review is running now, in any session.
+ */
+const ROLE_NAMES: Record<Role, string> = { fixing: 'fixer', reviewing: 'reviewer' }
+
 /** The key that closes an open item's drawer, from its line at the drawer's top. */
 const CLOSE_HOTKEY = '0'
 
@@ -1208,28 +1215,27 @@ function notesOf(pr: PullRequest): Note[] {
 }
 
 /**
- * What a row says of a pull request's review, from its draft state and the
- * labels a review sets: `reviewing` while a review runs, `draft` while its
- * author works on it, `clean` once its current head is signed off, and
- * `ready` while it waits for a review. Only `clean` is green, so a held draft
- * that keeps its `clean` label reads as a draft.
+ * What a row says of a pull request's review, from the labels a review sets
+ * alone: `reviewing` while a review runs, over a `clean` an earlier head left,
+ * `clean` once a head is signed off, and nothing before a review. The row's
+ * number carries the draft state, so a held draft reads as a dim number
+ * beside its `clean`.
  */
-function reviewState(pr: PullRequest): Note & { color: 'warning' | 'success' } {
+function reviewLabel(pr: PullRequest): (Note & { color: 'warning' | 'success' }) | undefined {
   if (pr.labels.includes('reviewing')) return { text: 'reviewing', color: 'warning' }
-  if (pr.isDraft) return { text: 'draft', color: 'warning' }
   if (pr.labels.includes('clean')) return { text: 'clean', color: 'success' }
-  return { text: 'ready', color: 'warning' }
+  return undefined
 }
 
 /**
  * A pull request's color on the line its collapsed rows give way to: red
- * when a note or its checks hold it back, else its review state's, as its row
- * draws it, and muted while it loads.
+ * when a note or its checks hold it back, green once a ready pull request is
+ * signed off, yellow otherwise, and muted while it loads.
  */
 function statusColor(pr: PullRequest): Note['color'] | 'subtle' {
   if (pr.isLoading === true) return 'subtle'
   if (pr.isConflicting || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.checks === 'failing') return 'error'
-  return reviewState(pr).color
+  return !pr.isDraft && reviewLabel(pr)?.text === 'clean' ? 'success' : 'warning'
 }
 
 /** How far a thread's line sits inside the line that names its file. */
@@ -2276,7 +2282,7 @@ export const register: Register = on => {
             {roles.flatMap((role, at) => [
               ...(at === 0 ? [] : [' and ']),
               <Text key={`role:${role}`} color={ROLE_COLORS[role]}>
-                {role}
+                {ROLE_NAMES[role]}
               </Text>,
             ])}
             {pr.branch !== '' && ' · '}
@@ -2360,6 +2366,7 @@ export const register: Register = on => {
       const { pr } = row
       const key = keyOf(pr)
       const notes = notesOf(pr)
+      const review = reviewLabel(pr)
       // A pull request the daemon has no result for yet holds only its
       // reference, so its line says it is loading in its title's place.
       const isLoaded = pr.isLoading !== true
@@ -2377,13 +2384,14 @@ export const register: Register = on => {
               <Button
                 key={`pr:${key}`}
                 plain
+                dimColor={pr.isDraft}
                 label={label(pr)}
                 onPress={() => toggle(key, `pr:${key}`, opened === key ? undefined : `discuss:${key}`)}
               />
             </Box>
-            {isLoaded && (
+            {isLoaded && review !== undefined && (
               <Box flexShrink={0}>
-                <Text color={reviewState(pr).color}>{reviewState(pr).text}</Text>
+                <Text color={review.color}>{review.text}</Text>
               </Box>
             )}
             {isLoaded && !isOwn(pr, shown.viewer) && (
@@ -2408,7 +2416,7 @@ export const register: Register = on => {
             )}
             {ageColumn(key, pr.updatedAt)}
           </Box>
-          {/* The drawer starts where the state does, one column past the label. */}
+          {/* The drawer starts where the review label does, one column past the number. */}
           {opened === key && drawPrDrawer(row, labelWidth + 1)}
         </Box>
       )
