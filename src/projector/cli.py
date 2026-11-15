@@ -1475,6 +1475,10 @@ def review_rules(json_output: bool) -> int:
     """`review rules`: whether the user's settings allow every command Projector's permission rules name,
     exiting 1 when one may not.
 
+    `--json` also says whether each file allows `project summary publish`,
+    which a file lacking newer rules can still do, so a session whose publish
+    was refused can tell a missing rule from a matching one.
+
     It asks `allow_commands` only to report, so it writes nothing, and a review
     loop can run it before its first publish rather than learn of a refusal on
     one pull request mid-loop. The rules belong in the person's own settings,
@@ -1487,8 +1491,10 @@ def review_rules(json_output: bool) -> int:
     files = allow_commands(apply=False, hint=False)
     allowed = all(entry.action == "unchanged" for entry in files)
     if json_output:
+        publish = permissions.publish_allowed()
         print(json.dumps({"allowed": allowed,
-                          "files": [{"path": entry.path, "allowed": entry.action == "unchanged"}
+                          "files": [{"path": entry.path, "allowed": entry.action == "unchanged",
+                                     "summary_publish": publish.get(entry.path, False)}
                                     for entry in files]}, indent=2))
     else:
         for entry in files:

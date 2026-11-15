@@ -1053,7 +1053,12 @@ and the comment alone links it.
 
 A summary that fails to build or publish never changes the review's
 verdict: say in your report that the summary failed and why, and leave the
-review as it was.
+review as it was. When the host refuses the publish, work out why as
+`summarize-pr` describes, and report the summary as unfinished, with what
+refused it and the action that would let it through. A refusal holds back
+only that head's summary. Summarize and publish every later head as above,
+and report each one either published, with its URL, or still blocked, with
+the reason. Never stop summarizing because an earlier publish was refused.
 
 ## Gate readiness claims in plans
 

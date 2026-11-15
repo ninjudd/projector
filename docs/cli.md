@@ -242,6 +242,12 @@ what it did to each:
   Codex once Projector names it and you run `init` again. To see what the
   rules allow, run
   `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
+  That checks the command alone. Codex checks each command of a chain such as
+  `gh repo view && project summary publish` on its own and takes the
+  strictest result, so a command no rule names sends the whole call to its
+  usual approval, and an agent runs each `project` command as a call of its
+  own. Codex reads its rules only when a session starts, so start a new
+  session after `init` writes the file.
   `init` keeps the file, and says on stderr how to add the rules yourself, when
   the file is not valid UTF-8, cannot be read, or cannot be written, as one in
   a read-only directory cannot, or when `rules` is not a directory. `init`
@@ -2079,7 +2085,12 @@ is installed, which allow Projector's commands, such as
 `project review publish`, `project review hold`, and `project summary publish`,
 and ask before the few that reach outside Projector's own state. It prints
 each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
-whole check and for each file. It writes nothing, takes no pull request, and
+whole check and for each file, and `summary_publish` for each file, which is
+`true` when that file allows `project summary publish`. A file can lack newer
+rules and still allow the publish, and stderr says so for a Codex file, so a
+refused publish can be told apart from a missing rule: running `init` again
+does not change a refusal that a matching rule did not prevent. It writes
+nothing, takes no pull request, and
 runs from any directory. It exits 0 when every file has the rules. It exits 1
 when a file lacks them or cannot be read, says on stderr what is missing, and
 asks for `project init` at a terminal, because `init` adds the rules only for a
