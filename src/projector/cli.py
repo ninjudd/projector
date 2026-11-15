@@ -2346,8 +2346,8 @@ def init_required_check(arguments: argparse.Namespace, root: Path, files: list[F
         except review.ReviewError as error:
             # The ruleset is in place, and a rerun finds the check required and posts nothing, so say what to do.
             print(f"project: could not post {review.REVIEW_CONTEXT} on the open pull requests a review already "
-                  f"signed off: {error}; run `project review publish` again on each one that should merge, or have "
-                  "it reviewed again", file=sys.stderr)
+                  f"signed off: {error}; review each one that should merge again, with `project review setup "
+                  "<number> --rereview` and then `project review publish`, which posts the status", file=sys.stderr)
     if config.get("review.labels") is not False:
         files.append(write_clean_workflow(root))
     if answer and recorded is not True:

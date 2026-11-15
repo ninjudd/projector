@@ -1670,12 +1670,14 @@ class RequiredCheckTests(RepositoryTestCase):
 
         self.assertEqual(0, code, err)
         self.assertIn("could not post projector/review on the open pull requests a review already signed off", err)
+        self.assertIn("`project review setup <number> --rereview` and then `project review publish`", err,
+                      "publish alone refuses a pull request with no review set up")
         self.assertEqual(1, len(self.github.rulesets))
         self.assertTrue(self.workflow().exists())
         self.assertTrue(self.recorded(), "a rerun finds the check required, so this run finishes the setup")
 
     def test_the_answer_flags_are_refused_outside_a_repository(self) -> None:
-        outside = Path(tempfile.mkdtemp())
+        outside = Path(self.enterContext(tempfile.TemporaryDirectory()))
         for flag in ("--require-review", "--no-require-review"):
             with self.subTest(flag=flag):
                 code, _, err = self.invoke("init", flag, cwd=outside)

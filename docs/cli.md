@@ -450,8 +450,9 @@ things in order:
 3. Posts the `success` status on the current head of each open pull request
    that a review has already signed off, so none waits on a review it has.
    When GitHub refuses that, `init` says so and goes on, because a rerun finds
-   the check required and posts nothing; run `project review publish` again on
-   each pull request that should merge.
+   the check required and posts nothing. Review each pull request that should
+   merge again, with `project review setup <number> --rereview` and then
+   `project review publish`, which posts the status.
 4. Records `review.require_check = true` in the repository's
    `.projector.toml`.
 
