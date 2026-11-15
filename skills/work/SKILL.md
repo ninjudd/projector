@@ -104,7 +104,8 @@ project review ready <number> --repo <owner>/<repo>
 Do not hold a finished pull request in draft until the rest of the work is
 done. Keep one a draft only while you still have changes to push to it, or
 while a request asks the user to test it or to review its plan and they
-have not answered, as the hand-over describes.
+have not answered, as `../implement/SKILL.md` describes for a test request
+and `../spec/SKILL.md` for a plan review request.
 
 ## Fix each pull request as reviews arrive
 
