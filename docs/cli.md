@@ -2720,7 +2720,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
 | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
 | `UNREVIEWED` | `fix`, when no session on this machine reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
 | `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed; under a repository subscription, only once the pull request is ready for review |
-| `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review |
+| `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
 | `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
 | `MOVED` | any | Another session owns the role now |
 | `MERGED`, `CLOSED` | any | The pull request merged or closed |
