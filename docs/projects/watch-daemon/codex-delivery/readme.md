@@ -248,7 +248,8 @@ passing their output to the existing subscription parser.
 
 The full Python gate passes 1,260 tests. Both plugin validations, plan
 checks, and the hooks type-check pass. The current Claude test runner
-still reports 25 existing panel-rendering expectation failures. A live
+reports 202 passing tests and 25 panel-rendering expectation failures;
+an isolated copy of unchanged `main` has the same 25 failing test names. A live
 Claude session received a notice through its mod while idle and replied.
 A native Codex queue resumed an unloaded test thread and received its
 reply; temporary startup-only hook overrides did not survive that resume,
@@ -257,7 +258,7 @@ so that run does not prove acknowledgment through installed hooks.
 The combined live Codex check remains pending. Run
 `PYTHONPATH=src python3 tests/codex_smoke.py --review-hooks` with native
 Codex and Node 22 or newer. The test creates a separate loopback server,
-reviews four temporary hooks in the native browser, restarts the server
+reviews four temporary hooks in the native hook browser, restarts the server
 to unload the thread, and queues a batch through the real CLI. Success
 requires its `UserPromptSubmit` receipt. It stops its server and archives
 its test thread; it does not change the installed plugin or mutate GitHub.
