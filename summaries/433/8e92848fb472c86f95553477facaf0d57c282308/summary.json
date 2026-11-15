@@ -1,0 +1,106 @@
+{
+ "version": 1,
+ "name": "Panel row draft and label split",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 433,
+  "title": "Color a drawer row's number by draft state and its word by labels alone",
+  "head": "8e92848fb472c86f95553477facaf0d57c282308",
+  "headRef": "drawer-review-status",
+  "base": "983e280cf97a59cbd412c223f6deff1af5a0cc66",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel in Claude Code lists the pull requests a session fixes or reviews, one row each. Each row starts with the pull request's number, then a short word about its review, then the title. Before this change that word folded two facts into one: whether the pull request is a draft, and which review labels it carries. It printed the first of <code>reviewing</code>, <code>draft</code>, <code>clean</code>, and <code>ready</code> that applied.",
+   "That order hid a sign-off. On <code>main</code>, a draft means its author is still working, and the <code>clean</code> label means a review signed the current head off. A held draft, which is a signed-off pull request whose author is building a change on it, keeps <code>clean</code>, but the row printed <code>draft</code> because the draft check came first.",
+   "The change gives each fact its own place on the row:",
+   "<ul><li><b>The number shows the draft state.</b> It is drawn dim while the pull request is a draft and in the default color once it is ready for review.</li><li><b>The word shows the labels alone.</b> It is <code>reviewing</code> in yellow while a review runs, <code>clean</code> in green once a review signed the head off, and absent before any review.</li></ul>",
+   "The collapsed line, such as <code>+ #12 #14</code>, has only numbers, so it keeps its colors: red when a conflict, a change request, or failing checks hold the pull request back, green for a ready pull request labeled <code>clean</code>, and yellow otherwise."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Row</b>: one pull request's line in the panel.</li><li><b>Review label</b>: the <code>reviewing</code> or <code>clean</code> GitHub label that <code>project review setup</code> and <code>project review publish</code> manage.</li><li><b>Held draft</b>: a pull request a review signed off, converted back to a draft while its author builds a change.</li><li><b>Dim</b>: the <code>dimColor</code> prop on the number's <code>Button</code>, which draws it faint at rest and full strength under the pointer or the focus.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review at <code>8e92848</code>, clean, with no finding threads.</li><li>It listed two documentation suggestions: say that the collapsed line is green for <code>clean</code> without <code>reviewing</code>, and call the word \"review label\" in the two lines of <code>docs/plugins.md</code> and the one code comment that still say \"review state\".</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "row",
+   "title": "The row's number and word",
+   "kicker": "How the panel draws a pull request's draft state and review labels",
+   "intro": [
+    "The row is drawn in <code>hooks/register.tsx</code>. <code>reviewLabel</code>, which replaces <code>reviewState</code>, reads only the pull request's labels and returns no word when neither review label is present. The draft state moves to the number's <code>Button</code> as <code>dimColor</code>.",
+    "<code>statusColor</code>, which colors the collapsed line, gives the same color as before for every combination of draft state and labels. It now spells out the draft check that <code>reviewState</code> used to make for it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Splits the row's review word from its draft state: <code>reviewLabel</code> reads labels only, and the number dims on a draft.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1217,
+       "text": "Labels arrive lowercased from <code>toPullRequest</code> in <code>hooks/github.ts</code>, so a <code>Reviewing</code> label still matches. Traced the parse and the existing fixture for pull request 14."
+      },
+      {
+       "kind": "verify",
+       "line": 1231,
+       "text": "Walked each combination of draft state and labels through the old <code>reviewState</code> color and the new expression. Only a ready pull request whose word is <code>clean</code> is green in both."
+      },
+      {
+       "kind": "verify",
+       "line": 2380,
+       "text": "<code>dimColor</code> is a documented <code>Button</code> prop in Claude Code's declarations, and <code>hooks/typecheck.sh</code> passes. A loading row has <code>isDraft: false</code> from <code>loadingOf</code>, so it is not dimmed."
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Rewrites the row test to check the word, its color, and whether the number is dim, for four pull requests.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Removing <code>dimColor={pr.isDraft}</code> turns the test red with <code>isDim: false</code> for the held draft. The test still looks for <code>draft</code> and <code>ready</code> beside each title, so the old words coming back also fail it."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The panel's documentation",
+   "kicker": "The plugin guide's description of a row and of the collapsed line",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the row and the collapsed line. The change rewrites both descriptions and drops the <code>draft</code> word from the two example panels, keeping their column widths."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Describes the dim number and the label-only word, and the collapsed line's colors.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 573,
+       "text": "\"Carries only the <code>clean</code> label\" means <code>clean</code> without <code>reviewing</code>. A pull request with an unrelated label, such as <code>bug</code>, is still green. The review listed rewording this as a suggestion."
+      },
+      {
+       "kind": "context",
+       "text": "Two unchanged lines, about the loading row and where the drawer starts, still call the word the \"review state\". The review listed renaming them as a suggestion."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
