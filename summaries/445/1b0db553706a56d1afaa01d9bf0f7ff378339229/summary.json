@@ -1,0 +1,74 @@
+{
+ "version": 1,
+ "name": "Agent messages plan",
+ "project": "agent-messages",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 445,
+  "title": "Plan agent registration and messages between sessions",
+  "head": "1b0db553706a56d1afaa01d9bf0f7ff378339229",
+  "headRef": "plan-agent-messages",
+  "base": "9574ab64cb96b335463fbeeee8646621cf7252fd",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's watch daemon is a background process, one per machine, that writes event lines into a folder for each agent session. Projector's mod submits those lines to a Claude Code session as a prompt, and the Codex adapter queues them into a Codex thread. Today only the daemon writes there, and only about pull requests, so two agent sessions have no way to talk to each other except through you.",
+   "This pull request adds a plan, at <code>status: ready</code>, for a <code>project agent</code> command group. A session registers a name and a one-line summary, which is also how it agrees to receive messages. Another session of yours lists it and sends it a message. The message text is stored in the recipient's folder, and a one-line <code>PEER MESSAGE</code> event wakes the recipient, which reads the text with <code>project agent read</code>. That command prints a notice that the message carries none of the user's authority.",
+   "A second layer, the relay, carries the same records between machines through hidden refs in the repository the session works in, in public and private repositories alike. You turn it on with <code>project agent key init</code>, which writes an X25519 private key to <code>~/.projector.toml</code> that you copy to your other machines. Every record is encrypted with ChaCha20 and authenticated with HMAC-SHA256 before it leaves the machine, and a daemon opens only records that your own key sealed. Commands never push. They queue ref changes in a local outbox, and the daemon pushes each repository's queue in one push per pass, so a slow pre-push hook never blocks an agent.",
+   "The plan defers messages to other people's agents, key rotation, addressing subagents, and showing peers in Projector's panel."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Session folder.</b> The directory under the watch state root where the daemon keeps one session's subscriptions and events.</li><li><b>Live.</b> A registered session is live while <code>watch.delivery</code> reports anything but <code>none</code> for it. For Codex, that is while its registration lease holds.</li><li><b>Relay.</b> The cross-machine layer: presence refs under <code>refs/projector/agents/</code> and one inbox ref per message under <code>refs/projector/inbox/</code>, each holding one sealed record.</li><li><b>Seal.</b> Encrypting a record with ChaCha20 and authenticating it with HMAC-SHA256, under keys agreed with X25519 between the sender's key and the recipient's public key.</li><li><b>Outbox.</b> A per-repository file of queued ref changes that only the daemon pushes.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><b>First review.</b> It found that the Codex queue drops a message-keyed line and that an idle Codex agent never counts as live. Both are fixed at this head, and their threads are resolved.</li><li><b>This review.</b> It found two gaps in the sealed relay that the plan added since then: the outbox's single checkout per repository, and the private key printed where agents can capture it. Both are open.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The agent messages plan",
+   "kicker": "One new plan: register, list, send, read, and reply, then a sealed relay across machines",
+   "intro": [
+    "The plan is the only file in the change. Read § 2.1 for the commands on one machine, § 2.2 for the relay and its sealing, § 2.3 for the records and settings, and § 2.4 for the source files the build will touch. § 4 lists the acceptance tests, and § 7 splits the build into a two-layer stack, local messages first.",
+    "A message is one more event line, so <code>watch.append_events</code> picks the transport. The Claude mod needs no change. The Codex adapter changes only so that <code>codex_watch.eligible</code> keeps a line keyed to a message. The daemon's <code>scan</code> changes so that an idle registered agent keeps it running."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/readme.md",
+     "note": "The new plan, at <code>status: ready</code> and <code>priority: now</code>.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "§ 6 defers each of its four open questions explicitly, and <code>project check</code> reports the plans valid at this head."
+      },
+      {
+       "kind": "verify",
+       "line": 173,
+       "text": "§ 2.1 step 5's <code>eligible</code> change keeps the message. With <code>eligible</code> patched as described in a scratch copy at this head, <code>prepare</code> batched a <code>[\"message\", &lt;id&gt;]</code> line whose record exists, and <code>acknowledge</code> returned it."
+      },
+      {
+       "kind": "flag",
+       "line": 235,
+       "text": "§ 2.2 step 3: the outbox keeps one <code>cwd</code> per repository, but <code>send</code> writes each commit in the sender's own checkout. A commit from a second clone, or a recorded <code>cwd</code> that was removed, makes the one batched push fail with <code>bad object</code> before any ref lands, so every relayed change for that repository is stuck. A two-refspec push in a temporary repository reproduced it."
+      },
+      {
+       "kind": "flag",
+       "line": 206,
+       "text": "§ 2.2 step 1: <code>key init</code> prints the private key line, and the existing <code>project config list</code> would print <code>agent.key</code> too. An agent that runs either command captures the key in its transcript, and § 3 says a leaked key exposes every past record that stays on GitHub."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
