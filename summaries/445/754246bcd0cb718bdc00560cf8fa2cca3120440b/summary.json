@@ -1,0 +1,73 @@
+{
+ "version": 1,
+ "name": "Agent messages plan",
+ "project": "agent-messages",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 445,
+  "title": "Plan agent registration and messages between sessions",
+  "head": "754246bcd0cb718bdc00560cf8fa2cca3120440b",
+  "headRef": "plan-agent-messages",
+  "base": "9574ab64cb96b335463fbeeee8646621cf7252fd",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's watch daemon is a background process, one per machine, that writes event lines into a folder for each agent session. Projector's mod submits those lines to a Claude Code session as a prompt, and the Codex adapter queues them into a Codex thread. Today only the daemon writes there, and only about pull requests, so two agent sessions have no way to talk to each other except through you.",
+   "This pull request adds a plan, at <code>status: ready</code>, for a <code>project agent</code> command group. A session registers a name and a one-line summary, which is also how it agrees to receive messages. Another session signed in as the same GitHub login lists it and sends it a message. The message text is stored in the recipient's folder, and a one-line <code>PEER MESSAGE</code> event wakes the recipient, which reads the text with <code>project agent read</code>. That command prints a notice that the message carries none of the user's authority.",
+   "A second layer, the relay, carries the same records between machines through hidden refs in the working repository. It runs only when <code>agent.relay</code> is on and <code>gh</code> reports the repository <code>PRIVATE</code>, because GitHub keeps a deleted ref's commits viewable by SHA. The plan defers messages to other logins' agents, addressing subagents, and showing peers in Projector's panel."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Session folder.</b> The directory under the watch state root where the daemon keeps one session's subscriptions and events.</li><li><b>Live and lapsed.</b> Whether a session's deliverer is still renewing it. The plan uses both words without defining them.</li><li><b>Relay.</b> The cross-machine layer: presence refs under <code>refs/projector/agents/</code> and one inbox ref per message under <code>refs/projector/inbox/</code>.</li><li><b>Codex queue.</b> <code>codex_watch</code>'s per-session list of keyed event lines, which it batches into one Codex prompt.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first review of this head opened two findings. Both say the plan's claim that neither host integration changes does not hold for Codex: the Codex queue drops an event whose key is not a pull request's, and the daemon does not count an idle Codex agent as live. It also suggested two wording fixes.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The agent messages plan",
+   "kicker": "One new plan: register, list, send, read, and reply, then a relay across machines",
+   "intro": [
+    "The plan is the only file in the change. Read § 2.1 for the commands on one machine, § 2.2 for the relay, § 2.3 for the records each writes, and § 2.4 for the source files the build will touch. § 4 lists the acceptance tests, and § 7 splits the build into a two-layer stack, local messages first.",
+    "The design rests on one claim: a message is one more event line, so <code>watch.append_events</code> picks the transport and neither the Claude mod nor the Codex adapter changes. Check that claim against <code>src/projector/codex_watch.py</code> and the daemon's <code>scan</code> in <code>src/projector/watch.py</code> as you read."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/agent-messages/readme.md",
+     "note": "The new plan, at <code>status: ready</code> and <code>priority: now</code>.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "§ 6 defers each of its three open questions explicitly, and <code>project check</code> reports the plans valid at this head."
+      },
+      {
+       "kind": "flag",
+       "line": 148,
+       "text": "§ 2.1 step 5: the Codex adapter does not deliver this line unchanged. <code>codex_watch.prepare</code> keeps only items that <code>eligible</code> accepts, and <code>eligible</code> rejects a <code>[\"message\", &lt;id&gt;]</code> key, so the message is dropped from the queue on the first dispatch. Appending such an event and calling <code>prepare</code> at this head returned nothing and emptied the queue."
+      },
+      {
+       "kind": "flag",
+       "line": 201,
+       "text": "§ 2.2 step 3: the daemon counts a Codex session as live only while it has a subscription or a queued item, and it stops after 5 minutes with nothing live. An idle registered Codex agent is therefore never polled for, never delivered to, and treated as lapsed, so step 6 deletes its presence ref."
+      },
+      {
+       "kind": "context",
+       "line": 66,
+       "text": "This sentence says the daemon polls with <code>git ls-remote</code>, while § 2.2 step 3 and § 5 say <code>git fetch</code>. The detailed steps use the fetch."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
