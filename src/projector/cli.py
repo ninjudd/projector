@@ -427,6 +427,19 @@ def parser() -> argparse.ArgumentParser:
         help="serve the GitHub Pages site at this custom domain, such as https://projects.example.com, and link the "
         "repository's website to it",
     )
+    review_choice = init.add_mutually_exclusive_group()
+    review_choice.add_argument(
+        "--require-review",
+        action="store_true",
+        default=None,
+        help="this repository relies on Projector alone: require a clean review of the current head before "
+        "merge, through a ruleset, the clean label's workflow, and the status on heads already signed off "
+        "(default: ask at a terminal)",
+    )
+    review_choice.add_argument(
+        "--no-require-review", action="store_false", dest="require_review",
+        help="record that this repository requires no Projector review before merge, so init stops asking",
+    )
     rule_choice = init.add_mutually_exclusive_group()
     rule_choice.add_argument(
         "--publish-rule",
@@ -604,7 +617,8 @@ def parser() -> argparse.ArgumentParser:
                               help="remove what the sweep finds; without it, only list it")
     add_output(review_prune)
     review_publish = review_commands.add_parser(
-        "publish", help="check and submit the review, set draft state, and delete the start comment"
+        "publish", help="check and submit the review, sign the head off with its labels and status, and delete the "
+                        "start comment"
     )
     review_gate = review_commands.add_parser(
         "gate", help="run the repository's review.gate command in the review's worktree, on a trusted head only"
@@ -624,8 +638,10 @@ def parser() -> argparse.ArgumentParser:
                             "give, for fix-pr to implement or defer"
     )
     review_hold = review_commands.add_parser(
-        "hold", help="hold your pull request in draft while changes for it are built, and end the hold once they "
-                     "are pushed"
+        "hold", help="convert your pull request to a draft while you build a change for it"
+    )
+    review_ready = review_commands.add_parser(
+        "ready", help="mark your pull request ready for review once your work on it is done"
     )
     for command in (review_status, review_suggestions):
         command.add_argument("pr", type=int, help="the pull request number")
@@ -636,18 +652,10 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--state-dir", type=Path,
                              help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
         add_output(command)
-    review_hold.add_argument("pr", type=int, help="the pull request number")
-    review_hold.add_argument("--repo", help="owner/name (default: this checkout's origin, never a review set up here)")
-    add_output(review_hold)
-    hold_mode = review_hold.add_mutually_exclusive_group(required=True)
-    hold_mode.add_argument("--add", action="append", metavar="TEXT",
-                           help="a change about to be built: post the hold listing it, or add it to the open hold, "
-                                "then mark the pull request draft (repeatable)")
-    # A bare --drop appends None, so the default is a list: None alone would read as --drop never given.
-    hold_mode.add_argument("--drop", action="append", nargs="?", default=[], metavar="TEXT",
-                           help="a listed change that will not be built: remove it, and end the hold when none is "
-                                "left (repeatable); with no TEXT, end the hold, which you do once the push that "
-                                "carries every listed change succeeds, since the command does not check it")
+    for command in (review_hold, review_ready):
+        command.add_argument("pr", type=int, help="the pull request number")
+        command.add_argument("--repo", help="owner/name (default: this checkout's origin, never a review set up here)")
+        add_output(command)
     for command in (review_setup, review_move, review_census, review_settle, review_release, review_finish,
                     review_publish, review_gate, review_interdiff):
         command.add_argument("pr", type=int, help="the pull request number")
@@ -1501,20 +1509,40 @@ def review_suggestions(root: Path, arguments: argparse.Namespace) -> int:
     return 0
 
 
-def review_hold(arguments: argparse.Namespace) -> int:
-    """`review hold`: post, extend, shrink, or end your hold on a pull request in `--repo`, or else in the
-    repository of the checkout it runs in."""
-    repo = review.named_repo(arguments.repo, Path.cwd(), "to hold a pull request in")
-    result = review.hold(repo, arguments.pr, arguments.add or [], arguments.drop or [])
-    print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.hold_lines(result)))
+def review_draft(arguments: argparse.Namespace) -> int:
+    """`review hold` and `review ready`: convert your pull request in `--repo`, or else in the repository of
+    the checkout it runs in, to a draft, or mark it ready for review."""
+    hold = arguments.review_command == "hold"
+    repo = review.named_repo(arguments.repo, Path.cwd(),
+                             "to hold a pull request in" if hold else "to mark a pull request ready in")
+    result = review.set_draft(repo, arguments.pr, hold)
+    print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.draft_lines(result)))
     return 0
+
+
+def labels_enabled(checkout: Path) -> bool:
+    """Whether `review.labels` lets the review commands change the `reviewing` and `clean` labels; on unless the
+    checkout's configuration turns it off, or when there is no checkout to read it from."""
+    try:
+        return load_config(review.checkout_root(checkout)).get("review.labels") is not False
+    except ProjectorError:
+        return True
+
+
+def label_lines(labeled: Optional[dict]) -> list[str]:
+    """What a review command did to the labels, and a warning when GitHub refused the change."""
+    if not labeled:
+        return []
+    lines = [f"added the {name} label" for name in labeled["added"]]
+    lines += [f"removed the {name} label" for name in labeled["removed"]]
+    return lines + ([f"warning: {labeled['warning']}"] if labeled["warning"] else [])
 
 
 def run_review(arguments: argparse.Namespace) -> int:
     if arguments.review_command == "rules":
         return review_rules(arguments.json_output)
-    if arguments.review_command == "hold":
-        return review_hold(arguments)
+    if arguments.review_command in ("hold", "ready"):
+        return review_draft(arguments)
     root = review.state_dir(arguments.state_dir)
     if arguments.review_command == "status":
         return review_status(root, arguments)
@@ -1527,7 +1555,8 @@ def run_review(arguments: argparse.Namespace) -> int:
     loop = review.valid_loop(arguments.loop)
     command = arguments.review_command
     if command == "finish":
-        result = review.finish(root, arguments.pr, arguments.repo, arguments.model, arguments.force, Path.cwd())
+        result = review.finish(root, arguments.pr, arguments.repo, arguments.model, arguments.force, Path.cwd(),
+                               labels_enabled(Path.cwd()))
         print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.finish_lines(result)))
         return 0
     if command == "setup":
@@ -1538,7 +1567,7 @@ def run_review(arguments: argparse.Namespace) -> int:
             configured = None
         state = review.setup(root, arguments.pr, checkout, arguments.repo, arguments.reviewer,
                              configured if isinstance(configured, str) else None,
-                             arguments.model, loop, arguments.rereview, arguments.replace)
+                             arguments.model, loop, arguments.rereview, arguments.replace, labels_enabled(checkout))
     else:
         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
         if command == "census":
@@ -1585,7 +1614,7 @@ def run_review(arguments: argparse.Namespace) -> int:
             enabled = incremental_enabled(Path(state["checkout"])) if arguments.incremental else True
             result = review.publish(paths, loop, arguments.verdict, arguments.body,
                                     arguments.threads, arguments.covered, arguments.second_verdict, allow,
-                                    arguments.incremental, enabled)
+                                    arguments.incremental, enabled, labels_enabled(Path(state["checkout"])))
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:
@@ -1596,14 +1625,15 @@ def run_review(arguments: argparse.Namespace) -> int:
                 if newest and newest["review"] != result["review_id"]:
                     print(f"the newest verdict on the head is {newest['model']}'s {newest['verdict']}, "
                           f"review {newest['review']}")
-                kept = "it stays a draft" if result["draft"] is not None else "the change requests stand"
                 if newest and newest["verdict"] == "clean" and result["open_threads"]:
                     count = result["open_threads"]
-                    print(f"{count} finding thread{' is' if count == 1 else 's are'} open on the head, so {kept}")
-                if newest and newest["verdict"] == "clean" and result["held"]:
-                    print(f"the author's hold comment is open, so {kept} until the author deletes it")
-                if result["draft"] is not None:
-                    print("marked draft" if result["draft"] else "marked ready")
+                    print(f"{count} finding thread{' is' if count == 1 else 's are'} open on the head, so it is not "
+                          "signed off")
+                print(f"{result['sha'][:7]} is {'signed off' if result['signed_off'] else 'not signed off'}")
+                if result["status"]:
+                    print(f"posted {review.REVIEW_CONTEXT} {result['status']} on {result['sha'][:7]}")
+                for line in label_lines(result["labels"]):
+                    print(line, file=sys.stderr if line.startswith("warning: ") else sys.stdout)
                 if result["dismissed"]:
                     print("dismissed change request " + ", ".join(map(str, result["dismissed"])))
             return 0
@@ -1631,6 +1661,8 @@ def run_review(arguments: argparse.Namespace) -> int:
         print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
         if command == "setup" and arguments.replace is not None:
             print(f"deleted start comment {arguments.replace}, which this review replaces")
+        for line in label_lines(state.get("labels")):
+            print(line, file=sys.stderr if line.startswith("warning: ") else sys.stdout)
         for path in state["removed"]:
             print(f"removed the earlier head's worktree {path}")
     return 0
@@ -2254,6 +2286,95 @@ def publish_rule_enabled(root: Path) -> bool:
     return load_config(root).setting("review.publish_rule") is not False
 
 
+REQUIRE_QUESTION = "Does this repository rely on Projector alone to sign off pull requests before merge? [y/N] "
+
+
+def init_required_check(arguments: argparse.Namespace, root: Path, files: list[FileAction]) -> None:
+    """`init`'s setup of the required review check, as docs/projects/review-on-ready/readme.md § 2.5 describes,
+    adding the label workflow to `files`. It acts only in a repository whose origin is on GitHub, asks only at a
+    terminal while `review.require_check` is unset and the default branch does not require the check yet, never
+    removes anything, and writes nothing else when GitHub refuses the ruleset."""
+    answer = arguments.require_review
+    try:
+        repo = review.origin_repo(root)
+    except review.ReviewError:
+        if answer:
+            raise InitError("--require-review sets up a GitHub repository's ruleset, and this checkout has no "
+                            "origin on GitHub", files) from None
+        return
+    config = load_config(root)
+    recorded = config.get("review.require_check")
+    if answer is False or answer is None and recorded is False:
+        if answer is False and recorded is not False:
+            record_required_check(root, False)
+        return
+    if answer is None and recorded is None and not sys.stdin.isatty():
+        # Without a person to ask, an unanswered question changes nothing.
+        return
+    try:
+        required = review.requires_check(repo, review.default_branch(repo))
+    except review.ReviewError as error:
+        if answer is None and recorded is None:
+            # Nobody asked for the check, so a GitHub that cannot be read only skips the question.
+            print(f"project: did not ask whether {repo} requires a Projector review before merge, because its "
+                  f"default branch's rules could not be read: {error}; run `project init --require-review` to set "
+                  "the check up", file=sys.stderr)
+            return
+        raise InitError(f"could not read the rules of {repo}'s default branch: {error}", files) from error
+    if answer is None and recorded is None and not required:
+        print(REQUIRE_QUESTION, end="", file=sys.stderr, flush=True)
+        if sys.stdin.readline().strip().lower() not in ("y", "yes"):
+            record_required_check(root, False)
+            return
+        answer = True
+    if not required:
+        try:
+            review.create_ruleset(repo)
+        except review.ReviewError as error:
+            raise InitError(f"could not create the {review.RULESET_NAME} ruleset on {repo}: {error}; creating a "
+                            "ruleset takes admin access, and a private repository needs a paid plan for rulesets, so "
+                            f"an admin of {repo} can run `project init --require-review`", files) from error
+        print(f"project: created the {review.RULESET_NAME} ruleset, which requires {review.REVIEW_CONTEXT} on "
+              f"{repo}'s default branch", file=sys.stderr)
+        username = config.get("review.username")
+        try:
+            reviewer = review.reviewer_login(None, username if isinstance(username, str) else None,
+                                             review.authenticated_login())
+            for posted in review.backfill_statuses(repo, reviewer):
+                print(f"project: posted {review.REVIEW_CONTEXT} success on #{posted['number']} at "
+                      f"{posted['sha'][:7]}, which a review already signed off", file=sys.stderr)
+        except review.ReviewError as error:
+            # The ruleset is in place, and a rerun finds the check required and posts nothing, so say what to do.
+            print(f"project: could not post {review.REVIEW_CONTEXT} on the open pull requests a review already "
+                  f"signed off: {error}; review each one that should merge again, with `project review setup "
+                  "<number> --rereview` and then `project review publish`, which posts the status", file=sys.stderr)
+    if config.get("review.labels") is not False:
+        files.append(write_clean_workflow(root))
+    if answer and recorded is not True:
+        record_required_check(root, True)
+
+
+def record_required_check(root: Path, value: bool) -> None:
+    change = write_value(root / CONFIG_NAME, "review.require_check", value)
+    print(f"project: {change.action} review.require_check = {format_value(value)} in {change.path}", file=sys.stderr)
+
+
+def write_clean_workflow(root: Path) -> FileAction:
+    """Write the workflow that takes `clean` off a pushed pull request, keeping one edited by hand."""
+    path = root / review.CLEAN_WORKFLOW_PATH
+    text = review.clean_workflow_text()
+    if path.is_file():
+        if path.read_text(encoding="utf-8") == text:
+            return FileAction(review.CLEAN_WORKFLOW_PATH, "unchanged")
+        return FileAction(review.CLEAN_WORKFLOW_PATH, "kept",
+                          f"{review.CLEAN_WORKFLOW_PATH} has changes Projector did not write, so it was left alone")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return FileAction(review.CLEAN_WORKFLOW_PATH, "created",
+                      f"commit {review.CLEAN_WORKFLOW_PATH} to the default branch through a pull request; GitHub "
+                      "runs the workflow only from there")
+
+
 def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[str]:
     """Whether `init` adds Projector's permission rules ("add"), only reports them ("report"), or leaves them
     (None).
@@ -2276,6 +2397,9 @@ def init_permissions_only(arguments: argparse.Namespace) -> int:
 
     if arguments.site or arguments.url:
         raise UsageError("--site and --url set up a repository's site; run `project init` inside that repository")
+    if arguments.require_review is not None:
+        flag = "--require-review" if arguments.require_review else "--no-require-review"
+        raise UsageError(f"{flag} answers for a repository; run `project init` inside that repository")
     publish_rule = publish_rule_mode(arguments, Path.cwd())
     files = allow_commands(apply=publish_rule == "add") if publish_rule else []
     emit_files(files, arguments.json_output, readme=False)
@@ -2387,6 +2511,7 @@ def run(arguments: argparse.Namespace) -> int:
                               "to stop setting it up", file=sys.stderr)
                     if needs_admin:
                         print(f"project: to finish setting it up, {error.steps()}", file=sys.stderr)
+            init_required_check(arguments, root, files)
         except InitError as error:
             # Say what was written before saying what could not be.
             if not arguments.json_output:

@@ -58,6 +58,8 @@ SETTINGS: dict[str, type] = {
     "review.gate": str,
     "review.incremental": bool,
     "review.summarize": bool,
+    "review.labels": bool,
+    "review.require_check": bool,
     "fix.resolve_human_threads": bool,
     "watch.auto_start": bool,
     "watch.interval": int,

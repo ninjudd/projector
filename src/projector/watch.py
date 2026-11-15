@@ -83,13 +83,15 @@ PROJECTOR_REVIEW = re.compile(r"^<!-- projector-review ", re.M)
 
 # The query § 2.6 of the watch-daemon plan gives, which Projector's panel reads from the cache too, with
 # the fields the events name: `mergedAt` and `mergeCommit` for MERGED, each comment's id and times for a
-# live start comment, and `nameWithOwner` for the review state's path. `rateLimit` reports what it cost.
+# live start comment, and `nameWithOwner` for the review state's path. The panel reads `labels` for the
+# `reviewing` and `clean` labels a review sets. `rateLimit` reports what it cost.
 QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
   repository(owner:$o,name:$r){ visibility nameWithOwner
     pullRequest(number:$n){
       number title url body state isDraft reviewDecision mergeable updatedAt mergedAt mergeCommit { oid }
       headRefOid headRefName baseRefName author { login }
       additions deletions changedFiles
+      labels(first:20){ nodes{ name } }
       commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
       comments(last:100){ nodes{ databaseId author{ login } authorAssociation body createdAt updatedAt } }
       reviews(last:100){ nodes{ author{ login } authorAssociation submittedAt body } }
@@ -1335,18 +1337,20 @@ class Pass:
         # This machine sees only its own sessions, so a review running elsewhere shows only as its live start
         # comment, and the event says nothing about a machine it cannot see. Anyone can comment on a public
         # repository, so only an account whose review would count can hold the event back. Held back, the head
-        # keeps its key, so it is still announced only once.
-        draft = f"draft:{number}:{head}"
-        if pr.get("isDraft") and not reviewers:
+        # keeps its key, so it is still announced only once. A draft waits on its author, not on a review.
+        unreviewed = f"unreviewed:{number}:{head}"
+        if not pr.get("isDraft") and not reviewers \
+                and not head_sign_off(pr, head, self.daemon.operator or "", visibility)["signed_off"]:
             starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
                       for comment, _ in self.live_starts(pr, head)]
             if review.counted_reviews(starts, self.daemon.operator or "", visibility):
-                if draft in announced:
-                    kept[draft] = announced[draft]
+                if unreviewed in announced:
+                    kept[unreviewed] = announced[unreviewed]
             else:
-                standing(draft,
-                         f"DRAFT {ref} head={head[:8]}: no review has signed off this head, and no session on this "
-                         f"machine reviews it — tell the user that no session on this machine reviews {ref}",
+                standing(unreviewed,
+                         f"UNREVIEWED {ref} head={head[:8]}: ready for review, its head is not signed off, and no "
+                         f"session on this machine reviews it — tell the user that no session on this machine "
+                         f"reviews {ref}",
                          None)
         conflict = f"conflict:{number}:{head}"
         mergeable = pr.get("mergeable") or "UNKNOWN"
@@ -1416,10 +1420,10 @@ class Pass:
         head = pr.get("headRefOid") or ""
         branch = pr.get("headRefName") or "?"
         action = f"run review-pr on {ref} in subagent review-{number} with --loop {session}"
-        verdicts = head_verdicts(pr, head, repository.get("visibility"))
-        reviewed = any(found["login"] == reviewer and found["model"] == model for found in verdicts)
-        counted = sorted((found for found in verdicts if found["counted"]), key=lambda found: found["at"])
-        newest = counted[-1]["verdict"] if counted else None
+        signed = head_sign_off(pr, head, reviewer, repository.get("visibility"))
+        reviewed = any(found["model"] == model and (found["login"] or "").lower() == reviewer
+                       for found in signed["models"])
+        newest = signed["newest"]["verdict"] if signed["newest"] else None
         unresolved = [thread for thread in nodes(pr, "reviewThreads") if not thread.get("isResolved")]
         answer = newest_answer(unresolved)
         key = f"{head}:{answer if answer is not None else '-'}"
@@ -1428,6 +1432,18 @@ class Pass:
         announced = record.get("announced")
         if known is None and reviewed:
             known = head
+        if pr.get("isDraft") and line.number is None:
+            # A draft's author is still working on it, so a repository subscription waits until it is marked
+            # ready, and then announces what no review has read: a pull request never announced, a head newer
+            # than the last one known, or, at once, a head announced before it was drafted. A review that stalls
+            # meanwhile is reported once, so its subagent still hears to stop.
+            lines = []
+            if (pull, name) in self.stalled_roles and not reviewed:
+                lines.append(f"NEW HEAD {ref} ({branch}) head={head[:7]}, its last review stalled while the pull "
+                             f"request is a draft — stop subagent review-{number}, and review it once it is ready")
+            self.states[session].data["review"][label] = {
+                "head": known, "flag": flag, "announced": None if reviewed or announced is None and not lines else 0}
+            return lines
         lines = []
         if (pull, name) in self.stalled_roles and not reviewed:
             lines.append(f"NEW HEAD {ref} ({branch}) head={head[:7]}, its last review stalled — stop subagent "
@@ -1438,32 +1454,18 @@ class Pass:
             lines.append(f"NEW HEAD {ref} ({branch}): {known[:7]} -> {head[:7]}, needs an exact-head review — {action}")
         if lines:
             known, flag, announced = head, key, self.now
-        if is_held(pr):
-            flag = "held"
-        elif not lines and known == head:
-            waiting = None
-            if not unresolved or answer is not None:
-                author = login(pr).lower()
-                operator = (self.daemon.operator or "").lower()
-                if pr.get("isDraft") and (not operator or author == operator):
-                    waiting = "draft"
-                elif newest == "changes-requested":
-                    waiting = "changes-requested"
-            if waiting is None:
+        if not lines and known == head:
+            if newest != "changes-requested" or unresolved and answer is None:
                 flag = "-"
             else:
                 if not unresolved:
                     seen, now_key, how = flag.split(":")[0], head, "with every thread resolved"
                 else:
                     seen, now_key, how = flag, key, "and the author replied on an open finding"
-                if flag == "held":
-                    how = "now that its hold is lifted"
                 if seen != now_key:
-                    asked = (f"changes requested {how}; re-review this head, and a clean one is a COMMENT, never an "
-                             "approval") if waiting == "changes-requested" else \
-                        f"still a draft {how}; re-review this head and sign off if clean"
-                    lines.append(f"RESPONDED {ref} ({branch}) head={head[:7]}: {asked} — run review-pr on {ref} with "
-                                 f"--rereview in subagent review-{number} with --loop {session}")
+                    lines.append(f"RESPONDED {ref} ({branch}) head={head[:7]}: changes requested {how}; re-review "
+                                 "this head, and a clean one is a COMMENT, never an approval — run review-pr on "
+                                 f"{ref} with --rereview in subagent review-{number} with --loop {session}")
                     flag = key
         if reviewed:
             announced = None
@@ -1522,18 +1524,20 @@ def snippet(text: str) -> str:
     return f": {text}" if text.strip() else ""
 
 
-def head_verdicts(pr: dict, head: str, visibility: Optional[str]) -> list[dict]:
-    """Every Projector verdict on the head: when, which, by which model and login, and whether it counts as
-    `project review status` counts another account's."""
-    found = []
-    for node in nodes(pr, "reviews"):
-        marker = review.verdict_marker(node.get("body") or "")
-        if marker is None or marker.sha != head:
-            continue
-        found.append({"at": node.get("submittedAt") or "", "verdict": marker.verdict,
-                      "model": review.identity(marker.model), "login": login(node).lower(),
-                      "counted": review.review_counts(node.get("authorAssociation"), visibility)})
-    return found
+def verdict_rows(pr: dict) -> list[dict]:
+    """The Projector reviews among the reviews the daemon's query returns, in the shape `review.verdicts` gives,
+    so the daemon decides a head's sign-off as `project review publish` does."""
+    return [{"id": None, "url": None, "at": node.get("submittedAt"), "login": login(node),
+             "association": node.get("authorAssociation"), "body": node.get("body") or ""}
+            for node in nodes(pr, "reviews") if review.verdict_marker(node.get("body") or "")]
+
+
+def head_sign_off(pr: dict, head: str, reviewer: str, visibility: Optional[str]) -> dict:
+    """`review.sign_off` of the head from the reviewer's verdicts and those of every account `project review
+    status` counts, and the open Projector finding threads in the daemon's query."""
+    open_threads = sum(1 for thread in nodes(pr, "reviewThreads") if not thread.get("isResolved")
+                       and review.FINDING_MARKER in ((nodes(thread, "first") or [{}])[0].get("body") or ""))
+    return review.sign_off(head, review.counted_reviews(verdict_rows(pr), reviewer, visibility), open_threads)
 
 
 def newest_answer(unresolved: list[dict]) -> Optional[int]:
@@ -1548,13 +1552,6 @@ def newest_answer(unresolved: list[dict]) -> Optional[int]:
         if not ANSWERED.search(last.get("body") or ""):
             answers.append(last.get("databaseId") or 0)
     return max(answers) if answers else None
-
-
-def is_held(pr: dict) -> bool:
-    """Whether the pull request's author has a hold comment open on it; anyone else's holds nothing."""
-    author = login(pr).lower()
-    return bool(author) and any(login(comment).lower() == author and review.HOLD_MARKER in (comment.get("body") or "")
-                                for comment in nodes(pr, "comments"))
 
 
 def closing_actions(repo: str, number: int, names: list[str]) -> str:

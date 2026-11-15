@@ -391,6 +391,12 @@ def rereview(number: int, session: str) -> str:
     return f"run review-pr on acme/app#{number} with --rereview in subagent review-{number} with --loop {session}"
 
 
+def responded(session: str, how: str = "with every thread resolved", number: int = 1, ref: str = "feature",
+              head: str = SHA_A) -> str:
+    return (f"RESPONDED acme/app#{number} ({ref}) head={head[:7]}: changes requested {how}; re-review this head, "
+            f"and a clean one is a COMMENT, never an approval — {rereview(number, session)}")
+
+
 def new_pr(number: int, ref: str, session: str, head: str = SHA_A) -> str:
     return (f"NEW PR acme/app#{number} ({ref}) head={head[:7]}: unreviewed, needs an exact-head review — "
             f"{review_action(number, session)}")
@@ -404,8 +410,20 @@ def new_head(number: int, ref: str, old: str, new: str, session: str) -> str:
 NO_REVIEWER = ", and no session on this machine reviews it"
 
 
+def unreviewed(number: int, head: str = SHA_A) -> str:
+    return (f"UNREVIEWED acme/app#{number} head={head[:8]}: ready for review, its head is not signed off{NO_REVIEWER} "
+            f"— tell the user that no session on this machine reviews acme/app#{number}")
+
+
 class FixRoleTests(WatchCase):
     """What the `fix` owner hears."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # A fixed pull request is a draft its author is working on unless a test says otherwise, so only the tests
+        # of review coverage hear UNREVIEWED.
+        made = self.github.pull_request
+        self.github.pull_request = lambda number, **fields: made(number, **{"draft": True, **fields})
 
     def fixer(self, *lines: str) -> None:
         self.subscribe("fixer", *lines)
@@ -427,7 +445,7 @@ class FixRoleTests(WatchCase):
     def test_reports_every_kind_of_outstanding_work_on_a_fixed_pull_request(self) -> None:
         marker = f"<!-- projector-finding v=1 priority=P1 sha={SHA_A} -->\nP1 nil deref"
         self.github.pull_request(
-            1, draft=True, decision="CHANGES_REQUESTED",
+            1, draft=False, decision="CHANGES_REQUESTED",
             changes={"author": {"login": "teammate"}, "body": "Please split this", "commit": {"oid": SHA_A}},
             threads=[thread("T1", body=marker), thread("T0", resolved=True)],
             reviews=[rest_review(77, who="codex", body="Body-only concern"),
@@ -438,17 +456,29 @@ class FixRoleTests(WatchCase):
         events = self.cycle()
 
         self.assertEqual([
-            f"DRAFT acme/app#1 head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user that no "
-            "session on this machine reviews acme/app#1",
+            unreviewed(1),
             f"VERDICT acme/app#1 CHANGES_REQUESTED on aaaaaaaa [teammate]: Please split this — {fix_action(1)}",
             f"FINDING acme/app#1 src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}",
             f"REVIEW acme/app#1 by [codex] on aaaaaaaa: Body-only concern — {fix_action(1)}",
         ], events["fixer"])
-        self.assertEqual({f"draft:1:{SHA_A}", f"verdict:teammate:{SHA_A}", "T1", "review:77"},
+        self.assertEqual({f"unreviewed:1:{SHA_A}", f"verdict:teammate:{SHA_A}", "T1", "review:77"},
                          set(self.state("fixer")["fix"]["acme/app#1 fix"]))
 
-    def test_a_draft_another_session_reviews_asks_the_fixer_for_nothing(self) -> None:
+    def test_a_draft_or_a_signed_off_head_waits_on_no_review(self) -> None:
+        # A draft waits on its author, and a clean newest verdict with no open finding has signed its head off.
         self.github.pull_request(1, draft=True)
+        self.github.pull_request(2, draft=False, verdicts=[projector_verdict(SHA_A, "clean")])
+        self.github.pull_request(3, draft=False, verdicts=[projector_verdict(SHA_A, "clean")],
+                                 threads=[finding_thread()])
+        self.fixer("acme/app#1 fix", "acme/app#2 fix", "acme/app#3 fix")
+
+        events = self.cycle()
+
+        self.assertEqual([unreviewed(3), f"FINDING acme/app#3 src/x.py:3 [bugbot]: A nil deref — {fix_action(3)}"],
+                         events["fixer"], "an open finding keeps #3's clean verdict from signing it off")
+
+    def test_a_ready_pull_request_another_session_reviews_asks_the_fixer_for_nothing(self) -> None:
+        self.github.pull_request(1, draft=False)
         self.fixer("acme/app#1 fix")
         self.subscribe("reviewer", f"acme/app#1 review {MODEL} operator")
         self.renew("reviewer")
@@ -464,11 +494,12 @@ class FixRoleTests(WatchCase):
                 "createdAt": at, "updatedAt": at,
                 "body": f"📽️ Reviewing\n<!-- projector-start v=1 sha={sha} model={MODEL} -->"}
 
-    def test_a_draft_another_machine_is_reviewing_asks_the_fixer_for_nothing(self) -> None:
-        self.github.pull_request(1, draft=True, comments=[self.start_comment()])
-        self.github.pull_request(2, draft=True, comments=[self.start_comment(SHA_B)])
-        self.github.pull_request(3, draft=True, comments=[self.start_comment(association="NONE")])
-        self.github.pull_request(4, draft=True, comments=[self.start_comment(association="CONTRIBUTOR", who="operator")])
+    def test_a_pull_request_another_machine_is_reviewing_asks_the_fixer_for_nothing(self) -> None:
+        self.github.pull_request(1, draft=False, comments=[self.start_comment()])
+        self.github.pull_request(2, draft=False, comments=[self.start_comment(SHA_B)])
+        self.github.pull_request(3, draft=False, comments=[self.start_comment(association="NONE")])
+        self.github.pull_request(4, draft=False,
+                                 comments=[self.start_comment(association="CONTRIBUTOR", who="operator")])
         self.fixer("acme/app#1 fix", "acme/app#2 fix", "acme/app#3 fix", "acme/app#4 fix")
 
         events = self.cycle()
@@ -476,31 +507,26 @@ class FixRoleTests(WatchCase):
         # A live start comment for the head means a review runs somewhere. #2's is for another head, and on a public
         # repository #3's comes from an account whose review would not count, so both are reported. #4's comes from
         # the operator, whose own reviews count whatever their association, as they do for a verdict.
-        self.assertEqual([
-            f"DRAFT acme/app#{number} head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user "
-            f"that no session on this machine reviews acme/app#{number}"
-            for number in (2, 3)
-        ], events["fixer"])
+        self.assertEqual([unreviewed(2), unreviewed(3)], events["fixer"])
 
-    def test_a_review_elsewhere_does_not_announce_a_draft_head_twice(self) -> None:
-        self.github.pull_request(1, draft=True)
+    def test_a_review_elsewhere_does_not_announce_an_unreviewed_head_twice(self) -> None:
+        self.github.pull_request(1, draft=False)
         self.fixer("acme/app#1 fix")
         announced = self.cycle()["fixer"]
-        self.github.pull_request(1, draft=True, comments=[self.start_comment()])
+        self.github.pull_request(1, draft=False, comments=[self.start_comment()])
         self.advance(900)
         reviewing = self.cycle()["fixer"]
-        self.github.pull_request(1, draft=True, verdicts=[projector_verdict(SHA_A)])
+        self.github.pull_request(1, draft=False, verdicts=[projector_verdict(SHA_A)])
         self.advance(900)
         reviewed = self.cycle()["fixer"]
         self.advance(900)
         later = self.cycle()["fixer"]
 
-        drafts = [line for line in announced + reviewing + reviewed + later if line.startswith("DRAFT")]
-        self.assertEqual(1, len(drafts), drafts)
-        self.assertEqual(drafts, [line for line in announced if line.startswith("DRAFT")])
+        self.assertEqual([unreviewed(1)], announced)
+        self.assertEqual([], [line for line in reviewing + reviewed + later if line.startswith("UNREVIEWED")])
 
-    def test_a_session_that_fixes_and_reviews_a_pull_request_hears_no_draft(self) -> None:
-        self.github.pull_request(1, draft=True)
+    def test_a_session_that_fixes_and_reviews_a_pull_request_hears_no_unreviewed(self) -> None:
+        self.github.pull_request(1, draft=False)
         self.fixer("acme/app#1 fix", f"acme/app#1 review {MODEL} operator")
 
         events = self.cycle()
@@ -590,7 +616,7 @@ class FixRoleTests(WatchCase):
         ], events["fixer"])
 
     def test_a_later_pass_repeats_only_after_the_renotify_interval(self) -> None:
-        self.github.pull_request(1, draft=True, threads=[thread("T1")], reviews=[rest_review(5)])
+        self.github.pull_request(1, draft=False, threads=[thread("T1")], reviews=[rest_review(5)])
         self.fixer("acme/app#1 fix")
 
         first = self.cycle()["fixer"]
@@ -670,7 +696,7 @@ class FixRoleTests(WatchCase):
         self.assertEqual({}, self.state("fixer")["fix"]["acme/app#1 fix"])
 
     def test_a_merged_pull_request_is_announced_once_and_its_lines_end(self) -> None:
-        self.github.pull_request(1, draft=True, threads=[thread("T1")])
+        self.github.pull_request(1, draft=False, threads=[thread("T1")])
         self.fixer("acme/app#1 fix", "!acme/app#1 review claude-opus-5-5 operator")
         self.assertEqual(2, len(self.cycle()["fixer"]))
 
@@ -803,6 +829,74 @@ class ReviewRoleTests(WatchCase):
         self.assertEqual({"head": SHA_A, "flag": f"{SHA_A}:-", "announced": self.clock.wall()},
                          self.state("reviewer")["review"][f"acme/app#1 review {MODEL}"])
 
+    def watch_repository(self) -> None:
+        self.subscribe("reviewer", f"acme/app review {MODEL} operator")
+        self.renew("reviewer")
+
+    def test_a_draft_waits_for_ready_under_a_repository_subscription(self) -> None:
+        self.github.pull_request(1, draft=True)
+        self.watch_repository()
+        drafted = self.cycle()["reviewer"]
+        self.github.pull_request(1, draft=True, head=SHA_B)
+        pushed = self.cycle()["reviewer"]
+        self.advance(3600)
+        later = self.cycle()["reviewer"]
+        self.github.pull_request(1, head=SHA_B)
+        ready = self.cycle()["reviewer"]
+        again = self.cycle()["reviewer"]
+
+        self.assertEqual(([], [], []), (drafted, pushed, later), "the author is still working on a draft")
+        self.assertEqual([new_pr(1, "feature", "reviewer", SHA_B)], ready)
+        self.assertEqual([], again)
+
+    def test_a_draft_under_a_repository_subscription_asks_for_no_re_review(self) -> None:
+        changes = projector_verdict(SHA_A)
+        self.github.pull_request(1, verdicts=[changes], threads=[thread("T1")])
+        self.watch_repository()
+        self.cycle()
+
+        self.github.pull_request(1, draft=True, verdicts=[changes], threads=[thread("T1", resolved=True)])
+        drafted = self.cycle()["reviewer"]
+        self.github.pull_request(1, verdicts=[changes], threads=[thread("T1", resolved=True)])
+        ready = self.cycle()["reviewer"]
+
+        self.assertEqual([], drafted)
+        self.assertEqual([responded("reviewer")], ready)
+
+    def test_marking_a_draft_ready_announces_at_once_a_head_no_review_read(self) -> None:
+        self.github.pull_request(1)
+        self.watch_repository()
+        announced = self.cycle()["reviewer"]
+        self.github.pull_request(1, draft=True)
+        drafted = self.cycle()["reviewer"]
+        self.github.pull_request(1)
+        ready = self.cycle()["reviewer"]
+
+        self.assertEqual([new_pr(1, "feature", "reviewer")], announced)
+        self.assertEqual([], drafted)
+        self.assertEqual([f"NEW HEAD acme/app#1 (still open) (feature) head=aaaaaaa: still needs an exact-head review "
+                          f"— {review_action(1, 'reviewer')}"], ready, "the head waited without a review")
+
+    def test_a_head_pushed_to_a_draft_is_a_new_head_once_it_is_ready(self) -> None:
+        clean = [projector_verdict(SHA_A, "clean")]
+        self.github.pull_request(1, verdicts=clean)
+        self.watch_repository()
+        known = self.cycle()["reviewer"]
+        self.github.pull_request(1, draft=True, head=SHA_B, verdicts=clean)
+        drafted = self.cycle()["reviewer"]
+        self.github.pull_request(1, head=SHA_B, verdicts=clean)
+        ready = self.cycle()["reviewer"]
+
+        self.assertEqual(([], []), (known, drafted))
+        self.assertEqual([new_head(1, "feature", SHA_A, SHA_B, "reviewer")], ready)
+
+    def test_a_pull_request_subscription_announces_a_draft(self) -> None:
+        # Running review-pr on a pull request asks for its review now, draft or not.
+        self.github.pull_request(1, draft=True)
+        self.reviewer(1)
+
+        self.assertEqual([new_pr(1, "feature", "reviewer")], self.cycle()["reviewer"])
+
     def test_reports_a_moved_head_then_a_response_once_per_head(self) -> None:
         self.github.pull_request(1, head=SHA_B, draft=True)
         self.reviewer(1)
@@ -811,26 +905,37 @@ class ReviewRoleTests(WatchCase):
         self.github.pull_request(1, head=SHA_A, draft=True)
         moved = self.cycle()["reviewer"]
         suppressed = self.cycle()["reviewer"]
-        self.github.pull_request(1, head=SHA_A, draft=True, threads=[thread("T1")])
+        changes = projector_verdict(SHA_A)
+        self.github.pull_request(1, head=SHA_A, draft=True, verdicts=[changes], threads=[thread("T1")])
         under_review = self.cycle()["reviewer"]
-        self.github.pull_request(1, head=SHA_A, draft=True, threads=[thread("T1", resolved=True)])
-        responded = self.cycle()["reviewer"]
+        self.github.pull_request(1, head=SHA_A, draft=True, verdicts=[changes], threads=[thread("T1", resolved=True)])
+        answered = self.cycle()["reviewer"]
         quiet = self.cycle()["reviewer"]
-        self.github.pull_request(1, head=SHA_A, verdicts=[projector_verdict(SHA_A)], threads=[thread("T2")])
+        self.github.pull_request(1, head=SHA_A, verdicts=[changes], threads=[thread("T2")])
         reopened = self.cycle()["reviewer"]
         flag = self.state("reviewer")["review"][f"acme/app#1 review {MODEL}"]["flag"]
-        self.github.pull_request(1, head=SHA_A, verdicts=[projector_verdict(SHA_A)],
-                                 threads=[thread("T2", resolved=True)])
-        cross_author = self.cycle()["reviewer"]
+        self.github.pull_request(1, head=SHA_A, verdicts=[changes], threads=[thread("T2", resolved=True)])
+        answered_again = self.cycle()["reviewer"]
 
         self.assertEqual([new_head(1, "feature", SHA_B, SHA_A, "reviewer")], moved)
         self.assertEqual(([], [], [], []), (suppressed, under_review, quiet, reopened))
         self.assertEqual("-", flag)
-        self.assertEqual([f"RESPONDED acme/app#1 (feature) head=aaaaaaa: still a draft with every thread resolved; "
-                          f"re-review this head and sign off if clean — {rereview(1, 'reviewer')}"], responded)
-        self.assertEqual([f"RESPONDED acme/app#1 (feature) head=aaaaaaa: changes requested with every thread "
-                          f"resolved; re-review this head, and a clean one is a COMMENT, never an approval — "
-                          f"{rereview(1, 'reviewer')}"], cross_author)
+        self.assertEqual([responded("reviewer")], answered)
+        self.assertEqual([responded("reviewer")], answered_again)
+
+    def test_a_head_with_no_change_request_waits_on_nothing(self) -> None:
+        # Draft state is the author's, so an unchanged draft whose threads are all resolved needs no re-review.
+        self.github.pull_request(1, head=SHA_A, draft=True)
+        self.reviewer(1)
+        self.cycle()
+
+        self.github.pull_request(1, head=SHA_A, draft=True, threads=[thread("T1", resolved=True)])
+        unsettled = self.cycle()["reviewer"]
+        self.github.pull_request(1, head=SHA_A, draft=True, verdicts=[projector_verdict(SHA_A, "clean")],
+                                 threads=[thread("T1", resolved=True)])
+        clean = self.cycle()["reviewer"]
+
+        self.assertEqual(([], []), (unsettled, clean))
 
     def test_reports_an_author_reply_on_an_open_finding_once_per_reply(self) -> None:
         finding = {"databaseId": 11, "body": FINDING}
@@ -840,24 +945,23 @@ class ReviewRoleTests(WatchCase):
             found["first"]["nodes"] = [finding]
             return found
 
-        self.github.pull_request(1, head=SHA_A, draft=True, threads=[finding_on()])
+        changes = [projector_verdict(SHA_A)]
+        self.github.pull_request(1, head=SHA_A, threads=[finding_on()])
         self.reviewer(1)
         self.cycle()
 
         decline = {"databaseId": 12, "body": "<!-- projector-reply v=1 --> Declined: the caller checks for nil."}
-        self.github.pull_request(1, head=SHA_A, draft=True, threads=[finding_on(decline)])
+        self.github.pull_request(1, head=SHA_A, verdicts=changes, threads=[finding_on(decline)])
         replied = self.cycle()["reviewer"]
         quiet = self.cycle()["reviewer"]
         kept = {"databaseId": 13, "body": "<!-- projector-verify v=1 result=kept --> The second caller does not."}
-        self.github.pull_request(1, head=SHA_A, draft=True, threads=[finding_on(decline, kept)])
+        self.github.pull_request(1, head=SHA_A, verdicts=changes, threads=[finding_on(decline, kept)])
         after_verify = self.cycle()["reviewer"]
         again = {"databaseId": 14, "body": "Fair, but that caller is dead code."}
-        self.github.pull_request(1, head=SHA_A, draft=True, threads=[finding_on(decline, kept, again)])
+        self.github.pull_request(1, head=SHA_A, verdicts=changes, threads=[finding_on(decline, kept, again)])
         replied_again = self.cycle()["reviewer"]
 
-        self.assertEqual([f"RESPONDED acme/app#1 (feature) head=aaaaaaa: still a draft and the author replied on an "
-                          f"open finding; re-review this head and sign off if clean — {rereview(1, 'reviewer')}"],
-                         replied)
+        self.assertEqual([responded("reviewer", "and the author replied on an open finding")], replied)
         self.assertEqual([], quiet)
         self.assertEqual([], after_verify, "the reviewer's own verify reply is not an answer")
         self.assertEqual(1, len(replied_again))
@@ -888,70 +992,32 @@ class ReviewRoleTests(WatchCase):
 
         self.assertEqual([], self.cycle()["reviewer"])
 
-    def test_a_hold_is_never_a_response_and_lifting_it_is_one(self) -> None:
-        hold = {"author": {"login": "operator"},
-                "body": f"Held in draft while the following changes are implemented:\n\n- Rename `x`\n\n"
-                        f"{review.HOLD_MARKER}\n"}
-        self.github.pull_request(1, head=SHA_A)
+    def test_converting_a_reviewed_head_to_a_draft_asks_for_nothing(self) -> None:
+        # The author holds a signed-off pull request in draft while building a change on it.
+        self.github.pull_request(1, head=SHA_A, verdicts=[projector_verdict(SHA_A, "clean")])
         self.reviewer(1)
         self.cycle()
-        self.cycle()
 
-        self.github.pull_request(1, head=SHA_A, comments=[hold])
-        posted = self.cycle()["reviewer"]
-        flag = self.state("reviewer")["review"][f"acme/app#1 review {MODEL}"]["flag"]
-        self.github.pull_request(1, head=SHA_A, draft=True, comments=[hold])
+        self.github.pull_request(1, head=SHA_A, draft=True, verdicts=[projector_verdict(SHA_A, "clean")])
         held = self.cycle()["reviewer"]
-        still_held = self.cycle()["reviewer"]
-        self.github.pull_request(1, head=SHA_A, draft=True)
-        lifted = self.cycle()["reviewer"]
-        quiet = self.cycle()["reviewer"]
+        self.github.pull_request(1, head=SHA_A, verdicts=[projector_verdict(SHA_A, "clean")])
+        ready_again = self.cycle()["reviewer"]
 
-        self.assertEqual(([], [], []), (posted, held, still_held))
-        self.assertEqual("held", flag)
-        self.assertEqual([f"RESPONDED acme/app#1 (feature) head=aaaaaaa: still a draft now that its hold is lifted; "
-                          f"re-review this head and sign off if clean — {rereview(1, 'reviewer')}"], lifted)
-        self.assertEqual([], quiet)
+        self.assertEqual(([], []), (held, ready_again))
 
-    def test_drafting_before_the_hold_lands_asks_to_re_review_the_unchanged_head(self) -> None:
-        self.github.pull_request(1, head=SHA_A)
-        self.reviewer(1)
-        self.cycle()
-        self.cycle()
-
-        self.github.pull_request(1, head=SHA_A, draft=True)
-        drafted_first = self.cycle()["reviewer"]
-
-        self.assertEqual([f"RESPONDED acme/app#1 (feature) head=aaaaaaa: still a draft with every thread resolved; "
-                          f"re-review this head and sign off if clean — {rereview(1, 'reviewer')}"], drafted_first)
-
-    def test_a_hold_seen_on_a_new_head_asks_for_it_again_once_lifted(self) -> None:
-        hold = {"author": {"login": "operator"}, "body": f"Held\n\n- Rename `x`\n\n{review.HOLD_MARKER}"}
-        self.github.pull_request(1, head=SHA_B, draft=True)
+    def test_an_old_hold_comment_silences_nothing(self) -> None:
+        # An older Projector's hold comment, left on a pull request, holds nothing for this one.
+        hold = {"author": {"login": "operator"},
+                "body": "Held in draft while the following changes are implemented:\n\n- Rename `x`\n\n"
+                        "<!-- projector-hold v=1 -->\n"}
+        self.github.pull_request(1, head=SHA_A, verdicts=[projector_verdict(SHA_A)], threads=[thread("T1")])
         self.reviewer(1)
         self.cycle()
 
-        self.github.pull_request(1, head=SHA_A, draft=True, comments=[hold])
-        moved = self.cycle()["reviewer"]
-        self.github.pull_request(1, head=SHA_A, draft=True)
-        lifted = self.cycle()["reviewer"]
+        self.github.pull_request(1, head=SHA_A, verdicts=[projector_verdict(SHA_A)], comments=[hold],
+                                 threads=[thread("T1", resolved=True)])
 
-        self.assertEqual([new_head(1, "feature", SHA_B, SHA_A, "reviewer")], moved)
-        self.assertEqual(1, len(lifted), lifted)
-        self.assertIn("still a draft now that its hold is lifted", lifted[0])
-
-    def test_a_hold_marker_from_anyone_but_the_author_holds_nothing(self) -> None:
-        planted = {"author": {"login": "passerby"}, "body": review.HOLD_MARKER}
-        self.github.pull_request(1, head=SHA_A)
-        self.reviewer(1)
-        self.cycle()
-        self.cycle()
-
-        self.github.pull_request(1, head=SHA_A, draft=True, comments=[planted])
-
-        self.assertEqual([f"RESPONDED acme/app#1 (feature) head=aaaaaaa: still a draft with every thread resolved; "
-                          f"re-review this head and sign off if clean — {rereview(1, 'reviewer')}"],
-                         self.cycle()["reviewer"])
+        self.assertEqual([responded("reviewer")], self.cycle()["reviewer"])
 
     def test_a_head_this_reviewer_already_reviewed_is_known_without_a_word(self) -> None:
         self.github.pull_request(1, ref="reviewed", verdicts=[projector_verdict(SHA_A, "clean")])
@@ -993,8 +1059,7 @@ class ReviewRoleTests(WatchCase):
         known = self.cycle()["reviewer"]
         quiet = self.cycle()["reviewer"]
 
-        self.assertEqual([f"RESPONDED acme/app#1 (feature) head=aaaaaaa: still a draft with every thread resolved; "
-                          f"re-review this head and sign off if clean — {rereview(1, 'reviewer')}"], known)
+        self.assertEqual([responded("reviewer")], known)
         self.assertEqual([], quiet)
 
     def test_a_reviewed_head_that_moved_is_a_new_head(self) -> None:
@@ -1051,12 +1116,12 @@ class ReviewRoleTests(WatchCase):
         self.assertEqual((SHA_A, SHA_A), (before["review"][label]["head"], during["review"][label]["head"]))
         self.assertEqual([new_head(1, "feature", SHA_A, SHA_B, "reviewer")], recovered)
 
-    def test_only_the_authors_own_draft_waits_on_a_clean_review(self) -> None:
-        # A review never moves another author's draft state, so that draft stays a draft after a clean review
-        # dismisses the change request it settled.
+    def test_a_clean_review_settles_a_pull_request_whoever_wrote_it(self) -> None:
+        # A review moves no draft state, so a head with a clean newest verdict waits on nothing, whether the
+        # operator or another author wrote the pull request.
         def both(**fields):
-            self.github.pull_request(1, ref="mine", draft=True, **fields)
-            self.github.pull_request(2, ref="asked", author="teammate", draft=True, **fields)
+            self.github.pull_request(1, ref="mine", **fields)
+            self.github.pull_request(2, ref="asked", author="teammate", **fields)
 
         both(requested=("operator",))
         self.subscribe("reviewer", f"acme/app review {MODEL} operator")
@@ -1076,8 +1141,7 @@ class ReviewRoleTests(WatchCase):
         self.assertEqual([], reviewed)
         self.assertEqual(2, len(pushed), pushed)
         self.assertEqual([], under_review)
-        self.assertEqual([f"RESPONDED acme/app#1 (mine) head=bbbbbbb: still a draft with every thread resolved; "
-                          f"re-review this head and sign off if clean — {rereview(1, 'reviewer')}"], settled)
+        self.assertEqual([], settled)
 
     def test_another_authors_answer_without_a_push_asks_for_a_re_review(self) -> None:
         # GitHub leaves reviewDecision null where the base branch requires no reviews, so the verdict marker is
@@ -1090,12 +1154,14 @@ class ReviewRoleTests(WatchCase):
                                      threads=threads)
             self.github.pull_request(3, ref="ready", author="teammate", verdicts=[changes], threads=outsider_threads)
             # Anyone can review a public repository, so a passerby's marker is no verdict there.
+            # The reviewer's own clean verdict came first, so only the passerby's later one could ask for changes.
+            mine = projector_verdict(SHA_A, "clean", at="2026-10-12T09:00:00Z")
             self.github.pull_request(4, ref="passerby", author="teammate", threads=outsider_threads,
-                                     verdicts=[projector_verdict(SHA_A, association="NONE")])
+                                     verdicts=[mine, projector_verdict(SHA_A, association="NONE", who="passerby")])
             # In a private one, every review counts.
             self.github.pull_request(5, repo="acme/secret", ref="private", author="teammate",
                                      threads=outsider_threads,
-                                     verdicts=[projector_verdict(SHA_A, association="NONE")])
+                                     verdicts=[mine, projector_verdict(SHA_A, association="NONE", who="passerby")])
 
         self.github.repository("acme/secret", visibility="PRIVATE")
         teammates([finding_thread()], [finding_thread()])
@@ -1435,6 +1501,28 @@ class OwnerTests(WatchCase):
         self.assertEqual(["NEW HEAD acme/app#1 (feature) head=aaaaaaa, its last review stalled — stop subagent "
                           f"review-1, then {review_action(1, 'A')}"], stalled["A"])
 
+    def test_a_review_that_stalls_on_a_draft_still_tells_its_subagent_to_stop(self) -> None:
+        # A stall is reported on the pass that finds it, so the wait for a draft must not swallow it.
+        self.github.pull_request(1)
+        self.subscribe_live("A", f"acme/app review {MODEL} operator")
+        self.cycle()
+        self.lock("A")
+        self.github.pull_request(1, draft=True)
+        self.cycle()
+
+        self.advance(1800)
+        stalled = self.cycle()
+        self.advance(60)
+        quiet = self.cycle()
+        self.github.pull_request(1)
+        ready = self.cycle()
+
+        self.assertEqual(["NEW HEAD acme/app#1 (feature) head=aaaaaaa, its last review stalled while the pull request "
+                          "is a draft — stop subagent review-1, and review it once it is ready"], stalled["A"])
+        self.assertEqual([], quiet["A"])
+        self.assertEqual([f"NEW HEAD acme/app#1 (still open) (feature) head=aaaaaaa: still needs an exact-head review "
+                          f"— {review_action(1, 'A')}"], ready["A"], "the head no review read is announced at once")
+
     def test_a_lapsed_owner_loses_its_locks_at_once(self) -> None:
         self.github.pull_request(1)
         self.subscribe_live("B", f"acme/app review {MODEL} operator")
@@ -1505,8 +1593,7 @@ class OwnerTests(WatchCase):
         answered = self.cycle()
 
         self.assertEqual([], moved["B"])
-        self.assertEqual([f"RESPONDED acme/app#1 (feature) head=aaaaaaa: still a draft with every thread resolved; "
-                          f"re-review this head and sign off if clean — {rereview(1, 'B')}"], answered["B"])
+        self.assertEqual([responded("B")], answered["B"])
         self.assertEqual([], answered["A"])
 
     def test_two_models_each_review(self) -> None:

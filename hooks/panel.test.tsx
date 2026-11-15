@@ -61,7 +61,7 @@ const pr = (number: number, title: string, fields: Record<string, unknown> = {})
 // What GitHub answers for each repository, whatever alias the query gives it.
 const BY_REPO: Record<string, Record<string, unknown>> = {
   'o/r': {
-    p1: pr(1, 'Signed-off change'),
+    p1: pr(1, 'Signed-off change', { labels: { nodes: [{ name: 'clean' }] } }),
     p2: pr(2, 'Change under review', {
       isDraft: true,
       reviewThreads: { nodes: [{ isResolved: false }] },
@@ -84,6 +84,9 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       reviewDecision: 'APPROVED',
       reviewThreads: { nodes: [{ isResolved: false }, { isResolved: false }, { isResolved: false }] },
     }),
+    p13: pr(13, 'Change waiting for review'),
+    p14: pr(14, 'Change a review is reading', { labels: { nodes: [{ name: 'Reviewing' }, { name: 'clean' }] } }),
+    p15: pr(15, 'Signed-off change held for a suggestion', { isDraft: true, labels: { nodes: [{ name: 'clean' }] } }),
   },
   'x/y': {
     p7: pr(7, 'Conflicting change', {
@@ -277,10 +280,46 @@ test('draws one line per open pull request of the session’s own loops', async 
   expect(texts.slice(0, 3).map(found => found.props.color)).toEqual(['subtle', 'subtle', 'subtle'])
   expect(await ui.find({ type: 'Text', text: /─|updated|ago|just now/ })).toBeUndefined()
   // The rows start on the line under the header, with no blank line between.
-  expect(texts.slice(3, 5).map(found => found.text)).toEqual(['ready', ''])
+  expect(texts.slice(3, 5).map(found => found.text)).toEqual(['clean', ''])
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a row says reviewing, draft, clean, or ready from its labels and draft state, and only clean is green', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#1\no/r#13\no/r#14\no/r#15\n' })
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+  const ui = await $.ui.mount(PANEL)
+
+  const states = new Map<string, [string, unknown]>()
+  for (const title of [
+    'Signed-off change',
+    'Change waiting for review',
+    'Change a review is reading',
+    'Signed-off change held for a suggestion',
+  ]) {
+    const row = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+    const at = row.indexOf(title)
+    const word = row
+      .slice(0, at)
+      .reverse()
+      .find(text => ['reviewing', 'draft', 'clean', 'ready'].includes(text))
+    const found = (await ui.findAll({ type: 'Text', text: word ?? '' })).map(text => text.props.color)
+    states.set(title, [word ?? '', found[0]])
+  }
+  expect(Object.fromEntries(states)).toEqual({
+    'Signed-off change': ['clean', 'success'],
+    'Change waiting for review': ['ready', 'warning'],
+    // A review in progress shows over a clean label an earlier head left.
+    'Change a review is reading': ['reviewing', 'warning'],
+    // A held pull request keeps its clean label, and reads as the draft its author is working on.
+    'Signed-off change held for a suggestion': ['draft', 'warning'],
+  })
   await ui.unmount()
 })
 
@@ -300,7 +339,7 @@ test('draws no background and no header on a surface that does not lay text out 
     // The panel starts with its first row.
     const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
     expect(texts.filter(text => text.includes('─') || text.startsWith('/projector') || /\d+s$/.test(text))).toEqual([])
-    expect(texts[0]).toBe('ready')
+    expect(texts[0]).toBe('clean')
     expect(texts).not.toContain('ctrl+x tab to focus')
     expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
     await ui.unmount()
@@ -3516,7 +3555,7 @@ test('collapsed pull requests list their labels in the rows’ order and status 
   await ui.press({ key: 'count:pr' })
   expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #1 #2 #10 #12')
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
-  // Ready is green and a draft yellow, as their rows' states are; a conflict, a change request, or failing checks is red.
+  // Clean is green and a draft yellow, as their rows' states are; a conflict, a change request, or failing checks is red.
   const colors = await Promise.all(['#1', '#2', '#10', '#12'].map(async text => (await label(text))?.color))
   expect(colors).toEqual(['success', 'warning', 'error', 'error'])
   expect(await Promise.all(['#1', '#2', '#10', '#12'].map(async text => (await label(text))?.inverse))).toEqual([

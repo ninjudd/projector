@@ -4110,8 +4110,10 @@ class InitSiteTests(SiteRepoCase):
         with mock.patch.object(summary, "gh_lookup", side_effect=github.lookup), \
              mock.patch.object(summary, "gh", side_effect=github.gh), \
              mock.patch.object(cli.shutil, "which", return_value="/usr/bin/gh"), \
+             mock.patch("sys.stdin.isatty", return_value=False), \
              redirect_stdout(out), redirect_stderr(err):
-            # The site is under test; the Claude Code settings step has its own tests.
+            # The site is under test; the Claude Code settings step and the required check, which asks only a
+            # person at a terminal, have their own tests.
             code = cli.main(["init", "--root", str(self.repo), "--no-publish-rule", *extra])
         return code, out.getvalue(), err.getvalue()
 
