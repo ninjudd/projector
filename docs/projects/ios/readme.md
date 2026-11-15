@@ -148,8 +148,13 @@ a pull request, and anything else is a branch.
    log's path.
 8. **Keep the build.** Clone the built app into `builds/<App>/<key>/`, where
    `<key>` names the branch or pull request, and write `build.json` beside
-   it. The clone uses `cp -c`, an APFS copy-on-write clone, so it costs no
-   time or space until a later build changes the original.
+   it. On macOS the clone uses `cp -cR`, an APFS copy-on-write clone, so it
+   costs no time or space until a later build changes the original. On any
+   other system, such as CI's Linux runner, where `cp` has no clone and
+   GNU `cp` reads `-c` as something else, it copies with
+   `shutil.copytree(symlinks=True)`. The choice follows `sys.platform`,
+   not whether `cp -c` exits zero, so a Linux run never depends on what its
+   `cp` makes of the flag.
 9. **Install and open.** Run `xcrun devicectl device install app`, then
    `device process launch --terminate-existing <bundle ID>`. When the launch
    fails because the device is locked, print
@@ -347,9 +352,15 @@ at that paragraph.
 ## 4. Acceptance criteria
 
 The tests run in temporary Git repositories with stand-in `xcrun`,
-`xcodebuild`, `gh`, and `osascript` scripts on `PATH`. The stand-ins record
-their arguments and write fixture output, including a fake `.app` folder with
-an `Info.plist`. Every fixture is synthetic.
+`xcodebuild`, `gh`, `osascript`, `open`, `log`, and `sudo` scripts on
+`PATH`, because CI runs them on Linux, which has no `log` command. The
+`sudo` stand-in runs its arguments without asking, so the device path of
+`logs` reaches the `log` stand-in. The stand-ins record their arguments and
+write fixture output, including a fake `.app` folder with an `Info.plist`
+and a fake log archive. Kept builds are copied with `shutil.copytree` on
+Linux, as § 2.2 step 8 says, and a test that patches `sys.platform` to
+`darwin` checks that a Mac clones with `cp -cR` through a `cp` stand-in.
+Every fixture is synthetic.
 
 | Do | Expect | Catches |
 | --- | --- | --- |
