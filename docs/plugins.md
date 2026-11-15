@@ -607,8 +607,9 @@ label say together, taking the first of these that applies:
 
 A pull request that is still loading is muted. The numbers work as tabs:
 click one to open that pull request's drawer below the line, with its number
-drawn inverted, and click it again to close the drawer. The pull requests stay collapsed, and only one
-drawer is open at a time, so clicking another number moves the drawer to it.
+drawn inverted, and click it again to close the drawer. The pull requests
+stay collapsed, and only one drawer is open at a time, so clicking another
+number moves the drawer to it.
 A drawer that is open when you collapse the pull requests stays open under
 their line. There it starts under the first number, where on its row it
 starts one column past the number. Click the `+` to expand the pull
