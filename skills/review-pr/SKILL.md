@@ -1093,9 +1093,14 @@ NEW HEAD acme/app#14 9f3c2a1 — run review-pr on acme/app#14 in subagent review
   cleared its lock. Stop the subagent first, then start a new one under the
   same name to review the head. The stalled subagent passes the same
   `--loop`, so the refusal that stops a reviewer whose review was handed
-  over would not stop it.
-- **`RESPONDED`** reports that the author answered every finding on an
-  unmoved head. Send it to the subagent, which re-reviews the head with
+  over would not stop it. When the pull request became a draft under a
+  repository subscription, the line says so and ends `stop subagent
+  review-<number>, and review it once it is ready`: stop the subagent and
+  start none, because the daemon announces the head again once the pull
+  request is marked ready.
+- **`RESPONDED`** reports that the author, without pushing, resolved every
+  thread or replied on an open finding of a head whose newest verdict
+  requests changes. Send it to the subagent, which re-reviews the head with
   `setup --rereview`.
 - **`MOVED`** reports that another session now owns the review. Stop the
   subagent, and run no `project review finish`, as
