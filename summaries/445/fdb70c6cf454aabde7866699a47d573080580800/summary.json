@@ -15,7 +15,7 @@
   "summary": [
    "Projector's watch daemon is a background process, one per machine, that writes event lines into a folder for each agent session. Projector's mod submits those lines to a Claude Code session as a prompt, and the Codex adapter queues them into a Codex thread. Today only the daemon writes there, and only about pull requests, so two agent sessions have no way to talk to each other except through you.",
    "This pull request adds a plan, at <code>status: ready</code>, for a <code>project agent</code> command group. A session registers a name and a one-line summary, which is also how it agrees to receive messages. Another session of yours lists it and sends it a message. The message text is stored in the recipient's folder, and a one-line <code>PEER MESSAGE</code> event wakes the recipient, which reads the text with <code>project agent read</code>. That command prints a notice that the message carries none of the user's authority.",
-   "A second layer, the relay, carries the same records between machines through hidden refs in the repository the session works in, in public and private repositories alike. You turn it on with <code>project agent key init</code>, which writes an X25519 private key to <code>~/.projector.toml</code> without printing it. You copy the key to your other machines with <code>project agent key export</code> and <code>key import</code>, which run only in a terminal, and the <code>config</code> commands redact the key wherever it appears in a value they print, including inside the <code>[agent]</code> table. Every record is encrypted with ChaCha20 and authenticated with HMAC-SHA256 before it leaves the machine, and a daemon opens only records that your own key sealed. Commands never push or write Git objects. They queue sealed records in a local outbox, and the daemon writes them as commits in one chosen checkout and pushes each repository's queue in one push per pass, so a slow pre-push hook never blocks an agent.",
+   "A second layer, the relay, carries the same records between machines through hidden Git refs, which point to commits outside normal branches. A user-created X25519 private key enables it and is copied between the user's machines. Records are encrypted with ChaCha20 and authenticated with HMAC-SHA256; accepting a sender also requires the user's own public key. Config commands redact the private key even when they print a containing table. Commands queue sealed records locally, and the daemon writes and pushes their Git objects in batches. This review flags missing constraints in that batching, daemon startup, Git identity, and scheduling.",
    "The plan defers messages to other people's agents, key rotation, addressing subagents, and showing peers in Projector's panel."
   ],
   "cards": [
@@ -26,8 +26,8 @@
    },
    {
     "id": "review",
-    "title": "Review so far",
-    "html": "<ul class=\"tight\"><li><b>First review.</b> It found that the Codex queue drops a message-keyed line and that an idle Codex agent never counts as live. Both are fixed.</li><li><b>Second review.</b> It found that one outbox checkout per repository let an unpushable change block every relayed change, and that <code>key init</code> and <code>config list</code> print the private key. Both are fixed.</li><li><b>Third review.</b> It reopened the key finding, because <code>project config get agent</code> printed the whole <code>[agent]</code> table. The plan now redacts a secret key inside every printed value.</li><li><b>This review.</b> The head is clean, and all four finding threads are resolved.</li></ul>"
+    "title": "Security and performance review",
+    "html": "<ul class=\"tight\"><li><b>Scope.</b> This is a ready plan, not the implementation. The review traces its integration against the current watch daemon, Codex adapter, Git helpers, and configuration printers.</li><li><b>Earlier findings.</b> All four earlier threads are addressed by the current plan: queue eligibility, idle liveness, writing outbox objects in the pushing checkout, and recursive secret redaction.</li><li><b>Current findings.</b> The published review requests five plan changes: public disclosure rules, transport commit identity, cold-start registration, duplicate destination refs, and relay work blocking the shared loop.</li><li><b>Cryptography.</b> The design includes both static and ephemeral X25519 terms, MAC verification before decryption, an own-sender-key check, recipient checks, age checks, and message-ID deduplication. Reviewing these requirements does not validate an implementation that this pull request does not contain.</li></ul>"
    }
   ]
  },
@@ -48,23 +48,48 @@
      "collapsed": false,
      "checks": [
       {
-       "kind": "verify",
-       "text": "§ 6 defers each of its four open questions explicitly, and <code>project check</code> reports the plans valid at this head."
+       "kind": "context",
+       "text": "§ 6 explicitly defers other people’s agents, key rotation, subagent addressing, and panel discovery. The ready status still requires the integration defects flagged below to be settled."
       },
       {
        "kind": "verify",
-       "line": 176,
-       "text": "§ 2.1 step 5's <code>eligible</code> change keeps the message. With <code>eligible</code> patched as described in a scratch copy, <code>prepare</code> batched a <code>[\"message\", &lt;id&gt;]</code> line whose record exists, and <code>acknowledge</code> returned it."
-      },
-      {
-       "kind": "verify",
-       "line": 267,
-       "text": "§ 2.2 step 3's push names only objects its checkout has. In a temporary repository, two commits written in one clone after the queuing worktree was removed both landed in one <code>git push --porcelain</code>. A lease push whose expected commit existed only on <code>origin</code> landed too."
+       "line": 175,
+       "text": "The existing Codex queue filters messages through <code>eligible</code> in prepare, acknowledge, drain, and dispatch. The plan now explicitly changes that common filter for message keys whose records exist."
       },
       {
        "kind": "verify",
        "line": 234,
-       "text": "§ 2.2 step 1's redaction reaches every printed value. At this head, the CLI prints configuration values only in <code>run_config</code>'s <code>get</code> and <code>list</code>, <code>change_config</code>, <code>report_override</code>, and the <code>review.require_check</code> notice. The plan passes each one that can carry <code>agent.key</code> through <code>config.redact</code>, tables included, and § 4 tests <code>config get agent</code> and <code>config unset agent</code>."
+       "text": "The existing CLI prints configuration values in get/list, change_config, and report_override; the plan routes these through recursive redaction, including a whole <code>[agent]</code> table."
+      },
+      {
+       "kind": "flag",
+       "line": 382,
+       "text": "§ 2.4 permits a private repository name in a public relay message, conflicting with the supplied repository policy against putting private names in public repositories; § 3 repeats the exception."
+      },
+      {
+       "kind": "flag",
+       "line": 272,
+       "text": "§ 2.2 seals the tree contents but leaves Git author and committer headers unspecified. A temporary commit-tree reproduction still contained the configured login and email in both headers."
+      },
+      {
+       "kind": "flag",
+       "line": 94,
+       "text": "§ 2.1 does not start the daemon during registration. Existing idle Codex hooks start it only when pull-request subscriptions or queued events exist, so a first agent registration can remain unpublished."
+      },
+      {
+       "kind": "flag",
+       "line": 274,
+       "text": "§ 2.2 appends each change and sends one refspec per change. Two queued registrations for the same presence ref produce duplicate destinations; a temporary bare repository rejected that push."
+      },
+      {
+       "kind": "flag",
+       "line": 378,
+       "text": "§ 2.4 puts relay work in daemon passes. The current tick waits for each pass before Codex dispatch, and the reused Git helper has no timeout, so a slow pre-push hook can suspend unrelated delivery."
+      },
+      {
+       "kind": "verify",
+       "line": 527,
+       "text": "The Python suite passed at this head (1,272 tests; 108 skipped in the initial environment without Node). Project check, both plugin validations, 227 hook tests, and diff check passed. Hook type-check passed after the installed Node runtime was added to PATH."
       }
      ]
     }
