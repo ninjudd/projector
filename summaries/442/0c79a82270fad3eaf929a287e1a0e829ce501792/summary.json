@@ -1,0 +1,146 @@
+{
+ "version": 1,
+ "name": "Review label events",
+ "project": "watch-daemon",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 442,
+  "title": "Report review label changes to the fixer and reload the panel on events",
+  "head": "0c79a82270fad3eaf929a287e1a0e829ce501792",
+  "headRef": "report-label-changes",
+  "base": "7e501d3e8510c9ad8dbe2b834e86dae901ca5de7",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's watch daemon is one process per machine that polls the pull requests agent sessions subscribe to, and appends one-line events to each session's <code>events</code> file. A session that pushed a pull request owns its <code>fix</code> role and hears about review work on it, such as an open finding thread. Projector's reviews mark their outcome with two labels: <code>reviewing</code> while a review runs, and <code>clean</code> once a review signs the current head off.",
+   "Before this change, the daemon fetched the labels only so Projector's panel in Claude Code could draw them. No event reported a change to them, so the fixing session never heard that a review had started or signed its head off. This change adds a <code>LABEL</code> event for the <code>fix</code> owner, such as <code>LABEL acme/app#12 +clean head=9f3c2a1b: … tell the user it is clean</code>. It also makes the panel reload as soon as it takes a batch of events, so an open drawer shows threads that match the events rather than ones up to 30 seconds old.",
+   "<ul><li><b>Edge-triggered, not level-triggered.</b> The daemon's other <code>fix</code> events repeat while their work stands. A <code>LABEL</code> line fires once per change, because it reports news rather than work.</li><li><b>A silent first look.</b> The first time an owner sees a pull request, and the first time after the role moves to a new owner, the daemon records the labels and sends nothing. An upgrade, or a subscription to a pull request that is already <code>clean</code>, sends no burst of lines.</li><li><b>Fixers only.</b> A session that owns the <code>review</code> role hears nothing, because its own reviews set the labels.</li></ul>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review asked for the in-progress watch-daemon plan to record the <code>LABEL</code> event and the reload on events. The plan now does, and that thread is resolved.</li><li>Both earlier suggestions are done: <code>docs/plugins.md</code> says the reload is a whole poll, and the <code>route_labels</code> docstring gives a reason that holds without the panel.</li><li>One open finding: a 107-character line in the reflowed <code>docs/plugins.md</code> paragraph, against the repository's rule to match the surrounding wrapping.</li><li>One suggestion: say in the plan's § 9.4 that the reload runs only while the panel is shown.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "The daemon reports label changes",
+   "kicker": "A LABEL event for the fix owner, and the record it compares against",
+   "intro": [
+    "Each pass, <code>route_fix</code> works out what the session that owns a pull request's <code>fix</code> role should hear. It now ends by calling <code>route_labels</code>, which compares the pull request's <code>clean</code> and <code>reviewing</code> labels with the ones the session last saw and sends a <code>LABEL</code> line for each one added or removed.",
+    "The labels the session last saw live in a new <code>labels</code> section of the session's <code>state.json</code>, keyed like the <code>fix</code> record. <code>Pass.save</code> drops a session's entries for every role it no longer owns, and now applies that to <code>labels</code> too. So a closed pull request, or a role handed to another session, leaves no record behind, and the next owner starts with a silent first look."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "A label edit changes the ETag of the pull request's REST resource, so <code>refresh</code> queries the pull request again on the next pass rather than waiting for the full query. Traced through <code>Pass.refresh</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Adds <code>LABEL_CHANGES</code>, the text each change sends, <code>route_labels</code>, and the <code>labels</code> state section.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "Labels are lowercased before they are compared, as <code>review.label_names</code> does, because GitHub treats label names without regard to case.",
+       "line": 1426
+      },
+      {
+       "kind": "verify",
+       "text": "The new record is written before the comparison returns, so the next pass compares against this pass's labels and a renotify interval does not repeat a line. The 900-second step in the first new test checks it.",
+       "line": 1429
+      },
+      {
+       "kind": "context",
+       "text": "The filter that drops a non-owned role's record now covers <code>labels</code>. The pull request's testing section says the closed-pull-request and handover tests fail without it.",
+       "line": 965
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "Five tests: the change sequence, a non-review label, a <code>review</code> owner, a close, and a handover."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "The panel reloads when it takes events",
+   "kicker": "One refresh call in the mod's event delivery",
+   "intro": [
+    "Projector's mod for Claude Code delivers the daemon's events. On each 5-second tick it takes the lines from the session's <code>events</code> file and submits them as one prompt. While the panel is shown, it also draws each pull request from the daemon's cache on each tick, but asks GitHub for the open drawer's threads only every 30 seconds.",
+    "<code>deliverEvents</code> now calls <code>refresh</code> as soon as it takes a batch. The daemon writes a pull request's cache during its pass and appends the events only at the end of the pass, so the reload draws what the events report. <code>refresh</code> runs a whole poll by default, which reads the drawer's threads, <code>panel.background</code>, and any pull request an earlier watcher tracks."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "<code>refresh</code> does nothing while the panel is hidden, and its <code>inFlight</code> guard queues a request that arrives during a tick's own refresh, so the two never run at once."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Calls <code>refresh</code> once a batch of events is taken, before it is submitted.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The pull request's testing section says the new panel test fails without this call. Between polls a tick asks GitHub for no threads, so the count would stay at one.",
+       "line": 1047
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Opens a drawer, writes a cache update and a <code>LABEL</code> event between polls, and expects a second thread query on the next tick."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the fix-pr skill",
+   "kicker": "What the new event means, what a fixing session does with it, and the plan's record of both",
+   "intro": [
+    "<code>docs/cli.md</code> adds the event to the daemon's event table and explains the silent first look. <code>skills/fix-pr/SKILL.md</code> tells a fixing session that a <code>LABEL</code> line is not work: on <code>+clean</code> it tells the user, and it does nothing for the other changes. <code>docs/plugins.md</code> says the open drawer also reads its threads when the panel takes events, and that this runs a whole poll.",
+    "The watch-daemon plan, still <code>in-progress</code>, records the same decisions. Its § 2.7 event table gains a <code>LABEL</code> row, its § 2.2 file table names the <code>labels</code> record, § 9.3 says the 30-second poll also runs on events, and a new § 9.4 records the event, the record, the silent first look, and the reload."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "A <code>LABEL</code> row in the event table, and a paragraph on when the daemon records labels."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "When the open drawer reads its threads, and that taking events runs a whole poll.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 457,
+       "text": "This line runs to 107 characters in a paragraph wrapped at about 75, and the paragraph now ends on the single word <code>equivalent.</code>. The repository asks a Markdown edit to match the wrapping around it."
+      }
+     ]
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "What a fixing session does with a <code>LABEL</code> line."
+    },
+    {
+     "path": "docs/projects/watch-daemon/readme.md",
+     "note": "The plan's event table, file table, and settled decisions in § 9.3 and the new § 9.4.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1068,
+       "text": "Each statement in § 9.4 matches <code>route_labels</code>, <code>Pass.save</code>, and <code>deliverEvents</code> at this head. One gap is listed as a suggestion: the reload runs only while the panel is shown, which § 9.4 does not say."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
