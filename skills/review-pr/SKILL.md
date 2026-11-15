@@ -574,8 +574,8 @@ resolved, so none of them is typed. It posts a `COMMENT`, even where
 `review.allow_approve` is `true`, because an incremental review vouches only
 that the change since a reviewed head needed nothing more. It then signs the
 head off, as any clean verdict does, and on another author's pull request it
-ends the body with "A human approval is what remains." It refuses, exiting 1 and keeping the lock so you can run the full
-review on the same setup, when:
+ends the body with "A human approval is what remains." It refuses, exiting 1
+and keeping the lock so you can run the full review on the same setup, when:
 
 - a rule fails, such as a thread opened since `interdiff` ran;
 - the head moved since `setup`, in which case run
@@ -961,8 +961,9 @@ Report the review as done only after `publish` exits 0. Report the SHA, the
 verdict, the review id, how many threads it opened and suggestions it
 listed, the head of the full review an incremental review builds on, whether
 the head is signed off and a newer verdict that decided it when `publish`
-names one, and the summary's URL when the next section publishes one. Before a `clean` verdict, settle
-every earlier finding first; `publish` refuses one while a finding is open.
+names one, and the summary's URL when the next section publishes one. Before
+a `clean` verdict, settle every earlier finding first; `publish` refuses one
+while a finding is open.
 Never resolve another reviewer's thread, resolve a finding you have not
 verified at this head, claim a newer SHA was reviewed, or merge.
 

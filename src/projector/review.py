@@ -916,12 +916,18 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
     labeled = None
     if labels:
         present = label_names(pr)
-        stale = set()
+        stale, unread = set(), None
         if CLEAN_LABEL in present:
-            newest = newest_verdicts(sha, verdicts(repo, number, reviewer, repo_visibility(pr)))
-            if not newest or newest[0]["verdict"] != "clean":
-                stale = {CLEAN_LABEL}
+            # The start comment is posted and the lock held, so a failed read only keeps the label as it is.
+            try:
+                newest = newest_verdicts(sha, verdicts(repo, number, reviewer, repo_visibility(pr)))
+            except ReviewError as exc:
+                unread = f"kept the clean label on {repo}#{number}, because its verdicts could not be read: {exc}"
+            else:
+                if not newest or newest[0]["verdict"] != "clean":
+                    stale = {CLEAN_LABEL}
         labeled = change_labels(repo, number, present, {REVIEWING_LABEL}, stale, token)
+        labeled["warning"] = labeled["warning"] or unread
     ensure_loop(root, loop)
     kept, removed = remove_superseded(paths, earlier.get("checkout"), earlier.get("worktrees", []), worktree)
     state = {
