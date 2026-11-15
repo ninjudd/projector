@@ -451,9 +451,10 @@ account's hourly GraphQL quota, because GitHub charges for each thread's
 first comment. So the panel asks for them in a `gh api graphql` call of
 their own, for that one pull request, when the drawer opens, every 30
 seconds while it stays open, and as soon as the panel takes the daemon's
-events. The daemon writes its cache before its events, so the panel reloads
-its lines then too. It skips the call when the pull request has no
-unresolved thread. The skills never depend on the panel, and Codex has no
+events. Taking events runs a whole poll, so `panel.background` and an
+earlier watcher's query run then too. The daemon writes its cache before its
+events, so the panel reloads its lines then as well. It skips the threads
+call when the pull request has no unresolved thread. The skills never depend on the panel, and Codex has no
 equivalent.
 
 A session that started a `watch-threads.sh` or `watch-prs.sh` watcher under
