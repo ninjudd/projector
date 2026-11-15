@@ -274,13 +274,21 @@ and `watch status` says why. Only the daemon pushes, and it pushes without
    checks session folders. When an outbox holds changes, the daemon picks
    the chosen checkout and writes each new record there as a blob, a tree,
    and a parentless commit, with `git hash-object -w`, `git mktree`, and
-   `git commit-tree`. Then it pushes them all from that checkout in one
-   `git push --porcelain origin` with one refspec per change and a
-   `--force-with-lease=<ref>:<old>` for each moved ref. Because the daemon
-   writes every commit in the checkout it pushes from, just before the
-   push, the push never names an object that checkout lacks. That holds
-   when agents queue from two clones of one repository, and when the
-   worktree that queued a change has since been removed. It
+   `git commit-tree`. Sealing hides only the blob, and `commit-tree` would
+   otherwise copy the checkout's `user.name` and `user.email` into the
+   author and committer headers and sign the commit when `commit.gpgSign`
+   is set. So the daemon runs it with `--no-gpg-sign`, with
+   `GIT_AUTHOR_NAME` and `GIT_COMMITTER_NAME` set to `projector`,
+   `GIT_AUTHOR_EMAIL` and `GIT_COMMITTER_EMAIL` set to `projector@invalid`,
+   and `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE` set to `@0 +0000`, and
+   with the message `projector relay`. Nothing about the session goes
+   anywhere outside the sealed blob. Then it pushes them all from that
+   checkout in one `git push --porcelain origin` with one refspec per
+   change and a `--force-with-lease=<ref>:<old>` for each moved ref.
+   Because the daemon writes every commit in the checkout it pushes from,
+   just before the push, the push never names an object that checkout
+   lacks. That holds when agents queue from two clones of one repository,
+   and when the worktree that queued a change has since been removed. It
    reads each ref's result from the porcelain output, removes the changes
    that landed, and keeps the rest for the next pass, with the error in
    `watch status`. A slow pre-push hook therefore delays only the daemon,
@@ -514,7 +522,7 @@ config files standing in for two machines.
 | Run `tests/test_crypto.py`. | X25519 matches RFC 7748 § 6.1, ChaCha20 matches RFC 8439 § 2.4.2, and HKDF matches RFC 5869's first test case. A record sealed and opened round-trips. Changing one byte of the ciphertext, the tag, either public key, or the MAC key makes `open` fail. Catches a wrong primitive or a tag that covers too little. |
 | Register A on machine 1 and B on machine 2, with no `agent.key` on either. Run one pass on each machine. | No ref appears on `origin`. `list` shows `local only` with `project agent key init`. Catches a relay that runs before you opt in. |
 | Put the same `agent.key` on both machines. Run one pass on each, then send from A to B and pass again on machine 2. | Each machine lists the other's agent with its machine name. B receives one `PEER MESSAGE` line, and the inbox ref is gone from `origin`. Catches presence that never publishes and a receipt that never deletes. |
-| After that exchange, read every object in `origin` with `git cat-file --batch-all-objects --batch`. | None contains A's or B's name, summary, session ID, or login, or the message text. Catches plaintext reaching the repository. |
+| Give both checkouts a `user.name` of the sender's login, a private `user.email`, and `commit.gpgSign = true`. After that exchange, read every object in `origin` with `git cat-file --batch-all-objects --batch`. | None contains A's or B's name, summary, session ID, login, or configured email, or the message text, and every relay commit has the `projector <projector@invalid>` author and committer, the fixed date, the fixed message, and no signature. Catches plaintext reaching the repository, and a commit header that publishes the checkout's identity. |
 | Push four records under machine 2's key ID: one sealed with another key, one with a flipped ciphertext byte, one unsealed, and a valid message copied to another agent's ref. Pass on machine 2. | None is delivered. All four refs are deleted, and `watch status` counts four rejected. Catches forgery, tampering, a missing seal, and a redirected message. |
 | Push a delivered message's record again, and one whose `sent_at` is 8 days old. | Neither is delivered. Catches replay. |
 | Run `key init` with standard output captured, then run `config list`, `config list --json`, `config get agent.key`, `config get agent.key --json`, `config get agent`, `config get agent --json`, `config unset agent.key --user --json`, and, after `key import` restores the key, `config unset agent --user --json`. | No output contains the key or its base64; each shows `<redacted, key ID <id>>` with the right ID, and `key init` prints the ID and the copy instructions. Catches a key printed by any command an agent may run, including through the table that holds it. |
