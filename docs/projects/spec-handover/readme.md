@@ -58,16 +58,20 @@ test, applied to a plan.
 1. `spec` writes the plan and runs `project show`, `project check`, and
    `git diff --check`, then reads the plan as its reviewer would, as it
    does today.
-2. It commits the plan on a branch, never on the default branch, and
-   pushes. If that branch already has an open pull request, such as a plan
-   being refined in an earlier spec's pull request, it pushes there and
-   skips the next step.
+2. It commits the plan on a branch, never on the default branch, runs
+   `git diff --check origin/<default-branch>...HEAD`, and pushes. Step 1's
+   bare `git diff --check` reads only tracked changes in the working tree,
+   so it misses a new plan file and anything already committed; the range
+   form reads the whole branch. If that branch already has an open pull
+   request, such as a plan being refined in an earlier spec's pull
+   request, it pushes there and skips the next step.
 3. It opens the pull request with `gh pr create --draft`. The title
    follows the pattern of the default branch's recent subjects. The body
    explains why the plan exists and ends with a `## Testing` section that
-   lists `project show <name>`, `project check`, and `git diff --check`.
-   Where the repository's instructions or the user say otherwise, `spec`
-   follows them, except that the merge stays the user's.
+   lists `project show <name>`, `project check`, and
+   `git diff --check origin/<default-branch>...HEAD`. Where the
+   repository's instructions or the user say otherwise, `spec` follows
+   them, except that the merge stays the user's.
 4. It subscribes the session to the pull request with
    `project watch add <owner>/<repo>#<number>`, as it does today.
 5. For each open question that blocks implementation and needs the user's
