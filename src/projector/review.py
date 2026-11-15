@@ -681,10 +681,13 @@ def set_draft(repo: str, number: int, draft: bool) -> dict:
     changed = bool(pr.get("draft")) != draft
     if changed:
         run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft else [])])
-        if bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft")) != draft:
+        after = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
+        if bool(after.get("draft")) != draft:
             undo = " --undo" if draft else ""
             raise ReviewError(f"{repo}#{number} is still {'ready' if draft else 'a draft'} after `gh pr ready{undo}`; "
                               f"run `gh pr ready {number} --repo {repo}{undo}` and check it")
+        # GitHub can show a just-pushed head only seconds after the push, so name the head this later read sees.
+        pr = after if after.get("head") else pr
     return {"repo": repo, "number": number, "head": pr["head"]["sha"], "draft": draft, "changed": changed}
 
 
