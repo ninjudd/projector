@@ -1,0 +1,4 @@
+interface:
+  display_name: "Work"
+  short_description: "Keep working on your own, post decisions to the inbox, and hand pull requests to review"
+  default_prompt: "Use $work to keep working on this on your own while I'm away."

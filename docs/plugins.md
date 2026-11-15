@@ -13,8 +13,8 @@ instructions and supporting scripts without a generated copy or host-specific
 fork.
 
 The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
-`review-repo`, `summarize-pr`, `write`, `rewrite`, `cleanup`, and
-`write-tests`.
+`review-repo`, `summarize-pr`, `write`, `rewrite`, `cleanup`,
+`write-tests`, and `work`.
 `summarize-pr` summarizes a pull request's changes as a guided review page.
 Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
 `$<skill>`.
@@ -93,6 +93,19 @@ subscribing a session, run
 `project config set watch.auto_start false --user`, or leave out `--user` to
 change only the current repository. [The CLI guide](cli.md) describes the
 `project watch` commands.
+
+To leave a session working while you are away, run `/projector:work`, or
+name the work, as in `/projector:work finish the retry plan`. The session
+then makes each decision that has a reasonable answer itself, and posts the
+ones you must review to your inbox with the answer it recommends, building
+on that answer where it is safe to change later. It marks each pull request
+ready for review once its work on it is done, rather than holding every
+pull request in draft until the end, and runs `fix-pr` on each one as its
+review work arrives, without asking you first. It stops only when the work
+is done or waits on you, and reports each pull request, each decision a
+reviewer would want to know about, and each item waiting in your inbox.
+Every other rule still holds: it opens pull requests and never merges them,
+and it asks before an action that is hard to undo.
 
 When you are done with a session, run `/projector:cleanup` before you shut
 it down. It checks each thing you asked the session for against evidence
