@@ -20,6 +20,7 @@ PUBLISHED_SKILLS = {
     "rewrite",
     "cleanup",
     "write-tests",
+    "work",
 }
 # A skill cites another skill's section as: `../<skill>/SKILL.md` describes
 # under "<heading>". The heading may be at any level.
