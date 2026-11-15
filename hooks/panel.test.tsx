@@ -15,6 +15,7 @@ const PANEL = {
   component: 'AbovePrompt',
   props: {
     hasSurvey: false,
+    isCollapsed: false,
     isWorking: false,
     maxRows: 12,
     bodyColumns: 120,
@@ -229,7 +230,10 @@ function world(
     const printed = bash(e.command)
     return { result: { ...printed, interrupted: false }, text: printed.stdout }
   })
-  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+  // The band is one row per plugin, which the engine stacks. This stands in for what the band shows when no
+  // plugin draws a row, so it shows exactly when the panel passes.
+  on('ui.render', { component: 'AbovePromptList' }, ($, e, next) => {
+    if (e.props.rows.length > 0) return next(e)
     const { Text } = $.ui.resolve(e)
     return <Text>{ENGINE_SITE}</Text>
   })
@@ -389,7 +393,7 @@ test('the panel’s last line says how to focus the panel, and once the panel ha
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\n' })
-  on('ui.focus', () => ({}))
+  on('ui.focus', { plugin: '*' }, () => ({}))
   on('prompt.edit', ($, e) => ({ text: e.text, cursor: e.cursor }))
   on('prompt.submit', ($, e) => ({ text: e.text }))
   const invalidated: string[] = []
@@ -4646,7 +4650,7 @@ test('a keyed line’s label takes the color of the `: ` before it, so it invert
  */
 function keyboardOf(on: On) {
   const tried: string[] = []
-  on('ui.focus', () => ({}))
+  on('ui.focus', { plugin: '*' }, () => ({}))
   on('ui.log', ($, e) => {
     const element = /^projector: the focus stayed off (\S+): /.exec(e.text)?.[1]
     if (element !== undefined) tried.push(element)
