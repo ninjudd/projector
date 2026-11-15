@@ -455,7 +455,7 @@ class Dispatcher:
             if (folder / "codex-receipts" / path.name).exists() or not path.exists():
                 return
             batch.update(state=state, last_error=error,
-                         next_attempt_at=self.wall() + min(300, 30 * 2 ** min(batch["attempts"] - 1, 4)))
+                         next_attempt_at=self.wall() + (30, 60, 120, 300)[min(batch["attempts"] - 1, 3)])
             write_json(path, batch)
 
     def close(self) -> None:

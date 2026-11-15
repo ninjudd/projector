@@ -123,6 +123,19 @@ else:
         codex.retry(self.folder, self.now)
         self.assertEqual(batch["batch_id"], self.prepare()["batch_id"])
 
+    def test_repeated_queue_failures_wait_until_each_retry_deadline(self):
+        (self.root / "fail").touch()
+        self.enqueue()
+        self.send()
+        for delay in (30, 60, 120, 300, 300):
+            with self.subTest(delay=delay):
+                self.now += delay - 1
+                self.assertIsNone(self.prepare(), "failed submission retried before its deadline")
+                self.now += 1
+                batch = self.prepare()
+                self.assertIsNotNone(batch, "failed submission did not retry at its deadline")
+                self.dispatcher.send(self.folder, batch["batch_id"])
+
     def test_restart_recovers_a_claim_without_losing_concurrent_new_revision(self):
         self.enqueue()
         batch = self.prepare()
