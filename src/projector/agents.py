@@ -32,6 +32,8 @@ from .inbox import SESSION, is_one_line, locked, read_json, write_json
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 MESSAGE = re.compile(r"^m-[0-9a-f]{32}$")
+# A model ID has no space or parenthesis, so the model `event_line` prints before its notice cannot read as prose.
+MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,99}$")
 MAX_SUMMARY = 120
 MAX_MODEL = 100
 MAX_TEXT = 16 * 1024
@@ -142,8 +144,9 @@ def register(root: Path, session: str, *, name: Optional[str], summary: Optional
                              "letter or digit")
     if summary is not None:
         check_line("summary", summary, MAX_SUMMARY)
-    if model is not None:
-        check_line("model", model, MAX_MODEL)
+    if model is not None and not MODEL_ID.fullmatch(model):
+        raise UsageError(f"{model!r} is not a model ID: use 1 to {MAX_MODEL} letters, digits, and . _ : / @ [ ] -, "
+                         "starting with a letter or digit")
     if record(root, session) is None and name is None and summary is None:
         raise UsageError("a session's first registration needs --name, --summary, or both")
     if not live(root, session, now):

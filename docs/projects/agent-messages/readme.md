@@ -795,8 +795,18 @@ which layer 2 keeps unless it says otherwise:
 - **Names are stored in lowercase.** `register` lowercases `--name` before
   it checks the pattern, so `Parser-Refactor` and `parser-refactor` are one
   name, and every record and line shows the lowercase form.
-- **A summary or a model holds no tab.** `list` separates its columns with
-  tabs, as `project watch list` does, so `register` refuses a tab in either.
+- **A summary holds no tab.** `list` separates its columns with tabs, as
+  `project watch list` does, so `register` refuses a tab in a summary.
+- **A model must be shaped like a model ID.** The event line prints the
+  sender's model before the authority notice, so a model that holds prose
+  would put the sender's words ahead of the trust boundary that step 5
+  places first. `register` therefore accepts only 1 to 100 letters, digits,
+  and `. _ : / @ [ ] -`, starting with a letter or digit, which admits IDs
+  such as `claude-opus-4-6[1m]` and `openai/gpt-5.5` and refuses a space, a
+  parenthesis, and a tab. The name and the host are already fixed shapes,
+  so the model was the one field before the notice that a sender could
+  fill with text. Layer 2 holds a record from the relay to the same shape
+  before its model reaches a line.
 - **The limit is read from the sender's checkout.** `send` and `reply` read
   `agent.message_limit` from the working directory's configuration, with
   the user layer under it, as `project config get` would. The refusal names

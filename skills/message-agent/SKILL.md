@@ -61,7 +61,8 @@ project agent register --name parser-refactor --summary "Refactoring the parser'
 - **The summary** is one line of at most 120 characters that says what the
   session is working on now, so a peer can tell which session to ask.
 - **The model** is the model ID your host reports for you, such as
-  `claude-opus-5-5` or `gpt-5.5`. Never guess one.
+  `claude-opus-5-5` or `gpt-5.5`. Never guess one. Registration refuses
+  a model with a space or a parenthesis, because a model ID has neither.
 
 Keep the summary current. When the work changes direction, run
 `project agent register --summary "<new summary>"`. A later registration

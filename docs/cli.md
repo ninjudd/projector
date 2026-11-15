@@ -2839,7 +2839,12 @@ registered parser-refactor (claude claude-opus-5-5) in acme/app feature; deliver
   session of the same login holds, and names that session's summary. A
   lapsed session's name is free to take.
 - **`--summary`** is one line of at most 120 characters.
-- **`--model`** is the model ID the session runs.
+- **`--model`** is the model ID the session runs: 1 to 100 letters, digits,
+  and `.`, `_`, `:`, `/`, `@`, `[`, `]`, and `-`, starting with a letter or
+  digit, such as `claude-opus-5-5` or `gpt-5.5`. Each message's event line
+  prints the model before its authority notice, so `register` refuses, with
+  exit code 2, a value with a space, a parenthesis, or any other character
+  that could make it read as prose.
 
 The first registration needs `--name`, `--summary`, or both. A later one
 changes only the fields it gives, and records the checkout, the login, and
