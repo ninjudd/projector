@@ -1232,28 +1232,27 @@ function reviewLabel(pr: PullRequest): { text: string; color: 'claude' | 'succes
 
 /**
  * The word after a row's number: its review label while it carries one, and
- * otherwise `draft` in the subtle color or `ready` in the theme's light blue.
- * `ready` means only that no label is set, which is also true after a push
- * removes `clean` or a review requests changes. A held draft still shows its
- * `clean` beside its subtle number.
+ * otherwise `draft` in italic or `ready` in the theme's light blue. `ready`
+ * means only that no label is set, which is also true after a push removes
+ * `clean` or a review requests changes. A held draft still shows its `clean`
+ * beside its italic number.
  */
-function rowState(pr: PullRequest): { text: string; color: string } {
-  return reviewLabel(pr) ?? (pr.isDraft ? { text: 'draft', color: 'subtle' } : { text: 'ready', color: 'suggestion' })
+function rowState(pr: PullRequest): { text: string; color?: string; isItalic?: true } {
+  return reviewLabel(pr) ?? (pr.isDraft ? { text: 'draft', isItalic: true } : { text: 'ready', color: 'suggestion' })
 }
 
 /**
  * A pull request's number on the line its collapsed rows give way to, which
  * has no state beside it, so its color says what the row says: red when a
  * note or its checks hold it back, yellow while review threads are open, as
- * the row's count of them is, muted for a draft, as the row's number is, then
- * the review label's orange or green, and the default color for a ready pull
- * request that carries neither label. It is muted while it loads.
+ * the row's count of them is, then the review label's orange or green, and
+ * the default color for a pull request that carries neither label. It is
+ * muted while it loads. A draft's number is italic as well, as its row's is.
  */
 function statusColor(pr: PullRequest): string | undefined {
   if (pr.isLoading === true) return 'subtle'
   if (pr.isConflicting || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.checks === 'failing') return 'error'
   if (pr.openThreads > 0) return 'warning'
-  if (pr.isDraft) return 'subtle'
   return reviewLabel(pr)?.color
 }
 
@@ -1844,7 +1843,7 @@ export const register: Register = on => {
                     plain
                     onPress={() => toggle(key, `open:${key}`, isOpened ? undefined : `discuss:${key}`)}
                   >
-                    <Text color={statusColor(pr)} inverse={isOpened}>
+                    <Text color={statusColor(pr)} italic={pr.isDraft} inverse={isOpened}>
                       {label(pr)}
                     </Text>
                   </Button>,
@@ -2406,13 +2405,15 @@ export const register: Register = on => {
                 label={label(pr)}
                 onPress={() => toggle(key, `pr:${key}`, opened === key ? undefined : `discuss:${key}`)}
               >
-                {/* `dimColor` does not dim in every terminal, so a draft's number takes the theme's subtle color. */}
-                <Text color={pr.isDraft ? 'subtle' : undefined}>{label(pr)}</Text>
+                {/* A draft's number is italic, in the default color, which stays readable where `subtle` fades it. */}
+                <Text italic={pr.isDraft}>{label(pr)}</Text>
               </Button>
             </Box>
             {isLoaded && (
               <Box flexShrink={0}>
-                <Text color={state.color}>{state.text}</Text>
+                <Text color={state.color} italic={state.isItalic}>
+                  {state.text}
+                </Text>
               </Box>
             )}
             {isLoaded && !isOwn(pr, shown.viewer) && (
