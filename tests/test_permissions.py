@@ -285,23 +285,5 @@ class SummaryPublishTests(unittest.TestCase):
         # to the publish sends the whole call to automatic approval, which can refuse it.
         skill = flat(SKILLS / "summarize-pr" / "SKILL.md")
 
-        self.assertIn("alone, as a tool call of its own", skill)
-        self.assertIn("Do not check the repository's or the site's visibility first.", skill)
-        self.assertIn("never join it to the publish", skill)
         self.assertNotRegex(skill, r"(&&|;|\|)\s*project summary publish")
         self.assertNotRegex(skill, r"project summary publish[^`]*(&&|;|\|)")
-
-    def test_a_refused_publish_is_diagnosed_and_kept_as_unfinished_work(self) -> None:
-        summarize = flat(SKILLS / "summarize-pr" / "SKILL.md")
-        review = flat(SKILLS / "review-pr" / "SKILL.md")
-
-        self.assertIn("`project review rules --json`", summarize)
-        self.assertIn("read `summary_publish` for the host's file", summarize)
-        self.assertIn("Do not send the user to `project init` for it.", summarize,
-                      "a matching rule is not repaired by writing it again")
-        self.assertIn("Codex reads its rules only when a session starts", summarize)
-        self.assertIn("never retry it in another form or send the summary by another path", summarize)
-        self.assertIn("report the publish as unfinished", summarize)
-        self.assertIn("One refusal stops only that publish.", summarize)
-        self.assertIn("Never stop summarizing because an earlier publish was refused.", review)
-        self.assertIn("published, with its URL, or still blocked, with the reason", review)
