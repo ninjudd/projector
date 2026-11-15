@@ -284,7 +284,7 @@ such as `2*`. The ` · ` between two notes keeps the default text color. The
 line ends with how long ago the pull request last changed, in the column
 where the inbox's items end with their ages. Only the title shortens on a
 narrow terminal. A pull request that the watch daemon has not queried yet
-reads `loading…` in place of its title, with no review state, author, or
+reads `loading…` in place of its title, with no review label, author, or
 age, until the daemon's first result for it arrives.
 
 Your own pull requests come first, then everyone else's, each author's
@@ -342,7 +342,7 @@ there the panel starts with its first row.
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
-one column past the number, under the review state. It names the session's
+one column past the number, under the review label. It names the session's
 roles on the pull request: `fixing` in the terminal palette's blue,
 `reviewing` in Claude's orange, or `fixing and reviewing`. This `reviewing`
 says that this session reviews the pull request, whatever its labels say.
@@ -570,8 +570,8 @@ out of view. A collapsed line starts with `+`, where an item's starts with
 `-`, to say it expands. Collapsed pull requests become a line such as
 `+ #12 #14 #15` in their place, listing each in the rows' order and coloring
 it by status: red when a conflict, a change request, or failing checks hold
-it back, green when it is ready for review and carries only the `clean`
-label, and otherwise yellow. A pull request that is still
+it back, green when it is ready for review and labeled `clean` and not
+`reviewing`, and otherwise yellow. A pull request that is still
 loading is muted. The numbers work as tabs: click one to open that pull
 request's drawer below the line, with its number drawn inverted, and click it
 again to close the drawer. The pull requests stay collapsed, and only one

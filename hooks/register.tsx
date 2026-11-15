@@ -2409,7 +2409,7 @@ export const register: Register = on => {
             )}
             {ageColumn(key, pr.updatedAt)}
           </Box>
-          {/* The drawer starts where the state does, one column past the label. */}
+          {/* The drawer starts where the review label does, one column past the number. */}
           {opened === key && drawPrDrawer(row, labelWidth + 1)}
         </Box>
       )
