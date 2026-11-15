@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -123,6 +123,7 @@ Keep additions under `sessions/<session>/`; accept all existing records.
 | Record or output | Fields and behavior |
 | --- | --- |
 | `codex.json` | `schema_version: 1`, `thread_id`, `executable`, `cwd`, `expires_at`, and `enabled`. A hook-supplied ID binds the registration to this session. Store no token or remote address. |
+| Capability and submission records | `codex.json` also caches `executable_signature`, `supported`, and `last_error`. `codex-submit.lock` is an OS lock held across the queue call, so recovery distinguishes a running submission from a crashed one. `codex-last.json` retains the consumed batch ID and its last delivery state. |
 | `codex-events.json` | `schema_version: 1` and an ordered `items` array. Each item holds a stable `key` and unchanged event `line`. Write the file atomically under the session lock; skip keys already queued or pending. Mod and stream sessions retain the plain `events` file. |
 | `codex-pending/<uuid>.json` | `batch_id`, claimed `items`, `state` (`prepared`, `submitting`, `queued`, `uncertain`, or `failed`), `attempts`, `next_attempt_at`, and bounded `last_error`. Claim under the lock: write the pending record before removing its keys from `codex-events.json`. Before another append or dispatch, recover an interrupted claim by removing those keys from the queue. New revisions have different keys and survive. Persist `submitting` before the call; recover it as `uncertain`. |
 | `codex-receipts/<uuid>.json` | `batch_id` and `consumed_at`. Write the receipt before removing its pending batch; recover a matching pending batch as consumed. Retain receipts for 24 hours and until any concurrent command result is settled, whichever is later. |
@@ -228,3 +229,42 @@ dependency or service is required.
   lifecycle events, hook trust, and the inability of async completion to
   start a turn. [Plugin packaging](https://developers.openai.com/plugins/build/plugins)
   permits an explicit `hooks` path in `.codex-plugin/plugin.json`.
+
+## 7. Implementation and verification
+
+The implementation adds the Codex adapter, command hooks, keyed producer
+events, bounded dispatch, recovery, CLI status, and the shared workflow and
+documentation changes. Claude's production hooks module is unchanged. Its
+test mount supplies the current host's required `isCollapsed` prop, so
+the hooks type-check against the generated declarations.
+
+The focused tests exercise actual producer reminder variants, new heads
+and replies, both roles, shared GitHub polling, transport isolation, batch
+limits, acknowledgment races, dropped work, retry timing, lease expiry,
+and a hung process beside another session. Native Codex `PostToolUse`
+supplies plain text in the tested client; the adapter also accepts
+structured completion results and filters authoring commands before
+passing their output to the existing subscription parser.
+
+The full Python gate passes 1,260 tests. Both plugin validations, plan
+checks, and the hooks type-check pass. The current Claude test runner
+still reports 25 existing panel-rendering expectation failures. A live
+Claude session received a notice through its mod while idle and replied.
+A native Codex queue resumed an unloaded test thread and received its
+reply; temporary startup-only hook overrides did not survive that resume,
+so that run does not prove acknowledgment through installed hooks.
+
+The combined live Codex check remains pending. Run
+`PYTHONPATH=src python3 tests/codex_smoke.py --review-hooks` with native
+Codex and Node 22 or newer. The test creates a separate loopback server,
+reviews four temporary hooks in the native browser, restarts the server
+to unload the thread, and queues a batch through the real CLI. Success
+requires its `UserPromptSubmit` receipt. It stops its server and archives
+its test thread; it does not change the installed plugin or mutate GitHub.
+Folder and hook trust decisions persist in Codex's local settings.
+
+The project stays in progress until the operator authorizes that temporary
+folder and hook trust and the combined check passes. The test must also
+observe new-head and finding events in a live review workflow before
+completion; the automated producer tests and separate native transport
+observations do not replace that acceptance check.

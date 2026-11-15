@@ -400,17 +400,30 @@ and `-`, and gives it to each subagent it starts. Every `project watch`
 command there takes it as `--session <id>`, or reads it from
 `PROJECTOR_SESSION`.
 
+In Codex, trusted Projector hooks supply the real parent session ID in
+additional context. Pass it to watch commands and workers rather than
+choosing another ID.
+
 The command's last line says how the session's events arrive:
 
 | Line | Means | Do |
 | --- | --- | --- |
 | `events: mod` | Projector's mod in Claude Code submits them as a prompt. | Nothing more. |
+| `events: codex` | Trusted Codex hooks register the session; the daemon queues events as prompts. | Nothing more. Do not start a stream. |
 | `events: stream` | A `project watch stream` that the session runs prints them. | Nothing more. |
 | ``events: none — start `project watch stream --session <id>` …`` | Nothing delivers them yet. | Start the command the line names under the host's persistent process or monitor facility, where it runs until stopped. |
 
 Start the stream only from the conversation the user talks to, because a
 subagent's processes end when it returns. A subagent that reads `none` says
 so in its report, and the conversation that started it starts the stream.
+
+For Codex delivery problems, inspect `project watch status --json`. A
+queued batch can be waiting for its thread to resume. Never resend it just
+because it has not run. An uncertain submission needs a decision to resend
+before `project watch codex-retry --session <id>` is used, because the first
+message may already be accepted. Stop delivery with `project watch
+disconnect --session <id>` before switching transports. Recheck current
+subscriptions and PR state before acting on every queued event.
 
 When the user asks the session to stop fixing a pull request, run
 `project watch remove <owner>/<repo>#<number>` and stop its subagent. A

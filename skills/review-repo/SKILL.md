@@ -132,6 +132,12 @@ get an incremental review, and every other head gets a full one. Green CI
 and resolved threads are evidence about state, not substitutes for review.
 Keep acting on events until the user asks you to stop.
 
+When `project watch add` reports `events: codex`, the daemon queues events
+to the parent session ID supplied by the trusted Codex hooks. Pass that ID
+to workers and start no stream. Use the delivery recovery rules in
+`../review-pr/SKILL.md`; recheck current subscriptions and PR state before
+acting on a queued event.
+
 ## Stop reviewing the repository
 
 When the user asks the session to stop reviewing the repository, remove the

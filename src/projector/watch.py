@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Callable, Iterator, Optional
 from urllib.parse import quote
 
-from . import review
+from . import codex_watch, review
 from .config import MINIMUMS, ConfigError
 from .config import load as load_config
 from .core import ProjectorError, UsageError
@@ -372,6 +372,8 @@ def drop(root: Path, session: str, repo: str, number: int, role: str, model: Opt
 def renew(root: Path, session: str, deliverer: str, now: float) -> None:
     folder = session_folder(root, session)
     with locked(folder):
+        if codex_watch.active(folder, now):
+            raise UsageError("this session uses Codex delivery; disconnect it before starting mod or stream")
         write_json(folder / "session.json", {"deliverer": deliverer, "renewed_at": stamp(now)})
 
 
@@ -379,6 +381,10 @@ def take(root: Path, session: str, now: float) -> list[str]:
     """Empty the session's events and renew it, keeping its deliverer, and answer the lines taken."""
     folder = session_folder(root, session)
     with locked(folder):
+        if codex_watch.active(folder, now):
+            raise UsageError("this session uses Codex delivery; disconnect it before taking its events")
+        if codex_watch.registration(folder):
+            codex_watch.drain(folder)
         events = folder / "events"
         try:
             text = events.read_text(encoding="utf-8")
@@ -394,7 +400,10 @@ def take(root: Path, session: str, now: float) -> list[str]:
 
 def delivery(root: Path, session: str, now: float) -> str:
     """How the session's events arrive: `mod` or `stream` while that deliverer renews it, or `none`."""
-    record = read_json(session_folder(root, session) / "session.json") or {}
+    folder = session_folder(root, session)
+    if codex_watch.active(folder, now):
+        return "codex"
+    record = read_json(folder / "session.json") or {}
     renewed = seconds_of(record.get("renewed_at"))
     if record.get("deliverer") in DELIVERERS and renewed is not None and now - renewed < LAPSE:
         return record["deliverer"]
@@ -403,6 +412,9 @@ def delivery(root: Path, session: str, now: float) -> str:
 
 def append_events(folder: Path, lines: list[str]) -> None:
     with locked(folder):
+        if codex_watch.registration(folder).get("enabled"):
+            codex_watch.append(folder, lines)
+            return
         with (folder / "events").open("a", encoding="utf-8") as stream:
             stream.writelines(f"{line}\n" for line in lines)
 
@@ -418,7 +430,7 @@ def stream(root: Path, session: str, emit: Callable[[str], None], ensure: Callab
             ensure()
             renew(root, session, "stream", wall())
             renewed = mono()
-        if events.exists() and events.stat().st_size:
+        if events.exists() and events.stat().st_size or codex_watch.registration(events.parent):
             for line in take(root, session, wall()):
                 emit(line)
         sleep(1)
@@ -662,6 +674,7 @@ class Daemon:
         self.next_pass = mono()
         self.wanted = False
         self.last_pass: Optional[float] = None
+        self.codex = codex_watch.Dispatcher(wall=wall)
 
     def log(self, message: str) -> None:
         print(f"{stamp(self.wall())} {message}", flush=True)
@@ -731,6 +744,7 @@ class Daemon:
                 return False
             if self.wanted or now >= self.next_pass:
                 self.run_pass()
+            self.codex.tick([self.root / "sessions" / name for name in session_names(self.root)])
             return True
         finally:
             self.last_tick = self.mono()
@@ -739,7 +753,8 @@ class Daemon:
         """Count every live session as seen, and every lock as changed, now: a gap in the loop is the machine
         sleeping, which should lapse no session and stall no review."""
         for name in self.live:
-            self.sessions[name] = Seen(self.sessions[name].signature, now)
+            if name in self.sessions:
+                self.sessions[name] = Seen(self.sessions[name].signature, now)
         self.locks = {path: (modified, now) for path, (modified, _) in self.locks.items()}
 
     def stop_requested(self) -> bool:
@@ -771,6 +786,8 @@ class Daemon:
             elif seen.signature != signature:
                 self.sessions[name] = Seen(signature, now)
         live = {name for name, seen in self.sessions.items() if now - seen.at < LAPSE}
+        live.update(name for name in names if codex_watch.active(self.root / "sessions" / name, wall)
+                    and codex_watch.has_work(self.root / "sessions" / name))
         for name in names:
             mark = file_signature(self.root / "sessions" / name / "subscriptions")
             if name in live and mark != self.marks.get(name) and self.lacks_result(name):
@@ -911,6 +928,7 @@ class Pass:
         self.branches: dict[tuple[str, str], Optional[str]] = {}
         self.lock_lists: dict[tuple[str, int], list] = {}
         self.stalled_roles: set[tuple[tuple[str, int], str]] = set()
+        self.stall_keys: dict[tuple[tuple[str, int], str], list] = {}
 
     def tell(self, session: str, *lines: str) -> None:
         self.outbox.setdefault(session, []).extend(lines)
@@ -1237,6 +1255,7 @@ class Pass:
         stalled = bool(mine) and all(self.daemon.stalled(lock, self.mono) for lock in mine)
         if current == desired:
             if stalled:
+                self.stall_keys[pull, name] = [(str(lock.path), lock.modified) for lock in mine]
                 for lock in mine:
                     self.clear(pull, lock)
                 self.stalled_roles.add((pull, name))
@@ -1323,13 +1342,13 @@ class Pass:
         lines: list[str] = []
         action = f"run fix-pr on {ref} in subagent fix-{number}"
 
-        def standing(key: str, first: str, again: Optional[str]) -> None:
+        def standing(key: str, first: str, again: Optional[str], revision: object = None) -> None:
             last = announced.get(key)
             if last is None:
-                lines.append(first)
+                lines.append(codex_watch.Event(first, [repo.lower(), number, "fix", key, revision]))
                 last = self.now
             elif again is not None and self.now - last >= self.settings.renotify:
-                lines.append(again)
+                lines.append(codex_watch.Event(again, [repo.lower(), number, "fix", key, revision]))
                 last = self.now
             kept[key] = last
 
@@ -1369,7 +1388,8 @@ class Pass:
                 said = snippet(re.sub(r"[\r\n\t]+", " ", node.get("body") or ""))
                 standing(f"verdict:{who}:{sha}",
                          f"VERDICT {ref} CHANGES_REQUESTED on {sha[:8]} [{who}]{said} — {action}",
-                         f"VERDICT {ref} (still open) CHANGES_REQUESTED on {sha[:8]} [{who}]{said} — {action}")
+                         f"VERDICT {ref} (still open) CHANGES_REQUESTED on {sha[:8]} [{who}]{said} — {action}",
+                         codex_watch.digest(node.get("body") or ""))
         for thread in nodes(pr, "reviewThreads"):
             if thread.get("isResolved") or not thread.get("id"):
                 continue
@@ -1378,7 +1398,8 @@ class Pass:
             who = login(last) or "?"
             said = snippet(re.sub(r"[\r\n\t]+", " ", HTML_COMMENT.sub("", last.get("body") or "")).lstrip(" "))
             standing(thread["id"], f"FINDING {ref} {place} [{who}]{said} — {action}",
-                     f"FINDING {ref} (still open) {place} [{who}]{said} — {action}")
+                     f"FINDING {ref} (still open) {place} [{who}]{said} — {action}",
+                     [head, last.get("databaseId"), codex_watch.digest(last.get("body") or "")])
         suggesting = standing_suggestions(reviews, head, self.daemon.operator or "", visibility)
         for found in reviews:
             if found.get("id") is None:
@@ -1399,7 +1420,7 @@ class Pass:
             who = (found.get("user") or {}).get("login") or "?"
             sha = (found.get("commit_id") or "?")[:8]
             standing(f"review:{found['id']}", f"REVIEW {ref} by [{who}] on {sha}{listing}{snippet(text)} — {action}",
-                     None)
+                     None, codex_watch.digest(body))
         for key, last in announced.items():
             if key.startswith("review:"):
                 kept.setdefault(key, last)
@@ -1443,7 +1464,8 @@ class Pass:
                              f"request is a draft — stop subagent review-{number}, and review it once it is ready")
             self.states[session].data["review"][label] = {
                 "head": known, "flag": flag, "announced": None if reviewed or announced is None and not lines else 0}
-            return lines
+            return [codex_watch.Event(text, [repo.lower(), number, name, "stalled",
+                                            head, self.stall_keys.get((pull, name))]) for text in lines]
         lines = []
         if (pull, name) in self.stalled_roles and not reviewed:
             lines.append(f"NEW HEAD {ref} ({branch}) head={head[:7]}, its last review stalled — stop subagent "
@@ -1475,7 +1497,12 @@ class Pass:
                          f"— {action}")
             announced = self.now
         self.states[session].data["review"][label] = {"head": known, "flag": flag, "announced": announced}
-        return lines
+        return [codex_watch.Event(text, [repo.lower(), number, name,
+                                        "responded" if text.startswith("RESPONDED ") else
+                                        "stalled" if "last review stalled" in text else "head",
+                                        head, key if text.startswith("RESPONDED ") else
+                                        self.stall_keys.get((pull, name)) if "last review stalled" in text else reviewer])
+                for text in lines]
 
     def in_flight(self, repo: str, number: int, repository: dict, model: str, reviewer: str, head: str) -> bool:
         """Whether a review of the head by the model is under way: on this machine, a lock for the head that
@@ -1644,6 +1671,7 @@ def serve(root: Path, version: str, *, sleep: Callable[[float], None] = time.sle
         if not try_lock(descriptor):
             print(f"{stamp(time.time())} another daemon holds {root / 'daemon.mutex'}; exiting", flush=True)
             return 0
+        daemon = None
         try:
             daemon = Daemon(root, version=version, **options)
             daemon.start()
@@ -1653,6 +1681,8 @@ def serve(root: Path, version: str, *, sleep: Callable[[float], None] = time.sle
         except KeyboardInterrupt:
             pass
         finally:
+            if daemon is not None:
+                daemon.codex.close()
             unlock(descriptor)
     finally:
         os.close(descriptor)
@@ -1669,7 +1699,9 @@ def status(root: Path, now: float) -> dict:
     return {"pid": daemon.get("pid"), "version": daemon.get("version"), "started_at": daemon.get("started_at"),
             "operator": daemon.get("operator"), "live_sessions": report.get("live_sessions") or [],
             "targets": report.get("targets") or [], "repositories": report.get("repositories") or [],
-            "last_pass": report.get("last_pass"), "graphql_points_last_hour": points}
+            "last_pass": report.get("last_pass"), "graphql_points_last_hour": points,
+            "deliveries": {name: found for name in session_names(root)
+                           if (found := codex_watch.report(session_folder(root, name), now))}}
 
 
 def listing(root: Path, session: Optional[str]) -> list[dict]:

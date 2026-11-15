@@ -11,6 +11,7 @@
   "license": "MIT",
   "keywords": ["projects", "planning", "git", "agents", "code-review"],
   "skills": "./skills/",
+  "hooks": "./codex-hooks/hooks.json",
   "interface": {
     "displayName": "Projector",
     "shortDescription": "Plan, implement, and review Git projects",

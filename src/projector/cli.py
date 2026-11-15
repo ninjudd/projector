@@ -23,7 +23,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import inbox, instructions, loop, permissions, review, site, summary, watch
+from . import codex_watch, inbox, instructions, loop, permissions, review, site, summary, watch
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
@@ -1018,6 +1018,9 @@ def add_watch_parser(subcommands) -> None:
     renew.add_argument("--deliverer", required=True, choices=watch.DELIVERERS,
                        help="what delivers the session's events: Projector's mod, or `project watch stream`")
     command("stream", "renew the session and print each event as it arrives, until stopped")
+    command("codex-hook", "handle a Codex lifecycle hook from standard input", session=False)
+    command("codex-retry", "resend a pending Codex batch; it can duplicate an accepted message")
+    command("disconnect", "disconnect session delivery while keeping pending work")
     add_output(command("status", "report the watch daemon, its live sessions and targets, its last pass, and the "
                                  "GraphQL points it spent in the last hour", session=False))
     command("serve", "run the watch daemon; every other watch command starts it", session=False)
@@ -1075,6 +1078,30 @@ def run_watch(arguments: argparse.Namespace) -> int:
     command = arguments.watch_command
     version = distribution_version()
     json_output = getattr(arguments, "json_output", False)
+    ensure = lambda: watch.ensure_daemon(root, version, newer_release)
+    if command == "codex-hook":
+        try:
+            event = json.load(sys.stdin)
+            if not isinstance(event, dict):
+                raise UsageError("Codex hook input must be a JSON object")
+            result = codex_watch.hook(root, event, time.time(), ensure)
+        except (ValueError, OSError, subprocess.SubprocessError, ProjectorError) as error:
+            result = {"systemMessage": "Projector: automatic Codex delivery unavailable; "
+                      "inspect watch status or use the stream fallback. " + str(error)[:200]}
+        # Hook stdout uses Codex's schema rather than Projector's CLI envelope.
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    if command in ("disconnect", "codex-retry"):
+        session = watch.session_id(arguments.session)
+        folder = watch.session_folder(root, session)
+        if command == "disconnect":
+            codex_watch.disconnect(folder)
+            print(f"disconnected {session}; subscriptions and pending events remain")
+        else:
+            codex_watch.retry(folder, time.time())
+            ensure()
+            print(f"retrying {session}'s pending batch; this can duplicate an accepted message")
+        return 0
     if command == "serve":
         return watch.serve(root, version)
     if command == "stop":
@@ -1096,6 +1123,11 @@ def run_watch(arguments: argparse.Namespace) -> int:
             print(f"repositories: {', '.join(report['repositories']) or 'none'}")
             print(f"last pass: {report['last_pass'] or 'none yet'}")
             print(f"GraphQL points in the last hour: {report['graphql_points_last_hour']}")
+            for session, found in report["deliveries"].items():
+                expires = found["expires_at"]
+                when = watch.stamp(expires) if isinstance(expires, (int, float)) else "unknown"
+                print(f"delivery {session}: {found['state']}, expires {when}, "
+                      f"batch {found['batch_id'] or 'none'} {found['last_error']}")
         return 0
     session = watch.session_id(arguments.session, required=command != "list")
     if command == "list":
