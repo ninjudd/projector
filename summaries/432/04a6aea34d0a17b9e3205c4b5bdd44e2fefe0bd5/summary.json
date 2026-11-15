@@ -1,0 +1,220 @@
+{
+ "version": 1,
+ "name": "Codex watch delivery",
+ "project": "watch-daemon/codex-delivery",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 432,
+  "title": "Deliver watch events through Codex's native queue",
+  "head": "04a6aea34d0a17b9e3205c4b5bdd44e2fefe0bd5",
+  "headRef": "codex-watch-delivery",
+  "base": "c4777b6a6cb2fa23aa155c0c60ddd4afa21598cc",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's <b>watch daemon</b> is one background process per machine. It polls GitHub for the pull requests that live agent sessions review or fix, and it writes each piece of new work, such as a new head or a reviewer's finding, as an <b>event line</b> to the session that owns it. In Claude Code, Projector's mod submits those lines as prompts. Before this change, Codex had no such adapter. The skills told a Codex session to run <code>project watch stream</code>, which prints events but cannot start a turn in an idle conversation.",
+   "This pull request adds a Codex adapter. Trusted Codex command hooks register the session with the daemon and acknowledge each delivery. The daemon sends events as a prompt with <code>codex queue --thread &lt;id&gt; --message &lt;batch&gt; --resume</code>, a CLI command that queues a message on a Codex thread and resumes the thread if it is not loaded. Claude Code's mod and the stream fallback keep working as before.",
+   "<ol><li><b>Register.</b> The <code>SessionStart</code> hook runs <code>project watch codex-hook</code>. It records the session ID, the absolute <code>codex</code> executable, and the working directory in <code>codex.json</code>, with a 24-hour lease that each later hook renews.</li><li><b>Queue.</b> While the session is registered, the daemon writes its events to <code>codex-events.json</code>, each with a stable <b>key</b> that names the piece of work. A reminder of the same work in different words has the same key, so it never queues a second copy.</li><li><b>Claim and send.</b> On each tick, the daemon claims up to 8 KiB of events into one pending batch per session, and a pool of four worker threads runs <code>codex queue</code> with a 15-second timeout.</li><li><b>Acknowledge.</b> When Codex runs the queued prompt, the <code>UserPromptSubmit</code> hook matches its <code>PROJECTOR WATCH &lt;batch-id&gt;</code> marker, writes a receipt, and deletes the batch, so the next batch can go out.</li></ol>",
+   "This pull request completes the plan: its frontmatter is <code>status: completed</code>, and a new § 8 records the outcome as shipped. The native Codex smoke test in <code>tests/codex_smoke.py</code> passed: an unloaded thread resumed, and the real <code>UserPromptSubmit</code> hook acknowledged the exact queued batch. The operator accepted that test as enough for now, and deferred the full live review and fix workflow test on both hosts until after a wider release. The open review finding asks § 7 and § 8 to record that decision and its reason as given."
+  ],
+  "cards": [
+   {
+    "id": "states",
+    "title": "Batch states",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>State</th><th>Means</th><th>Next</th></tr></thead><tbody><tr><td><code>prepared</code></td><td>Claimed, not yet sent</td><td class=\"r\">Sent on the next tick</td></tr><tr><td><code>submitting</code></td><td><code>codex queue</code> is running</td><td class=\"r\">Recovered as <code>uncertain</code> after a crash</td></tr><tr><td><code>queued</code></td><td>Codex accepted it (exit 0)</td><td class=\"r\">Waits for acknowledgment, never resent</td></tr><tr><td><code>failed</code></td><td>Definite failure</td><td class=\"r\">Retried after 30, 60, 120, then every 300 s</td></tr><tr><td><code>uncertain</code></td><td>Timeout or crash mid-send</td><td class=\"r\">Only <code>project watch codex-retry</code> resends it</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Registration</b>: <code>codex.json</code> in the session's state folder, which binds the session to a Codex thread.</li><li><b>Lease</b>: the 24-hour wall-clock expiry that host activity renews.</li><li><b>Key</b>: the JSON identity of a piece of work, such as a repository, pull request, role, thread, and latest comment.</li><li><b>Receipt</b>: <code>codex-receipts/&lt;batch-id&gt;.json</code>, which marks a batch consumed for 24 hours.</li><li><b>Transport</b>: what delivers a session's events: <code>mod</code>, <code>stream</code>, or <code>codex</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "adapter",
+   "title": "The Codex delivery adapter",
+   "kicker": "One new module owns hooks, registration, durable batches, acknowledgment, and queue execution.",
+   "intro": [
+    "<code>src/projector/codex_watch.py</code> holds everything that is specific to Codex. The daemon calls it to queue events and to send batches, and the CLI calls it to handle hook input. It uses only the standard library.",
+    "A batch moves through files in the session's folder, written atomically under the session's lock. <code>prepare</code> writes the pending batch before it removes the batch's keys from the queue. So when a crash interrupts a claim, <code>recover</code> finishes the claim by removing those keys again. A separate OS lock, <code>codex-submit.lock</code>, is held for the whole <code>codex queue</code> call, so that recovery can tell a send still running from one that crashed."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Exit 0 from <code>codex queue</code> means Codex accepted the message, not that the thread ran it. A <code>queued</code> batch is therefore never resent automatically, and it holds back the session's next batch until the hook acknowledges it."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/codex_watch.py",
+     "note": "New module: registration, keyed queue, claim and recovery, acknowledgment, the push-command filter for <code>PostToolUse</code>, and the <code>Dispatcher</code> worker pool.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 113,
+       "text": "<code>append</code> skips a key that is already in the queue or in the pending batch, so a reminder adds nothing while its batch waits. After the batch is acknowledged, a later reminder of standing work can queue the work again, as Claude's mod would."
+      },
+      {
+       "kind": "context",
+       "line": 126,
+       "text": "<code>eligible</code> always passes <code>MERGED</code>, <code>CLOSED</code>, <code>MISSING</code>, and <code>MOVED</code>. Any other line must carry a key whose repository, number, and role match a subscription that is not excluded. <code>prepare</code> drops a queued item that fails this check."
+      },
+      {
+       "kind": "verify",
+       "line": 179,
+       "text": "Acknowledgment writes the receipt before it deletes the pending batch, and <code>_send</code> checks for the receipt before it records its result, so a result that arrives late cannot bring a consumed batch back. <code>test_acknowledgment_racing_command_completion_cannot_resurrect_batch</code> covers this, and it passes at this head."
+      },
+      {
+       "kind": "verify",
+       "line": 179,
+       "text": "An acknowledgment needs the prompt to equal the sent message exactly, or the batch stays <code>queued</code> and the session gets no further batch. The native smoke test that the plan's § 7 records waits for this receipt, so its pass shows that real Codex delivers the queued text unchanged to the hook."
+      },
+      {
+       "kind": "verify",
+       "line": 424,
+       "text": "The submission lock is a <code>flock</code> on its own file descriptor, so the daemon's main thread sees a worker thread's send as running. Definite failures now retry after 30, 60, 120, then every 300 seconds, as the plan's § 2.1 step 7 says. <code>test_repeated_queue_failures_wait_until_each_retry_deadline</code> checks each deadline one second early and on time, and it passes at this head."
+      },
+      {
+       "kind": "context",
+       "line": 382,
+       "text": "Only <code>SessionStart</code>, and a prompt that consumes a batch, get the session-ID context. Every other hook still renews the lease and starts the daemon when work is waiting, but returns nothing to the model."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "daemon",
+   "title": "Daemon and CLI integration",
+   "kicker": "The existing daemon routes keyed events to the adapter and keeps a Codex session live under its lease.",
+   "intro": [
+    "Each event producer in <code>src/projector/watch.py</code> now returns a <code>codex_watch.Event</code>, a string subclass that carries a key, so mod and stream sessions read exactly the text they read before. <code>route_fix</code> keys each item by its existing standing key, plus a revision: the head, latest comment ID, and body digest for a finding, or a body digest for a verdict or review. <code>route_review</code> keys a head by the head and reviewer, a <code>RESPONDED</code> event by the existing head-and-answer flag, and a stalled review by the stalled lock's identity.",
+    "A Codex session counts as live while its lease holds and it has subscriptions or pending events. Wall-clock expiry decides this, so the sleep forgiveness that keeps mod and stream sessions alive never extends a Codex lease. <code>renew</code>, <code>take</code>, and <code>delivery</code> refuse to let a second transport consume a session that Codex delivers to."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Keyed events from <code>route_fix</code> and <code>route_review</code>, Codex liveness in <code>scan</code>, the dispatcher tick, transport refusals, and <code>deliveries</code> in status.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 789,
+       "text": "Codex sessions join <code>live</code> here, outside <code>self.sessions</code>, which is why <code>forgive</code> now skips names it has no record for."
+      },
+      {
+       "kind": "context",
+       "line": 747,
+       "text": "The dispatcher ticks once per daemon turn, about once a second. For an idle registered session it reads files and starts no process. <code>test_no_events_start_no_process_and_write_no_queue</code> covers this."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds <code>codex-hook</code>, <code>codex-retry</code>, and <code>disconnect</code>, and prints each Codex delivery in <code>watch status</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 1082,
+       "text": "The hook always exits 0 and prints Codex's hook JSON. A failure becomes a <code>systemMessage</code> of at most 200 characters, so a broken hook never blocks the user's turn."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "packaging",
+   "title": "Codex hook packaging",
+   "kicker": "Codex loads its own command hooks. Claude Code keeps its TypeScript module.",
+   "intro": [
+    "<code>.codex-plugin/plugin.json</code> now points Codex at <code>codex-hooks/hooks.json</code>, which runs the installed <code>project watch codex-hook</code> on five lifecycle events. Codex never reads <code>hooks/hooks.json</code>, which belongs to Claude's mod. The packaging test parses each hook command with the real CLI parser."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".codex-plugin/plugin.json",
+     "note": "Adds the explicit <code>hooks</code> path."
+    },
+    {
+     "path": "codex-hooks/hooks.json",
+     "note": "New: <code>SessionStart</code>, <code>SessionEnd</code>, <code>UserPromptSubmit</code>, <code>PostToolUse</code> for <code>Bash</code>, and <code>Stop</code>."
+    },
+    {
+     "path": "tests/test_packaging.py"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests and the live harness",
+   "kicker": "Fake executables cover the adapter. An opt-in harness drives native Codex.",
+   "intro": [
+    "<code>tests/test_codex_watch.py</code> runs a fake <code>codex</code> executable at the process boundary, uses a controlled clock, and drives the real daemon producers for the routing cases. <code>tests/codex_smoke.py</code> and <code>tests/codex_smoke.mjs</code> are not collected by <code>unittest discover</code>. They start a disposable local Codex server, create a test thread, restart the server to unload the thread, and check that the queued batch is acknowledged."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_codex_watch.py",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 365,
+       "text": "The <code>codex-fix</code> session subscribes to fix but does not own the role, and this assertion checks that its queue stays empty. It passes at this head."
+      }
+     ]
+    },
+    {
+     "path": "tests/codex_smoke.py"
+    },
+    {
+     "path": "tests/codex_smoke.mjs"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Skills, documentation, and the plan",
+   "kicker": "The shared skills learn the events: codex result, and the plan records what has been verified.",
+   "intro": [
+    "The <code>review-pr</code>, <code>fix-pr</code>, <code>review-repo</code>, and <code>implement</code> skills add a row for <code>events: codex</code>, which means: start no stream. They also tell a Codex session to use the parent session ID that the hooks supply, and how to recover from a stuck delivery. <code>docs/cli.md</code> documents setup, the lease, status, retry, and switching to a stream. The plan's § 7 records what was built and verified, and its new § 8 marks the project completed and shipped."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/review-pr/SKILL.md"
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md"
+    },
+    {
+     "path": "skills/review-repo/SKILL.md"
+    },
+    {
+     "path": "skills/implement/SKILL.md"
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/projects/watch-daemon/codex-delivery/readme.md",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The frontmatter reads <code>status: completed</code> with <code>priority: now</code> kept, which is what <code>project done</code> writes, because it sets only the status. <code>project check</code> passes."
+      },
+      {
+       "kind": "flag",
+       "line": 284,
+       "text": "Open finding: § 8 says the remaining live checks run after merge, gives no reason, and does not say the smoke test was accepted in their place. The operator's decision is that the passing smoke test is enough for now, and the full workflow test on both hosts waits for a wider release. Record that, with the reason, in § 7 and § 8."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
