@@ -71,7 +71,10 @@ keeps the label and needs no check.
 6. When the author must change a pull request that a review signed off, such as
    to build a suggestion, `fix-pr` first runs `project review hold <number>`,
    which converts it to a draft, and runs `project review ready <number>` once
-   the push lands.
+   the push lands. The hold leaves the `clean` label on, because the head is
+   still the one the review signed off. A draft that carries `clean` tells a
+   reader that the pull request was signed off and that its author is building
+   a change, such as a suggestion, on top of it. The push removes the label.
 7. Each push to a pull request that carries the `clean` label starts the
    workflow, which removes the label. In a repository without the workflow,
    `project review setup` removes it when the next review of that pull request
