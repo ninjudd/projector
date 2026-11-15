@@ -267,7 +267,7 @@ not subscribed to before.
 
 ```text
   /projector                                              2 pull requests  12s   [-]
-   #267 List a loop's open pull requests above the Claude Code prompt       2h
+   #267 ready List a loop's open pull requests above the Claude Code prompt 2h
    #258 reviewing grace Name the reviewed head in a review's… conflict · 2* 5m
         reviewer · review-signature · +84 −12 in 5 files · checks passing
         7: Discuss  8: Dismiss
