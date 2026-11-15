@@ -1,0 +1,36 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 5353598f..d1746c26 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2658,7 +2658,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
+ | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
+ | `UNREVIEWED` | `fix`, when no session on this machine reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
+ | `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed; under a repository subscription, only once the pull request is ready for review |
+-| `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review |
++| `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
+ | `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
+ | `MOVED` | any | Another session owns the role now |
+ | `MERGED`, `CLOSED` | any | The pull request merged or closed |
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 6d42e8a3..1d3a204f 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -1093,10 +1093,14 @@ NEW HEAD acme/app#14 9f3c2a1 — run review-pr on acme/app#14 in subagent review
+   cleared its lock. Stop the subagent first, then start a new one under the
+   same name to review the head. The stalled subagent passes the same
+   `--loop`, so the refusal that stops a reviewer whose review was handed
+-  over would not stop it.
+-- **`RESPONDED`** reports that the author answered every finding on an
+-  unmoved head. Send it to the subagent, which re-reviews the head with
+-  `setup --rereview`.
++  over would not stop it. When the pull request became a draft under a
++  repository subscription, the line says so and ends `stop subagent
++  review-<number>, and review it once it is ready`: stop the subagent and
++  start none, because the daemon announces the head again once the pull
++  request is marked ready.
++- **`RESPONDED`** reports that the author answered, without pushing, the
++  findings of a head whose newest verdict requests changes. Send it to the
++  subagent, which re-reviews the head with `setup --rereview`.
+ - **`MOVED`** reports that another session now owns the review. Stop the
+   subagent, and run no `project review finish`, as
+   [Stop when the review moves to another session](#stop-when-the-review-moves-to-another-session)
