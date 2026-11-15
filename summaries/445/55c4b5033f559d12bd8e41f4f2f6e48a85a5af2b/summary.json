@@ -15,19 +15,19 @@
   "summary": [
    "Projector's watch daemon is a background process, one per machine, that writes event lines into a folder for each agent session. Projector's mod submits those lines to a Claude Code session as a prompt, and the Codex adapter queues them into a Codex thread. Today only the daemon writes there, and only about pull requests, so two agent sessions have no way to talk to each other except through you.",
    "This pull request adds a plan, at <code>status: ready</code>, for a <code>project agent</code> command group. A session registers a name and a one-line summary, which is also how it agrees to receive messages. Another session of yours lists it and sends it a message. The message text is stored in the recipient's folder, and a one-line <code>PEER MESSAGE</code> event wakes the recipient, which reads the text with <code>project agent read</code>. That command prints a notice that the message carries none of the user's authority.",
-   "A second layer, the relay, carries the same records between machines through hidden Git refs, which point to commits outside normal branches. A user-created X25519 private key turns it on. The key is kept in the macOS Keychain, Windows Credential Manager, or Linux <code>secret-tool</code> where one is usable, and inline in <code>~/.projector.toml</code> otherwise, and you copy it between machines from a terminal with <code>key export</code> and <code>key import</code>. Records are encrypted with ChaCha20 and authenticated with HMAC-SHA256, and a daemon opens only records your own key sealed. The <code>config</code> commands redact an inline key even inside a printed table. Commands queue sealed records in an outbox, one item per ref. The daemon writes them as commits with a fixed identity and pushes them in one batch per repository, in a background job with timeouts, so a slow pre-push hook never holds up another session.",
-   "The plan defers messages to other people's agents, key rotation, addressing subagents, and showing peers in Projector's panel."
+   "A second layer, the relay, carries encrypted and authenticated records between machines through hidden Git refs outside normal branches. A private key enables it. The new version stores that key in macOS Keychain, Windows Credential Manager, or Linux Secret Service when available; configuration holds a key ID, while headless systems can use a protected inline fallback. Commands never push: they queue one desired change per ref, and background jobs create commits with fixed transport identities and push them in batches.",
+   "All nine findings from earlier review rounds are addressed in the plan. This review flags one issue in the new keychain integration: macOS key reads need a bounded, noninteractive path outside the shared watch loop. The plan still defers messages to other people’s agents, key rotation, subagent addressing, and panel discovery."
   ],
   "cards": [
    {
     "id": "terms",
     "title": "Terms",
-    "html": "<ul class=\"tight\"><li><b>Session folder.</b> The directory under the watch state root where the daemon keeps one session's subscriptions and events.</li><li><b>Live.</b> A registered session is live while <code>watch.delivery</code> reports anything but <code>none</code> for it. For Codex, that is while its registration lease holds.</li><li><b>Relay.</b> The cross-machine layer: presence refs under <code>refs/projector/agents/</code> and one inbox ref per message under <code>refs/projector/inbox/</code>, each holding one sealed record.</li><li><b>Seal.</b> Encrypting a record with ChaCha20 and authenticating it with HMAC-SHA256, under keys agreed with X25519 between the sender's key and the recipient's public key.</li><li><b>Outbox.</b> A per-repository file of queued ref changes, holding sealed records rather than commits, that only the daemon writes and pushes.</li><li><b>Chosen checkout.</b> The checkout the daemon writes and pushes relay commits from: a live registered session's, or else the newest recorded one that still exists.</li><li><b>Relay job.</b> The per-repository background task, on a pool of 2 threads, that runs the relay's fetch, delivery, commits, and push with timeouts, off the daemon's loop.</li></ul>"
+    "html": "<ul class=\"tight\"><li><b>Session folder.</b> The directory under the watch state root where the daemon keeps one session's subscriptions and events.</li><li><b>Live.</b> A registered session is live while <code>watch.delivery</code> reports anything but <code>none</code> for it. For Codex, that is while its registration lease holds.</li><li><b>Relay.</b> The cross-machine layer: presence refs under <code>refs/projector/agents/</code> and one inbox ref per message under <code>refs/projector/inbox/</code>, each holding one sealed record.</li><li><b>Seal.</b> Encrypting a record with ChaCha20 and authenticating it with HMAC-SHA256, under keys agreed with X25519 between the sender's key and the recipient's public key.</li><li><b>Outbox.</b> A per-repository file of queued ref changes, holding sealed records rather than commits, that only the daemon writes and pushes.</li><li><b>Chosen checkout.</b> The checkout the daemon writes and pushes relay commits from: a live registered session's, or else the newest recorded one that still exists.</li></ul>"
    },
    {
     "id": "review",
-    "title": "Review so far",
-    "html": "<ul class=\"tight\"><li><b>Scope.</b> This is a ready plan, not the implementation. Reviews traced its claims against the current watch daemon, Codex adapter, Git helpers, and configuration printers.</li><li><b>Earlier findings.</b> All nine finding threads are resolved: queue eligibility, idle liveness, outbox objects written in the pushing checkout, recursive redaction, disclosure rules for public repositories, a fixed commit identity, starting the daemon on registration, one outbox item per ref, and relay work moved off the daemon's loop.</li><li><b>This review.</b> The head is clean. One suggestion asks to rewrap a few overlong prose lines.</li></ul>"
+    "title": "Security and performance review",
+    "html": "<ul class=\"tight\"><li><b>Scope.</b> This is a ready plan. Its future relay and keychain backends are not implemented in this pull request.</li><li><b>Earlier fixes.</b> Registration starts the daemon; idle agents remain live; message keys survive Codex filtering; ref changes coalesce; commits use fixed nonpersonal identities; relay Git work uses background jobs and deadlines; private values are redacted recursively; public messages contain no private repository names.</li><li><b>Current finding.</b> The macOS key lookup can wait for an unlock dialog. Only Linux has a specified keychain-read deadline, so startup and reloads need the same isolation that now protects Git work.</li><li><b>Additional hardening.</b> The plan now puts the peer authority notice before previews, uses full UUID message IDs, and caps sealed-record size and records opened per job.</li></ul>"
    }
   ]
  },
@@ -38,7 +38,7 @@
    "kicker": "One new plan: register, list, send, read, and reply, then a sealed relay across machines",
    "intro": [
     "The plan is the only file in the change. Read § 2.1 for the commands on one machine, § 2.2 for the relay and its sealing, § 2.3 for the records and settings, and § 2.4 for the source files the build will touch. § 4 lists the acceptance tests, and § 7 splits the build into a two-layer stack, local messages first.",
-    "A message is one more event line, so <code>watch.append_events</code> picks the transport. The Claude mod needs no change. The Codex adapter changes only so that <code>codex_watch.eligible</code> keeps a line keyed to a message. The daemon's <code>scan</code> changes so that an idle registered agent keeps it running."
+    "A message uses the existing watch transport. The plan changes the common Codex eligibility filter for message keys and keeps registered idle sessions live. Relay jobs run outside the dispatch loop, one per repository, with bounded Git calls. The new keychain layer keeps the secret out of ordinary configuration and passes private values through standard input or native credential APIs rather than command arguments."
    ],
    "checks": [],
    "files": [
@@ -49,32 +49,42 @@
      "checks": [
       {
        "kind": "context",
-       "text": "§ 6 explicitly defers other people’s agents, key rotation, subagent addressing, and panel discovery. The ready status still requires the integration defects flagged below to be settled."
+       "text": "The plan remains ready. Other people’s agents, rotation, subagent addressing, and panel discovery are explicitly deferred. Its new keychain behavior must meet the same unattended-operation requirement as relay delivery."
       },
       {
        "kind": "verify",
-       "line": 187,
-       "text": "§ 2.1 step 5's <code>eligible</code> change keeps a peer message. In a scratch copy with <code>eligible</code> patched as described, <code>prepare</code> batched a <code>[\"message\", &lt;id&gt;]</code> line whose record exists, and <code>acknowledge</code> returned it."
+       "line": 97,
+       "text": "Successful registration explicitly calls <code>ensure_daemon</code>; this closes the cold-start path where existing Codex hooks see no pull-request work and do not start it."
       },
       {
        "kind": "verify",
        "line": 221,
-       "text": "The reason for the relay job holds: at this head <code>Daemon.tick</code> finishes <code>run_pass</code> before it calls <code>codex.tick</code>, and <code>summary.git</code> runs Git with no timeout."
+       "text": "Relay Git work now runs in per-repository background jobs and uses explicit deadlines. Existing <code>Daemon.tick</code> waits for a pass before new Codex dispatch, which is why this isolation matters."
       },
       {
        "kind": "verify",
-       "line": 260,
-       "text": "<code>/usr/bin/security -i</code> reads its command from standard input, so storing the key that way keeps it out of process arguments. Tried on macOS with a harmless <code>list-keychains</code>."
+       "line": 359,
+       "text": "A temporary repository with a private configured name/email and signing enabled produced the prescribed fixed author, committer, epoch dates, message, and no signature when the new explicit environment and <code>--no-gpg-sign</code> were applied."
+      },
+      {
+       "kind": "verify",
+       "line": 342,
+       "text": "The outbox now holds one desired item per ref and preserves the expected remote commit when replacing it, removing the duplicate-destination batch described in the earlier finding."
       },
       {
        "kind": "verify",
        "line": 306,
-       "text": "Redaction reaches every printed value. At this head the CLI prints configuration values only in <code>run_config</code>'s <code>get</code> and <code>list</code>, <code>change_config</code>, <code>report_override</code>, and the <code>review.require_check</code> notice, and the plan routes each through <code>config.redact</code>, tables included."
+       "text": "Redaction still covers nested inline keys, while <code>keychain:&lt;key-id&gt;</code> contains only a reference and may be printed. The plan continues to refuse private keys from checkout-level settings."
+      },
+      {
+       "kind": "flag",
+       "line": 279,
+       "text": "The new daemon startup/reload key reads have no bounded, noninteractive macOS path. Apple documents unlock UI as the default, and the prescribed <code>security</code> command can wait on that UI, delaying unrelated new Codex dispatch."
       },
       {
        "kind": "verify",
-       "line": 361,
-       "text": "The fixed identity works. In a temporary repository with a real <code>user.name</code> and <code>commit.gpgSign = true</code>, <code>git commit-tree --no-gpg-sign</code> with these variables wrote <code>projector &lt;projector@invalid&gt; 0 +0000</code> headers and no signature."
+       "line": 605,
+       "text": "Full validation passed at this head: the Python suite ran 1,272 tests with one compiled-JavaScript check skipped because site dependencies are absent in the scratch checkout; 227 hook tests, both plugin validations, project check, hook type-check, and diff check passed. Node-dependent Python tests ran."
       }
      ]
     }
