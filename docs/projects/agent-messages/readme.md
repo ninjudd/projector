@@ -365,10 +365,16 @@ and gives one that has changed the pushed commit as its new `old`.
    replaces that item's `sealed`, or makes it a deletion, and keeps its
    `old`, which is still the commit on `origin` that the lease must
    expect. A deletion of a ref whose `old` is `null`, one that never
-   reached `origin`, removes the item instead. When a change lands, the
-   daemon moves the ref's tracking ref to the commit it pushed, so the
-   next change to that ref reads its `old` from what landed. The daemon checks the outbox each second, as it
-   checks session folders. When an outbox holds changes, the daemon picks
+   reached `origin`, removes the item instead, but only while no running
+   push carries that item. If a push that creates the ref is in flight,
+   the item becomes a deletion and stays, because the create may still
+   land. When the push ends, the item takes the pushed commit as its
+   `old` if the create landed, or is removed if it did not, so a session
+   that ends during a slow push is cleaned up on the next push rather
+   than by the lease sweep an hour later. When a change lands, the daemon
+   moves the ref's tracking ref to the commit it pushed, so the next
+   change to that ref reads its `old` from what landed. The daemon checks
+   the outbox each second, as it checks session folders. When an outbox holds changes, the daemon picks
    the chosen checkout and writes each new record there as a blob, a tree,
    and a parentless commit, with `git hash-object -w`, `git mktree`, and
    `git commit-tree`. Sealing hides only the blob, and `commit-tree` would
@@ -661,6 +667,7 @@ config files standing in for two machines.
 | Make the pre-push hook hang, with the push timeout lowered to 2 seconds for the test. | The push's process group is killed, its changes stay queued with the timeout as their error in `watch status`, and the next pass starts a new push. Catches a stuck hook that stops the relay for good. |
 | Clone the repository twice on machine 1 and add a worktree to the first clone. Register A in the worktree and C in the second clone, send a message from each, then remove the worktree and end A. Pass on machine 1. | Both messages and A's cleanup land in one push from the second clone, and the outbox is empty. Then end C and delete the second clone before the next pass: C's cleanup stays queued, nothing is pushed, and `watch status` says no recorded checkout of the repository remains. Catches a push that names an object its checkout lacks, and an outbox that pushes from a removed checkout. |
 | Before any pass, register A, change its summary twice, and send it nothing. Pass. Then let a renewal and A's cleanup both queue before the next pass, and pass again. | Each time the outbox holds one item for A's presence ref, and each push carries one refspec for it. The first pass publishes the last summary, and the second deletes the ref under a lease that expects the commit the first pass pushed. Catches a batch that names one ref twice and fails on every pass, and a coalesced change that loses its lease. |
+| Give the checkout a pre-push hook that sleeps 30 seconds. Register A, let the pass start the push that creates A's presence ref, and end A while the hook runs. | The outbox keeps a deletion for A's presence ref during the push. Once the create lands, the next push deletes the ref under a lease that expects the created commit, with no wait for the lease sweep. Catches a deletion dropped because its create had not landed yet. |
 | Make one queued change's lease fail while two others are valid. | The two land and leave the outbox. The failed one stays, with its error in `watch status`, and lands on a later pass once its lease is right. Catches a batch that loses every change when one fails. |
 | Relay through a repository the fake `gh` reports `PUBLIC`, then `PRIVATE`. | `send` prints `public repository: name no private repository and describe none of its internals` for the first and not the second. Catches a missing reminder. |
 | Register Codex session B on machine 2 with no subscriptions and an empty queue, and advance machine 2's clock past the daemon's 5-minute idle stop and past a lease renewal. Then send from A on machine 1 and pass on both machines. | Machine 2's daemon is still running, B's presence ref is renewed and never deleted, and the fake `codex` receives one queued prompt with the `PEER MESSAGE` line. Catches a scan that counts an idle Codex agent as not live. |
