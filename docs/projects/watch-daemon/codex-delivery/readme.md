@@ -246,15 +246,12 @@ supplies plain text in the tested client; the adapter also accepts
 structured completion results and filters authoring commands before
 passing their output to the existing subscription parser.
 
-A full Python run passed 1,260 tests before the latest documentation and
-Claude panel changes were merged from `main`. The final run passed except
-for sandbox restrictions on the site's loopback servers; all 19 tests in
-`tests.test_site.ServeTests` passed when rerun outside that sandbox.
-Both plugin validations, plan checks, and the hooks type-check pass. The
-current Claude test runner
-reports 202 passing tests and 25 panel-rendering expectation failures;
-an isolated copy of unchanged `main` has the same 25 failing test names. A live
-Claude session received a notice through its mod while idle and replied.
+After merging current `main`, the full Python suite passes 1,262 tests.
+The compiled-site JavaScript check is skipped because the linked worktree
+has no site npm install; no site source or assets changed. All 227 Claude
+hook tests pass. Both plugin validations, plan checks, and the hooks
+type-check pass. A live Claude session received a notice through its mod
+while idle and replied.
 
 The combined live Codex check passed with Codex 0.169.0 and Node 24.22.2:
 
@@ -274,6 +271,7 @@ removed its temporary files. It changed no installed plugin and made no
 GitHub mutation. Folder and hook trust decisions persist in Codex's local
 settings.
 
-The project stays in progress until new-head and finding events are also
-observed in a live review workflow. The automated producer tests and native
+The project stays in progress until live new-head and finding events wake
+the subscribed review and fix workflows on both hosts, with the existing PR
+worker reused to execute that work. The automated producer tests and native
 transport check do not replace that acceptance check.
