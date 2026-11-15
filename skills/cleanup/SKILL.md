@@ -86,7 +86,8 @@ holds nothing under Projector's state directory.
    ```
 
    `project review status` reports the verdict on the current head, the
-   open finding threads, and each hold comment the author has open.
+   open finding threads, whether the head is signed off, and the Projector
+   labels on the pull request.
    `gh pr view` reports whether the pull request conflicts with its base,
    as `mergeable` reading `CONFLICTING`, and the result of each check, as a
    check run's `conclusion` or a commit status's `state`. When
@@ -108,8 +109,8 @@ gap:
 - Review work on a pull request the session fixes: an unresolved finding, a
   standing change request, a conflict with its base, failing checks, or a
   suggestion neither implemented nor deferred. `fix-pr` does this work.
-- A hold comment the session posted, which says a change is still being
-  built.
+- A pull request the session held, converting it to a draft with
+  `project review hold`, which says a change is still being built.
 - A plan whose `status` or `priority` no longer matches the work, a project
   the work completed that is not marked `completed`, or a warning from
   `project check`. `finish` does this work.
@@ -120,7 +121,8 @@ These are not gaps, because the session has no more work to do on them:
 
 - A pull request that waits for the user's review or merge. The merge is the
   user's checkpoint, and this skill never merges.
-- A draft that waits for a review by another session.
+- A pull request, ready for review, that waits for a review by another
+  session.
 - A notice in the inbox that nothing depends on.
 
 ## Ask what to do with each gap
@@ -171,9 +173,11 @@ only when the user's answer says to.
   for the report.
 - **Leave it.** Do nothing more for the gap, and name it in the report.
 
-When a gap held a hold comment and the user chose an issue or to leave it,
-end the hold with `project review hold <number> --drop`. A hold that no
-session will lift keeps the pull request a draft however clean its review.
+When a gap is a pull request the session held and the user chose an issue or
+to leave it, mark it ready with
+`project review ready <number> --repo <owner>/<repo>` once nothing more will
+be pushed for it. A held pull request that no session marks ready stays a
+draft, which GitHub refuses to merge however clean its review.
 
 ## Release what the session holds
 

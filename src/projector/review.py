@@ -53,11 +53,6 @@ from .inbox import SESSION, locked, write_json
 from .summary import repo_slug
 
 FINDING_MARKER = "projector-finding"
-# The last line of the comment that holds a pull request in draft while changes for it are built, as
-# `hold_body` writes it for fix-pr/SKILL.md § Hold the pull request while changes are built.
-HOLD_MARKER = "<!-- projector-hold v=1 -->"
-# A change a hold comment lists.
-HOLD_BULLET = re.compile(r"^[-*]\s+(.+)$")
 # The mark that opens both the start comment and the review's signature line, as
 # review-pr/SKILL.md § Label every review and finding writes it.
 MARK = "📽️"
@@ -665,47 +660,152 @@ def is_live(comment: dict, reviews: list[dict], at: datetime) -> bool:
     return True
 
 
-# Holds
+# Draft state
 
-def holds(repo: str, number: int, author: str) -> list[dict]:
-    """The hold comments on the pull request, from every page, each with its `id` and `url`. Only the
-    pull request's `author` holds it: anyone can comment, so another account's comment carrying the
-    marker holds nothing."""
-    if not author:
-        return []
-    rows = run_gh(["api", "--paginate", f"repos/{repo}/issues/{number}/comments",
-                   "--jq", f'.[] | select(.body // "" | contains("{HOLD_MARKER}")) '
-                           '| {id, url: .html_url, login: .user.login} | @json']).splitlines()
-    return [{"id": comment["id"], "url": comment.get("url")} for comment in map(json.loads, filter(str.strip, rows))
-            if (comment.get("login") or "").lower() == author.lower()]
-
-
-def hold_body(changes: list[str]) -> str:
-    """A hold comment listing `changes`, with the marker on its last line."""
-    bullets = "\n".join(f"- {change}" for change in changes)
-    return f"Held in draft while the following changes are implemented:\n\n{bullets}\n\n{HOLD_MARKER}\n"
-
-
-def read_hold(repo: str, comment: int) -> dict:
-    """A hold comment as GitHub has it now: its `id` and `url`, the `changes` it lists, and whether the marker
-    is its last line, as `marked`."""
-    found = gh_json(["api", f"repos/{repo}/issues/comments/{comment}"]) or {}
-    lines = [line.strip() for line in (found.get("body") or "").splitlines() if line.strip()]
-    return {"id": comment, "url": found.get("html_url"),
-            "changes": [m.group(1).strip() for m in map(HOLD_BULLET.match, lines) if m],
-            "marked": bool(lines) and lines[-1] == HOLD_MARKER}
+def set_draft(repo: str, number: int, draft: bool) -> dict:
+    """`review hold` with `draft`, and `review ready` without it: convert the operator's own pull request to a
+    draft, or mark it ready for review, then read the state back. Draft means its author is still working on
+    it, and only the author's draft state is theirs to move, so both refuse a pull request someone else wrote."""
+    pr = read_pull_request(repo, number)
+    if pr.get("state") != "open":
+        raise ReviewError(f"{repo}#{number} is {pr.get('state') or 'not open'}; only an open pull request has a "
+                          "draft state to move")
+    author = (pr.get("user") or {}).get("login") or ""
+    login = authenticated_login()
+    if login.lower() != author.lower():
+        raise ReviewError(f"gh is signed in as {login}, and {repo}#{number} is {author or 'nobody'}'s; only the "
+                          "pull request's author moves its draft state")
+    changed = bool(pr.get("draft")) != draft
+    if changed:
+        run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft else [])])
+        if bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft")) != draft:
+            undo = " --undo" if draft else ""
+            raise ReviewError(f"{repo}#{number} is still {'ready' if draft else 'a draft'} after `gh pr ready{undo}`; "
+                              f"run `gh pr ready {number} --repo {repo}{undo}` and check it")
+    return {"repo": repo, "number": number, "head": pr["head"]["sha"], "draft": draft, "changed": changed}
 
 
-def hold_listing(comments: list[dict]) -> list[str]:
-    """The changes a hold's comments list, in order, each once."""
-    return list(dict.fromkeys(change for comment in comments for change in comment["changes"]))
+def draft_lines(result: dict) -> list[str]:
+    """`review hold` and `review ready` without --json: the pull request's draft state, and whether it moved."""
+    where, head = f"{result['repo']}#{result['number']}", result["head"][:7]
+    if result["draft"]:
+        return [f"converted {where} to a draft at {head}" if result["changed"]
+                else f"{where} is already a draft at {head}"]
+    return [f"marked {where} ready for review at {head}" if result["changed"]
+            else f"{where} is already ready for review at {head}"]
+
+
+# Sign-off: the labels and the commit status
+
+# The labels and the status context that show a pull request's reviews, as
+# docs/projects/review-on-ready/readme.md § 2.3 describes them.
+CLEAN_LABEL = "clean"
+REVIEWING_LABEL = "reviewing"
+LABELS = {CLEAN_LABEL: ("0e8a16", "Projector's newest review of the current head is clean"),
+          REVIEWING_LABEL: ("fbca04", "A Projector review of this pull request is in progress")}
+REVIEW_CONTEXT = "projector/review"
+
+
+def sign_off(head: str, reviews: list[dict], open_threads: int) -> dict:
+    """Whether `head` is signed off: the newest counted Projector verdict on it, from any model, is clean, and no
+    Projector finding thread is open. `reviews` are counted reviews as `verdicts` gives them. Gives the
+    `newest` verdict, each account's and model's newest in `models`, `open_threads`, and `signed_off`."""
+    models = newest_verdicts(head, reviews)
+    newest = models[0] if models else None
+    return {"newest": newest, "models": models, "open_threads": open_threads,
+            "signed_off": newest is not None and newest["verdict"] == "clean" and not open_threads}
+
+
+def label_names(pr: dict) -> set[str]:
+    """The labels on `pr`, a pull request as GitHub's REST API gives it, lowercased, as GitHub matches them."""
+    return {(label.get("name") or "").lower() for label in pr.get("labels") or []}
+
+
+def change_labels(repo: str, number: int, present: set[str], add: set[str], remove: set[str],
+                  token: Optional[str]) -> dict:
+    """Add `add` and remove `remove`, Projector's labels, in one `gh pr edit`, skipping what `present` already
+    says. When the edit refuses a label to add, create the labels to add and edit once more; a label that
+    already exists stays as it is. Gives the labels `added` and `removed`, or a `warning` when GitHub refused,
+    because the labels are a view and their refusal never fails the command that changes them."""
+    added, removed = sorted(add - present), sorted(remove & present)
+    if not added and not removed:
+        return {"added": [], "removed": [], "warning": None}
+    args = ["pr", "edit", str(number), "--repo", repo, *[a for name in added for a in ("--add-label", name)],
+            *[a for name in removed for a in ("--remove-label", name)]]
+    try:
+        try:
+            run_gh(args, token)
+        except ReviewError:
+            if not added:
+                raise
+            for name in added:
+                color, description = LABELS[name]
+                with suppress(ReviewError):
+                    run_gh(["api", "-X", "POST", f"repos/{repo}/labels", "-f", f"name={name}", "-f", f"color={color}",
+                            "-f", f"description={description}"], token)
+            run_gh(args, token)
+    except ReviewError as exc:
+        return {"added": [], "removed": [], "warning": f"left the labels on {repo}#{number} as they were: {exc}"}
+    return {"added": added, "removed": removed, "warning": None}
+
+
+def reviews_in_progress(repo: str, number: int, reviewer: str, reviews: list[dict],
+                        exclude: Optional[int] = None) -> bool:
+    """Whether a start comment of the reviewer's on the pull request, other than `exclude`, still means a review
+    in progress among `reviews`, as `is_live` decides."""
+    at = now()
+    return any(comment["id"] != exclude and is_live(comment, reviews, at)
+               for comment in start_comments(repo, number, reviewer))
+
+
+def clear_reviewing(repo: str, number: int, reviewer: str, token: Optional[str]) -> Optional[dict]:
+    """Remove `reviewing` from the pull request once no start comment of the reviewer's means a review in
+    progress, as `change_labels` does. Gives None when it changed nothing or the pull request cannot be read."""
+    try:
+        present = label_names(read_pull_request(repo, number))
+        if REVIEWING_LABEL not in present or reviews_in_progress(repo, number, reviewer,
+                                                                 reviewer_reviews(repo, number, reviewer)):
+            return None
+    except ReviewError:
+        return None
+    return change_labels(repo, number, present, set(), {REVIEWING_LABEL}, token)
+
+
+def requires_check(repo: str, branch: str) -> bool:
+    """Whether a ruleset on `branch`, the repository's default branch, requires the `projector/review` status."""
+    contexts = run_gh(["api", "--paginate", f"repos/{repo}/rules/branches/{branch}",
+                       "--jq", '.[] | select(.type == "required_status_checks") '
+                               "| .parameters.required_status_checks[].context"]).split()
+    return REVIEW_CONTEXT in contexts
+
+
+def post_status(repo: str, sha: str, verdict: dict, token: Optional[str]) -> str:
+    """Post the `projector/review` status that `verdict`, as `sign_off` gives it, sets on `sha`, the commit the
+    verdict names, linking the review that decided it, and give the state it posted."""
+    newest, count = verdict["newest"], verdict["open_threads"]
+    if verdict["signed_off"]:
+        state, description = "success", f"Clean: {newest['model']}"
+    elif count:
+        state, description = "failure", f"Changes requested: {count} open finding{'' if count == 1 else 's'}"
+    else:
+        state, description = "failure", f"Changes requested: {newest['model']}"
+    link = ["-f", f"target_url={newest['url']}"] if newest.get("url") else []
+    run_gh(["api", "-X", "POST", f"repos/{repo}/statuses/{sha}", "-f", f"state={state}",
+            "-f", f"context={REVIEW_CONTEXT}", "-f", f"description={description[:140]}", *link], token)
+    return state
+
+
+def commit_status(repo: str, sha: str) -> Optional[str]:
+    """The state of the `projector/review` status on `sha`, or None when no review posted one."""
+    return run_gh(["api", f"repos/{repo}/commits/{sha}/status",
+                   "--jq", f'.statuses[] | select(.context == "{REVIEW_CONTEXT}") | .state']).strip() or None
 
 
 def named_repo(repo: Optional[str], cwd: Path, purpose: str) -> str:
-    """The repository `review hold` and `review finish` act on: `repo`, else the origin of the checkout `cwd`
-    is in. Unlike the commands that follow a review, they never take one from review state: they delete
-    comments, so they act only on a repository they were given or are run in. `purpose` completes the
-    refusal outside a checkout, as "to hold a pull request in"."""
+    """The repository `review hold`, `review ready`, and `review finish` act on: `repo`, else the origin of the
+    checkout `cwd` is in. Unlike the commands that follow a review, they never take one from review state: they
+    move a pull request's draft state or delete comments, so they act only on a repository they were given or
+    are run in. `purpose` completes the refusal outside a checkout, as "to hold a pull request in"."""
     if repo:
         return repo
     try:
@@ -713,150 +813,6 @@ def named_repo(repo: Optional[str], cwd: Path, purpose: str) -> str:
     except ReviewError as exc:
         raise ReviewError(f"{cwd} is not in a checkout whose origin is on GitHub, so there is no repository "
                           f"{purpose}; pass --repo owner/name") from exc
-
-
-def hold_changes(texts: list[str], flag: str) -> list[str]:
-    """The changes given to --add or --drop, trimmed and without repeats, each refused unless it is one line."""
-    changes: list[str] = []
-    for text in texts:
-        change = text.strip()
-        if not change or "\n" in change or "\r" in change:
-            raise ReviewError(f"{flag} {text!r} is not a change: give each change as one line of text")
-        if change not in changes:
-            changes.append(change)
-    return changes
-
-
-def hold(repo: str, number: int, add: list[str], drop: list[Optional[str]]) -> dict:
-    """`review hold`: post or extend the author's hold on the pull request with `add`, remove the changes
-    `drop` names from it, or end it with a `drop` that names none (a bare --drop, given as None), as
-    fix-pr/SKILL.md § Hold the pull request while changes are built describes. Only the author's comment
-    holds a pull request, so every mode refuses anyone else, and no mode marks the pull request ready."""
-    if bool(add) == bool(drop):
-        raise ReviewError("pass --add or --drop")
-    end = None in drop
-    if end and len(drop) > 1:
-        raise ReviewError("a bare --drop ends the whole hold, so it cannot be combined with --drop TEXT; run "
-                          "--drop TEXT to remove a change, or --drop alone to end the hold")
-    changes = hold_changes(add, "--add") if add else [] if end else hold_changes(drop, "--drop")
-    pr = read_pull_request(repo, number)
-    author = (pr.get("user") or {}).get("login") or ""
-    login = authenticated_login()
-    if login.lower() != author.lower():
-        raise ReviewError(f"gh is signed in as {login}, and {repo}#{number} is {author or 'nobody'}'s; only the "
-                          "pull request's author can hold it, because nothing reads another account's hold comment")
-    held = holds(repo, number, author)
-    if add:
-        return hold_add(repo, pr, held, changes)
-    if end:
-        return hold_end(repo, pr, held)
-    return hold_drop(repo, pr, held, changes)
-
-
-def hold_result(repo: str, pr: dict, action: str, comment: Optional[dict], changes: list[str], draft: bool) -> dict:
-    return {"repo": repo, "number": pr["number"], "head": pr["head"]["sha"], "action": action,
-            "comment": {"id": comment["id"], "url": comment["url"]} if comment else None, "changes": changes,
-            "draft": draft}
-
-
-def write_hold(repo: str, number: int, comment: Optional[int], changes: list[str]) -> dict:
-    """Post the hold comment, or edit `comment`, then read it back, refusing unless it lists `changes` and
-    ends with the marker."""
-    body = hold_body(changes)
-    if comment is None:
-        comment = gh_json(["api", f"repos/{repo}/issues/{number}/comments", "-f", f"body={body}"])["id"]
-    else:
-        run_gh(["api", "-X", "PATCH", f"repos/{repo}/issues/comments/{comment}", "-f", f"body={body}"])
-    written = read_hold(repo, comment)
-    if not written["marked"] or written["changes"] != changes:
-        raise ReviewError(f"hold comment {comment} does not read back as written, listing the changes with "
-                          f"{HOLD_MARKER} on its last line; check it at {written['url'] or 'the pull request'} "
-                          "and run the command again")
-    return written
-
-
-def hold_add(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
-    """Post the hold, or add `changes` to the newest one. Only once the comment reads back is the pull request
-    drafted: to the watch daemon, a draft on an unchanged head with no hold open is an author who answered
-    without pushing."""
-    number = pr["number"]
-    if pr.get("state") != "open":
-        raise ReviewError(f"{repo}#{number} is {pr.get('state') or 'not open'}; only an open pull request is held")
-    listing, newest = changes, None
-    if held:
-        newest = read_hold(repo, held[-1]["id"])
-        listing = newest["changes"] + [change for change in changes if change not in newest["changes"]]
-    written = write_hold(repo, number, newest["id"] if newest else None, listing)
-    # Read again now that the hold is open, so a review that marked it ready meanwhile is drafted too.
-    draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
-    if not draft:
-        run_gh(["pr", "ready", str(number), "--repo", repo, "--undo"])
-        draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
-        if not draft:
-            raise ReviewError(f"{repo}#{number} is still ready after `gh pr ready --undo`, with hold comment "
-                              f"{written['id']} open; run `gh pr ready {number} --repo {repo} --undo` and check it")
-    return hold_result(repo, pr, "added" if newest else "posted", written, listing, draft)
-
-
-def hold_drop(repo: str, pr: dict, held: list[dict], changes: list[str]) -> dict:
-    """Remove `changes`, which the owner decided will not be built, from every hold comment of the author's
-    that lists them, and delete a comment left with none. The hold ends only once no comment is left, on a
-    head no push changed, which asks the session reviewing it to re-review it."""
-    number = pr["number"]
-    if not held:
-        raise ReviewError(f"{repo}#{number} has no hold open, so there is no change to drop")
-    found = [read_hold(repo, comment["id"]) for comment in held]
-    listing = hold_listing(found)
-    unknown = [f'"{change}"' for change in changes if change not in listing]
-    if unknown:
-        raise ReviewError(f"the hold on {repo}#{number} lists no change {listed(unknown)}; it lists "
-                          + (listed([f'"{change}"' for change in listing]) or "none"))
-    kept = []
-    for comment in found:
-        left = [change for change in comment["changes"] if change not in changes]
-        if left == comment["changes"]:
-            kept.append(comment)
-        elif left:
-            kept.append(write_hold(repo, number, comment["id"], left))
-        else:
-            delete_comment(repo, comment["id"])
-    draft = bool(pr.get("draft"))
-    if kept:
-        return hold_result(repo, pr, "dropped", kept[-1], hold_listing(kept), draft)
-    return hold_result(repo, pr, "ended", found[-1], listing, draft)
-
-
-def hold_end(repo: str, pr: dict, held: list[dict]) -> dict:
-    """Delete every hold comment of the author's, leaving the draft state to the review of the head. The
-    caller says when: fix-pr ends the hold once the push that carries every listed change succeeds, and
-    nothing here checks that it did."""
-    draft = bool(pr.get("draft"))
-    if not held:
-        return hold_result(repo, pr, "none", None, [], draft)
-    found = [read_hold(repo, comment["id"]) for comment in held]
-    for comment in found:
-        delete_comment(repo, comment["id"])
-    return hold_result(repo, pr, "ended", found[-1], hold_listing(found), draft)
-
-
-def hold_lines(result: dict) -> list[str]:
-    """`review hold` without --json: what it did, the comment, the changes the hold lists, and the draft state."""
-    where, head = f"{result['repo']}#{result['number']}", result["head"][:7]
-    comment, changes, action = result["comment"], result["changes"], result["action"]
-    state = "it is a draft" if result["draft"] else "it is not a draft"
-    count = f"{len(changes)} change{'' if len(changes) == 1 else 's'}"
-    if action == "none":
-        return [f"no hold is open on {where}; {state}"]
-    if action in ("posted", "added"):
-        return [f"{action} hold comment {comment['id']} on {where}: {comment['url']}",
-                f"held in draft while {count} {'is' if len(changes) == 1 else 'are'} implemented: "
-                + "; ".join(changes)]
-    if action == "dropped":
-        return [f"still held by comment {comment['id']} on {where}: {comment['url']}",
-                f"{count} still listed: " + "; ".join(changes) + f"; {state}"]
-    return [f"ended the hold on {where}, deleting hold comment {comment['id']}, which listed "
-            + ("; ".join(changes) if changes else "no change"),
-            f"the session reviewing it reviews {head} next, and a clean verdict marks it ready; {state}"]
 
 
 # Resolving which review a command means
@@ -919,7 +875,10 @@ def review_paths(root: Path, repo: str, number: int, model: Optional[str]) -> Pa
 
 def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer: Optional[str],
           configured_reviewer: Optional[str], model: str, loop: Optional[str],
-          rereview: bool, replace: Optional[int] = None) -> dict:
+          rereview: bool, replace: Optional[int] = None, labels: bool = True) -> dict:
+    """`review setup`: lock the pull request's head for the model, check it out in a scratch worktree, post
+    the start comment, and record the review. With `labels`, mark the pull request `reviewing`, and take off
+    a `clean` that no clean verdict on this head supports, as a push leaves where no workflow removes it."""
     checkout = checkout_root(checkout)
     origin = origin_repo(checkout)
     if repo and repo.lower() != origin.lower():
@@ -954,6 +913,15 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
         # --replace names, give way to this one.
         if comment["id"] in (recorded, replace):
             delete_comment(repo, comment["id"], token)
+    labeled = None
+    if labels:
+        present = label_names(pr)
+        stale = set()
+        if CLEAN_LABEL in present:
+            newest = newest_verdicts(sha, verdicts(repo, number, reviewer, repo_visibility(pr)))
+            if not newest or newest[0]["verdict"] != "clean":
+                stale = {CLEAN_LABEL}
+        labeled = change_labels(repo, number, present, {REVIEWING_LABEL}, stale, token)
     ensure_loop(root, loop)
     kept, removed = remove_superseded(paths, earlier.get("checkout"), earlier.get("worktrees", []), worktree)
     state = {
@@ -981,7 +949,7 @@ def setup(root: Path, number: int, checkout: Path, repo: Optional[str], reviewer
     }
     write_state(paths, state)
     touch(lock)
-    return dict(state, removed=removed)
+    return dict(state, removed=removed, labels=labeled)
 
 
 def check_replaceable(starts: list[dict], comment: int, model: str, reviewer: str, repo: str, number: int) -> None:
@@ -1106,12 +1074,14 @@ def remove_worktree(checkout: Optional[str], path: Path, folder: Path) -> None:
         shutil.rmtree(path)
 
 
-def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], force: bool, cwd: Path) -> dict:
+def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], force: bool, cwd: Path,
+           labels: bool = True) -> dict:
     """`review finish`: end one model's review of the pull request on this machine. As the reviewer, delete
     the review's start comment and every other start comment of the model's that `is_live` no longer
-    counts; remove every scratch worktree the state lists; clear the locks; and delete the state, keeping
-    the loop's record. Refuses while the review is unpublished unless `force`, and succeeds when there is
-    nothing to clean, so a second run changes nothing.
+    counts; with `labels`, remove `reviewing` once no start comment means a review in progress; remove every
+    scratch worktree the state lists; clear the locks; and delete the state, keeping the loop's record.
+    Refuses while the review is unpublished unless `force`, and succeeds when there is nothing to clean, so
+    a second run changes nothing.
 
     The repository is `repo`, else the origin of the checkout `cwd` is in, never one taken from review state,
     so a run in one repository cannot end another's review of a pull request with the same number. Every
@@ -1120,7 +1090,7 @@ def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], f
     repo = named_repo(repo, cwd, "to finish a review in")
     model = find_model(root, repo, number, model)
     result: dict = {"repo": repo, "number": number, "model": model, "comments": [], "worktrees": [],
-                    "released": [], "state": False}
+                    "released": [], "state": False, "labels": None}
     paths = Paths(root, repo, number, model) if model else None
     state = stored_state(paths) if paths else None
     elsewhere = [found for found in set_up_repos(root, number) if found.lower() != repo.lower()]
@@ -1137,10 +1107,12 @@ def finish(root: Path, number: int, repo: Optional[str], model: Optional[str], f
         if recorded and not force:
             raise ReviewError(unfinished(state, recorded))
         result["comments"] = finished_starts(state, recorded)
-        if result["comments"]:
+        if result["comments"] or labels:
             token = reviewer_token(state["reviewer"])
             for comment in result["comments"]:
                 delete_comment(repo, comment, token)
+            if labels:
+                result["labels"] = clear_reviewing(repo, number, state["reviewer"], token)
         result["worktrees"] = remove_worktrees(paths, state)
     result["released"] = [str(lock) for lock in release(paths)]
     paths.request.unlink(missing_ok=True)
@@ -1205,8 +1177,11 @@ def finish_lines(result: dict) -> list[str]:
     if not (result["state"] or result["comments"] or result["worktrees"] or result["released"]):
         return [f"no review of {where} is set up here; there is nothing to finish"]
     count = len(result["released"])
+    labeled = result.get("labels") or {}
     return ([f"finished the review of {where}"]
             + [f"deleted start comment {comment}" for comment in result["comments"]]
+            + [f"removed the {name} label" for name in labeled.get("removed") or []]
+            + ([f"warning: {labeled['warning']}"] if labeled.get("warning") else [])
             + [f"removed worktree {path}" for path in result["worktrees"]]
             + ([f"released {count} lock{'' if count == 1 else 's'}"] if count else [])
             + (["deleted its state; the loop's record of published reviews stays"] if result["state"] else []))
@@ -2269,32 +2244,32 @@ def thread_model(thread: dict) -> Optional[str]:
 
 
 def status(repo: str, number: int, reviewer: str) -> dict:
-    """The newest Projector verdict on the pull request's current head, the verdict `publish` sets draft
-    state by, with each account's newest verdict by each model on it, every open Projector finding thread,
-    and every open hold comment. Its `suggestions` count those `review suggestions` lists for the head."""
+    """The newest Projector verdict on the pull request's current head, with each account's newest verdict by
+    each model on it, every open Projector finding thread, whether the head is `signed_off` as `sign_off`
+    decides, the Projector `labels` on the pull request, and the `projector/review` status on the head as
+    `check`. Its `suggestions` count those `review suggestions` lists for the head."""
     pr = read_pull_request(repo, number)
     head = pr["head"]["sha"]
     found = verdicts(repo, number, reviewer, repo_visibility(pr))
-    models = newest_verdicts(head, found)
     threads = [t for t in census(repo, number)["threads"] if not t["resolved"]]
-    held = holds(repo, number, (pr.get("user") or {}).get("login") or "")
-    newest = models[0] if models else None
+    verdict = sign_off(head, found, len(threads))
+    newest = verdict["newest"]
     return {"repo": repo, "number": number, "head": head, "draft": bool(pr.get("draft")),
-            "verdict": newest["verdict"] if newest else "unreviewed", "newest": newest, "models": models,
+            "verdict": newest["verdict"] if newest else "unreviewed", "newest": newest, "models": verdict["models"],
             "suggestions": sum(map(listed_suggestions, suggesting_reviews(head, found))),
             "open_threads": [{"path": t["path"], "line": t["line"], "model": thread_model(t)} for t in threads],
-            "held": bool(held), "holds": held}
+            "signed_off": verdict["signed_off"], "labels": sorted(label_names(pr) & LABELS.keys()),
+            "check": commit_status(repo, head)}
 
 
 def status_lines(result: dict) -> list[str]:
-    """`review status` without --json: whether the head is held, the newest verdict on it, each account's
-    and model's when several gave one, naming the account where two share a model, each with the number of
-    suggestions standing with it when there are any, the open threads, and the hold comments."""
+    """`review status` without --json: the newest verdict on the head, each account's and model's when several
+    gave one, naming the account where two share a model, each with the number of suggestions standing with
+    it when there are any, the open threads, and whether the head is signed off, with the labels and status."""
     newest = result["newest"]
-    held = "held; " if result["held"] else ""
     count = newest["suggestions"] if newest else 0
     listing = f" with {count} suggestion{'' if count == 1 else 's'}" if count else ""
-    lines = [f"#{result['number']} at {result['head'][:7]}: {held}{result['verdict']}{listing}"
+    lines = [f"#{result['number']} at {result['head'][:7]}: {result['verdict']}{listing}"
              + (f" from {newest['model']}, {newest['url'] or 'review ' + str(newest['review'])}" if newest else "")]
     rows = result["models"]
     if len(rows) > 1:
@@ -2310,8 +2285,11 @@ def status_lines(result: dict) -> list[str]:
     if threads:
         named = ", ".join(f"{t['path']}:{t['line']}" + (f" ({t['model']})" if t["model"] else "") for t in threads)
         lines.append(f"  {len(threads)} open finding thread{'' if len(threads) == 1 else 's'}: {named}")
-    for hold in result["holds"]:
-        lines.append(f"  held in draft by comment {hold['id']} until the changes it lists are pushed")
+    shown = [("signed off" if result["signed_off"] else "not signed off") + (", a draft" if result["draft"] else "")]
+    shown.append("labeled " + ", ".join(result["labels"]) if result["labels"] else "no Projector label")
+    if result["check"]:
+        shown.append(f"{REVIEW_CONTEXT} {result['check']}")
+    lines.append("  " + "; ".join(shown))
     return lines
 
 
@@ -2450,17 +2428,17 @@ def compose_incremental(state: dict, body: str, rules: dict, cross_author: bool,
 
 def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path: Path,
             threads_path: Optional[Path], covered: Optional[str], second: Optional[int], allow_approve: bool,
-            incremental: bool = False, enabled: bool = True) -> dict:
-    """Submit the review, then re-read it, act on the head's newest verdict and its open finding
-    threads, record, delete the start comment, and release the lock, in that order. Every refusal
-    leaves the lock held for this review to retry, except the fence's: once the lock names another
-    loop, or a loop's lock is gone, the state and lock are the new owner's, so `publish` writes
-    neither, checking before each write of the state.
+            incremental: bool = False, enabled: bool = True, labels: bool = True) -> dict:
+    """Submit the review, then re-read it, act on whether the head is signed off, record, delete the start
+    comment, and release the lock, in that order. Every refusal leaves the lock held for this review to
+    retry, except the fence's: once the lock names another loop, or a loop's lock is gone, the state and
+    lock are the new owner's, so `publish` writes neither, checking before each write of the state.
 
-    Acting on the newest verdict sets a self-review's draft state. On another author's pull request a
-    clean newest verdict with no finding open dismisses the reviewer's standing Projector change
-    requests, because a `COMMENT` review leaves `reviewDecision` where the last of them put it. While
-    the author holds the pull request, it stays a draft and its change requests stand.
+    Acting on the sign-off posts the `projector/review` status on the reviewed commit where the default
+    branch requires it, and, with `labels`, sets `clean` and takes `reviewing` off once no other review is
+    in progress, in one edit. On another author's pull request a signed-off head dismisses the reviewer's
+    standing Projector change requests, because a `COMMENT` review leaves `reviewDecision` where the last of
+    them put it. Draft state is the author's, and `publish` never moves it.
 
     With `incremental`, the review is a clean `COMMENT` that builds on this loop's last full
     review, published only while `incremental_rules` passes, with `enabled` from
@@ -2532,9 +2510,8 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
             elif verdict == "changes-requested":
                 event = "REQUEST_CHANGES"
             else:
-                # An approval would clear the pull request to merge while its author is still building
-                # changes for it.
-                event = "COMMENT" if holds(repo, number, (pr.get("user") or {}).get("login") or "") else "APPROVE"
+                # An approval would clear a draft to merge while its author is still working on it.
+                event = "COMMENT" if pr.get("draft") else "APPROVE"
         payload = {"commit_id": sha, "event": event, "body": text,
                    "comments": [{"path": t["path"], "line": t["line"], "side": "RIGHT",
                                  "body": f"<!-- projector-finding v=1 priority={t['priority']} sha={sha} "
@@ -2558,34 +2535,33 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
     read = gh_json(["api", f"repos/{repo}/pulls/{number}/reviews/{review_id}"]) or {}
     if f"sha={sha}" not in (read.get("body") or ""):
         raise ReviewError(f"review {review_id} does not carry sha={sha[:7]} when read back; check it on GitHub")
-    newest, draft_wanted, open_threads, dismissed, held = None, None, None, [], None
+    # The head's newest Projector verdict decides, whichever model gave it: this review, counted as read back
+    # whether or not the listing shows it yet, or one another model posted since. A finding thread open now
+    # keeps the head from being signed off whatever that verdict says, because another model can post one
+    # after this review counted none and before its own verdict landed.
+    posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
+              "login": reviewer, "body": read["body"]}
+    current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
+    counted = [r for r in verdicts(repo, number, reviewer, repo_visibility(current)) if r.get("id") != review_id]
+    counted.append(posted)
+    verdict_now = sign_off(sha, counted, census(repo, number)["open"])
+    newest, signed_off = verdict_now["newest"], verdict_now["signed_off"]
     standing = [] if published.get("self") else standing_change_requests(repo, number, reviewer)
-    if published.get("self") or standing:
-        # The head's newest Projector verdict decides, whichever model gave it: this review, counted as read
-        # back whether or not the listing shows it yet, or one another model posted since. A finding thread
-        # open now holds the pull request whatever that verdict says, because another model can post one
-        # after this review counted none and before its own verdict landed. So does the author's hold: the
-        # author is building changes no review has read.
-        posted = {"id": review_id, "url": read.get("html_url"), "at": read.get("submitted_at") or now().isoformat(),
-                  "login": reviewer, "body": read["body"]}
-        current = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
-        others = [r for r in verdicts(repo, number, reviewer, repo_visibility(current)) if r.get("id") != review_id]
-        newest = newest_verdicts(sha, others + [posted])[0]
-        open_threads = census(repo, number)["open"]
-        held = bool(holds(repo, number, (current.get("user") or {}).get("login") or ""))
-    if standing and newest["verdict"] == "clean" and not open_threads and not held:
+    dismissed = []
+    if standing and signed_off:
         dismissed = dismiss(repo, number, reviewer, standing,
                             f"{MARK} The newest verdict on {sha[:7]} is clean: {newest['url']}", token)
-    if published.get("self"):
-        draft_wanted = newest["verdict"] == "changes-requested" or open_threads > 0 or held
-        draft = bool(current.get("draft"))
-        if draft != draft_wanted:
-            run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft_wanted else [])], token)
-            draft = bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft"))
-            if draft != draft_wanted:
-                raise ReviewError(f"{repo}#{number} is {'a draft' if draft else 'ready'} after the newest verdict, "
-                                  f"{newest['verdict']}, with {open_threads} open finding threads"
-                                  f"{' and a hold open' if held else ''}; set it with `gh pr ready` and retry")
+    base = current.get("base") or {}
+    branch = (base.get("repo") or {}).get("default_branch") or base.get("ref") or ""
+    status = post_status(repo, sha, verdict_now, token) if requires_check(repo, branch) else None
+    labeled = None
+    if labels:
+        # The labels describe the pull request's current head, so a push since the submit takes `clean` off.
+        clean = signed_off and (current.get("head") or {}).get("sha") == sha
+        others = reviews_in_progress(repo, number, reviewer, counted, (state.get("start_comment") or {}).get("id"))
+        labeled = change_labels(repo, number, label_names(current), {CLEAN_LABEL} if clean else set(),
+                                (set() if clean else {CLEAN_LABEL}) | (set() if others else {REVIEWING_LABEL}),
+                                token)
     if loop is not None:
         with locked(loop_record(root, loop).parent):
             record = read_record(root, loop)
@@ -2605,5 +2581,6 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
         write_state(paths, state)
         paths.lock(sha).unlink(missing_ok=True)
     return {"repo": repo, "number": number, "sha": sha, "review_id": review_id, "verdict": published["verdict"],
-            "event": published["event"], "draft": draft_wanted, "dismissed": dismissed, "from": published.get("from"),
-            "newest": newest, "open_threads": open_threads, "held": held}
+            "event": published["event"], "signed_off": signed_off, "status": status, "labels": labeled,
+            "dismissed": dismissed, "from": published.get("from"), "newest": newest,
+            "open_threads": verdict_now["open_threads"]}

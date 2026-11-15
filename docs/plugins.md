@@ -30,13 +30,11 @@ including pull requests opened later. `fix-pr` answers one pull request's
 findings, verifying each by the same protocol, and merges the base into a
 branch that conflicts with it. `fix-pr` also implements or defers each
 suggestion a review lists. While it builds a change that no review has read,
-such as a
-suggestion it implements or a change you ask for, it holds the pull request
-in draft with a comment that lists the changes, so the pull request never
-looks ready to merge while the changes are coming. It posts and removes that
-comment with `project review hold`, and ends the hold once the changes are
-pushed, so a clean review of that push marks the pull request ready. The
-reviewer settles its own
+such as a suggestion it implements or a change you ask for, it converts the
+pull request to a draft with `project review hold`, so the pull request
+never looks ready to merge while the changes are coming. Once the push that
+carries them lands, it marks the pull request ready for review again with
+`project review ready`. The reviewer settles its own
 findings on every head: it resolves one it verifies fixed, reopens one resolved
 too early, and keeps one whose decline does not hold, so its verdict rests on
 what it checked rather than on who clicked resolve. In a repository with a
@@ -87,8 +85,10 @@ prints them, and a skill starts it under the host's monitor facility when
 `project watch` command starts the daemon, which exits a few minutes after
 the last session goes away, so you never start or stop it yourself. The
 session that writes a pull request does not review it unless you ask, so
-run `review-repo` or `review-pr` in a session to review it; until a review
-signs a head off, the pull request stays a draft. To keep pushes from
+run `review-repo` or `review-pr` in a session to review it. The writing
+session opens the pull request as a draft and marks it ready for review
+with `project review ready` once its work is done. A review that signs off
+the current head labels the pull request `clean`. To keep pushes from
 subscribing a session, run
 `project config set watch.auto_start false --user`, or leave out `--user` to
 change only the current repository. [The CLI guide](cli.md) describes the
@@ -97,8 +97,9 @@ change only the current repository. [The CLI guide](cli.md) describes the
 When you are done with a session, run `/projector:cleanup` before you shut
 it down. It checks each thing you asked the session for against evidence
 that it was delivered, such as a pull request URL, and looks for work left
-over: uncommitted or unpushed changes, open review findings, a hold, a plan
-whose status is stale, or a promise to do something later. For each gap, it
+over: uncommitted or unpushed changes, open review findings, a pull request
+held in draft while a change is built, a plan whose status is stale, or a
+promise to do something later. For each gap, it
 asks whether to do the work now, open an issue for it, or leave it. Then it
 stops the session's subagents and background commands, finishes its
 reviews, removes its subscriptions, withdraws its open inbox items, and
@@ -258,16 +259,32 @@ not subscribed to before.
                                                            ctrl+x tab to focus
 ```
 
-Each line is the pull request's number, `draft` or `ready`, its author when
-someone else wrote it, and the title. Notes follow when the pull request
+Each line is the pull request's number, its review state, its author when
+someone else wrote it, and the title. The review state is the first of these
+that applies:
+
+- **`reviewing`**, in yellow, while the pull request carries the `reviewing`
+  label, which `project review setup` adds when a review starts.
+- **`draft`**, in yellow, while the pull request is a draft, which means its
+  author is still working on it.
+- **`clean`**, in green, while it carries the `clean` label, which
+  `project review publish` adds once a review signs off the current head.
+- **`ready`**, in yellow, for a pull request that is ready for review and
+  carries neither label.
+
+So a held draft, which keeps its `clean` label while a change is built,
+reads as `draft`. The panel reads the labels with the rest of the line, from
+the watch daemon's query of the pull request.
+
+Notes follow the title when the pull request
 has them: `conflict` or `changes requested` in red, `approved` in green,
 and last the number of unresolved review threads before a `*` in yellow,
 such as `2*`. The ` · ` between two notes keeps the default text color. The
 line ends with how long ago the pull request last changed, in the column
 where the inbox's items end with their ages. Only the title shortens on a
 narrow terminal. A pull request that the watch daemon has not queried yet
-reads `loading…` in place of its title, with no state, author, or age, until
-the daemon's first result for it arrives.
+reads `loading…` in place of its title, with no review state, author, or
+age, until the daemon's first result for it arrives.
 
 Your own pull requests come first, then everyone else's, each author's
 together and the authors in order of login, with no line between the groups.
@@ -324,9 +341,11 @@ there the panel starts with its first row.
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
-one column past the number, under `draft` or `ready`. It names the session's
+one column past the number, under the review state. It names the session's
 roles on the pull request: `fixing` in the terminal palette's blue,
-`reviewing` in Claude's orange, or `fixing and reviewing`. Then come its
+`reviewing` in Claude's orange, or `fixing and reviewing`. This `reviewing`
+says that this session reviews the pull request, whatever its labels say.
+Then come its
 branch, in the palette's cyan, its size, and its checks. The size reads as a
 diff stat: the insertions, such as `+84`, in green and the deletions, such
 as `−12`, in red. The checks' state takes a color of its own, and the rest,
@@ -550,8 +569,9 @@ out of view. A collapsed line starts with `+`, where an item's starts with
 `-`, to say it expands. Collapsed pull requests become a line such as
 `+ #12 #14 #15` in their place, listing each in the rows' order and coloring
 it by status: red when a conflict, a change request, or failing checks hold
-it back, and otherwise yellow for a draft and green for a pull request that
-is ready. Click a pull request's number to expand them with its drawer
+it back, and otherwise in its review state's color, green for `clean` and
+yellow for `reviewing`, `draft`, and `ready`. A pull request that is still
+loading is muted. Click a pull request's number to expand them with its drawer
 open. A collapsed kind of item becomes a line such as `+ 2 questions` at
 the top of the items, drawn in the kind's color. Click the line, or the
 count again, to expand it. The pull requests, the questions, the requests,

@@ -55,14 +55,17 @@ what it did to each:
   one below so the stack can merge as a unit. Its last part applies only
   where the Projector plugin is installed: build every change with the
   `implement` skill, whose hand-over subscribes the session to fix its pull
-  request, open every pull request as a draft until a clean review marks it
-  ready, and, where the `ask`, `tell`, and `request` tools are available, post
-  anything the person must not miss to the inbox as well as saying it in the
-  conversation. It tells an agent to post a request only for work it cannot do
-  itself, such as running a command it is not allowed to run or checking a
-  change on the person's phone, with numbered steps that each say what the
-  person should see, and options that fit the work, such as `Looks good` and
-  `Some feedback` for a test. It tells an agent to act on the option a person
+  request, open every pull request as a draft and mark it ready for review
+  with `project review ready` once its work is done, and, where the `ask`,
+  `tell`, and `request` tools are available, post anything the person must
+  not miss to the inbox as well as saying it in the conversation. A draft says
+  that its author is still working on the pull request, and a review that
+  signs off the current head labels the pull request `clean`. It tells an
+  agent to post a request only for work it cannot do itself, such as running
+  a command it is not allowed to run or checking a change on the person's
+  phone, with numbered steps that each say what the person should see, and
+  options that fit the work, such as `Looks good` and `Some feedback` for a
+  test. It tells an agent to act on the option a person
   chose and the notes under it, and not to post a declined request again. It
   tells an agent to give a request a start action only when it must prepare
   something first, to do the slow part, such as a build, before it posts the
@@ -160,10 +163,9 @@ what it did to each:
   refuse a reviewing session's clean review of your own pull request as
   self-approval, although the review is a `COMMENT` that moves no
   `reviewDecision` and a person still merges. It can refuse the deletion of a
-  comment as a write to an external system: the comment that holds your pull
-  request in draft, which leaves a clean pull request stuck in draft, and a
-  finished review's start comment, which leaves the pull request saying a
-  review is in progress. The reply and resolution that settle a finding
+  finished review's start comment as a write to an external system, which
+  leaves the pull request saying a review is in progress. The reply and
+  resolution that settle a finding
   thread are writes of the same kind. It can also refuse the publish of a
   summary you asked for. An allow rule resolves the command before the
   classifier runs. The rules go in your settings rather
@@ -221,7 +223,7 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "release", "rules", "settle", "setup", "status", "suggestions"]],
+      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions"]],
       decision = "allow",
   )
   prefix_rule(
@@ -655,6 +657,7 @@ reads, which are these:
 | `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
 | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+| `review.labels` | boolean | `true` | `project review setup`, `publish`, and `finish`, to add and remove the `reviewing` label, which shows a review in progress, and the `clean` label, which shows a signed-off head; `false` leaves both labels alone, as a repository whose own `clean` or `reviewing` label means something else needs |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
 | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |
@@ -667,7 +670,9 @@ reads, which are these:
 `false` rather than a question to ask. It never applies to a review of your own
 pull request, where GitHub refuses the verdict regardless. `review.incremental`
 is on unless it is `false`, and a value that is neither `true` nor `false`
-makes both commands that read it refuse and name the key.
+makes both commands that read it refuse and name the key. `review.labels` is
+on unless it is exactly `false`. `setup` and `publish` read it from the
+review's checkout, and `finish` from the checkout it runs in.
 
 The operator -- the account whose branches carry fixes and whose token pushes
 them -- is deliberately not a key. It follows whichever token is authenticated,
@@ -1007,9 +1012,10 @@ request's last message: each publish posts the link again at the end, and
 then deletes the account's older summary comments. A rerun on the same head
 posts nothing while its comment is still the last item on the pull request's
 timeline. Anything the conversation shows after the comment, such as another
-comment, a submitted review, a push, or a ready-for-review event, makes the
-rerun post the link again. A pending review, a subscription, or a mention
-does not, because readers of the conversation do not see it.
+comment, a submitted review, a push, a label change, or a ready-for-review
+event, makes the rerun post the link again. A pending review, a
+subscription, or a mention does not, because readers of the conversation do
+not see it.
 `summary publish` also puts the same link at the very bottom of the pull
 request's description, after a blank line, and removes the link an earlier
 publish left there. Where the account cannot edit the description, it prints
@@ -1105,7 +1111,8 @@ with newer summaries, so a reviewed head the site has no summary of counts
 too. **Unreviewed** means no Projector review names the head or an earlier
 one, so on a pull request's newest head it means none names any of its
 heads. The newest review of a head decides whichever model wrote it, as it
-decides the draft state. When that review is incremental, the header reads
+decides whether `project review publish` signs the head off. When that
+review is incremental, the header reads
 **Clean · incremental from a8cf3d5**, where the second part names
 the head of the full review it builds on, by the same model, and links that
 review, while the row on Reviews shows **Clean** alone. Models are told apart
@@ -1447,8 +1454,8 @@ project review setup 66 --model claude-opus-5-5 --replace 4011
 project review gate 66
 project review status 66
 project review suggestions 66
-project review hold 66 --add "Skip fenced code blocks when looking for headings"
-project review hold 66 --drop
+project review hold 66
+project review ready 66
 project review rules
 ```
 
@@ -1493,6 +1500,15 @@ this pull request for the same model, and deletes it as the reviewer once
 this review's start comment is posted. It refuses, exiting 1 and deleting
 nothing, any other comment: another model's start comment, another account's,
 a comment that is no start comment, or one that does not exist.
+
+Once the start comment is posted, `setup` adds the `reviewing` label to the
+pull request. It also removes the `clean` label when the newest counted
+Projector verdict on the head is not clean, or when the head has none, as
+after a push to a pull request that a review signed off. It prints
+`added the reviewing label` or `removed the clean label` for each change, and
+creates a label the repository lacks, as `publish` does. When GitHub refuses
+the change, `setup` prints a `warning:` line on stderr and the review stays
+set up. With `review.labels` set to `false`, `setup` leaves the labels alone.
 
 The start comment and the review's signature line name the head under review
 by its short SHA, the Projector version that `project version` reports, the
@@ -1557,12 +1573,17 @@ closes. It takes these steps:
    head after the comment, or once a day passes since its last edit. Another
    model's start comments, and the model's live ones from another session,
    stay.
-2. It removes every scratch worktree the review's state lists: the current
+2. It removes the `reviewing` label once no start comment of the reviewer's
+   means a review in progress, and prints `removed the reviewing label`. While
+   another model's review is still in progress, the label stays. When GitHub
+   refuses the change, `finish` prints a `warning:` line and goes on. With
+   `review.labels` set to `false`, it leaves the label alone.
+3. It removes every scratch worktree the review's state lists: the current
    head's, and any earlier head's that `setup` or `move` kept because its
    lock was held or it would not come out. It removes each with
    `git worktree remove` in the checkout, then runs `git worktree prune`. When
    the checkout is gone, it deletes a worktree under the state directory itself.
-3. It clears the locks and deletes the state. The loop's record of published
+4. It clears the locks and deletes the state. The loop's record of published
    reviews stays.
 
 `finish` acts on the repository `--repo` names, or else on the `origin` of
@@ -1582,7 +1603,9 @@ anything is deleted. With nothing set up for the pull request on this
 machine, `finish` asks GitHub nothing, prints that there is nothing to
 finish, and exits 0, so running it twice is safe. With `--json` it prints the `repo`, `number`, and
 `model`, the `comments` it deleted, the `worktrees` it removed, the locks it
-`released`, and whether it deleted the `state`.
+`released`, whether it deleted the `state`, and the `labels` it changed, as
+the label names `added` and `removed` and any `warning`, or `null` when it
+had no label to remove.
 
 `prune` sweeps the scratch worktrees that no review on this machine needs. A
 review needs the worktree of its current head while its pull request is open,
@@ -1668,43 +1691,108 @@ whose marker names no model collides with every model. Outside a loop,
 `--second-verdict <review-id>` publishes beside an earlier verdict the body
 names.
 
-On a self-review `publish` submits a `COMMENT`, re-reads it, and sets draft
-state by the newest Projector verdict on the head, whichever model gave it:
-it returns the pull request to draft when that verdict requests changes and
-marks it ready when it is clean. The newest verdict is usually the one it just
-posted, and is another model's only when that model posted on the head in
-between. In the same step it counts the open Projector finding threads again,
-and keeps the pull request a draft while any is open, whatever the newest
-verdict, so a finding another model posts after this review's census still
-holds it. It also keeps the pull request a draft while its author has a hold
-comment open: a comment that carries `<!-- projector-hold v=1 -->`, which
-`hold` posts for `fix-pr` while it builds a change for the pull request. Only
-the author's comment counts. It counts the reviewer's verdicts, the one it just
-posted included, and those of the accounts the site's status counts: in a
-public repository, any account that owns the repository, belongs to its
-organization, or collaborates on it, and in a private or internal repository,
-every account. On another author's pull request
-it posts `REQUEST_CHANGES` or a `COMMENT`, or an `APPROVE` for a clean
-verdict where `review.allow_approve` is `true` and the author has no hold
-comment open, and leaves draft state alone. A `COMMENT` leaves the account's
-last change request holding `reviewDecision`, so when the newest verdict on
-the head is clean and no finding thread or hold is open, read the same way,
-`publish` dismisses each of the reviewer's Projector `REQUEST_CHANGES`
-reviews that nobody dismissed and no later approval by the account replaced.
-A change request whose body carries no Projector verdict marker is left
-alone. It then adds the review id to the loop's record, deletes the start
-comment, and releases the lock. It prints the draft state it set, the newer
-verdict that decided it when that is another model's, the open finding
-threads or hold that kept a clean head a draft or its change requests
-standing, and the change requests it dismissed; `--json` gives them as
-`draft`, `newest`, `open_threads`, a count, `held`, and `dismissed`, the
-dismissed review ids. A run that fails after submitting, including a
-dismissal GitHub refuses, exits non-zero, and running it again finishes that
-review rather than posting another.
+On a self-review `publish` submits a `COMMENT`. On another author's pull
+request it posts `REQUEST_CHANGES` or a `COMMENT`, or an `APPROVE` for a
+clean verdict where `review.allow_approve` is `true` and the pull request is
+not a draft, because an approval would clear a draft to merge while its
+author is still working on it.
+
+Once the review is submitted, `publish` reads it back and decides whether
+the head is signed off. A head is signed off when the newest Projector
+verdict on it, whichever model gave it, is clean and no Projector finding
+thread is open. The newest verdict is usually the one `publish` just posted,
+and is another model's only when that model posted on the head in between.
+In the same step `publish` counts the open finding threads again, so a
+finding that another model posts after this review's census still keeps the
+head from being signed off. It counts the reviewer's verdicts, the one it
+just posted included, and those of the accounts the site's status counts:
+in a public repository, any account that owns the repository, belongs to its
+organization, or collaborates on it, and in a private or internal
+repository, every account. Draft state plays no part in the sign-off, and
+`publish` never changes it, because a draft means that the pull request's
+author is still working on it. The author moves it with `hold` and `ready`.
+
+`publish` then acts on the sign-off in this order:
+
+1. On another author's pull request whose head is signed off, it dismisses
+   each of the reviewer's Projector `REQUEST_CHANGES` reviews that nobody
+   dismissed and no later approval by the account replaced, because a
+   `COMMENT` leaves the account's last change request holding
+   `reviewDecision`. A change request whose body carries no Projector
+   verdict marker is left alone.
+2. When a ruleset on the repository's default branch requires the status
+   check `projector/review`, it posts that commit status on the SHA it
+   reviewed, even when the pull request's head moved after the submit. The
+   status links the review whose verdict decided it, with the state and
+   description in the table below. Without such a ruleset, `publish` posts no
+   status.
+3. It changes the labels in one `gh pr edit`. It adds `clean` when the head
+   is signed off and is still the pull request's current head, and removes
+   `clean` otherwise. It removes `reviewing` unless another start comment of
+   the reviewer's still means a review in progress, such as another model's.
+4. It adds the review id to the loop's record, deletes the start comment,
+   and releases the lock.
+
+| Head | State | Description |
+| --- | --- | --- |
+| Signed off | `success` | `Clean: claude-opus-5-5`, naming the model of the newest verdict |
+| A finding thread is open | `failure` | `Changes requested: 2 open findings`, with the count |
+| The newest verdict requests changes | `failure` | `Changes requested: claude-opus-5-5`, naming its model |
+
+`publish` reads the rules with
+`GET repos/{owner}/{repo}/rules/branches/{branch}`, which any account that
+can read the repository may call. That endpoint reports rulesets only, so a
+repository that requires `projector/review` through classic branch
+protection gets no status. `publish` reads the default branch rather than
+the pull request's base, so a stacked pull request's head already carries
+the status when its base retargets to the default branch.
+
+`setup` and `publish` create a label the repository lacks the first time
+they add it:
+
+| Label | Color | Description |
+| --- | --- | --- |
+| `clean` | `0e8a16` | Projector's newest review of the current head is clean |
+| `reviewing` | `fbca04` | A Projector review of this pull request is in progress |
+
+A label that already exists is used as it is, and Projector never changes
+its color or description. `clean` says that Projector's newest review of the
+current head is clean, not that the pull request may merge, because a
+repository can still require people's approval. A label stays on the pull
+request through a push, so `setup` removes a stale `clean` when the next
+review starts. Set `review.labels` to `false` to keep `setup`, `publish`,
+and `finish` from adding or removing either label, as in a repository whose
+own `clean` or `reviewing` label means something else.
+
+`publish` prints what it did:
+
+```
+$ project review publish 66 --verdict clean --body body.md --covered 12/12 --loop example-review-claude-opus-5-5
+published review 3301 (clean, COMMENT) on example/app#66 at 4f2a9c1d8e3b7a6f5c4d3e2f1a0b9c8d7e6f5a4b
+4f2a9c1 is signed off
+posted projector/review success on 4f2a9c1
+added the clean label
+removed the reviewing label
+```
+
+Before the sign-off line, it names the newer verdict that decided it when
+that is another model's, and the open finding threads that kept a clean
+verdict from signing the head off. The `posted` line appears only where a
+ruleset requires the check, and a last line names any change requests it
+dismissed. `--json` gives them as `signed_off`; `newest`; `open_threads`, a
+count; `status`, the state it posted or `null`; `labels`, the label names
+`added` and `removed` and any `warning`, or `null` with `review.labels` set
+to `false`; and `dismissed`, the dismissed review ids.
+
+A run that fails after submitting, including a dismissal or a status that
+GitHub refuses, exits non-zero, and running it again finishes that review
+rather than posting another. A refused label change does not fail the run:
+`publish` prints a `warning:` line on stderr and exits 0, because the labels
+only show the sign-off, and the status is what a ruleset enforces.
 
 `status` prints the newest Projector verdict on the pull request's current
-head, the one `publish` sets draft state by, with the model and the review it
-came from. When several models gave a verdict on the head, it adds each
+head, the one `publish` signs the head off by, with the model and the review
+it came from. When several models gave a verdict on the head, it adds each
 model's newest one, newest first. Two accounts that run the same model each
 keep their own line, with the account in parentheses after the model, as
 `claude-opus-5-5 (teammate)`. Each verdict gives the number of suggestions
@@ -1713,38 +1801,43 @@ for an incremental review, those of the full review it builds on. These are
 the suggestions `suggestions` lists for the head, picked the same way, so
 after an incremental review the count does not drop to 0 while the full
 review's suggestions wait on `fix-pr`. Then it lists the open finding
-threads, and any hold comment the author has open:
+threads. Its last line says whether the head is signed off, adds `a draft`
+when the pull request is one, names the Projector labels the pull request
+carries, and gives the state of the `projector/review` status on the head
+when it has one:
 
 ```
 $ project review status 66
 #66 at 4f2a9c1: clean with 2 suggestions from claude-opus-5-5, https://github.com/example/app/pull/66#pullrequestreview-3301
   claude-opus-5-5   clean               review 3301, 14:20 UTC, 2 suggestions
   gpt-5.5           changes-requested   review 3290, 14:02 UTC
+  signed off; labeled clean; projector/review success
 ```
 
-A head with no Projector verdict is `unreviewed`. While the author has a hold
-comment open, the first line opens with `held;`, as in `#66 at 4f2a9c1:
-held; clean from …`, and a line such as `held in draft by comment 4411 until
-the changes it lists are pushed` names the comment. `status` counts the
+A head with no Projector verdict is `unreviewed`. On an unlabeled draft that
+no review has signed off, the last line reads
+`not signed off, a draft; no Projector label`. `status` counts the
 verdicts `publish` counts: those of the reviewer, found as `setup` finds it,
 from `--reviewer`, then `review.username`, then the authenticated user, and
 in a public repository those of any account that owns the repository, belongs
 to its organization, or collaborates on it, or in a private or internal
-repository those of every account. It reads the pull request, its reviews, its issue
-comments, and its threads, and runs from any directory. It exits 0 whatever the verdict, and 1 only when
-it cannot read the pull request. With `--json` it prints one object:
+repository those of every account. It reads the pull request, its reviews,
+its threads, and its head's commit status, and runs from any directory. It
+exits 0 whatever the verdict, and 1 only when it cannot read the pull
+request. With `--json` it prints one object:
 
 | Field | Value |
 | --- | --- |
 | `repo`, `number`, `head` | The pull request and its current head SHA. |
-| `draft` | Whether the pull request is a draft. |
+| `draft` | Whether the pull request is a draft, which means its author is still working on it. |
 | `verdict` | The newest verdict on the head: `clean`, `changes-requested`, or `unreviewed`. |
 | `newest` | That verdict's `model`, `verdict`, `review` id, `url`, `at`, and `login`, and the number of `suggestions` that stand with its review: those the review lists and, for an incremental review, those of the full review it builds on. Each review's count is its `projector-suggestions` line, or its body's list where it has none. It is `null` when the head is `unreviewed`. |
 | `models` | Each account's newest verdict by each model on the head in the same shape, newest first. A reviewing session finds its own by `login` and `model`. |
 | `suggestions` | The number of suggestions every entry of `models` brings, each review counted once: the suggestions `suggestions` lists for the head. |
 | `open_threads` | Each open Projector finding thread's `path`, `line`, and `model`, or `null` for a thread whose marker names none. |
-| `held` | Whether the pull request's author has a hold comment open, which keeps the pull request a draft whatever `verdict` says. |
-| `holds` | Each hold comment the pull request's author has open on it, as its `id` and `url`. A comment by anyone else that carries the marker holds nothing. |
+| `signed_off` | Whether the head is signed off: `verdict` is `clean` and `open_threads` is empty. Draft state plays no part in it. |
+| `labels` | The Projector labels on the pull request, `clean` and `reviewing`, in that order, or an empty list. |
+| `check` | The state of the `projector/review` commit status on the head, such as `success` or `failure`, or `null` when the head has none. |
 
 `suggestions` lists the suggestions the `fix-pr` skill decides on the pull
 request's current head: those of each account's newest Projector review by
@@ -1782,80 +1875,57 @@ object for each suggestion:
 | `path`, `line` | The file and line the suggestion names, or `null` where it names none. |
 | `text` | The suggestion, on one line. |
 
-`hold` holds your pull request in draft while you build changes no review has
-read, as the `fix-pr` skill does, and ends the hold once a push carries them.
-Pass `--add` or `--drop`. Each repeats, one change each, and `--drop` with no
-change ends the hold:
+`hold` and `ready` move your own pull request's draft state. A draft means
+that its author is still working on it. Run `ready` once your work on the
+pull request is done, to mark it ready for review. Run `hold` to convert it
+back to a draft while you build a change that no review has read, as the
+`fix-pr` skill does before it builds a suggestion, and run `ready` again
+once the push that carries the change lands:
 
 ```sh
-project review hold 66 --add "Skip fenced code blocks when looking for headings" --add "Rename the flag"
-project review hold 66 --drop "Rename the flag"
-project review hold 66 --drop
+project review hold 66
+project review ready 66
 ```
 
-A hold is an issue comment by the pull request's author whose last line is
-`<!-- projector-hold v=1 -->`. `hold` writes it in this shape:
+Each command checks that the pull request is open and that `gh` is signed in
+as its author, and refuses otherwise, because only the author's draft state
+is theirs to move. It then runs `gh pr ready`, with `--undo` for `hold`,
+reads the pull request back, and refuses when the draft state did not
+change. A pull request that is already in the state you ask for is left as
+it is. Run these commands rather than `gh pr ready` itself: they refuse a
+pull request someone else wrote, they confirm the change, and the
+`Bash(project *)` rule that `init` adds allows them.
 
-```markdown
-Held in draft while the following changes are implemented:
+Neither command touches the labels, so a held draft keeps its `clean`
+label. Together, the label and the draft say that a review signed off the
+head and that its author is building a change on top of it. Once the
+change is pushed, `setup` removes the label when the next review starts.
 
-- Skip fenced code blocks when looking for headings
-- Rename the flag
-
-<!-- projector-hold v=1 -->
-```
-
-- `--add` posts the comment when you have no hold open on the pull request.
-  Otherwise it edits your newest hold comment, adding each change the
-  comment does not already list, comparing the text after trimming. It reads
-  the comment back and confirms that the marker is its last line. Only then
-  does it mark a pull request that is not a draft as one, with
-  `gh pr ready --undo`, and confirm it. The comment comes first because, to
-  the watch daemon, a pull request that turns draft on an unchanged head with
-  no hold open is an author who answered without pushing, so it asks the
-  reviewing session to re-review that head. It refuses a pull request that is
-  not open.
-- `--drop TEXT` removes each change you name from every one of your hold
-  comments that lists it. It refuses a change no hold comment lists, and
-  names the ones they do. It deletes a comment left with no change. Once no
-  hold comment is left, the hold ends on a head no push changed, so the watch
-  daemon asks the reviewing session to re-review that head.
-- `--drop` with no change ends the hold: it deletes every hold comment you
-  have open on the pull request and leaves the draft state as it is. Run it
-  once the push that carries every listed change succeeds. Ending the hold
-  before that push would let a clean review of the unchanged head mark the
-  pull request ready while the changes are still local, and `hold` does not
-  check for it: it trusts you to run it after the push. With no hold open, it
-  says so and exits 0. It cannot be combined with `--drop TEXT` in one run.
-
-Each mode first checks that `gh` is signed in as the pull request's author,
-and refuses otherwise, because only the author's comment holds a pull
-request. No mode marks the pull request ready: a clean review of the head you
-push does that. `hold` posts as the signed-in account. It acts on the
-repository `--repo` names, or else on the `origin` of the checkout you run it
-in, and refuses outside a checkout whose `origin` is on GitHub unless you pass
-`--repo`. Unlike `status` and the commands that follow a review, it never
-takes the repository from a review set up on this machine, because a command
-that posts and deletes comments must not act on a repository it guessed. It
-prints what it did, the comment's id and URL, the changes the hold lists, and
-the draft state:
+`hold` and `ready` act on the repository `--repo` names, or else on the
+`origin` of the checkout you run them in, and refuse outside a checkout
+whose `origin` is on GitHub unless you pass `--repo`. Unlike `status` and
+the commands that follow a review, they never take the repository from a
+review set up on this machine, because a command that moves a pull
+request's draft state must not act on a repository it guessed. Each prints
+the draft state and the head:
 
 ```
-$ project review hold 66 --add "Skip fenced code blocks when looking for headings"
-posted hold comment 4411 on example/app#66: https://github.com/example/app/pull/66#issuecomment-4411
-held in draft while 1 change is implemented: Skip fenced code blocks when looking for headings
+$ project review ready 66
+marked example/app#66 ready for review at 4f2a9c1
+$ project review hold 66
+converted example/app#66 to a draft at 4f2a9c1
 ```
 
-Every refusal exits 1 and says what to do. With `--json` it prints one
-object:
+When the pull request is already in that state, the line reads
+`example/app#66 is already ready for review at 4f2a9c1` or
+`example/app#66 is already a draft at 4f2a9c1`. Every refusal exits 1 and
+says why. With `--json` each command prints one object:
 
 | Field | Value |
 | --- | --- |
-| `repo`, `number`, `head` | The pull request and its current head SHA. |
-| `action` | `posted` or `added` for `--add`; `dropped` for `--drop TEXT` while a hold comment is left; `ended` once the hold ends, from a bare `--drop` or a `--drop TEXT` that removed the last change; or `none` when a bare `--drop` found no hold open. |
-| `comment` | The hold comment's `id` and `url`, or `null` when no hold was open. For `dropped` it is the newest comment that still holds the pull request, and for `ended` the newest comment deleted. |
-| `changes` | The changes the hold lists after the command. For `ended`, the changes the deleted comments listed. |
-| `draft` | Whether the pull request is a draft after the command. |
+| `repo`, `number`, `head` | The pull request and its head SHA. |
+| `draft` | Whether the pull request is a draft after the command: `true` for `hold` and `false` for `ready`. |
+| `changed` | Whether the command changed the draft state. It is `false` when the pull request was already in the state asked for. |
 
 `interdiff` decides whether the head may have an incremental review: a short
 clean verdict on a head that changed little since this loop's last full review
@@ -1907,8 +1977,8 @@ the change touches, a `projector-incremental` line naming the full review's
 head, the kind, and the counts, and a lead that links the full review and
 states the change's size, the kind, and any resolved conflict. It always posts
 a `COMMENT`, even where `review.allow_approve` is `true`, adds "A human
-approval is what remains." on another author's pull request, and on a
-self-review marks the pull request ready, as any clean verdict does. It
+approval is what remains." on another author's pull request, and labels the
+pull request `clean` when it signs off the head, as any clean verdict does. It
 refuses, keeping the lock, when a rule fails, when the body is empty, too
 long, or holds a signature line, a marker, or `{census}`, and when given
 `--threads`, `--covered`, `--second-verdict`, or
@@ -1955,11 +2025,12 @@ state file, and outside a checkout it needs `--repo`. With several models
 set up, each later command refuses, naming them, until `--model` picks one.
 State an earlier release wrote is not read, so a review set up before an
 upgrade runs `setup` again. A command that posts a review, posts or deletes
-a start comment, or settles a finding thread runs `gh` as the reviewer,
+a start comment, settles a finding thread, changes a label, or posts the
+`projector/review` status runs `gh` as the reviewer,
 `--reviewer` or `review.username` or else the authenticated user, with
 `GH_TOKEN` set to `gh auth token --user <reviewer>` for that call alone, so
-the account the rest of the session uses is left alone. `hold` posts as the
-authenticated user, who must be the pull request's author.
+the account the rest of the session uses is left alone. `hold` and `ready`
+run as the authenticated user, who must be the pull request's author.
 
 A review holds a lock for its pull request, head, and model from `setup` until
 it is published, recording the host, the loop, and when it was taken, so a
@@ -2532,7 +2603,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
 | `DRAFT` | `fix`, when no session on this machine reviews the pull request | A head that no review has signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
 | `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed |
 | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled |
-| `RESPONDED` | `review` | The author answered every finding on an unmoved head, or lifted a hold |
+| `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding |
 | `MOVED` | any | Another session owns the role now |
 | `MERGED`, `CLOSED` | any | The pull request merged or closed |
 | `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |

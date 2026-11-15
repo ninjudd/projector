@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -479,3 +479,41 @@ next review.
   commit status, which a ruleset requires. That workflow also has to cope with
   stacked pull requests whose base predates it. A status that `publish` posts
   itself needs no such workflow.
+
+## 9. What implementation settled
+
+The change ships as a stack of three pull requests that merge as one unit,
+as § 6 requires: sign-off by the labels and the status, the daemon's wait for
+ready, and `init`'s setup of the required check.
+
+### 9.1 Sign-off by the labels and the status
+
+- **`RESPONDED` changes with the sign-off, not with the draft gate.** Once
+  `publish` stops moving draft state, a draft no longer means "not signed
+  off", so the "still a draft" re-review would ask for a re-review of every
+  clean draft. The first layer drops it with the hold comment's effect on
+  `RESPONDED`, which leaves the change-request case alone. The second layer
+  adds the draft gate.
+- **`setup` judges a stale `clean` by the verdicts alone.** It reads the
+  verdicts only when the pull request carries `clean`, and takes the label off
+  when the newest counted verdict on the head is not clean. It reads no
+  threads: a model that opens a finding after a clean verdict publishes a
+  change request, which takes `clean` off itself.
+- **`publish` adds `clean` only for the head it reviewed.** When a push lands
+  between the submit and the labels, `publish` posts the status on the
+  reviewed commit, where it belongs, and leaves `clean` off the pull request,
+  whose current head no review has read.
+- **`reviewing` counts the reviewer's own start comments.** `publish` and
+  `finish` keep the label while a start comment of the reviewer's account, by
+  any model, still means a review in progress, as `is_live` decides. Sessions
+  that review on several models post as one account.
+- **A label is created when an edit refuses it.** `change_labels` makes one
+  `gh pr edit`, and only when it fails with a label to add does it create the
+  missing labels and edit again. A repository pays for the creation once.
+- **The panel shows one word for a held pull request.** A row prints
+  `reviewing`, then `draft`, then `clean`, then `ready`, the first that
+  applies, so a draft that keeps `clean` reads as `draft`, and green still
+  means ready to merge. GitHub's list shows both the draft and the label.
+- **The daemon's query reads `labels`,** because the panel builds a row from
+  the daemon's cache as well as from its own query. It is one more field in a
+  query the daemon already makes, not a new request.

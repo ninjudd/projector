@@ -604,7 +604,8 @@ def parser() -> argparse.ArgumentParser:
                               help="remove what the sweep finds; without it, only list it")
     add_output(review_prune)
     review_publish = review_commands.add_parser(
-        "publish", help="check and submit the review, set draft state, and delete the start comment"
+        "publish", help="check and submit the review, sign the head off with its labels and status, and delete the "
+                        "start comment"
     )
     review_gate = review_commands.add_parser(
         "gate", help="run the repository's review.gate command in the review's worktree, on a trusted head only"
@@ -624,8 +625,10 @@ def parser() -> argparse.ArgumentParser:
                             "give, for fix-pr to implement or defer"
     )
     review_hold = review_commands.add_parser(
-        "hold", help="hold your pull request in draft while changes for it are built, and end the hold once they "
-                     "are pushed"
+        "hold", help="convert your pull request to a draft while you build a change for it"
+    )
+    review_ready = review_commands.add_parser(
+        "ready", help="mark your pull request ready for review once your work on it is done"
     )
     for command in (review_status, review_suggestions):
         command.add_argument("pr", type=int, help="the pull request number")
@@ -636,18 +639,10 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--state-dir", type=Path,
                              help="where review state lives (default: $XDG_STATE_HOME/projector/reviews)")
         add_output(command)
-    review_hold.add_argument("pr", type=int, help="the pull request number")
-    review_hold.add_argument("--repo", help="owner/name (default: this checkout's origin, never a review set up here)")
-    add_output(review_hold)
-    hold_mode = review_hold.add_mutually_exclusive_group(required=True)
-    hold_mode.add_argument("--add", action="append", metavar="TEXT",
-                           help="a change about to be built: post the hold listing it, or add it to the open hold, "
-                                "then mark the pull request draft (repeatable)")
-    # A bare --drop appends None, so the default is a list: None alone would read as --drop never given.
-    hold_mode.add_argument("--drop", action="append", nargs="?", default=[], metavar="TEXT",
-                           help="a listed change that will not be built: remove it, and end the hold when none is "
-                                "left (repeatable); with no TEXT, end the hold, which you do once the push that "
-                                "carries every listed change succeeds, since the command does not check it")
+    for command in (review_hold, review_ready):
+        command.add_argument("pr", type=int, help="the pull request number")
+        command.add_argument("--repo", help="owner/name (default: this checkout's origin, never a review set up here)")
+        add_output(command)
     for command in (review_setup, review_move, review_census, review_settle, review_release, review_finish,
                     review_publish, review_gate, review_interdiff):
         command.add_argument("pr", type=int, help="the pull request number")
@@ -1501,20 +1496,40 @@ def review_suggestions(root: Path, arguments: argparse.Namespace) -> int:
     return 0
 
 
-def review_hold(arguments: argparse.Namespace) -> int:
-    """`review hold`: post, extend, shrink, or end your hold on a pull request in `--repo`, or else in the
-    repository of the checkout it runs in."""
-    repo = review.named_repo(arguments.repo, Path.cwd(), "to hold a pull request in")
-    result = review.hold(repo, arguments.pr, arguments.add or [], arguments.drop or [])
-    print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.hold_lines(result)))
+def review_draft(arguments: argparse.Namespace) -> int:
+    """`review hold` and `review ready`: convert your pull request in `--repo`, or else in the repository of
+    the checkout it runs in, to a draft, or mark it ready for review."""
+    hold = arguments.review_command == "hold"
+    repo = review.named_repo(arguments.repo, Path.cwd(),
+                             "to hold a pull request in" if hold else "to mark a pull request ready in")
+    result = review.set_draft(repo, arguments.pr, hold)
+    print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.draft_lines(result)))
     return 0
+
+
+def labels_enabled(checkout: Path) -> bool:
+    """Whether `review.labels` lets the review commands change the `reviewing` and `clean` labels; on unless the
+    checkout's configuration turns it off, or when there is no checkout to read it from."""
+    try:
+        return load_config(review.checkout_root(checkout)).get("review.labels") is not False
+    except ProjectorError:
+        return True
+
+
+def label_lines(labeled: Optional[dict]) -> list[str]:
+    """What a review command did to the labels, and a warning when GitHub refused the change."""
+    if not labeled:
+        return []
+    lines = [f"added the {name} label" for name in labeled["added"]]
+    lines += [f"removed the {name} label" for name in labeled["removed"]]
+    return lines + ([f"warning: {labeled['warning']}"] if labeled["warning"] else [])
 
 
 def run_review(arguments: argparse.Namespace) -> int:
     if arguments.review_command == "rules":
         return review_rules(arguments.json_output)
-    if arguments.review_command == "hold":
-        return review_hold(arguments)
+    if arguments.review_command in ("hold", "ready"):
+        return review_draft(arguments)
     root = review.state_dir(arguments.state_dir)
     if arguments.review_command == "status":
         return review_status(root, arguments)
@@ -1527,7 +1542,8 @@ def run_review(arguments: argparse.Namespace) -> int:
     loop = review.valid_loop(arguments.loop)
     command = arguments.review_command
     if command == "finish":
-        result = review.finish(root, arguments.pr, arguments.repo, arguments.model, arguments.force, Path.cwd())
+        result = review.finish(root, arguments.pr, arguments.repo, arguments.model, arguments.force, Path.cwd(),
+                               labels_enabled(Path.cwd()))
         print(json.dumps(result, indent=2) if arguments.json_output else "\n".join(review.finish_lines(result)))
         return 0
     if command == "setup":
@@ -1538,7 +1554,7 @@ def run_review(arguments: argparse.Namespace) -> int:
             configured = None
         state = review.setup(root, arguments.pr, checkout, arguments.repo, arguments.reviewer,
                              configured if isinstance(configured, str) else None,
-                             arguments.model, loop, arguments.rereview, arguments.replace)
+                             arguments.model, loop, arguments.rereview, arguments.replace, labels_enabled(checkout))
     else:
         repo = review.find_repo(root, arguments.pr, arguments.repo, Path.cwd())
         if command == "census":
@@ -1585,7 +1601,7 @@ def run_review(arguments: argparse.Namespace) -> int:
             enabled = incremental_enabled(Path(state["checkout"])) if arguments.incremental else True
             result = review.publish(paths, loop, arguments.verdict, arguments.body,
                                     arguments.threads, arguments.covered, arguments.second_verdict, allow,
-                                    arguments.incremental, enabled)
+                                    arguments.incremental, enabled, labels_enabled(Path(state["checkout"])))
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:
@@ -1596,14 +1612,15 @@ def run_review(arguments: argparse.Namespace) -> int:
                 if newest and newest["review"] != result["review_id"]:
                     print(f"the newest verdict on the head is {newest['model']}'s {newest['verdict']}, "
                           f"review {newest['review']}")
-                kept = "it stays a draft" if result["draft"] is not None else "the change requests stand"
                 if newest and newest["verdict"] == "clean" and result["open_threads"]:
                     count = result["open_threads"]
-                    print(f"{count} finding thread{' is' if count == 1 else 's are'} open on the head, so {kept}")
-                if newest and newest["verdict"] == "clean" and result["held"]:
-                    print(f"the author's hold comment is open, so {kept} until the author deletes it")
-                if result["draft"] is not None:
-                    print("marked draft" if result["draft"] else "marked ready")
+                    print(f"{count} finding thread{' is' if count == 1 else 's are'} open on the head, so it is not "
+                          "signed off")
+                print(f"{result['sha'][:7]} is {'signed off' if result['signed_off'] else 'not signed off'}")
+                if result["status"]:
+                    print(f"posted {review.REVIEW_CONTEXT} {result['status']} on {result['sha'][:7]}")
+                for line in label_lines(result["labels"]):
+                    print(line, file=sys.stderr if line.startswith("warning: ") else sys.stdout)
                 if result["dismissed"]:
                     print("dismissed change request " + ", ".join(map(str, result["dismissed"])))
             return 0
@@ -1631,6 +1648,8 @@ def run_review(arguments: argparse.Namespace) -> int:
         print(f"start comment {state['start_comment']['id']} posted {state['start_comment']['created_at']}")
         if command == "setup" and arguments.replace is not None:
             print(f"deleted start comment {arguments.replace}, which this review replaces")
+        for line in label_lines(state.get("labels")):
+            print(line, file=sys.stderr if line.startswith("warning: ") else sys.stdout)
         for path in state["removed"]:
             print(f"removed the earlier head's worktree {path}")
     return 0

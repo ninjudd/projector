@@ -15,6 +15,7 @@ export type Fetched = {
 
 const FIELDS = `number title url state isDraft reviewDecision mergeable body
   author { login } headRefName additions deletions changedFiles updatedAt
+  labels(first: 20) { nodes { name } }
   reviewThreads(first: 100) { nodes { isResolved } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`
 
@@ -138,6 +139,10 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
     deletions: numberOf(node.deletions),
     changedFiles: numberOf(node.changedFiles),
     checks: checksOf(node),
+    labels: nodesOf(node.labels).flatMap(label => {
+      const name = isRecord(label) ? stringOf(label.name) : null
+      return name === null ? [] : [name.toLowerCase()]
+    }),
     updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
     summaryUrl: summary?.[1] ?? null,
   }

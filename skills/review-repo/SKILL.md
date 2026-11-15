@@ -1,6 +1,6 @@
 ---
 name: review-repo
-description: Review every open pull request in the current GitHub repository that the operator wrote or that requests the operator's review, including those opened later, and every head pushed to them, by running review-pr in one subagent per pull request, so each head gets an exact-head review and a pull request stays in draft until its head is clean. Use when the user asks to keep reviewing a repository's pull requests as they are pushed.
+description: Review every open pull request in the current GitHub repository that the operator wrote or that requests the operator's review, including those opened later, and every head pushed to them, by running review-pr in one subagent per pull request, so each head gets an exact-head review and a pull request carries the clean label once its head is clean. Use when the user asks to keep reviewing a repository's pull requests as they are pushed.
 ---
 
 # Review a repository
@@ -88,7 +88,7 @@ one.
   author, a CODEOWNERS rule, or a bot. The request must name the operator's
   login. A request to a team the operator belongs to does not count. A
   requested pull request is someone else's, so `review-pr` reviews it in the
-  cross-author mode and never moves its draft state.
+  cross-author mode.
 - **Pull requests you keep out.** To keep one pull request out when the user
   asks, run
   `project watch drop <owner>/<repo>#<number> --role review --model <model-id>`,

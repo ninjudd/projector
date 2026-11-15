@@ -45,6 +45,8 @@ export type PullRequest = {
   changedFiles: number
   /** The head commit's combined check state; null when it has no checks. */
   checks: Checks | null
+  /** The pull request's label names, lowercased, among them the `reviewing` and `clean` a review sets. */
+  labels: string[]
   /** When the pull request last changed, in milliseconds; null when GitHub did not say. */
   updatedAt: number | null
   /** The Projector summary the description links, when one was published. */

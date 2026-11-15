@@ -167,9 +167,10 @@ Leave the plan changes visible for ordinary Git review; do not commit, push,
 or open a pull request unless the user or repository workflow asks for those
 actions.
 
-When you open a pull request for the plan, open it as a draft, and
-subscribe the session to fix it, so review findings on the plan are fixed as
-they arrive:
+When you open a pull request for the plan, open it as a draft, mark it ready
+with `project review ready <number> --repo <owner>/<repo>` once the plan is
+written, as `../implement/SKILL.md` describes, and subscribe the session to
+fix it, so review findings on the plan are fixed as they arrive:
 
 ```sh
 project watch add <owner>/<repo>#<number>

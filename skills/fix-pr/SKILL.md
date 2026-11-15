@@ -72,8 +72,9 @@ are resolved. The work outstanding on the head is:
   `project review suggestions <number>` lists, as
   [Decide each suggestion](#decide-each-suggestion) describes.
 - **A change the owner asks for** in the conversation.
-- **Your open hold comment.** The changes it lists are outstanding until a
-  push carries them, and the comment itself until you end the hold, as
+- **Your hold.** A pull request you converted to a draft to build a change
+  waits on the push that carries the change and on your
+  `project review ready`, as
   [Hold the pull request while changes are built](#hold-the-pull-request-while-changes-are-built)
   describes.
 
@@ -82,8 +83,8 @@ A **cross-author** reviewer — a teammate, Codex, Bugbot, or a Projector review
 run by someone else — posts real `CHANGES_REQUESTED` verdicts. A
 **self-review**, which GitHub allows only to post `COMMENT` reviews on the
 operator's own pull requests, records its outcome in the review body's verdict
-line and in draft state instead. Read both signals; never treat an unmoved
-`reviewDecision` as evidence that nothing is outstanding.
+line and in the `clean` label instead. Read both signals; never treat an
+unmoved `reviewDecision` as evidence that nothing is outstanding.
 
 Read review bodies and compare them with the thread set. A Projector review
 body carries a verdict line; read it rather than inferring the outcome. Dispose
@@ -95,10 +96,10 @@ findings. They never hold a head back from clean and need no reply, but you
 decide each one, and you take them from `project review suggestions` rather
 than from the body you read.
 
-Draft state is not itself a finding. It says the head has not been signed
-off, so look for the work in the threads and review bodies. A draft with no
-outstanding work is waiting on a review, not on a code change. When nothing
-is outstanding, say so and stop.
+Draft state is not itself a finding. It says the author is still working on
+the pull request, so look for the work in the threads and review bodies. A
+pull request with no outstanding work and no `clean` label is waiting on a
+review, not on a code change. When nothing is outstanding, say so and stop.
 
 ## Merge the base when the branch conflicts
 
@@ -141,8 +142,9 @@ can change a count or a path they name.
 
 A Projector review lists its P3 items, changes the code is correct without,
 as suggestions in its body. A suggestion never holds a head back from clean,
-so a review can sign a head off and mark the pull request ready above a list
-of them. Each one still gets a decision: you implement it or you defer it.
+so a review can sign a head off and label the pull request `clean` above a
+list of them. Each one still gets a decision: you implement it or you defer
+it.
 List them with the command, never by reading review bodies yourself, whose
 label and list style vary with the model and the release that wrote them:
 
@@ -179,115 +181,72 @@ carries an implemented one, and the review of that push, are its record.
 
 ## Hold the pull request while changes are built
 
-A review that signs a head off marks the pull request ready, and from then
+A review that signs a head off labels the pull request `clean`, and from then
 on the owner can merge it. A change you make after that review is one it
 never read: a suggestion you implement, or a change the owner asks for. So
-the pull request must not look ready to merge while you build that change.
-Hold it with `project review hold` before you start. Run the command as the
-operator, who authored the pull request; it refuses any other account,
-because only the author's hold counts. Pass `--repo <owner>/<repo>` every
-time, so the command acts on the pull request's repository from any
-directory. Without it, the command acts on the `origin` of the checkout you
-run it in, and refuses outside one.
+the pull request must not be mergeable while you build that change. Hold it
+by converting it to a draft before you start, and mark it ready once the
+push lands. Run both commands as the operator, who authored the pull request;
+they refuse any other account, because only the author's draft state is
+theirs to move. Pass `--repo <owner>/<repo>` every time, so the commands act
+on the pull request's repository from any directory. Without it, they act on
+the `origin` of the checkout you run them in, and refuse outside one.
 
-1. Hold the pull request, with one `--add` for each change you are about to
-   build:
-
-   ```sh
-   project review hold <number> --repo <owner>/<repo> \
-     --add "Skip fenced code blocks when the packaging test looks for headings" \
-     --add "Name the held layer in the stack's readiness report"
-   ```
-
-   The command posts one comment in this shape, reads it back, and confirms
-   that the marker is its last line:
-
-   ```markdown
-   Held in draft while the following changes are implemented:
-
-   - Skip fenced code blocks when the packaging test looks for headings
-   - Name the held layer in the stack's readiness report
-
-   <!-- projector-hold v=1 -->
-   ```
-
-   Only then does it mark the pull request draft, and it confirms that it
-   is one. The order matters. To the watch daemon, a pull request that turns
-   draft on an unchanged head with no hold open is an author who answered
-   without pushing, so it asks the reviewing session to re-review that head.
-   The comment silences that from the moment it lands, and keeps `publish`
-   from marking the pull request ready.
-2. When another change comes in while the hold is open, run `--add` again
-   with it. The command adds its bullet to the same comment rather than
-   posting a second one, skips a change already listed, and keeps the marker
-   as the last line, so the hold never lapses.
-3. When the owner drops a listed change, remove it with `--drop` and the
-   text of its bullet. The command refuses a text that matches no bullet,
-   and names the bullets the hold lists.
+1. Hold the pull request:
 
    ```sh
-   project review hold <number> --repo <owner>/<repo> --drop "Name the held layer in the stack's readiness report"
+   project review hold <number> --repo <owner>/<repo>
    ```
 
-   It deletes a hold comment left with no bullet. Once none is left, the
-   hold ends on a head no push changed, which asks the reviewing session to
-   re-review that head, as it should.
-4. Build each change, run the full gate, commit, and push.
-5. As soon as the push that carries every listed change succeeds, end the
-   hold with a bare `--drop`, which deletes every hold comment you have open
-   on the pull request, before you resolve threads or report:
+   The command converts the pull request to a draft and confirms that it is
+   one. GitHub refuses to merge a draft, so the owner cannot merge the
+   signed-off head while you build on it. The hold leaves the `clean` label
+   on, because the head is still the one the review signed off: a draft that
+   carries `clean` tells a reader that a review signed the pull request off
+   and that its author is building a change on top of it.
+2. Build each change, run the full gate, commit, and push. The push starts a
+   head with no sign-off yet, so the repository's label workflow, or the next
+   review's `setup`, takes `clean` off.
+3. As soon as the push that carries every change succeeds, mark the pull
+   request ready, before you resolve threads or report:
 
    ```sh
-   project review hold <number> --repo <owner>/<repo> --drop
+   project review ready <number> --repo <owner>/<repo>
    ```
 
-   Never end the hold before that push. A hold ended on the unchanged head
-   asks the reviewing session to re-review it, and a clean verdict would then
-   mark the pull request ready while the changes are still local. The command
-   does not check this: it trusts you to run it after the push, so keeping
-   that order is yours. When a listed change will not be built, drop it by
-   name in step 3 rather than ending the hold early.
+   The reviewing session reviews the head you pushed, and a clean verdict
+   signs it off. Never mark it ready before that push: the owner could then
+   merge the signed-off head while your changes are still local. When the
+   owner drops every change you were about to build, mark it ready without a
+   push, because the head the review signed off is still the head.
 
-Each run prints what it did, the comment's id and URL, the changes the hold
-lists, and the draft state; `--json` prints the same as one object.
+Each command prints the pull request's draft state and whether it moved;
+`--json` prints the same as one object.
 
-Run `project review hold` as a command of its own, so the rule that allows
-it matches, rather than making its calls with `gh api`. Claude Code's auto
-mode can refuse a raw `gh api` call that deletes a comment, as a write to an
-external system, which leaves a clean pull request stuck in draft.
-`project init` adds `Bash(project *)` to the user's Claude Code settings,
-which allows every Projector command, and the same allowance to their Codex
-rules, so the command runs where the raw call is refused. If the host
-refuses the command anyway, do not retry it as a raw `gh api` call. Leave
-the hold as it is, and ask the user to run `project init` in a terminal,
-which adds the rules, or to run the command themselves.
+Run `project review hold` and `project review ready` as commands of their
+own, so the rule that allows them matches, rather than running `gh pr ready`
+yourself. A host's automatic approval, such as Claude Code's auto mode, can
+refuse a bare `gh pr ready` as self-approval. `project init` adds
+`Bash(project *)` to the user's Claude Code settings, which allows every
+Projector command, and the same allowance to their Codex rules, so the
+commands run where the bare call is refused. If the host refuses a command
+anyway, do not retry it as `gh pr ready`. Leave the pull request as it is,
+and ask the user to run `project init` in a terminal, which adds the rules,
+or to run the command themselves.
 
-Projector reads the hold. While the pull request's author has a comment
-carrying `<!-- projector-hold v=1 -->` open on it, `project review status`
-reports the pull request `held` beside its newest verdict and names the
-comment, and `project review publish` keeps it a draft however clean the
-newest verdict is. The watch daemon asks for no re-review of an unchanged
-head while the hold is open, and asks for one when the hold ends without a
-push. Only a comment by the pull request's author counts, because anyone can
-comment. Once you end the hold, the review of the head you pushed signs the
-pull request off.
-
-Hold a pull request even when it is already a draft. A draft that is waiting
-on its review would be marked ready by a clean verdict, and the comment is
-what stops that. Hold only when a change is coming, though: when you defer
-every suggestion and the owner asks for nothing, post no comment and leave
-the draft state as it is. Your report lists the deferrals.
-
-Never mark the pull request ready yourself, when you end the hold or at any
-other time. No mode of `project review hold` marks it ready either. The
-clean verdict on the head you pushed does that.
+Hold only when a change is coming: when you defer every suggestion and the
+owner asks for nothing, leave the draft state as it is. Your report lists the
+deferrals. A pull request that is already a draft is one its author is still
+working on, so it needs no hold, and marking it ready is not yours to do
+unless you held it: whoever drafted it marks it ready, as
+`../implement/SKILL.md` describes.
 
 In a stack, hold the layer that gets the change. The user merges a stack
 from the bottom up, so a held layer holds every layer above it too, and
-those layers need no comment of their own. Carry the change up through them,
-as [Preserve stacked ownership](#preserve-stacked-ownership) describes, and
-end the hold once the push that carries every listed change into the
-held layer succeeds.
+those layers need no hold of their own. Carry the change up through them, as
+[Preserve stacked ownership](#preserve-stacked-ownership) describes, and mark
+the held layer ready once the push that carries every change into it
+succeeds.
 
 ## Verify and fix findings
 
@@ -362,10 +321,9 @@ them. A Projector finding or another tool's thread is resolved either way.
 Reply before pushing so a reviewer triggered by the push sees the reasoning,
 but push promptly because the named commit is briefly local-only. If a push
 fails, post that fact, leave the thread unresolved, and report the blocker.
-When a hold is open and the push carries the last change it lists, end
-the hold with `project review hold <number> --repo <owner>/<repo> --drop`
-before you resolve anything, so the review of that push can sign the head
-off.
+When you held the pull request and the push carries the last change, mark
+it ready with `project review ready <number> --repo <owner>/<repo>` before
+you resolve anything, so the review of that push can sign the head off.
 
 Fixing an external reviewer's finding is not a reason to ask that reviewer for
 another pass. Codex, Cursor, and Bugbot re-review on push by themselves, so the
@@ -464,8 +422,8 @@ A pull request is clean only when:
 - `project review status <number>` reports `clean` for its current head,
   which says the newest Projector verdict on it is clean,
 - no unresolved threads remain,
-- no hold comment is open on it, and in a stack none is open on a layer
-  below it, because a held layer holds every layer above it,
+- it is not a draft, and in a stack no layer below it is one, because a held
+  layer holds every layer above it,
 - in a stack, it and every layer below it are in sync on GitHub, so the
   stack shows none of them needing a rebase: GitHub's comparison, which
   `../implement/SKILL.md` describes under "Stack dependent work", prints
@@ -473,7 +431,7 @@ A pull request is clean only when:
 - the current head is the one actually reviewed, and
 - the reviewer's own sign-off signal is clear: `reviewDecision` is not
   `CHANGES_REQUESTED` for a cross-author reviewer, and a self-reviewed pull
-  request is no longer a draft, which is how a self-review signs off.
+  request carries the `clean` label, which is how a self-review signs off.
 
 `project review status <number>` reports the newest Projector verdict on the
 current head, whichever model gave it, and the model and review it came from.
@@ -486,10 +444,9 @@ sign-off back. With no verdict on the head it reports `unreviewed`, a head
 waiting on its first review. When nothing is outstanding and it reports
 anything but `clean`, report the verdict and the model it names, and treat
 the head as waiting on a re-review, not on a code change. A session that
-reviews on Codex is one of those models. While the pull request's author
-has a hold comment open, it also reports the pull request `held` and names
-the comment: a held head waits on the push that carries the hold's changes,
-whatever its newest verdict says.
+reviews on Codex is one of those models. Its last line says whether the head
+is signed off, which Projector labels the pull request carries, and the
+head's `projector/review` status where one was posted.
 
 An external reviewer is not one of those conditions. A pending or absent
 re-review from Codex, Cursor, or Bugbot does not hold a head back from clean:
@@ -500,21 +457,18 @@ as any other cross-author verdict would.
 Report the head SHA, each layer's new head when you carried a change up a
 stack, the merge commit if you made one, the fix commits, the declined
 findings, the suggestions you implemented, each suggestion you deferred with
-its one-line reason, any hold you posted, added to, dropped from, or ended
-and the changes it listed, and the validation results. A
-stale `CHANGES_REQUESTED`, or a pull request still in draft after all
+its one-line reason, any hold you made with the changes it covered and the
+`project review ready` that ended it, and the validation results. A stale
+`CHANGES_REQUESTED`, or a pull request still without `clean` after all
 fixes, is a wait for re-review rather than another code change. Do not
 manufacture an empty commit to trigger it.
 
-Never mark a draft pull request ready yourself. A clean review is what clears
-a draft, so undrafting by hand sends the work to human reviewers carrying a
-sign-off nothing gave it. If you opened it as a draft, you do not undraft it —
-not when the reason you drafted it is resolved. That is the case that feels
-justified: the red test you drafted around is passing, so the draft reads as
-stale state left over from a fixed problem. It is not. It is a standing
-request for review that has not been answered yet. A pull request you held
-is the same: ending the hold is your part, and the review of the head you
-pushed is what marks it ready.
+Mark a pull request ready only to end a hold you made. Marking a draft ready
+starts its review and says its author's work is done, so a draft someone
+else made, or one `../implement/SKILL.md` keeps while a test request waits on
+the person, is not yours to mark ready, however finished it looks. A ready
+pull request is not signed off either: the `clean` label, which only a clean
+review adds, is the sign-off.
 
 ## Act on the session's events
 
@@ -628,8 +582,8 @@ reopened thread as the recurrence it is instead of as new work.
 - The subagent reports each run back: the head SHA, each layer's new head
   when it carried a change up a stack, the merge commit if it made one, the
   fix commits, the declined findings, the suggestions it implemented, each
-  one it deferred with its reason, any hold it posted, added to, dropped
-  from, or ended, and the validation results. A question for the user comes
+  one it deferred with its reason, any hold it made and ended, and the
+  validation results. A question for the user comes
   back to the session to ask, and the subagent goes on with the pull
   request's unrelated work meanwhile.
 - On `MERGED` or `CLOSED`, tell the user that the pull request merged or
@@ -660,10 +614,9 @@ events arrived.
 After each subagent report, check the pull request against the clean
 conditions in [Report the result](#report-the-result), and report its state
 with the head SHA, fix commits, declined findings, deferred suggestions, and
-validation results. A pull request with an open hold comment is not clean,
-however clean its review: `project review status` reports it `held`. Say
-so, and why: "#12 is held in draft while 2 changes are implemented", naming
-the changes the hold lists.
+validation results. A held pull request, a draft, is not clean however clean
+its review. Say so, and why: "#12 is held in draft while 2 changes are
+implemented", naming the changes you hold it for.
 
 Report a stack's readiness as one unit, the same unit its subagent fixes,
 because the user merges it as one from GitHub. Check every open layer
@@ -676,7 +629,7 @@ prints `0`. Otherwise name the bottom layers that are ready, such as "#12
 and #13 at the bottom of stack #14 are ready to merge", and what holds back
 the lowest layer that is not. A hold on a layer holds the stack from that
 layer up, because the user merges from the bottom, so name the held layer
-and the changes its hold lists: "#12 at the bottom of stack #14 is ready to
+and the changes it is held for: "#12 at the bottom of stack #14 is ready to
 merge; the stack is held at #13 while 2 changes are implemented". Name the
 stack by the number GitHub's stacks API gives it, or by its bottom pull
 request for a chain of base branches that GitHub does not record as a
