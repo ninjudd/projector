@@ -131,7 +131,18 @@ a pull request, and anything else is a branch.
    reading the head's build phases and scripts.
 5. **Move the worktree.** Create the worktree detached at the fetched commit,
    or check it out there with `--force`. The worktree belongs to
-   Projector, so a build discards any change made in it.
+   Projector, so a build discards any change made in it. A worktree
+   belongs to the clone that created it, and the person may run `build` in
+   a second clone of the same repository, which shares the state folder
+   because § 2.5 keys it by `<owner>/<repo>`. So once `worktree/` exists,
+   step 4 fetches with `review.fetch(<worktree>, …)` and this step checks
+   out with `git -C <worktree>`, which puts the commit in the clone that owns
+   the worktree, whichever clone the command ran in. When `worktree/` is
+   missing, or `git -C <worktree>` fails because its clone is gone, `build`
+   deletes the folder, runs `git worktree prune` in the clone it runs in,
+   and creates the worktree from that clone after fetching there.
+   `cleanup` removes the worktree through the same owning clone, the one
+   `git -C <worktree> rev-parse --git-common-dir` names.
 6. **Resolve the app.** Find the Xcode project in the worktree (§ 2.3), pick
    the scheme, and read the app target's `FULL_PRODUCT_NAME`,
    `PRODUCT_BUNDLE_IDENTIFIER`, and `TARGET_BUILD_DIR` from
@@ -147,14 +158,20 @@ a pull request, and anything else is a branch.
    without repeats, up to 20, or its last 30 lines when it has none, and the
    log's path.
 8. **Keep the build.** Clone the built app into `builds/<App>/<key>/`, where
-   `<key>` names the branch or pull request, and write `build.json` beside
-   it. On macOS the clone uses `cp -cR`, an APFS copy-on-write clone, so it
-   costs no time or space until a later build changes the original. On any
-   other system, such as CI's Linux runner, where `cp` has no clone and
-   GNU `cp` reads `-c` as something else, it copies with
-   `shutil.copytree(symlinks=True)`. The choice follows `sys.platform`,
-   not whether `cp -c` exits zero, so a Linux run never depends on what its
-   `cp` makes of the flag.
+   `<key>` names the target as the person gave it, and write `build.json`
+   beside it. A pull request's key is `pr-<number>`, such as `pr-12`. A
+   branch's key is `branch-` and the branch name percent-encoded with
+   `urllib.parse.quote(name, safe="")`, so `feature/login` is
+   `branch-feature%2Flogin`, no two branches share a key, and a `/` never
+   makes a nested folder. `install` looks a build up by the same key, so a
+   build of `12` is found by `12` and not by its branch's name: the start
+   action names the target the agent built, and that target is the one it
+   installs. On macOS the clone uses `cp -cR`, an APFS copy-on-write
+   clone, so it costs no time or space until a later build changes the
+   original. On any other system, such as CI's Linux runner, where `cp`
+   makes no such clone, it copies with `shutil.copytree(symlinks=True)`.
+   The choice follows `sys.platform`, not whether `cp -c` exits zero, so a
+   Linux run never depends on what its `cp` makes of the flag.
 9. **Install and open.** Run `xcrun devicectl device install app`, then
    `device process launch --terminate-existing <bundle ID>`. When the launch
    fails because the device is locked, print
@@ -184,6 +201,13 @@ The repository needs no configuration when it follows the convention.
 user's `.projector.toml`. `ios.output` expands a leading `~`.
 
 ### 2.4 Crashes and logs
+
+Neither command builds, so neither runs step 6 of § 2.2. Each reads the
+app's product name and bundle ID from the `build.json` of the newest kept
+build of `<App>`, by `built_at`. `<App>` is `--app`, or `ios.app`, or with
+neither the one app under `builds/`; with several, the command fails and
+lists them, and with none, it fails with the `project ios build` command
+that keeps one. `<product>` below is that `product` without its `.app`.
 
 `crashes` lists the device's `systemCrashLogs` domain with
 `xcrun devicectl device info files`, keeps the `.ips` files named
@@ -264,9 +288,12 @@ test in a repository where `project ios` finds an Xcode project:
    said to.
 3. Run `project ios devices --json`. When a device can take an install, give
    the request the start action `Install #<number>'s build of <App> on your
-   <device> and open it`, and on `STARTED` run
-   `project ios install <number>`, then `ready`, or `block` with the reason
-   its error gives, such as a locked phone.
+   <device> and open it`, naming the device that listing found, and on
+   `STARTED` run `project ios install <number> --device <UDID>` with that
+   device's UDID, then `ready`, or `block` with the reason its error gives,
+   such as a locked phone. The UDID keeps the install on the device the
+   start action names, even when another device is connected by the time
+   the person presses start.
 4. Whether or not there is a start action, the request's steps give the
    command `project ios build <number>` and say to run it in any checkout of
    the repository on the Mac the device is plugged into. When no device can
@@ -287,7 +314,7 @@ at that paragraph.
 | `src/projector/ios.py` | New. Device choice, the lock, fetch and worktree, app resolution, the build and its output window, kept builds, install and open, the Mac wrapper, crash summaries, logs, and cleanup. |
 | `src/projector/cli.py` | `add_ios_parser` and `run_ios`, beside the other command groups. |
 | `src/projector/config.py` | `ios.app`, `ios.project`, and `ios.output` in `SETTINGS`. |
-| `src/projector/permissions.py` | `Bash(project ios *allow-untrusted*)` in `ASK`, with the module's explanation and `ASKED` updated to name it. |
+| `src/projector/permissions.py` | `Bash(project ios *allow-untrusted*)` in `ASK`, with the module's explanation and `ASKED` updated to name it. The `project ios` entry of § 3 in `CODEX_ALLOW`, and `build` and `logs` in the `CODEX_RULES` header. |
 | `src/projector/review.py` | Moves the choice between a pull request's branch and `refs/pull/<n>/head` out of `fetch_head` into a function that `fetch_head` and `ios.py` both call. |
 | `docs/cli.md` | A new section, "Put an iOS app on a device", with the commands, the convention, the settings, and the state. |
 | `skills/implement/SKILL.md` | The device test paragraph of § 2.6. |
@@ -344,6 +371,16 @@ at that paragraph.
   `Bash(project ios *allow-untrusted*)` joins `ASK` in
   `permissions.py`, and `build` refuses the head without the flag rather
   than running a fork's scripts because `Bash(project *)` allowed it.
+- **Only the commands that run no repository code are allowed in Codex.**
+  Codex's rules allow `project` commands by name, run an allowed command
+  outside the sandbox, and leave out every command that can run another
+  program. So `init` adds `["project", "ios", ["cleanup", "crashes",
+  "devices", "install"]]` to `CODEX_ALLOW`. Each runs only Apple's fixed
+  tools and Git on Projector's own state, and `install` runs only on
+  `STARTED`. `build` runs the repository's build scripts and `logs` runs
+  `sudo`, so both fall through to Codex's usual approval, which asks for
+  them, and the `CODEX_RULES` header names them with the other commands it
+  leaves out.
 - **Standard library only.** The script's embedded Python already did the
   JSON work. `plistlib` replaces `PlistBuddy`, and `fcntl.flock` replaces
   `lockf(1)`. The command checks for `xcrun` rather than for macOS, so the
@@ -368,6 +405,11 @@ Every fixture is synthetic.
 | `build 12` for a pull request from a fork, or one whose commit names an author without write access | Exit 65 with the reason `trusted_head` gives and `--allow-untrusted`, before any fetch, and no `xcodebuild` call. | A fork's Run Script build phases running as the person unasked. |
 | `build -h`, then `build 12 --allow-unt` | `--allow-untrusted` is listed, and the abbreviation is refused as an unknown option. | An abbreviation slipping past the ask rule. |
 | The ask rules `init` writes | `ASK` holds `Bash(project ios *allow-untrusted*)`. | An untrusted build allowed by `Bash(project *)`. |
+| The Codex rules `init` writes | They allow `project ios devices`, `crashes`, `install`, and `cleanup`, and not `build` or `logs`. | A build of the repository's scripts run outside Codex's sandbox unasked. |
+| `build` in a second clone of the repository after a build in the first | The fetch and checkout run in the first clone, and the worktree is at the commit. | A `checkout --force` failing on a commit the owning clone never fetched. |
+| `build` after the clone that owned `worktree/` was deleted | It prunes the stale entry and makes a new worktree from the clone it runs in. | A dead worktree blocking every later build. |
+| `build feature/login` and `build 12`, where pull request 12's branch is `feature/login`, then `install feature/login` and `install 12` | The builds are kept in `builds/MyApp/branch-feature%2Flogin/` and `builds/MyApp/pr-12/`, and each `install` installs its own target's build. | A branch name making nested folders, or a start action installing another target's build. |
+| `crashes` and `logs` with one kept app and no worktree | They read the product and bundle ID from its newest `build.json`. With no kept build, they fail with the `project ios build` command. | A crash or log search for the wrong app. |
 | `build` with an iPhone and an iPad both connected | It fails before `xcodebuild` runs and lists both devices. | An install on whichever device the list names first. |
 | `build --ipad` with both connected | It installs on the iPad's UDID. | `--ipad` ignored when one device is connected and another is reachable. |
 | `build` with only an `unavailable` device | It fails before the build and says how to reach the device. | A ten-minute build for a device that cannot take it. |
