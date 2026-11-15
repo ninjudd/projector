@@ -1578,7 +1578,7 @@ class RequiredCheckTests(RepositoryTestCase):
         self.assertTrue(review.requires_check("acme/app", "main"), "publish posts its status where init requires it")
         text = self.workflow().read_text()
         self.assertIn(f"contains(github.event.pull_request.labels.*.name, '{review.CLEAN_LABEL}')", text)
-        self.assertIn(f"--remove-label {review.CLEAN_LABEL}\n", text)
+        self.assertIn(f'select(ascii_downcase == "{review.CLEAN_LABEL}")', text)
         self.assertNotIn("{label}", text)
         self.assertNotIn("{context}", text)
         self.assertIn(f'select(.context == "{review.REVIEW_CONTEXT}")', text)
@@ -1602,6 +1602,13 @@ class RequiredCheckTests(RepositoryTestCase):
         self.assertEqual(0, code, err)
         self.assertEqual(edited, self.workflow().read_text(), "a hand edit of an earlier workflow is the repository's")
         self.assertIn(f"kept {review.CLEAN_WORKFLOW_PATH}", out)
+        # A kept copy never takes the template's fixes, so init says how to see them and adopt them.
+        self.assertIn(f"`project review workflow | diff -u {review.CLEAN_WORKFLOW_PATH} -`", err)
+
+        code, out, err = self.invoke("review", "workflow")
+
+        self.assertEqual((0, ""), (code, err))
+        self.assertEqual(review.clean_workflow_text(), out)
 
     def test_a_no_records_the_answer_and_changes_nothing_else(self) -> None:
         code, _, err = self.init(answer="\n")
@@ -1748,7 +1755,8 @@ jobs:
 """
 
 # A stand-in for `gh` on the clean workflow's PATH. It answers `gh api <path> --jq <program>` from the JSON
-# $ANSWERS holds for the path, through the real `jq`, as `gh` prints a `--jq` result, fails on a path it has no
+# $ANSWERS holds for the path, through the real `jq`, as `gh` prints a `--jq` result. A path holds a list of
+# answers, one for each read in turn, and the last answers every read after it. It fails on a path it has no
 # answer for, and records every other command in $CALLS.
 STUB_GH = """#!/usr/bin/env python3
 import json, os, subprocess, sys
@@ -1757,7 +1765,13 @@ if args[:1] == ["api"]:
     answers = json.loads(open(os.environ["ANSWERS"]).read())
     if args[1] not in answers:
         sys.exit(f"gh: no answer for {args[1]}")
-    sys.exit(subprocess.run(["jq", "-r", args[args.index("--jq") + 1]], input=json.dumps(answers[args[1]]),
+    reads = os.environ["ANSWERS"] + ".reads"
+    counts = json.loads(open(reads).read()) if os.path.exists(reads) else {}
+    at = counts.get(args[1], 0)
+    counts[args[1]] = at + 1
+    open(reads, "w").write(json.dumps(counts))
+    answer = answers[args[1]][min(at, len(answers[args[1]]) - 1)]
+    sys.exit(subprocess.run(["jq", "-r", args[args.index("--jq") + 1]], input=json.dumps(answer),
                             text=True).returncode)
 with open(os.environ["CALLS"], "a") as calls:
     calls.write(json.dumps(args) + "\\n")
@@ -1775,15 +1789,17 @@ class CleanWorkflowStepTests(unittest.TestCase):
         start, end = lines.index("      - run: |") + 1, lines.index("        env:")
         return "\n".join(line[10:] for line in lines[start:end]) + "\n"
 
-    def run_step(self, labels: list[str], statuses: list[dict] | None) -> tuple[int, str, list[list[str]]]:
+    def run_step(self, labels: list[str], *reads: list[dict]) -> tuple[int, str, list[list[str]]]:
+        """Run the step on a pull request carrying `labels`, whose head's statuses each read in turn gives as
+        `reads`, the last for every read after it; with no `reads`, reading the status fails."""
         folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
         gh = folder / "bin" / "gh"
         gh.parent.mkdir()
         gh.write_text(STUB_GH)
         gh.chmod(0o755)
-        answers = {"repos/acme/app/pulls/7": {"head": {"sha": self.HEAD}, "labels": [{"name": n} for n in labels]}}
-        if statuses is not None:
-            answers[f"repos/acme/app/commits/{self.HEAD}/status?per_page=100"] = {"statuses": statuses}
+        answers = {"repos/acme/app/pulls/7": [{"head": {"sha": self.HEAD}, "labels": [{"name": n} for n in labels]}]}
+        if reads:
+            answers[f"repos/acme/app/commits/{self.HEAD}/status?per_page=100"] = [{"statuses": r} for r in reads]
         (folder / "answers.json").write_text(json.dumps(answers))
         env = {**os.environ, "PATH": f"{gh.parent}{os.pathsep}{os.environ['PATH']}", "PR": "7", "REPO": "acme/app",
                "ANSWERS": str(folder / "answers.json"), "CALLS": str(folder / "calls")}
@@ -1796,30 +1812,45 @@ class CleanWorkflowStepTests(unittest.TestCase):
     def status(self, state: str, context: str = review.REVIEW_CONTEXT) -> dict:
         return {"context": context, "state": state}
 
+    def edit(self, change: str, name: str = review.CLEAN_LABEL) -> list[str]:
+        return ["pr", "edit", "7", "--repo", "acme/app", change, name]
+
     def test_keeps_the_label_on_a_head_a_review_signed_off_since_the_push(self) -> None:
         code, out, calls = self.run_step(["Clean"], [self.status("success")])
 
         self.assertEqual((0, []), (code, calls), out)
-        self.assertIn(f"signed off its head {self.HEAD[:7]}", out)
+        self.assertIn(f"kept Clean on #7, because a review signed off its head {self.HEAD[:7]}", out)
 
     def test_removes_the_label_from_a_head_no_review_signed_off(self) -> None:
-        removal = [["pr", "edit", "7", "--repo", "acme/app", "--remove-label", review.CLEAN_LABEL]]
         for name, statuses in [("no status", []), ("a failure", [self.status("failure")]),
                                ("another check's success", [self.status("success", "ci/build")]),
                                ("a pending status", [self.status("pending")])]:
             with self.subTest(name):
                 code, out, calls = self.run_step([review.CLEAN_LABEL, "bug"], statuses)
 
-                self.assertEqual((0, removal), (code, calls), out)
+                self.assertEqual((0, [self.edit("--remove-label")]), (code, calls), out)
+
+    def test_removes_the_label_by_the_name_the_pull_request_spells_it(self) -> None:
+        # GitHub matches label names without regard to case, and the step never relies on `gh` doing the same.
+        code, out, calls = self.run_step(["Clean"], [])
+
+        self.assertEqual((0, [self.edit("--remove-label", "Clean")]), (code, calls), out)
+
+    def test_gives_the_label_back_to_a_head_a_review_signed_off_while_the_step_removed_it(self) -> None:
+        code, out, calls = self.run_step(["Clean"], [], [self.status("success")])
+
+        self.assertEqual((0, [self.edit("--remove-label", "Clean"), self.edit("--add-label", "Clean")]),
+                         (code, calls), out)
+        self.assertIn(f"gave Clean back to #7, because a review signed off its head {self.HEAD[:7]}", out)
 
     def test_does_nothing_once_the_label_is_gone(self) -> None:
-        code, out, calls = self.run_step(["bug"], None)
+        code, out, calls = self.run_step(["bug"])
 
         self.assertEqual((0, []), (code, calls), out)
         self.assertIn("no longer carries", out)
 
     def test_fails_without_removing_the_label_when_the_status_cannot_be_read(self) -> None:
-        code, out, calls = self.run_step([review.CLEAN_LABEL], None)
+        code, out, calls = self.run_step([review.CLEAN_LABEL])
 
         self.assertNotEqual(0, code, out)
         self.assertEqual([], calls)
@@ -2578,6 +2609,8 @@ class UpgradeTests(unittest.TestCase):
         edits = {
             "instructions": mock.patch.object(instructions, "template", return_value=instructions.template() + "x"),
             "site-workflow": mock.patch.object(cli.summary, "WORKFLOW", cli.summary.WORKFLOW + "# x\n"),
+            "clean-workflow": mock.patch.object(review, "clean_workflow_text",
+                                                return_value=review.clean_workflow_text() + "# x\n"),
             "permission-rules": mock.patch.object(permissions, "ASK", (*permissions.ASK, "Bash(project x *)")),
         }
         self.assertEqual(set(edits), set(before))

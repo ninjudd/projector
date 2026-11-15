@@ -12,7 +12,11 @@ name: Projector clean label
 # So the step reads the pull request as it is when it runs, and keeps the label
 # when the current head is already signed off: `project init` writes this
 # workflow only where the default branch requires `{context}`, so a review
-# that signs a head off posts that status as `success` on it.
+# that signs a head off posts that status as `success` on it. A review can
+# still sign the head off between that read and the removal, so the step reads
+# the status again after it removes the label, and gives a head signed off by
+# then its label back. The step names the label as the pull request spells it,
+# whatever its case.
 on:
   pull_request_target:
     types: [synchronize]
@@ -27,18 +31,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          now=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha + " " + ([.labels[].name | ascii_downcase] | any(. == "{label}") | tostring)')
-          head=${now% *}
-          if [ "${now#* }" != true ]; then
+          status() { gh api "repos/$REPO/commits/$1/status?per_page=100" --jq '.statuses[] | select(.context == "{context}") | .state'; }
+          now=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha + " " + ([.labels[].name | select(ascii_downcase == "{label}")] | first // "")')
+          sha=${now%% *}
+          name=${now#* }
+          if [ -z "$name" ]; then
             echo "#$PR no longer carries {label}"
             exit 0
           fi
-          status=$(gh api "repos/$REPO/commits/$head/status?per_page=100" --jq '.statuses[] | select(.context == "{context}") | .state')
-          if [ "$status" = success ]; then
-            echo "kept {label} on #$PR, because a review signed off its head ${head:0:7}"
+          state=$(status "$sha")
+          if [ "$state" = success ]; then
+            echo "kept $name on #$PR, because a review signed off its head ${sha:0:7}"
             exit 0
           fi
-          gh pr edit "$PR" --repo "$REPO" --remove-label {label}
+          gh pr edit "$PR" --repo "$REPO" --remove-label "$name"
+          sha=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')
+          state=$(status "$sha")
+          if [ "$state" = success ]; then
+            gh pr edit "$PR" --repo "$REPO" --add-label "$name"
+            echo "gave $name back to #$PR, because a review signed off its head ${sha:0:7} while the step removed it"
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
