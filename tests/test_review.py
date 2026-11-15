@@ -3169,7 +3169,7 @@ class StatusTests(LatestWinsCase):
         # A host's automatic approval can refuse a bare `gh pr ready` as self-approval, where the rule that
         # allows Projector's commands allows these.
         skills = Path(cli.__file__).resolve().parents[2] / "skills"
-        for name in ("fix-pr", "implement"):
+        for name in ("fix-pr", "implement", "spec"):
             text = (skills / name / "SKILL.md").read_text()
             with self.subTest(skill=name):
                 self.assertIn("project review ready <number> --repo <owner>/<repo>", text)

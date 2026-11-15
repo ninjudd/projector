@@ -483,8 +483,9 @@ manufacture an empty commit to trigger it.
 
 Mark a pull request ready only to end a hold you made. Marking a draft ready
 starts its review and says its author's work is done, so a draft someone
-else made, or one `../implement/SKILL.md` keeps while a test request waits on
-the person, is not yours to mark ready, however finished it looks. A ready
+else made, one `../implement/SKILL.md` keeps while a test request waits on
+the person, or one `../spec/SKILL.md` keeps while a request to review its
+plan waits, is not yours to mark ready, however finished it looks. A ready
 pull request is not signed off either: only a clean review signs a head off,
 as `project review status` reports and the `clean` label shows.
 

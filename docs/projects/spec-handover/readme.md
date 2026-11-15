@@ -1,5 +1,5 @@
 ---
-status: ready
+status: completed
 priority: now
 ---
 
@@ -211,3 +211,29 @@ loop.
 - **A session that ends without `cleanup`.** Its plan pull request stays a
   draft until someone marks it ready. The panel already shows a draft's
   state, so this plan defers any automatic fix.
+
+## 7. Outcome
+
+Shipped. `skills/spec/SKILL.md` ends its "Validate and hand over" section
+with `### Open the pull request` and `### Ask the user to review the plan`,
+which carry the flow in § 2.1 and the request in § 2.2. The generated
+section is version 26, and `fix-pr`, `work`, `cleanup`, and the
+repository's own instructions each keep a plan pull request a draft while
+its review request waits.
+
+The evidence:
+
+- **The flow ran once by hand.** This plan's own pull request,
+  [#440](https://github.com/ninjudd/projector/pull/440), followed it
+  before the skill described it. It opened as a draft, a review request
+  linked to the rendered readme, the user's `Looks good` settled the
+  question of which review goes first, and `project review ready` marked
+  it ready. The two review findings it then received are now in § 2.1
+  step 2 and § 2.3.
+- **The tests.** `test_the_skills_move_draft_state_through_the_commands_alone`
+  now covers `spec`, and it fails when a command block in `spec` runs a
+  bare `gh pr ready`. `test_the_template_text_is_pinned_to_its_version`
+  pins version 26.
+- **What no test covers.** The other rows of § 4 describe how an agent
+  follows the skill's prose, which no unit test can run. The next `spec`
+  run exercises them.
