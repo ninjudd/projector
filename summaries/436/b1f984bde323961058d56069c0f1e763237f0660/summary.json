@@ -1,0 +1,137 @@
+{
+ "version": 1,
+ "name": "Clean label workflow race",
+ "project": "review-on-ready",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 436,
+  "title": "Keep clean on a head a review signed off after the push that queued the label workflow",
+  "head": "b1f984bde323961058d56069c0f1e763237f0660",
+  "headRef": "clean-label-race",
+  "base": "2d3a358662b4e0944af89ef2518490f9f3655dc9",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector marks a pull request whose current head a review signed off with the <code>clean</code> label. In a repository that requires the <code>projector/review</code> commit status, <code>project init</code> also writes a GitHub Actions workflow, <code>.github/workflows/projector-clean.yml</code>, that takes <code>clean</code> off whenever a commit is pushed, because a new head has no review yet.",
+   "That workflow decided whether to run from the labels the push event recorded, then removed the label from the pull request as it was when the job ran. A job that ran late, such as one stuck in a queue or re-run later, which replays the old event, could remove <code>clean</code> from a head that a review signed off after the push. Nothing put the label back, because Projector decides sign-off from the review verdicts, so the head never got another review.",
+   "The workflow's step now reads the pull request when it runs:",
+   "<ol><li><b>The label is already gone.</b> The step exits and changes nothing.</li><li><b>The current head has a <code>success</code> <code>projector/review</code> status.</b> A review signed that head off, so the step keeps the label.</li><li><b>Anything else.</b> The step removes the label. It then reads the head and its status again, and gives the label back when a review signed the head off in the meantime.</li></ol>",
+   "<code>publish</code>, which adds <code>clean</code>, now reads the head again right after it adds the label, and takes the label back off when a push moved the head during the edit. Such a push records no <code>clean</code> in its event, so the workflow would skip it.",
+   "<code>init</code> recognizes the workflow 0.8.14 wrote by its SHA-256 digest and replaces it, reporting <code>updated</code>, and still keeps a file someone edited. For a kept copy it points at the new <code>project review workflow</code>, which prints the current workflow to compare with. <code>upgrade</code> now says when a release changes the clean workflow."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first Projector review, of <code>b8dabd2</code>, was clean and suggested closing a gap in <code>publish</code>. This head closes it.</li><li>The review of <code>b1f984b</code> requests changes: one open finding asks to rewrap two edited paragraphs of <code>docs/cli.md</code>.</li><li>It also suggests a re-read after the step gives the label back, and a step test for a head that moves before that re-read.</li><li>The full test suite, <code>project check</code>, and <code>git diff --check</code> pass at <code>b1f984b</code>.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Signed off.</b> The newest Projector verdict on the head is clean and no finding thread is open.</li><li><b><code>projector/review</code>.</b> The commit status <code>publish</code> posts on the reviewed commit, <code>success</code> when signed off, wherever the default branch requires it.</li><li><b>Event labels.</b> The labels GitHub records in a <code>pull_request_target</code> event at the moment of the push. A re-run replays them unchanged.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "workflow",
+   "title": "The workflow and publish read the pull request when they act",
+   "kicker": "Where clean is taken off, kept, or given back",
+   "intro": [
+    "The template is the file <code>init</code> renders into each repository. Its job still starts only when the push event listed <code>clean</code>, so a push to a pull request without the label starts no runner. The step reads the pull request's head and labels, then that head's combined commit status, and removes the label only when no review signed the head off. After removing it, the step reads the head and status once more, so a review that landed between the first read and the removal keeps its label.",
+    "<code>publish</code> is the only command that adds <code>clean</code>. After adding it, <code>publish</code> reads the pull request again and takes the label off if the head moved. A push before that read recorded no label in its event, so only this read can catch it. A push after it records the label, and that push's workflow job takes it off."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/templates/clean-workflow.yml",
+     "note": "The rendered workflow: reads the head and status, removes the label, and gives it back to a head signed off meanwhile.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 30,
+       "text": "This <code>if</code> still reads the event's labels, so a push that records no <code>clean</code> starts no job. <code>publish</code>'s new re-read covers the one case where that matters."
+      },
+      {
+       "kind": "context",
+       "line": 51,
+       "text": "Giving the label back has a window of its own: a push between the head read on line 48 and this edit lands with the label removed, so its job skips and the new head keeps <code>clean</code>. The review suggested reading the head once more after this edit, as <code>publish</code> does."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/review.py",
+     "note": "<code>publish</code> re-reads the head after adding <code>clean</code>; also the digest set of earlier workflows.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2636,
+       "text": "The review walked a push landing before the read, between the read and the edit, and after the edit; each ends with no <code>clean</code> on the unreviewed head. Disabling this block makes <code>test_a_push_during_the_label_edit_takes_the_clean_label_back_off</code> fail."
+      },
+      {
+       "kind": "verify",
+       "line": 839,
+       "text": "The review hashed the 0.8.14 template with <code>{label}</code> filled in and got this digest. The template has no other released version."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "init",
+   "title": "init replaces the earlier release's workflow",
+   "kicker": "How an existing repository gets the new step",
+   "intro": [
+    "<code>write_clean_workflow</code> runs inside <code>init</code> only after it finds or creates the ruleset that requires <code>projector/review</code>. A file equal to the template is <code>unchanged</code>. A file whose digest matches a workflow an earlier release wrote is replaced and reported <code>updated</code>. Any other file is <code>kept</code>, and <code>init</code> says how to compare it with <code>project review workflow</code>. The new subcommand is added to Projector's Codex permission rules."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Replaces an earlier release's workflow, adds <code>project review workflow</code>, and adds the clean workflow to <code>upgrade</code>'s digests."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Lets Codex run <code>project review workflow</code> without asking."
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Tests and documentation",
+   "kicker": "The step run under bash, and the init upgrade",
+   "intro": [
+    "<code>CleanWorkflowStepTests</code> cuts the step's script out of the rendered template and runs it with <code>bash -e</code>, as GitHub does, against a stub <code>gh</code> that answers through the real <code>jq</code>. The stub now gives each read in turn its own answer, which lets a test return no status first and <code>success</code> second. <code>tests/test_review.py</code> moves the head right after <code>publish</code>'s label edit."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "In scratch copies, disabling the <code>success</code> branch, dropping case folding, changing the digest, and disabling <code>publish</code>'s re-read each turned a test red. Removing the step's second head read turned nothing red, which the review listed as a suggestion."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_projector.py"
+    },
+    {
+     "path": "tests/test_review.py"
+    },
+    {
+     "path": "tests/test_permissions.py"
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Describes the run-time read, the give-back, <code>publish</code>'s re-read, and <code>project review workflow</code>.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 913,
+       "text": "Open finding: this line and line 1838 run to 99 and 127 characters while the prose around them wraps below 80. The repository's <code>CLAUDE.md</code> asks Markdown edits to match the surrounding wrapping."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
