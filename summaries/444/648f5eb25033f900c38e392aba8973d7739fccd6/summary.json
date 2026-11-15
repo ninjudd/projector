@@ -1,0 +1,118 @@
+{
+ "version": 1,
+ "name": "Panel pull request state colors",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 444,
+  "title": "Show a pull request's draft state in a color every terminal draws",
+  "head": "648f5eb25033f900c38e392aba8973d7739fccd6",
+  "headRef": "pr-state-colors",
+  "base": "9574ab64cb96b335463fbeeee8646621cf7252fd",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the list above the Claude Code prompt that shows one line for each open pull request the session fixes or reviews. Each line starts with the pull request's number, and a word after it can say where review stands. A click on the header's count collapses the lines into one line of numbers, such as <code>+ #12 #14</code>.",
+   "Before this change, the panel marked a draft by dimming its number with <code>dimColor</code>. Some terminals draw <code>dimColor</code> at full strength, so there a draft looked the same as a ready pull request. The word after the number appeared only when a review had set a label, and on the collapsed line drafts, reviews in progress, and ready pull requests were all yellow.",
+   "Now the number of a draft is drawn in the theme's <code>subtle</code> color, and every loaded line says its state. On the collapsed line, each number takes a color that says what the line's number and word would have said together.",
+   "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>State</th><th>Row word</th><th>Collapsed number</th></tr></thead><tbody><tr><td>Conflict, change request, or failing checks</td><td>unchanged; red notes after the title</td><td class=\"r\">red</td></tr><tr><td>Open review threads</td><td>unchanged; a yellow <code>N*</code> count</td><td class=\"r\">yellow</td></tr><tr><td>Draft</td><td><code>draft</code> in subtle, or the review label</td><td class=\"r\">muted</td></tr><tr><td><code>reviewing</code> label</td><td><code>reviewing</code> in orange (was yellow)</td><td class=\"r\">orange</td></tr><tr><td><code>clean</code> label</td><td><code>clean</code> in green</td><td class=\"r\">green</td></tr><tr><td>Ready, no review label</td><td><code>ready</code> in light blue (was nothing)</td><td class=\"r\">default color</td></tr></tbody></table></div>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first Projector review of this head found the code and tests sound and opened two documentation threads, both on <code>docs/plugins.md</code>: the example rows above the new text still show a row with no state word, and one rewrapped line runs to 102 characters.</li><li>A suggestion asks that <code>ready</code> be described as having no review label, not as waiting for a first review, since a push that removes <code>clean</code> also leaves a ready pull request at <code>ready</code>.</li></ul>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Draft.</b> GitHub's draft state, which says the author is still working.</li><li><b><code>reviewing</code> and <code>clean</code>.</b> Labels Projector's review sets: <code>reviewing</code> while a review runs, and <code>clean</code> once a review signs off the current head.</li><li><b>Theme keys.</b> <code>subtle</code>, <code>suggestion</code>, <code>claude</code>, <code>warning</code>, <code>success</code>, and <code>error</code> are Claude Code theme colors: muted, light blue, orange, yellow, green, and red.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "panel",
+   "title": "How the panel picks each state's color",
+   "kicker": "The row's number and word, and the collapsed line's colors, in the hooks module",
+   "intro": [
+    "The panel lives in <code>hooks/register.tsx</code>, the Claude Code hooks module Projector ships. Three small functions decide what a pull request looks like there.",
+    "<ul><li><b><code>reviewLabel</code></b> reads the review labels: <code>reviewing</code> over <code>clean</code>, now in the theme's <code>claude</code> orange so yellow keeps meaning open threads.</li><li><b><code>rowState</code></b>, new, is the word after a row's number: the review label when there is one, otherwise <code>draft</code> or <code>ready</code>.</li><li><b><code>statusColor</code></b> is a collapsed number's color, which now checks open threads and draft state before the labels.</li></ul>",
+    "The row's number moves from a plain <code>Button</code> label to a <code>Text</code> child of the button, because a <code>Button</code> takes no <code>color</code> and the number needs the <code>subtle</code> color while the pull request is a draft."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds <code>rowState</code>, reorders <code>statusColor</code>, and draws the row's number and state word with them.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Each branch of <code>statusColor</code> returns the color <code>docs/plugins.md</code> lists, in the same order; the new collapsed-line test, which passed in the 228-test run, compares every branch's color with a literal.",
+       "line": 1246
+      },
+      {
+       "kind": "context",
+       "text": "A draft that carries <code>clean</code> or <code>reviewing</code> shows that label as its word, so on the row only the number's subtle color says it is a draft.",
+       "line": 1234
+      },
+      {
+       "kind": "context",
+       "text": "The button keeps its <code>label</code>, which names the control, and draws this <code>Text</code> in its place, as the <code>Button</code> declaration allows for children of strings and <code>Text</code>.",
+       "line": 2404
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests that pin each state's color",
+   "kicker": "One row test and one collapsed-line test, both table-shaped",
+   "intro": [
+    "<code>hooks/panel.test.tsx</code> runs the panel against a fake GitHub answer, with one pull request for each state. The change adds a conflicting draft, <code>#16</code>, to show that being held back outranks being a draft."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Rewrites the row test to check each row's word, word color, and number color, and adds a test for every collapsed number's color.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The row test also asserts the button has no <code>dimColor</code>, so a return to dimming fails it."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The panel's documentation",
+   "kicker": "docs/plugins.md describes the row states and the collapsed line's colors",
+   "intro": [
+    "<code>docs/plugins.md</code> is the living description of the panel. The change turns its list of review labels into a list of row states, and its sentence about the collapsed line's colors into a list in the order the code checks them."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Describes the four row states and the six collapsed-line colors.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "The example block above this paragraph still shows <code>#267 List a loop's open pull requests…</code> with no state word, which the panel no longer draws for a loaded row. Add the word that row would show, such as <code>ready</code>.",
+       "line": 280
+      },
+      {
+       "kind": "flag",
+       "text": "This line is 102 characters, where the paragraph around it wraps under 80; the repository asks that a Markdown edit match the wrapping around it.",
+       "line": 610
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
