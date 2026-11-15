@@ -216,6 +216,18 @@ else:
         self.assertIn("--session session-A", output["hookSpecificOutput"]["additionalContext"])
         self.assertEqual(self.now + 1 + 86400, codex.registration(self.folder)["expires_at"])
 
+    def test_an_ordinary_prompt_renews_delivery_without_repeating_startup_context(self):
+        event = {"hook_event_name": "UserPromptSubmit", "session_id": "session-A", "cwd": str(self.root),
+                 "prompt": "Continue the implementation."}
+        output = codex.hook(self.root, event, self.now + 1, mock.Mock())
+        self.assertEqual({}, output)
+        self.assertEqual(self.now + 1 + 86400, codex.registration(self.folder)["expires_at"])
+        self.enqueue()
+        batch = self.send()
+        event["prompt"] = codex.message("session-A", batch)
+        output = codex.hook(self.root, event, self.now + 2, mock.Mock())
+        self.assertIn(str(self.event()), output["hookSpecificOutput"]["additionalContext"])
+
     def test_duplicate_consumed_marker_is_blocked_before_another_turn(self):
         self.enqueue()
         batch = self.send()

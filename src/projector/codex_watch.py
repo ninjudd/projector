@@ -379,15 +379,15 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
         ensure()
     if consumed and not lines:
         return {"decision": "block", "reason": "This watch batch is already consumed or its work was removed."}
+    if name != "SessionStart" and not consumed:
+        return {}
     context = (f"Use --session {session} for project watch commands and pass this parent ID to workers. "
                + ("Codex watch delivery handles this session; do not start a stream. " if record.get("enabled") else
                   "Automatic Codex delivery is disconnected; inspect watch status before starting a stream. ") +
                "Recheck subscriptions and current PR state before acting on events.")
     if consumed:
         context += " Process only these still-subscribed events:\n" + "\n".join(lines)
-    if name in ("SessionStart", "UserPromptSubmit"):
-        return {"hookSpecificOutput": {"hookEventName": name, "additionalContext": context}}
-    return {}
+    return {"hookSpecificOutput": {"hookEventName": name, "additionalContext": context}}
 
 
 class Dispatcher:
