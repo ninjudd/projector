@@ -19,6 +19,7 @@ Layout of the state root, `$XDG_STATE_HOME/projector/watch/`:
     sessions/<session>/session.json             the deliverer, and when it last renewed the session
     sessions/<session>/events                   event lines not yet delivered
     sessions/<session>/state.json               what the daemon announced to the session, and when
+    sessions/<session>/agent.json               its `project agent` registration, live while delivery reaches it
     cache/<owner>/<repo>/pulls/<number>.json    a pull request's ETags and last result
     cache/<owner>/<repo>/branches/<base>.json   a base branch's ETag
     cache/<owner>/<repo>/open/<page>.json       a page of the repository's open pull requests
@@ -515,6 +516,16 @@ def run_gh(args: list[str]) -> GhResult:
     return GhResult(done.returncode, done.stdout, done.stderr)
 
 
+def signed_in(gh: Callable[[list[str]], GhResult]) -> Optional[str]:
+    """The login `gh` is signed in as, or None when `gh api user` names none."""
+    result = gh(["api", "user"])
+    try:
+        found = json.loads(result.stdout).get("login") if result.returncode == 0 else None
+    except (ValueError, AttributeError):
+        found = None
+    return found if isinstance(found, str) and found else None
+
+
 @dataclass(frozen=True)
 class Response:
     """What `gh api -i` printed: the status line's code, or None when it printed none, the ETag, and the body.
@@ -694,12 +705,8 @@ class Daemon:
         if self.operator is not None and self.operator_read is not None \
                 and now - self.operator_read < self.settings.full_every:
             return
-        result = self.gh(["api", "user"])
-        try:
-            found = json.loads(result.stdout).get("login") if result.returncode == 0 else None
-        except (ValueError, AttributeError):
-            found = None
-        if not isinstance(found, str) or not found:
+        found = signed_in(self.gh)
+        if found is None:
             return
         self.operator_read = now
         if found != self.operator:
@@ -788,6 +795,8 @@ class Daemon:
         live = {name for name, seen in self.sessions.items() if now - seen.at < LAPSE}
         live.update(name for name in names if codex_watch.active(self.root / "sessions" / name, wall)
                     and codex_watch.has_work(self.root / "sessions" / name))
+        live.update(name for name in names if (self.root / "sessions" / name / "agent.json").exists()
+                    and delivery(self.root, name, wall) != "none")
         for name in names:
             mark = file_signature(self.root / "sessions" / name / "subscriptions")
             if name in live and mark != self.marks.get(name) and self.lacks_result(name):

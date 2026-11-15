@@ -1150,6 +1150,11 @@ minutes by default, while the head has no verdict by this model from the
 reviewer and no review of it in flight. So an event that never arrived comes
 back, and so does a head whose reviewer died, once its lock stalls.
 
+A `PEER MESSAGE` line is a message from another agent session, not a review
+event. Keep it in the main conversation and never send it to a review
+subagent. Handle it as `../message-agent/SKILL.md` describes under
+"Answer a `PEER MESSAGE` line".
+
 ### Give each pull request its own subagent
 
 Where the host can keep a subagent alive and send it later messages, each

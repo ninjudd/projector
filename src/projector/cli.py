@@ -23,7 +23,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import codex_watch, inbox, instructions, loop, permissions, review, site, summary, watch
+from . import agents, codex_watch, inbox, instructions, loop, permissions, review, site, summary, watch
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
@@ -714,6 +714,7 @@ def parser() -> argparse.ArgumentParser:
     add_inbox_parser(subcommands)
     add_loop_parser(subcommands)
     add_watch_parser(subcommands)
+    add_agent_parser(subcommands)
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
@@ -1029,6 +1030,86 @@ def add_watch_parser(subcommands) -> None:
                                  "GraphQL points it spent in the last hour", session=False))
     command("serve", "run the watch daemon; every other watch command starts it", session=False)
     command("stop", "ask the watch daemon to exit", session=False)
+
+
+def add_agent_parser(subcommands) -> None:
+    parser = subcommands.add_parser("agent", help="register the session under a name and a summary, list your "
+                                                   "registered sessions, and message them")
+    commands = parser.add_subparsers(dest="agent_command", required=True)
+
+    def command(name: str, help_text: str) -> argparse.ArgumentParser:
+        parsed = commands.add_parser(name, help=help_text)
+        parsed.add_argument("--session", help="the session's id (default: $PROJECTOR_SESSION, then "
+                                              "$CLAUDE_CODE_SESSION_ID)")
+        add_output(parsed)
+        return parsed
+
+    register = command("register", "record the session's name, summary, and model, so your other sessions can "
+                                   "find and message it")
+    register.add_argument("--name", help="1 to 32 letters, digits, and hyphens, unique among your live sessions")
+    register.add_argument("--summary", help=f"what the session is doing, one line of at most {agents.MAX_SUMMARY} "
+                                            "characters")
+    register.add_argument("--model", help="the model ID the session runs")
+    listed = command("list", "list your live registered sessions")
+    listed.add_argument("--all", action="store_true", dest="everyone", help="list lapsed sessions too")
+    send = command("send", "send a message to another of your registered sessions")
+    send.add_argument("to", help="the session's name, or its full session ID")
+    send.add_argument("text", help="the message, at most 16 KiB; - reads standard input")
+    reply = command("reply", "answer a message, to the session that sent it")
+    reply.add_argument("id", help="the message's ID, m- and 32 hex digits")
+    reply.add_argument("text", help="the reply, at most 16 KiB; - reads standard input")
+    read = command("read", "print a message sent to this session, with who sent it")
+    read.add_argument("id", help="the message's ID, m- and 32 hex digits")
+
+
+def run_agent(arguments: argparse.Namespace) -> int:
+    root = watch.state_root()
+    command = arguments.agent_command
+    now = time.time()
+    session = watch.session_id(arguments.session, required=command != "list")
+    if command == "list":
+        rows = agents.listing(root, session, now, everyone=arguments.everyone)
+        if arguments.json_output:
+            print(json_text({"local_only": True, "agents": rows}))
+            return 0
+        print("local only")
+        for row in rows:
+            print(agents.row_text(row, now))
+        if not rows:
+            print("no registered session" if arguments.everyone else "no live registered session")
+        return 0
+    if command == "read":
+        message, sender = agents.read(root, session, arguments.id, now)
+        if arguments.json_output:
+            print(json_text({"message": message, "sender": sender, "notice": agents.NOTICE}))
+        else:
+            print(agents.read_text(message, sender))
+        return 0
+    ensure = lambda: watch.ensure_daemon(root, distribution_version(), newer_release)
+    if command == "register":
+        found = agents.register(root, session, name=arguments.name, summary=arguments.summary,
+                                model=arguments.model, cwd=Path.cwd(), now=now)
+        ensure()
+        way = watch.delivery(root, session, now)
+        if arguments.json_output:
+            print(json_text({"session": session, "agent": found, "delivery": way}))
+        else:
+            place = " ".join(part for part in (found.get("repo"), found.get("branch")) if part) or found["cwd"]
+            print(f"registered {agents.label(found, session)} ({agents.describe(found['host'], found.get('model'))}) "
+                  f"in {place}; delivery: {way}")
+        return 0
+    text = sys.stdin.read().rstrip("\n") if arguments.text == "-" else arguments.text
+    limit = agents.message_limit(here_config())
+    if command == "send":
+        message, found, way = agents.send(root, session, arguments.to, text, now, limit=limit)
+    else:
+        message, found, way = agents.reply(root, session, arguments.id, text, now, limit=limit)
+    ensure()
+    if arguments.json_output:
+        print(json_text({"message": message, "to": found, "delivery": way}))
+    else:
+        print(agents.summary_of(message, found, way))
+    return 0
 
 
 def here_config():
@@ -2510,6 +2591,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_loop(arguments)
     if arguments.command == "watch":
         return run_watch(arguments)
+    if arguments.command == "agent":
+        return run_agent(arguments)
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.

@@ -550,6 +550,11 @@ subagent already has is a reminder: send it on. A thread the subagent
 declined stays unresolved, because declining leaves the decision to the
 user, so its reminder needs nothing more until someone answers the reply.
 
+A `PEER MESSAGE` line is a message from another agent session, not a pull
+request event. Keep it in the main conversation and never send it to a
+pull request's subagent. Handle it as `../message-agent/SKILL.md` describes
+under "Answer a `PEER MESSAGE` line".
+
 ### Give each pull request its own subagent
 
 Where the host can keep a subagent alive and send it later messages, each
