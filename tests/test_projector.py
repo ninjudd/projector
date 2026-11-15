@@ -18,7 +18,7 @@ from unittest import mock
 
 import importlib.metadata as metadata
 
-from projector import cli, instructions, permissions
+from projector import cli, instructions, permissions, review
 from projector.cli import distribution_version, main
 from projector.core import AmbiguousProject, ProjectorError, ProjectStore, project_from_text
 
@@ -1462,6 +1462,196 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(0, code, stderr)
         self.assertIn("kept ~/.claude/settings.json\n", stdout)
         self.assertIn("is not a directory", stderr)
+
+
+class RulesetGitHub:
+    """The slice of GitHub `init`'s required check uses, for acme/app: its rules, rulesets, open pull requests,
+    their verdicts and threads, and the statuses posted."""
+
+    def __init__(self) -> None:
+        self.rules: list[str] = []
+        self.rulesets: list[dict] = []
+        self.refuse = False
+        # Each open pull request's head and the verdict bodies on it, and the pull requests with an open finding.
+        self.pulls: dict[int, tuple[str, list[str]]] = {}
+        self.open_findings: set[int] = set()
+        self.statuses: list[dict] = []
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args: list[str], token: str | None = None) -> str:
+        self.calls.append(list(args))
+        if args == ["api", "repos/acme/app", "--jq", ".default_branch"]:
+            return "main\n"
+        if args[:3] == ["api", "--paginate", "repos/acme/app/rules/branches/main"]:
+            return "".join(f"{context}\n" for context in self.rules)
+        if args[:4] == ["api", "-X", "POST", "repos/acme/app/rulesets"]:
+            if self.refuse:
+                raise review.ReviewError("gh api -X POST repos/acme/app/rulesets failed: Not Found (HTTP 404)")
+            created = json.loads(Path(args[5]).read_text())
+            self.rulesets.append(created)
+            for rule in created["rules"]:
+                self.rules += [check["context"] for check in rule["parameters"]["required_status_checks"]]
+            return "{}"
+        if args[:3] == ["api", "--paginate", "repos/acme/app/pulls?state=open&per_page=100"]:
+            return "".join(json.dumps({"number": number, "sha": sha, "visibility": "public"}) + "\n"
+                           for number, (sha, _) in self.pulls.items())
+        if args[:2] == ["api", "--paginate"] and args[2].endswith("/reviews"):
+            number = int(args[2].split("/")[-2])
+            return "".join(json.dumps({"id": 900 + i, "url": f"https://github.com/acme/app/pull/{number}#r{i}",
+                                       "at": f"2026-11-01T00:0{i}:00Z", "login": "operator", "association": "OWNER",
+                                       "body": body}) + "\n"
+                           for i, body in enumerate(self.pulls[number][1]))
+        if args[:2] == ["api", "graphql"]:
+            number = int(next(arg for arg in args if arg.startswith("n="))[2:])
+            nodes = [{"id": "T1", "isResolved": False, "path": "a.py", "line": 1,
+                      "comments": {"nodes": [{"body": "<!-- projector-finding v=1 priority=P2 --> nil", "id": "C1",
+                                              "databaseId": 1, "author": {"login": "operator"}}]}}] \
+                if number in self.open_findings else []
+            return json.dumps({"data": {"repository": {"pullRequest": {"reviewThreads": {
+                "pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}}}}})
+        if args[:3] == ["api", "-X", "POST"] and args[3].startswith("repos/acme/app/statuses/"):
+            fields = dict(args[i + 1].split("=", 1) for i, arg in enumerate(args) if arg == "-f")
+            self.statuses.append(dict(fields, sha=args[3].rsplit("/", 1)[1]))
+            return "{}"
+        if args == ["api", "user", "--jq", ".login"]:
+            return "operator\n"
+        raise AssertionError(f"unexpected gh call: {args}")
+
+
+def clean_verdict(sha: str, verdict: str = "clean") -> str:
+    return (f"Projector review\n\n<!-- projector-review v=1 verdict={verdict} projector=1.2.3 model=claude-opus-5-5 "
+            f"sha={sha} findings=0 seconds=60 covered=1/1 -->\n")
+
+
+class RequiredCheckTests(RepositoryTestCase):
+    """`project init`'s setup of the required review check in a repository whose origin is acme/app on GitHub."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        subprocess.run(["git", "-C", str(self.root), "remote", "add", "origin", "https://github.com/acme/app.git"],
+                       check=True)
+        self.github = RulesetGitHub()
+        self.enterContext(mock.patch.object(review, "run_gh", self.github))
+        self.github.pulls = {7: ("a" * 40, [clean_verdict("a" * 40)]), 8: ("b" * 40, [clean_verdict("c" * 40)]),
+                             9: ("d" * 40, [clean_verdict("d" * 40)])}
+        self.github.open_findings = {9}
+
+    def init(self, *extra: str, answer: str | None = None) -> tuple[int, str, str]:
+        if answer is not None:
+            self.at_a_terminal()
+            self.enterContext(mock.patch("sys.stdin.readline", return_value=answer))
+        return self.invoke("init", "--no-site", "--no-publish-rule", *extra)
+
+    def workflow(self) -> Path:
+        return self.root / review.CLEAN_WORKFLOW_PATH
+
+    def recorded(self) -> object:
+        path = self.root / ".projector.toml"
+        return tomllib.loads(path.read_text()).get("review", {}).get("require_check") if path.exists() else None
+
+    def test_a_yes_requires_the_check_writes_the_workflow_and_posts_heads_already_signed_off(self) -> None:
+        code, out, err = self.init(answer="y\n")
+
+        self.assertEqual(0, code, err)
+        self.assertIn(cli.REQUIRE_QUESTION, err)
+        self.assertEqual([review.ruleset()], self.github.rulesets)
+        self.assertEqual([("a" * 40, "success")], [(s["sha"], s["state"]) for s in self.github.statuses],
+                         "#8's clean verdict is on an earlier head, and #9 has an open finding")
+        self.assertEqual(review.clean_workflow_text(), self.workflow().read_text())
+        self.assertIn(f"created {review.CLEAN_WORKFLOW_PATH}", out)
+        self.assertTrue(self.recorded())
+
+        code, _, err = self.init(answer="n\n")
+
+        self.assertEqual(0, code, err)
+        self.assertNotIn(cli.REQUIRE_QUESTION, err, "the answer is recorded")
+        self.assertEqual(1, len(self.github.rulesets))
+
+    def test_the_ruleset_and_the_workflow_agree_with_what_publish_posts_and_labels(self) -> None:
+        self.assertEqual(0, self.init("--require-review")[0])
+
+        self.assertTrue(review.requires_check("acme/app", "main"), "publish posts its status where init requires it")
+        text = self.workflow().read_text()
+        self.assertIn(f"contains(github.event.pull_request.labels.*.name, '{review.CLEAN_LABEL}')", text)
+        self.assertIn(f"--remove-label {review.CLEAN_LABEL}\n", text)
+        self.assertNotIn("{label}", text)
+
+    def test_a_no_records_the_answer_and_changes_nothing_else(self) -> None:
+        code, _, err = self.init(answer="\n")
+
+        self.assertEqual(0, code, err)
+        self.assertIs(False, self.recorded())
+        self.assertEqual(([], []), (self.github.rulesets, self.github.statuses))
+        self.assertFalse(self.workflow().exists())
+        self.github.calls.clear()
+
+        code, _, err = self.init(answer="y\n")
+
+        self.assertEqual(0, code, err)
+        self.assertNotIn(cli.REQUIRE_QUESTION, err)
+        self.assertEqual([], self.github.calls, "a recorded no asks GitHub nothing")
+
+    def test_without_a_terminal_or_a_flag_it_asks_and_changes_nothing(self) -> None:
+        code, _, err = self.init()
+
+        self.assertEqual(0, code, err)
+        self.assertNotIn(cli.REQUIRE_QUESTION, err)
+        self.assertEqual([], self.github.calls)
+        self.assertIsNone(self.recorded())
+        self.assertFalse(self.workflow().exists())
+
+    def test_a_refused_ruleset_writes_no_workflow_status_or_setting(self) -> None:
+        self.github.refuse = True
+
+        code, _, err = self.init("--require-review")
+
+        self.assertNotEqual(0, code)
+        self.assertIn("could not create the Projector review ruleset on acme/app", err)
+        self.assertIn("an admin of acme/app can run `project init --require-review`", err)
+        self.assertEqual([], self.github.statuses)
+        self.assertFalse(self.workflow().exists())
+        self.assertIsNone(self.recorded())
+
+    def test_with_the_labels_off_it_writes_no_workflow(self) -> None:
+        (self.root / ".projector.toml").write_text("[review]\nlabels = false\n")
+
+        code, _, err = self.init("--require-review")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(1, len(self.github.rulesets))
+        self.assertEqual(1, len(self.github.statuses))
+        self.assertFalse(self.workflow().exists(), "the workflow would take a label of the repository's own off")
+        self.assertTrue(self.recorded())
+
+    def test_a_branch_that_already_requires_the_check_gets_the_workflow_without_a_question(self) -> None:
+        self.github.rules = [review.REVIEW_CONTEXT]
+
+        code, _, err = self.init(answer="n\n")
+
+        self.assertEqual(0, code, err)
+        self.assertNotIn(cli.REQUIRE_QUESTION, err)
+        self.assertEqual(([], []), (self.github.rulesets, self.github.statuses))
+        self.assertTrue(self.workflow().exists())
+        self.assertIsNone(self.recorded(), "nobody answered")
+
+    def test_a_recorded_yes_puts_back_a_ruleset_that_is_gone(self) -> None:
+        (self.root / ".projector.toml").write_text("[review]\nrequire_check = true\n")
+
+        code, _, err = self.init()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(1, len(self.github.rulesets))
+        self.assertTrue(self.workflow().exists())
+
+    def test_a_workflow_edited_by_hand_is_kept(self) -> None:
+        self.workflow().parent.mkdir(parents=True)
+        self.workflow().write_text("name: mine\n")
+
+        code, _, err = self.init("--require-review")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual("name: mine\n", self.workflow().read_text())
+        self.assertIn("has changes Projector did not write", err)
 
 
 class ReviewRulesTests(RepositoryTestCase):

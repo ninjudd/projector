@@ -242,7 +242,7 @@ while it waits, and it still writes nothing to GitHub.
 | `AGENTS.md`, `CLAUDE.md` | The repository's own hand-over rules and the generated block. |
 | `docs/cli.md`, `docs/plugins.md` | Living documentation for the commands, events, settings, and panel. |
 | `docs/projects/watch-daemon/readme.md` | The `DRAFT` and `RESPONDED` rows of its events table, because that project is still in progress. |
-| `tests/test_review.py`, `tests/test_watch.py`, `tests/test_instructions.py`, `tests/test_cli.py`, `hooks/panel.test.tsx` | § 4. |
+| `tests/test_review.py`, `tests/test_watch.py`, `tests/test_instructions.py`, `tests/test_projector.py`, `hooks/panel.test.tsx` | § 4. |
 
 ## 3. Why this design
 
@@ -368,10 +368,10 @@ Each of these tests fails before the change:
   publishing review's own comment alone.
 - **`test_review.py`: `setup` removes a stale label.** It catches a label left
   on a head no review has read, in a repository without the workflow.
-- **`test_cli.py`: `init`'s question, flags, and refusal, in a temporary Git
+- **`test_projector.py`: `init`'s question, flags, and refusal, in a temporary Git
   repository with a fake `gh`.** It catches a prompt without a terminal and a
   partial setup after a refused ruleset.
-- **`test_cli.py`: the workflow `init` writes removes the label `publish`
+- **`test_projector.py`: the workflow `init` writes removes the label `publish`
   adds, and the ruleset `init` creates requires the context `publish` posts.**
   It pins each value through what depends on it, so renaming one side turns
   the test red.
@@ -537,3 +537,20 @@ ready, and `init`'s setup of the required check.
 - **`UNREVIEWED` keeps `DRAFT`'s other rules.** It fires once per head, never
   again on the reminder, and a live start comment from an account whose
   review would count holds it back, as it held `DRAFT` back.
+
+### 9.3 `init`'s setup of the required check
+
+- **Without a terminal or a flag, `init` asks GitHub nothing.** It returns
+  before it reads the default branch's rules, so an agent's `init` never
+  reaches GitHub for the check, and neither does a test.
+- **A refused ruleset fails `init`.** Whether the answer came from the prompt
+  or from `--require-review`, `init` exits non-zero with the refusal and the
+  files it already wrote, as a refused `--site` does.
+- **The backfill runs only when `init` creates the ruleset.** It counts the
+  verdicts as `project review status` does for the reviewer, which is
+  `review.username` or else the signed-in account.
+- **`init` reports the check on stderr,** as it reports the site, so its
+  `--json` report still lists only files. The workflow is one of those files.
+- **The tests live in `tests/test_projector.py`,** beside `init`'s other
+  tests. The site's `init` tests run without a terminal, as an agent runs
+  `init`, so they never meet the question.

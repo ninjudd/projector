@@ -427,6 +427,19 @@ def parser() -> argparse.ArgumentParser:
         help="serve the GitHub Pages site at this custom domain, such as https://projects.example.com, and link the "
         "repository's website to it",
     )
+    review_choice = init.add_mutually_exclusive_group()
+    review_choice.add_argument(
+        "--require-review",
+        action="store_true",
+        default=None,
+        help="this repository relies on Projector alone: require a clean review of the current head before "
+        "merge, through a ruleset, the clean label's workflow, and the status on heads already signed off "
+        "(default: ask at a terminal)",
+    )
+    review_choice.add_argument(
+        "--no-require-review", action="store_false", dest="require_review",
+        help="record that this repository requires no Projector review before merge, so init stops asking",
+    )
     rule_choice = init.add_mutually_exclusive_group()
     rule_choice.add_argument(
         "--publish-rule",
@@ -2273,6 +2286,83 @@ def publish_rule_enabled(root: Path) -> bool:
     return load_config(root).setting("review.publish_rule") is not False
 
 
+REQUIRE_QUESTION = "Does this repository rely on Projector alone to sign off pull requests before merge? [y/N] "
+
+
+def init_required_check(arguments: argparse.Namespace, root: Path, files: list[FileAction]) -> None:
+    """`init`'s setup of the required review check, as docs/projects/review-on-ready/readme.md § 2.5 describes,
+    adding the label workflow to `files`. It acts only in a repository whose origin is on GitHub, asks only at a
+    terminal while `review.require_check` is unset and the default branch does not require the check yet, never
+    removes anything, and writes nothing else when GitHub refuses the ruleset."""
+    answer = arguments.require_review
+    try:
+        repo = review.origin_repo(root)
+    except review.ReviewError:
+        if answer:
+            raise InitError("--require-review sets up a GitHub repository's ruleset, and this checkout has no "
+                            "origin on GitHub", files) from None
+        return
+    config = load_config(root)
+    recorded = config.get("review.require_check")
+    if answer is False or answer is None and recorded is False:
+        if answer is False and recorded is not False:
+            record_required_check(root, False)
+        return
+    if answer is None and recorded is None and not sys.stdin.isatty():
+        # Without a person to ask, an unanswered question changes nothing.
+        return
+    try:
+        required = review.requires_check(repo, review.default_branch(repo))
+    except review.ReviewError as error:
+        raise InitError(f"could not read the rules of {repo}'s default branch: {error}", files) from error
+    if answer is None and recorded is None and not required:
+        print(REQUIRE_QUESTION, end="", file=sys.stderr, flush=True)
+        if sys.stdin.readline().strip().lower() not in ("y", "yes"):
+            record_required_check(root, False)
+            return
+        answer = True
+    if not required:
+        try:
+            review.create_ruleset(repo)
+        except review.ReviewError as error:
+            raise InitError(f"could not create the {review.RULESET_NAME} ruleset on {repo}: {error}; creating a "
+                            "ruleset takes admin access, and a private repository needs a paid plan for rulesets, so "
+                            f"an admin of {repo} can run `project init --require-review`", files) from error
+        print(f"project: created the {review.RULESET_NAME} ruleset, which requires {review.REVIEW_CONTEXT} on "
+              f"{repo}'s default branch", file=sys.stderr)
+        username = config.get("review.username")
+        reviewer = review.reviewer_login(None, username if isinstance(username, str) else None,
+                                         review.authenticated_login())
+        for posted in review.backfill_statuses(repo, reviewer):
+            print(f"project: posted {review.REVIEW_CONTEXT} success on #{posted['number']} at {posted['sha'][:7]}, "
+                  "which a review already signed off", file=sys.stderr)
+    if config.get("review.labels") is not False:
+        files.append(write_clean_workflow(root))
+    if answer and recorded is not True:
+        record_required_check(root, True)
+
+
+def record_required_check(root: Path, value: bool) -> None:
+    change = write_value(root / CONFIG_NAME, "review.require_check", value)
+    print(f"project: {change.action} review.require_check = {format_value(value)} in {change.path}", file=sys.stderr)
+
+
+def write_clean_workflow(root: Path) -> FileAction:
+    """Write the workflow that takes `clean` off a pushed pull request, keeping one edited by hand."""
+    path = root / review.CLEAN_WORKFLOW_PATH
+    text = review.clean_workflow_text()
+    if path.is_file():
+        if path.read_text(encoding="utf-8") == text:
+            return FileAction(review.CLEAN_WORKFLOW_PATH, "unchanged")
+        return FileAction(review.CLEAN_WORKFLOW_PATH, "kept",
+                          f"{review.CLEAN_WORKFLOW_PATH} has changes Projector did not write, so it was left alone")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return FileAction(review.CLEAN_WORKFLOW_PATH, "created",
+                      f"commit {review.CLEAN_WORKFLOW_PATH} to the default branch through a pull request; GitHub "
+                      "runs the workflow only from there")
+
+
 def publish_rule_mode(arguments: argparse.Namespace, start: Path) -> Optional[str]:
     """Whether `init` adds Projector's permission rules ("add"), only reports them ("report"), or leaves them
     (None).
@@ -2406,6 +2496,7 @@ def run(arguments: argparse.Namespace) -> int:
                               "to stop setting it up", file=sys.stderr)
                     if needs_admin:
                         print(f"project: to finish setting it up, {error.steps()}", file=sys.stderr)
+            init_required_check(arguments, root, files)
         except InitError as error:
             # Say what was written before saying what could not be.
             if not arguments.json_output:
