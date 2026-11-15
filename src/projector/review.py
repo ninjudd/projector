@@ -2633,6 +2633,18 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
         labeled = change_labels(repo, number, label_names(current), {CLEAN_LABEL} if clean else set(),
                                 (set() if clean else {CLEAN_LABEL}) | (set() if others else {REVIEWING_LABEL}),
                                 token)
+        if CLEAN_LABEL in labeled["added"]:
+            # A push between the read above and the edit queued its label workflow with an event that lists no
+            # `clean`, so that job skips and leaves the label on a head no review has read. The head as it is
+            # now decides; a push after this read lists `clean`, and its workflow takes the label off. The labels
+            # never fail the publish, so a read that fails leaves them as the edit made them.
+            moved = {"head": {"sha": sha}}
+            with suppress(ReviewError):
+                moved = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or moved
+            if (moved.get("head") or {}).get("sha") != sha:
+                taken = change_labels(repo, number, label_names(moved), set(), {CLEAN_LABEL}, token)
+                labeled = {"added": [name for name in labeled["added"] if name not in taken["removed"]],
+                           "removed": labeled["removed"], "warning": labeled["warning"] or taken["warning"]}
     if loop is not None:
         with locked(loop_record(root, loop).parent):
             record = read_record(root, loop)

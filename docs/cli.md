@@ -1834,7 +1834,8 @@ its color or description. `clean` says that Projector's newest review of the
 current head is clean, not that the pull request may merge, because a
 repository can still require people's approval. A label stays on the pull
 request through a push, so `setup` removes a stale `clean` when the next
-review starts. Set `review.labels` to `false` to keep `setup`, `publish`,
+review starts. `publish` reads the head again after it adds `clean`, and
+takes the label back off when a push moved the head during the edit. Set `review.labels` to `false` to keep `setup`, `publish`,
 and `finish` from adding or removing either label, as in a repository whose
 own `clean` or `reviewing` label means something else.
 
