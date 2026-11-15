@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -193,7 +193,8 @@ clocks, temporary Git repositories, and restartable state. Prove each new
 regression test fails when its claimed fault is introduced. Run the full
 repository validation gate from `AGENTS.md` before handover.
 
-Also test both hosts against a disposable repository and PR. In Codex,
+The operator defers the following checks until after merge, as § 8 records.
+Test both hosts against a disposable repository and PR. In Codex,
 trust the hooks, subscribe, let the session become idle, and trigger a new
 head and a finding. Observe automatic turns, hook acknowledgment, and reuse
 of the PR's worker. Exercise an unloaded thread with a running local daemon.
@@ -271,7 +272,23 @@ removed its temporary files. It changed no installed plugin and made no
 GitHub mutation. Folder and hook trust decisions persist in Codex's local
 settings.
 
-The project stays in progress until live new-head and finding events wake
-the subscribed review and fix workflows on both hosts, with the existing PR
-worker reused to execute that work. The automated producer tests and native
-transport check do not replace that acceptance check.
+The implementation is complete. The operator accepts the remaining live
+workflow checks as validation after merge, as § 8 records.
+
+## 8. Completion and validation after merge
+
+Outcome: shipped. The Codex delivery implementation ships when
+[pull request 432](https://github.com/ninjudd/projector/pull/432) merges.
+That change carries all of this project's code and its completion record.
+
+The owner chose to run the remaining live workflow checks after merge.
+Those checks have not been performed: live new-head and finding events
+waking the subscribed review and fix workflows on both hosts, and reuse of
+the existing PR worker to execute that work. The automated producer tests,
+native exact-message acknowledgment smoke test, and Claude idle-notice
+observation remain the evidence already collected; they do not establish
+the deferred workflow results.
+
+This decision changes § 4's pre-merge validation scope. The pull request's
+Testing section tracks the operator's validation handoff after merge. It
+requires no further implementation or separate project-completion change.
