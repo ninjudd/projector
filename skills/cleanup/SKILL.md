@@ -110,7 +110,9 @@ gap:
   standing change request, a conflict with its base, failing checks, or a
   suggestion neither implemented nor deferred. `fix-pr` does this work.
 - A pull request the session held, converting it to a draft with
-  `project review hold`, which says a change is still being built.
+  `project review hold`, which says a change is still being built, or kept
+  a draft while a request asks the user to test the change or to review
+  its plan.
 - A plan whose `status` or `priority` no longer matches the work, a project
   the work completed that is not marked `completed`, or a warning from
   `project check`. `finish` does this work.

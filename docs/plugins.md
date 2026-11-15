@@ -18,7 +18,10 @@ The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
 `summarize-pr` summarizes a pull request's changes as a guided review page.
 Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
 `$<skill>`.
-`spec` writes a project's technical spec under `docs/projects/`.
+`spec` writes a project's technical spec under `docs/projects/`, opens it as
+a draft pull request, and asks you in the inbox to review the plan as GitHub
+renders it. The pull request stays a draft until you answer, so the
+automated review reads the plan only after you have.
 `implement` builds from that plan, or from a description of a change small
 enough to need no spec, such as `/projector:implement fix the typo in the
 install docs`.

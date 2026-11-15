@@ -1,4 +1,4 @@
-<!-- projector:begin 25 -->
+<!-- projector:begin 26 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -53,15 +53,17 @@ skill, `/projector:implement` in Claude Code or `$implement` in Codex,
 whether it follows a plan under `{projects_dir}` or only a description,
 however small. Its hand-over opens the pull request and subscribes the
 session to fix it, so review findings are fixed as they arrive rather than
-waiting for someone to notice that nothing is fixing them.
+waiting for someone to notice that nothing is fixing them. Write each plan
+with the `spec` skill, whose hand-over opens the plan's pull request the
+same way.
 
 Open every pull request as a draft, each layer of a stack included, and mark
 it ready with `project review ready` once your work on it is done. A draft
 says its author is still working, so marking it ready is what asks for its
-review. When the hand-over asks the person to test the change, keep it a
-draft until they answer that it looks good. Ready is not signed off: a clean
-review of the head labels the pull request `clean`, and only that is the
-sign-off.
+review. When the hand-over asks the person to test the change or to review
+a plan, keep it a draft until they answer that it looks good. Ready is not
+signed off: a clean review of the head labels the pull request `clean`, and
+only that is the sign-off.
 
 Talk with the person in the conversation as usual. When Projector's `ask`,
 `tell`, and `request` tools are available, also post anything they must not
