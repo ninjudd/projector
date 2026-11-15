@@ -1027,7 +1027,10 @@ const isRenewed = (session: string, time: number) =>
  * any, and submits them as one prompt, which waits until the session is
  * idle, as an inbox answer for the main loop does. `take` renews the session,
  * so only a minute without an event renews it alone. Events that arrive while
- * a batch waits stay in the file, and go as one prompt after it.
+ * a batch waits stay in the file, and go as one prompt after it. The daemon
+ * writes its cache before its events, so a shown panel reloads as it takes
+ * them, and its open drawer reads its threads then rather than at the next
+ * poll.
  */
 async function deliverEvents($: Engine, root: string, session: string, time: number): Promise<void> {
   const events = await $.fs.stat(`${folderOf(root, session)}/events`).catch(() => undefined)
@@ -1041,6 +1044,7 @@ async function deliverEvents($: Engine, root: string, session: string, time: num
   const { events: lines } = JSON.parse(ran.stdout) as { events?: unknown }
   const text = (Array.isArray(lines) ? lines : []).filter(line => typeof line === 'string').join('\n')
   if (text === '') return
+  void refresh($)
   isSubmitting = true
   void $.prompt
     .submit({ text })

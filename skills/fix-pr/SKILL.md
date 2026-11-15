@@ -531,6 +531,11 @@ role are these:
   request that a session here reviews, or that a live start comment from the
   operator or another account whose review would count shows under review
   elsewhere; it waits for that review.
+- **`LABEL`** reports that a review added or removed the `clean` or
+  `reviewing` label, as `+clean` or `-reviewing`. It is not work. On
+  `+clean`, tell the user that a review signed off the head. The other
+  changes need nothing, because any work behind them arrives as its own
+  line.
 - **`MOVED`** reports that another session now owns the pull request's
   `fix` role. Stop its subagent at once, because two fixers would push the
   same branch, and tell the user.

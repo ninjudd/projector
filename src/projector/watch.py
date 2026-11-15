@@ -81,10 +81,21 @@ HTML_TAG = re.compile(r"<[^>]*>")
 ANSWERED = re.compile(r"projector-(?:finding|verify)")
 PROJECTOR_REVIEW = re.compile(r"^<!-- projector-review ", re.M)
 
+# What each change to a label a review sets tells the `fix` owner, by the label and whether it was added.
+LABEL_CHANGES = {
+    (review.CLEAN_LABEL, True): "labeled clean, so a review signed off its head — tell the user it is clean",
+    (review.CLEAN_LABEL, False): "no longer labeled clean, so its head is not signed off — nothing to do, since any "
+                                 "work arrives as its own line",
+    (review.REVIEWING_LABEL, True): "labeled reviewing, so a review of it is in progress — nothing to do while it runs",
+    (review.REVIEWING_LABEL, False): "no longer labeled reviewing, so no review of it is in progress — nothing to do, "
+                                     "since any work arrives as its own line",
+}
+
 # The query § 2.6 of the watch-daemon plan gives, which Projector's panel reads from the cache too, with
 # the fields the events name: `mergedAt` and `mergeCommit` for MERGED, each comment's id and times for a
 # live start comment, and `nameWithOwner` for the review state's path. The panel reads `labels` for the
-# `reviewing` and `clean` labels a review sets. `rateLimit` reports what it cost.
+# `reviewing` and `clean` labels a review sets, and the daemon for their LABEL events. `rateLimit` reports what it
+# cost.
 QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
   repository(owner:$o,name:$r){ visibility nameWithOwner
     pullRequest(number:$n){
@@ -897,9 +908,10 @@ def renewed_at(folder: Path) -> float:
 
 
 class SessionState:
-    """The daemon's record for one session: when it first saw each line, what it announced, and when."""
+    """The daemon's record for one session: when it first saw each line, what it announced, and when, and the
+    review labels each pull request it fixes carried."""
 
-    KEYS = ("added", "fix", "review", "closed", "adopted")
+    KEYS = ("added", "fix", "review", "closed", "adopted", "labels")
 
     def __init__(self, folder: Path) -> None:
         self.folder = folder
@@ -968,7 +980,7 @@ class Pass:
             write_json(self.root / "owners.json", owners)
         for name, state in self.states.items():
             owned = {label for label, owner in owners.items() if owner == name}
-            for role in ("fix", "review"):
+            for role in ("fix", "review", "labels"):
                 state.data[role] = {label: record for label, record in state.data[role].items() if label in owned}
             state.data["closed"] = {label: at for label, at in state.data["closed"].items()
                                     if isinstance(at, (int, float)) and self.now - at < FORGET}
@@ -1425,6 +1437,25 @@ class Pass:
             if key.startswith("review:"):
                 kept.setdefault(key, last)
         self.states[session].data["fix"][label] = kept
+        return lines + self.route_labels(session, label, ref, pr, head)
+
+    def route_labels(self, session: str, label: str, ref: str, pr: dict, head: str) -> list[str]:
+        """A LABEL line for each review label added or removed since the owner last saw the pull request. The
+        first look, and the first after the role moves, records the labels and announces nothing, because a line
+        reports a change and the labels it finds are none: a subscription to a pull request that is already clean
+        reports nothing until the label comes off, on a host without the panel, such as Codex, as on one with it."""
+        present = {(node.get("name") or "").lower() for node in nodes(pr, "labels")}
+        current = [name for name in review.LABELS if name in present]
+        seen = self.states[session].data["labels"].get(label)
+        self.states[session].data["labels"][label] = current
+        if not isinstance(seen, list):
+            return []
+        lines = []
+        for name in review.LABELS:
+            added = name in current
+            if added != (name in seen):
+                sign = "+" if added else "-"
+                lines.append(f"LABEL {ref} {sign}{name} head={head[:8]}: {LABEL_CHANGES[name, added]}")
         return lines
 
     def route_review(self, session: str, pull: tuple[str, int], name: str, repo: str, repository: dict,

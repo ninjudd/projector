@@ -5235,6 +5235,31 @@ test('reads its rows from the cache on each tick, and asks GitHub only for an ea
   await ui.unmount()
 })
 
+test('reads the open drawer’s threads again as soon as the daemon’s events arrive, rather than at the next poll', async ($, on) => {
+  const label = 'LABEL x/y#7 +clean head=9f3c2a1b: labeled clean, so a review signed off its head — tell the user it is clean'
+  const session = watchWorld(on, { files: { [SUBSCRIPTIONS]: 'x/y#7 fix\n', ...cached('x/y', given('x/y', 7)) } })
+  const threads = () => session.gh().filter(query => query.includes('p7: pullRequest(number: 7) { reviewThreads'))
+  await begin($, session.clock)
+  const ui = await $.ui.mount(PANEL)
+  await ui.press({ key: 'pr:x/y#7' })
+  await session.clock.settle()
+  expect(threads()).toHaveLength(1)
+
+  // A tick between polls reads the daemon's cache and asks GitHub nothing.
+  await session.clock.advance(TICK)
+  await session.clock.settle()
+  expect(threads()).toHaveLength(1)
+
+  // The daemon writes its cache before its events, so the drawer reads its threads with them.
+  Object.assign(session.files, cached('x/y', { ...given('x/y', 7), labels: { nodes: [{ name: 'clean' }] } }))
+  session.files[EVENTS] = `${label}\n`
+  await session.clock.advance(TICK)
+  await session.clock.settle()
+  expect(session.submitted).toEqual([label])
+  expect(threads()).toHaveLength(2)
+  await ui.unmount()
+})
+
 test('renews the session at its start, which starts the daemon, and once a minute while no event comes', async ($, on) => {
   const session = watchWorld(on)
   const watched = () => session.project().filter(command => command.startsWith('watch'))
