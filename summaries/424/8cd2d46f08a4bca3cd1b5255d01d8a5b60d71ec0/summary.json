@@ -1,0 +1,134 @@
+{
+ "version": 1,
+ "name": "Review on ready plan",
+ "project": "review-on-ready",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 424,
+  "title": "Plan reviews that wait until a pull request is ready",
+  "head": "8cd2d46f08a4bca3cd1b5255d01d8a5b60d71ec0",
+  "headRef": "worktree-review-on-ready",
+  "base": "75dab0e449182aac40007dfe5becd958a7d91132",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's review loop reviews pull requests on its own. A background process, the <b>watch daemon</b>, notices each commit pushed to a pull request and asks an agent session to review it. On your own pull request, GitHub won't let you approve or request changes, so Projector uses <b>draft state</b> as its verdict today. A review with findings turns the pull request into a draft, and a clean review marks it ready for review.",
+   "Because draft already means \"not signed off\", an author has no way to say \"I'm still working on this\". Every push gets a full review, including pushes the author replaces minutes later. This pull request adds a plan, <code>docs/projects/review-on-ready</code>, that gives draft back the meaning GitHub gives it. A pull request stays a draft while its author works, and gets its first review when the author marks it ready. Two labels, and in some repositories a commit status, then carry the verdict instead of draft state.",
+   "The pull request adds no code. The plan is marked <code>ready</code>, which claims that it answers or deliberately defers every question that would block building it."
+  ],
+  "cards": [
+   {
+    "id": "at-a-glance",
+    "title": "Today and after the plan",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th></th><th>Today</th><th>After</th></tr></thead><tbody><tr><td>Which heads are reviewed</td><td>Every head of every covered pull request</td><td>Under a repository subscription, only heads of pull requests that aren't drafts</td></tr><tr><td>Where the verdict shows</td><td>Draft state on your own pull request</td><td>A <code>clean</code> label, and a <code>reviewing</code> label while a review runs</td></tr><tr><td>What blocks a merge</td><td>Nothing Projector controls</td><td>A required <code>projector/review</code> commit status, only in a repository that opts in</td></tr><tr><td>How an author pauses reviews</td><td>A hold comment the tools read</td><td>Converting the pull request to a draft</td></tr><tr><td>Event to the fixing session</td><td><code>DRAFT</code>: a draft nobody here reviews</td><td><code>UNREVIEWED</code>: a ready pull request nobody is reviewing</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Repository subscription.</b> A session asked to review every pull request of the operator's in a repository, through <code>review-repo</code>. Only these wait for ready.</li><li><b>Pull request subscription.</b> A session asked to review one pull request, through <code>review-pr</code>. These review drafts too.</li><li><b>Signed off.</b> The newest counted Projector verdict on the head is clean and no Projector finding thread is open (§ 2.2).</li><li><b>Start comment.</b> The comment <code>project review setup</code> posts to say a review of a head is under way. The <code>reviewing</code> label follows it.</li><li><b>Hold.</b> Today, a comment by the author that keeps a signed-off pull request in draft while the author builds a change. The plan replaces it with draft state alone.</li><li><b>Commit status and ruleset.</b> A status is a pass or fail mark GitHub attaches to one commit. A ruleset can require one before a branch accepts a merge.</li></ul>"
+   },
+   {
+    "id": "history",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><b><code>e38d1a5</code>: changes requested.</b> One finding: § 2.6 withheld <code>RESPONDED</code> from every draft, so a draft that <code>review-pr</code> watched stalled once its author declined a finding. Four suggestions came with it.</li><li><b><code>6ef8a50</code>: clean.</b> <code>b2fdc44</code> fixed the finding, and <code>6ef8a50</code> took all four suggestions. Two new suggestions came with it, on <code>review.labels</code> and the workflow, and on the order for ending holds.</li><li><b><code>8cd2d46</code>: clean.</b> This commit took both suggestions. The review listed one more: bring the § 2.4 settings table in line with § 2.5's rule on the workflow.</li><li><code>project check</code> and <code>git diff --check</code> pass at this head, and the unit test suite passed at <code>e38d1a5</code>. Every commit since changes only the plan.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The plan",
+   "kicker": "One new plan file that specifies the change, with nothing built yet",
+   "intro": [
+    "The plan opens with the problem: one repository's pull request got 9 reviews over 26 commits, three of them clean verdicts in a row that layout changes replaced within minutes. § 2 is the design, and its subsections are where a reviewer's attention belongs. § 2.1 walks a pull request from opening to merge, § 2.2 defines when a head counts as signed off, § 2.3 lists exactly what Projector writes to GitHub, and § 2.6 lists how the daemon's events change.",
+    "§ 3 gives the reason for each decision, § 4 lists the acceptance criteria and the tests that must fail before the change, and § 6 covers rollout. § 7 lists four open questions, each deferred on purpose, which is what lets the plan claim <code>ready</code>."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Read the plan against two kinds of subscription. A repository subscription skips draft heads, while a pull request subscription, the one <code>review-pr</code> creates, reviews drafts too. Both § 2.1's head rule and § 2.6's <code>RESPONDED</code> rule turn on that difference."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/review-on-ready/readme.md",
+     "collapsed": false,
+     "note": "The whole change: a new plan, at <code>status: ready</code> and <code>priority: now</code>, for reviews that wait until a pull request is ready, with labels and an optional required status carrying the verdict.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 54,
+       "text": "Steps 1 to 8 are the life of a pull request under the plan. Draft means the author is still working, ready means review it, and the labels and the status say what the newest review found. Step 6 is the hold's replacement: converting to a draft while the author builds a change on a signed-off head."
+      },
+      {
+       "kind": "verify",
+       "line": 94,
+       "text": "This is the rule <code>publish</code> uses for draft state today, without the hold. I read <code>publish</code> in <code>review.py</code>: it turns the pull request into a draft when the newest counted verdict requests changes, when a finding thread is open, or when a hold is open."
+      },
+      {
+       "kind": "context",
+       "line": 123,
+       "text": "An existing label with the same name is used as it is. A repository whose own <code>clean</code> or <code>reviewing</code> label means something else turns the labels off with <code>review.labels = false</code>, and § 2.5 then has <code>init</code> skip the workflow too, so nothing removes that label."
+      },
+      {
+       "kind": "verify",
+       "line": 143,
+       "text": "The workflow can't run a fork's code with its write token. I read the job: it has no checkout step, and it passes the shell only the pull request number and the repository name. Its job-level <code>if</code> skips the job, so no runner starts, unless the <code>clean</code> label is present."
+      },
+      {
+       "kind": "context",
+       "line": 153,
+       "text": "The status is required only where a ruleset says so. <code>publish</code> asks GitHub for the rules on the default branch and posts <code>projector/review</code> only when one requires it, so a workplace repository where people approve never sees a failing Projector check beside its CI."
+      },
+      {
+       "kind": "context",
+       "line": 181,
+       "text": "The settings table here describes less than § 2.5 now does. The <code>review.labels</code> row doesn't say that <code>false</code> also makes <code>init</code> skip the workflow, and this row says <code>true</code> keeps the workflow in place, which holds only while the labels are on. The review suggests bringing the two rows in line."
+      },
+      {
+       "kind": "context",
+       "line": 190,
+       "text": "This question is the only way a repository opts in to the required check. A yes creates a ruleset with no bypass actors, so even an admin can't merge a head that lacks a clean review. Projector's summaries go to <code>refs/projector/summaries</code>, not to a branch, so the ruleset doesn't block them."
+      },
+      {
+       "kind": "verify",
+       "line": 210,
+       "text": "With the labels off, nothing needs the workflow. <code>init</code> skips it wherever these steps would write it, because Projector adds no <code>clean</code> label then, and § 4 pins the case: <code>init --require-review</code> with labels off creates the ruleset and posts the status, and writes no workflow."
+      },
+      {
+       "kind": "verify",
+       "line": 222,
+       "text": "A draft that <code>review-pr</code> watches no longer stalls. The draft condition on <code>RESPONDED</code> now applies only under a repository subscription, so a pull request subscription asks for a re-review when the author declines a finding without pushing. I checked that the daemon can tell the two apart: <code>route_review</code> receives the subscription line, whose <code>number</code> is empty for a repository. § 4 covers the case with an acceptance row and a <code>test_watch.py</code> test."
+      },
+      {
+       "kind": "verify",
+       "line": 233,
+       "text": "The names this table replaces exist at this head. <code>hold_add</code>, <code>hold_drop</code>, <code>hold_end</code>, <code>hold_lines</code>, and <code>HOLD_MARKER</code> are in <code>review.py</code>, and <code>route_review</code>, <code>route_fix</code>, and <code>is_held</code> are in <code>watch.py</code>. The instructions block ships at version 24, so version 25 is the next one."
+      },
+      {
+       "kind": "verify",
+       "line": 305,
+       "text": "The verdict is computed twice today, as this bullet says. <code>publish</code> reads verdicts through <code>verdicts</code>, <code>counted_reviews</code>, and <code>newest_verdicts</code> in <code>review.py</code>, and the daemon has its own <code>head_verdicts</code> in <code>watch.py</code>. I found each one at this head."
+      },
+      {
+       "kind": "context",
+       "line": 416,
+       "text": "Rollout needs the daemon and the skills to change together. Before upgrading, you end each open hold with today's <code>hold --drop</code>, and after upgrading you mark ready each open draft that was waiting on a review."
+      },
+      {
+       "kind": "verify",
+       "line": 421,
+       "text": "Ending a hold early is unsafe, and this step now says so. Today's daemon sends <code>RESPONDED</code> when a hold ends on an unchanged head, and an older <code>publish</code> then marks a clean pull request ready while its changes are still local. So a hold ends only once its push lands, as <code>fix-pr</code> requires, and a change that won't be built is dropped by its text. I read both behaviors in <code>watch.py</code> and <code>review.py</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 444,
+       "text": "Each of the four open questions says it is deferred and why, which a plan at <code>ready</code> needs. I read each one against the design above, and none blocks building it."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
