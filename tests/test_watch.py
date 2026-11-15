@@ -42,7 +42,7 @@ REASONS = {200: "OK", 304: "Not Modified", 403: "Forbidden", 404: "Not Found", 5
 
 def node(number, *, repo="acme/app", state="OPEN", draft=False, decision=None, head=SHA_A, ref="feature",
          base="main", mergeable="MERGEABLE", merged_at=None, merge_commit=None, author="operator", verdicts=(),
-         changes=None, threads=(), comments=()):
+         changes=None, threads=(), comments=(), labels=()):
     """A pull request as the daemon's GraphQL query returns it."""
     return {
         "number": number, "title": f"Change {number}", "url": f"https://github.com/{repo}/pull/{number}", "body": "",
@@ -54,6 +54,7 @@ def node(number, *, repo="acme/app", state="OPEN", draft=False, decision=None, h
         "comments": {"nodes": list(comments)}, "reviews": {"nodes": list(verdicts)},
         "changesRequested": {"nodes": [changes] if changes else []},
         "reviewThreads": {"nodes": list(threads)},
+        "labels": {"nodes": [{"name": name} for name in labels]},
     }
 
 
@@ -410,6 +411,11 @@ def new_head(number: int, ref: str, old: str, new: str, session: str) -> str:
 NO_REVIEWER = ", and no session on this machine reviews it"
 
 
+def label(change: str, number: int = 1, head: str = SHA_A) -> str:
+    meaning = watch.LABEL_CHANGES[change[1:], change[0] == "+"]
+    return f"LABEL acme/app#{number} {change} head={head[:8]}: {meaning}"
+
+
 def unreviewed(number: int, head: str = SHA_A) -> str:
     return (f"UNREVIEWED acme/app#{number} head={head[:8]}: ready for review, its head is not signed off{NO_REVIEWER} "
             f"— tell the user that no session on this machine reviews acme/app#{number}")
@@ -532,6 +538,56 @@ class FixRoleTests(WatchCase):
         events = self.cycle()
 
         self.assertEqual([new_pr(1, "feature", "fixer")], events["fixer"])
+
+    def test_reports_each_review_label_added_or_removed_after_the_first_look(self) -> None:
+        self.github.pull_request(1, labels=["clean", "bug"])
+        self.fixer("acme/app#1 fix")
+
+        first = self.cycle()["fixer"]
+        self.github.pull_request(1, labels=["bug"])
+        unlabeled = self.cycle()["fixer"]
+        self.github.pull_request(1, labels=["Reviewing"])
+        started = self.cycle()["fixer"]
+        self.advance(900)
+        quiet = self.cycle()["fixer"]
+        self.github.pull_request(1, labels=["clean"])
+        finished = self.cycle()["fixer"]
+
+        self.assertEqual([], first)
+        self.assertEqual([label("-clean")], unlabeled)
+        self.assertEqual([label("+reviewing")], started)
+        self.assertEqual([], quiet)
+        self.assertEqual([label("+clean"), label("-reviewing")], finished)
+        self.assertEqual({"acme/app#1 fix": ["clean"]}, self.state("fixer")["labels"])
+
+    def test_a_label_other_than_a_review_label_reports_nothing(self) -> None:
+        self.github.pull_request(1)
+        self.fixer("acme/app#1 fix")
+        self.cycle()
+
+        self.github.pull_request(1, labels=["bug"])
+
+        self.assertEqual([], self.cycle()["fixer"])
+
+    def test_a_review_owner_hears_no_label_change(self) -> None:
+        self.github.pull_request(1, labels=["reviewing"])
+        self.subscribe("reviewer", f"acme/app#1 review {MODEL} operator")
+        self.renew("reviewer")
+        self.cycle()
+
+        self.github.pull_request(1, labels=["clean"])
+
+        self.assertEqual([], [line for line in self.cycle()["reviewer"] if line.startswith("LABEL")])
+
+    def test_a_closed_pull_request_forgets_its_labels(self) -> None:
+        self.github.pull_request(1, labels=["clean"])
+        self.fixer("acme/app#1 fix")
+        self.cycle()
+
+        self.github.pull_request(1, state="CLOSED", labels=["clean"])
+        self.cycle()
+
+        self.assertEqual({}, self.state("fixer")["labels"])
 
     def test_a_projector_review_is_work_only_when_it_lists_suggestions(self) -> None:
         # One review by each model, since only each model's newest verdict on the head stands. The last comes
@@ -1443,6 +1499,24 @@ class OwnerTests(WatchCase):
         self.assertEqual([new_pr(1, "feature", "A")], events["A"])
         self.assertEqual([], events["B"])
         self.assertEqual({f"acme/app#1 review {MODEL}": "A", f"acme/app#2 review {MODEL}": "A"}, self.owners())
+
+    def test_a_new_fix_owner_hears_of_labels_only_once_it_has_seen_them(self) -> None:
+        self.github.pull_request(1, labels=["clean"])
+        self.subscribe_live("A", "acme/app#1 fix")
+        self.cycle()
+        self.subscribe_live("B", "acme/app#1 fix")
+        self.cycle()
+
+        self.lapse("A")
+        self.advance(301)
+        moved = self.cycle()
+        self.github.pull_request(1)
+        unlabeled = self.cycle()
+
+        self.assertEqual({"acme/app#1 fix": "B"}, self.owners())
+        self.assertEqual([], [line for line in moved["B"] if line.startswith("LABEL")])
+        self.assertEqual([label("-clean")], [line for line in unlabeled["B"] if line.startswith("LABEL")])
+        self.assertEqual({}, self.state("A")["labels"])
 
     def test_the_role_waits_for_a_review_in_flight_then_moves_with_its_record(self) -> None:
         self.github.pull_request(1)

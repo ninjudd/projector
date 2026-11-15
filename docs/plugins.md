@@ -449,8 +449,10 @@ daemon's query. Every 30 seconds it also reads `panel.background` with
 `project config get`. An open drawer's threads cost a point of the
 account's hourly GraphQL quota, because GitHub charges for each thread's
 first comment. So the panel asks for them in a `gh api graphql` call of
-their own, for that one pull request, when the drawer opens and every 30
-seconds while it stays open. It skips the call when the pull request has no
+their own, for that one pull request, when the drawer opens, every 30
+seconds while it stays open, and as soon as the panel takes the daemon's
+events. The daemon writes its cache before its events, so the panel reloads
+its lines then too. It skips the call when the pull request has no
 unresolved thread. The skills never depend on the panel, and Codex has no
 equivalent.
 

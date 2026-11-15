@@ -2682,6 +2682,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
 | `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
 | `CONFLICT` | `fix` | A branch that conflicts with its base |
 | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
+| `LABEL` | `fix` | A `clean` or `reviewing` label added or removed since the owner last saw the pull request, as `+clean` or `-reviewing` |
 | `UNREVIEWED` | `fix`, when no session on this machine reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
 | `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed; under a repository subscription, only once the pull request is ready for review |
 | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review, except that a review that stalls on a draft is reported once, to stop its subagent until the draft is ready |
@@ -2689,6 +2690,14 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
 | `MOVED` | any | Another session owns the role now |
 | `MERGED`, `CLOSED` | any | The pull request merged or closed |
 | `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |
+
+A `LABEL` line is not work. The review commands set the `clean` and
+`reviewing` labels, and any work behind a change to them arrives as its own
+line. The daemon records the labels the first time an owner sees the pull
+request, and when a role moves to a new owner, and reports a change only
+after that, so a subscription to a pull request that is already `clean`
+reports nothing until the label comes off. The daemon matches the labels
+without regard to case, as GitHub does.
 
 A Projector review is work only through its suggestions, and they stand
 where `project review suggestions` lists them: in each account's newest
