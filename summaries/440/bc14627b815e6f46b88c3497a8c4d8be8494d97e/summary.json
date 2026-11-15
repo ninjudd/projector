@@ -1,0 +1,68 @@
+{
+ "version": 1,
+ "name": "Spec hand-over plan",
+ "project": "spec-handover",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 440,
+  "title": "Plan handing a finished spec to the user for review",
+  "head": "bc14627b815e6f46b88c3497a8c4d8be8494d97e",
+  "headRef": "spec-handover",
+  "base": "c4777b6a6cb2fa23aa155c0c60ddd4afa21598cc",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's <code>spec</code> skill writes a project's plan under <code>docs/projects/</code>. Today it ends by leaving the plan uncommitted, and it opens a pull request only when someone asks for one. When it does open one, it marks the pull request ready right away, and the only hand-off is a URL in the conversation.",
+   "This pull request adds a plan, <code>spec-handover</code>, at <code>status: ready</code>. The plan has <code>spec</code> commit the plan on a branch, open a draft pull request, and post one inbox request that links to the plan as GitHub renders it. The pull request stays a draft until the user answers. <code>Looks good</code> or a decline marks it ready with <code>project review ready</code>, and <code>Some feedback</code> makes <code>spec</code> revise the plan and reopen the same request.",
+   "The draft hold makes the user's review come before the automated one. A session that reviews the whole repository skips drafts, so the automated review starts only once the user has read the plan. The pull request changes no code. It records the design and lists the files a later pull request will change."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Inbox</b>: Projector's panel above the user's prompt, where a session posts an <code>ask</code> (a decision), a <code>tell</code> (news), or a <code>request</code> (work only the user can do).</li><li><b>Draft hold</b>: keeping a pull request a draft while a request waits on the user. <code>implement</code> already does this for a device test.</li><li><b>Generated section</b>: the Projector block in <code>AGENTS.md</code> that <code>project init</code> writes from <code>src/projector/templates/agents-block.md</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Where the review stands",
+    "html": "<ul class=\"tight\"><li>The first review requested changes with two findings, both on gaps in the plan's file list and flow.</li><li>The plan's one open question, a session that ends without <code>cleanup</code>, is deferred on purpose and blocks nothing.</li><li><code>project check</code> passes, and the branch merges into the current <code>main</code> without a conflict.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "plan",
+   "title": "The spec-handover plan",
+   "kicker": "How spec opens a draft pull request and asks the user to review the plan",
+   "intro": [
+    "The plan is the whole pull request. Section 2.1 gives the steps <code>spec</code> takes once the plan passes <code>project check</code>. Section 2.2 gives the fields of the inbox request. Section 2.3 lists the files the implementation changes. Section 3 explains the design, including why the user's review comes first.",
+    "Read it against the skills it changes. <code>spec</code>'s \"Validate and hand over\" section is what the plan replaces. <code>implement</code>'s \"Hand the work over\" section has the draft hold the plan reuses, and <code>cleanup</code> lists a held draft as unfinished work."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/spec-handover/readme.md",
+     "note": "The new plan: the hand-over flow, the review request, the files it changes, and the acceptance criteria.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The plan's claims about the current skills match the head: <code>spec</code> leaves the plan uncommitted, <code>implement</code> keeps a draft while a test request waits and marks it ready on <code>Looks good</code> or a decline, and <code>cleanup</code> marks a held draft ready when the user leaves it. Checked by reading each skill at the head."
+      },
+      {
+       "kind": "flag",
+       "line": 68,
+       "text": "Step 3's <code>## Testing</code> section lists a bare <code>git diff --check</code>. Once step 2 commits the plan, that command compares only the working tree with the index, so it prints nothing even when the plan has trailing whitespace. A temporary repository confirmed it. The fix is to list <code>git diff --check origin/&lt;default-branch&gt;...HEAD</code>."
+      },
+      {
+       "kind": "flag",
+       "line": 135,
+       "text": "Section 2.3 widens the test-request draft rule in the generated section, <code>CLAUDE.md</code>, and <code>cleanup</code>, but not in <code>skills/fix-pr/SKILL.md</code> or in <code>skills/work/SKILL.md</code>, which landed on <code>main</code> after this branch's base. A <code>work</code> session would still mark a plan pull request ready while the review request waits, so the automated review would run first."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
