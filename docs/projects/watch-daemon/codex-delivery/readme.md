@@ -246,8 +246,11 @@ supplies plain text in the tested client; the adapter also accepts
 structured completion results and filters authoring commands before
 passing their output to the existing subscription parser.
 
-The full Python gate passes 1,260 tests. Both plugin validations, plan
-checks, and the hooks type-check pass. The current Claude test runner
+A full Python run passed 1,260 tests before the latest documentation and
+Claude panel changes were merged from `main`. The final run passed except
+for sandbox restrictions on the site's loopback servers; all 19 tests in
+`tests.test_site.ServeTests` passed when rerun outside that sandbox.
+Both plugin validations, plan checks, and the hooks type-check pass. The current Claude test runner
 reports 202 passing tests and 25 panel-rendering expectation failures;
 an isolated copy of unchanged `main` has the same 25 failing test names. A live
 Claude session received a notice through its mod while idle and replied.
