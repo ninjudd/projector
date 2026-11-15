@@ -41,12 +41,13 @@ repository subscription, the watch daemon announces no review of a draft head,
 so a pull request gets its first review when its author marks it ready for
 review. `project review publish` stops moving draft state. A `reviewing` label
 shows a review in progress, and `publish` replaces it with a `clean` label on a
-clean head, which a workflow removes when a new commit arrives. In a repository whose default branch requires it, `publish` also posts
-a `projector/review` commit status on the reviewed commit, so GitHub blocks the
-merge until the current head has a clean review. `project init` asks whether a
-repository relies on Projector alone, and a yes sets up that requirement and
-the workflow. A repository where people review too, as at most workplaces,
-keeps the label and needs no check.
+clean head, which a workflow removes when a new commit arrives. In a repository
+whose default branch requires it, `publish` also posts a `projector/review`
+commit status on the reviewed commit, so GitHub blocks the merge until the
+current head has a clean review. `project init` asks whether a repository
+relies on Projector alone, and a yes sets up that requirement and the
+workflow. A repository where people review too, as at most workplaces, keeps
+the label and needs no check.
 
 ### 2.1 The flow
 
@@ -119,7 +120,7 @@ clears it.
 | Item | Shape |
 | --- | --- |
 | Commit status | `POST repos/{owner}/{repo}/statuses/{sha}` on the SHA the verdict names, with `context` `projector/review`, `state` `success` or `failure`, a `description` of at most 140 characters such as `Clean: claude-opus-5-5` or `Changes requested: 2 open findings`, and `target_url` set to the review's URL |
-| Labels | `clean`, color `0e8a16`, description `Projector's newest review of the current head is clean`; and `reviewing`, color `fbca04`, description `A Projector review of this pull request is in progress`. `setup` and `publish` create each label the first time a repository needs it. |
+| Labels | `clean`, color `0e8a16`, description `Projector's newest review of the current head is clean`; and `reviewing`, color `fbca04`, description `A Projector review of this pull request is in progress`. `setup` and `publish` create each label the first time a repository needs it. When a repository already has a label of that name, they use it as it is and never change its color or description. A repository whose own `clean` or `reviewing` label means something else sets `review.labels` to `false`, because Projector, and the workflow, would add and remove that label on every review. |
 | Ruleset | Name `Projector review`, `target` `branch`, `enforcement` `active`, `conditions.ref_name.include` `["~DEFAULT_BRANCH"]`, one `required_status_checks` rule that requires the context `projector/review` with `strict_required_status_checks_policy` `false`, and no bypass actors |
 | Workflow | `.github/workflows/projector-clean.yml`, below |
 
@@ -299,12 +300,15 @@ while it waits, and it still writes nothing to GitHub.
   claims more than the comment does, and needs no state of its own. One label
   serves every model, so it stays until the last live start comment goes.
 - **One sign-off function.** `publish` computes draft state today from the
-  newest counted verdict (`head_verdicts` and `counted_reviews`) and the open
-  finding threads. That computation becomes the sign-off function, and
-  `publish`, `setup`, `status`, `init`'s backfill, and the daemon's
-  `RESPONDED` and `UNREVIEWED` all call it. One constant names the label for
-  `publish`, `setup`, the panel, and the workflow template, and another names
-  the `projector/review` context for `publish` and the ruleset.
+  newest counted verdict and the open finding threads. It reads the verdicts
+  with `verdicts`, `counted_reviews`, and `newest_verdicts` in `review.py`,
+  and the daemon picks the newest verdict with its own copy, `head_verdicts`
+  in `watch.py`, over the review nodes its query returns. The sign-off
+  function replaces both: it takes the reviews in one shape, so `publish`,
+  `setup`, `status`, `init`'s backfill, and the daemon's `RESPONDED` and
+  `UNREVIEWED` all decide sign-off the same way. One constant names the label
+  for `publish`, `setup`, the panel, and the workflow template, and another
+  names the `projector/review` context for `publish` and the ruleset.
 
 ## 4. Acceptance criteria
 
@@ -411,11 +415,16 @@ with the code they cover.
    head of a draft the agent is still working on. A newer daemon with the
    older skills never reviews a pull request that waits as a draft for a
    sign-off that no longer comes.
-2. After you upgrade, mark ready each of your open drafts that waits on a
+2. Before you upgrade, end each hold you have open, with the release you have:
+   `project review hold <number> --repo <owner>/<repo> --drop`. The new
+   `hold` takes no `--drop`, and an older Projector that reviews the pull
+   request, such as a teammate's, still reads a leftover hold comment as a
+   hold. `project review status <number>` reports `held` for each one.
+3. After you upgrade, mark ready each of your open drafts that waits on a
    review. Those drafts meant "not signed off", and the daemon now waits for
    them. `gh pr list --author <login> --draft` lists them, and
    `project review ready <number>` marks each one.
-3. Run `project init` in each repository to refresh the instructions block. In
+4. Run `project init` in each repository to refresh the instructions block. In
    a repository that relies on Projector alone, answer yes, or pass
    `--require-review`, as an admin, then commit the workflow it writes.
 
@@ -443,9 +452,9 @@ next review.
 - **Review counts in this repository.** The last 40 merged pull requests before
   this plan got 71 Projector verdicts, a median of 2 and at most 5.
 - **The repository in § 1.** Its pull request with 9 reviews had 5 clean
-  verdicts. Three came in a row, 6 and 17 minutes apart, each followed by commits
-  that changed the layout, its icons, or its sizes, not by fixes for a
-  finding.
+  verdicts. Three came in a row, 6 and 17 minutes apart, each followed by
+  commits that changed the layout, its icons, or its sizes, not by fixes for
+  a finding.
 - **GitHub's rules.** GitHub refuses a review request naming the pull request's
   author (`Review cannot be requested from pull request author`). It refuses
   to merge a draft. It keeps the newest status for each context on each
