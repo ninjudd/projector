@@ -1098,9 +1098,10 @@ NEW HEAD acme/app#14 9f3c2a1 — run review-pr on acme/app#14 in subagent review
   review-<number>, and review it once it is ready`: stop the subagent and
   start none, because the daemon announces the head again once the pull
   request is marked ready.
-- **`RESPONDED`** reports that the author answered, without pushing, the
-  findings of a head whose newest verdict requests changes. Send it to the
-  subagent, which re-reviews the head with `setup --rereview`.
+- **`RESPONDED`** reports that the author, without pushing, resolved every
+  thread or replied on an open finding of a head whose newest verdict
+  requests changes. Send it to the subagent, which re-reviews the head with
+  `setup --rereview`.
 - **`MOVED`** reports that another session now owns the review. Stop the
   subagent, and run no `project review finish`, as
   [Stop when the review moves to another session](#stop-when-the-review-moves-to-another-session)
