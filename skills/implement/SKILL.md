@@ -228,9 +228,9 @@ findings wait until the user runs `fix-pr`.
 ### Prepare a device test for an iOS app
 
 In a repository with an iOS app, a change to check on the person's
-iPhone, iPad, or Mac goes through `project ios`, which builds a branch or
-a pull request in a worktree of its own and installs it. Prepare the test
-this way, and post the request only once the build has succeeded:
+iPhone or iPad goes through `project ios`, which builds a branch or a pull
+request in a worktree of its own and installs it. Prepare the test this
+way, and post the request only once the build has succeeded:
 
 1. Push the branch, so the person's own run of `project ios build` fetches
    the commit you built.
