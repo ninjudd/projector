@@ -1420,7 +1420,9 @@ class Pass:
 
     def route_labels(self, session: str, label: str, ref: str, pr: dict, head: str) -> list[str]:
         """A LABEL line for each review label added or removed since the owner last saw the pull request. The
-        first look records the labels and announces nothing, because the owner already sees them in the panel."""
+        first look, and the first after the role moves, records the labels and announces nothing, because a line
+        reports a change and the labels it finds are none: a subscription to a pull request that is already clean
+        reports nothing until the label comes off, on a host without the panel, such as Codex, as on one with it."""
         present = {(node.get("name") or "").lower() for node in nodes(pr, "labels")}
         current = [name for name in review.LABELS if name in present]
         seen = self.states[session].data["labels"].get(label)
