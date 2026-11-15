@@ -1217,25 +1217,40 @@ function notesOf(pr: PullRequest): Note[] {
 /**
  * What a row says of a pull request's review, from the labels a review sets
  * alone: `reviewing` while a review runs, over a `clean` an earlier head left,
- * `clean` once a head is signed off, and nothing before a review. The row's
- * number carries the draft state, so a held draft reads as a dim number
- * beside its `clean`.
+ * `clean` once a head is signed off, and nothing while neither is set.
  */
-function reviewLabel(pr: PullRequest): (Note & { color: 'warning' | 'success' }) | undefined {
-  if (pr.labels.includes('reviewing')) return { text: 'reviewing', color: 'warning' }
+function reviewLabel(pr: PullRequest): { text: string; color: 'claude' | 'success' } | undefined {
+  // Orange, as the drawer draws a reviewer, since yellow marks findings.
+  if (pr.labels.includes('reviewing')) return { text: 'reviewing', color: 'claude' }
   if (pr.labels.includes('clean')) return { text: 'clean', color: 'success' }
   return undefined
 }
 
 /**
- * A pull request's color on the line its collapsed rows give way to: red
- * when a note or its checks hold it back, green once a ready pull request is
- * signed off, yellow otherwise, and muted while it loads.
+ * The word after a row's number: its review label while it carries one, and
+ * otherwise `draft` in the subtle color or `ready` in the theme's light blue.
+ * `ready` means only that no label is set, which is also true after a push
+ * removes `clean` or a review requests changes. A held draft still shows its
+ * `clean` beside its subtle number.
  */
-function statusColor(pr: PullRequest): Note['color'] | 'subtle' {
+function rowState(pr: PullRequest): { text: string; color: string } {
+  return reviewLabel(pr) ?? (pr.isDraft ? { text: 'draft', color: 'subtle' } : { text: 'ready', color: 'suggestion' })
+}
+
+/**
+ * A pull request's number on the line its collapsed rows give way to, which
+ * has no state beside it, so its color says what the row says: red when a
+ * note or its checks hold it back, yellow while review threads are open, as
+ * the row's count of them is, muted for a draft, as the row's number is, then
+ * the review label's orange or green, and the default color for a ready pull
+ * request that carries neither label. It is muted while it loads.
+ */
+function statusColor(pr: PullRequest): string | undefined {
   if (pr.isLoading === true) return 'subtle'
   if (pr.isConflicting || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.checks === 'failing') return 'error'
-  return !pr.isDraft && reviewLabel(pr)?.text === 'clean' ? 'success' : 'warning'
+  if (pr.openThreads > 0) return 'warning'
+  if (pr.isDraft) return 'subtle'
+  return reviewLabel(pr)?.color
 }
 
 /** How far a thread's line sits inside the line that names its file. */
@@ -2366,7 +2381,7 @@ export const register: Register = on => {
       const { pr } = row
       const key = keyOf(pr)
       const notes = notesOf(pr)
-      const review = reviewLabel(pr)
+      const state = rowState(pr)
       // A pull request the daemon has no result for yet holds only its
       // reference, so its line says it is loading in its title's place.
       const isLoaded = pr.isLoading !== true
@@ -2384,14 +2399,16 @@ export const register: Register = on => {
               <Button
                 key={`pr:${key}`}
                 plain
-                dimColor={pr.isDraft}
                 label={label(pr)}
                 onPress={() => toggle(key, `pr:${key}`, opened === key ? undefined : `discuss:${key}`)}
-              />
+              >
+                {/* `dimColor` does not dim in every terminal, so a draft's number takes the theme's subtle color. */}
+                <Text color={pr.isDraft ? 'subtle' : undefined}>{label(pr)}</Text>
+              </Button>
             </Box>
-            {isLoaded && review !== undefined && (
+            {isLoaded && (
               <Box flexShrink={0}>
-                <Text color={review.color}>{review.text}</Text>
+                <Text color={state.color}>{state.text}</Text>
               </Box>
             )}
             {isLoaded && !isOwn(pr, shown.viewer) && (
@@ -2416,7 +2433,7 @@ export const register: Register = on => {
             )}
             {ageColumn(key, pr.updatedAt)}
           </Box>
-          {/* The drawer starts where the review label does, one column past the number. */}
+          {/* The drawer starts where the row's state does, one column past the number. */}
           {opened === key && drawPrDrawer(row, labelWidth + 1)}
         </Box>
       )

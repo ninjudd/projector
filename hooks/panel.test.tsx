@@ -88,6 +88,7 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
     p13: pr(13, 'Change waiting for review'),
     p14: pr(14, 'Change a review is reading', { labels: { nodes: [{ name: 'Reviewing' }, { name: 'clean' }] } }),
     p15: pr(15, 'Signed-off change held for a suggestion', { isDraft: true, labels: { nodes: [{ name: 'clean' }] } }),
+    p16: pr(16, 'Draft that conflicts', { isDraft: true, mergeable: 'CONFLICTING' }),
   },
   'x/y': {
     p7: pr(7, 'Conflicting change', {
@@ -284,25 +285,26 @@ test('draws one line per open pull request of the session’s own loops', async 
   expect(texts.slice(0, 3).map(found => found.props.color)).toEqual(['subtle', 'subtle', 'subtle'])
   expect(await ui.find({ type: 'Text', text: /─|updated|ago|just now/ })).toBeUndefined()
   // The rows start on the line under the header, with no blank line between.
-  expect(texts.slice(3, 5).map(found => found.text)).toEqual(['clean', ''])
+  expect(texts.slice(3, 6).map(found => found.text)).toEqual(['#1', 'clean', ''])
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('a row dims a draft number and says reviewing, clean, or nothing from its labels alone', async ($, on) => {
+test('a row draws a draft number in the subtle color and says reviewing, clean, draft, or ready after it', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#1\no/r#13\no/r#14\no/r#15\n' })
+  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#13\no/r#14\no/r#15\n' })
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
 
-  const rows = new Map<string, { word: string; color: unknown; isDim: boolean }>()
+  const rows = new Map<string, { word: string; color: unknown; number: unknown }>()
   for (const [number, title] of [
     [1, 'Signed-off change'],
+    [2, 'Change under review'],
     [13, 'Change waiting for review'],
     [14, 'Change a review is reading'],
     [15, 'Signed-off change held for a suggestion'],
@@ -313,17 +315,22 @@ test('a row dims a draft number and says reviewing, clean, or nothing from its l
     const word = texts
       .slice(Math.max(0, at - 2), at)
       .find(found => ['reviewing', 'clean', 'draft', 'ready'].includes(found.text))
+    // `dimColor` does not dim in every terminal, so the number's color alone carries the draft state.
     const button = await ui.find({ type: 'Button', key: `pr:o/r#${number}` })
-    rows.set(title, { word: word?.text ?? '', color: word?.props.color, isDim: button?.props.dimColor === true })
+    expect(button?.props.dimColor).toBeUndefined()
+    const digits = texts.find(found => found.text === `#${number}`)
+    rows.set(title, { word: word?.text ?? '', color: word?.props.color, number: digits?.props.color })
   }
   expect(Object.fromEntries(rows)).toEqual({
-    'Signed-off change': { word: 'clean', color: 'success', isDim: false },
-    // A ready pull request no review has labeled says nothing of its review.
-    'Change waiting for review': { word: '', color: undefined, isDim: false },
+    'Signed-off change': { word: 'clean', color: 'success', number: undefined },
+    'Change under review': { word: 'draft', color: 'subtle', number: 'subtle' },
+    // A pull request no review has labeled says whether it is ready, in light blue.
+    'Change waiting for review': { word: 'ready', color: 'suggestion', number: undefined },
     // A review in progress shows over a clean label an earlier head left.
-    'Change a review is reading': { word: 'reviewing', color: 'warning', isDim: false },
-    // A held pull request keeps its clean label beside the dim number of a draft.
-    'Signed-off change held for a suggestion': { word: 'clean', color: 'success', isDim: true },
+    // Reviewing is orange, as the drawer's reviewer is, since yellow marks findings.
+    'Change a review is reading': { word: 'reviewing', color: 'claude', number: undefined },
+    // A held pull request keeps its clean label beside the subtle number of a draft.
+    'Signed-off change held for a suggestion': { word: 'clean', color: 'success', number: 'subtle' },
   })
   await ui.unmount()
 })
@@ -344,7 +351,7 @@ test('draws no background and no header on a surface that does not lay text out 
     // The panel starts with its first row.
     const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
     expect(texts.filter(text => text.includes('─') || text.startsWith('/projector') || /\d+s$/.test(text))).toEqual([])
-    expect(texts[0]).toBe('clean')
+    expect(texts.slice(0, 2)).toEqual(['#1', 'clean'])
     expect(texts).not.toContain('ctrl+x tab to focus')
     expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeDefined()
     await ui.unmount()
@@ -3545,6 +3552,36 @@ test('the pull requests’ count in the header collapses them to one line in the
   await ui.unmount()
 })
 
+test('a collapsed number is red when held back, yellow with findings, muted for a draft, orange reviewing, green clean, and plain when ready', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#12\no/r#13\no/r#14\no/r#15\no/r#16\n' })
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+  const ui = await $.ui.mount(PANEL)
+
+  await ui.press({ key: 'count:pr' })
+  const colors: Record<string, unknown> = {}
+  for (const text of ['#1', '#2', '#12', '#13', '#14', '#15', '#16']) {
+    colors[text] = (await ui.find({ type: 'Text', text }))?.props.color
+  }
+  expect(colors).toEqual({
+    '#1': 'success',
+    // An open review thread shows over the draft state, as the row's yellow count of them does.
+    '#2': 'warning',
+    '#12': 'error',
+    // A ready pull request no review has labeled takes the default color.
+    '#13': undefined,
+    '#14': 'claude',
+    // A held draft's clean label does not make its number green.
+    '#15': 'subtle',
+    // What holds a pull request back shows over its draft state.
+    '#16': 'error',
+  })
+  await ui.unmount()
+})
+
 test('collapsed pull requests list their labels in the rows’ order and status colors, and each label is a tab for its drawer', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -3560,7 +3597,8 @@ test('collapsed pull requests list their labels in the rows’ order and status 
   await ui.press({ key: 'count:pr' })
   expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #1 #2 #10 #12')
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
-  // Clean is green and a draft yellow, as their rows' states are; a conflict, a change request, or failing checks is red.
+  // Clean is green and open review threads yellow, as the row's count of them is; a conflict, a change request, or
+  // failing checks is red.
   const colors = await Promise.all(['#1', '#2', '#10', '#12'].map(async text => (await label(text))?.color))
   expect(colors).toEqual(['success', 'warning', 'error', 'error'])
   expect(await Promise.all(['#1', '#2', '#10', '#12'].map(async text => (await label(text))?.inverse))).toEqual([

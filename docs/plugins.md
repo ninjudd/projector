@@ -267,7 +267,7 @@ not subscribed to before.
 
 ```text
   /projector                                              2 pull requests  12s   [-]
-   #267 List a loop's open pull requests above the Claude Code prompt       2h
+   #267 ready List a loop's open pull requests above the Claude Code prompt 2h
    #258 reviewing grace Name the reviewed head in a review's… conflict · 2* 5m
         reviewer · review-signature · +84 −12 in 5 files · checks passing
         7: Discuss  8: Dismiss
@@ -277,23 +277,25 @@ not subscribed to before.
                                                            ctrl+x tab to focus
 ```
 
-Each line is the pull request's number, its review label, its author when
-someone else wrote it, and the title. The number is dim while the pull
-request is a draft, which means its author is still working on it, and drawn
-in the default text color once it is ready for review. The review label is
-the first of these that the pull request carries, and it is left out when
-the pull request carries neither:
+Each line is the pull request's number, its state, its author when someone
+else wrote it, and the title. The number is drawn in the theme's subtle color
+while the pull request is a draft, which means its author is still working on
+it, and in the default text color once it is ready for review. The state is
+the first of these that applies:
 
-- **`reviewing`**, in yellow, while the pull request carries the `reviewing`
-  label, which `project review setup` adds when a review starts.
+- **`reviewing`**, in orange, while the pull request carries the
+  `reviewing` label, which `project review setup` adds when a review starts.
 - **`clean`**, in green, while it carries the `clean` label, which
   `project review publish` adds once a review signs off the current head.
+- **`draft`**, in the subtle color, while it is a draft.
+- **`ready`**, in light blue, while it is ready for review and carries
+  neither label. That covers a pull request no review has read yet, and also
+  one whose `clean` label a push removed or whose review requested changes.
 
 So a held draft, which keeps its `clean` label while a change is built,
-reads as a dim number beside `clean`, and a ready pull request with no label
-is waiting for its first review. The panel reads the draft state and the
-labels with the rest of the line, from the watch daemon's query of the pull
-request.
+reads as a subtle number beside `clean`. The panel reads the draft state and
+the labels with the rest of the line, from the watch daemon's query of the
+pull request.
 
 Notes follow the title when the pull request
 has them: `conflict` or `changes requested` in red, `approved` in green,
@@ -592,14 +594,23 @@ Click a count in the header to collapse what it counts to one line, so a
 long list of pull requests or a burst of notices does not push the questions
 out of view. A collapsed line starts with `+`, where an item's starts with
 `-`, to say it expands. Collapsed pull requests become a line such as
-`+ #12 #14 #15` in their place, listing each in the rows' order and coloring
-it by status: red when a conflict, a change request, or failing checks hold
-it back, green when it is ready for review and labeled `clean` and not
-`reviewing`, and otherwise yellow. A pull request that is still
-loading is muted. The numbers work as tabs: click one to open that pull
-request's drawer below the line, with its number drawn inverted, and click it
-again to close the drawer. The pull requests stay collapsed, and only one
-drawer is open at a time, so clicking another number moves the drawer to it.
+`+ #12 #14 #15` in their place, listing each in the rows' order. With no
+review label beside it, each number's color says what its row's number and
+label say together, taking the first of these that applies:
+
+- **Red** when a conflict, a change request, or failing checks hold it back.
+- **Yellow** while it has unresolved review threads, which its row counts in
+  yellow.
+- **Muted** while it is a draft, even one that keeps its `clean` label.
+- **Orange** while it carries the `reviewing` label.
+- **Green** while it carries the `clean` label.
+- **The default text color** when it is ready and no review has labeled it.
+
+A pull request that is still loading is muted. The numbers work as tabs:
+click one to open that pull request's drawer below the line, with its number
+drawn inverted, and click it again to close the drawer. The pull requests
+stay collapsed, and only one drawer is open at a time, so clicking another
+number moves the drawer to it.
 A drawer that is open when you collapse the pull requests stays open under
 their line. There it starts under the first number, where on its row it
 starts one column past the number. Click the `+` to expand the pull
