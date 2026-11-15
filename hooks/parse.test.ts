@@ -122,6 +122,7 @@ describe('GitHub', () => {
             deletions: 7,
             changedFiles: 4,
             updatedAt: '2026-10-12T12:00:00Z',
+            labels: { nodes: [{ name: 'Reviewing' }, { name: 'bug' }] },
             commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
             body:
               'Why the change exists.\n\n<!-- projector-summary v=1 sha=' +
@@ -155,6 +156,8 @@ describe('GitHub', () => {
       deletions: 7,
       changedFiles: 4,
       checks: 'failing',
+      // Lowercased, as GitHub matches label names, so a row finds `reviewing` however the repository spells it.
+      labels: ['reviewing', 'bug'],
       updatedAt: Date.UTC(2026, 9, 12, 12, 0),
       summaryUrl: 'https://example.com/site/reviews/1',
     })
@@ -414,6 +417,7 @@ describe('the daemon’s files', () => {
       additions: 30,
       deletions: 4,
       changedFiles: 3,
+      labels: { nodes: [{ name: 'clean' }] },
       commits: { nodes: [{ commit: { statusCheckRollup: { state: 'PENDING' } } }] },
       comments: { nodes: [] },
       reviews: { nodes: [] },
@@ -447,6 +451,7 @@ describe('the daemon’s files', () => {
       deletions: 4,
       changedFiles: 3,
       checks: 'pending',
+      labels: ['clean'],
       updatedAt: Date.UTC(2026, 9, 30, 11),
       summaryUrl: null,
     })

@@ -83,13 +83,15 @@ PROJECTOR_REVIEW = re.compile(r"^<!-- projector-review ", re.M)
 
 # The query § 2.6 of the watch-daemon plan gives, which Projector's panel reads from the cache too, with
 # the fields the events name: `mergedAt` and `mergeCommit` for MERGED, each comment's id and times for a
-# live start comment, and `nameWithOwner` for the review state's path. `rateLimit` reports what it cost.
+# live start comment, and `nameWithOwner` for the review state's path. The panel reads `labels` for the
+# `reviewing` and `clean` labels a review sets. `rateLimit` reports what it cost.
 QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
   repository(owner:$o,name:$r){ visibility nameWithOwner
     pullRequest(number:$n){
       number title url body state isDraft reviewDecision mergeable updatedAt mergedAt mergeCommit { oid }
       headRefOid headRefName baseRefName author { login }
       additions deletions changedFiles
+      labels(first:20){ nodes{ name } }
       commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
       comments(last:100){ nodes{ databaseId author{ login } authorAssociation body createdAt updatedAt } }
       reviews(last:100){ nodes{ author{ login } authorAssociation submittedAt body } }
@@ -1438,32 +1440,18 @@ class Pass:
             lines.append(f"NEW HEAD {ref} ({branch}): {known[:7]} -> {head[:7]}, needs an exact-head review — {action}")
         if lines:
             known, flag, announced = head, key, self.now
-        if is_held(pr):
-            flag = "held"
-        elif not lines and known == head:
-            waiting = None
-            if not unresolved or answer is not None:
-                author = login(pr).lower()
-                operator = (self.daemon.operator or "").lower()
-                if pr.get("isDraft") and (not operator or author == operator):
-                    waiting = "draft"
-                elif newest == "changes-requested":
-                    waiting = "changes-requested"
-            if waiting is None:
+        if not lines and known == head:
+            if newest != "changes-requested" or unresolved and answer is None:
                 flag = "-"
             else:
                 if not unresolved:
                     seen, now_key, how = flag.split(":")[0], head, "with every thread resolved"
                 else:
                     seen, now_key, how = flag, key, "and the author replied on an open finding"
-                if flag == "held":
-                    how = "now that its hold is lifted"
                 if seen != now_key:
-                    asked = (f"changes requested {how}; re-review this head, and a clean one is a COMMENT, never an "
-                             "approval") if waiting == "changes-requested" else \
-                        f"still a draft {how}; re-review this head and sign off if clean"
-                    lines.append(f"RESPONDED {ref} ({branch}) head={head[:7]}: {asked} — run review-pr on {ref} with "
-                                 f"--rereview in subagent review-{number} with --loop {session}")
+                    lines.append(f"RESPONDED {ref} ({branch}) head={head[:7]}: changes requested {how}; re-review "
+                                 "this head, and a clean one is a COMMENT, never an approval — run review-pr on "
+                                 f"{ref} with --rereview in subagent review-{number} with --loop {session}")
                     flag = key
         if reviewed:
             announced = None
@@ -1548,13 +1536,6 @@ def newest_answer(unresolved: list[dict]) -> Optional[int]:
         if not ANSWERED.search(last.get("body") or ""):
             answers.append(last.get("databaseId") or 0)
     return max(answers) if answers else None
-
-
-def is_held(pr: dict) -> bool:
-    """Whether the pull request's author has a hold comment open on it; anyone else's holds nothing."""
-    author = login(pr).lower()
-    return bool(author) and any(login(comment).lower() == author and review.HOLD_MARKER in (comment.get("body") or "")
-                                for comment in nodes(pr, "comments"))
 
 
 def closing_actions(repo: str, number: int, names: list[str]) -> str:

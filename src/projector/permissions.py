@@ -122,7 +122,7 @@ CODEX_ALLOW = (
                            "revise", "show", "tell", "watch", "withdraw"]],
      "Posts, revises, reads, withdraws, restores, or delivers an inbox item, or reports on a request's start, "
      "but never records the person's answer to one."),
-    (["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "release",
+    (["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release",
                             "rules", "settle", "setup", "status", "suggestions"]],
      "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),
     (["project", "site", ["page", "status", "workflow"]],

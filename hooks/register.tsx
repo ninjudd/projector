@@ -1208,14 +1208,28 @@ function notesOf(pr: PullRequest): Note[] {
 }
 
 /**
+ * What a row says of a pull request's review, from its draft state and the
+ * labels a review sets: `reviewing` while a review runs, `draft` while its
+ * author works on it, `clean` once its current head is signed off, and
+ * `ready` while it waits for a review. Only `clean` is green, so a held draft
+ * that keeps its `clean` label reads as a draft.
+ */
+function reviewState(pr: PullRequest): Note & { color: 'warning' | 'success' } {
+  if (pr.labels.includes('reviewing')) return { text: 'reviewing', color: 'warning' }
+  if (pr.isDraft) return { text: 'draft', color: 'warning' }
+  if (pr.labels.includes('clean')) return { text: 'clean', color: 'success' }
+  return { text: 'ready', color: 'warning' }
+}
+
+/**
  * A pull request's color on the line its collapsed rows give way to: red
- * when a note or its checks hold it back, else its state's, as its row draws
- * `draft` or `ready`, and muted while it loads.
+ * when a note or its checks hold it back, else its review state's, as its row
+ * draws it, and muted while it loads.
  */
 function statusColor(pr: PullRequest): Note['color'] | 'subtle' {
   if (pr.isLoading === true) return 'subtle'
   if (pr.isConflicting || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.checks === 'failing') return 'error'
-  return pr.isDraft ? 'warning' : 'success'
+  return reviewState(pr).color
 }
 
 /** How far a thread's line sits inside the line that names its file. */
@@ -2264,7 +2278,7 @@ export const register: Register = on => {
             </Box>
             {isLoaded && (
               <Box flexShrink={0}>
-                <Text color={pr.isDraft ? 'warning' : 'success'}>{pr.isDraft ? 'draft' : 'ready'}</Text>
+                <Text color={reviewState(pr).color}>{reviewState(pr).text}</Text>
               </Box>
             )}
             {isLoaded && !isOwn(pr, shown.viewer) && (

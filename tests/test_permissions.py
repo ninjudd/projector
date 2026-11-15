@@ -21,7 +21,8 @@ from projector import cli, permissions
 DECISIONS = (
     ("project", "allow", "none"),
     ("project review publish 12 --body body.md --loop x", "allow", "allow"),
-    ("project review hold 12 --drop", "allow", "allow"),
+    ("project review hold 12 --repo acme/app", "allow", "allow"),
+    ("project review ready 12 --repo acme/app", "allow", "allow"),
     ("project review setup 12 --model claude", "allow", "allow"),
     ("project review finish 12 --force", "allow", "allow"),
     ("project review prune --apply", "allow", "allow"),

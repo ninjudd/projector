@@ -1,4 +1,4 @@
-<!-- projector:begin 24 -->
+<!-- projector:begin 25 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -55,11 +55,13 @@ however small. Its hand-over opens the pull request and subscribes the
 session to fix it, so review findings are fixed as they arrive rather than
 waiting for someone to notice that nothing is fixing them.
 
-Open every pull request as a draft, each layer of a stack included. A review
-marks a pull request ready when its head reviews clean, so a draft says the
-work has not been signed off yet. Never mark your own draft ready, even
-once the reason you drafted it is resolved, because only a clean review
-clears it.
+Open every pull request as a draft, each layer of a stack included, and mark
+it ready with `project review ready` once your work on it is done. A draft
+says its author is still working, so marking it ready is what asks for its
+review. When the hand-over asks the person to test the change, keep it a
+draft until they answer that it looks good. Ready is not signed off: a clean
+review of the head labels the pull request `clean`, and only that is the
+sign-off.
 
 Talk with the person in the conversation as usual. When Projector's `ask`,
 `tell`, and `request` tools are available, also post anything they must not

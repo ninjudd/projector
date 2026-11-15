@@ -143,8 +143,25 @@ holding two unrelated arguments at once, or when one half would still be
 worth shipping if the other were abandoned. Work that crosses it becomes a
 stack, built as [Stack dependent work](#stack-dependent-work) describes.
 
-Open it as a draft. A clean review of its head marks it ready, so the draft
-says the work has not been signed off yet; never mark it ready yourself.
+Open it as a draft, and mark it ready for review once your work on it is
+done:
+
+```sh
+project review ready <number> --repo <owner>/<repo>
+```
+
+A draft says its author is still working, so a session that reviews the
+repository waits for the pull request to be ready before it reviews it, and
+marking it ready is what asks for that review. Mark it ready at the
+hand-over, unless the hand-over asks the person to test the change, as a
+request to check it on their device does. Then keep it a draft until they
+answer: mark it ready when they answer `Looks good` or decline the request,
+and keep it a draft while you build what `Some feedback` asks for, marking it
+ready once that work is done. Ready is not signed off: a clean review of the
+head labels the pull request `clean`, and only that is the sign-off. Run the
+command as a command of its own, never as a bare `gh pr ready`, as
+`../fix-pr/SKILL.md` describes under "Hold the pull request while changes
+are built".
 
 Follow the writing guide in `../writing.md`, § 10 in particular, when you
 write each commit message, the title, and the body. Its first rule starts
@@ -182,7 +199,7 @@ needs no handing up. Skip the command when
 `project config get watch.auto_start --default true` prints `false`. The
 session that wrote the pull request does not review it unless the user asks
 it to: a session that runs `review-pr` or `review-repo` reviews it, and
-until one does, the pull request stays a draft.
+until one does, the pull request carries no `clean` label.
 
 When you hand over the URL, say whether the session is subscribed to fix
 the pull request, and how its events arrive, from the `events:` line that
@@ -225,8 +242,10 @@ differ, these rules win:
   describes.
 - **Open every layer as a draft.** `gh stack submit --auto` opens new pull
   requests as drafts. Never pass `--open` to `submit` or `link`: it marks
-  every layer ready for review, the existing ones included, and only a
-  clean review marks a layer ready.
+  every layer ready for review at once, the existing ones included, whatever
+  their authors are still doing. Mark each layer ready with
+  `project review ready <number> --repo <owner>/<repo>` when the hand-over
+  above says to.
 - **Replace the title and body `submit` writes.** The body is a "Stack
   created with GitHub Stacks CLI" footer, after the hard-wrapped commit body
   when the layer has one commit, with no `## Testing` section, and a squash

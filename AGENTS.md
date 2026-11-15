@@ -125,14 +125,15 @@ Open pull requests; never merge them. The user owns the merge checkpoint.
 Keep tests and documentation with the code they verify.
 
 Open your own pull request as a draft, and draft every layer of a stack you
-open. A review marks a pull request ready when its head reviews clean, so the
-draft says the work has not been signed off yet and the ready transition says
-it has — a self-review landing before the work reaches human eyes.
+open. A draft says you are still working on it, so a session that reviews
+the repository waits. Mark it ready with `project review ready` once your
+work is done, which asks for its review; while a test request waits on the
+user, keep it a draft until they answer that it looks good.
 
-Never mark your own draft ready yourself; a clean review is what clears it.
-The tempting move is undrafting once the reason you drafted is resolved — a
-red test now passing, say — which sends the work to human reviewers carrying
-a sign-off nothing gave it.
+Ready is not signed off. A clean review of the head labels the pull request
+`clean`, and only that label, with the `projector/review` status where a
+ruleset requires it, says a review signed the work off. Never add `clean`
+yourself.
 
 Use an imperative pull request title and a body that explains why the change
 exists. End every body with a `## Testing` section containing commands you ran
@@ -143,7 +144,7 @@ because squash merges preserve that body as the commit message.
 For review findings, verify first, commit locally, reply with the commit, push,
 resolve the thread, and re-fetch it in that order.
 
-<!-- projector:begin 24 -->
+<!-- projector:begin 25 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -200,11 +201,13 @@ however small. Its hand-over opens the pull request and subscribes the
 session to fix it, so review findings are fixed as they arrive rather than
 waiting for someone to notice that nothing is fixing them.
 
-Open every pull request as a draft, each layer of a stack included. A review
-marks a pull request ready when its head reviews clean, so a draft says the
-work has not been signed off yet. Never mark your own draft ready, even
-once the reason you drafted it is resolved, because only a clean review
-clears it.
+Open every pull request as a draft, each layer of a stack included, and mark
+it ready with `project review ready` once your work on it is done. A draft
+says its author is still working, so marking it ready is what asks for its
+review. When the hand-over asks the person to test the change, keep it a
+draft until they answer that it looks good. Ready is not signed off: a clean
+review of the head labels the pull request `clean`, and only that is the
+sign-off.
 
 Talk with the person in the conversation as usual. When Projector's `ask`,
 `tell`, and `request` tools are available, also post anything they must not
