@@ -142,6 +142,7 @@ def init_digests() -> dict[str, dict[str, str]]:
     outputs = {
         "instructions": ("the Projector section in AGENTS.md and CLAUDE.md", instructions.render("docs/projects")),
         "site-workflow": (f"the site workflow, {WORKFLOW_PATH}", summary.workflow_text("v0")),
+        "clean-workflow": (f"the clean label workflow, {review.CLEAN_WORKFLOW_PATH}", review.clean_workflow_text()),
         "permission-rules": (
             "the permission rules in your Claude Code settings and Codex rules",
             json.dumps([permissions.ALLOW, permissions.ASK, permissions.SUPERSEDED, permissions.RETIRED_ASK,
@@ -630,6 +631,9 @@ def parser() -> argparse.ArgumentParser:
     add_output(review_commands.add_parser(
         "rules", help=f"report whether your settings allow {permissions.COMMANDS}"
     ))
+    review_commands.add_parser(
+        "workflow", help=f"print the {review.CLEAN_WORKFLOW_PATH} that project init writes, to compare with yours"
+    )
     review_status = review_commands.add_parser(
         "status", help="report the newest Projector verdict on a pull request's current head"
     )
@@ -1541,6 +1545,9 @@ def label_lines(labeled: Optional[dict]) -> list[str]:
 def run_review(arguments: argparse.Namespace) -> int:
     if arguments.review_command == "rules":
         return review_rules(arguments.json_output)
+    if arguments.review_command == "workflow":
+        print(review.clean_workflow_text(), end="")
+        return 0
     if arguments.review_command in ("hold", "ready"):
         return review_draft(arguments)
     root = review.state_dir(arguments.state_dir)
@@ -2360,17 +2367,25 @@ def record_required_check(root: Path, value: bool) -> None:
 
 
 def write_clean_workflow(root: Path) -> FileAction:
-    """Write the workflow that takes `clean` off a pushed pull request, keeping one edited by hand."""
+    """Write the workflow that takes `clean` off a pushed pull request, replacing one an earlier release wrote
+    but keeping one edited by hand."""
     path = root / review.CLEAN_WORKFLOW_PATH
     text = review.clean_workflow_text()
+    action = "created"
     if path.is_file():
-        if path.read_text(encoding="utf-8") == text:
+        current = path.read_text(encoding="utf-8")
+        if current == text:
             return FileAction(review.CLEAN_WORKFLOW_PATH, "unchanged")
-        return FileAction(review.CLEAN_WORKFLOW_PATH, "kept",
-                          f"{review.CLEAN_WORKFLOW_PATH} has changes Projector did not write, so it was left alone")
+        if not review.is_earlier_clean_workflow(current):
+            return FileAction(review.CLEAN_WORKFLOW_PATH, "kept",
+                              f"{review.CLEAN_WORKFLOW_PATH} has changes Projector did not write, so it was left "
+                              "alone; Projector's current workflow differs from it, so compare the two with "
+                              f"`project review workflow | diff -u {review.CLEAN_WORKFLOW_PATH} -`, and adopt "
+                              f"Projector's with `project review workflow > {review.CLEAN_WORKFLOW_PATH}`")
+        action = "updated"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
-    return FileAction(review.CLEAN_WORKFLOW_PATH, "created",
+    return FileAction(review.CLEAN_WORKFLOW_PATH, action,
                       f"commit {review.CLEAN_WORKFLOW_PATH} to the default branch through a pull request; GitHub "
                       "runs the workflow only from there")
 

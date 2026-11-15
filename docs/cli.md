@@ -223,7 +223,7 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
-      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions"]],
+      pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
       decision = "allow",
   )
   prefix_rule(
@@ -443,10 +443,26 @@ things in order:
    access, and a private repository needs a paid plan for rulesets. When
    GitHub refuses, `init` says why, exits non-zero, and does nothing else.
 2. Writes `.github/workflows/projector-clean.yml`, which takes the `clean`
-   label off a pull request when a commit is pushed to it. Commit it through a
-   pull request; it runs once it reaches the default branch. With
-   `review.labels` set to `false`, `init` writes no workflow, because the
-   workflow would take a `clean` label of the repository's own off.
+   label off a pull request when a commit is pushed to it. Its job reads the
+   pull request when it runs, not as it was at the push, and keeps the label
+   when the current head already has a `success` `projector/review` status. So
+   a job that runs late, or a re-run of an old job, never takes `clean` off a
+   head that a review signed off after the push. After it removes the label,
+   it reads the status once more and gives the label back when a review signed
+   the head off in the meantime. When a push moved the head while it gave the
+   label back, it takes the label off again. Commit the workflow through a
+   pull request; it runs once it reaches the default branch. `init` replaces a
+   workflow that an earlier release wrote and keeps one you edited. A kept
+   copy never takes a later release's fixes, so `init` says how to compare it
+   with Projector's current workflow, which `project review workflow` prints:
+
+   ```sh
+   project review workflow | diff -u .github/workflows/projector-clean.yml -
+   project review workflow > .github/workflows/projector-clean.yml
+   ```
+
+   With `review.labels` set to `false`, `init` writes no workflow, because
+   the workflow would take a `clean` label of the repository's own off.
 3. Posts the `success` status on the current head of each open pull request
    that a review has already signed off, so none waits on a review it has.
    When GitHub refuses that, `init` says so and goes on, because a rerun finds
@@ -891,11 +907,12 @@ when the released installer cannot be downloaded.
 
 After the installer's rows, `upgrade` prints rows of its own, in the same
 format, that say whether you need to run `project init` again. A release can
-change three things `init` writes: the Projector section in `AGENTS.md` and
-`CLAUDE.md`, the site workflow, and the permission rules in your Claude Code
-settings and Codex rules. `upgrade` compares what the command it replaced
-writes with what the `project` on your `PATH` writes after the install, which
-is the command you run `init` with next, and lists each one that changed:
+change four things `init` writes: the Projector section in `AGENTS.md` and
+`CLAUDE.md`, the site workflow, the clean label workflow, and the permission
+rules in your Claude Code settings and Codex rules. `upgrade` compares what
+the command it replaced writes with what the `project` on your `PATH` writes
+after the install, which is the command you run `init` with next, and lists
+each one that changed:
 
 ```text
 init-changed   the Projector section in AGENTS.md and CLAUDE.md
@@ -1513,6 +1530,7 @@ project review suggestions 66
 project review hold 66
 project review ready 66
 project review rules
+project review workflow
 ```
 
 `setup` checks that pull request 66 is open, fetches its head into the
@@ -1816,9 +1834,11 @@ its color or description. `clean` says that Projector's newest review of the
 current head is clean, not that the pull request may merge, because a
 repository can still require people's approval. A label stays on the pull
 request through a push, so `setup` removes a stale `clean` when the next
-review starts. Set `review.labels` to `false` to keep `setup`, `publish`,
-and `finish` from adding or removing either label, as in a repository whose
-own `clean` or `reviewing` label means something else.
+review starts. `publish` reads the head again after it adds `clean`, and
+takes the label back off when a push moved the head during the edit. Set
+`review.labels` to `false` to keep `setup`, `publish`, and `finish` from
+adding or removing either label, as in a repository whose own `clean` or
+`reviewing` label means something else.
 
 `publish` prints what it did:
 
@@ -2068,6 +2088,12 @@ can warn you before a publish is refused rather than after. A file that lacks
 the rules means the host's automatic approval can refuse a publish, not that it
 will: the repository's own settings, or settings your organization manages, can
 still allow the commands.
+
+`workflow` prints the `.github/workflows/projector-clean.yml` that `init`
+writes, as this release renders it, so you can compare it with a copy you
+edited, as [Require a clean review before merge](#require-a-clean-review-before-merge)
+describes. It writes nothing, takes no pull request, and runs from any
+directory.
 
 No command takes a SHA: each comes from GitHub or the state file. `setup` works
 from the checkout containing the working directory, or `--checkout`, and

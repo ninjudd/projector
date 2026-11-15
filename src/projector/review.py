@@ -34,6 +34,7 @@ longer names their loop, and `publish` checks again before it writes the state a
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -832,10 +833,21 @@ def create_ruleset(repo: str) -> None:
         run_gh(["api", "-X", "POST", f"repos/{repo}/rulesets", "--input", str(path)])
 
 
+# The SHA-256 digests of the clean workflows earlier releases wrote, which `init` replaces with the current one
+# as its own rather than keeping them as a repository's edit. 0.8.14's removed the label without reading the pull
+# request, so a queued or re-run job could take it off a head a review had signed off since the push.
+EARLIER_CLEAN_WORKFLOWS = frozenset({"0da9345e4571de4cf28e74fe3de88c0b68866b94694b87404e186dfe2e92d113"})
+
+
 def clean_workflow_text() -> str:
     """The workflow that takes `clean` off a pull request when a commit is pushed to it."""
     template = resources.files("projector").joinpath("templates/clean-workflow.yml").read_text(encoding="utf-8")
-    return template.replace("{label}", CLEAN_LABEL)
+    return template.replace("{label}", CLEAN_LABEL).replace("{context}", REVIEW_CONTEXT)
+
+
+def is_earlier_clean_workflow(text: str) -> bool:
+    """Whether `text` is a clean workflow an earlier release of Projector wrote, unedited."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest() in EARLIER_CLEAN_WORKFLOWS
 
 
 def backfill_statuses(repo: str, reviewer: str) -> list[dict]:
@@ -2621,6 +2633,18 @@ def publish(paths: Paths, loop: Optional[str], verdict: Optional[str], body_path
         labeled = change_labels(repo, number, label_names(current), {CLEAN_LABEL} if clean else set(),
                                 (set() if clean else {CLEAN_LABEL}) | (set() if others else {REVIEWING_LABEL}),
                                 token)
+        if CLEAN_LABEL in labeled["added"]:
+            # A push between the read above and the edit queued its label workflow with an event that lists no
+            # `clean`, so that job skips and leaves the label on a head no review has read. The head as it is
+            # now decides; a push after this read lists `clean`, and its workflow takes the label off. The labels
+            # never fail the publish, so a read that fails leaves them as the edit made them.
+            moved = {"head": {"sha": sha}}
+            with suppress(ReviewError):
+                moved = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or moved
+            if (moved.get("head") or {}).get("sha") != sha:
+                taken = change_labels(repo, number, label_names(moved), set(), {CLEAN_LABEL}, token)
+                labeled = {"added": [name for name in labeled["added"] if name not in taken["removed"]],
+                           "removed": labeled["removed"], "warning": labeled["warning"] or taken["warning"]}
     if loop is not None:
         with locked(loop_record(root, loop).parent):
             record = read_record(root, loop)

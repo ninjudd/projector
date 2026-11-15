@@ -83,6 +83,8 @@ class FakeGitHub:
         self.after_post = None
         # Runs once, as the next review is submitted and before GitHub records it.
         self.before_post = None
+        # Runs once, right after the next label edit, as a push landing at that moment.
+        self.after_edit = None
         # Reviews the listing leaves out, as one GitHub has not indexed yet.
         self.unlisted: set[int] = set()
         # Answer a dismissal without dismissing anything.
@@ -178,6 +180,9 @@ class FakeGitHub:
                 raise ReviewError(f"gh {' '.join(args)} failed: '{missing[0]}' not found")
             names = [label["name"] for label in self.pr["labels"] if label["name"] not in remove]
             self.pr["labels"] = [{"name": name} for name in names + [name for name in add if name not in names]]
+            if self.after_edit:
+                hook, self.after_edit = self.after_edit, None
+                hook()
             return ""
         if args[:4] == ["api", "-X", "POST", f"repos/{REPO}/labels"]:
             fields = self.fields(args)
@@ -924,6 +929,23 @@ class PublishTests(PublishCase):
         self.assertEqual(["trunk"], self.github.rules_branches, "the default branch's rules decide")
         self.assertEqual([], self.github.labels(), "the head moved, so the pull request is not labeled clean")
         self.assertIn(f"posted {review.REVIEW_CONTEXT} success on {self.head[:7]}", out)
+
+    def test_a_push_during_the_label_edit_takes_the_clean_label_back_off(self) -> None:
+        # The push lands after the publish read the head and before its edit added the label, so the event the
+        # push queued lists no clean and the label workflow skips it.
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.github.rules = [review.REVIEW_CONTEXT]
+        pushed = "f" * 40
+        self.github.after_edit = lambda: self.github.pr["head"].update(sha=pushed)
+
+        code, out, err = self.publish("clean")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([], self.github.labels(), "the head moved during the edit, so clean comes back off")
+        self.assertEqual([(self.head, "success")], [(s["sha"], s["state"]) for s in self.github.statuses],
+                         "the reviewed head keeps its status")
+        self.assertNotIn("added the clean label", out)
+        self.assertIn("removed the reviewing label", out)
 
     def test_changes_requested_posts_a_failing_status_where_the_check_is_required(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])

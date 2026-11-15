@@ -28,6 +28,7 @@ DECISIONS = (
     ("project review prune --apply", "allow", "allow"),
     ("project review settle 12 --thread T --result fixed --body reply.md", "allow", "allow"),
     ("project review suggestions 12 --json", "allow", "allow"),
+    ("project review workflow", "allow", "allow"),
     ("project review gate 12", "allow", "none"),
     ("project summary publish --summary summary.json", "allow", "allow"),
     ("project inbox ask question --recommend yes --session s1", "allow", "allow"),
