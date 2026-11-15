@@ -910,9 +910,10 @@ After the installer's rows, `upgrade` prints rows of its own, in the same
 format, that say whether you need to run `project init` again. A release can
 change four things `init` writes: the Projector section in `AGENTS.md` and
 `CLAUDE.md`, the site workflow, the clean label workflow, and the permission
-rules in your Claude Code settings and Codex rules. `upgrade` compares what the command it replaced
-writes with what the `project` on your `PATH` writes after the install, which
-is the command you run `init` with next, and lists each one that changed:
+rules in your Claude Code settings and Codex rules. `upgrade` compares what
+the command it replaced writes with what the `project` on your `PATH` writes
+after the install, which is the command you run `init` with next, and lists
+each one that changed:
 
 ```text
 init-changed   the Projector section in AGENTS.md and CLAUDE.md
@@ -1835,9 +1836,10 @@ current head is clean, not that the pull request may merge, because a
 repository can still require people's approval. A label stays on the pull
 request through a push, so `setup` removes a stale `clean` when the next
 review starts. `publish` reads the head again after it adds `clean`, and
-takes the label back off when a push moved the head during the edit. Set `review.labels` to `false` to keep `setup`, `publish`,
-and `finish` from adding or removing either label, as in a repository whose
-own `clean` or `reviewing` label means something else.
+takes the label back off when a push moved the head during the edit. Set
+`review.labels` to `false` to keep `setup`, `publish`, and `finish` from
+adding or removing either label, as in a repository whose own `clean` or
+`reviewing` label means something else.
 
 `publish` prints what it did:
 
