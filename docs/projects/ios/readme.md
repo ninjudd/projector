@@ -86,7 +86,10 @@ Every command except `devices` and `cleanup` takes these options:
 | `--iphone`, `--ipad` | Uses the one connected iPhone, or the one connected iPad. |
 | `--mac` | Builds the app as Designed for iPad and opens it on this Mac, quitting the copy that is running. `crashes` and `logs` read this Mac instead of a device. |
 
-`build` also takes `--verbose`, which prints every line `xcodebuild` writes.
+`build` also takes `--verbose`, which prints every line `xcodebuild` writes,
+and `--allow-untrusted`, which builds a pull request whose head § 2.2 step 4
+judges untrusted. `build` accepts no abbreviated option, so the ask rule of
+§ 3 sees `--allow-untrusted` in every spelling that reaches it.
 `logs` also takes `--predicate <predicate>`, which replaces the filter in
 § 2.4 for an app whose log does not follow it.
 
@@ -114,7 +117,18 @@ a pull request, and anything else is a branch.
    fetch its branch when the pull request comes from this repository, or
    `refs/pull/<n>/head` when it comes from a fork. For a branch, fetch
    `refs/heads/<branch>`. Both use `review.fetch`, which writes no
-   `FETCH_HEAD`.
+   `FETCH_HEAD`. Before it fetches a pull request, `build` judges whether
+   its head may run, with `review.trusted_head`, the rule
+   `project review setup` uses: the head is in this repository, and the
+   pull request's author and every commit's author is the operator, the
+   `gh` login, or has write access to the repository. A branch of the
+   repository itself counts as trusted, because only an account with write
+   access can push it. `xcodebuild` runs every Run Script build phase in
+   the project, so an untrusted head could run its own code as the person,
+   with their GitHub token and signing identity in reach. `build` refuses
+   one with exit 65, the reason `trusted_head` gives, and the flag that
+   overrides it: `--allow-untrusted`, which the person passes after
+   reading the head's build phases and scripts.
 5. **Move the worktree.** Create the worktree detached at the fetched commit,
    or check it out there with `--force`. The worktree belongs to
    Projector, so a build discards any change made in it.
@@ -239,7 +253,10 @@ test in a repository where `project ios` finds an Xcode project:
 1. Push the branch, so the person's own run of `build` fetches the same
    commit.
 2. Run `project ios build <number> --no-install`, in the background when the
-   host allows it, and post nothing until it succeeds.
+   host allows it, and post nothing until it succeeds. When it refuses an
+   untrusted head, never pass `--allow-untrusted` on your own: tell the
+   person why it refused, and build only once they have read the head and
+   said to.
 3. Run `project ios devices --json`. When a device can take an install, give
    the request the start action `Install #<number>'s build of <App> on your
    <device> and open it`, and on `STARTED` run
@@ -265,6 +282,7 @@ at that paragraph.
 | `src/projector/ios.py` | New. Device choice, the lock, fetch and worktree, app resolution, the build and its output window, kept builds, install and open, the Mac wrapper, crash summaries, logs, and cleanup. |
 | `src/projector/cli.py` | `add_ios_parser` and `run_ios`, beside the other command groups. |
 | `src/projector/config.py` | `ios.app`, `ios.project`, and `ios.output` in `SETTINGS`. |
+| `src/projector/permissions.py` | `Bash(project ios *allow-untrusted*)` in `ASK`, with the module's explanation and `ASKED` updated to name it. |
 | `src/projector/review.py` | Moves the choice between a pull request's branch and `refs/pull/<n>/head` out of `fetch_head` into a function that `fetch_head` and `ios.py` both call. |
 | `docs/cli.md` | A new section, "Put an iOS app on a device", with the commands, the convention, the settings, and the state. |
 | `skills/implement/SKILL.md` | The device test paragraph of § 2.6. |
@@ -311,10 +329,16 @@ at that paragraph.
 - **The Desktop as the default output.** A crash report or a log file on the
   Desktop is where a person looks for one, like a screenshot, and where
   iCloud Desktop sync carries it to another Mac. `ios.output` moves it.
-- **No new permission rule.** Every `project` command is allowed. `install`
-  replaces a build on the person's device, but the skills run it only on
-  `STARTED`, which is the person's consent, so an ask rule would only add a
-  second prompt to the press.
+- **One new ask rule, for an untrusted build.** Every `project` command is
+  allowed. `install` replaces a build on the person's device, but the
+  skills run it only on `STARTED`, which is the person's consent, so an ask
+  rule would only add a second prompt to the press. A trusted `build` runs
+  the repository's build scripts unasked, as `project review gate` runs
+  `review.gate` on a trusted head. An untrusted head is the case
+  `project review gate` refuses and `site.prepare` asks for, so
+  `Bash(project ios *allow-untrusted*)` joins `ASK` in
+  `permissions.py`, and `build` refuses the head without the flag rather
+  than running a fork's scripts because `Bash(project *)` allowed it.
 - **Standard library only.** The script's embedded Python already did the
   JSON work. `plistlib` replaces `PlistBuddy`, and `fcntl.flock` replaces
   `lockf(1)`. The command checks for `xcrun` rather than for macOS, so the
@@ -329,7 +353,10 @@ an `Info.plist`. Every fixture is synthetic.
 
 | Do | Expect | Catches |
 | --- | --- | --- |
-| `build 12` for a pull request from a fork | The fetch names `refs/pull/12/head`, and the worktree is at the pull request's head. | A fork's pull request failing because its branch is not on `origin`. |
+| `build 12 --allow-untrusted` for a pull request from a fork | The fetch names `refs/pull/12/head`, and the worktree is at the pull request's head. | A fork's pull request failing because its branch is not on `origin`. |
+| `build 12` for a pull request from a fork, or one whose commit names an author without write access | Exit 65 with the reason `trusted_head` gives and `--allow-untrusted`, before any fetch, and no `xcodebuild` call. | A fork's Run Script build phases running as the person unasked. |
+| `build -h`, then `build 12 --allow-unt` | `--allow-untrusted` is listed, and the abbreviation is refused as an unknown option. | An abbreviation slipping past the ask rule. |
+| The ask rules `init` writes | `ASK` holds `Bash(project ios *allow-untrusted*)`. | An untrusted build allowed by `Bash(project *)`. |
 | `build` with an iPhone and an iPad both connected | It fails before `xcodebuild` runs and lists both devices. | An install on whichever device the list names first. |
 | `build --ipad` with both connected | It installs on the iPad's UDID. | `--ipad` ignored when one device is connected and another is reachable. |
 | `build` with only an `unavailable` device | It fails before the build and says how to reach the device. | A ten-minute build for a device that cannot take it. |
