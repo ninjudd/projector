@@ -1,0 +1,523 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 9c4b2f48..5273877f 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2600,10 +2600,10 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
+ | `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
+ | `CONFLICT` | `fix` | A branch that conflicts with its base |
+ | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
+-| `DRAFT` | `fix`, when no session on this machine reviews the pull request | A head that no review has signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
+-| `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed |
+-| `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled |
+-| `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding |
++| `UNREVIEWED` | `fix`, when no session on this machine reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
++| `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed; under a repository subscription, only once the pull request is ready for review |
++| `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review |
++| `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
+ | `MOVED` | any | Another session owns the role now |
+ | `MERGED`, `CLOSED` | any | The pull request merged or closed |
+ | `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |
+@@ -2613,8 +2613,18 @@ where `project review suggestions` lists them: in each account's newest
+ verdict on the current head by each model, and in the full review that an
+ incremental one builds on, which can be of an earlier head. Any other review
+ of an earlier head is history, so it reports nothing. The daemon announces
+-each review once. A draft that a session on this machine reviews waits for
+-that review without a line of its own.
++each review once. A pull request that a session on this machine reviews
++waits for that review without a line of its own, and a draft waits on its
++author.
++
++A draft means its author is still working on the pull request, so a
++repository subscription announces nothing for one: no `NEW PR`, `NEW HEAD`,
++reminder, or `RESPONDED`. Marking it ready announces what no review has read:
++`NEW PR` for a pull request never announced, `NEW HEAD` from the last head
++known, or at once the `(still open)` reminder for a head announced before it
++became a draft. A subscription to one pull request, as `review-pr` adds,
++announces every head, draft or not, because running `review-pr` asks for its
++review now.
+ 
+ `FINDING`, `VERDICT`, `CONFLICT`, and `NEW HEAD` report work that
+ stands until it is done, so the daemon announces each again, with
+diff --git a/docs/projects/review-on-ready/readme.md b/docs/projects/review-on-ready/readme.md
+index 3bbdac37..c7e89445 100644
+--- a/docs/projects/review-on-ready/readme.md
++++ b/docs/projects/review-on-ready/readme.md
+@@ -517,3 +517,23 @@ ready, and `init`'s setup of the required check.
+ - **The daemon's query reads `labels`,** because the panel builds a row from
+   the daemon's cache as well as from its own query. It is one more field in a
+   query the daemon already makes, not a new request.
++
++### 9.2 The daemon's wait for ready
++
++- **A draft keeps its record while it waits.** Under a repository
++  subscription the daemon still records a draft's head as known when this
++  model reviewed it, and announces nothing. Marking it ready then announces
++  `NEW PR` for a pull request never announced, `NEW HEAD` from the last head
++  known, or, for a head announced before it became a draft and never
++  reviewed, the `(still open)` reminder at once rather than after
++  `watch.renotify`.
++- **The daemon decides sign-off with `review.sign_off`.** It passes the review
++  nodes its query returns, in the shape `review.verdicts` gives, and counts
++  them as `project review status` does: the reviewer's own verdicts, whatever
++  their association, and every account the repository lets in. So a verdict
++  the reviewer's own account posts counts toward `RESPONDED` even where
++  GitHub gives that account no association, as it already counted for
++  `publish`.
++- **`UNREVIEWED` keeps `DRAFT`'s other rules.** It fires once per head, never
++  again on the reminder, and a live start comment from an account whose
++  review would count holds it back, as it held `DRAFT` back.
+diff --git a/docs/projects/watch-daemon/readme.md b/docs/projects/watch-daemon/readme.md
+index a203485b..9777fcb7 100644
+--- a/docs/projects/watch-daemon/readme.md
++++ b/docs/projects/watch-daemon/readme.md
+@@ -396,7 +396,7 @@ what to do, after ` — `. A session that loaded no loop skill can act on it.
+ | `VERDICT` | `fix` | A real `CHANGES_REQUESTED`, including one whose findings are only in its body | The same |
+ | `CONFLICT` | `fix` | A branch that conflicts with its base | The same |
+ | `REVIEW` | `fix` | A review body with no inline thread, with the count of suggestions it lists | The same |
+-| `DRAFT` | `fix`, when the session does not also own `review` of it | No clean review has signed off the head, and no live start comment from the operator or another account whose review would count shows a review of the head under way on any machine. When no live session on this machine owns `review` of the pull request, the line says so. | Waits, or tells the user that no session on this machine reviews the pull request |
++| `UNREVIEWED` | `fix`, when the session does not also own `review` of it | The pull request is ready for review, its head is not signed off, no live session on this machine owns `review` of it, and no live start comment from the operator or another account whose review would count shows a review of the head under way on any machine | Tells the user that no session on this machine reviews the pull request |
+ | `NEW PR` | `review` | A pull request this session now owns, with a head this model has not reviewed | Runs `review-pr` in `review-<n>`, passing the session's id as `--loop` |
+ | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review in this session stalled (§ 2.5) | The same. After a stall, it first stops the stalled subagent, which shares the session's `--loop` and so would pass the fence. |
+ | `RESPONDED` | `review` | The author answered the findings of a head whose newest verdict requests changes, without pushing | Runs `review-pr` with `--rereview` |
+@@ -413,7 +413,7 @@ NEW HEAD acme/app#14 9f3c2a1, its last review stalled — stop subagent review-1
+ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagent review-14 and run no project review finish
+ ```
+ 
+-`FINDING`, `VERDICT`, `CONFLICT`, `DRAFT`, and `NEW HEAD` report work that
++`FINDING`, `VERDICT`, `CONFLICT`, `UNREVIEWED`, and `NEW HEAD` report work that
+ stands until it is done, and the daemon announces each again every
+ `watch.renotify` seconds while it stands. A `NEW HEAD` stands while the head
+ has no verdict by the owner's model from its reviewer and no review of it in
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index f6e3e459..42497ed8 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -500,17 +500,18 @@ role are these:
+   names an earlier head when an incremental review of the current head
+   builds on that head's full review. Any other review of an earlier head,
+   and a Projector review that lists none, report nothing.
+-- **`DRAFT`** reports, once per head, a draft that no clean review has
+-  signed off and that no session on this machine reviews. The daemon sees
+-  only this machine's sessions, so a session on another machine may review
+-  the draft before it posts its start comment. Tell the user once that no
+-  session on this machine reviews it, and that `review-pr` or `review-repo`
+-  would, unless they review it elsewhere. Never say that no session reviews
+-  it at all. It is not work: any work behind it arrives as its own
+-  `FINDING`, `VERDICT`, `CONFLICT`, or `REVIEW` line. A draft that a session
+-  here reviews, or that a live start comment from the operator or another
+-  account whose review would count shows under review elsewhere, reports
+-  nothing; it waits for that review.
++- **`UNREVIEWED`** reports, once per head, a pull request ready for review
++  whose head is not signed off and that no session on this machine reviews.
++  The daemon sees only this machine's sessions, so a session on another
++  machine may review the pull request before it posts its start comment.
++  Tell the user once that no session on this machine reviews it, and that
++  `review-pr` or `review-repo` would, unless they review it elsewhere. Never
++  say that no session reviews it at all. It is not work: any work behind it
++  arrives as its own `FINDING`, `VERDICT`, `CONFLICT`, or `REVIEW` line. A
++  draft reports nothing, because it waits on its author, and so does a pull
++  request that a session here reviews, or that a live start comment from the
++  operator or another account whose review would count shows under review
++  elsewhere; it waits for that review.
+ - **`MOVED`** reports that another session now owns the pull request's
+   `fix` role. Stop its subagent at once, because two fixers would push the
+   same branch, and tell the user.
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index d1a17366..561986a7 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -246,6 +246,11 @@ newest to the pull request itself, so it outranks the other session's on
+ this machine. The review moves here once the other review publishes, and
+ this session reviews from the next head.
+ 
++A subscription to the pull request itself announces every later head, draft
++or not, because running this skill asks for the pull request's review now. A
++repository subscription, which `review-repo` adds, waits until a draft is
++marked ready, as `../review-repo/SKILL.md` describes.
++
+ Skip the command when `review-repo` started this review. The session's
+ subscription to the repository already covers the pull request, and a line
+ for the pull request would outlive the user's request to stop reviewing the
+@@ -1115,8 +1120,12 @@ re-review can settle the findings and sign off. It fires once per answer,
+ and the re-review's own replies carry the verify marker, so they never count
+ as one. A head whose newest verdict is clean waits on nothing, whether or not
+ the pull request is a draft, so converting it to a draft or marking it ready
+-asks for no re-review. A `RESPONDED` that reaches a subagent after a later
+-review signed the head off needs nothing: that review already did.
++asks for no re-review. Under a repository subscription a draft hears no
++`RESPONDED` until it is ready, because its author is still working on it; a
++subscription to the pull request itself asks on a draft too, so a draft that
++this skill watches gets its re-review when the author declines a finding. A
++`RESPONDED` that reaches a subagent after a later review signed the head off
++needs nothing: that review already did.
+ 
+ The daemon announces `NEW HEAD` again every `watch.renotify` seconds, 15
+ minutes by default, while the head has no verdict by this model from the
+diff --git a/skills/review-repo/SKILL.md b/skills/review-repo/SKILL.md
+index e637cf9a..b11dbd5f 100644
+--- a/skills/review-repo/SKILL.md
++++ b/skills/review-repo/SKILL.md
+@@ -89,6 +89,12 @@ one.
+   login. A request to a team the operator belongs to does not count. A
+   requested pull request is someone else's, so `review-pr` reviews it in the
+   cross-author mode.
++- **Drafts wait for ready.** A draft says its author is still working on it,
++  so the daemon announces nothing for one, neither its heads nor a
++  `RESPONDED`, until the author marks it ready for review. Then it announces
++  whatever no review has read. Run `review-pr` on a draft when the user asks
++  for its review now: that subscribes the session to the pull request itself,
++  which announces every head, draft or not.
+ - **Pull requests you keep out.** To keep one pull request out when the user
+   asks, run
+   `project watch drop <owner>/<repo>#<number> --role review --model <model-id>`,
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 91d82703..6029dd4d 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -1337,18 +1337,20 @@ def standing(key: str, first: str, again: Optional[str]) -> None:
+         # This machine sees only its own sessions, so a review running elsewhere shows only as its live start
+         # comment, and the event says nothing about a machine it cannot see. Anyone can comment on a public
+         # repository, so only an account whose review would count can hold the event back. Held back, the head
+-        # keeps its key, so it is still announced only once.
+-        draft = f"draft:{number}:{head}"
+-        if pr.get("isDraft") and not reviewers:
++        # keeps its key, so it is still announced only once. A draft waits on its author, not on a review.
++        unreviewed = f"unreviewed:{number}:{head}"
++        if not pr.get("isDraft") and not reviewers \
++                and not head_sign_off(pr, head, self.daemon.operator or "", visibility)["signed_off"]:
+             starts = [{"login": login(comment), "association": comment.get("authorAssociation")}
+                       for comment, _ in self.live_starts(pr, head)]
+             if review.counted_reviews(starts, self.daemon.operator or "", visibility):
+-                if draft in announced:
+-                    kept[draft] = announced[draft]
++                if unreviewed in announced:
++                    kept[unreviewed] = announced[unreviewed]
+             else:
+-                standing(draft,
+-                         f"DRAFT {ref} head={head[:8]}: no review has signed off this head, and no session on this "
+-                         f"machine reviews it — tell the user that no session on this machine reviews {ref}",
++                standing(unreviewed,
++                         f"UNREVIEWED {ref} head={head[:8]}: ready for review, its head is not signed off, and no "
++                         f"session on this machine reviews it — tell the user that no session on this machine "
++                         f"reviews {ref}",
+                          None)
+         conflict = f"conflict:{number}:{head}"
+         mergeable = pr.get("mergeable") or "UNKNOWN"
+@@ -1418,10 +1420,10 @@ def route_review(self, session: str, pull: tuple[str, int], name: str, repo: str
+         head = pr.get("headRefOid") or ""
+         branch = pr.get("headRefName") or "?"
+         action = f"run review-pr on {ref} in subagent review-{number} with --loop {session}"
+-        verdicts = head_verdicts(pr, head, repository.get("visibility"))
+-        reviewed = any(found["login"] == reviewer and found["model"] == model for found in verdicts)
+-        counted = sorted((found for found in verdicts if found["counted"]), key=lambda found: found["at"])
+-        newest = counted[-1]["verdict"] if counted else None
++        signed = head_sign_off(pr, head, reviewer, repository.get("visibility"))
++        reviewed = any(found["model"] == model and (found["login"] or "").lower() == reviewer
++                       for found in signed["models"])
++        newest = signed["newest"]["verdict"] if signed["newest"] else None
+         unresolved = [thread for thread in nodes(pr, "reviewThreads") if not thread.get("isResolved")]
+         answer = newest_answer(unresolved)
+         key = f"{head}:{answer if answer is not None else '-'}"
+@@ -1430,6 +1432,13 @@ def route_review(self, session: str, pull: tuple[str, int], name: str, repo: str
+         announced = record.get("announced")
+         if known is None and reviewed:
+             known = head
++        if pr.get("isDraft") and line.number is None:
++            # A draft's author is still working on it, so a repository subscription waits until it is marked
++            # ready, and then announces what no review has read: a pull request never announced, a head newer
++            # than the last one known, or, at once, a head announced before it was drafted.
++            self.states[session].data["review"][label] = {
++                "head": known, "flag": flag, "announced": None if reviewed or announced is None else 0}
++            return []
+         lines = []
+         if (pull, name) in self.stalled_roles and not reviewed:
+             lines.append(f"NEW HEAD {ref} ({branch}) head={head[:7]}, its last review stalled — stop subagent "
+@@ -1510,18 +1519,20 @@ def snippet(text: str) -> str:
+     return f": {text}" if text.strip() else ""
+ 
+ 
+-def head_verdicts(pr: dict, head: str, visibility: Optional[str]) -> list[dict]:
+-    """Every Projector verdict on the head: when, which, by which model and login, and whether it counts as
+-    `project review status` counts another account's."""
+-    found = []
+-    for node in nodes(pr, "reviews"):
+-        marker = review.verdict_marker(node.get("body") or "")
+-        if marker is None or marker.sha != head:
+-            continue
+-        found.append({"at": node.get("submittedAt") or "", "verdict": marker.verdict,
+-                      "model": review.identity(marker.model), "login": login(node).lower(),
+-                      "counted": review.review_counts(node.get("authorAssociation"), visibility)})
+-    return found
++def verdict_rows(pr: dict) -> list[dict]:
++    """The Projector reviews among the reviews the daemon's query returns, in the shape `review.verdicts` gives,
++    so the daemon decides a head's sign-off as `project review publish` does."""
++    return [{"id": None, "url": None, "at": node.get("submittedAt"), "login": login(node),
++             "association": node.get("authorAssociation"), "body": node.get("body") or ""}
++            for node in nodes(pr, "reviews") if review.verdict_marker(node.get("body") or "")]
++
++
++def head_sign_off(pr: dict, head: str, reviewer: str, visibility: Optional[str]) -> dict:
++    """`review.sign_off` of the head from the reviewer's verdicts and those of every account `project review
++    status` counts, and the open Projector finding threads in the daemon's query."""
++    open_threads = sum(1 for thread in nodes(pr, "reviewThreads") if not thread.get("isResolved")
++                       and review.FINDING_MARKER in ((nodes(thread, "first") or [{}])[0].get("body") or ""))
++    return review.sign_off(head, review.counted_reviews(verdict_rows(pr), reviewer, visibility), open_threads)
+ 
+ 
+ def newest_answer(unresolved: list[dict]) -> Optional[int]:
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index f1bd49ec..62d77a8a 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -410,9 +410,21 @@ def new_head(number: int, ref: str, old: str, new: str, session: str) -> str:
+ NO_REVIEWER = ", and no session on this machine reviews it"
+ 
+ 
++def unreviewed(number: int, head: str = SHA_A) -> str:
++    return (f"UNREVIEWED acme/app#{number} head={head[:8]}: ready for review, its head is not signed off{NO_REVIEWER} "
++            f"— tell the user that no session on this machine reviews acme/app#{number}")
++
++
+ class FixRoleTests(WatchCase):
+     """What the `fix` owner hears."""
+ 
++    def setUp(self) -> None:
++        super().setUp()
++        # A fixed pull request is a draft its author is working on unless a test says otherwise, so only the tests
++        # of review coverage hear UNREVIEWED.
++        made = self.github.pull_request
++        self.github.pull_request = lambda number, **fields: made(number, **{"draft": True, **fields})
++
+     def fixer(self, *lines: str) -> None:
+         self.subscribe("fixer", *lines)
+         self.renew("fixer")
+@@ -433,7 +445,7 @@ def test_events_come_only_from_subscribed_pull_requests(self) -> None:
+     def test_reports_every_kind_of_outstanding_work_on_a_fixed_pull_request(self) -> None:
+         marker = f"<!-- projector-finding v=1 priority=P1 sha={SHA_A} -->\nP1 nil deref"
+         self.github.pull_request(
+-            1, draft=True, decision="CHANGES_REQUESTED",
++            1, draft=False, decision="CHANGES_REQUESTED",
+             changes={"author": {"login": "teammate"}, "body": "Please split this", "commit": {"oid": SHA_A}},
+             threads=[thread("T1", body=marker), thread("T0", resolved=True)],
+             reviews=[rest_review(77, who="codex", body="Body-only concern"),
+@@ -444,17 +456,29 @@ def test_reports_every_kind_of_outstanding_work_on_a_fixed_pull_request(self) ->
+         events = self.cycle()
+ 
+         self.assertEqual([
+-            f"DRAFT acme/app#1 head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user that no "
+-            "session on this machine reviews acme/app#1",
++            unreviewed(1),
+             f"VERDICT acme/app#1 CHANGES_REQUESTED on aaaaaaaa [teammate]: Please split this — {fix_action(1)}",
+             f"FINDING acme/app#1 src/x.py:3 [bugbot]: P1 nil deref — {fix_action(1)}",
+             f"REVIEW acme/app#1 by [codex] on aaaaaaaa: Body-only concern — {fix_action(1)}",
+         ], events["fixer"])
+-        self.assertEqual({f"draft:1:{SHA_A}", f"verdict:teammate:{SHA_A}", "T1", "review:77"},
++        self.assertEqual({f"unreviewed:1:{SHA_A}", f"verdict:teammate:{SHA_A}", "T1", "review:77"},
+                          set(self.state("fixer")["fix"]["acme/app#1 fix"]))
+ 
+-    def test_a_draft_another_session_reviews_asks_the_fixer_for_nothing(self) -> None:
++    def test_a_draft_or_a_signed_off_head_waits_on_no_review(self) -> None:
++        # A draft waits on its author, and a clean newest verdict with no open finding has signed its head off.
+         self.github.pull_request(1, draft=True)
++        self.github.pull_request(2, draft=False, verdicts=[projector_verdict(SHA_A, "clean")])
++        self.github.pull_request(3, draft=False, verdicts=[projector_verdict(SHA_A, "clean")],
++                                 threads=[finding_thread()])
++        self.fixer("acme/app#1 fix", "acme/app#2 fix", "acme/app#3 fix")
++
++        events = self.cycle()
++
++        self.assertEqual([unreviewed(3), f"FINDING acme/app#3 src/x.py:3 [bugbot]: A nil deref — {fix_action(3)}"],
++                         events["fixer"], "an open finding keeps #3's clean verdict from signing it off")
++
++    def test_a_ready_pull_request_another_session_reviews_asks_the_fixer_for_nothing(self) -> None:
++        self.github.pull_request(1, draft=False)
+         self.fixer("acme/app#1 fix")
+         self.subscribe("reviewer", f"acme/app#1 review {MODEL} operator")
+         self.renew("reviewer")
+@@ -470,11 +494,12 @@ def start_comment(self, sha: str = SHA_A, association: str = "OWNER", who: str =
+                 "createdAt": at, "updatedAt": at,
+                 "body": f"📽️ Reviewing\n<!-- projector-start v=1 sha={sha} model={MODEL} -->"}
+ 
+-    def test_a_draft_another_machine_is_reviewing_asks_the_fixer_for_nothing(self) -> None:
+-        self.github.pull_request(1, draft=True, comments=[self.start_comment()])
+-        self.github.pull_request(2, draft=True, comments=[self.start_comment(SHA_B)])
+-        self.github.pull_request(3, draft=True, comments=[self.start_comment(association="NONE")])
+-        self.github.pull_request(4, draft=True, comments=[self.start_comment(association="CONTRIBUTOR", who="operator")])
++    def test_a_pull_request_another_machine_is_reviewing_asks_the_fixer_for_nothing(self) -> None:
++        self.github.pull_request(1, draft=False, comments=[self.start_comment()])
++        self.github.pull_request(2, draft=False, comments=[self.start_comment(SHA_B)])
++        self.github.pull_request(3, draft=False, comments=[self.start_comment(association="NONE")])
++        self.github.pull_request(4, draft=False,
++                                 comments=[self.start_comment(association="CONTRIBUTOR", who="operator")])
+         self.fixer("acme/app#1 fix", "acme/app#2 fix", "acme/app#3 fix", "acme/app#4 fix")
+ 
+         events = self.cycle()
+@@ -482,31 +507,26 @@ def test_a_draft_another_machine_is_reviewing_asks_the_fixer_for_nothing(self) -
+         # A live start comment for the head means a review runs somewhere. #2's is for another head, and on a public
+         # repository #3's comes from an account whose review would not count, so both are reported. #4's comes from
+         # the operator, whose own reviews count whatever their association, as they do for a verdict.
+-        self.assertEqual([
+-            f"DRAFT acme/app#{number} head=aaaaaaaa: no review has signed off this head{NO_REVIEWER} — tell the user "
+-            f"that no session on this machine reviews acme/app#{number}"
+-            for number in (2, 3)
+-        ], events["fixer"])
++        self.assertEqual([unreviewed(2), unreviewed(3)], events["fixer"])
+ 
+-    def test_a_review_elsewhere_does_not_announce_a_draft_head_twice(self) -> None:
+-        self.github.pull_request(1, draft=True)
++    def test_a_review_elsewhere_does_not_announce_an_unreviewed_head_twice(self) -> None:
++        self.github.pull_request(1, draft=False)
+         self.fixer("acme/app#1 fix")
+         announced = self.cycle()["fixer"]
+-        self.github.pull_request(1, draft=True, comments=[self.start_comment()])
++        self.github.pull_request(1, draft=False, comments=[self.start_comment()])
+         self.advance(900)
+         reviewing = self.cycle()["fixer"]
+-        self.github.pull_request(1, draft=True, verdicts=[projector_verdict(SHA_A)])
++        self.github.pull_request(1, draft=False, verdicts=[projector_verdict(SHA_A)])
+         self.advance(900)
+         reviewed = self.cycle()["fixer"]
+         self.advance(900)
+         later = self.cycle()["fixer"]
+ 
+-        drafts = [line for line in announced + reviewing + reviewed + later if line.startswith("DRAFT")]
+-        self.assertEqual(1, len(drafts), drafts)
+-        self.assertEqual(drafts, [line for line in announced if line.startswith("DRAFT")])
++        self.assertEqual([unreviewed(1)], announced)
++        self.assertEqual([], [line for line in reviewing + reviewed + later if line.startswith("UNREVIEWED")])
+ 
+-    def test_a_session_that_fixes_and_reviews_a_pull_request_hears_no_draft(self) -> None:
+-        self.github.pull_request(1, draft=True)
++    def test_a_session_that_fixes_and_reviews_a_pull_request_hears_no_unreviewed(self) -> None:
++        self.github.pull_request(1, draft=False)
+         self.fixer("acme/app#1 fix", f"acme/app#1 review {MODEL} operator")
+ 
+         events = self.cycle()
+@@ -596,7 +616,7 @@ def test_a_projector_review_counts_as_project_review_suggestions_counts_it(self)
+         ], events["fixer"])
+ 
+     def test_a_later_pass_repeats_only_after_the_renotify_interval(self) -> None:
+-        self.github.pull_request(1, draft=True, threads=[thread("T1")], reviews=[rest_review(5)])
++        self.github.pull_request(1, draft=False, threads=[thread("T1")], reviews=[rest_review(5)])
+         self.fixer("acme/app#1 fix")
+ 
+         first = self.cycle()["fixer"]
+@@ -676,7 +696,7 @@ def test_an_unsettled_mergeability_is_queried_each_pass_and_is_not_a_conflict(se
+         self.assertEqual({}, self.state("fixer")["fix"]["acme/app#1 fix"])
+ 
+     def test_a_merged_pull_request_is_announced_once_and_its_lines_end(self) -> None:
+-        self.github.pull_request(1, draft=True, threads=[thread("T1")])
++        self.github.pull_request(1, draft=False, threads=[thread("T1")])
+         self.fixer("acme/app#1 fix", "!acme/app#1 review claude-opus-5-5 operator")
+         self.assertEqual(2, len(self.cycle()["fixer"]))
+ 
+@@ -809,6 +829,74 @@ def test_events_come_only_from_subscribed_pull_requests(self) -> None:
+         self.assertEqual({"head": SHA_A, "flag": f"{SHA_A}:-", "announced": self.clock.wall()},
+                          self.state("reviewer")["review"][f"acme/app#1 review {MODEL}"])
+ 
++    def watch_repository(self) -> None:
++        self.subscribe("reviewer", f"acme/app review {MODEL} operator")
++        self.renew("reviewer")
++
++    def test_a_draft_waits_for_ready_under_a_repository_subscription(self) -> None:
++        self.github.pull_request(1, draft=True)
++        self.watch_repository()
++        drafted = self.cycle()["reviewer"]
++        self.github.pull_request(1, draft=True, head=SHA_B)
++        pushed = self.cycle()["reviewer"]
++        self.advance(3600)
++        later = self.cycle()["reviewer"]
++        self.github.pull_request(1, head=SHA_B)
++        ready = self.cycle()["reviewer"]
++        again = self.cycle()["reviewer"]
++
++        self.assertEqual(([], [], []), (drafted, pushed, later), "the author is still working on a draft")
++        self.assertEqual([new_pr(1, "feature", "reviewer", SHA_B)], ready)
++        self.assertEqual([], again)
++
++    def test_a_draft_under_a_repository_subscription_asks_for_no_re_review(self) -> None:
++        changes = projector_verdict(SHA_A)
++        self.github.pull_request(1, verdicts=[changes], threads=[thread("T1")])
++        self.watch_repository()
++        self.cycle()
++
++        self.github.pull_request(1, draft=True, verdicts=[changes], threads=[thread("T1", resolved=True)])
++        drafted = self.cycle()["reviewer"]
++        self.github.pull_request(1, verdicts=[changes], threads=[thread("T1", resolved=True)])
++        ready = self.cycle()["reviewer"]
++
++        self.assertEqual([], drafted)
++        self.assertEqual([responded("reviewer")], ready)
++
++    def test_marking_a_draft_ready_announces_at_once_a_head_no_review_read(self) -> None:
++        self.github.pull_request(1)
++        self.watch_repository()
++        announced = self.cycle()["reviewer"]
++        self.github.pull_request(1, draft=True)
++        drafted = self.cycle()["reviewer"]
++        self.github.pull_request(1)
++        ready = self.cycle()["reviewer"]
++
++        self.assertEqual([new_pr(1, "feature", "reviewer")], announced)
++        self.assertEqual([], drafted)
++        self.assertEqual([f"NEW HEAD acme/app#1 (still open) (feature) head=aaaaaaa: still needs an exact-head review "
++                          f"— {review_action(1, 'reviewer')}"], ready, "the head waited without a review")
++
++    def test_a_head_pushed_to_a_draft_is_a_new_head_once_it_is_ready(self) -> None:
++        clean = [projector_verdict(SHA_A, "clean")]
++        self.github.pull_request(1, verdicts=clean)
++        self.watch_repository()
++        known = self.cycle()["reviewer"]
++        self.github.pull_request(1, draft=True, head=SHA_B, verdicts=clean)
++        drafted = self.cycle()["reviewer"]
++        self.github.pull_request(1, head=SHA_B, verdicts=clean)
++        ready = self.cycle()["reviewer"]
++
++        self.assertEqual(([], []), (known, drafted))
++        self.assertEqual([new_head(1, "feature", SHA_A, SHA_B, "reviewer")], ready)
++
++    def test_a_pull_request_subscription_announces_a_draft(self) -> None:
++        # Running review-pr on a pull request asks for its review now, draft or not.
++        self.github.pull_request(1, draft=True)
++        self.reviewer(1)
++
++        self.assertEqual([new_pr(1, "feature", "reviewer")], self.cycle()["reviewer"])
++
+     def test_reports_a_moved_head_then_a_response_once_per_head(self) -> None:
+         self.github.pull_request(1, head=SHA_B, draft=True)
+         self.reviewer(1)
+@@ -1028,12 +1116,12 @@ def test_carries_the_last_result_forward_when_a_query_fails(self) -> None:
+         self.assertEqual((SHA_A, SHA_A), (before["review"][label]["head"], during["review"][label]["head"]))
+         self.assertEqual([new_head(1, "feature", SHA_A, SHA_B, "reviewer")], recovered)
+ 
+-    def test_a_clean_review_settles_a_draft_whoever_wrote_it(self) -> None:
+-        # A review moves no draft state, so a draft with a clean newest verdict waits on nothing, whether the
+-        # operator or another author wrote it.
++    def test_a_clean_review_settles_a_pull_request_whoever_wrote_it(self) -> None:
++        # A review moves no draft state, so a head with a clean newest verdict waits on nothing, whether the
++        # operator or another author wrote the pull request.
+         def both(**fields):
+-            self.github.pull_request(1, ref="mine", draft=True, **fields)
+-            self.github.pull_request(2, ref="asked", author="teammate", draft=True, **fields)
++            self.github.pull_request(1, ref="mine", **fields)
++            self.github.pull_request(2, ref="asked", author="teammate", **fields)
+ 
+         both(requested=("operator",))
+         self.subscribe("reviewer", f"acme/app review {MODEL} operator")
+@@ -1066,12 +1154,14 @@ def teammates(threads, outsider_threads):
+                                      threads=threads)
+             self.github.pull_request(3, ref="ready", author="teammate", verdicts=[changes], threads=outsider_threads)
+             # Anyone can review a public repository, so a passerby's marker is no verdict there.
++            # The reviewer's own clean verdict came first, so only the passerby's later one could ask for changes.
++            mine = projector_verdict(SHA_A, "clean", at="2026-10-12T09:00:00Z")
+             self.github.pull_request(4, ref="passerby", author="teammate", threads=outsider_threads,
+-                                     verdicts=[projector_verdict(SHA_A, association="NONE")])
++                                     verdicts=[mine, projector_verdict(SHA_A, association="NONE", who="passerby")])
+             # In a private one, every review counts.
+             self.github.pull_request(5, repo="acme/secret", ref="private", author="teammate",
+                                      threads=outsider_threads,
+-                                     verdicts=[projector_verdict(SHA_A, association="NONE")])
++                                     verdicts=[mine, projector_verdict(SHA_A, association="NONE", who="passerby")])
+ 
+         self.github.repository("acme/secret", visibility="PRIVATE")
+         teammates([finding_thread()], [finding_thread()])
