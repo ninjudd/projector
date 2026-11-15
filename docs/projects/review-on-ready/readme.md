@@ -216,7 +216,7 @@ repository's settings, delete the workflow file, and set
 | Event | Today | After |
 | --- | --- | --- |
 | `NEW PR`, `NEW HEAD`, and the `NEW HEAD` reminder | Each head of each covered pull request | Under a repository subscription, only a head that isn't a draft. Marking a draft ready announces its head. |
-| `RESPONDED` | The operator's own draft, or a pull request whose newest verdict requests changes, once the author answers | Only a pull request that isn't a draft and whose newest verdict requests changes |
+| `RESPONDED` | The operator's own draft, or a pull request whose newest verdict requests changes, once the author answers | A pull request whose newest verdict requests changes, once the author answers. Under a repository subscription, only one that isn't a draft; a pull request subscription asks on a draft too, so a draft that `review-pr` watches gets its re-review when the author declines a finding without pushing. |
 | `DRAFT`, to the session that fixes the pull request | A draft that no session on this machine reviews | Replaced by `UNREVIEWED`: a pull request ready for review whose head isn't signed off, and that no session here or live start comment elsewhere is reviewing, once per head |
 | The author's hold comment | Silences `RESPONDED`, and lifting it counts as an answer | Gone, because a held pull request is a draft |
 
@@ -329,7 +329,8 @@ while it waits, and it still writes nothing to GitHub.
 | Run `init` at a terminal with `review.require_check` unset | The question. `y` creates the ruleset, writes the workflow, posts the status on signed-off heads, and records `true`. `n` records `false` and does nothing else. A second run asks nothing. |
 | Run `init` without a terminal and without a flag | No question and no change |
 | Run `init --require-review` without admin access | The refusal reported, and no workflow, status, or setting written |
-| Resolve every thread on a ready pull request whose newest verdict requests changes | One `RESPONDED`; on a draft, none |
+| Resolve every thread on a ready pull request whose newest verdict requests changes | One `RESPONDED`; on a draft under a repository subscription, none |
+| Reply on a finding thread, without pushing, on a draft whose newest verdict requests changes and that a pull request subscription covers | One `RESPONDED` |
 | Leave a ready pull request whose head isn't signed off with no reviewing session | One `UNREVIEWED` for the head; for a draft, none |
 | Open the panel on a pull request that carries the label | Its row prints `clean` in green |
 
@@ -343,6 +344,10 @@ Each of these tests fails before the change:
   reviewed.
 - **`test_watch.py`: a pull request subscription announces a draft head.** It
   catches a gate applied to explicit requests.
+- **`test_watch.py`: a pull request subscription sends `RESPONDED` on a draft
+  whose author replied on a finding.** It catches the draft condition applied
+  to `RESPONDED` under every subscription, which leaves a draft that
+  `review-pr` watches without a re-review once its author declines a finding.
 - **`test_review.py`: a clean publish posts `success` on the verdict's SHA.**
   The fake GitHub moves the pull request's head between the submit and the
   status, and the test asserts the status path names the reviewed SHA. It
