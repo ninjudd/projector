@@ -1,0 +1,1687 @@
+diff --git a/.codex-plugin/plugin.json b/.codex-plugin/plugin.json
+index 9ae6569f..2808f909 100644
+--- a/.codex-plugin/plugin.json
++++ b/.codex-plugin/plugin.json
+@@ -11,6 +11,7 @@
+   "license": "MIT",
+   "keywords": ["projects", "planning", "git", "agents", "code-review"],
+   "skills": "./skills/",
++  "hooks": "./codex-hooks/hooks.json",
+   "interface": {
+     "displayName": "Projector",
+     "shortDescription": "Plan, implement, and review Git projects",
+diff --git a/codex-hooks/hooks.json b/codex-hooks/hooks.json
+new file mode 100644
+index 00000000..60fed036
+--- /dev/null
++++ b/codex-hooks/hooks.json
+@@ -0,0 +1,9 @@
++{
++  "hooks": {
++    "SessionStart": [{"hooks": [{"type": "command", "command": "project watch codex-hook", "timeout": 20}]}],
++    "SessionEnd": [{"hooks": [{"type": "command", "command": "project watch codex-hook", "timeout": 3}]}],
++    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "project watch codex-hook", "timeout": 20}]}],
++    "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "project watch codex-hook", "timeout": 20}]}],
++    "Stop": [{"hooks": [{"type": "command", "command": "project watch codex-hook", "timeout": 20}]}]
++  }
++}
+diff --git a/docs/cli.md b/docs/cli.md
+index d1746c26..7b3a4e6a 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2552,11 +2552,73 @@ the session take the `fix` role from another session (see
+ 
+ The last line of `add` says how the session's events arrive: `events: mod`
+ when Projector's mod in Claude Code renews the session, `events: stream`
+-when a running `project watch stream` renews it, or
++when a running `project watch stream` renews it, `events: codex` when the
++local Codex queue adapter handles it, or
+ ``events: none — start `project watch stream --session <id>` under your
+ host's monitor facility`` when nothing has renewed it in the last 5
+ minutes. With `--json`, `add` prints the lines it `added` and the
+-`delivery`, which is `mod`, `stream`, or `none`.
++`delivery`, which is `mod`, `stream`, `codex`, or `none`.
++
++### Deliver events to Codex
++
++With the Projector plugin installed in local Codex, review and trust its
++command hooks through `/hooks` or the desktop app's hook settings. Use
++Codex CLI 0.166.0 or newer with a running local daemon. Projector checks
++that the native executable supports `queue --thread`, `--message`, and
++`--resume`. Remote app-server selection and Windows batch-file shims are
++not supported by this adapter; use stream delivery where available.
++
++The hooks register the real parent session ID, which workers share, and
++subscribe after output from a push or PR creation confirms a target.
++`watch.auto_start = false` disables those automatic subscriptions.
++The same review and fix skills run on both hosts. Claude Code keeps its
++mod and requires no Codex executable.
++
++Codex receives one batch at a time, with standing work IDs that coalesce
++reminders even when their text differs. An acknowledgment marks a batch
++consumed. An idle session starts no model turn until an event arrives.
++The registration expires after 24 hours without host activity and ends
++when the host sends `SessionEnd`. A daemon exit while Codex is idle needs
++the next hook or a watch command to restart it:
++
++```sh
++project watch status --json
++```
++
++The `deliveries` object reports the state, expiry, batch ID, and diagnostic
++for each Codex registration. `queued` means Codex accepted the message;
++it does not prove the thread resumed. Resume that thread when its warning
++says it needs attention. `uncertain` means a timeout or interrupted
++submission left acceptance unknown. After checking the thread, use an
++explicit retry only when resending is intended:
++
++```sh
++project watch codex-retry --session <id>
++```
++
++A retry can duplicate an accepted message. Projector suppresses duplicate
++consumed batch IDs for at least 24 hours. To switch to a stream, stop any
++existing host deliverer, then disconnect before starting it:
++
++```sh
++project watch disconnect --session <id>
++project watch stream --session <id>
++```
++
++Disconnect keeps subscriptions and pending events. The stream takes
++unsent events, while accepted and uncertain batches stay separate until
++acknowledged or explicitly retried. Remove a PR's subscription to stop its
++work, rather than merely changing its transport. A message Codex already
++accepted cannot be recalled; the skills recheck subscriptions before acting.
++When hooks are unavailable, `events: none` reports the stream fallback.
++A background stream prints events but does not itself wake an idle Codex
++session.
++
++`project watch codex-hook` reads host hook JSON from standard input. The
++plugin runs it at session start and end, prompt submission, shell-tool
++completion, and turn stop. Malformed input produces advisory feedback;
++it cannot register a target or start the daemon. Hook registration alone
++adds no subscription and starts no watcher.
+ 
+ ### Subscribe from a command's output
+ 
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 70e94c02..27de90e1 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -79,8 +79,10 @@ CONFLICT acme/app#12 conflicts with main — run fix-pr on acme/app#12 in subage
+ 
+ The session runs `fix-pr` or `review-pr` on it, in one subagent for each
+ pull request, and one for each stack. In Claude Code, the mod delivers the
+-lines as a prompt. On another host, such as Codex, `project watch stream`
+-prints them, and a skill starts it under the host's monitor facility when
++lines as a prompt. In a local Codex session with trusted Projector hooks,
++the daemon queues them as prompts through `codex queue --resume`.
++On a host without automatic delivery, `project watch stream` prints them,
++and a skill starts it under the host's monitor facility when
+ `project watch add` says that nothing delivers the session's events. Any
+ `project watch` command starts the daemon, which exits a few minutes after
+ the last session goes away, so you never start or stop it yourself. The
+@@ -479,9 +481,14 @@ the daemon's events into the conversation, so no watcher runs in it:
+ 
+ Each event line names what to do, such as
+ `CONFLICT acme/app#12 conflicts with main — run fix-pr on acme/app#12 in subagent fix-12`,
+-so a session that loaded no skill can act on it. On a host without the mod,
+-such as Codex, or in a Claude Code session with mods off,
+-`project watch stream` renews the session and prints its events instead.
++so a session that loaded no skill can act on it. In local Codex, trusted
++command hooks register the parent session, and the daemon submits batches
++with `codex queue --resume`. The session acknowledges each batch before
++the daemon sends another. See [Codex delivery](cli.md#deliver-events-to-codex)
++for hook setup, the idle lease, recovery, and status. On a host without
++automatic delivery, or in Claude Code with mods off, `project watch stream`
++renews the session and prints its events instead. A stream alone does not
++start an idle Codex turn.
+ 
+ #### Choose the panel's color
+ 
+@@ -920,8 +927,9 @@ Invoke a skill directly, for example:
+ $spec a safer deploy workflow
+ ```
+ 
+-The Codex manifest exposes the same `skills/` path as Claude Code. It adds only
+-install-surface metadata; it does not wrap or rewrite skill instructions.
++The Codex manifest exposes the same `skills/` path as Claude Code. It adds
++install-surface metadata and command hooks for local event delivery; it does
++not wrap or rewrite skill instructions.
+ 
+ Codex has no plugin dependencies, so `gh-stack@projector` is a plugin of its
+ own there, and the last command above installs it. Projector's skills work
+diff --git a/docs/projects/watch-daemon/codex-delivery/readme.md b/docs/projects/watch-daemon/codex-delivery/readme.md
+index 6d4fd073..ee387c9c 100644
+--- a/docs/projects/watch-daemon/codex-delivery/readme.md
++++ b/docs/projects/watch-daemon/codex-delivery/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: ready
++status: in-progress
+ priority: now
+ ---
+ 
+@@ -123,6 +123,7 @@ Keep additions under `sessions/<session>/`; accept all existing records.
+ | Record or output | Fields and behavior |
+ | --- | --- |
+ | `codex.json` | `schema_version: 1`, `thread_id`, `executable`, `cwd`, `expires_at`, and `enabled`. A hook-supplied ID binds the registration to this session. Store no token or remote address. |
++| Capability and submission records | `codex.json` also caches `executable_signature`, `supported`, and `last_error`. `codex-submit.lock` is an OS lock held across the queue call, so recovery distinguishes a running submission from a crashed one. `codex-last.json` retains the consumed batch ID and its last delivery state. |
+ | `codex-events.json` | `schema_version: 1` and an ordered `items` array. Each item holds a stable `key` and unchanged event `line`. Write the file atomically under the session lock; skip keys already queued or pending. Mod and stream sessions retain the plain `events` file. |
+ | `codex-pending/<uuid>.json` | `batch_id`, claimed `items`, `state` (`prepared`, `submitting`, `queued`, `uncertain`, or `failed`), `attempts`, `next_attempt_at`, and bounded `last_error`. Claim under the lock: write the pending record before removing its keys from `codex-events.json`. Before another append or dispatch, recover an interrupted claim by removing those keys from the queue. New revisions have different keys and survive. Persist `submitting` before the call; recover it as `uncertain`. |
+ | `codex-receipts/<uuid>.json` | `batch_id` and `consumed_at`. Write the receipt before removing its pending batch; recover a matching pending batch as consumed. Retain receipts for 24 hours and until any concurrent command result is settled, whichever is later. |
+@@ -228,3 +229,51 @@ dependency or service is required.
+   lifecycle events, hook trust, and the inability of async completion to
+   start a turn. [Plugin packaging](https://developers.openai.com/plugins/build/plugins)
+   permits an explicit `hooks` path in `.codex-plugin/plugin.json`.
++
++## 7. Implementation and verification
++
++The implementation adds the Codex adapter, command hooks, keyed producer
++events, bounded dispatch, recovery, CLI status, and the shared workflow and
++documentation changes. Claude's production hooks module is unchanged. Its
++test mount supplies the current host's required `isCollapsed` prop, so
++the hooks type-check against the generated declarations.
++
++The focused tests exercise actual producer reminder variants, new heads
++and replies, both roles, shared GitHub polling, transport isolation, batch
++limits, acknowledgment races, dropped work, retry timing, lease expiry,
++and a hung process beside another session. Native Codex `PostToolUse`
++supplies plain text in the tested client; the adapter also accepts
++structured completion results and filters authoring commands before
++passing their output to the existing subscription parser.
++
++A full Python run passed 1,260 tests before the latest documentation and
++Claude panel changes were merged from `main`. The final run passed except
++for sandbox restrictions on the site's loopback servers; all 19 tests in
++`tests.test_site.ServeTests` passed when rerun outside that sandbox.
++Both plugin validations, plan checks, and the hooks type-check pass. The
++current Claude test runner
++reports 202 passing tests and 25 panel-rendering expectation failures;
++an isolated copy of unchanged `main` has the same 25 failing test names. A live
++Claude session received a notice through its mod while idle and replied.
++
++The combined live Codex check passed with Codex 0.169.0 and Node 24.22.2:
++
++```sh
++PYTHONPATH=src python3 tests/codex_smoke.py --review-hooks
++```
++
++The operator authorized the temporary folder and hook trust. Each of the
++four generated hooks was approved individually in Codex's native hook
++browser. The test restarted its separate loopback server to unload the
++thread, then queued a batch through the real CLI. It exited successfully
++with `PASS: an unloaded Codex thread resumed and acknowledged its native
++queued batch`. Its `UserPromptSubmit` receipt proves that the hook's prompt
++matched the sent message exactly; the batch was consumed rather than left
++queued. The harness archived its test thread, stopped its server, and
++removed its temporary files. It changed no installed plugin and made no
++GitHub mutation. Folder and hook trust decisions persist in Codex's local
++settings.
++
++The project stays in progress until new-head and finding events are also
++observed in a live review workflow. The automated producer tests and native
++transport check do not replace that acceptance check.
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 8446283c..f8887919 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -15,6 +15,7 @@ const PANEL = {
+   component: 'AbovePrompt',
+   props: {
+     hasSurvey: false,
++    isCollapsed: false,
+     isWorking: false,
+     maxRows: 12,
+     bodyColumns: 120,
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 7b4db37d..f78fc142 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -400,11 +400,16 @@ and `-`, and gives it to each subagent it starts. Every `project watch`
+ command there takes it as `--session <id>`, or reads it from
+ `PROJECTOR_SESSION`.
+ 
++In Codex, trusted Projector hooks supply the real parent session ID in
++additional context. Pass it to watch commands and workers rather than
++choosing another ID.
++
+ The command's last line says how the session's events arrive:
+ 
+ | Line | Means | Do |
+ | --- | --- | --- |
+ | `events: mod` | Projector's mod in Claude Code submits them as a prompt. | Nothing more. |
++| `events: codex` | Trusted Codex hooks register the session; the daemon queues events as prompts. | Nothing more. Do not start a stream. |
+ | `events: stream` | A `project watch stream` that the session runs prints them. | Nothing more. |
+ | ``events: none — start `project watch stream --session <id>` …`` | Nothing delivers them yet. | Start the command the line names under the host's persistent process or monitor facility, where it runs until stopped. |
+ 
+@@ -412,6 +417,14 @@ Start the stream only from the conversation the user talks to, because a
+ subagent's processes end when it returns. A subagent that reads `none` says
+ so in its report, and the conversation that started it starts the stream.
+ 
++For Codex delivery problems, inspect `project watch status --json`. A
++queued batch can be waiting for its thread to resume. Never resend it just
++because it has not run. An uncertain submission needs a decision to resend
++before `project watch codex-retry --session <id>` is used, because the first
++message may already be accepted. Stop delivery with `project watch
++disconnect --session <id>` before switching transports. Recheck current
++subscriptions and PR state before acting on every queued event.
++
+ When the user asks the session to stop fixing a pull request, run
+ `project watch remove <owner>/<repo>#<number>` and stop its subagent. A
+ subscription also ends by itself when the pull request merges or closes.
+diff --git a/skills/implement/SKILL.md b/skills/implement/SKILL.md
+index 269308a6..3a2b5155 100644
+--- a/skills/implement/SKILL.md
++++ b/skills/implement/SKILL.md
+@@ -207,6 +207,9 @@ the pull request, and how its events arrive, from the `events:` line that
+ 
+ - **`events: mod`** means Projector's mod in Claude Code submits them as a
+   prompt.
++- **`events: codex`** means trusted Codex hooks register the parent session
++  and the daemon queues events as prompts. Start no stream. Use the recovery
++  rules in `../fix-pr/SKILL.md` if delivery needs attention.
+ - **`events: stream`** means a `project watch stream` that the session
+   runs prints them.
+ - **`events: none`** means nothing delivers them yet. Start the
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 7d13a9c5..9d8cf147 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -210,6 +210,9 @@ is signed off.
+ A review belongs to the agent session that runs it, and the session's id
+ names the review's record. In Claude Code the id is
+ `$CLAUDE_CODE_SESSION_ID`, which every command has, a subagent's included.
++In Codex, trusted Projector hooks provide the real parent session ID in
++additional context. Use that ID and pass it to each worker; do not invent
++another ID when the hook has supplied one.
+ On a host that sets no session id, the conversation the user talks to
+ chooses one, of letters, digits, `.`, `_`, and `-`, and gives it to each
+ subagent it starts. Every `project watch` command there takes it as
+@@ -265,6 +268,7 @@ The command's last line says how the session's events arrive:
+ | Line | Means | Do |
+ | --- | --- | --- |
+ | `events: mod` | Projector's mod in Claude Code submits them as a prompt. | Nothing more. |
++| `events: codex` | Trusted Codex hooks register the session; the daemon queues events as prompts. | Nothing more. Do not start a stream. |
+ | `events: stream` | A `project watch stream` that the session runs prints them. | Nothing more. |
+ | ``events: none — start `project watch stream --session <id>` …`` | Nothing delivers them yet. | Start the command the line names under the host's persistent process or monitor facility, where it runs until stopped. |
+ 
+@@ -272,6 +276,14 @@ Start the stream only from the conversation the user talks to, because a
+ subagent's processes end when it returns. A subagent that reads `none` says
+ so in its report, and the conversation that started it starts the stream.
+ 
++For Codex delivery problems, inspect `project watch status --json`. A
++queued batch can be waiting for its thread to resume. Never resend it just
++because it has not run. An uncertain submission needs a decision to resend
++before `project watch codex-retry --session <id>` is used, because the first
++message may already be accepted. Stop delivery with `project watch
++disconnect --session <id>` before switching transports. Recheck current
++subscriptions and PR state before acting on every queued event.
++
+ When the user asks the session to stop reviewing the pull request, run
+ `project watch remove <owner>/<repo>#<number> --role review --model <model-id>`.
+ A subscription also ends by itself when the pull request merges or closes.
+diff --git a/skills/review-repo/SKILL.md b/skills/review-repo/SKILL.md
+index b11dbd5f..12495d2f 100644
+--- a/skills/review-repo/SKILL.md
++++ b/skills/review-repo/SKILL.md
+@@ -132,6 +132,12 @@ get an incremental review, and every other head gets a full one. Green CI
+ and resolved threads are evidence about state, not substitutes for review.
+ Keep acting on events until the user asks you to stop.
+ 
++When `project watch add` reports `events: codex`, the daemon queues events
++to the parent session ID supplied by the trusted Codex hooks. Pass that ID
++to workers and start no stream. Use the delivery recovery rules in
++`../review-pr/SKILL.md`; recheck current subscriptions and PR state before
++acting on a queued event.
++
+ ## Stop reviewing the repository
+ 
+ When the user asks the session to stop reviewing the repository, remove the
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 7fb5fcd4..8af7218b 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -23,7 +23,7 @@
+ from urllib.parse import urlparse
+ from urllib.request import url2pathname, urlopen
+ 
+-from . import inbox, instructions, loop, permissions, review, site, summary, watch
++from . import codex_watch, inbox, instructions, loop, permissions, review, site, summary, watch
+ from .permissions import allow_commands
+ from .summary import WORKFLOW_PATH
+ from .config import (
+@@ -1018,6 +1018,9 @@ def roles(parsed: argparse.ArgumentParser) -> None:
+     renew.add_argument("--deliverer", required=True, choices=watch.DELIVERERS,
+                        help="what delivers the session's events: Projector's mod, or `project watch stream`")
+     command("stream", "renew the session and print each event as it arrives, until stopped")
++    command("codex-hook", "handle a Codex lifecycle hook from standard input", session=False)
++    command("codex-retry", "resend a pending Codex batch; it can duplicate an accepted message")
++    command("disconnect", "disconnect session delivery while keeping pending work")
+     add_output(command("status", "report the watch daemon, its live sessions and targets, its last pass, and the "
+                                  "GraphQL points it spent in the last hour", session=False))
+     command("serve", "run the watch daemon; every other watch command starts it", session=False)
+@@ -1075,6 +1078,30 @@ def run_watch(arguments: argparse.Namespace) -> int:
+     command = arguments.watch_command
+     version = distribution_version()
+     json_output = getattr(arguments, "json_output", False)
++    ensure = lambda: watch.ensure_daemon(root, version, newer_release)
++    if command == "codex-hook":
++        try:
++            event = json.load(sys.stdin)
++            if not isinstance(event, dict):
++                raise UsageError("Codex hook input must be a JSON object")
++            result = codex_watch.hook(root, event, time.time(), ensure)
++        except (ValueError, OSError, subprocess.SubprocessError, ProjectorError) as error:
++            result = {"systemMessage": "Projector: automatic Codex delivery unavailable; "
++                      "inspect watch status or use the stream fallback. " + str(error)[:200]}
++        # Hook stdout uses Codex's schema rather than Projector's CLI envelope.
++        print(json.dumps(result, ensure_ascii=False))
++        return 0
++    if command in ("disconnect", "codex-retry"):
++        session = watch.session_id(arguments.session)
++        folder = watch.session_folder(root, session)
++        if command == "disconnect":
++            codex_watch.disconnect(folder)
++            print(f"disconnected {session}; subscriptions and pending events remain")
++        else:
++            codex_watch.retry(folder, time.time())
++            ensure()
++            print(f"retrying {session}'s pending batch; this can duplicate an accepted message")
++        return 0
+     if command == "serve":
+         return watch.serve(root, version)
+     if command == "stop":
+@@ -1096,6 +1123,11 @@ def run_watch(arguments: argparse.Namespace) -> int:
+             print(f"repositories: {', '.join(report['repositories']) or 'none'}")
+             print(f"last pass: {report['last_pass'] or 'none yet'}")
+             print(f"GraphQL points in the last hour: {report['graphql_points_last_hour']}")
++            for session, found in report["deliveries"].items():
++                expires = found["expires_at"]
++                when = watch.stamp(expires) if isinstance(expires, (int, float)) else "unknown"
++                print(f"delivery {session}: {found['state']}, expires {when}, "
++                      f"batch {found['batch_id'] or 'none'} {found['last_error']}")
+         return 0
+     session = watch.session_id(arguments.session, required=command != "list")
+     if command == "list":
+diff --git a/src/projector/codex_watch.py b/src/projector/codex_watch.py
+new file mode 100644
+index 00000000..bfa7e560
+--- /dev/null
++++ b/src/projector/codex_watch.py
+@@ -0,0 +1,462 @@
++"""Local Codex delivery for the shared watch daemon."""
++
++from __future__ import annotations
++
++import contextlib
++import hashlib
++import json
++import os
++import re
++import shlex
++import shutil
++import subprocess
++import time
++import uuid
++from concurrent.futures import Future, ThreadPoolExecutor
++from pathlib import Path
++from typing import Callable, Optional
++
++from .core import UsageError
++from .inbox import locked, read_json, try_lock, unlock, write_json
++
++LEASE = 24 * 3600
++LIMIT = 8 * 1024
++TIMEOUT = 15
++MARKER = re.compile(r"^PROJECTOR WATCH ([0-9a-f-]{36})\n")
++TERMINAL = {"MERGED", "CLOSED", "MISSING", "MOVED"}
++
++
++def digest(value: object) -> str:
++    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
++
++
++class Event(str):
++    def __new__(cls, line: str, key: list):
++        value = super().__new__(cls, line)
++        value.key = json.dumps(key, separators=(",", ":"), ensure_ascii=False)
++        return value
++
++
++def registration(folder: Path) -> dict:
++    return read_json(folder / "codex.json") or {}
++
++
++def active(folder: Path, now: float) -> bool:
++    record = registration(folder)
++    expires = record.get("expires_at")
++    return (record.get("schema_version") == 1 and record.get("enabled") is True
++            and isinstance(expires, (int, float)) and expires > now)
++
++
++def pending(folder: Path) -> list[tuple[Path, dict]]:
++    return [(path, record) for path in sorted((folder / "codex-pending").glob("*.json"))
++            if (record := read_json(path)) and record.get("batch_id") == path.stem]
++
++
++def queued(folder: Path) -> list[dict]:
++    return (read_json(folder / "codex-events.json") or {}).get("items") or []
++
++
++def save_queue(folder: Path, items: list[dict]) -> None:
++    write_json(folder / "codex-events.json", {"schema_version": 1, "items": items})
++
++
++def has_work(folder: Path) -> bool:
++    from .watch import subscriptions
++    return any(not line.excluded for line in subscriptions(folder)) or bool(queued(folder) or pending(folder))
++
++
++@contextlib.contextmanager
++def submission(folder: Path):
++    descriptor = os.open(folder / "codex-submit.lock", os.O_CREAT | os.O_RDWR, 0o600)
++    held = try_lock(descriptor)
++    try:
++        yield held
++    finally:
++        if held:
++            unlock(descriptor)
++        os.close(descriptor)
++
++
++def sending(folder: Path) -> bool:
++    with submission(folder) as held:
++        return not held
++
++
++def recover(folder: Path) -> None:
++    keys = set()
++    batches = pending(folder)
++    for path, batch in batches:
++        keys.update(item["key"] for item in batch["items"])
++        receipt = folder / "codex-receipts" / path.name
++        if receipt.exists():
++            path.unlink()
++        elif batch["state"] == "submitting" and not sending(folder):
++            batch.update(state="uncertain", last_error="submission outcome unknown; use codex-retry")
++            write_json(path, batch)
++    items = queued(folder)
++    remaining = [item for item in items if item["key"] not in keys]
++    if remaining != items:
++        save_queue(folder, remaining)
++
++
++def prune_receipts(folder: Path, now: float) -> None:
++    if sending(folder):
++        return
++    inflight = {path.name for path, _ in pending(folder)}
++    for path in (folder / "codex-receipts").glob("*.json"):
++        receipt = read_json(path) or {}
++        if path.name not in inflight and now - receipt.get("consumed_at", now) > LEASE and not sending(folder):
++            path.unlink()
++
++
++def append(folder: Path, lines: list[str]) -> None:
++    recover(folder)
++    items = queued(folder)
++    keys = {item["key"] for item in items}
++    keys.update(item["key"] for _, batch in pending(folder) for item in batch["items"])
++    for line in lines:
++        key = getattr(line, "key", None) or json.dumps(["notice", digest(line)])
++        if key not in keys:
++            items.append({"key": key, "line": str(line)})
++            keys.add(key)
++    save_queue(folder, items)
++
++
++def eligible(folder: Path, item: dict) -> bool:
++    from .watch import subscriptions
++    if item["line"].split(" ", 1)[0] in TERMINAL:
++        return True
++    key = json.loads(item["key"])
++    if len(key) < 3 or not isinstance(key[1], int):
++        return False
++    repo, number, role = key[:3]
++    lines = subscriptions(folder)
++    matching = [line for line in lines if line.repo.lower() == repo and line.role_name == role
++                and line.number in (None, number)]
++    return any(not line.excluded for line in matching) and not any(line.excluded for line in matching)
++
++
++def prepare(folder: Path, now: float) -> Optional[dict]:
++    recover(folder)
++    batches = pending(folder)
++    if batches:
++        batch = batches[0][1]
++        if batch["state"] not in ("prepared", "failed") or batch.get("next_attempt_at", 0) > now:
++            return None
++        return batch
++    items = [item for item in queued(folder) if eligible(folder, item)]
++    chosen = []
++    size = 0
++    for item in items:
++        length = len(item["line"].replace("\0", "\\0").encode("utf-8")) + 1
++        if size + length > LIMIT:
++            break
++        chosen.append(item)
++        size += length
++    if not chosen:
++        if items != queued(folder):
++            save_queue(folder, items)
++        if items:
++            write_json(folder / "codex-last.json", {"state": "blocked", "last_error": "event exceeds batch limit"})
++        return None
++    batch = {"batch_id": str(uuid.uuid4()), "items": chosen, "state": "prepared", "attempts": 0,
++             "next_attempt_at": now, "last_error": ""}
++    path = folder / "codex-pending" / f"{batch['batch_id']}.json"
++    path.parent.mkdir(exist_ok=True)
++    write_json(path, batch)
++    keys = {item["key"] for item in chosen}
++    save_queue(folder, [item for item in items if item["key"] not in keys])
++    return batch
++
++
++def message(session: str, batch: dict) -> str:
++    return (f"PROJECTOR WATCH {batch['batch_id']}\nsession={session}\n"
++            "Recheck current subscriptions and PR state before acting.\n"
++            + "\n".join(item["line"].replace("\0", "\\0") for item in batch["items"]))
++
++
++def acknowledge(folder: Path, session: str, prompt: str, now: float) -> tuple[bool, list[str]]:
++    if not isinstance(prompt, str):
++        raise UsageError("Codex hook prompt must be text")
++    found = MARKER.match(prompt)
++    if found is None:
++        return False, []
++    batch_id = found[1]
++    try:
++        valid = str(uuid.UUID(batch_id)) == batch_id
++    except ValueError:
++        valid = False
++    if not valid:
++        return False, []
++    receipt = folder / "codex-receipts" / f"{batch_id}.json"
++    with locked(folder):
++        if receipt.exists():
++            return True, []
++        path = folder / "codex-pending" / f"{batch_id}.json"
++        batch = read_json(path)
++        if batch is None or prompt != message(session, batch):
++            return False, []
++        lines = [item["line"] for item in batch["items"] if eligible(folder, item)]
++        receipt.parent.mkdir(exist_ok=True)
++        write_json(receipt, {"batch_id": batch_id, "consumed_at": now})
++        # A command result can race this hook. The receipt wins over that result.
++        path.unlink(missing_ok=True)
++        write_json(folder / "codex-last.json", {"batch_id": batch_id, "state": "consumed", "last_error": ""})
++    return True, lines
++
++
++def disconnect(folder: Path) -> None:
++    if not folder.is_dir():
++        return
++    with locked(folder):
++        record = registration(folder)
++        if record:
++            write_json(folder / "codex.json", {**record, "enabled": False})
++        (folder / "session.json").unlink(missing_ok=True)
++
++
++def retry(folder: Path, now: float) -> None:
++    with locked(folder):
++        if sending(folder):
++            raise UsageError("this batch is being submitted; wait for its result")
++        recover(folder)
++        batches = pending(folder)
++        if not batches:
++            raise UsageError("this session has no pending Codex batch")
++        path, batch = batches[0]
++        if batch["state"] == "submitting":
++            raise UsageError("this batch is being submitted; wait for its result")
++        batch.update(state="prepared", next_attempt_at=now, last_error="explicit retry can duplicate a message")
++        write_json(path, batch)
++
++
++def drain(folder: Path) -> None:
++    from .watch import write_text
++    recover(folder)
++    items = queued(folder)
++    lines = [item["line"] for item in items if eligible(folder, item)]
++    removable = []
++    for path, batch in pending(folder):
++        if batch["state"] in ("prepared", "failed"):
++            lines.extend(item["line"] for item in batch["items"] if eligible(folder, item))
++            removable.append(path)
++    if lines:
++        events = folder / "events"
++        previous = events.read_text(encoding="utf-8") if events.exists() else ""
++        write_text(events, previous + "".join(line + "\n" for line in lines))
++    if items:
++        save_queue(folder, [])
++    for path in removable:
++        path.unlink()
++
++
++def report(folder: Path, now: float) -> dict:
++    record = registration(folder)
++    if not record:
++        return {}
++    last = (pending(folder) or [(None, read_json(folder / "codex-last.json") or {})])[0][1]
++    state = ("disconnected" if not record.get("enabled") else
++             "expired" if not active(folder, now) else last.get("state", "idle"))
++    return {"transport": "codex", "expires_at": record.get("expires_at"), "state": state,
++            "batch_id": last.get("batch_id"), "last_error": last.get("last_error") or record.get("last_error", "")}
++
++
++def register(folder: Path, session: str, cwd: str, now: float, *, run: Callable = subprocess.run) -> dict:
++    from .watch import LAPSE, seconds_of
++    if not Path(cwd).is_absolute() or "\0" in cwd or not Path(cwd).is_dir():
++        raise UsageError("Codex registration needs an existing absolute directory")
++    with locked(folder):
++        other = read_json(folder / "session.json") or {}
++        renewed = seconds_of(other.get("renewed_at"))
++        if renewed is not None and now - renewed < LAPSE:
++            raise UsageError("this session already uses mod or stream delivery; disconnect it before switching")
++        old = registration(folder)
++        executable = shutil.which("codex")
++        if executable is None or Path(executable).suffix.lower() in (".cmd", ".bat"):
++            raise UsageError("Codex delivery needs a native codex executable with queue --resume")
++        executable = str(Path(executable).absolute())
++        stat = Path(executable).stat()
++        signature = [executable, stat.st_mtime_ns, stat.st_size]
++        supported = old.get("supported")
++        if old.get("executable_signature") != signature:
++            result = run([executable, "queue", "--help"], capture_output=True, text=True,
++                         encoding="utf-8", errors="replace", timeout=5)
++            supported = (result.returncode == 0 and all(option in result.stdout
++                         for option in ("--thread", "--message", "--resume")))
++        record = {"schema_version": 1, "thread_id": session, "executable": executable,
++                  "executable_signature": signature, "cwd": cwd, "expires_at": now + LEASE,
++                  "supported": supported, "enabled": bool(supported),
++                  "last_error": "" if supported else "Codex CLI lacks queue --resume"}
++        write_json(folder / "codex.json", record)
++        if not supported:
++            raise UsageError("this Codex CLI lacks queue --resume; automatic delivery is unavailable")
++        return record
++
++
++def tool_output(event: dict) -> Optional[str]:
++    tool_input = event.get("tool_input")
++    command = tool_input.get("command") if isinstance(tool_input, dict) else None
++    if not isinstance(command, str) or not push_command(command):
++        return None
++    response = event.get("tool_response")
++    if event.get("tool_name") != "Bash":
++        return None
++    if isinstance(response, str):
++        return response
++    if not isinstance(response, dict) or not isinstance(response.get("exit_code"), int):
++        return None
++    return "\n".join(response[key] for key in ("output", "stdout", "stderr") if isinstance(response.get(key), str))
++
++
++def push_command(command: str) -> bool:
++    try:
++        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
++        lexer.whitespace = " \t\r"
++        lexer.whitespace_split = True
++        lexer.commenters = ""
++        words = list(lexer)
++    except ValueError:
++        return False
++    groups: list[list[str]] = [[]]
++    for word in words:
++        if word and all(character in ";&|()\n" for character in word):
++            groups.append([])
++        else:
++            groups[-1].append(word)
++    for group in groups:
++        while group and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", group[0])
++                         or group[0] in {"command", "env", "exec", "nohup"}):
++            group.pop(0)
++        if not group:
++            continue
++        name, rest = Path(group[0]).name, group[1:]
++        if name == "gh" and (rest[:1] == ["stack"] or rest[:2] == ["pr", "create"]):
++            return True
++        if name == "git":
++            while rest:
++                value = rest.pop(0)
++                if value in {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}:
++                    rest = rest[1:]
++                elif not value.startswith("-"):
++                    if value == "push":
++                        return True
++                    break
++    return False
++
++
++def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, run: Callable = subprocess.run) -> dict:
++    from . import watch
++    from .config import load as load_config
++    name, session, cwd = event.get("hook_event_name"), event.get("session_id"), event.get("cwd")
++    if not isinstance(name, str) or name not in {"SessionStart", "SessionEnd", "UserPromptSubmit", "PostToolUse", "Stop"}:
++        raise UsageError("unsupported Codex hook event")
++    if not isinstance(session, str) or not isinstance(cwd, str) or not Path(cwd).is_absolute():
++        raise UsageError("Codex hook needs a session_id and absolute cwd")
++    if not watch.SESSION.fullmatch(session):
++        raise UsageError("Codex session_id contains invalid characters")
++    if name == "UserPromptSubmit" and not isinstance(event.get("prompt"), str):
++        raise UsageError("Codex hook prompt must be text")
++    folder = watch.session_folder(root, session)
++    if name == "SessionEnd":
++        disconnect(folder)
++        return {}
++    record = registration(folder)
++    if name == "SessionStart":
++        record = register(folder, session, cwd, now, run=run)
++    elif not record:
++        return {"systemMessage": "Projector: no Codex registration; start or resume a session with trusted hooks."}
++    elif record.get("enabled"):
++        with locked(folder):
++            record = registration(folder)
++            record["expires_at"] = now + LEASE
++            write_json(folder / "codex.json", record)
++    text = tool_output(event) if name == "PostToolUse" else None
++    if text is not None and load_config(Path(cwd)).setting("watch.auto_start") is not False:
++        watch.add_from_output(root, session, text)
++    consumed, lines = acknowledge(folder, session, event.get("prompt", ""), now) if name == "UserPromptSubmit" else (False, [])
++    if record.get("enabled") and has_work(folder):
++        ensure()
++    if consumed and not lines:
++        return {"decision": "block", "reason": "This watch batch is already consumed or its work was removed."}
++    context = (f"Use --session {session} for project watch commands and pass this parent ID to workers. "
++               + ("Codex watch delivery handles this session; do not start a stream. " if record.get("enabled") else
++                  "Automatic Codex delivery is disconnected; inspect watch status before starting a stream. ") +
++               "Recheck subscriptions and current PR state before acting on events.")
++    if consumed:
++        context += " Process only these still-subscribed events:\n" + "\n".join(lines)
++    if name in ("SessionStart", "UserPromptSubmit"):
++        return {"hookSpecificOutput": {"hookEventName": name, "additionalContext": context}}
++    return {}
++
++
++class Dispatcher:
++    def __init__(self, *, run: Callable = subprocess.run, wall: Callable[[], float] = time.time) -> None:
++        self.run = run
++        self.wall = wall
++        self.pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="codex-watch")
++        self.jobs: dict[Path, Future] = {}
++        self.cleaned: dict[Path, float] = {}
++
++    def tick(self, folders: list[Path]) -> None:
++        self.jobs = {folder: job for folder, job in self.jobs.items() if not job.done()}
++        for folder in folders:
++            if len(self.jobs) >= 4:
++                break
++            if folder in self.jobs or not active(folder, self.wall()):
++                continue
++            with locked(folder):
++                if self.wall() - self.cleaned.get(folder, float("-inf")) >= 3600:
++                    prune_receipts(folder, self.wall())
++                    self.cleaned[folder] = self.wall()
++                batches = pending(folder)
++                if batches and batches[0][1]["state"] in ("queued", "uncertain"):
++                    continue
++                batch = prepare(folder, self.wall())
++            if batch is not None:
++                self.jobs[folder] = self.pool.submit(self.send, folder, batch["batch_id"])
++
++    def send(self, folder: Path, batch_id: str) -> None:
++        with submission(folder) as held:
++            if held:
++                self._send(folder, batch_id)
++
++    def _send(self, folder: Path, batch_id: str) -> None:
++        path = folder / "codex-pending" / f"{batch_id}.json"
++        with locked(folder):
++            record = registration(folder)
++            batch = read_json(path)
++            if not active(folder, self.wall()) or not batch or batch["state"] not in ("prepared", "failed"):
++                return
++            batch["items"] = [item for item in batch["items"] if eligible(folder, item)]
++            if not batch["items"]:
++                path.unlink()
++                return
++            if not Path(record["cwd"]).is_dir() or not Path(record["executable"]).is_file():
++                batch.update(state="failed", next_attempt_at=self.wall() + 300,
++                             last_error="registered Codex executable or directory is missing")
++                write_json(path, batch)
++                return
++            batch.update(state="submitting", attempts=batch["attempts"] + 1)
++            write_json(path, batch)
++        try:
++            result = self.run([record["executable"], "queue", "--thread", record["thread_id"],
++                               "--message", message(folder.name, batch), "--resume"],
++                              cwd=record["cwd"], capture_output=True, text=True,
++                              encoding="utf-8", errors="replace", timeout=TIMEOUT)
++            state = "queued" if result.returncode == 0 else "failed"
++            error = ("queued with a Codex warning; inspect the thread or resume it manually" if result.stderr else "") \
++                if state == "queued" else "Codex queue failed; retry scheduled"
++        except subprocess.TimeoutExpired:
++            state, error = "uncertain", "submission timed out; use codex-retry only if resending is intended"
++        except OSError:
++            state, error = "failed", "Codex could not start; retry scheduled"
++        with locked(folder):
++            if (folder / "codex-receipts" / path.name).exists() or not path.exists():
++                return
++            batch.update(state=state, last_error=error,
++                         next_attempt_at=self.wall() + min(300, 30 * 2 ** min(batch["attempts"] - 1, 4)))
++            write_json(path, batch)
++
++    def close(self) -> None:
++        self.pool.shutdown(wait=True, cancel_futures=True)
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 2fd669b4..b16fe6f2 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -45,7 +45,7 @@
+ from typing import Callable, Iterator, Optional
+ from urllib.parse import quote
+ 
+-from . import review
++from . import codex_watch, review
+ from .config import MINIMUMS, ConfigError
+ from .config import load as load_config
+ from .core import ProjectorError, UsageError
+@@ -372,6 +372,8 @@ def edit(lines: list[str]) -> list[str]:
+ def renew(root: Path, session: str, deliverer: str, now: float) -> None:
+     folder = session_folder(root, session)
+     with locked(folder):
++        if codex_watch.active(folder, now):
++            raise UsageError("this session uses Codex delivery; disconnect it before starting mod or stream")
+         write_json(folder / "session.json", {"deliverer": deliverer, "renewed_at": stamp(now)})
+ 
+ 
+@@ -379,6 +381,10 @@ def take(root: Path, session: str, now: float) -> list[str]:
+     """Empty the session's events and renew it, keeping its deliverer, and answer the lines taken."""
+     folder = session_folder(root, session)
+     with locked(folder):
++        if codex_watch.active(folder, now):
++            raise UsageError("this session uses Codex delivery; disconnect it before taking its events")
++        if codex_watch.registration(folder):
++            codex_watch.drain(folder)
+         events = folder / "events"
+         try:
+             text = events.read_text(encoding="utf-8")
+@@ -394,7 +400,10 @@ def take(root: Path, session: str, now: float) -> list[str]:
+ 
+ def delivery(root: Path, session: str, now: float) -> str:
+     """How the session's events arrive: `mod` or `stream` while that deliverer renews it, or `none`."""
+-    record = read_json(session_folder(root, session) / "session.json") or {}
++    folder = session_folder(root, session)
++    if codex_watch.active(folder, now):
++        return "codex"
++    record = read_json(folder / "session.json") or {}
+     renewed = seconds_of(record.get("renewed_at"))
+     if record.get("deliverer") in DELIVERERS and renewed is not None and now - renewed < LAPSE:
+         return record["deliverer"]
+@@ -403,6 +412,9 @@ def delivery(root: Path, session: str, now: float) -> str:
+ 
+ def append_events(folder: Path, lines: list[str]) -> None:
+     with locked(folder):
++        if codex_watch.registration(folder).get("enabled"):
++            codex_watch.append(folder, lines)
++            return
+         with (folder / "events").open("a", encoding="utf-8") as stream:
+             stream.writelines(f"{line}\n" for line in lines)
+ 
+@@ -418,7 +430,7 @@ def stream(root: Path, session: str, emit: Callable[[str], None], ensure: Callab
+             ensure()
+             renew(root, session, "stream", wall())
+             renewed = mono()
+-        if events.exists() and events.stat().st_size:
++        if events.exists() and events.stat().st_size or codex_watch.registration(events.parent):
+             for line in take(root, session, wall()):
+                 emit(line)
+         sleep(1)
+@@ -662,6 +674,7 @@ def __init__(self, root: Path, *, version: str = "unknown", gh: Optional[Callabl
+         self.next_pass = mono()
+         self.wanted = False
+         self.last_pass: Optional[float] = None
++        self.codex = codex_watch.Dispatcher(wall=wall)
+ 
+     def log(self, message: str) -> None:
+         print(f"{stamp(self.wall())} {message}", flush=True)
+@@ -731,6 +744,7 @@ def tick(self) -> bool:
+                 return False
+             if self.wanted or now >= self.next_pass:
+                 self.run_pass()
++            self.codex.tick([self.root / "sessions" / name for name in session_names(self.root)])
+             return True
+         finally:
+             self.last_tick = self.mono()
+@@ -739,7 +753,8 @@ def forgive(self, now: float) -> None:
+         """Count every live session as seen, and every lock as changed, now: a gap in the loop is the machine
+         sleeping, which should lapse no session and stall no review."""
+         for name in self.live:
+-            self.sessions[name] = Seen(self.sessions[name].signature, now)
++            if name in self.sessions:
++                self.sessions[name] = Seen(self.sessions[name].signature, now)
+         self.locks = {path: (modified, now) for path, (modified, _) in self.locks.items()}
+ 
+     def stop_requested(self) -> bool:
+@@ -771,6 +786,8 @@ def scan(self, now: float) -> None:
+             elif seen.signature != signature:
+                 self.sessions[name] = Seen(signature, now)
+         live = {name for name, seen in self.sessions.items() if now - seen.at < LAPSE}
++        live.update(name for name in names if codex_watch.active(self.root / "sessions" / name, wall)
++                    and codex_watch.has_work(self.root / "sessions" / name))
+         for name in names:
+             mark = file_signature(self.root / "sessions" / name / "subscriptions")
+             if name in live and mark != self.marks.get(name) and self.lacks_result(name):
+@@ -911,6 +928,7 @@ def __init__(self, daemon: Daemon, now: float, now_mono: float) -> None:
+         self.branches: dict[tuple[str, str], Optional[str]] = {}
+         self.lock_lists: dict[tuple[str, int], list] = {}
+         self.stalled_roles: set[tuple[tuple[str, int], str]] = set()
++        self.stall_keys: dict[tuple[tuple[str, int], str], list] = {}
+ 
+     def tell(self, session: str, *lines: str) -> None:
+         self.outbox.setdefault(session, []).extend(lines)
+@@ -1237,6 +1255,7 @@ def move_review(self, pull: tuple[str, int], name: str, repo: str, current: Opti
+         stalled = bool(mine) and all(self.daemon.stalled(lock, self.mono) for lock in mine)
+         if current == desired:
+             if stalled:
++                self.stall_keys[pull, name] = [(str(lock.path), lock.modified) for lock in mine]
+                 for lock in mine:
+                     self.clear(pull, lock)
+                 self.stalled_roles.add((pull, name))
+@@ -1323,13 +1342,13 @@ def route_fix(self, session: str, pull: tuple[str, int], repo: str, pr: dict, re
+         lines: list[str] = []
+         action = f"run fix-pr on {ref} in subagent fix-{number}"
+ 
+-        def standing(key: str, first: str, again: Optional[str]) -> None:
++        def standing(key: str, first: str, again: Optional[str], revision: object = None) -> None:
+             last = announced.get(key)
+             if last is None:
+-                lines.append(first)
++                lines.append(codex_watch.Event(first, [repo.lower(), number, "fix", key, revision]))
+                 last = self.now
+             elif again is not None and self.now - last >= self.settings.renotify:
+-                lines.append(again)
++                lines.append(codex_watch.Event(again, [repo.lower(), number, "fix", key, revision]))
+                 last = self.now
+             kept[key] = last
+ 
+@@ -1369,7 +1388,8 @@ def standing(key: str, first: str, again: Optional[str]) -> None:
+                 said = snippet(re.sub(r"[\r\n\t]+", " ", node.get("body") or ""))
+                 standing(f"verdict:{who}:{sha}",
+                          f"VERDICT {ref} CHANGES_REQUESTED on {sha[:8]} [{who}]{said} — {action}",
+-                         f"VERDICT {ref} (still open) CHANGES_REQUESTED on {sha[:8]} [{who}]{said} — {action}")
++                         f"VERDICT {ref} (still open) CHANGES_REQUESTED on {sha[:8]} [{who}]{said} — {action}",
++                         codex_watch.digest(node.get("body") or ""))
+         for thread in nodes(pr, "reviewThreads"):
+             if thread.get("isResolved") or not thread.get("id"):
+                 continue
+@@ -1378,7 +1398,8 @@ def standing(key: str, first: str, again: Optional[str]) -> None:
+             who = login(last) or "?"
+             said = snippet(re.sub(r"[\r\n\t]+", " ", HTML_COMMENT.sub("", last.get("body") or "")).lstrip(" "))
+             standing(thread["id"], f"FINDING {ref} {place} [{who}]{said} — {action}",
+-                     f"FINDING {ref} (still open) {place} [{who}]{said} — {action}")
++                     f"FINDING {ref} (still open) {place} [{who}]{said} — {action}",
++                     [head, last.get("databaseId"), codex_watch.digest(last.get("body") or "")])
+         suggesting = standing_suggestions(reviews, head, self.daemon.operator or "", visibility)
+         for found in reviews:
+             if found.get("id") is None:
+@@ -1399,7 +1420,7 @@ def standing(key: str, first: str, again: Optional[str]) -> None:
+             who = (found.get("user") or {}).get("login") or "?"
+             sha = (found.get("commit_id") or "?")[:8]
+             standing(f"review:{found['id']}", f"REVIEW {ref} by [{who}] on {sha}{listing}{snippet(text)} — {action}",
+-                     None)
++                     None, codex_watch.digest(body))
+         for key, last in announced.items():
+             if key.startswith("review:"):
+                 kept.setdefault(key, last)
+@@ -1443,7 +1464,8 @@ def route_review(self, session: str, pull: tuple[str, int], name: str, repo: str
+                              f"request is a draft — stop subagent review-{number}, and review it once it is ready")
+             self.states[session].data["review"][label] = {
+                 "head": known, "flag": flag, "announced": None if reviewed or announced is None and not lines else 0}
+-            return lines
++            return [codex_watch.Event(text, [repo.lower(), number, name, "stalled",
++                                            head, self.stall_keys.get((pull, name))]) for text in lines]
+         lines = []
+         if (pull, name) in self.stalled_roles and not reviewed:
+             lines.append(f"NEW HEAD {ref} ({branch}) head={head[:7]}, its last review stalled — stop subagent "
+@@ -1475,7 +1497,12 @@ def route_review(self, session: str, pull: tuple[str, int], name: str, repo: str
+                          f"— {action}")
+             announced = self.now
+         self.states[session].data["review"][label] = {"head": known, "flag": flag, "announced": announced}
+-        return lines
++        return [codex_watch.Event(text, [repo.lower(), number, name,
++                                        "responded" if text.startswith("RESPONDED ") else
++                                        "stalled" if "last review stalled" in text else "head",
++                                        head, key if text.startswith("RESPONDED ") else
++                                        self.stall_keys.get((pull, name)) if "last review stalled" in text else reviewer])
++                for text in lines]
+ 
+     def in_flight(self, repo: str, number: int, repository: dict, model: str, reviewer: str, head: str) -> bool:
+         """Whether a review of the head by the model is under way: on this machine, a lock for the head that
+@@ -1644,6 +1671,7 @@ def serve(root: Path, version: str, *, sleep: Callable[[float], None] = time.sle
+         if not try_lock(descriptor):
+             print(f"{stamp(time.time())} another daemon holds {root / 'daemon.mutex'}; exiting", flush=True)
+             return 0
++        daemon = None
+         try:
+             daemon = Daemon(root, version=version, **options)
+             daemon.start()
+@@ -1653,6 +1681,8 @@ def serve(root: Path, version: str, *, sleep: Callable[[float], None] = time.sle
+         except KeyboardInterrupt:
+             pass
+         finally:
++            if daemon is not None:
++                daemon.codex.close()
+             unlock(descriptor)
+     finally:
+         os.close(descriptor)
+@@ -1669,7 +1699,9 @@ def status(root: Path, now: float) -> dict:
+     return {"pid": daemon.get("pid"), "version": daemon.get("version"), "started_at": daemon.get("started_at"),
+             "operator": daemon.get("operator"), "live_sessions": report.get("live_sessions") or [],
+             "targets": report.get("targets") or [], "repositories": report.get("repositories") or [],
+-            "last_pass": report.get("last_pass"), "graphql_points_last_hour": points}
++            "last_pass": report.get("last_pass"), "graphql_points_last_hour": points,
++            "deliveries": {name: found for name in session_names(root)
++                           if (found := codex_watch.report(session_folder(root, name), now))}}
+ 
+ 
+ def listing(root: Path, session: Optional[str]) -> list[dict]:
+diff --git a/tests/codex_smoke.mjs b/tests/codex_smoke.mjs
+new file mode 100644
+index 00000000..6bbb9509
+--- /dev/null
++++ b/tests/codex_smoke.mjs
+@@ -0,0 +1,44 @@
++const [endpoint, cwd] = process.argv.slice(2);
++const socket = new WebSocket(endpoint);
++const pending = new Map();
++let nextId = 0;
++let completed;
++const turn = new Promise((resolve, reject) => { completed = { resolve, reject }; });
++const timer = setTimeout(() => completed.reject(new Error("initial turn timed out")), 60000);
++socket.onmessage = ({ data }) => {
++  const message = JSON.parse(data);
++  if (message.id !== undefined && pending.has(message.id)) {
++    const { resolve, reject } = pending.get(message.id);
++    pending.delete(message.id);
++    if (message.error) reject(new Error(JSON.stringify(message.error)));
++    else resolve(message.result);
++  }
++  if (message.method === "turn/completed") {
++    if (message.params.turn.error) completed.reject(new Error(JSON.stringify(message.params.turn.error)));
++    else completed.resolve();
++  }
++};
++const rpc = (method, params) => new Promise((resolve, reject) => {
++  const id = ++nextId;
++  pending.set(id, { resolve, reject });
++  socket.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
++});
++try {
++  await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
++  await rpc("initialize", { clientInfo: { name: "projector-smoke", version: "1" }, capabilities: { experimentalApi: true } });
++  socket.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
++  const { data } = await rpc("hooks/list", { cwds: [cwd] });
++  if (data.some(entry => entry.hooks.some(hook => hook.enabled
++      && !["trusted", "managed"].includes(hook.trustStatus)))) {
++    throw new Error("review the temporary test hooks first with --review-hooks");
++  }
++  const { thread } = await rpc("thread/start", { cwd, sandbox: "read-only", approvalPolicy: "never" });
++  process.stdout.write(JSON.stringify({ thread: thread.id }) + "\n");
++  await rpc("turn/start", { threadId: thread.id, input: [{ type: "text", text:
++    "Transport smoke test. Use no tools or files. Reply only READY now. Later transport notices request only ACK; no PR actions.",
++    text_elements: [] }] });
++  await turn;
++} finally {
++  clearTimeout(timer);
++  socket.close();
++}
+diff --git a/tests/codex_smoke.py b/tests/codex_smoke.py
+new file mode 100644
+index 00000000..7f5a769c
+--- /dev/null
++++ b/tests/codex_smoke.py
+@@ -0,0 +1,132 @@
++"""Opt-in live queue test with a disposable local server, thread, and hooks.
++
++Requires native Codex and Node 22+. No installed plugin/configuration is changed,
++and no GitHub mutation is made. Use --review-hooks to trust the four temporary
++test hooks in Codex's native hook browser before the test runs.
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import os
++import shlex
++import shutil
++import socket
++import subprocess
++import sys
++import tempfile
++import time
++from pathlib import Path
++
++from projector import codex_watch, watch
++from projector.inbox import locked
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--hook", type=Path)
++    parser.add_argument("--review-hooks", action="store_true")
++    args = parser.parse_args()
++    if args.hook:
++        event = json.load(sys.stdin)
++        print(json.dumps(codex_watch.hook(args.hook, event, time.time(), lambda: None)))
++        return
++    executable, node = shutil.which("codex"), shutil.which("node")
++    if not executable or not node:
++        raise SystemExit("Install native Codex and Node 22+ before running this live test")
++    repo = Path(__file__).resolve().parents[1]
++    thread = None
++    server = None
++    with tempfile.TemporaryDirectory(prefix="projector-codex-smoke-") as temporary:
++        root = Path(temporary).resolve()
++        script = root / "hook.py"
++        script.write_text("import sys\nsys.path.insert(0, " + repr(str(repo / "src")) + ")\n"
++                          "sys.path.insert(0, " + repr(str(repo / "tests")) + ")\n"
++                          "from codex_smoke import main\nmain()\n")
++        words = [sys.executable, str(script), "--hook", str(root / "watch")]
++        command = subprocess.list2cmdline(words) if os.name == "nt" else shlex.join(words)
++        group = '[{hooks=[{type="command",command=' + json.dumps(command) + '}]}]'
++        with socket.socket() as listener:
++            listener.bind(("127.0.0.1", 0))
++            port = listener.getsockname()[1]
++        endpoint = f"ws://127.0.0.1:{port}"
++        argv = [executable, "--sandbox", "read-only"]
++        argv.extend(["app-server", "--listen", endpoint])
++        for name in ("SessionStart", "UserPromptSubmit", "SessionEnd", "Stop"):
++            argv.extend(["-c", "hooks." + name + "=" + group])
++
++        def start(log):
++            process = subprocess.Popen(argv, stdout=log, stderr=log)
++            deadline = time.monotonic() + 15
++            while time.monotonic() < deadline and process.poll() is None:
++                try:
++                    with socket.create_connection(("127.0.0.1", port), timeout=0.2):
++                        return process
++                except OSError:
++                    time.sleep(0.1)
++            process.terminate()
++            process.wait(timeout=15)
++            raise RuntimeError("isolated Codex server did not start")
++
++        def stop(process):
++            if process.poll() is None:
++                process.terminate()
++                try:
++                    process.wait(timeout=15)
++                except subprocess.TimeoutExpired:
++                    process.kill()
++                    process.wait(timeout=15)
++
++        with (root / "server.log").open("w") as log:
++            try:
++                server = start(log)
++                if args.review_hooks:
++                    print("Open /hooks, review the four temporary test hooks, then /exit to run the test.", flush=True)
++                    subprocess.run([executable, "--remote", endpoint, "--cd", str(root)], check=True)
++                result = subprocess.run([node, str(repo / "tests" / "codex_smoke.mjs"), endpoint, str(root)],
++                                        capture_output=True, text=True, timeout=90)
++                for line in result.stdout.splitlines():
++                    thread = json.loads(line).get("thread", thread)
++                if result.returncode:
++                    raise RuntimeError("initial Codex turn failed: " + result.stderr[-1000:])
++                if thread is None:
++                    raise RuntimeError("Codex did not create a test thread")
++                stop(server)
++                server = start(log)
++                folder = watch.session_folder(root / "watch", thread)
++                if not codex_watch.registration(folder):
++                    raise RuntimeError("test hooks did not run; review hook trust")
++                codex_watch.register(folder, thread, str(root), time.time())
++                watch.add(root / "watch", thread, watch.Subscription("acme/transport-fixture", 14, "fix"))
++                notice = codex_watch.Event("NOTICE transport smoke test: reply only ACK; no PR actions.",
++                                          ["acme/transport-fixture", 14, "fix", "smoke"])
++                watch.append_events(folder, [notice])
++                with locked(folder):
++                    batch = codex_watch.prepare(folder, time.time())
++                def run(command, **kwargs):
++                    return subprocess.run([*command, "--remote", endpoint], **kwargs)
++                dispatcher = codex_watch.Dispatcher(run=run)
++                try:
++                    dispatcher.send(folder, batch["batch_id"])
++                finally:
++                    dispatcher.close()
++                receipt = folder / "codex-receipts" / f"{batch['batch_id']}.json"
++                deadline = time.monotonic() + 45
++                while not receipt.exists() and time.monotonic() < deadline:
++                    time.sleep(0.2)
++                if not receipt.exists():
++                    raise RuntimeError("queued thread did not acknowledge: " + json.dumps(codex_watch.report(folder, time.time())))
++                print("PASS: an unloaded Codex thread resumed and acknowledged its native queued batch")
++            finally:
++                if server and server.poll() is None:
++                    try:
++                        if thread:
++                            subprocess.run([executable, "archive", thread, "--remote", endpoint],
++                                           capture_output=True, timeout=15)
++                    finally:
++                        stop(server)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tests/test_codex_watch.py b/tests/test_codex_watch.py
+new file mode 100644
+index 00000000..5549fae8
+--- /dev/null
++++ b/tests/test_codex_watch.py
+@@ -0,0 +1,376 @@
++from __future__ import annotations
++
++import io
++import json
++import os
++import subprocess
++import sys
++import tempfile
++import threading
++import unittest
++from pathlib import Path
++from unittest import mock
++
++from projector import cli, codex_watch as codex, watch
++from projector.core import UsageError
++from projector.inbox import locked, read_json, write_json
++
++
++class DeliveryTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory(prefix="codex watch ")
++        self.addCleanup(self.temp.cleanup)
++        self.root = Path(self.temp.name).resolve()
++        self.folder = watch.session_folder(self.root, "session-A")
++        self.folder.mkdir(parents=True)
++        self.now = 1000.0
++        self.executable = self.root / "codex"
++        self.executable.write_text(f"#!{sys.executable}\n" + '''import json, pathlib, sys
++root = pathlib.Path(__file__).parent
++if sys.argv[1:] == ["queue", "--help"]:
++    print("--thread --message --resume")
++else:
++    with (root / "calls.jsonl").open("a") as stream:
++        stream.write(json.dumps({"args": sys.argv[1:], "cwd": str(pathlib.Path.cwd())}) + "\\n")
++    if (root / "warning").exists():
++        print("could not resume; a private prompt must not appear in diagnostics", file=sys.stderr)
++    if (root / "fail").exists():
++        sys.exit(1)
++''')
++        self.executable.chmod(0o755)
++        self.patch = mock.patch("shutil.which", return_value=str(self.executable))
++        self.patch.start()
++        self.addCleanup(self.patch.stop)
++        codex.register(self.folder, "session-A", str(self.root), self.now)
++        watch.add(self.root, "session-A", watch.Subscription("Acme/App", 14, "fix"))
++        self.dispatcher = codex.Dispatcher(wall=lambda: self.now)
++        self.addCleanup(self.dispatcher.close)
++
++    def event(self, text="FINDING Acme/App#14 src/x.py:3 — run fix-pr", revision="a"):
++        return codex.Event(text, ["acme/app", 14, "fix", "thread-T", revision])
++
++    def enqueue(self, *events):
++        watch.append_events(self.folder, list(events or [self.event()]))
++
++    def prepare(self):
++        with locked(self.folder):
++            return codex.prepare(self.folder, self.now)
++
++    def send(self):
++        batch = self.prepare()
++        self.dispatcher.send(self.folder, batch["batch_id"])
++        return batch
++
++    def test_reminder_wording_does_not_queue_another_prompt_but_new_reply_survives(self):
++        self.enqueue(self.event())
++        batch = self.send()
++        self.enqueue(self.event("FINDING Acme/App#14 (still open) src/x.py:3 — run fix-pr"),
++                     self.event("FINDING Acme/App#14 new reply — run fix-pr", "b"))
++        self.assertEqual(["b"], [json.loads(item["key"])[-1] for item in codex.queued(self.folder)])
++        self.assertIsNone(self.prepare())
++        consumed, lines = codex.acknowledge(self.folder, "session-A", codex.message("session-A", batch), self.now)
++        self.assertEqual((True, [str(self.event())]), (consumed, lines))
++        self.assertEqual("b", json.loads(self.prepare()["items"][0]["key"])[-1])
++
++    def test_queue_uses_registered_thread_and_preserves_spaces_and_shell_text(self):
++        text = "FINDING Acme/App#14 literal \\0 and NUL\0 `touch nope` $(touch nope) — run fix-pr"
++        self.enqueue(self.event(text))
++        batch = self.send()
++        calls = [json.loads(line) for line in (self.root / "calls.jsonl").read_text().splitlines()]
++        self.assertEqual([{"args": ["queue", "--thread", "session-A", "--message",
++                                    codex.message("session-A", batch), "--resume"], "cwd": str(self.root)}], calls)
++        self.assertFalse((self.root / "nope").exists())
++        self.assertIn("NUL\\0", calls[0]["args"][4])
++
++    def test_resume_warning_is_queued_and_never_retried_or_logged_verbatim(self):
++        (self.root / "warning").touch()
++        self.enqueue()
++        self.send()
++        self.now += 3600
++        self.assertIsNone(self.prepare())
++        report = codex.report(self.folder, self.now)
++        self.assertEqual("queued", report["state"])
++        self.assertIn("warning", report["last_error"])
++        self.assertNotIn("private", report["last_error"])
++        self.assertEqual(1, len((self.root / "calls.jsonl").read_text().splitlines()))
++
++    def test_acknowledgment_racing_command_completion_cannot_resurrect_batch(self):
++        self.enqueue()
++        batch = self.prepare()
++        def run(*args, **kwargs):
++            codex.acknowledge(self.folder, "session-A", codex.message("session-A", batch), self.now)
++            return subprocess.CompletedProcess(args[0], 0, "", "")
++        self.dispatcher.run = run
++        self.dispatcher.send(self.folder, batch["batch_id"])
++        self.assertEqual([], codex.pending(self.folder))
++        self.assertEqual((True, []), codex.acknowledge(self.folder, "session-A",
++                                                    codex.message("session-A", batch), self.now))
++        self.assertEqual("consumed", codex.report(self.folder, self.now)["state"])
++
++    def test_definite_failure_backs_off_and_timeout_requires_explicit_retry(self):
++        (self.root / "fail").touch()
++        self.enqueue()
++        self.send()
++        self.assertIsNone(self.prepare())
++        self.now += 30
++        batch = self.prepare()
++        self.assertIsNotNone(batch)
++        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", 15))
++        self.dispatcher.send(self.folder, batch["batch_id"])
++        self.now += 10000
++        self.assertIsNone(self.prepare())
++        self.assertEqual("uncertain", codex.report(self.folder, self.now)["state"])
++        codex.retry(self.folder, self.now)
++        self.assertEqual(batch["batch_id"], self.prepare()["batch_id"])
++
++    def test_restart_recovers_a_claim_without_losing_concurrent_new_revision(self):
++        self.enqueue()
++        batch = self.prepare()
++        batch["state"] = "submitting"
++        write_json(self.folder / "codex-pending" / f"{batch['batch_id']}.json", batch)
++        new = self.event("FINDING Acme/App#14 new reply — run fix-pr", "b")
++        codex.save_queue(self.folder, [*batch["items"], {"key": new.key, "line": str(new)}])
++        with locked(self.folder):
++            codex.recover(self.folder)
++        self.assertEqual([{"key": new.key, "line": str(new)}], codex.queued(self.folder))
++        self.assertEqual("uncertain", codex.pending(self.folder)[0][1]["state"])
++
++    def test_a_live_submission_cannot_be_recovered_or_explicitly_retried(self):
++        self.enqueue()
++        batch = self.prepare()
++        batch["state"] = "submitting"
++        path = self.folder / "codex-pending" / f"{batch['batch_id']}.json"
++        write_json(path, batch)
++        with codex.submission(self.folder):
++            with locked(self.folder):
++                codex.recover(self.folder)
++            self.assertEqual("submitting", read_json(path)["state"])
++            with self.assertRaises(UsageError):
++                codex.retry(self.folder, self.now)
++
++    def test_drop_before_submission_filters_work_but_keeps_terminal_notice(self):
++        self.enqueue()
++        batch = self.prepare()
++        watch.drop(self.root, "session-A", "acme/app", 14, "fix", None)
++        self.dispatcher.send(self.folder, batch["batch_id"])
++        self.assertFalse((self.root / "calls.jsonl").exists())
++        self.enqueue("MERGED Acme/App#14 into main — clean up")
++        self.assertEqual("MERGED Acme/App#14 into main — clean up", self.send()["items"][0]["line"])
++
++    def test_a_late_accepted_batch_is_acknowledged_but_dropped_work_is_not_routed(self):
++        self.enqueue()
++        batch = self.send()
++        watch.remove(self.root, "session-A", "acme/app", 14, "fix")
++        self.assertEqual((True, []), codex.acknowledge(self.folder, "session-A",
++                                                    codex.message("session-A", batch), self.now))
++
++    def test_disconnect_allows_stream_to_take_unsent_items_but_not_accepted_batch(self):
++        self.enqueue()
++        self.send()
++        self.enqueue(self.event("FINDING Acme/App#14 newer — run fix-pr", "b"))
++        codex.disconnect(self.folder)
++        watch.renew(self.root, "session-A", "stream", self.now)
++        self.assertEqual(["FINDING Acme/App#14 newer — run fix-pr"], watch.take(self.root, "session-A", self.now))
++        self.assertEqual("queued", codex.pending(self.folder)[0][1]["state"])
++
++    def test_lease_expires_across_sleep_without_changing_legacy_liveness(self):
++        watch.renew(self.root, "claude-A", "mod", self.now)
++        self.assertEqual(("codex", "mod"), (watch.delivery(self.root, "session-A", self.now),
++                                            watch.delivery(self.root, "claude-A", self.now)))
++        self.assertEqual(("codex", "none"), (watch.delivery(self.root, "session-A", self.now + 301),
++                                             watch.delivery(self.root, "claude-A", self.now + 301)))
++        self.assertEqual("none", watch.delivery(self.root, "session-A", self.now + 86401))
++
++    def test_transports_cannot_steal_each_others_events(self):
++        with self.assertRaises(UsageError):
++            watch.take(self.root, "session-A", self.now)
++        with self.assertRaises(UsageError):
++            watch.renew(self.root, "session-A", "mod", self.now)
++        watch.renew(self.root, "claude-A", "mod", self.now)
++        with self.assertRaises(UsageError):
++            codex.register(self.root / "sessions" / "claude-A", "claude-A", str(self.root), self.now)
++
++    def test_no_events_start_no_process_and_write_no_queue(self):
++        for _ in range(3):
++            self.dispatcher.tick([self.folder])
++        self.assertFalse((self.root / "calls.jsonl").exists())
++        self.assertFalse((self.folder / "codex-events.json").exists())
++
++    def test_registration_reuses_capability_probe_and_hook_renews_parent(self):
++        event = {"hook_event_name": "SessionStart", "session_id": "session-A", "cwd": str(self.root)}
++        probe = mock.Mock(side_effect=AssertionError("capability probe repeated"))
++        output = codex.hook(self.root, event, self.now + 1, mock.Mock(), run=probe)
++        self.assertIn("--session session-A", output["hookSpecificOutput"]["additionalContext"])
++        self.assertEqual(self.now + 1 + 86400, codex.registration(self.folder)["expires_at"])
++
++    def test_duplicate_consumed_marker_is_blocked_before_another_turn(self):
++        self.enqueue()
++        batch = self.send()
++        event = {"hook_event_name": "UserPromptSubmit", "session_id": "session-A", "cwd": str(self.root),
++                 "prompt": codex.message("session-A", batch)}
++        codex.hook(self.root, event, self.now, mock.Mock())
++        self.assertEqual("block", codex.hook(self.root, event, self.now, mock.Mock())["decision"])
++
++    def test_malformed_hook_is_advisory_and_cannot_start_daemon(self):
++        for event in ({"hook_event_name": "SessionStart", "session_id": "../wrong"},
++                      {"hook_event_name": "UserPromptSubmit", "session_id": "fresh-bad",
++                       "cwd": str(self.root), "prompt": []}):
++            with self.subTest(event=event), mock.patch("sys.stdin", io.StringIO(json.dumps(event))), \
++                    mock.patch("projector.watch.state_root", return_value=self.root), \
++                    mock.patch("projector.watch.ensure_daemon") as ensure, \
++                    mock.patch("sys.stdout", new_callable=io.StringIO) as output:
++                self.assertEqual(0, cli.main(["watch", "codex-hook"]))
++                result = json.loads(output.getvalue())
++                self.assertIn("unavailable", result["systemMessage"])
++                self.assertNotIn("schema_version", result)
++                ensure.assert_not_called()
++                self.assertFalse((self.root / "sessions" / "fresh-bad").exists())
++
++    def test_old_cli_capability_failure_is_cached_and_does_not_claim_delivery(self):
++        folder = self.root / "sessions" / "old-cli"
++        folder.mkdir()
++        run = mock.Mock(return_value=subprocess.CompletedProcess([], 0, "--thread --message", ""))
++        with self.assertRaises(UsageError):
++            codex.register(folder, "old-cli", str(self.root), self.now, run=run)
++        with self.assertRaises(UsageError):
++            codex.register(folder, "old-cli", str(self.root), self.now, run=run)
++        self.assertEqual(1, run.call_count)
++        self.assertEqual("none", watch.delivery(self.root, "old-cli", self.now))
++
++    def test_push_output_from_child_hooks_uses_parent_and_respects_disabled_auto_start(self):
++        event = {"hook_event_name": "PostToolUse", "session_id": "session-A", "cwd": str(self.root),
++                 "tool_input": {"command": "gh pr create --draft"},
++                 "tool_name": "Bash", "tool_response": {"exit_code": 0, "output": "https://github.com/acme/app/pull/17"}}
++        config = mock.Mock()
++        config.setting.return_value = False
++        with mock.patch("projector.config.load", return_value=config):
++            codex.hook(self.root, event, self.now, mock.Mock())
++        self.assertEqual([14], [line.number for line in watch.subscriptions(self.folder)])
++        config.setting.return_value = True
++        with mock.patch("projector.config.load", return_value=config):
++            codex.hook(self.root, event, self.now, mock.Mock())
++        self.assertEqual([14, 17], [line.number for line in watch.subscriptions(self.folder)])
++        self.assertEqual(["session-A"], watch.session_names(self.root))
++
++    def test_running_shell_output_cannot_subscribe_until_command_completes(self):
++        event = {"tool_name": "Bash", "tool_input": {"command": "gh pr create --draft"},
++                 "tool_response": {"exit_code": None, "session_id": 12,
++                 "output": "https://github.com/acme/app/pull/17"}}
++        self.assertIsNone(codex.tool_output(event))
++        event["tool_response"] = {"exit_code": 0, "output": "https://github.com/acme/app/pull/17"}
++        self.assertEqual("https://github.com/acme/app/pull/17", codex.tool_output(event))
++
++    def test_real_codex_text_output_is_parsed_only_for_authoring_commands(self):
++        event = {"tool_name": "Bash", "tool_input": {"command": "gh pr create --draft"},
++                 "tool_response": "https://github.com/acme/app/pull/17"}
++        self.assertEqual(event["tool_response"], codex.tool_output(event))
++        event["tool_input"]["command"] = "cat notes.md"
++        self.assertIsNone(codex.tool_output(event), "reading a PR URL must not subscribe the session to fix it")
++        self.assertTrue(codex.push_command("git -C 'some dir' push origin feature"))
++        self.assertTrue(codex.push_command("git status\ngit push"))
++        self.assertFalse(codex.push_command("echo 'git push'"))
++
++    def test_hung_session_does_not_block_another_and_pool_has_no_unbounded_backlog(self):
++        entered, release, other_done = threading.Event(), threading.Event(), threading.Event()
++        def run(args, **kwargs):
++            if args[args.index("--thread") + 1] == "session-A":
++                entered.set()
++                if not release.wait(5):
++                    raise AssertionError("test did not release the slow call")
++            else:
++                other_done.set()
++            return subprocess.CompletedProcess(args, 0, "", "")
++        self.dispatcher.run = run
++        self.enqueue()
++        folders = [self.folder]
++        for number in range(5):
++            name = f"other-{number}"
++            folder = watch.session_folder(self.root, name)
++            codex.register(folder, name, str(self.root), self.now)
++            watch.add(self.root, name, watch.Subscription("acme/app", 14, "fix"))
++            watch.append_events(folder, [self.event()])
++            folders.append(folder)
++        try:
++            self.dispatcher.tick(folders)
++            self.assertTrue(entered.wait(5))
++            self.assertTrue(other_done.wait(5), "a hung session blocked another session")
++            self.assertLessEqual(len(self.dispatcher.jobs), 4)
++        finally:
++            release.set()
++
++    def test_bounded_batches_keep_later_complete_lines_without_losing_them(self):
++        first = self.event("FINDING Acme/App#14 " + "x" * 5000, "a")
++        second = self.event("FINDING Acme/App#14 " + "y" * 5000, "b")
++        self.enqueue(first, second)
++        batch = self.send()
++        self.assertEqual([str(first)], [item["line"] for item in batch["items"]])
++        self.assertEqual([str(second)], [item["line"] for item in codex.queued(self.folder)])
++        codex.acknowledge(self.folder, "session-A", codex.message("session-A", batch), self.now)
++        self.assertEqual([str(second)], [item["line"] for item in self.prepare()["items"]])
++
++
++from tests.test_watch import WatchCase, SHA_A, SHA_B, MODEL, thread
++
++
++class RoutingTests(WatchCase):
++    def setUp(self):
++        super().setUp()
++        self.addCleanup(self.daemon.codex.close)
++
++    def codex_session(self, name, line):
++        self.subscribe(name, line)
++        folder = self.folder(name)
++        write_json(folder / "codex.json", {"schema_version": 1, "enabled": True,
++                                          "expires_at": self.clock.wall() + 86400})
++
++    def test_real_head_and_finding_reminders_coalesce_without_additional_github_queries(self):
++        self.github.pull_request(14, threads=[thread("T1")])
++        self.codex_session("codex-review", f"acme/app#14 review {MODEL} operator")
++        self.codex_session("codex-fix", "acme/app#14 fix")
++        self.subscribe("claude", "acme/app#14 fix")
++        self.renew("claude")
++        self.daemon.run_pass()
++        self.assertEqual(["acme/app#14"], self.github.queried())
++        review_folder, fix_folder = self.folder("codex-review"), self.folder("claude")
++        review_items = codex.queued(review_folder)
++        self.assertEqual(1, len(review_items))
++        self.assertIn(SHA_A[:7], review_items[0]["line"])
++        self.assertIn("--loop codex-review", review_items[0]["line"])
++        self.assertIn("FINDING acme/app#14", self.take("claude")[0])
++        self.advance(901)
++        self.daemon.run_pass()
++        self.assertEqual(review_items, codex.queued(review_folder))
++        self.assertIn("(still open)", self.take("claude")[0])
++        self.github.pull_request(14, head=SHA_B, threads=[thread("T1")])
++        self.daemon.run_pass()
++        self.assertEqual([SHA_A, SHA_B], [json.loads(item["key"])[4] for item in codex.queued(review_folder)])
++
++    def test_codex_finding_new_reply_survives_while_the_previous_batch_waits(self):
++        self.github.pull_request(14, threads=[thread("T1")])
++        self.codex_session("codex-fix", "acme/app#14 fix")
++        self.daemon.run_pass()
++        folder = self.folder("codex-fix")
++        first = [item for item in codex.queued(folder) if item["line"].startswith("FINDING")]
++        self.advance(901)
++        self.daemon.run_pass()
++        self.assertEqual(first, [item for item in codex.queued(folder) if item["line"].startswith("FINDING")])
++        self.github.pull_request(14, threads=[thread("T1", replies=[{"databaseId": 2, "body": "a new reply"}])])
++        self.advance(901)
++        self.daemon.run_pass()
++        findings = [item for item in codex.queued(folder) if item["line"].startswith("FINDING")]
++        self.assertEqual(2, len(findings))
++        self.assertIn("new reply", findings[1]["line"])
++
++    def test_wall_clock_expiry_wins_over_sleep_forgiveness_and_daemon_restart(self):
++        self.github.pull_request(14)
++        self.codex_session("codex-review", f"acme/app#14 review {MODEL} operator")
++        self.daemon.scan(self.clock.mono())
++        self.assertIn("codex-review", self.daemon.live)
++        self.clock.advance(86401)
++        self.daemon.forgive(self.clock.mono())
++        restarted = self.make_daemon()
++        self.addCleanup(restarted.codex.close)
++        restarted.scan(self.clock.mono())
++        self.assertNotIn("codex-review", restarted.live)
++        self.daemon.scan(self.clock.mono())
++        self.assertNotIn("codex-review", self.daemon.live)
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+index 87ea6787..585f10ac 100644
+--- a/tests/test_packaging.py
++++ b/tests/test_packaging.py
+@@ -105,14 +105,22 @@ def test_both_hosts_serve_upstreams_gh_stack_skill_from_one_pin(self) -> None:
+ 
+     def test_only_claude_code_loads_the_hooks_module(self) -> None:
+         # Claude Code finds hooks/hooks.json at the plugin root by itself; the
+-        # manifest names the module's state contract. Codex has no hooks module.
++        # manifest names the module's state contract. Codex uses command hooks instead.
+         hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text())
+         [module] = hooks["modules"]
+         self.assertTrue((ROOT / "hooks" / module).is_file())
+         self.assertEqual("./hooks/types.d.ts", self.manifest("claude")["types"])
+         self.assertTrue((ROOT / "hooks" / "types.d.ts").is_file())
+         self.assertNotIn("types", self.manifest("codex"))
+-        self.assertNotIn("hooks", self.manifest("codex"))
++        codex_hooks = json.loads((ROOT / self.manifest("codex")["hooks"]).read_text())
++        self.assertNotIn("modules", codex_hooks)
++        commands = [handler["command"] for groups in codex_hooks["hooks"].values()
++                    for group in groups for handler in group["hooks"]]
++        self.assertTrue(commands)
++        from projector import cli
++        for command in commands:
++            args = cli.parser().parse_args(command.split()[1:])
++            self.assertEqual("codex-hook", args.watch_command)
+ 
+     def test_only_claude_code_declares_gh_stack_as_a_dependency(self) -> None:
+         # Codex has no plugin dependencies; install.sh adds gh-stack there.
