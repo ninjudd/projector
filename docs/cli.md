@@ -413,6 +413,61 @@ In `--json` mode the document gains a `site` object with `pages`,
 reason when the site was not set up. When the site needs an admin, `site`
 also has `admin_commands`, the list of commands described above.
 
+### Require a clean review before merge
+
+In a repository that relies on Projector alone to sign off pull requests, a
+ruleset can make GitHub block a merge until the current head has a clean
+Projector review. `project review publish` posts the `projector/review` status
+on each commit it reviews wherever the default branch requires that status. A
+new head starts with no status, so it waits for its own review. In a
+repository where people approve pull requests too, as at most workplaces,
+leave the check off: a clean Projector review is not a merge decision there.
+
+When you run `init` at a terminal in a GitHub repository whose default branch
+does not require `projector/review` yet, it asks:
+
+```text
+Does this repository rely on Projector alone to sign off pull requests before merge? [y/N]
+```
+
+`--require-review` answers yes and `--no-require-review` answers no, without
+a prompt, and both are refused outside a Git repository. Without a terminal
+or a flag, `init` asks nothing and changes nothing. When `gh` cannot read the
+default branch's rules, because it is missing, signed out, or offline,
+`init` skips the question with a note and changes nothing, unless a flag or a
+recorded `true` asked for the check, which then fails `init`. A yes does four
+things in order:
+
+1. Creates the `Projector review` ruleset, which requires `projector/review`
+   on the default branch, with no bypass. Creating a ruleset takes admin
+   access, and a private repository needs a paid plan for rulesets. When
+   GitHub refuses, `init` says why, exits non-zero, and does nothing else.
+2. Writes `.github/workflows/projector-clean.yml`, which takes the `clean`
+   label off a pull request when a commit is pushed to it. Commit it through a
+   pull request; it runs once it reaches the default branch. With
+   `review.labels` set to `false`, `init` writes no workflow, because the
+   workflow would take a `clean` label of the repository's own off.
+3. Posts the `success` status on the current head of each open pull request
+   that a review has already signed off, so none waits on a review it has.
+   When GitHub refuses that, `init` says so and goes on, because a rerun finds
+   the check required and posts nothing. Review each pull request that should
+   merge again, with `project review setup <number> --rereview` and then
+   `project review publish`, which posts the status.
+4. Records `review.require_check = true` in the repository's
+   `.projector.toml`.
+
+A no records `review.require_check = false`, and `init` asks no more. Once
+the setting is `true`, `init` creates whichever of the ruleset and the
+workflow is missing, without asking. When the default branch already requires
+`projector/review`, as a ruleset an admin added by hand does, `init` asks
+nothing and writes the workflow. `init` never removes anything. To stop
+requiring the check, delete the ruleset in the repository's settings, delete
+the workflow, and run:
+
+```sh
+project config set review.require_check false
+```
+
 ## Browse projects
 
 Run `list` to group projects by priority without creating an index. Each row
@@ -658,6 +713,7 @@ reads, which are these:
 | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `review.labels` | boolean | `true` | `project review setup`, `publish`, and `finish`, to add and remove the `reviewing` label, which shows a review in progress, and the `clean` label, which shows a signed-off head; `false` leaves both labels alone, as a repository whose own `clean` or `reviewing` label means something else needs |
+| `review.require_check` | boolean | none | `init`, as your answer to whether the repository relies on Projector alone to sign off pull requests: none asks at a terminal, `true` keeps the ruleset and the label workflow in place, and `false` asks no more; `init` writes it when you answer, as [Require a clean review before merge](#require-a-clean-review-before-merge) describes |
 | `fix.resolve_human_threads` | boolean | `true` | `fix-pr`, to resolve a person's review thread once its fix is pushed; `false` replies and leaves resolving to the reviewer |
 | `watch.auto_start` | boolean | `true` | the skills and `project watch add --from-output`, to subscribe the session to fix each pull request it opens or pushes to; `false` adds no such subscription, and `project watch add` still adds one you ask for |
 | `watch.interval` | whole number | `60` | the watch daemon, from `~/.projector.toml` only, as the seconds between passes; at least `30` |

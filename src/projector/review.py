@@ -41,10 +41,12 @@ import secrets
 import shutil
 import socket
 import subprocess
+import tempfile
 from collections import Counter
 from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from importlib import resources
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -799,6 +801,57 @@ def commit_status(repo: str, sha: str) -> Optional[str]:
     """The state of the `projector/review` status on `sha`, or None when no review posted one."""
     return run_gh(["api", f"repos/{repo}/commits/{sha}/status",
                    "--jq", f'.statuses[] | select(.context == "{REVIEW_CONTEXT}") | .state']).strip() or None
+
+
+# The required check, which `project init` sets up for a repository that relies on Projector alone, as
+# docs/projects/review-on-ready/readme.md § 2.5 describes
+
+RULESET_NAME = "Projector review"
+CLEAN_WORKFLOW_PATH = ".github/workflows/projector-clean.yml"
+
+
+def ruleset() -> dict:
+    """The ruleset that requires the `projector/review` status on the default branch, with no bypass."""
+    return {"name": RULESET_NAME, "target": "branch", "enforcement": "active",
+            "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+            "rules": [{"type": "required_status_checks",
+                       "parameters": {"strict_required_status_checks_policy": False,
+                                      "required_status_checks": [{"context": REVIEW_CONTEXT}]}}],
+            "bypass_actors": []}
+
+
+def default_branch(repo: str) -> str:
+    return run_gh(["api", f"repos/{repo}", "--jq", ".default_branch"]).strip()
+
+
+def create_ruleset(repo: str) -> None:
+    """Create `ruleset` in the repository, which takes admin access, and a paid plan in a private repository."""
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "ruleset.json"
+        path.write_text(json.dumps(ruleset()), encoding="utf-8")
+        run_gh(["api", "-X", "POST", f"repos/{repo}/rulesets", "--input", str(path)])
+
+
+def clean_workflow_text() -> str:
+    """The workflow that takes `clean` off a pull request when a commit is pushed to it."""
+    template = resources.files("projector").joinpath("templates/clean-workflow.yml").read_text(encoding="utf-8")
+    return template.replace("{label}", CLEAN_LABEL)
+
+
+def backfill_statuses(repo: str, reviewer: str) -> list[dict]:
+    """Post the `success` status on the current head of each open pull request whose head is signed off, so a
+    ruleset that starts requiring the check holds back none that a review has already signed off. Counts the
+    verdicts as `status` does for `reviewer`. Gives each pull request's `number` and the `sha` it posted on."""
+    rows = run_gh(["api", "--paginate", f"repos/{repo}/pulls?state=open&per_page=100",
+                   "--jq", ".[] | {number, sha: .head.sha, visibility: .base.repo.visibility} | @json"]).splitlines()
+    posted = []
+    for pr in map(json.loads, filter(str.strip, rows)):
+        verdict = sign_off(pr["sha"], verdicts(repo, pr["number"], reviewer, pr.get("visibility")),
+                           census(repo, pr["number"])["open"])
+        if verdict["signed_off"]:
+            post_status(repo, pr["sha"], verdict, None)
+            posted.append({"number": pr["number"], "sha": pr["sha"]})
+    return posted
 
 
 def named_repo(repo: Optional[str], cwd: Path, purpose: str) -> str:

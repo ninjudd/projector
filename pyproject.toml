@@ -23,5 +23,5 @@ package-dir = { "" = "src", "projector.site.assets" = "site/assets" }
 include-package-data = false
 
 [tool.setuptools.package-data]
-projector = ["templates/*.md"]
+projector = ["templates/*.md", "templates/*.yml"]
 "projector.site.assets" = ["*.css", "*.js", "*.svg"]
