@@ -365,7 +365,7 @@ and gives one that has changed the pushed commit as its new `old`.
    returns without waiting for the push and prints `delivery: relay
    (queued)`. The sender's `sent.json` records the message as a local send
    does. When the cache records the repository as anything but `PRIVATE`,
-   the command also prints `public repository: send nothing private`.
+   the command also prints `public repository: name no private repository and describe none of its internals`.
 8. **Deliver from another machine.** For a valid message to a session that
    is live on this machine, the daemon writes the message to that
    session's `messages/<id>.json` and appends its `PEER MESSAGE` line, as
@@ -432,7 +432,7 @@ one `sealed.json`.
 | `src/projector/codex_watch.py` | Let `eligible` accept a `["message", <id>]` key while the folder holds `messages/<id>.json` (§ 2.1 step 5), so `prepare`, `acknowledge`, `drain`, and `Dispatcher._send` keep a peer message. On `SessionEnd`, mark the session so the next pass deletes its relay refs. |
 | `src/projector/cli.py` | Add `project agent register`, `list`, `send`, `reply`, `read`, `key init`, `key show`, `key export`, and `key import`, with `--session` and `--json` as the watch commands take them. `register`, `send`, and `reply` run `ensure_daemon`. `key export` and `key import` refuse without a terminal on standard input and output (§ 2.2 step 1). `run_config`, `change_config`, and `report_override` pass every value they print through `config.redact`, so a secret key shows as `<redacted, key ID <id>>` in `config list`, `config get`, `config set`, and `config unset`, in text and in `--json`, whether the command names the key or a table that holds it. `config set` refuses `agent.key` and names `key import`. |
 | `src/projector/config.py` | Add `agent.message_limit` and `agent.key` to `SETTINGS`, and `agent.message_limit` to `MINIMUMS` with 1. `config.py` keeps no defaults, so the default of 12 lives in `agents.py`, which passes it when it reads the setting, as `watch.Settings` holds the watch defaults. Add a set of user-layer-only keys, holding `agent.key`, that the walk never supplies and the permission check guards, and a set of secret keys, also holding `agent.key`. Add `redact(key, value)`, which replaces each secret key at or under the dotted `key` inside `value`, a table or a scalar, with `<redacted, key ID <id>>`. |
-| New `skills/message-agent/SKILL.md` | When to register and how to keep the summary current. How to pass the session's model ID, how to find, message, and reply to a peer, how to handle a `PEER MESSAGE` line, and the authority rule from § 2.1 step 6. A peer's request that needs the user goes to the user through the inbox. In a public repository, or whenever `send` prints its public-repository reminder, a message carries nothing private: the agent may name a private repository, but never describes its internals, such as its code, file paths, identifiers, plans, or business details. The skill never runs `key init` unless the user asks for it, and never runs `key export` or `key import`, which the user runs in a terminal. |
+| New `skills/message-agent/SKILL.md` | When to register and how to keep the summary current. How to pass the session's model ID, how to find, message, and reply to a peer, how to handle a `PEER MESSAGE` line, and the authority rule from § 2.1 step 6. A peer's request that needs the user goes to the user through the inbox. In a public repository, or whenever `send` prints its public-repository reminder, a message carries nothing private: it names no private repository and describes none of a private repository's internals, such as its code, file paths, identifiers, plans, or business details. Where the agent needs to refer to one, it writes "a private repository" instead of its name. The skill never runs `key init` unless the user asks for it, and never runs `key export` or `key import`, which the user runs in a terminal. |
 | `skills/fix-pr/SKILL.md`, `skills/review-pr/SKILL.md`, `skills/review-repo/SKILL.md` | Where each says how the session routes event lines, state that a `PEER MESSAGE` line stays with the main conversation, never a per-PR worker, and point to `message-agent`. |
 | `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `tests/test_packaging.py` | Publish the new skill on both hosts. |
 | `docs/cli.md` | Document the command group, the records, the refs, the key and how to copy it, the limit, and what happens without a deliverer. |
@@ -481,10 +481,12 @@ one `sealed.json`.
 - **Keep private details out of public repositories by convention too.**
   Sealing protects the content today, but the ciphertext stays on GitHub
   permanently, and a leaked key would expose it. So in a public repository
-  the skill keeps a message to what could be public. It may name a private
-  repository, which reveals little, but never describes its internals.
-  `send` prints a reminder there, because the agent may not know the
-  repository's visibility.
+  the skill keeps a message to what could be public, which is the rule
+  the repository's own instructions set for anything written into a
+  public repository. A message names no private repository and describes
+  none of its internals; an agent that needs to refer to one writes "a
+  private repository". `send` prints a reminder there, because the agent
+  may not know the repository's visibility.
 - **Let the key be the switch.** A relay that pushes into a shared
   repository should start only when you ask. Holding the key is that
   request, so the relay needs no separate setting. Reading it only from
@@ -576,7 +578,7 @@ config files standing in for two machines.
 | Clone the repository twice on machine 1 and add a worktree to the first clone. Register A in the worktree and C in the second clone, send a message from each, then remove the worktree and end A. Pass on machine 1. | Both messages and A's cleanup land in one push from the second clone, and the outbox is empty. Then end C and delete the second clone before the next pass: C's cleanup stays queued, nothing is pushed, and `watch status` says no recorded checkout of the repository remains. Catches a push that names an object its checkout lacks, and an outbox that pushes from a removed checkout. |
 | Before any pass, register A, change its summary twice, and send it nothing. Pass. Then let a renewal and A's cleanup both queue before the next pass, and pass again. | Each time the outbox holds one item for A's presence ref, and each push carries one refspec for it. The first pass publishes the last summary, and the second deletes the ref under a lease that expects the commit the first pass pushed. Catches a batch that names one ref twice and fails on every pass, and a coalesced change that loses its lease. |
 | Make one queued change's lease fail while two others are valid. | The two land and leave the outbox. The failed one stays, with its error in `watch status`, and lands on a later pass once its lease is right. Catches a batch that loses every change when one fails. |
-| Relay through a repository the fake `gh` reports `PUBLIC`, then `PRIVATE`. | `send` prints `public repository: send nothing private` for the first and not the second. Catches a missing reminder. |
+| Relay through a repository the fake `gh` reports `PUBLIC`, then `PRIVATE`. | `send` prints `public repository: name no private repository and describe none of its internals` for the first and not the second. Catches a missing reminder. |
 | Register Codex session B on machine 2 with no subscriptions and an empty queue, and advance machine 2's clock past the daemon's 5-minute idle stop and past a lease renewal. Then send from A on machine 1 and pass on both machines. | Machine 2's daemon is still running, B's presence ref is renewed and never deleted, and the fake `codex` receives one queued prompt with the `PEER MESSAGE` line. Catches a scan that counts an idle Codex agent as not live. |
 | Make the ref deletion fail once on machine 2, then pass again. | B receives the message exactly once, and the ref is deleted on the second pass. Catches a duplicate from a retried delivery. |
 | Let A lapse on machine 1. Separately, stop machine 1's daemon and advance past the lease, then run a full pass on machine 2. Separately, remove `agent.key` from machine 1 and pass. | A's presence and inbox refs are deleted in each case. Catches refs that outlive their agent or the key. |
