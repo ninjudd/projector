@@ -1,0 +1,75 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index b6d5969c..b07a6de4 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -1983,7 +1983,9 @@ whose `origin` is on GitHub unless you pass `--repo`. Unlike `status` and
+ the commands that follow a review, they never take the repository from a
+ review set up on this machine, because a command that moves a pull
+ request's draft state must not act on a repository it guessed. Each prints
+-the draft state and the head:
++the draft state and the head that GitHub shows once the state has moved.
++GitHub can take a few seconds to show a head you just pushed, so a command
++you run right after a push can still name the head before it:
+ 
+ ```
+ $ project review ready 66
+diff --git a/src/projector/review.py b/src/projector/review.py
+index a763d18d..f07c1d88 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -681,10 +681,13 @@ def set_draft(repo: str, number: int, draft: bool) -> dict:
+     changed = bool(pr.get("draft")) != draft
+     if changed:
+         run_gh(["pr", "ready", str(number), "--repo", repo, *(["--undo"] if draft else [])])
+-        if bool((gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}).get("draft")) != draft:
++        after = gh_json(["api", f"repos/{repo}/pulls/{number}"]) or {}
++        if bool(after.get("draft")) != draft:
+             undo = " --undo" if draft else ""
+             raise ReviewError(f"{repo}#{number} is still {'ready' if draft else 'a draft'} after `gh pr ready{undo}`; "
+                               f"run `gh pr ready {number} --repo {repo}{undo}` and check it")
++        # GitHub can show a just-pushed head only seconds after the push, so name the head this later read sees.
++        pr = after if after.get("head") else pr
+     return {"repo": repo, "number": number, "head": pr["head"]["sha"], "draft": draft, "changed": changed}
+ 
+ 
+diff --git a/tests/test_review.py b/tests/test_review.py
+index e3b7ec11..a0320cb5 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -83,6 +83,8 @@ def __init__(self, head: str, base_sha: str) -> None:
+         self.after_post = None
+         # Runs once, as the next review is submitted and before GitHub records it.
+         self.before_post = None
++        # Runs once, right after the next `gh pr ready`, as GitHub catching up with a push it had not yet shown.
++        self.after_ready = None
+         # Runs once, right after the next label edit, as a push landing at that moment.
+         self.after_edit = None
+         # Reviews the listing leaves out, as one GitHub has not indexed yet.
+@@ -131,6 +133,9 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+             return json.dumps(dict(found, html_url=review_page(review_id), submitted_at=found.get("at")))
+         if args[:2] == ["pr", "ready"]:
+             self.pr["draft"] = "--undo" in args
++            if self.after_ready:
++                hook, self.after_ready = self.after_ready, None
++                hook()
+             return ""
+         if args[:3] == ["api", "-X", "DELETE"]:
+             del self.comments[int(args[3].rsplit("/", 1)[1])]
+@@ -3337,6 +3342,17 @@ def test_ready_marks_a_draft_ready_for_review(self) -> None:
+         self.assertEqual([["pr", "ready", "1", "--repo", REPO]], self.drafts())
+         self.assertEqual({"repo": REPO, "number": 1, "head": self.head, "draft": False, "changed": True}, json.loads(out))
+ 
++    def test_names_the_head_github_shows_after_the_move_not_the_one_it_showed_before(self) -> None:
++        # Right after a push, GitHub can still show the head before it, so the head the command first read is
++        # stale, and naming it would say an older head was marked ready.
++        pushed = "f" * 40
++        self.github.after_ready = lambda: self.github.pr["head"].update(sha=pushed)
++
++        code, out, err = self.run_draft("ready")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual([f"marked {REPO}#1 ready for review at {pushed[:7]}"], out.splitlines())
++
+     def test_a_state_already_reached_changes_nothing(self) -> None:
+         for command, draft, line in (("hold", True, "is already a draft"), ("ready", False, "is already ready")):
+             with self.subTest(command=command):

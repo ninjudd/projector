@@ -1,0 +1,80 @@
+{
+ "version": 1,
+ "name": "Ready names the current head",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 447,
+  "title": "Name the head GitHub shows after review ready or hold moves the draft state",
+  "head": "0235f99285f6dfcbce0449b2692bb19596df799b",
+  "headRef": "review-ready-current-head",
+  "base": "9574ab64cb96b335463fbeeee8646621cf7252fd",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project review ready</code> marks the author's own draft pull request ready for review, and <code>project review hold</code> converts it back to a draft. Agents run them around a push: <code>fix-pr</code> holds a signed-off pull request, pushes a change, and then marks it ready. Each command prints one line naming the pull request's head, such as <code>marked acme/app#1 ready for review at 4f2a9c1</code>, so the reader knows which commit now waits for review.",
+   "Both commands read the pull request from GitHub, run <code>gh pr ready</code>, and read the pull request back to confirm that the draft state moved. They took the head from the first read. Right after a push, GitHub can still show the previous head for a few seconds, so the line could name a commit that was no longer the pull request's head.",
+   "The change takes the head from the read-back instead, which runs later and sees a recent push more often. When the read-back has no head, the command falls back to the first read. A pull request already in the requested state makes only one read, so it reports that read's head. The documentation now says which head the line names and that it can still trail a push made a moment before."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review, at <code>0235f99</code>, found no blocking problem and opened no finding thread.</li><li>It suggested moving the sentence about GitHub's lag in <code>docs/cli.md</code> after the example output.</li><li>It noted that the Testing section says <code>DraftTests</code> runs 12 tests, while the class runs 11 at this head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "head",
+   "title": "Report the head from the read-back",
+   "kicker": "set_draft names the head GitHub shows after the draft state moves",
+   "intro": [
+    "<code>set_draft</code> in <code>src/projector/review.py</code> is the shared body of <code>review ready</code> and <code>review hold</code>. It refuses a pull request that is closed or that someone else wrote, runs <code>gh pr ready</code> (with <code>--undo</code> for <code>hold</code>), and reads the pull request back from GitHub's REST API to confirm the draft state.",
+    "The change keeps that read-back in a variable, <code>after</code>, and uses its head in the result when it has one. The documentation in <code>docs/cli.md</code> describes the new rule and its limit, and a test in <code>tests/test_review.py</code> has the fake GitHub move the head while <code>gh pr ready</code> runs."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>review_draft</code> in <code>src/projector/cli.py</code> is the only caller of <code>set_draft</code>. It prints the result as one line or as JSON, and no skill or daemon reads the <code>head</code> field to decide anything. Checked by searching the repository."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "The read-back after <code>gh pr ready</code> now supplies the head that the command prints.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The fallback to the first read applies only when the read-back returns no <code>head</code>. GitHub's REST API always includes one for a pull request, so in practice the read-back's head is the one printed.",
+       "line": 690
+      }
+     ]
+    },
+    {
+     "path": "tests/test_review.py",
+     "note": "Adds an <code>after_ready</code> hook to the fake GitHub and a test that moves the head while <code>gh pr ready</code> runs.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The new test fails when the fix is reverted: it expects <code>fffffff</code> and gets the earlier head. Checked by reverting the line in a copy of the source and running <code>DraftTests</code>.",
+       "line": 3345
+      }
+     ]
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Says the line names the head GitHub shows once the state has moved, and that it can trail a push made a moment before.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The sentence about GitHub's lag ends with the colon that introduces the example, so the sample output can read as an illustration of a stale head. The review suggested moving the sentence after the example.",
+       "line": 1988
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
