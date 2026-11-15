@@ -1,0 +1,445 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index b6d5969c..20b775b9 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -242,6 +242,12 @@ what it did to each:
+   Codex once Projector names it and you run `init` again. To see what the
+   rules allow, run
+   `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
++  That checks the command alone. Codex checks each command of a chain such as
++  `gh repo view && project summary publish` on its own and takes the
++  strictest result, so a command no rule names sends the whole call to its
++  usual approval, and an agent runs each `project` command as a call of its
++  own. Codex reads its rules only when a session starts, so start a new
++  session after `init` writes the file.
+   `init` keeps the file, and says on stderr how to add the rules yourself, when
+   the file is not valid UTF-8, cannot be read, or cannot be written, as one in
+   a read-only directory cannot, or when `rules` is not a directory. `init`
+@@ -2079,7 +2085,12 @@ is installed, which allow Projector's commands, such as
+ `project review publish`, `project review hold`, and `project summary publish`,
+ and ask before the few that reach outside Projector's own state. It prints
+ each file after `allows` or `lacks`; with `--json` it prints `allowed` for the
+-whole check and for each file. It writes nothing, takes no pull request, and
++whole check and for each file, and `summary_publish` for each file, which is
++`true` when that file allows `project summary publish`. A file can lack newer
++rules and still allow the publish, and stderr says so for a Codex file, so a
++refused publish can be told apart from a missing rule: running `init` again
++does not change a refusal that a matching rule did not prevent. It writes
++nothing, takes no pull request, and
+ runs from any directory. It exits 0 when every file has the rules. It exits 1
+ when a file lacks them or cannot be read, says on stderr what is missing, and
+ asks for `project init` at a terminal, because `init` adds the rules only for a
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 9d8cf147..6e4cee4b 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -1053,7 +1053,12 @@ and the comment alone links it.
+ 
+ A summary that fails to build or publish never changes the review's
+ verdict: say in your report that the summary failed and why, and leave the
+-review as it was.
++review as it was. When the host refuses the publish, work out why as
++`summarize-pr` describes, and report the summary as unfinished, with what
++refused it and the action that would let it through. A refusal holds back
++only that head's summary. Summarize and publish every later head as above,
++and report each one either published, with its URL, or still blocked, with
++the reason. Never stop summarizing because an earlier publish was refused.
+ 
+ ## Gate readiness claims in plans
+ 
+diff --git a/skills/review-repo/SKILL.md b/skills/review-repo/SKILL.md
+index 12495d2f..998a67d8 100644
+--- a/skills/review-repo/SKILL.md
++++ b/skills/review-repo/SKILL.md
+@@ -55,7 +55,8 @@ open.
+    adds the rules. Do not run `init` to add them yourself, because `init`
+    adds them only for a person. Then continue: the repository's own settings
+    can still allow the commands, so a missing rule means a publish can be
+-   refused, not that it will be.
++   refused, not that it will be. A file can lack newer rules and still allow
++   `project summary publish`, which `--json` reports as `summary_publish`.
+ 3. Subscribe the session to review the repository with this model:
+ 
+    ```sh
+diff --git a/skills/summarize-pr/SKILL.md b/skills/summarize-pr/SKILL.md
+index 88f7f6c9..58e738cb 100644
+--- a/skills/summarize-pr/SKILL.md
++++ b/skills/summarize-pr/SKILL.md
+@@ -276,14 +276,53 @@ wrapper only hides what is being written from the user and from the host's
+ permission checks. You do not need to build the page first; `page` is a
+ local preview.
+ 
++Run `project summary publish --summary WORKDIR/summary.json` alone, as a tool
++call of its own: not after `cd`, and not joined to another command with `&&`,
++`;`, or `|`. Do not check the repository's or the site's visibility first.
++`publish` checks hosting itself: it pushes only where the site workflow is on
++the default branch and a Pages site exists, and it keeps the summary in the
++checkout when a private repository's site is public. When the repository's
++own instructions require a visibility check before other writes, run that
++check as a tool call of its own, and never join it to the publish. Both
++Claude Code and Codex check each command of a chain against the user's
++rules and take the strictest result, so one command the rules do not name,
++such as `gh repo view`, sends the whole call, publish included, to the
++host's automatic approval.
++
+ A host's automatic approval can refuse `publish` as sending repository content
+ to another host, unless the user's own settings allow it. `project init`, run
+ by a person at a terminal, adds that allow rule to their Claude Code settings
+-and to their Codex rules, inside a repository or outside one. If the host
+-refuses `publish`, do not retry it in another form. Ask the user to run
+-`project init` in a terminal, or to run the `publish` command themselves.
+-`init` adds the rules only for a person at a terminal, so do not run it to
+-add them yourself.
++and to their Codex rules, inside a repository or outside one. When the host
++refuses `publish`, never retry it in another form or send the summary by
++another path. Work out why it was refused:
++
++1. **The call ran more than the publish.** Run the publish again, alone, as
++   the paragraph above says. That is the form the rule matches, not another
++   form.
++2. **The publish ran alone.** Run `project review rules --json`, which
++   writes nothing, and read `summary_publish` for the host's file,
++   `~/.claude/settings.json` for Claude Code or
++   `~/.codex/rules/projector.rules` for Codex.
++   - **`false`, or the file is not listed.** The rule is missing. Ask the
++     user to run `project init` themselves in a terminal, then
++     `project review rules` to check it. Codex reads its rules only when a
++     session starts, so a Codex user starts a new session after `init`.
++     `init` adds the rules only for a person at a terminal, so do not run
++     it to add them yourself.
++   - **`true`.** A matching rule is installed, and running `init` again
++     changes nothing for this publish, even when `allowed` is `false`
++     because the file lacks newer rules. Do not send the user to
++     `project init` for it. A Codex session that started before the rule
++     was written has not loaded it, so say that a new session would. Then
++     ask the user to authorize the publish to the repository's site, or to
++     run the publish command themselves.
++
++Keep the summary in `WORKDIR` and report the publish as unfinished: what
++refused it, and the action that would let it through. One refusal stops
++only that publish. Summarize and publish the next head as usual, and when the
++user authorizes the publish, check that the pull request is still open at the
++head you summarized, refresh the summary if the head moved, and run the same
++publish command again, alone.
+ 
+ `publish` fetches the diff once, builds the summary against it, and refuses one
+ that does not build. It then commits the summary and that diff to
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index d7429721..40a13160 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1475,6 +1475,10 @@ def review_rules(json_output: bool) -> int:
+     """`review rules`: whether the user's settings allow every command Projector's permission rules name,
+     exiting 1 when one may not.
+ 
++    `--json` also says whether each file allows `project summary publish`,
++    which a file lacking newer rules can still do, so a session whose publish
++    was refused can tell a missing rule from a matching one.
++
+     It asks `allow_commands` only to report, so it writes nothing, and a review
+     loop can run it before its first publish rather than learn of a refusal on
+     one pull request mid-loop. The rules belong in the person's own settings,
+@@ -1487,8 +1491,10 @@ def review_rules(json_output: bool) -> int:
+     files = allow_commands(apply=False, hint=False)
+     allowed = all(entry.action == "unchanged" for entry in files)
+     if json_output:
++        publish = permissions.publish_allowed()
+         print(json.dumps({"allowed": allowed,
+-                          "files": [{"path": entry.path, "allowed": entry.action == "unchanged"}
++                          "files": [{"path": entry.path, "allowed": entry.action == "unchanged",
++                                     "summary_publish": publish.get(entry.path, False)}
+                                     for entry in files]}, indent=2))
+     else:
+         for entry in files:
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index eb55c35b..2ba19daa 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -79,13 +79,19 @@
+ `review gate`, and `site build` and `serve`. They leave out `inbox answer`,
+ `dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear` too. A new
+ command reaches Codex once it is added here and `init` rewrites the file.
++
++Both hosts check each command of a chain such as `a && b` on its own and
++take the strictest result, so a rule covers a `project` command only when
++the call runs it alone, and the skills run each publish that way. No rule
++allows `gh` or the shell to make a chain pass.
+ """
+ 
+ from __future__ import annotations
+ 
+ import json
+ import os
+-from collections.abc import Mapping
++import re
++from collections.abc import Mapping, Sequence
+ from pathlib import Path
+ from typing import Optional
+ 
+@@ -130,6 +136,13 @@
+ )
+ CODEX_PREFIX_RULES = tuple(f'prefix_rule(pattern = {json.dumps(pattern)}, decision = "allow")'
+                            for pattern, _ in CODEX_ALLOW)
++# The command a summary publishes with. `review rules` says whether each file
++# still allows it, so a session whose publish was refused can tell a missing
++# rule from a refusal that a matching rule did not prevent.
++PUBLISH = ("project", "summary", "publish")
++# The Claude Code allow rules that match `PUBLISH`: the broad one, and the
++# narrower one Projector wrote before it.
++CLAUDE_PUBLISH_RULES = ("Bash(project *)", "Bash(project summary publish *)")
+ # Codex loads every `.rules` file in its rules directory, and writes the
+ # approvals a person saves to `default.rules`, so Projector keeps its rules in
+ # a file of its own and rewrites that file whole.
+@@ -164,6 +177,13 @@ def codex_home(environ: Mapping[str, str] = os.environ) -> Path:
+     return Path(environ.get("HOME") or Path.home()) / ".codex"
+ 
+ 
++def codex_rules_path(environ: Mapping[str, str] = os.environ) -> Optional[Path]:
++    """Projector's own Codex rules file, or None where Codex is not installed, which its directory's absence says."""
++
++    home = codex_home(environ)
++    return home / "rules" / "projector.rules" if home.is_dir() else None
++
++
+ def shown(path: Path, environ: Mapping[str, str] = os.environ) -> str:
+     """`path` as `init` reports it, with the home directory written as `~`."""
+ 
+@@ -272,10 +292,9 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
+     elsewhere is written through its link.
+     """
+ 
+-    home = codex_home(environ)
+-    if not home.is_dir():
++    path = codex_rules_path(environ)
++    if path is None:
+         return None
+-    path = home / "rules" / "projector.rules"
+     name = shown(path, environ)
+ 
+     def kept(reason: str) -> FileAction:
+@@ -290,13 +309,59 @@ def kept(reason: str) -> FileAction:
+     if text == CODEX_RULES:
+         return FileAction(name, "unchanged")
+     if not apply:
++        example = ("; it still allows `project summary publish`" if codex_allows(text, PUBLISH)
++                   else ", such as `project summary publish`")
+         return FileAction(name, "kept", f"{name} lacks Projector's current rules, without which Codex can ask "
+-                                        "before, or its approval reviewer refuse, a Projector command an agent runs, "
+-                                        "such as `project summary publish`"
++                                        "before, or its approval reviewer refuse, a Projector command an agent runs"
++                                        + example
+                                         + ("; run `project init` yourself in a terminal, or pass --publish-rule, to "
+-                                           "add it" if hint else ""))
++                                           "add them" if hint else ""))
+     try:
+         write_through(path, CODEX_RULES)
+     except OSError as error:
+         return kept(f"could not be written ({error.strerror})")
+     return FileAction(name, "updated" if existed else "created")
++
++
++def codex_allows(text: str, command: Sequence[str]) -> bool:
++    """Whether an `allow` rule in a rules file Projector wrote matches a prefix of `command`'s words.
++
++    Projector writes each pattern as JSON on one line, where a word that is a
++    list matches any one of its words, so this reads the files `init` wrote,
++    in this release's layout or the one-line layout of `CODEX_PREFIX_RULES`,
++    and no other Starlark.
++    """
++
++    for match in re.finditer(r'prefix_rule\(\s*pattern = (\[.*\]),\s*decision = "allow"', text):
++        try:
++            pattern = json.loads(match.group(1))
++        except json.JSONDecodeError:
++            continue
++        if isinstance(pattern, list) and 0 < len(pattern) <= len(command) and all(
++                word in (part if isinstance(part, list) else [part]) for word, part in zip(command, pattern)):
++            return True
++    return False
++
++
++def publish_allowed(environ: Mapping[str, str] = os.environ) -> dict[str, bool]:
++    """Whether each file `allow_commands` reports, by its shown path, allows `project summary publish`.
++
++    A file can lack Projector's current rules and still allow the publish,
++    which is what tells a refusal despite a matching rule from a missing one.
++    A file that cannot be read allows nothing.
++    """
++
++    path = settings_path(environ)
++    text, unreadable = read_user_file(path, environ)
++    try:
++        settings = json.loads(text) if text.strip() and not unreadable else {}
++    except json.JSONDecodeError:
++        settings = {}
++    permissions = settings.get("permissions") if isinstance(settings, dict) else None
++    allow = permissions.get("allow") if isinstance(permissions, dict) else None
++    allowed = {shown(path, environ): isinstance(allow, list) and any(rule in allow for rule in CLAUDE_PUBLISH_RULES)}
++    codex = codex_rules_path(environ)
++    if codex is not None:
++        text, unreadable = read_user_file(codex, environ)
++        allowed[shown(codex, environ)] = not unreadable and codex_allows(text, PUBLISH)
++    return allowed
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index 16ce340e..0cbdca8f 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -228,3 +228,77 @@ def test_site_build_and_serve_take_the_prepare_flags_only_spelled_in_full(self)
+             self.assertEqual("make", cli.parser().parse_args([*command, "--prepare=make"]).prepare)
+             self.assertEqual("make", cli.parser().parse_args([*command, "--prepare", "make"]).prepare)
+             self.assertTrue(cli.parser().parse_args([*command, "--allow-prepare"]).allow_prepare)
++
++
++SKILLS = Path(__file__).resolve().parents[1] / "skills"
++
++
++def flat(path: Path) -> str:
++    """A skill's text with its line breaks folded, so a phrase reads the same wherever the lines wrap."""
++    return " ".join(path.read_text().split())
++
++
++class SummaryPublishTests(unittest.TestCase):
++    """The summary publish the skills run is one the generated rules allow, run as a call of its own, and a
++    refused one is diagnosed rather than sent back through `project init`."""
++
++    def publish_line(self) -> str:
++        skill = (SKILLS / "summarize-pr" / "SKILL.md").read_text()
++        lines = re.findall(r"^project summary publish .*$", skill, re.MULTILINE)
++        self.assertEqual(["project summary publish --summary WORKDIR/summary.json"], lines)
++        return lines[0]
++
++    def test_the_generated_rules_allow_the_publish_line_the_skill_runs(self) -> None:
++        line = self.publish_line()
++
++        self.assertEqual(("allow", "allow"), (claude_decision(line), codex_decision(line)))
++        self.assertTrue(permissions.codex_allows(permissions.CODEX_RULES, shlex.split(line)))
++        self.assertTrue(permissions.codex_allows("\n".join(permissions.CODEX_PREFIX_RULES), shlex.split(line)))
++        self.assertTrue(permissions.codex_allows(permissions.CODEX_RULES, permissions.PUBLISH))
++        for command in ("project review gate 12", "project init", "project site build --out site",
++                        "gh api repos/acme/app/pages", "project"):
++            with self.subTest(command):
++                self.assertEqual(codex_decision(command) == "allow",
++                                 permissions.codex_allows(permissions.CODEX_RULES, shlex.split(command)))
++
++    @unittest.skipUnless(shutil.which("codex"), "checking the Codex rules needs the codex CLI")
++    def test_codex_itself_allows_the_publish_line_the_skill_runs(self) -> None:
++        home = tempfile.TemporaryDirectory()
++        self.addCleanup(home.cleanup)
++        rules = Path(home.name) / "projector.rules"
++        rules.write_text(permissions.CODEX_RULES)
++
++        result = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules),
++                                 *shlex.split(self.publish_line())],
++                                check=True, capture_output=True, text=True,
++                                env={**os.environ, "CODEX_HOME": home.name})
++
++        decision = json.loads(result.stdout)
++        self.assertEqual("allow", decision["decision"])
++        self.assertEqual(["project", "summary"], decision["matchedRules"][0]["prefixRuleMatch"]["matchedPrefix"])
++
++    def test_the_skill_publishes_alone_with_no_visibility_check_joined_to_it(self) -> None:
++        # Both hosts check each command of a chain and take the strictest result, so a visibility check joined
++        # to the publish sends the whole call to automatic approval, which can refuse it.
++        skill = flat(SKILLS / "summarize-pr" / "SKILL.md")
++
++        self.assertIn("alone, as a tool call of its own", skill)
++        self.assertIn("Do not check the repository's or the site's visibility first.", skill)
++        self.assertIn("never join it to the publish", skill)
++        self.assertNotRegex(skill, r"(&&|;|\|)\s*project summary publish")
++        self.assertNotRegex(skill, r"project summary publish[^`]*(&&|;|\|)")
++
++    def test_a_refused_publish_is_diagnosed_and_kept_as_unfinished_work(self) -> None:
++        summarize = flat(SKILLS / "summarize-pr" / "SKILL.md")
++        review = flat(SKILLS / "review-pr" / "SKILL.md")
++
++        self.assertIn("`project review rules --json`", summarize)
++        self.assertIn("read `summary_publish` for the host's file", summarize)
++        self.assertIn("Do not send the user to `project init` for it.", summarize,
++                      "a matching rule is not repaired by writing it again")
++        self.assertIn("Codex reads its rules only when a session starts", summarize)
++        self.assertIn("never retry it in another form or send the summary by another path", summarize)
++        self.assertIn("report the publish as unfinished", summarize)
++        self.assertIn("One refusal stops only that publish.", summarize)
++        self.assertIn("Never stop summarizing because an earlier publish was refused.", review)
++        self.assertIn("published, with its URL, or still blocked, with the reason", review)
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index a2479499..b40908e5 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -1905,7 +1905,8 @@ def test_rules_present_exits_0_and_writes_nothing(self) -> None:
+ 
+         code, stdout, stderr = self.invoke("review", "rules", "--json")
+         self.assertEqual(0, code, stderr)
+-        self.assertEqual({"allowed": True, "files": [{"path": "~/.claude/settings.json", "allowed": True}]},
++        self.assertEqual({"allowed": True, "files": [{"path": "~/.claude/settings.json", "allowed": True,
++                                                      "summary_publish": True}]},
+                          json.loads(stdout))
+ 
+         self.settings().write_text(json.dumps(granted("Bash(project review hold *)")))
+@@ -1951,10 +1952,65 @@ def write(permissions: dict) -> None:
+ 
+         code, stdout, _ = self.invoke("review", "rules", "--json")
+         self.assertEqual(1, code)
+-        self.assertEqual({"allowed": False, "files": [{"path": "~/.claude/settings.json", "allowed": False}]},
++        self.assertEqual({"allowed": False, "files": [{"path": "~/.claude/settings.json", "allowed": False,
++                                                       "summary_publish": False}]},
+                          json.loads(stdout))
+         self.assertFalse(self.settings().exists())
+ 
++    def test_json_says_whether_a_file_lacking_newer_rules_still_allows_the_summary_publish(self) -> None:
++        # A session whose publish was refused reads this to tell a missing rule, which `init` adds, from a
++        # matching one, which running `init` again would not change.
++        def publish(settings: object) -> bool:
++            self.settings().write_text(json.dumps(settings))
++            code, stdout, stderr = self.invoke("review", "rules", "--json")
++            self.assertIn(code, (0, 1), stderr)
++            return json.loads(stdout)["files"][0]["summary_publish"]
++
++        self.assertTrue(publish({"permissions": {"allow": list(permissions.ALLOW)}}), "only ask rules missing")
++        self.assertTrue(publish({"permissions": {"allow": ["Bash(project summary publish *)"]}}),
++                        "the narrower rule Projector wrote before")
++        self.assertFalse(publish({"permissions": {"allow": ["Bash(project review publish *)"]}}))
++        self.assertFalse(publish({"permissions": {"allow": "Bash(project *)"}}), "an allow that is not a list")
++        self.assertFalse(publish([]))
++        self.settings().write_text("{not json")
++        self.assertFalse(json.loads(self.invoke("review", "rules", "--json")[1])["files"][0]["summary_publish"])
++
++    def test_a_codex_file_lacking_newer_rules_says_it_still_allows_the_summary_publish(self) -> None:
++        rules = self.home / ".codex" / "rules" / "projector.rules"
++        rules.parent.mkdir(parents=True)
++        # The file an earlier release wrote, before `project review ready` and `workflow` were allowed.
++        stale = permissions.CODEX_RULES.replace('"publish", "ready", ', '"publish", ').replace(', "workflow"]', ']')
++        self.assertNotEqual(permissions.CODEX_RULES, stale)
++        cases = {
++            "stale": (stale, True),
++            "one-line layout": ("\n".join(permissions.CODEX_PREFIX_RULES), True),
++            "no summary rule": (stale.replace('"status", "summary",', '"status",'), False),
++            "summary only prompts": (stale.replace('"status", "summary",', '"status",')
++                                     + 'prefix_rule(pattern = ["project", "summary"], decision = "prompt")\n', False),
++            "not Projector's layout": ('prefix_rule(pattern = ["project", "summary"]  ,decision="allow")\n', False),
++            "empty": ("", False),
++        }
++        for name, (text, allowed) in cases.items():
++            with self.subTest(name):
++                rules.write_text(text)
++                before = self.home_tree()
++
++                code, stdout, stderr = self.invoke("review", "rules")
++                json_code, json_stdout, _ = self.invoke("review", "rules", "--json")
++
++                self.assertEqual((1, 1), (code, json_code), stderr)
++                self.assertEqual("allows ~/.claude/settings.json\nlacks ~/.codex/rules/projector.rules\n", stdout)
++                self.assertEqual(allowed, "it still allows `project summary publish`" in stderr, stderr)
++                self.assertEqual(not allowed, "such as `project summary publish`" in stderr, stderr)
++                self.assertEqual([True, allowed],
++                                 [entry["summary_publish"] for entry in json.loads(json_stdout)["files"]])
++                self.assertEqual(before, self.home_tree())
++
++        rules.unlink()
++        self.assertEqual([True, False], [entry["summary_publish"] for entry in
++                                         json.loads(self.invoke("review", "rules", "--json")[1])["files"]],
++                         "a missing file allows nothing")
++
+     def test_a_codex_directory_without_projectors_rules_exits_1(self) -> None:
+         (self.home / ".codex").mkdir()
+         before = self.home_tree()
