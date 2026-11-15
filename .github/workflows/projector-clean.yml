@@ -1,0 +1,65 @@
+name: Projector clean label
+
+# Written by `project init`. Removes the `clean` label when a commit is
+# pushed, because the label says that Projector's newest review of the current
+# head is clean, and a new head has no review yet. `pull_request_target` gives
+# the token write access on a pull request from a fork; the job never checks
+# out the pull request's code. The job-level `if` skips the job, so no runner
+# starts, unless the pull request carried the label at the push.
+#
+# The event records the labels as they were at the push, and the job can run
+# much later, after a slow queue or as a re-run, which replays the same event.
+# So the step reads the pull request as it is when it runs, and keeps the label
+# when the current head is already signed off: `project init` writes this
+# workflow only where the default branch requires `projector/review`, so a review
+# that signs a head off posts that status as `success` on it. A review can
+# still sign the head off between that read and the removal, so the step reads
+# the status again after it removes the label, and gives a head signed off by
+# then its label back. A push while it gives the label back starts a job whose
+# event lists no label, so the step reads the head once more and takes the
+# label off again when the head moved. The step names the label as the pull
+# request spells it, whatever its case.
+on:
+  pull_request_target:
+    types: [synchronize]
+
+permissions:
+  pull-requests: write
+  statuses: read
+
+jobs:
+  unclean:
+    if: contains(github.event.pull_request.labels.*.name, 'clean')
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          status() { gh api "repos/$REPO/commits/$1/status?per_page=100" --jq '.statuses[] | select(.context == "projector/review") | .state'; }
+          now=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha + " " + ([.labels[].name | select(ascii_downcase == "clean")] | first // "")')
+          sha=${now%% *}
+          name=${now#* }
+          if [ -z "$name" ]; then
+            echo "#$PR no longer carries clean"
+            exit 0
+          fi
+          state=$(status "$sha")
+          if [ "$state" = success ]; then
+            echo "kept $name on #$PR, because a review signed off its head ${sha:0:7}"
+            exit 0
+          fi
+          gh pr edit "$PR" --repo "$REPO" --remove-label "$name"
+          sha=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')
+          state=$(status "$sha")
+          if [ "$state" = success ]; then
+            gh pr edit "$PR" --repo "$REPO" --add-label "$name"
+            now=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')
+            if [ "$now" != "$sha" ]; then
+              gh pr edit "$PR" --repo "$REPO" --remove-label "$name"
+              echo "took $name off #$PR again, because ${now:0:7} was pushed while the step gave it back to ${sha:0:7}"
+              exit 0
+            fi
+            echo "gave $name back to #$PR, because a review signed off its head ${sha:0:7} while the step removed it"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
