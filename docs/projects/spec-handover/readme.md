@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 priority: now
 ---
 
@@ -93,7 +93,10 @@ test, applied to a plan.
 
    The user's approval changes only the pull request's draft state, never
    the plan's `status`. The status is `spec`'s readiness claim, and
-   step 5 has already made it honest.
+   step 5 has already made it honest. When the user asks for the automated
+   review to go first, `spec` marks the pull request ready at the hand-over
+   instead and still posts the request, so the user's answer only revises
+   the plan.
 9. Where the `ask`, `tell`, and `request` tools are not available, `spec`
    skips steps 5, 6, and 8. It raises blocking questions in the
    conversation, gives the rendered plan's URL in the hand-over, and marks
@@ -143,7 +146,8 @@ not have.
   usually goes first. For a plan, the user's review is what makes the
   automated one worth running. The rejected alternative is marking the
   pull request ready at the hand-over and posting the request beside it,
-  which runs both reviews at once.
+  which runs both reviews at once. A user who wants the automated review
+  first says so, and `spec` follows step 8's exception.
 - **The draft hold reuses `implement`'s rule.** `implement` keeps a pull
   request a draft while a device-test request waits and marks it ready on
   `Looks good` or a decline. The plan review follows the same rule, so the
@@ -198,10 +202,6 @@ loop.
 
 ## 6. Open questions
 
-- **Which review goes first.** § 3 holds the automated review until the
-  user approves. If you would rather both run at once, step 8 shrinks to
-  acting on feedback and the draft hold goes away. Owner: ninjudd, before
-  this plan moves to `ready`.
 - **A session that ends without `cleanup`.** Its plan pull request stays a
   draft until someone marks it ready. The panel already shows a draft's
   state, so this plan defers any automatic fix.
