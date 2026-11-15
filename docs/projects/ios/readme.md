@@ -189,11 +189,15 @@ failure or Ctrl-C deletes the claimed file and the archive.
 
 The filter keeps a line when either of these holds:
 
-- **The subsystem belongs to the app.** The subsystem equals the bundle ID or
-  any dotted prefix of it with at least two parts, or starts with the bundle
-  ID and a dot. An app logs under a subsystem such as `com.example.myapp`,
-  while its Development build's bundle ID is often
-  `com.example.myapp.dev`, and this rule matches both.
+- **The subsystem belongs to the app.** The subsystem equals the bundle ID,
+  starts with the bundle ID and a dot, or equals the bundle ID without its
+  last part when that still leaves at least three parts. An app logs under a
+  subsystem such as `com.example.myapp`, while its Development build's
+  bundle ID is often `com.example.myapp.dev`, and this rule matches both. It
+  never matches a two-part vendor prefix such as `com.example`, which other
+  apps from the same vendor log under: for the bundle ID
+  `com.example.myapp`, dropping the last part leaves two parts, so only the
+  bundle ID and its dotted children match.
 - **The app's process wrote a fault.** A Swift `fatalError` message reaches
   the log as a fault from the process, not from the app's subsystem.
 
@@ -343,7 +347,8 @@ an `Info.plist`. Every fixture is synthetic.
 | `crashes` on a synthetic watchdog report with no crashed thread | The summary shows the termination code in hex and the main thread. | An empty summary for the most common hang. |
 | `logs` twice in the same second | Two files, the second with ` 2`. | One run writing over another's log. |
 | `logs` interrupted after it claimed its file | No file left behind, and no archive. | An empty log file, or a whole device's log left on disk. |
-| `logs` for bundle ID `com.example.myapp.dev` | The predicate matches subsystems `com.example.myapp` and `com.example.myapp.dev`, and not `com.example`. | The default filter missing the app's own lines. |
+| `logs` for bundle ID `com.example.myapp.dev` | The predicate matches subsystems `com.example.myapp`, `com.example.myapp.dev`, and `com.example.myapp.dev.net`, and not `com.example` or `com.example.myappx`. | The default filter missing the app's own lines, or keeping the vendor's other apps. |
+| `logs` for bundle ID `com.example.myapp` | The predicate matches `com.example.myapp` and `com.example.myapp.net`, and not `com.example`. | Dropping the last part of a three-part bundle ID down to the vendor prefix. |
 | `cleanup`, then `cleanup` | The first removes the folder and prunes the worktree. The second prints `Nothing to clean up.` | A stale worktree entry left in the repository. |
 | Any command with no `xcrun` on `PATH` | Exit 69 and the message of § 2.2 step 1. | A traceback on Linux. |
 
