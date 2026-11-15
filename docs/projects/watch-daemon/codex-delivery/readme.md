@@ -49,17 +49,35 @@ needs no model turn when no event arrives.
    it has subscriptions or pending events, even while the conversation is
    idle. `SessionStart`, `UserPromptSubmit`, `PostToolUse`, and `Stop` renew
    it. Delivery attempts never renew it. A `SessionEnd` hook disconnects it;
-   expiry bounds polling
-   after a crash that produces no end hook. Use wall-clock expiry across
-   daemon restarts; sleep forgiveness must not extend this lease. Existing
-   mod and stream renewals retain their five-minute lapse rules.
+   expiry bounds polling after a crash that produces no end hook. Use
+   wall-clock expiry across daemon restarts; sleep forgiveness must not
+   extend this lease. Existing mod and stream renewals retain their
+   five-minute lapse rules. Each hook with subscribed or pending work runs
+   `ensure_daemon`. If the daemon exits while Codex is idle, it stays down
+   until the next hook or `project watch` command starts it. To restart it
+   without a new conversation turn, run `project watch status`. Persisted
+   batches recover on that restart. Automatic recovery without host
+   activity or a watch command is deferred; the lease alone cannot restart
+   a process, and events are not detected while the daemon is down.
 4. On each daemon tick, claim up to 8 KiB of complete pending event lines
    under the session lock. Send at most one unconsumed batch per session.
-   Preserve order and coalesce identical lines across the pending batch and
-   `events` for Codex sessions. New distinct events stay in `events`;
-   reminders create neither stored copies nor additional queued prompts
-   while a batch awaits consumption. Terminal events, including
-   `MERGED` and `CLOSED`, remain deliverable after the last subscription ends.
+   Preserve order and coalesce by work identity across the pending batch
+   and Codex's queued events. The producer attaches a stable key before
+   rendering the line: repository, PR, role, and the standing item's key.
+   A review head uses its SHA, model, and reviewer; a finding uses its
+   thread ID, head SHA, and latest comment ID and body digest. Other fix
+   items reuse `route_fix`'s standing key, plus a body digest for review or
+   verdict text. Reminder wording, including `(still open)`, never changes
+   the key. A stalled-review restart includes the stalled lock's identity;
+   `RESPONDED` includes the existing head/answer flag. Both use distinct
+   event kinds so they cannot disappear behind a head announcement. Events
+   without a standing key use their kind and a digest of their full line.
+   Keep the first line for a key already queued or pending; preserve new
+   revisions as distinct items. Reminders create neither stored copies nor
+   additional queued prompts while a batch awaits consumption. After its
+   acknowledgment, a later reminder can request work that still stands.
+   Terminal events such as `MERGED` and `CLOSED` remain deliverable after
+   the last subscription ends.
 5. Run queue commands as argument arrays, outside the session lock and the
    GitHub polling path. Use a bounded pool of four workers, a 15-second
    process timeout, and one command per session at a time. Run from the
@@ -71,8 +89,8 @@ needs no model turn when no event arrives.
    Retain a receipt for 24 hours; reject a repeated consumed marker before
    it starts another model turn. After acknowledgment, discard that batch
    and allow the next one. The conversation routes the events to the
-   existing per-PR review and fix
-   workers. Delivery does not publish reviews, alter draft state, or merge.
+   existing per-PR review and fix workers. Delivery does not publish
+   reviews, alter draft state, or merge.
 7. Treat exit zero as queued, including when stderr reports a failed resume.
    Keep the batch until acknowledgment, and expose any warning. Never
    resend a queued batch merely because it has not run. Retry definite
@@ -105,9 +123,9 @@ Keep additions under `sessions/<session>/`; accept all existing records.
 | Record or output | Fields and behavior |
 | --- | --- |
 | `codex.json` | `schema_version: 1`, `thread_id`, `executable`, `cwd`, `expires_at`, and `enabled`. A hook-supplied ID binds the registration to this session. Store no token or remote address. |
-| `codex-pending/<uuid>.events` | One claimed batch of unchanged event lines. Claim by atomic rename of `events`; split an oversized file under the lock with a recoverable journal. New appends recreate `events`. Recover an interrupted claim before dispatch. |
-| Batch metadata beside the events file | `batch_id`, `state` (`prepared`, `submitting`, `queued`, `uncertain`, or `failed`), `attempts`, `next_attempt_at`, and bounded `last_error`. Persist `submitting` before the call; recover it as `uncertain`. Retain acknowledgment receipts for 24 hours and until any concurrent command result is settled, whichever is later. |
-| `codex-receipts/<uuid>.json` | `batch_id` and `consumed_at`. Write the receipt before removing its pending batch; recover a matching pending batch as consumed. Prune expired receipts only after their command result is settled. |
+| `codex-events.json` | `schema_version: 1` and an ordered `items` array. Each item holds a stable `key` and unchanged event `line`. Write the file atomically under the session lock; skip keys already queued or pending. Mod and stream sessions retain the plain `events` file. |
+| `codex-pending/<uuid>.json` | `batch_id`, claimed `items`, `state` (`prepared`, `submitting`, `queued`, `uncertain`, or `failed`), `attempts`, `next_attempt_at`, and bounded `last_error`. Claim under the lock: write the pending record before removing its keys from `codex-events.json`. Before another append or dispatch, recover an interrupted claim by removing those keys from the queue. New revisions have different keys and survive. Persist `submitting` before the call; recover it as `uncertain`. |
+| `codex-receipts/<uuid>.json` | `batch_id` and `consumed_at`. Write the receipt before removing its pending batch; recover a matching pending batch as consumed. Retain receipts for 24 hours and until any concurrent command result is settled, whichever is later. |
 | Delivery status | Add per-session transport, expiry, batch ID, state, and diagnostic to `watch status --json` and readable status. Distinguish queued, consumed, failed, uncertain, disconnected, and expired delivery. Do not log event bodies or full prompts. |
 | `watch add` result | `events: codex` means a supported, enabled, unexpired registration handles delivery. Preserve `events: mod`, `events: stream`, and `events: none` and their JSON equivalents. |
 | `codex-hook`, `codex-retry`, and `disconnect` | The first consumes hook JSON; the latter two take `--session`. Validate all IDs and input. Malformed hook input neither registers nor queues anything. Hook failures report a bounded diagnostic without blocking the user's turn. |
@@ -117,12 +135,16 @@ shared helper used by scanning, delivery selection, and status. A fresh mod
 or stream registration and a Codex registration must not both consume the
 same session's events. Refuse a conflicting registration with a diagnostic;
 require disconnect before switching that session's transport.
+When a disconnected Codex session switches to stream delivery, render its
+unsent queued items as plain lines through the same claim and recovery
+logic. Keep accepted or uncertain batches separate until acknowledged or
+explicitly retried; switching transport must not resend them implicitly.
 
 ### 2.3 Components
 
 | Component | Change |
 | --- | --- |
-| `src/projector/watch.py` | Extend liveness and delivery selection, schedule Codex delivery, and expose status. Reuse subscriptions, ownership, reminders, and `add_from_output`. |
+| `src/projector/watch.py` | Extend liveness and delivery selection, schedule Codex delivery, and expose status. Carry work keys from the existing event producers to the destination adapter before rendering. Preserve mod and stream event text. Reuse subscriptions, ownership, reminders, and `add_from_output`. |
 | New `src/projector/codex_watch.py` | Own hook input, registration, durable batches, acknowledgments, queue execution, and retries. Use Python's standard library. |
 | `src/projector/cli.py` | Add the three commands, dispatch hooks before unconditional daemon startup, and report the additional transport and delivery states. |
 | `.codex-plugin/plugin.json` and new `codex-hooks/hooks.json` | Explicitly point Codex at its command hooks. Invoke the installed `project` CLI; use documented plugin-root expansion if a bundled launcher is needed. |
@@ -156,10 +178,11 @@ additional transport.
 | Subscribe Codex session A to review `acme/app#14`; advance the fixture from head `a` to `b`. | The fake CLI receives A's exact thread ID and one prompt naming head `b` and its review loop. Catches delivery to the wrong session or loss of the new head. |
 | Emit a finding for a fix subscription through the same daemon. | The prompt preserves the finding and `fix-<number>` action. Catches an adapter that handles only review events. |
 | Put Claude, Codex, and stream sessions in one temporary state root. | Each event reaches only its owning transport; GitHub query counts equal the existing daemon baseline. Catches double consumption and host-specific polling. |
-| Send repeated reminders while Codex is busy, then acknowledge its marker. | One batch waits; later distinct events survive and dispatch next. Catches queue floods and lost concurrent appends. |
+| Queue a first head announcement and a finding, then emit their actual `(still open)` reminder variants while Codex is busy. | One copy of each work item remains across queue and batch; acknowledgment starts no duplicate prompt. A changed head or a new finding reply survives and dispatches next. Catches wording-based deduplication and lost concurrent appends. |
 | Return exit zero plus a resume warning; restart the daemon before consumption. | The batch remains queued with its warning and is not resent. Catches the false assumption that queue success proves execution. |
 | Fail the CLI, time out during submission, or interrupt each durable transition. | Definite failures back off; uncertain submission requires explicit retry; pending lines survive restart. An acknowledgment racing command completion cannot resurrect the batch; repeated consumed markers start no model turn. Catches loss and duplicate submission races. |
 | End or expire a Codex registration, including across sleep and daemon restart. | Delivery stops; an idle subscribed registration remains live within its lease. Claude and stream lapse exactly as before. Catches immortal registrations and premature Codex expiry. |
+| Stop the daemon while Codex is idle, then invoke a hook or `project watch status`. | No automatic restart occurs before that trigger; the command starts one daemon and recovers pending batches without resending an accepted batch. Catches a false recovery guarantee and lost restart state. |
 | Drop a target while its batch waits; merge the last subscribed PR. | Dropped work does not dispatch; the terminal notice still does. Catches work after opt-out and lost cleanup events. |
 | Feed successful push output through a child hook, with automatic subscription enabled, disabled, and excluded. | Only the authorized parent subscription is added. No child queue target appears. Catches authority expansion and worker-owned delivery. |
 | Use spaces in executable and checkout paths, malformed JSON, an unsupported CLI, or conflicting transport registration. | Arguments remain intact; invalid input cannot route a prompt; fallback and diagnostics are truthful. Catches shell interpretation and accidental transport takeover. |
