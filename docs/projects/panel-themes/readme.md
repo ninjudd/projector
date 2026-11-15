@@ -84,8 +84,8 @@ as § 7 says, and until then step 1 of § 6 keeps the palette slots.
 | `error` | `conflict`, `changes requested`, `checks failing`, a GitHub error | `error` |
 | `added` | A drawer's insertions, such as `+84` | `success` |
 | `removed` | A drawer's deletions, such as `−12` | `error` |
-| `fixing` | `fixing` in a pull request's drawer | A theme key, picked by preview |
-| `reviewing` | `reviewing` in a pull request's drawer | `claude` |
+| `fixing` | `fixer` in a pull request's drawer | A theme key, picked by preview |
+| `reviewing` | `reviewer` in a pull request's drawer | `claude` |
 | `branch` | A pull request's branch in its drawer | A theme key, picked by preview |
 
 Some text stays outside every role, because Claude Code draws it and a
