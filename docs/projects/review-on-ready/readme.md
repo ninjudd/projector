@@ -207,10 +207,12 @@ A no records `review.require_check = false` and does nothing else. When
 `review.require_check` is `true`, `init` asks nothing and creates whichever of
 the ruleset and the workflow is missing. When the default branch already
 requires `projector/review` and the setting is unset, `init` doesn't ask, and
-it writes the workflow. `init` never
-removes anything. To stop requiring the check, delete the ruleset in the
-repository's settings, delete the workflow file, and set
-`review.require_check` to `false`.
+it writes the workflow. Wherever these steps write the workflow, `init` skips
+it while `review.labels` is `false`, because Projector then adds no `clean`
+label, and the workflow would remove a repository's own `clean` label on
+every push. `init` never removes anything. To stop requiring the check,
+delete the ruleset in the repository's settings, delete the workflow file,
+and set `review.require_check` to `false`.
 
 ### 2.6 Daemon events
 
@@ -333,6 +335,7 @@ while it waits, and it still writes nothing to GitHub.
 | Run `init` at a terminal with `review.require_check` unset | The question. `y` creates the ruleset, writes the workflow, posts the status on signed-off heads, and records `true`. `n` records `false` and does nothing else. A second run asks nothing. |
 | Run `init` without a terminal and without a flag | No question and no change |
 | Run `init --require-review` without admin access | The refusal reported, and no workflow, status, or setting written |
+| Run `init --require-review` with `review.labels` set to `false` | The ruleset created and the status posted, with no workflow written |
 | Resolve every thread on a ready pull request whose newest verdict requests changes | One `RESPONDED`; on a draft under a repository subscription, none |
 | Reply on a finding thread, without pushing, on a draft whose newest verdict requests changes and that a pull request subscription covers | One `RESPONDED` |
 | Leave a ready pull request whose head isn't signed off with no reviewing session | One `UNREVIEWED` for the head; for a draft, none |
@@ -416,10 +419,15 @@ with the code they cover.
    older skills never reviews a pull request that waits as a draft for a
    sign-off that no longer comes.
 2. Before you upgrade, end each hold you have open, with the release you have:
-   `project review hold <number> --repo <owner>/<repo> --drop`. The new
-   `hold` takes no `--drop`, and an older Projector that reviews the pull
-   request, such as a teammate's, still reads a leftover hold comment as a
-   hold. `project review status <number>` reports `held` for each one.
+   `project review hold <number> --repo <owner>/<repo> --drop`. End a hold
+   only once the push that carries its changes has landed, and drop a change
+   that will not be built by its text. A hold ended on an unchanged head asks
+   the reviewing session for a re-review, and an older Projector's clean
+   verdict then marks the pull request ready while the changes are still
+   local. The new `hold` takes no `--drop`, and an older Projector that
+   reviews the pull request, such as a teammate's, still reads a leftover
+   hold comment as a hold. `project review status <number>` reports `held`
+   for each one.
 3. After you upgrade, mark ready each of your open drafts that waits on a
    review. Those drafts meant "not signed off", and the daemon now waits for
    them. `gh pr list --author <login> --draft` lists them, and
