@@ -431,8 +431,12 @@ Does this repository rely on Projector alone to sign off pull requests before me
 ```
 
 `--require-review` answers yes and `--no-require-review` answers no, without
-a prompt. Without a terminal or a flag, `init` asks nothing and changes
-nothing. A yes does four things in order:
+a prompt, and both are refused outside a Git repository. Without a terminal
+or a flag, `init` asks nothing and changes nothing. When `gh` cannot read the
+default branch's rules, because it is missing, signed out, or offline,
+`init` skips the question with a note and changes nothing, unless a flag or a
+recorded `true` asked for the check, which then fails `init`. A yes does four
+things in order:
 
 1. Creates the `Projector review` ruleset, which requires `projector/review`
    on the default branch, with no bypass. Creating a ruleset takes admin
@@ -445,6 +449,9 @@ nothing. A yes does four things in order:
    workflow would take a `clean` label of the repository's own off.
 3. Posts the `success` status on the current head of each open pull request
    that a review has already signed off, so none waits on a review it has.
+   When GitHub refuses that, `init` says so and goes on, because a rerun finds
+   the check required and posts nothing; run `project review publish` again on
+   each pull request that should merge.
 4. Records `review.require_check = true` in the repository's
    `.projector.toml`.
 

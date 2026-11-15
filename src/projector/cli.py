@@ -2314,6 +2314,12 @@ def init_required_check(arguments: argparse.Namespace, root: Path, files: list[F
     try:
         required = review.requires_check(repo, review.default_branch(repo))
     except review.ReviewError as error:
+        if answer is None and recorded is None:
+            # Nobody asked for the check, so a GitHub that cannot be read only skips the question.
+            print(f"project: did not ask whether {repo} requires a Projector review before merge, because its "
+                  f"default branch's rules could not be read: {error}; run `project init --require-review` to set "
+                  "the check up", file=sys.stderr)
+            return
         raise InitError(f"could not read the rules of {repo}'s default branch: {error}", files) from error
     if answer is None and recorded is None and not required:
         print(REQUIRE_QUESTION, end="", file=sys.stderr, flush=True)
@@ -2331,11 +2337,17 @@ def init_required_check(arguments: argparse.Namespace, root: Path, files: list[F
         print(f"project: created the {review.RULESET_NAME} ruleset, which requires {review.REVIEW_CONTEXT} on "
               f"{repo}'s default branch", file=sys.stderr)
         username = config.get("review.username")
-        reviewer = review.reviewer_login(None, username if isinstance(username, str) else None,
-                                         review.authenticated_login())
-        for posted in review.backfill_statuses(repo, reviewer):
-            print(f"project: posted {review.REVIEW_CONTEXT} success on #{posted['number']} at {posted['sha'][:7]}, "
-                  "which a review already signed off", file=sys.stderr)
+        try:
+            reviewer = review.reviewer_login(None, username if isinstance(username, str) else None,
+                                             review.authenticated_login())
+            for posted in review.backfill_statuses(repo, reviewer):
+                print(f"project: posted {review.REVIEW_CONTEXT} success on #{posted['number']} at "
+                      f"{posted['sha'][:7]}, which a review already signed off", file=sys.stderr)
+        except review.ReviewError as error:
+            # The ruleset is in place, and a rerun finds the check required and posts nothing, so say what to do.
+            print(f"project: could not post {review.REVIEW_CONTEXT} on the open pull requests a review already "
+                  f"signed off: {error}; run `project review publish` again on each one that should merge, or have "
+                  "it reviewed again", file=sys.stderr)
     if config.get("review.labels") is not False:
         files.append(write_clean_workflow(root))
     if answer and recorded is not True:
@@ -2385,6 +2397,9 @@ def init_permissions_only(arguments: argparse.Namespace) -> int:
 
     if arguments.site or arguments.url:
         raise UsageError("--site and --url set up a repository's site; run `project init` inside that repository")
+    if arguments.require_review is not None:
+        flag = "--require-review" if arguments.require_review else "--no-require-review"
+        raise UsageError(f"{flag} answers for a repository; run `project init` inside that repository")
     publish_rule = publish_rule_mode(arguments, Path.cwd())
     files = allow_commands(apply=publish_rule == "add") if publish_rule else []
     emit_files(files, arguments.json_output, readme=False)

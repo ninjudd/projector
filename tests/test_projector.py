@@ -1477,9 +1477,13 @@ class RulesetGitHub:
         self.open_findings: set[int] = set()
         self.statuses: list[dict] = []
         self.calls: list[list[str]] = []
+        # A part of a call's arguments that makes it fail, as gh does offline or signed out.
+        self.fail: str | None = None
 
     def __call__(self, args: list[str], token: str | None = None) -> str:
         self.calls.append(list(args))
+        if self.fail and self.fail in " ".join(args):
+            raise review.ReviewError(f"gh {' '.join(args)} failed: error connecting to api.github.com")
         if args == ["api", "repos/acme/app", "--jq", ".default_branch"]:
             return "main\n"
         if args[:3] == ["api", "--paginate", "repos/acme/app/rules/branches/main"]:
@@ -1642,6 +1646,42 @@ class RequiredCheckTests(RepositoryTestCase):
         self.assertEqual(0, code, err)
         self.assertEqual(1, len(self.github.rulesets))
         self.assertTrue(self.workflow().exists())
+
+    def test_a_github_it_cannot_read_skips_the_question_unless_the_check_was_asked_for(self) -> None:
+        # Refreshing the instructions at a terminal must not fail where gh is missing, signed out, or offline.
+        self.github.fail = "default_branch"
+
+        code, _, err = self.init(answer="y\n")
+
+        self.assertEqual(0, code, err)
+        self.assertIn("did not ask whether acme/app requires a Projector review before merge", err)
+        self.assertNotIn(cli.REQUIRE_QUESTION, err)
+        self.assertIsNone(self.recorded())
+
+        code, _, err = self.init("--require-review")
+
+        self.assertNotEqual(0, code)
+        self.assertIn("could not read the rules of acme/app's default branch", err)
+
+    def test_a_failed_backfill_keeps_the_ruleset_the_workflow_and_the_setting(self) -> None:
+        self.github.fail = "pulls?state=open"
+
+        code, _, err = self.init("--require-review")
+
+        self.assertEqual(0, code, err)
+        self.assertIn("could not post projector/review on the open pull requests a review already signed off", err)
+        self.assertEqual(1, len(self.github.rulesets))
+        self.assertTrue(self.workflow().exists())
+        self.assertTrue(self.recorded(), "a rerun finds the check required, so this run finishes the setup")
+
+    def test_the_answer_flags_are_refused_outside_a_repository(self) -> None:
+        outside = Path(tempfile.mkdtemp())
+        for flag in ("--require-review", "--no-require-review"):
+            with self.subTest(flag=flag):
+                code, _, err = self.invoke("init", flag, cwd=outside)
+
+                self.assertNotEqual(0, code)
+                self.assertIn(f"{flag} answers for a repository", err)
 
     def test_a_workflow_edited_by_hand_is_kept(self) -> None:
         self.workflow().parent.mkdir(parents=True)
