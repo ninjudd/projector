@@ -1,0 +1,228 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 70e94c02..52093117 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -249,8 +249,8 @@ not subscribed to before.
+ 
+ ```text
+   /projector                                              2 pull requests  12s   [-]
+-   #267 draft List a loop's open pull requests above the Claude Code prompt 2h
+-   #258 draft grace Name the reviewed head in a review's sig… conflict · 2* 5m
++   #267 List a loop's open pull requests above the Claude Code prompt       2h
++   #258 reviewing grace Name the reviewed head in a review's… conflict · 2* 5m
+         reviewing · review-signature · +84 −12 in 5 files · checks passing
+         7: Discuss  8: Dismiss
+         open in github  open in projector
+@@ -259,22 +259,23 @@ not subscribed to before.
+                                                            ctrl+x tab to focus
+ ```
+ 
+-Each line is the pull request's number, its review state, its author when
+-someone else wrote it, and the title. The review state is the first of these
+-that applies:
++Each line is the pull request's number, its review label, its author when
++someone else wrote it, and the title. The number is dim while the pull
++request is a draft, which means its author is still working on it, and drawn
++in the default text color once it is ready for review. The review label is
++the first of these that the pull request carries, and it is left out when
++the pull request carries neither:
+ 
+ - **`reviewing`**, in yellow, while the pull request carries the `reviewing`
+   label, which `project review setup` adds when a review starts.
+-- **`draft`**, in yellow, while the pull request is a draft, which means its
+-  author is still working on it.
+ - **`clean`**, in green, while it carries the `clean` label, which
+   `project review publish` adds once a review signs off the current head.
+-- **`ready`**, in yellow, for a pull request that is ready for review and
+-  carries neither label.
+ 
+ So a held draft, which keeps its `clean` label while a change is built,
+-reads as `draft`. The panel reads the labels with the rest of the line, from
+-the watch daemon's query of the pull request.
++reads as a dim number beside `clean`, and a ready pull request with no label
++is waiting for its first review. The panel reads the draft state and the
++labels with the rest of the line, from the watch daemon's query of the pull
++request.
+ 
+ Notes follow the title when the pull request
+ has them: `conflict` or `changes requested` in red, `approved` in green,
+@@ -283,7 +284,7 @@ such as `2*`. The ` · ` between two notes keeps the default text color. The
+ line ends with how long ago the pull request last changed, in the column
+ where the inbox's items end with their ages. Only the title shortens on a
+ narrow terminal. A pull request that the watch daemon has not queried yet
+-reads `loading…` in place of its title, with no review state, author, or
++reads `loading…` in place of its title, with no review label, author, or
+ age, until the daemon's first result for it arrives.
+ 
+ Your own pull requests come first, then everyone else's, each author's
+@@ -341,7 +342,7 @@ there the panel starts with its first row.
+ 
+ Click a pull request's number to open a drawer under it, and click it again
+ to close the drawer; opening one drawer closes any other. The drawer starts
+-one column past the number, under the review state. It names the session's
++one column past the number, under the review label. It names the session's
+ roles on the pull request: `fixing` in the terminal palette's blue,
+ `reviewing` in Claude's orange, or `fixing and reviewing`. This `reviewing`
+ says that this session reviews the pull request, whatever its labels say.
+@@ -555,7 +556,7 @@ the open notices after the pull requests, before its time.
+ 
+ ```text
+   /projector                1 pull request · 2 questions · 1 notice  12s   [-]
+-   #337 draft Retry failed webhook deliveries with backoff            1h
++   #337 Retry failed webhook deliveries with backoff                  1h
+ 
+    - Force-pushed #337 to drop a stray debug file               #337  1m
+    - Run project init to add the publish rule?                        2m
+@@ -569,8 +570,8 @@ out of view. A collapsed line starts with `+`, where an item's starts with
+ `-`, to say it expands. Collapsed pull requests become a line such as
+ `+ #12 #14 #15` in their place, listing each in the rows' order and coloring
+ it by status: red when a conflict, a change request, or failing checks hold
+-it back, and otherwise in its review state's color, green for `clean` and
+-yellow for `reviewing`, `draft`, and `ready`. A pull request that is still
++it back, green when it is ready for review and labeled `clean` and not
++`reviewing`, and otherwise yellow. A pull request that is still
+ loading is muted. The numbers work as tabs: click one to open that pull
+ request's drawer below the line, with its number drawn inverted, and click it
+ again to close the drawer. The pull requests stay collapsed, and only one
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 636a6977..948b1825 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -291,7 +291,7 @@ test('draws one line per open pull request of the session’s own loops', async
+   await ui.unmount()
+ })
+ 
+-test('a row says reviewing, draft, clean, or ready from its labels and draft state, and only clean is green', async ($, on) => {
++test('a row dims a draft number and says reviewing, clean, or nothing from its labels alone', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\no/r#13\no/r#14\no/r#15\n' })
+@@ -300,29 +300,30 @@ test('a row says reviewing, draft, clean, or ready from its labels and draft sta
+   await clock.settle()
+   const ui = await $.ui.mount(PANEL)
+ 
+-  const states = new Map<string, [string, unknown]>()
+-  for (const title of [
+-    'Signed-off change',
+-    'Change waiting for review',
+-    'Change a review is reading',
+-    'Signed-off change held for a suggestion',
+-  ]) {
+-    const row = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+-    const at = row.indexOf(title)
+-    const word = row
+-      .slice(0, at)
+-      .reverse()
+-      .find(text => ['reviewing', 'draft', 'clean', 'ready'].includes(text))
+-    const found = (await ui.findAll({ type: 'Text', text: word ?? '' })).map(text => text.props.color)
+-    states.set(title, [word ?? '', found[0]])
++  const rows = new Map<string, { word: string; color: unknown; isDim: boolean }>()
++  for (const [number, title] of [
++    [1, 'Signed-off change'],
++    [13, 'Change waiting for review'],
++    [14, 'Change a review is reading'],
++    [15, 'Signed-off change held for a suggestion'],
++  ] as const) {
++    // The word sits right before the title, or before the author column of someone else's.
++    const texts = await ui.findAll({ type: 'Text' })
++    const at = texts.findIndex(found => found.text === title)
++    const word = texts
++      .slice(Math.max(0, at - 2), at)
++      .find(found => ['reviewing', 'clean', 'draft', 'ready'].includes(found.text))
++    const button = await ui.find({ type: 'Button', key: `pr:o/r#${number}` })
++    rows.set(title, { word: word?.text ?? '', color: word?.props.color, isDim: button?.props.dimColor === true })
+   }
+-  expect(Object.fromEntries(states)).toEqual({
+-    'Signed-off change': ['clean', 'success'],
+-    'Change waiting for review': ['ready', 'warning'],
++  expect(Object.fromEntries(rows)).toEqual({
++    'Signed-off change': { word: 'clean', color: 'success', isDim: false },
++    // A ready pull request no review has labeled says nothing of its review.
++    'Change waiting for review': { word: '', color: undefined, isDim: false },
+     // A review in progress shows over a clean label an earlier head left.
+-    'Change a review is reading': ['reviewing', 'warning'],
+-    // A held pull request keeps its clean label, and reads as the draft its author is working on.
+-    'Signed-off change held for a suggestion': ['draft', 'warning'],
++    'Change a review is reading': { word: 'reviewing', color: 'warning', isDim: false },
++    // A held pull request keeps its clean label beside the dim number of a draft.
++    'Signed-off change held for a suggestion': { word: 'clean', color: 'success', isDim: true },
+   })
+   await ui.unmount()
+ })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 10e89fdc..230cbe62 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1208,28 +1208,27 @@ function notesOf(pr: PullRequest): Note[] {
+ }
+ 
+ /**
+- * What a row says of a pull request's review, from its draft state and the
+- * labels a review sets: `reviewing` while a review runs, `draft` while its
+- * author works on it, `clean` once its current head is signed off, and
+- * `ready` while it waits for a review. Only `clean` is green, so a held draft
+- * that keeps its `clean` label reads as a draft.
++ * What a row says of a pull request's review, from the labels a review sets
++ * alone: `reviewing` while a review runs, over a `clean` an earlier head left,
++ * `clean` once a head is signed off, and nothing before a review. The row's
++ * number carries the draft state, so a held draft reads as a dim number
++ * beside its `clean`.
+  */
+-function reviewState(pr: PullRequest): Note & { color: 'warning' | 'success' } {
++function reviewLabel(pr: PullRequest): (Note & { color: 'warning' | 'success' }) | undefined {
+   if (pr.labels.includes('reviewing')) return { text: 'reviewing', color: 'warning' }
+-  if (pr.isDraft) return { text: 'draft', color: 'warning' }
+   if (pr.labels.includes('clean')) return { text: 'clean', color: 'success' }
+-  return { text: 'ready', color: 'warning' }
++  return undefined
+ }
+ 
+ /**
+  * A pull request's color on the line its collapsed rows give way to: red
+- * when a note or its checks hold it back, else its review state's, as its row
+- * draws it, and muted while it loads.
++ * when a note or its checks hold it back, green once a ready pull request is
++ * signed off, yellow otherwise, and muted while it loads.
+  */
+ function statusColor(pr: PullRequest): Note['color'] | 'subtle' {
+   if (pr.isLoading === true) return 'subtle'
+   if (pr.isConflicting || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.checks === 'failing') return 'error'
+-  return reviewState(pr).color
++  return !pr.isDraft && reviewLabel(pr)?.text === 'clean' ? 'success' : 'warning'
+ }
+ 
+ /** How far a thread's line sits inside the line that names its file. */
+@@ -2360,6 +2359,7 @@ export const register: Register = on => {
+       const { pr } = row
+       const key = keyOf(pr)
+       const notes = notesOf(pr)
++      const review = reviewLabel(pr)
+       // A pull request the daemon has no result for yet holds only its
+       // reference, so its line says it is loading in its title's place.
+       const isLoaded = pr.isLoading !== true
+@@ -2377,13 +2377,14 @@ export const register: Register = on => {
+               <Button
+                 key={`pr:${key}`}
+                 plain
++                dimColor={pr.isDraft}
+                 label={label(pr)}
+                 onPress={() => toggle(key, `pr:${key}`, opened === key ? undefined : `discuss:${key}`)}
+               />
+             </Box>
+-            {isLoaded && (
++            {isLoaded && review !== undefined && (
+               <Box flexShrink={0}>
+-                <Text color={reviewState(pr).color}>{reviewState(pr).text}</Text>
++                <Text color={review.color}>{review.text}</Text>
+               </Box>
+             )}
+             {isLoaded && !isOwn(pr, shown.viewer) && (
+@@ -2408,7 +2409,7 @@ export const register: Register = on => {
+             )}
+             {ageColumn(key, pr.updatedAt)}
+           </Box>
+-          {/* The drawer starts where the state does, one column past the label. */}
++          {/* The drawer starts where the review label does, one column past the number. */}
+           {opened === key && drawPrDrawer(row, labelWidth + 1)}
+         </Box>
+       )
