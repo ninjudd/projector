@@ -246,6 +246,11 @@ newest to the pull request itself, so it outranks the other session's on
 this machine. The review moves here once the other review publishes, and
 this session reviews from the next head.
 
+A subscription to the pull request itself announces every later head, draft
+or not, because running this skill asks for the pull request's review now. A
+repository subscription, which `review-repo` adds, waits until a draft is
+marked ready, as `../review-repo/SKILL.md` describes.
+
 Skip the command when `review-repo` started this review. The session's
 subscription to the repository already covers the pull request, and a line
 for the pull request would outlive the user's request to stop reviewing the
@@ -1116,8 +1121,12 @@ re-review can settle the findings and sign off. It fires once per answer,
 and the re-review's own replies carry the verify marker, so they never count
 as one. A head whose newest verdict is clean waits on nothing, whether or not
 the pull request is a draft, so converting it to a draft or marking it ready
-asks for no re-review. A `RESPONDED` that reaches a subagent after a later
-review signed the head off needs nothing: that review already did.
+asks for no re-review. Under a repository subscription a draft hears no
+`RESPONDED` until it is ready, because its author is still working on it; a
+subscription to the pull request itself asks on a draft too, so a draft that
+this skill watches gets its re-review when the author declines a finding. A
+`RESPONDED` that reaches a subagent after a later review signed the head off
+needs nothing: that review already did.
 
 The daemon announces `NEW HEAD` again every `watch.renotify` seconds, 15
 minutes by default, while the head has no verdict by this model from the

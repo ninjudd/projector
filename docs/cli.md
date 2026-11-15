@@ -2600,10 +2600,10 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
 | `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
 | `CONFLICT` | `fix` | A branch that conflicts with its base |
 | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
-| `DRAFT` | `fix`, when no session on this machine reviews the pull request | A head that no review has signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
-| `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed |
-| `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled |
-| `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding |
+| `UNREVIEWED` | `fix`, when no session on this machine reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
+| `NEW PR` | `review` | A pull request the session now owns whose head this model has not reviewed; under a repository subscription, only once the pull request is ready for review |
+| `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review stalled; under a repository subscription, only once the pull request is ready for review |
+| `RESPONDED` | `review` | A head whose newest verdict requests changes, once the author answers on it without pushing: every review thread is resolved, or the author replied on an open finding; under a repository subscription, only on a pull request ready for review |
 | `MOVED` | any | Another session owns the role now |
 | `MERGED`, `CLOSED` | any | The pull request merged or closed |
 | `MISSING` | any | The pull request or repository does not exist, or the operator cannot see it |
@@ -2613,8 +2613,18 @@ where `project review suggestions` lists them: in each account's newest
 verdict on the current head by each model, and in the full review that an
 incremental one builds on, which can be of an earlier head. Any other review
 of an earlier head is history, so it reports nothing. The daemon announces
-each review once. A draft that a session on this machine reviews waits for
-that review without a line of its own.
+each review once. A pull request that a session on this machine reviews
+waits for that review without a line of its own, and a draft waits on its
+author.
+
+A draft means its author is still working on the pull request, so a
+repository subscription announces nothing for one: no `NEW PR`, `NEW HEAD`,
+reminder, or `RESPONDED`. Marking it ready announces what no review has read:
+`NEW PR` for a pull request never announced, `NEW HEAD` from the last head
+known, or at once the `(still open)` reminder for a head announced before it
+became a draft. A subscription to one pull request, as `review-pr` adds,
+announces every head, draft or not, because running `review-pr` asks for its
+review now.
 
 `FINDING`, `VERDICT`, `CONFLICT`, and `NEW HEAD` report work that
 stands until it is done, so the daemon announces each again, with

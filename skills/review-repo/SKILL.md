@@ -89,6 +89,12 @@ one.
   login. A request to a team the operator belongs to does not count. A
   requested pull request is someone else's, so `review-pr` reviews it in the
   cross-author mode.
+- **Drafts wait for ready.** A draft says its author is still working on it,
+  so the daemon announces nothing for one, neither its heads nor a
+  `RESPONDED`, until the author marks it ready for review. Then it announces
+  whatever no review has read. Run `review-pr` on a draft when the user asks
+  for its review now: that subscribes the session to the pull request itself,
+  which announces every head, draft or not.
 - **Pull requests you keep out.** To keep one pull request out when the user
   asks, run
   `project watch drop <owner>/<repo>#<number> --role review --model <model-id>`,

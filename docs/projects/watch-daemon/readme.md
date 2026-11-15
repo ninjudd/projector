@@ -396,7 +396,7 @@ what to do, after ` — `. A session that loaded no loop skill can act on it.
 | `VERDICT` | `fix` | A real `CHANGES_REQUESTED`, including one whose findings are only in its body | The same |
 | `CONFLICT` | `fix` | A branch that conflicts with its base | The same |
 | `REVIEW` | `fix` | A review body with no inline thread, with the count of suggestions it lists | The same |
-| `DRAFT` | `fix`, when the session does not also own `review` of it | No clean review has signed off the head, and no live start comment from the operator or another account whose review would count shows a review of the head under way on any machine. When no live session on this machine owns `review` of the pull request, the line says so. | Waits, or tells the user that no session on this machine reviews the pull request |
+| `UNREVIEWED` | `fix`, when the session does not also own `review` of it | The pull request is ready for review, its head is not signed off, no live session on this machine owns `review` of it, and no live start comment from the operator or another account whose review would count shows a review of the head under way on any machine | Tells the user that no session on this machine reviews the pull request |
 | `NEW PR` | `review` | A pull request this session now owns, with a head this model has not reviewed | Runs `review-pr` in `review-<n>`, passing the session's id as `--loop` |
 | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review in this session stalled (§ 2.5) | The same. After a stall, it first stops the stalled subagent, which shares the session's `--loop` and so would pass the fence. |
 | `RESPONDED` | `review` | The author answered the findings of a head whose newest verdict requests changes, without pushing | Runs `review-pr` with `--rereview` |
@@ -413,7 +413,7 @@ NEW HEAD acme/app#14 9f3c2a1, its last review stalled — stop subagent review-1
 MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagent review-14 and run no project review finish
 ```
 
-`FINDING`, `VERDICT`, `CONFLICT`, `DRAFT`, and `NEW HEAD` report work that
+`FINDING`, `VERDICT`, `CONFLICT`, `UNREVIEWED`, and `NEW HEAD` report work that
 stands until it is done, and the daemon announces each again every
 `watch.renotify` seconds while it stands. A `NEW HEAD` stands while the head
 has no verdict by the owner's model from its reviewer and no review of it in

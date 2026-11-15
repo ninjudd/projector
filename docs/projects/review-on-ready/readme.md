@@ -517,3 +517,23 @@ ready, and `init`'s setup of the required check.
 - **The daemon's query reads `labels`,** because the panel builds a row from
   the daemon's cache as well as from its own query. It is one more field in a
   query the daemon already makes, not a new request.
+
+### 9.2 The daemon's wait for ready
+
+- **A draft keeps its record while it waits.** Under a repository
+  subscription the daemon still records a draft's head as known when this
+  model reviewed it, and announces nothing. Marking it ready then announces
+  `NEW PR` for a pull request never announced, `NEW HEAD` from the last head
+  known, or, for a head announced before it became a draft and never
+  reviewed, the `(still open)` reminder at once rather than after
+  `watch.renotify`.
+- **The daemon decides sign-off with `review.sign_off`.** It passes the review
+  nodes its query returns, in the shape `review.verdicts` gives, and counts
+  them as `project review status` does: the reviewer's own verdicts, whatever
+  their association, and every account the repository lets in. So a verdict
+  the reviewer's own account posts counts toward `RESPONDED` even where
+  GitHub gives that account no association, as it already counted for
+  `publish`.
+- **`UNREVIEWED` keeps `DRAFT`'s other rules.** It fires once per head, never
+  again on the reminder, and a live start comment from an account whose
+  review would count holds it back, as it held `DRAFT` back.
