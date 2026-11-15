@@ -6,10 +6,11 @@ priority: now
 # Let agents register and message each other
 
 A Claude Code or Codex session registers under a name, a summary of what it
-is doing, or both. Other sessions signed in as the same GitHub user can then
-find it and send it a message that wakes it, whichever host it runs on. That
-works on the same machine anywhere. It also works across machines when you
-turn on `agent.relay` and the session works in a private repository.
+is doing, or both. Other sessions of yours can then find it and send it a
+message that wakes it, whichever host it runs on. That works on the same
+machine anywhere. Once you give Projector a key pair in `~/.projector.toml`,
+it also works across machines, in public and private repositories alike,
+because the relay encrypts and authenticates every record.
 
 ## 1. Problem
 
@@ -36,7 +37,9 @@ missing:
   you. Both hosts deliver an event as a user prompt. So without that mark,
   a peer's request would carry your authority.
 - **Reach.** The state root is local, so nothing crosses to another
-  machine.
+  machine. And the only shared place two machines already have, the
+  repository they both push to, is readable by every collaborator, and by
+  everyone when it is public.
 
 ## 2. Solution
 
@@ -45,30 +48,38 @@ session's name and summary, and the GitHub login, host, model, machine, and
 checkout it runs in, in `sessions/<id>/agent.json`. You can give a name, a
 summary, or both, and you update them as the work changes. Registering is
 also how a session agrees to receive messages. `project agent list` shows
-the live registered sessions signed in as the same login. `project agent
-send <to> <text>` stores the message for the recipient. If the recipient is
-on this machine, `send` also appends one `PEER MESSAGE` line through the
-existing `append_events`, and the mod or the Codex adapter delivers that
-line as it delivers a watch event. The receiving agent runs `project agent
-read`. Its output says the message comes from another agent and carries
-none of the user's authority. The recipient answers with `project agent
-reply <id> <text>`. Each sender may send at most `agent.message_limit`
-messages an hour to any one recipient, which keeps two agents from
-answering each other forever.
+your live registered sessions. `project agent send <to> <text>` stores the
+message for the recipient. If the recipient is on this machine, `send` also
+appends one `PEER MESSAGE` line through the existing `append_events`, and
+the mod or the Codex adapter delivers that line as it delivers a watch
+event. The receiving agent runs `project agent read`. Its output says the
+message comes from another agent and carries none of the user's authority.
+The recipient answers with `project agent reply <id> <text>`. Each sender
+may send at most `agent.message_limit` messages an hour to any one
+recipient, which keeps two agents from answering each other forever.
 
-Messages between machines are off until you turn them on with
-`project config set agent.relay true`. Once that setting is on for a
-session's checkout and the session works in a repository that `gh` reports
-`PRIVATE`, the relay carries the same records between machines through
-hidden refs in that repository, `refs/projector/agents/<login>/…` and
-`refs/projector/inbox/<login>/…`, as `refs/projector/summaries` carries
-summaries. Each machine's daemon publishes its live agents, polls for its
-mail with one `git ls-remote` per pass, delivers what it finds locally, and
-deletes each delivered message's ref. When an agent stops, the daemon
-deletes that agent's refs, and a one-hour lease covers a machine that stops
-without cleaning up. A public repository never gets these refs: its agents
-reach only agents on the same machine. The commands and records are the
-same on one machine or many, and no host integration changes.
+Messages between machines start when you run `project agent key init`. It
+writes an X25519 private key as `agent.key` in `~/.projector.toml`, and you
+copy that one line to each of your other machines. On a machine that holds
+the key, the relay carries the same records between machines through hidden
+refs in the repository the session works in, `refs/projector/agents/…` and
+`refs/projector/inbox/…`, as `refs/projector/summaries` carries summaries.
+Every record is sealed before it is pushed: encrypted with ChaCha20 and
+authenticated with HMAC-SHA256, under a key agreed with X25519 between the
+sender's key pair and the recipient's public key. Ref names carry only a
+hash of the recipient's public key and random IDs, so neither the content
+nor your login appears in the repository. By default a daemon accepts only
+records sealed by your own key, so only your machines can read your agents'
+records or write them. Commands never push. `send` and `register` queue
+their refs in a local outbox and return at once, and the daemon pushes each
+repository's queued messages, renewals, and deletions in one push per pass,
+so a slow pre-push hook never holds up an agent. A daemon polls for its
+mail with one `git fetch` per pass, delivers what it opens locally, and
+deletes each delivered message's ref. When an agent stops, the daemon deletes that agent's refs, and a
+one-hour lease covers a machine that stops without cleaning up. The
+commands and records are the same on one machine or many, and no host
+integration changes. A key pair, unlike a shared secret, lets a later
+project accept messages from other people's agents (§ 6).
 
 ### 2.1 On one machine
 
@@ -91,6 +102,8 @@ same on one machine or many, and no host integration changes.
    - The working directory, the `origin` repository slug, and the current
      branch. A directory that is not a Git checkout leaves the last two
      out.
+   - A `relay_id` of 16 random hex digits, which names the session's refs
+     in place of its session ID.
 2. **Keep names unique.** A name is 1 to 32 characters of lowercase
    letters, digits, and hyphens, starting with a letter or digit, and
    names compare without regard to case. Names are unique within a login.
@@ -108,10 +121,9 @@ same on one machine or many, and no host integration changes.
    and model, the machine, the repository and branch, the summary, how
    long ago the record changed, and `(you)` beside the caller. When the
    relay does not run for the caller, the header says `local only` and
-   why: `agent.relay` is off, with the command that turns it on, or the
-   repository is not private.
-   `--all` adds lapsed sessions, marked `lapsed`, and `--json` prints the
-   records.
+   why: no `agent.key` is set, with the command that makes one, or the
+   checkout has no `origin`. `--all` adds lapsed sessions, marked
+   `lapsed`, and `--json` prints the records.
 4. **Send.** `project agent send <to> <text>` resolves `<to>` to a live
    registered session of the same login, by name first and then by full
    session ID. A `<text>` of `-` reads standard input. The command refuses
@@ -120,7 +132,7 @@ same on one machine or many, and no host integration changes.
    - The recipient is the sender, is not registered, is not live, or is
      signed in as another login.
    - The recipient is on another machine, and the sender does not work in
-     the same private repository (§ 2.2).
+     the same repository with the relay running (§ 2.2).
    - The text is empty or longer than 16 KiB.
    - The sender has already sent `agent.message_limit` messages to this
      recipient in the past hour, as its `sent.json` records. The error
@@ -166,67 +178,102 @@ same on one machine or many, and no host integration changes.
 
 ### 2.2 Across machines
 
-The relay runs for a session only when both of these hold:
-
-- **`agent.relay` is `true`.** The setting is read with `config.load` from
-  the session's `cwd`. So `~/.projector.toml` turns it on for every
-  checkout, and a checkout's own `.projector.toml` can turn it on or off
-  for that checkout alone. It defaults to `false`.
-- **The repository is private.** `gh repo view <repo> --json visibility`
-  must report `PRIVATE`. Any other answer, `INTERNAL` included, or a
-  failed check, counts as public.
-
-Every git command below runs
-in a registered session's `cwd` against its `origin`, with the
-credentials that checkout already pushes with, and pushes without
+The relay runs for a session when its machine holds `agent.key` and its
+checkout has an `origin` it can push to. Repository visibility does not
+matter to the relay, because nothing readable leaves the machine. It still
+matters to what agents write: in a public repository, the skill tells an
+agent to send nothing private (§ 2.4). Every git command below runs in a
+registered session's `cwd` against its `origin`, with the credentials that
+checkout already pushes with. Only the daemon pushes, and it pushes without
 `--no-verify`, as `summary.publish` does.
 
-1. **Gate every push.** Each command or daemon pass that is about to push
-   to the relay reads `agent.relay` and checks visibility first. When the
-   setting is off, it skips the push and records `relay: off`. When the
-   check does not report `PRIVATE`, it records `relay: not private`. On
-   each pass, the daemon also finds sessions whose setting has turned off.
-   On each full pass, every `watch.full_every` seconds, it finds
-   repositories that are no longer private. Either way, it deletes this
-   machine's refs there and stops relaying.
-2. **Publish presence.** When `register` changes a record in a private
-   repository, it pushes `refs/projector/agents/<login>/<session>`. The ref
-   points to a commit whose tree holds the session's `agent.json` and an
-   `expires_at` one hour ahead. The daemon renews the lease every 30
-   minutes while the session is live. The commit has no parent, so each
-   renewal moves the ref with `--force-with-lease=<ref>:<old>`. A failed
-   push leaves the local registration in place, and the daemon retries it
-   on its next pass. `list` shows that the record is not yet published.
-3. **Poll.** On each pass, for each private repository with a live
-   registered session on this machine whose setting is on, the daemon
-   runs one
-   `git fetch --prune origin` for the refspecs
-   `+refs/projector/agents/<login>/*` and
-   `+refs/projector/inbox/<login>/*`, into the tracking refs that
-   `summary.tracking_ref` names. Git transfers only commits it lacks. The
-   daemon then writes `<root>/relay/<owner>/<repo>.json` with each
-   unexpired agent that is on another machine. `list`, `send`, and name
-   checks read that cache.
-4. **Send to another machine.** `send` writes `message.json` with
-   `git hash-object -w`, builds a tree and a parentless commit with
-   `git mktree` and `git commit-tree`, and pushes it to
-   `refs/projector/inbox/<login>/<recipient>/<id>`. Each message has its
-   own ref, so pushes never race and never force. The command prints
-   `delivery: relay`, and its sender's `sent.json` records the message as
-   a local send does.
-5. **Deliver from another machine.** When a pass finds an inbox ref for a
-   session that is live on this machine, the daemon writes the message to
-   that session's `messages/<id>.json` and appends its `PEER MESSAGE` line,
-   as § 2.1 step 4 does. Then it deletes the ref with
-   `git push origin :<ref>`. An ID already in `messages/` is never
-   appended twice, so a deletion that fails and is retried on the next
-   pass delivers nothing new.
-6. **Clean up.** The daemon deletes an agent's presence ref and the inbox
-   refs addressed to it once that local session lapses or a Codex
-   `SessionEnd` disconnects it. On each full pass, any daemon of the same
-   login also deletes presence refs whose lease expired, and inbox refs
-   addressed to an expired agent or older than 7 days. That covers a
-   machine that crashes or never returns.
+1. **Make the key.** `project agent key init` creates an X25519 private
+   key from `secrets.token_bytes(32)` and writes it to the user layer,
+   `~/.projector.toml`, as `agent.key = "x25519:<base64>"`. It narrows the
+   file to mode `0600` on POSIX and prints the line to copy to your other
+   machines and the key's ID, the first 16 hex digits of the SHA-256 of
+   the public key. `project agent key show` prints the public key and its
+   ID. Projector reads `agent.key` only from the user layer: a value in
+   any checkout's `.projector.toml` is ignored with a warning, so a
+   repository cannot plant a key it knows. On POSIX, Projector refuses a
+   key in a file that other accounts can read, and the error names the
+   `chmod` that fixes it. On Windows it relies on the profile's ACL.
+2. **Seal every record.** Before pushing an `agent.json` or a message, the
+   relay seals it to the recipient's public key `R`, which is your own
+   public key by default:
+   1. Make an ephemeral X25519 key pair `e`.
+   2. Compute `X25519(e, R)` and `X25519(sender key, R)`, and derive 64
+      bytes from them with HKDF-SHA256. The salt is `e`'s public key, and
+      the info is `projector-agent v1`, the sender's public key, and `R`.
+      The first 32 bytes are the cipher key and the rest the MAC key.
+   3. Encrypt the record's JSON with ChaCha20 under the cipher key and an
+      all-zero nonce, which is safe because every key is used once.
+   4. Compute HMAC-SHA256 under the MAC key over the version, both public
+      keys, and the ciphertext.
+
+   The commit's tree holds one `sealed.json`: `v: 1`, the sender's public
+   key, `e`'s public key, the ciphertext, and the tag, each in base64.
+3. **Queue every ref change.** No command pushes. A command or pass that
+   changes a relay ref writes the commit locally and appends the change to
+   the repository's outbox, `<root>/outbox/<owner>/<repo>.json`, under its
+   lock: the ref, the new commit or a deletion, and for a moved ref the
+   commit it expects to replace. The daemon checks the outbox each second,
+   as it checks session folders. When an outbox holds changes, it pushes
+   them all in one `git push --porcelain origin` with one refspec per
+   change and a `--force-with-lease=<ref>:<old>` for each moved ref. It
+   reads each ref's result from the porcelain output, removes the changes
+   that landed, and keeps the rest for the next pass, with the error in
+   `watch status`. A slow pre-push hook therefore delays only the daemon,
+   and runs once per repository per pass however many changes are queued.
+4. **Publish presence.** When `register` changes a record, it queues
+   `refs/projector/agents/<key-id>/<relay-id>` to a commit holding the
+   sealed `agent.json` with an `expires_at` one hour ahead. The daemon
+   queues a renewal every 30 minutes while the session is live. The commit
+   has no parent, so each renewal moves the ref under a lease. `list` shows
+   that a record is not yet published while its change waits in the
+   outbox.
+5. **Poll.** On each pass, for each repository with a live registered
+   session on this machine, the daemon runs one `git fetch --prune origin`
+   for the refspecs `+refs/projector/agents/<key-id>/*` and
+   `+refs/projector/inbox/<key-id>/*`, into the tracking refs that
+   `summary.tracking_ref` names. Git transfers only commits it lacks.
+6. **Open and check.** For each new commit, the daemon checks the tag with
+   `hmac.compare_digest` before it decrypts anything, then checks the
+   contents:
+   - The sender's public key is your own. Accepting other keys is § 6's
+     work.
+   - A presence record's `relay_id` matches its ref name. A message's `to`
+     names the `relay_id` in its ref name, and its `sent_at` is less than
+     7 days old.
+
+   A record that fails any check is not delivered: the daemon queues its
+   ref's deletion and counts it under `relay: rejected` in `watch status`,
+   with no content. Valid presence from another machine goes into
+   `<root>/relay/<owner>/<repo>.json`, which `list`, `send`, and name
+   checks read. On each full pass, the daemon also records the
+   repository's visibility there from `gh repo view --json visibility`.
+7. **Send to another machine.** `send` seals the message, writes the tree
+   and a parentless commit with `git hash-object -w`, `git mktree`, and
+   `git commit-tree`, and queues it for
+   `refs/projector/inbox/<key-id>/<recipient-relay-id>/<id>`. Each message
+   has its own ref, so its push never races and never forces. The command
+   returns without waiting for the push and prints `delivery: relay
+   (queued)`. The sender's `sent.json` records the message as a local send
+   does. When the cache records the repository as anything but `PRIVATE`,
+   the command also prints `public repository: send nothing private`.
+8. **Deliver from another machine.** For a valid message to a session that
+   is live on this machine, the daemon writes the message to that
+   session's `messages/<id>.json` and appends its `PEER MESSAGE` line, as
+   § 2.1 step 4 does. Then it queues the ref's deletion. An ID already in
+   `messages/` is never appended twice, so a deletion that fails and is
+   retried, or a replayed record, delivers nothing new.
+9. **Clean up.** The daemon queues the deletion of an agent's presence ref
+   and the inbox refs addressed to it once that local session lapses, a
+   Codex `SessionEnd` disconnects it, or its machine no longer holds
+   `agent.key`. On each full pass, every `watch.full_every` seconds, any
+   daemon that holds the key also queues deletions of presence refs whose
+   lease expired, and of inbox refs addressed to an expired agent or older
+   than 7 days. That covers a machine that crashes or never returns.
 
 Agents on two machines reach each other only through a repository both
 work in. Agents in different repositories reach each other only on one
@@ -241,42 +288,47 @@ removes the session's files with it.
 
 | Path | Fields |
 | --- | --- |
-| `sessions/<id>/agent.json` | `schema_version: 1`, `login`, `name` (optional), `summary` (optional, one line of at most 120 characters, checked with `inbox.is_one_line`), `host` (`claude`, `codex`, or `other`), `model` (optional), `machine`, `machine_name`, `cwd`, `repo` (optional, `owner/repo`), `branch` (optional), `registered_at`, `updated_at`, and `relay` (`published`, `pending`, `off`, `not private`, or `none`). |
-| `sessions/<to>/messages/<id>.json` | `schema_version: 1`, `id` (`m-` and 8 hex digits from a UUID4), `from` (session ID), `from_name`, `from_host`, `from_model`, `from_machine`, `login`, `to`, `text`, `reply_to` (optional), `thread` (the ID of the first message in the exchange), `sent_at`, `read_at` (optional). |
+| `sessions/<id>/agent.json` | `schema_version: 1`, `login`, `name` (optional), `summary` (optional, one line of at most 120 characters, checked with `inbox.is_one_line`), `host` (`claude`, `codex`, or `other`), `model` (optional), `machine`, `machine_name`, `cwd`, `repo` (optional, `owner/repo`), `branch` (optional), `relay_id`, `registered_at`, `updated_at`, and `relay` (`published`, `pending`, `off`, or `none`). |
+| `sessions/<to>/messages/<id>.json` | `schema_version: 1`, `id` (`m-` and 8 hex digits from a UUID4), `from` (session ID), `from_name`, `from_host`, `from_model`, `from_machine`, `login`, `to`, `text`, `reply_to` (optional), `thread` (the ID of the first message in the exchange), `sent_at`, `read_at` (optional). A relayed message's `to` is the recipient's `relay_id`. |
 | `sessions/<from>/sent.json` | `schema_version: 1` and `items`, each `{id, to, sent_at}`. Entries older than an hour are dropped on each write. |
 | `machine.json` | `schema_version: 1` and `machine`, a UUID4. |
-| `relay/<owner>/<repo>.json` | `schema_version: 1`, `polled_at`, `visibility`, and `agents`, each another machine's `agent.json` with its `expires_at`. |
+| `relay/<owner>/<repo>.json` | `schema_version: 1`, `polled_at`, `visibility` (as `gh` last reported it, or `unknown`), `rejected` (a count), and `agents`, each another machine's opened `agent.json` with its `expires_at`. |
+| `outbox/<owner>/<repo>.json` | `schema_version: 1`, the `cwd` to push from, and `items`, each `{ref, new, old, queued_at, last_error}`. `new` is a commit or `null` for a deletion, and `old` is the commit a moved ref's lease expects. Written under its lock; the daemon removes each item once its ref lands. |
 | `agents/` | Holds only the lock that serializes name claims. |
-| `agent.message_limit` | A setting of type `int`, default 12, minimum 1. |
-| `agent.relay` | A setting of type `bool`, default `false`. It turns on messages between machines for the checkouts it covers. |
+
+The relay adds two settings:
+
+| Setting | Type and meaning |
+| --- | --- |
+| `agent.message_limit` | `int`, default 12, minimum 1. Messages from one sender to one recipient in a rolling hour. |
+| `agent.key` | `str`, `x25519:` and a base64 private key. Read only from the user layer. Its presence turns the relay on. |
 
 In the repository, the relay adds two hidden ref namespaces. They hold no
 branch or tag, so no clone fetches them by default and no pull request
-banner appears.
+banner appears. Each ref points to a parentless commit whose tree holds
+one `sealed.json`.
 
-| Ref | Points to a parentless commit whose tree holds |
+| Ref | Sealed contents |
 | --- | --- |
-| `refs/projector/agents/<login>/<session>` | `agent.json` with `expires_at`. |
-| `refs/projector/inbox/<login>/<session>/<id>` | `message.json`, the message record. |
-
-`<login>` is lowercase. Every ref and record is filtered by the reader's
-own login.
+| `refs/projector/agents/<key-id>/<relay-id>` | `agent.json` with `expires_at`. |
+| `refs/projector/inbox/<key-id>/<relay-id>/<id>` | The message record. |
 
 ### 2.4 Components
 
 | File | Change |
 | --- | --- |
 | New `src/projector/agents.py` | Registration, name validation and uniqueness, listing, message records, `sent.json` and the rate limit, the event line, and the read notice. It reuses `watch.session_folder`, `watch.delivery`, `watch.append_events`, `codex_watch.Event`, `inbox.locked`, `inbox.write_json`, and `review.origin_repo`. |
-| New `src/projector/relay.py` | The visibility gate, presence and message commits, pushes, deletes, the poll and its cache, and cleanup. It reuses `summary.git`, `summary.tracking_ref`, and the daemon's login. |
-| `src/projector/watch.py` | Run the relay's poll, renewal, delivery, and cleanup on each pass, and its visibility checks and lease sweep on each full pass. Report each repository's relay state in `watch status`. |
+| New `src/projector/crypto.py` | X25519 from RFC 7748, ChaCha20 from RFC 8439, HKDF from RFC 5869 over `hmac`, and `seal` and `open` from § 2.2 step 2. Standard library only. |
+| New `src/projector/relay.py` | Presence and message commits, the outbox and its batched push, the poll, the checks in § 2.2 step 6, the cache, and cleanup. It reuses `summary.git`, `summary.tracking_ref`, and the daemon's login. |
+| `src/projector/watch.py` | Run the relay's poll, renewal, delivery, and cleanup on each pass, and its lease sweep on each full pass. Report each repository's relay state and rejected count in `watch status`. |
 | `src/projector/codex_watch.py` | On `SessionEnd`, mark the session so the next pass deletes its relay refs. |
-| `src/projector/cli.py` | Add `project agent register`, `list`, `send`, `reply`, and `read`, with `--session` and `--json` as the watch commands take them. `send` and `reply` run `ensure_daemon`. |
-| `src/projector/config.py` | Add `agent.message_limit` and `agent.relay` to the typed keys, and `agent.message_limit` to the defaults and minimums. |
-| New `skills/message-agent/SKILL.md` | When to register and how to keep the summary current. How to pass the session's model ID, how to find, message, and reply to a peer, how to handle a `PEER MESSAGE` line, and the authority rule from § 2.1 step 6. A peer's request that needs the user goes to the user through the inbox. |
+| `src/projector/cli.py` | Add `project agent register`, `list`, `send`, `reply`, `read`, `key init`, and `key show`, with `--session` and `--json` as the watch commands take them. `send` and `reply` run `ensure_daemon`. |
+| `src/projector/config.py` | Add `agent.message_limit` and `agent.key` to the typed keys, and `agent.message_limit` to the defaults and minimums. Add a set of user-layer-only keys, holding `agent.key`, that the walk never supplies and the permission check guards. |
+| New `skills/message-agent/SKILL.md` | When to register and how to keep the summary current. How to pass the session's model ID, how to find, message, and reply to a peer, how to handle a `PEER MESSAGE` line, and the authority rule from § 2.1 step 6. A peer's request that needs the user goes to the user through the inbox. In a public repository, or whenever `send` prints its public-repository reminder, a message carries nothing private: the agent may name a private repository, but never describes its internals, such as its code, file paths, identifiers, plans, or business details. The skill never runs `key init` unless the user asks for it. |
 | `skills/fix-pr/SKILL.md`, `skills/review-pr/SKILL.md`, `skills/review-repo/SKILL.md` | Where each says how the session routes event lines, state that a `PEER MESSAGE` line stays with the main conversation, never a per-PR worker, and point to `message-agent`. |
 | `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `tests/test_packaging.py` | Publish the new skill on both hosts. |
-| `docs/cli.md` | Document the command group, the records, the refs, the limit, the private-only relay, and what happens without a deliverer. |
-| New `tests/test_agents.py` and `tests/test_relay.py` | The criteria in § 4. |
+| `docs/cli.md` | Document the command group, the records, the refs, the key and how to copy it, the limit, and what happens without a deliverer. |
+| New `tests/test_agents.py`, `tests/test_crypto.py`, and `tests/test_relay.py` | The criteria in § 4. |
 
 ## 3. Why this design
 
@@ -292,30 +344,59 @@ own login.
   recipient can judge it by.
 - **Relay through the working repository's refs.** Every machine that works
   in a repository can already fetch from and push to it, so the relay
-  needs no setup, account, or server. Hidden refs stay out of clones and
-  branch lists, and `refs/projector/summaries` already proves the
-  mechanics. One ref per message means senders never race, and deleting a
-  ref is the receipt.
-- **Make the relay opt-in.** Turning it on pushes refs into a repository
-  that collaborators share, so it starts only when you set
-  `agent.relay`. Reading the setting from the session's checkout lets you
-  turn it on everywhere or for one repository.
-- **Relay only in private repositories.** Deleting a ref does not make
-  GitHub forget its commit. GitHub keeps it viewable by SHA until Support
-  runs garbage collection, which it does only for sensitive data, and
-  there is no API to trigger it. In a public repository every summary and
-  message would be published for good, and anyone could fetch the refs
-  while they exist. Nobody wants a contributor's agent messaging theirs
-  anyway. In a private repository, leftover commits are visible only to
-  collaborators, who can already read the code.
-- **Scope by GitHub login.** Collaborators share a private repository, but
-  each one's agents should talk only to their own by default. The login
-  namespaces the refs and filters every list and send. It is a filter,
-  not authentication: git does not record who pushed a ref, so a
-  collaborator with write access could write under another login. That
-  collaborator could already push code, and the read notice denies any
-  message the user's authority, so the namespace guards against accidents
-  rather than attacks.
+  needs no account or server. Hidden refs stay out of clones and branch
+  lists, and `refs/projector/summaries` already proves the mechanics. One
+  ref per message means senders never race, and deleting a ref is the
+  receipt.
+- **Seal every record.** Anyone with write access can push a ref, and
+  anyone who can read the repository can fetch one: collaborators in a
+  private repository, and everyone in a public one. Deleting a ref also
+  does not make GitHub forget its commit, which stays viewable by SHA
+  until GitHub Support garbage-collects it. Plaintext records would let a
+  collaborator impersonate your agent and steer its work with nothing
+  visible in a pull request, and would publish a public repository's
+  messages for good. Sealing makes the content unreadable without your
+  key, and the tag makes a forged or altered record fail before it is
+  opened. What stays visible is that refs come and go, when, and who
+  pushed them. The ciphertext stays on GitHub, so a leaked key exposes
+  every past record. Rotating the key protects only later ones.
+- **Push from the daemon, in batches.** A plain push runs the
+  repository's pre-push hooks, which in some repositories run the test
+  suite. Pushing from `send` would make every message wait that long, and
+  pushing each change separately would run the hooks once per change.
+  Queuing changes in an outbox lets the agent return at once. The daemon
+  then pays for the hooks and the round trip once per repository per pass,
+  and it notices new work within a second, so the batch adds about a
+  second of latency.
+- **Keep private details out of public repositories by convention too.**
+  Sealing protects the content today, but the ciphertext stays on GitHub
+  permanently, and a leaked key would expose it. So in a public repository
+  the skill keeps a message to what could be public. It may name a private
+  repository, which reveals little, but never describes its internals.
+  `send` prints a reminder there, because the agent may not know the
+  repository's visibility.
+- **Let the key be the switch.** A relay that pushes into a shared
+  repository should start only when you ask. Holding the key is that
+  request, so the relay needs no separate setting. Reading it only from
+  the user layer keeps a committed `.projector.toml` from turning the
+  relay on with a key its author knows.
+- **Use a key pair, not a shared secret.** One X25519 key copied to each of
+  your machines costs no more than a shared secret, and a later project
+  can accept other people's agents by their public keys without anyone
+  sharing a secret. The static term in the key agreement authenticates
+  the sender to the recipient, and the ephemeral term gives every record
+  its own key.
+- **Implement the primitives in the standard library.** The core takes no
+  runtime dependencies, and Python's standard library has no cipher. The
+  plan implements published standards, checked against their RFC test
+  vectors, rather than inventing a scheme. The pure-Python code is fast
+  enough (§ 5). It is not constant-time, which matters little here,
+  because only the local daemon and CLI run it, never a service an
+  attacker can time.
+- **Scope by key.** By default a daemon opens only records that your own
+  key sealed, so only your machines can read or write your agents'
+  records. That enforces the same-login rule rather than filtering by a
+  login anyone could write.
 - **Send a reference, not the text.** Event lines are single lines, and a
   Codex batch holds at most 8 KiB. Storing the text and sending its ID
   allows multi-line messages up to 16 KiB. It also makes the receiver run
@@ -325,6 +406,13 @@ own login.
   agent starts a new thread. A per-pair hourly limit bounds the cost of a
   runaway exchange however its threads are shaped. Counting in the
   sender's `sent.json` works the same for local and relayed sends.
+- **Rejected: relaying only in private repositories.** It avoids
+  cryptography, but it leaves impersonation open to every collaborator and
+  public repositories without a relay.
+- **Rejected: signing with `ssh-keygen` against keys in a gist.** It
+  authenticates without encrypting, so it still needs private
+  repositories. It also adds an `ssh-keygen` dependency and a gist to
+  manage.
 - **Rejected: a separate relay repository.** It would keep leftover
   commits out of the working repository, but it needs you to create and
   name one on every machine.
@@ -340,8 +428,8 @@ own login.
 
 Tests use temporary state roots, controlled clocks, and the fake `codex`
 and `gh` executables the watch tests use. Relay tests use a temporary bare
-repository as `origin`, with two state roots and two checkouts standing in
-for two machines, and a fake `gh` that reports each visibility.
+repository as `origin`, with two state roots, two checkouts, and two user
+config files standing in for two machines.
 
 | Exercise | Expected result, and the bug it catches |
 | --- | --- |
@@ -356,20 +444,26 @@ for two machines, and a fake `gh` that reports each visibility.
 | Send from an unregistered session, to itself, to an unknown name, to a lapsed session, and with 16 KiB plus one byte. | Each is refused with its own message and writes nothing in any folder or ref. Catches a partial write before validation. |
 | B runs `read` on a message in A's folder. | The command is refused. Catches one session reading another's mail. |
 | Interrupt `send` after writing the record but before appending the line. | The record stays, and no line names a missing message. Catches a line written before its record. |
-| In a private repository, register A on machine 1 and B on machine 2 with `agent.relay` unset on both. Run one pass on each machine. | No ref appears on `origin`, and `list` shows `local only` with the command that turns the relay on. Catches a relay that runs before you opt in. |
-| Turn `agent.relay` on for both machines. Run one pass on each, then send from A to B and pass again on machine 2. | Each machine lists the other's agent with its machine name. B receives one `PEER MESSAGE` line, and the inbox ref is gone from `origin`. Catches presence that never publishes and a receipt that never deletes. |
+| Run `tests/test_crypto.py`. | X25519 matches RFC 7748 § 6.1, ChaCha20 matches RFC 8439 § 2.4.2, and HKDF matches RFC 5869's first test case. A record sealed and opened round-trips. Changing one byte of the ciphertext, the tag, either public key, or the MAC key makes `open` fail. Catches a wrong primitive or a tag that covers too little. |
+| Register A on machine 1 and B on machine 2, with no `agent.key` on either. Run one pass on each machine. | No ref appears on `origin`. `list` shows `local only` with `project agent key init`. Catches a relay that runs before you opt in. |
+| Put the same `agent.key` on both machines. Run one pass on each, then send from A to B and pass again on machine 2. | Each machine lists the other's agent with its machine name. B receives one `PEER MESSAGE` line, and the inbox ref is gone from `origin`. Catches presence that never publishes and a receipt that never deletes. |
+| After that exchange, read every object in `origin` with `git cat-file --batch-all-objects --batch`. | None contains A's or B's name, summary, session ID, or login, or the message text. Catches plaintext reaching the repository. |
+| Push four records under machine 2's key ID: one sealed with another key, one with a flipped ciphertext byte, one unsealed, and a valid message copied to another agent's ref. Pass on machine 2. | None is delivered. All four refs are deleted, and `watch status` counts four rejected. Catches forgery, tampering, a missing seal, and a redirected message. |
+| Push a delivered message's record again, and one whose `sent_at` is 8 days old. | Neither is delivered. Catches replay. |
+| Set `agent.key` in a checkout's `.projector.toml` only. Separately, make `~/.projector.toml` readable by its group. | The first is ignored with a warning, and the relay stays off. The second is refused with the `chmod` that fixes it. Catches a repository planting a key, and a key other accounts can read. |
+| Give machine 1's checkout a pre-push hook that sleeps 30 seconds and logs each run. Send three messages from A, then run one pass that also renews A's lease and deletes a delivered ref. | Each `send` returns in under a second and prints `delivery: relay (queued)`. The hook logs one run for the pass, and all five ref changes land. Catches a send that pushes itself, and a pass that pushes once per change. |
+| Make one queued change's lease fail while two others are valid. | The two land and leave the outbox. The failed one stays, with its error in `watch status`, and lands on a later pass once its lease is right. Catches a batch that loses every change when one fails. |
+| Relay through a repository the fake `gh` reports `PUBLIC`, then `PRIVATE`. | `send` prints `public repository: send nothing private` for the first and not the second. Catches a missing reminder. |
 | Make the ref deletion fail once on machine 2, then pass again. | B receives the message exactly once, and the ref is deleted on the second pass. Catches a duplicate from a retried delivery. |
-| Report the repository as `PUBLIC`, as `INTERNAL`, and as a failed `gh` call, then register and send across machines. | No ref appears on `origin`. `list` shows `local only`, and a send to the other machine is refused. Catches a relay that pushes without a private answer. |
-| Switch a relayed repository to `PUBLIC` and run a full pass. Separately, turn `agent.relay` off on machine 1 and run a pass. | In each case, this machine's refs are deleted from `origin`, and nothing more is pushed. Catches a relay that keeps publishing after the repository opens or after you opt out. |
-| Let A lapse on machine 1. Separately, stop machine 1's daemon and advance past the lease, then run a full pass on machine 2. | A's presence and inbox refs are deleted in each case, by machine 1 in the first and machine 2 in the second. Catches refs that outlive their agent. |
+| Let A lapse on machine 1. Separately, stop machine 1's daemon and advance past the lease, then run a full pass on machine 2. Separately, remove `agent.key` from machine 1 and pass. | A's presence and inbox refs are deleted in each case. Catches refs that outlive their agent or the key. |
 | Register the same name on both machines within one poll interval. | `list` shows both with their machines, and `send` to the name is refused as ambiguous. Catches a send that picks one silently. |
 
 Prove that each new regression test fails when the fault it names is
 introduced. Run the repository's validation gate from `AGENTS.md` before
 handover. After merge, check by hand with two real sessions, one in Claude
 Code and one in Codex, both idle: first on one machine, then on two
-machines in a disposable private repository. Each wakes on the other's
-message and replies, no turn starts when no message arrives, and
+machines in a disposable repository. Each wakes on the other's message and
+replies, no turn starts when no message arrives, and
 `git ls-remote origin 'refs/projector/*'` lists no agent refs after both
 sessions end. Confirm too that pushing the refs starts no workflow run.
 
@@ -378,15 +472,24 @@ sessions end. Confirm too that pushing the refs starts no workflow run.
 - **Idle sessions.** A registered session that receives nothing costs no
   model turn. On one machine it costs nothing more, because the daemon's
   scan of session folders already exists.
-- **The relay's poll.** With `agent.relay` off, the relay costs nothing.
-  With it on, each pass makes one `git fetch` per private repository with
-  a live registered session, which transfers only refs
-  and commits this machine lacks. It spends no REST or GraphQL quota.
-  Measure it in the two-machine test: an idle pass transfers no objects.
-- **Visibility checks.** One REST call per relayed repository on each full
-  pass, plus one before each push.
-- **Pushes.** Two lease renewals an hour per agent, one push per relayed
-  message, and one deletion per delivered message.
+- **The relay's poll.** With no `agent.key`, the relay costs nothing.
+  With it, each pass makes one `git fetch` per repository with a live
+  registered session, which transfers only refs and commits this machine
+  lacks. An empty fetch against GitHub measured 0.8 seconds. It spends no
+  REST or GraphQL quota. Measure it in the two-machine test: an idle pass
+  transfers no objects.
+- **Cryptography.** Sealing a record takes three X25519 operations and
+  opening one takes two, at 1.2 ms each in pure Python. ChaCha20 adds
+  22.6 ms for a 16 KiB message, the largest allowed, so the worst case is
+  about 30 ms a message. Presence records are a few hundred bytes. Only
+  new commits are opened.
+- **Pushes.** At most one push per repository per pass, carrying every
+  queued message, lease renewal (two an hour per agent), and deletion. The
+  repository's pre-push hooks run once per push, in the daemon, never in
+  an agent's command. A relayed message waits about a second in the
+  outbox before the daemon sees it.
+- **Visibility.** One REST call per relayed repository on each full pass,
+  for the reminder `send` prints.
 - **Each message.** The recipient's one model turn, which the rate limit
   bounds: by default at most 12 turns an hour per pair, in each direction.
 - **Storage.** Every push leaves a small commit in the repository's object
@@ -395,10 +498,16 @@ sessions end. Confirm too that pushing the refs starts no workflow run.
 
 ## 6. Open questions
 
-- **Agents of other logins.** Deferred. The default and only behavior is
-  the same login. Letting a user add collaborators' logins would also need
-  a way to verify who pushed a ref, such as GitHub's repository activity
-  API, before it means more than a filter.
+- **Agents of other people.** Deferred. The key pair is the groundwork. A
+  later project would publish your public key where only your account can
+  write, such as a gist, and add an allowlist of other people's keys. It
+  would also seal presence to each allowed key and accept records whose
+  sender key is on the list. Until then, a daemon opens only records
+  sealed by its own key.
+- **Rotating the key.** Deferred. Running `key init` again would make a new
+  key, after which messages sealed to the old one can no longer be opened.
+  A rotation command that keeps the old key for opening until its leases
+  expire can follow.
 - **Addressing subagents.** Deferred. Codex hooks report only the parent
   session ID, so a message reaches a conversation, not one of its workers.
   The Claude mod could route to an agent ID, as inbox delivery does, but
@@ -414,8 +523,9 @@ record and command, and the local layer is useful on its own.
 
 1. **Local messages.** § 2.1, its records, `agents.py`, the CLI, the skill,
    and the local criteria in § 4.
-2. **The relay.** § 2.2, `relay.py`, the daemon and Codex hook changes,
-   and the relay criteria in § 4. Run `project done` in this layer.
+2. **The relay.** § 2.2, `crypto.py`, `relay.py`, the key commands and
+   setting, the daemon and Codex hook changes, and the relay criteria in
+   § 4. Run `project done` in this layer.
 
 ## 8. Background
 
@@ -441,3 +551,8 @@ record and command, and the local layer is useful on its own.
   and [REST endpoints](https://docs.github.com/en/rest/actions/variables)
   give the 500-variable and 48 KB limits and require collaborator access.
   Neither says whether fork pull requests see `vars`.
+- Measured on a development machine with Python 3.12: a pure-Python
+  ChaCha20 matched RFC 8439's § 2.4.2 vector and encrypted 16 KiB in
+  22.6 ms, and a pure-Python X25519 matched RFC 7748's § 6.1 vectors at
+  1.2 ms an operation. An empty `git fetch` of a `refs/projector/`
+  namespace from GitHub took 0.81 to 0.84 seconds.
