@@ -213,7 +213,7 @@ browser.
 Publish the summary to the repository's hidden summaries ref, where the
 repository's Projector site reads it, whether that site is its GitHub Pages
 site or `project site serve` on the user's machine. From a checkout whose
-`origin` is the repository, run:
+`origin` is the repository, or with `--checkout` naming one, run:
 
 ```sh
 project summary publish --summary WORKDIR/summary.json
@@ -278,7 +278,15 @@ local preview.
 
 Run `project summary publish --summary WORKDIR/summary.json` alone, as a tool
 call of its own: not after `cd`, and not joined to another command with `&&`,
-`;`, or `|`. Do not check the repository's or the site's visibility first.
+`;`, or `|`. When your shell is not in the checkout, as a subagent's shell
+that returns to its start directory is not, name the checkout with
+`--checkout CHECKOUT` instead of a `cd`:
+
+```sh
+project summary publish --summary WORKDIR/summary.json --checkout CHECKOUT
+```
+
+Do not check the repository's or the site's visibility first.
 `publish` checks hosting itself: it pushes only where the site workflow is on
 the default branch and a Pages site exists, and it keeps the summary in the
 checkout when a private repository's site is public. When the repository's

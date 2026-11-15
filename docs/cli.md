@@ -1067,6 +1067,10 @@ once.
 Pass `--diff` to publish a diff you produced instead of fetching one; it must
 run from the summary's `pr.base` to its `pr.head`, because every later deploy
 serves the stored diff as it is. Pass `--no-dispatch` to skip the workflow.
+Pass `--checkout <path>` to publish from that checkout rather than the
+repository containing the current directory, so an agent whose shell is
+elsewhere runs the publish as one command, with no `cd` before it.
+`--summary` and `--diff` still name files relative to the current directory.
 
 `summary publish` pushes only to a repository that hosts its site, which
 `site status` reports as hosted. Anywhere else nothing on GitHub reads the

@@ -242,18 +242,19 @@ class SummaryPublishTests(unittest.TestCase):
     """The summary publish the skills run is one the generated rules allow, run as a call of its own, and a
     refused one is diagnosed rather than sent back through `project init`."""
 
-    def publish_line(self) -> str:
+    def publish_lines(self) -> list[str]:
         skill = (SKILLS / "summarize-pr" / "SKILL.md").read_text()
         lines = re.findall(r"^project summary publish .*$", skill, re.MULTILINE)
-        self.assertEqual(["project summary publish --summary WORKDIR/summary.json"], lines)
-        return lines[0]
+        self.assertIn("project summary publish --summary WORKDIR/summary.json", lines)
+        return lines
 
-    def test_the_generated_rules_allow_the_publish_line_the_skill_runs(self) -> None:
-        line = self.publish_line()
-
-        self.assertEqual(("allow", "allow"), (claude_decision(line), codex_decision(line)))
-        self.assertTrue(permissions.codex_allows(permissions.CODEX_RULES, shlex.split(line)))
-        self.assertTrue(permissions.codex_allows("\n".join(permissions.CODEX_PREFIX_RULES), shlex.split(line)))
+    def test_the_generated_rules_allow_the_publish_lines_the_skill_runs(self) -> None:
+        for line in self.publish_lines():
+            with self.subTest(line):
+                self.assertEqual(("allow", "allow"), (claude_decision(line), codex_decision(line)))
+                self.assertTrue(permissions.codex_allows(permissions.CODEX_RULES, shlex.split(line)))
+                self.assertTrue(permissions.codex_allows("\n".join(permissions.CODEX_PREFIX_RULES),
+                                                         shlex.split(line)))
         self.assertTrue(permissions.codex_allows(permissions.CODEX_RULES, permissions.PUBLISH))
         for command in ("project review gate 12", "project init", "project site build --out site",
                         "gh api repos/acme/app/pages", "project"):
@@ -262,20 +263,22 @@ class SummaryPublishTests(unittest.TestCase):
                                  permissions.codex_allows(permissions.CODEX_RULES, shlex.split(command)))
 
     @unittest.skipUnless(shutil.which("codex"), "checking the Codex rules needs the codex CLI")
-    def test_codex_itself_allows_the_publish_line_the_skill_runs(self) -> None:
+    def test_codex_itself_allows_the_publish_lines_the_skill_runs(self) -> None:
         home = tempfile.TemporaryDirectory()
         self.addCleanup(home.cleanup)
         rules = Path(home.name) / "projector.rules"
         rules.write_text(permissions.CODEX_RULES)
 
-        result = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules),
-                                 *shlex.split(self.publish_line())],
-                                check=True, capture_output=True, text=True,
-                                env={**os.environ, "CODEX_HOME": home.name})
+        for line in self.publish_lines():
+            with self.subTest(line):
+                result = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules), *shlex.split(line)],
+                                        check=True, capture_output=True, text=True,
+                                        env={**os.environ, "CODEX_HOME": home.name})
 
-        decision = json.loads(result.stdout)
-        self.assertEqual("allow", decision["decision"])
-        self.assertEqual(["project", "summary"], decision["matchedRules"][0]["prefixRuleMatch"]["matchedPrefix"])
+                decision = json.loads(result.stdout)
+                self.assertEqual("allow", decision["decision"])
+                self.assertEqual(["project", "summary"],
+                                 decision["matchedRules"][0]["prefixRuleMatch"]["matchedPrefix"])
 
     def test_the_skill_publishes_alone_with_no_visibility_check_joined_to_it(self) -> None:
         # Both hosts check each command of a chain and take the strictest result, so a visibility check joined

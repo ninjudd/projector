@@ -1032,11 +1032,13 @@ summary a person asks for:
   the reviewer flagged under the code it concerns. Drop a `flag` check whose
   finding thread has since been resolved.
 
-Publish it with `project summary publish`, after the review. It then
-links the summary from the pull request, so a reader on GitHub finds it:
-one comment per pull request, which a later head's summary reposts at the
-end, deleting the old one, and one line at the very bottom of the
-description. Do not post the link yourself.
+Publish it with `project summary publish`, after the review. Where you
+set the review up with `--checkout`, pass the publish the same
+`--checkout`, never a `cd`. It then links the summary from the pull
+request, so a reader on GitHub finds it: one comment per pull request,
+which a later head's summary reposts at the end, deleting the old one, and
+one line at the very bottom of the description. Do not post the link
+yourself.
 
 The description edit is intended, on every pull request. `publish` appends
 its link block after everything else in the description, below a trailer

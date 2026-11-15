@@ -882,6 +882,41 @@ class PublishTests(unittest.TestCase):
         self.assertEqual([], self.dispatches)
         self.assertEqual(before, run(self.repo, "git", "rev-parse", "HEAD"))
 
+    def test_checkout_publishes_from_that_checkout_without_a_cd(self) -> None:
+        # The caller runs in another repository, whose origin publish would refuse.
+        elsewhere = self.remote.with_name("elsewhere")
+        run(self.remote.parent, "git", "init", "--quiet", str(elsewhere))
+        run(elsewhere, "git", "remote", "add", "origin", "git@github.com:someone/else.git")
+        data = make_summary(GOOD_GROUPS)
+        data["pr"]["head"] = "a" * 40
+        (elsewhere / "summary.json").write_text(json.dumps(data))
+        (elsewhere / "pr.diff").write_text(DIFF)
+        cwd = os.getcwd()
+        os.chdir(elsewhere)
+        out = io.StringIO()
+        try:
+            with redirect_stdout(out):
+                code = cli.main(["summary", "publish", "--summary", "summary.json", "--diff", "pr.diff", "--local",
+                                 "--checkout", str(self.repo)])
+            self.assertEqual(elsewhere.resolve(), Path.cwd().resolve(), "the caller's directory is kept")
+        finally:
+            os.chdir(cwd)
+
+        self.assertEqual(0, code)
+        local = run(self.repo, "git", "ls-tree", "-r", "--name-only", "refs/projector/summaries").splitlines()
+        self.assertIn(f"summaries/7/{'a' * 40}/summary.json", local, "relative paths read from the caller's directory")
+        self.assertEqual("", run(elsewhere, "git", "for-each-ref", "refs/projector"), "nothing lands where it ran")
+
+    def test_a_checkout_that_is_not_a_directory_is_refused(self) -> None:
+        self.summary_path.write_text(json.dumps(make_summary(GOOD_GROUPS)))
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = cli.main(["summary", "publish", "--summary", str(self.summary_path), "--local",
+                             "--checkout", str(self.repo / "missing")])
+
+        self.assertNotEqual(0, code)
+        self.assertIn("is not a directory", err.getvalue())
+
     def test_no_dispatch_pushes_without_starting_the_workflow(self) -> None:
         self.publish("a" * 40, send_dispatch=False)
         self.assertEqual([], self.dispatches)

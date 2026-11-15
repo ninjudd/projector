@@ -572,6 +572,10 @@ def parser() -> argparse.ArgumentParser:
     )
     summary_publish.add_argument("--summary", required=True)
     summary_publish.add_argument("--remote", default="origin")
+    summary_publish.add_argument(
+        "--checkout", type=Path,
+        help="the checkout to publish from, in place of a `cd` (default: the repository containing this directory)",
+    )
     summary_publish.add_argument("--diff", help="publish the diff from this file instead of fetching it from GitHub")
     summary_publish.add_argument(
         "--no-dispatch", action="store_true", help="push the summary without starting the workflow"
@@ -1929,17 +1933,24 @@ def run_summary(arguments: argparse.Namespace) -> int:
     elif arguments.summary_command == "refresh":
         summary.refresh(arguments.summary, arguments.diff)
     else:
-        pr = summary.summary_pr(json.loads(Path(arguments.summary).read_text(encoding="utf-8")))
+        # Paths are read from where the command runs, and git runs in the checkout.
+        summary_path = Path(arguments.summary).resolve()
+        diff_path = Path(arguments.diff).resolve() if arguments.diff else None
+        checkout = arguments.checkout or Path.cwd()
+        if not checkout.is_dir():
+            raise UsageError(f"--checkout {checkout} is not a directory")
+        pr = summary.summary_pr(json.loads(summary_path.read_text(encoding="utf-8")))
         site, reason = (None, "--local asked for a local preview") if arguments.local \
             else summary.push_decision(pr["repo"])
-        summary.publish(
-            Path(arguments.summary),
-            arguments.remote,
-            send_dispatch=not arguments.no_dispatch,
-            diff_path=Path(arguments.diff) if arguments.diff else None,
-            push=site is not None,
-            reason=reason,
-        )
+        with contextlib.chdir(checkout):
+            summary.publish(
+                summary_path,
+                arguments.remote,
+                send_dispatch=not arguments.no_dispatch,
+                diff_path=diff_path,
+                push=site is not None,
+                reason=reason,
+            )
         # A summary kept in this checkout has no page on GitHub to link.
         if site is not None:
             print(summary.comment_summary(pr["repo"], pr["number"], pr["head"], site=site))
