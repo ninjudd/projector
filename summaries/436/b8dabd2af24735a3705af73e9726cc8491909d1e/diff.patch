@@ -1,0 +1,289 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index d1746c26..4b68193c 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -443,8 +443,13 @@ things in order:
+    access, and a private repository needs a paid plan for rulesets. When
+    GitHub refuses, `init` says why, exits non-zero, and does nothing else.
+ 2. Writes `.github/workflows/projector-clean.yml`, which takes the `clean`
+-   label off a pull request when a commit is pushed to it. Commit it through a
+-   pull request; it runs once it reaches the default branch. With
++   label off a pull request when a commit is pushed to it. Its job reads the
++   pull request when it runs, not as it was at the push, and keeps the label
++   when the current head already has a `success` `projector/review` status.
++   So a job that runs late, or a re-run of an old job, never takes `clean` off
++   a head that a review signed off after the push. Commit the workflow through
++   a pull request; it runs once it reaches the default branch. `init` replaces
++   a workflow that an earlier release wrote and keeps one you edited. With
+    `review.labels` set to `false`, `init` writes no workflow, because the
+    workflow would take a `clean` label of the repository's own off.
+ 3. Posts the `success` status on the current head of each open pull request
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 7fb5fcd4..a886b7c4 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -2360,17 +2360,23 @@ def record_required_check(root: Path, value: bool) -> None:
+ 
+ 
+ def write_clean_workflow(root: Path) -> FileAction:
+-    """Write the workflow that takes `clean` off a pushed pull request, keeping one edited by hand."""
++    """Write the workflow that takes `clean` off a pushed pull request, replacing one an earlier release wrote
++    but keeping one edited by hand."""
+     path = root / review.CLEAN_WORKFLOW_PATH
+     text = review.clean_workflow_text()
++    action = "created"
+     if path.is_file():
+-        if path.read_text(encoding="utf-8") == text:
++        current = path.read_text(encoding="utf-8")
++        if current == text:
+             return FileAction(review.CLEAN_WORKFLOW_PATH, "unchanged")
+-        return FileAction(review.CLEAN_WORKFLOW_PATH, "kept",
+-                          f"{review.CLEAN_WORKFLOW_PATH} has changes Projector did not write, so it was left alone")
++        if not review.is_earlier_clean_workflow(current):
++            return FileAction(review.CLEAN_WORKFLOW_PATH, "kept",
++                              f"{review.CLEAN_WORKFLOW_PATH} has changes Projector did not write, so it was left "
++                              "alone")
++        action = "updated"
+     path.parent.mkdir(parents=True, exist_ok=True)
+     path.write_text(text, encoding="utf-8")
+-    return FileAction(review.CLEAN_WORKFLOW_PATH, "created",
++    return FileAction(review.CLEAN_WORKFLOW_PATH, action,
+                       f"commit {review.CLEAN_WORKFLOW_PATH} to the default branch through a pull request; GitHub "
+                       "runs the workflow only from there")
+ 
+diff --git a/src/projector/review.py b/src/projector/review.py
+index d7d7d14b..e5b276da 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -34,6 +34,7 @@
+ 
+ from __future__ import annotations
+ 
++import hashlib
+ import json
+ import os
+ import re
+@@ -832,10 +833,21 @@ def create_ruleset(repo: str) -> None:
+         run_gh(["api", "-X", "POST", f"repos/{repo}/rulesets", "--input", str(path)])
+ 
+ 
++# The SHA-256 digests of the clean workflows earlier releases wrote, which `init` replaces with the current one
++# as its own rather than keeping them as a repository's edit. 0.8.14's removed the label without reading the pull
++# request, so a queued or re-run job could take it off a head a review had signed off since the push.
++EARLIER_CLEAN_WORKFLOWS = frozenset({"0da9345e4571de4cf28e74fe3de88c0b68866b94694b87404e186dfe2e92d113"})
++
++
+ def clean_workflow_text() -> str:
+     """The workflow that takes `clean` off a pull request when a commit is pushed to it."""
+     template = resources.files("projector").joinpath("templates/clean-workflow.yml").read_text(encoding="utf-8")
+-    return template.replace("{label}", CLEAN_LABEL)
++    return template.replace("{label}", CLEAN_LABEL).replace("{context}", REVIEW_CONTEXT)
++
++
++def is_earlier_clean_workflow(text: str) -> bool:
++    """Whether `text` is a clean workflow an earlier release of Projector wrote, unedited."""
++    return hashlib.sha256(text.encode("utf-8")).hexdigest() in EARLIER_CLEAN_WORKFLOWS
+ 
+ 
+ def backfill_statuses(repo: str, reviewer: str) -> list[dict]:
+diff --git a/src/projector/templates/clean-workflow.yml b/src/projector/templates/clean-workflow.yml
+index 5e2266d9..824cfd39 100644
+--- a/src/projector/templates/clean-workflow.yml
++++ b/src/projector/templates/clean-workflow.yml
+@@ -5,20 +5,40 @@ name: Projector clean label
+ # head is clean, and a new head has no review yet. `pull_request_target` gives
+ # the token write access on a pull request from a fork; the job never checks
+ # out the pull request's code. The job-level `if` skips the job, so no runner
+-# starts, unless the pull request carries the label.
++# starts, unless the pull request carried the label at the push.
++#
++# The event records the labels as they were at the push, and the job can run
++# much later, after a slow queue or as a re-run, which replays the same event.
++# So the step reads the pull request as it is when it runs, and keeps the label
++# when the current head is already signed off: `project init` writes this
++# workflow only where the default branch requires `{context}`, so a review
++# that signs a head off posts that status as `success` on it.
+ on:
+   pull_request_target:
+     types: [synchronize]
+ 
+ permissions:
+   pull-requests: write
++  statuses: read
+ 
+ jobs:
+   unclean:
+     if: contains(github.event.pull_request.labels.*.name, '{label}')
+     runs-on: ubuntu-latest
+     steps:
+-      - run: gh pr edit "$PR" --repo "$REPO" --remove-label {label}
++      - run: |
++          now=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha + " " + ([.labels[].name | ascii_downcase] | any(. == "{label}") | tostring)')
++          head=${now% *}
++          if [ "${now#* }" != true ]; then
++            echo "#$PR no longer carries {label}"
++            exit 0
++          fi
++          status=$(gh api "repos/$REPO/commits/$head/status?per_page=100" --jq '.statuses[] | select(.context == "{context}") | .state')
++          if [ "$status" = success ]; then
++            echo "kept {label} on #$PR, because a review signed off its head ${head:0:7}"
++            exit 0
++          fi
++          gh pr edit "$PR" --repo "$REPO" --remove-label {label}
+         env:
+           GH_TOKEN: ${{ github.token }}
+           PR: ${{ github.event.pull_request.number }}
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 46d37439..99e607b5 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -3,6 +3,7 @@
+ import json
+ import os
+ import shlex
++import shutil
+ import stat
+ import subprocess
+ import sys
+@@ -1579,6 +1580,28 @@ def test_the_ruleset_and_the_workflow_agree_with_what_publish_posts_and_labels(s
+         self.assertIn(f"contains(github.event.pull_request.labels.*.name, '{review.CLEAN_LABEL}')", text)
+         self.assertIn(f"--remove-label {review.CLEAN_LABEL}\n", text)
+         self.assertNotIn("{label}", text)
++        self.assertNotIn("{context}", text)
++        self.assertIn(f'select(.context == "{review.REVIEW_CONTEXT}")', text)
++
++    def test_init_replaces_the_workflow_an_earlier_release_wrote_and_keeps_one_edited_by_hand(self) -> None:
++        self.workflow().parent.mkdir(parents=True)
++        self.workflow().write_text(EARLIER_CLEAN_WORKFLOW)
++        self.assertTrue(review.is_earlier_clean_workflow(EARLIER_CLEAN_WORKFLOW))
++
++        code, out, err = self.init("--require-review")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(review.clean_workflow_text(), self.workflow().read_text())
++        self.assertIn(f"updated {review.CLEAN_WORKFLOW_PATH}", out)
++
++        edited = EARLIER_CLEAN_WORKFLOW.replace("ubuntu-latest", "ubuntu-24.04")
++        self.workflow().write_text(edited)
++
++        code, out, err = self.init("--require-review")
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(edited, self.workflow().read_text(), "a hand edit of an earlier workflow is the repository's")
++        self.assertIn(f"kept {review.CLEAN_WORKFLOW_PATH}", out)
+ 
+     def test_a_no_records_the_answer_and_changes_nothing_else(self) -> None:
+         code, _, err = self.init(answer="\n")
+@@ -1696,6 +1719,112 @@ def test_a_workflow_edited_by_hand_is_kept(self) -> None:
+         self.assertIn("has changes Projector did not write", err)
+ 
+ 
++# The clean workflow 0.8.14 wrote, which removed the label without reading the pull request.
++EARLIER_CLEAN_WORKFLOW = """name: Projector clean label
++
++# Written by `project init`. Removes the `clean` label when a commit is
++# pushed, because the label says that Projector's newest review of the current
++# head is clean, and a new head has no review yet. `pull_request_target` gives
++# the token write access on a pull request from a fork; the job never checks
++# out the pull request's code. The job-level `if` skips the job, so no runner
++# starts, unless the pull request carries the label.
++on:
++  pull_request_target:
++    types: [synchronize]
++
++permissions:
++  pull-requests: write
++
++jobs:
++  unclean:
++    if: contains(github.event.pull_request.labels.*.name, 'clean')
++    runs-on: ubuntu-latest
++    steps:
++      - run: gh pr edit "$PR" --repo "$REPO" --remove-label clean
++        env:
++          GH_TOKEN: ${{ github.token }}
++          PR: ${{ github.event.pull_request.number }}
++          REPO: ${{ github.repository }}
++"""
++
++# A stand-in for `gh` on the clean workflow's PATH. It answers `gh api <path> --jq <program>` from the JSON
++# $ANSWERS holds for the path, through the real `jq`, as `gh` prints a `--jq` result, fails on a path it has no
++# answer for, and records every other command in $CALLS.
++STUB_GH = """#!/usr/bin/env python3
++import json, os, subprocess, sys
++args = sys.argv[1:]
++if args[:1] == ["api"]:
++    answers = json.loads(open(os.environ["ANSWERS"]).read())
++    if args[1] not in answers:
++        sys.exit(f"gh: no answer for {args[1]}")
++    sys.exit(subprocess.run(["jq", "-r", args[args.index("--jq") + 1]], input=json.dumps(answers[args[1]]),
++                            text=True).returncode)
++with open(os.environ["CALLS"], "a") as calls:
++    calls.write(json.dumps(args) + "\\n")
++"""
++
++
++@unittest.skipUnless(shutil.which("bash") and shutil.which("jq"), "the workflow's step runs in bash and reads with jq")
++class CleanWorkflowStepTests(unittest.TestCase):
++    """The clean workflow's step, run as GitHub runs it, against a stub `gh`."""
++
++    HEAD = "b" * 40
++
++    def script(self) -> str:
++        lines = review.clean_workflow_text().splitlines()
++        start, end = lines.index("      - run: |") + 1, lines.index("        env:")
++        return "\n".join(line[10:] for line in lines[start:end]) + "\n"
++
++    def run_step(self, labels: list[str], statuses: list[dict] | None) -> tuple[int, str, list[list[str]]]:
++        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
++        gh = folder / "bin" / "gh"
++        gh.parent.mkdir()
++        gh.write_text(STUB_GH)
++        gh.chmod(0o755)
++        answers = {"repos/acme/app/pulls/7": {"head": {"sha": self.HEAD}, "labels": [{"name": n} for n in labels]}}
++        if statuses is not None:
++            answers[f"repos/acme/app/commits/{self.HEAD}/status?per_page=100"] = {"statuses": statuses}
++        (folder / "answers.json").write_text(json.dumps(answers))
++        env = {**os.environ, "PATH": f"{gh.parent}{os.pathsep}{os.environ['PATH']}", "PR": "7", "REPO": "acme/app",
++               "ANSWERS": str(folder / "answers.json"), "CALLS": str(folder / "calls")}
++        # GitHub runs a step's script with `bash -e`.
++        done = subprocess.run(["bash", "-e", "-c", self.script()], env=env, capture_output=True, text=True)
++        calls = folder / "calls"
++        recorded = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
++        return done.returncode, done.stdout + done.stderr, recorded
++
++    def status(self, state: str, context: str = review.REVIEW_CONTEXT) -> dict:
++        return {"context": context, "state": state}
++
++    def test_keeps_the_label_on_a_head_a_review_signed_off_since_the_push(self) -> None:
++        code, out, calls = self.run_step(["Clean"], [self.status("success")])
++
++        self.assertEqual((0, []), (code, calls), out)
++        self.assertIn(f"signed off its head {self.HEAD[:7]}", out)
++
++    def test_removes_the_label_from_a_head_no_review_signed_off(self) -> None:
++        removal = [["pr", "edit", "7", "--repo", "acme/app", "--remove-label", review.CLEAN_LABEL]]
++        for name, statuses in [("no status", []), ("a failure", [self.status("failure")]),
++                               ("another check's success", [self.status("success", "ci/build")]),
++                               ("a pending status", [self.status("pending")])]:
++            with self.subTest(name):
++                code, out, calls = self.run_step([review.CLEAN_LABEL, "bug"], statuses)
++
++                self.assertEqual((0, removal), (code, calls), out)
++
++    def test_does_nothing_once_the_label_is_gone(self) -> None:
++        code, out, calls = self.run_step(["bug"], None)
++
++        self.assertEqual((0, []), (code, calls), out)
++        self.assertIn("no longer carries", out)
++
++    def test_fails_without_removing_the_label_when_the_status_cannot_be_read(self) -> None:
++        code, out, calls = self.run_step([review.CLEAN_LABEL], None)
++
++        self.assertNotEqual(0, code, out)
++        self.assertEqual([], calls)
++
++
+ class ReviewRulesTests(RepositoryTestCase):
+     """`project review rules` reports Projector's permission rules and writes nothing, inside a repository or
+     outside one."""
