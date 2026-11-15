@@ -1020,7 +1020,9 @@ reads `refs/projector/walkthroughs` while neither the remote nor this
 checkout has `refs/projector/summaries`, as `site serve` does. `--head`
 copies the summary of the head whose SHA starts with the value you pass
 instead. It refuses a `--remote` whose GitHub repository is not `--repo`,
-and fails when no summary of the pull request is stored.
+and fails when no summary of the pull request is stored. `--checkout`
+names the checkout whose summaries ref it reads, so an agent whose shell is
+elsewhere needs no `cd`, as with `summary publish`.
 
 `summary refresh` brings a summary up to its pull request's current head
 and base. It sets every `pr` field to what GitHub reports now. That

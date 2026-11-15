@@ -1897,9 +1897,10 @@ class FromPublishedTests(unittest.TestCase):
         store(git_dir or self.remote, ref, f"{root}/7/{head}/{name}", json.dumps(data), when)
         return data
 
-    def init(self, *args: str) -> tuple[int, str, str]:
+    def init(self, *args: str, where: Path | None = None) -> tuple[int, str, str]:
+        """Run `summary init` for pull request 7 from `where`, this test's clone by default."""
         cwd = os.getcwd()
-        os.chdir(self.repo)
+        os.chdir(where or self.repo)
         out, err = io.StringIO(), io.StringIO()
         try:
             with redirect_stdout(out), redirect_stderr(err):
@@ -2006,8 +2007,29 @@ class FromPublishedTests(unittest.TestCase):
         self.assertEqual(65, code)
         self.assertIn("other is someone/else, but --repo is owner/repo", err)
 
+    def test_checkout_reads_that_checkouts_summaries_without_a_cd(self) -> None:
+        newest = self.stored("c" * 40, 1_700_000_500)
+        outside = Path(tempfile.mkdtemp())
+
+        code, out, err = self.init("--from-published", where=outside)
+        self.assertEqual(65, code, "outside a checkout there is no summaries ref to read")
+        self.assertIn("or name one with --checkout", err)
+
+        code, out, err = self.init("--from-published", "--checkout", str(self.repo), where=outside)
+        self.assertEqual(0, code, err)
+        self.assertEqual(newest, json.loads(self.path.read_text()))
+        self.assertIn("from refs/projector/remotes/origin/summaries", out)
+
+    def test_a_checkout_that_is_not_a_directory_is_refused(self) -> None:
+        code, _, err = self.init("--from-published", "--checkout", str(self.repo / "missing"))
+
+        self.assertEqual(2, code)
+        self.assertIn("is not a directory", err)
+        self.assertFalse(self.path.exists())
+
     def test_the_published_summary_options_need_each_other(self) -> None:
-        for args in (("--head", "c" * 7), ("--remote", "origin"), ("--from-published", "--diff", "pr.diff")):
+        for args in (("--head", "c" * 7), ("--remote", "origin"), ("--checkout", "."),
+                     ("--from-published", "--diff", "pr.diff")):
             with self.subTest(args=args):
                 self.assertEqual(2, self.init(*args)[0])
 

@@ -1021,7 +1021,8 @@ Then follow `summarize-pr` for this head, with two differences from a
 summary a person asks for:
 
 - **Update rather than start over.** Run `project summary init` with
-  `--from-published` first. When it finds a summary of this pull request,
+  `--from-published` first, passing the same `--checkout` as `setup` where
+  you gave it one. When it finds a summary of this pull request,
   update that one as the skill's "Update the page when the pull request
   moves" section describes, so a fix-cycle head costs a revision, not a
   rewrite. The newest version can come from another session or account,

@@ -562,6 +562,11 @@ def parser() -> argparse.ArgumentParser:
     summary_init.add_argument(
         "--head", help="with --from-published, copy the summary of the head whose SHA starts with this"
     )
+    summary_init.add_argument(
+        "--checkout", type=Path,
+        help="with --from-published, the checkout to read the summaries ref in, in place of a `cd` (default: the "
+             "repository containing this directory)",
+    )
     summary_refresh = summary_commands.add_parser(
         "refresh", help="bring a summary up to its pull request's current head and base, and say what changed"
     )
@@ -1891,10 +1896,12 @@ def init_from_published(arguments: argparse.Namespace) -> None:
     if arguments.diff:
         raise UsageError("--from-published copies a summary and reads no diff; pass --diff to `summary refresh`")
     remote = arguments.remote or "origin"
-    root = summary.checkout_root()
+    if arguments.checkout is not None and not arguments.checkout.is_dir():
+        raise UsageError(f"--checkout {arguments.checkout} is not a directory")
+    root = summary.checkout_root(arguments.checkout)
     if root is None:
         raise summary.SummaryError(f"--from-published reads the summaries ref, so run it in a checkout of "
-                                   f"{arguments.repo}")
+                                   f"{arguments.repo}, or name one with --checkout")
     slug = summary.repo_slug(summary.git("-C", str(root), "remote", "get-url", remote))
     if slug and slug.lower() != arguments.repo.lower():
         raise summary.SummaryError(f"{remote} is {slug}, but --repo is {arguments.repo}")
@@ -1926,8 +1933,9 @@ def run_summary(arguments: argparse.Namespace) -> int:
     if arguments.summary_command == "init":
         if arguments.from_published:
             init_from_published(arguments)
-        elif arguments.remote or arguments.head:
-            raise UsageError("--remote and --head choose a published summary; pass them with --from-published")
+        elif arguments.remote or arguments.head or arguments.checkout:
+            raise UsageError("--remote, --head, and --checkout choose a published summary; pass them with "
+                             "--from-published")
         else:
             summary.init(arguments.repo, arguments.pr, arguments.summary, arguments.diff)
     elif arguments.summary_command == "refresh":

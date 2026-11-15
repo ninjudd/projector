@@ -415,6 +415,9 @@ project summary init --from-published \
   --repo OWNER/NAME --pr NUMBER --summary WORKDIR/summary.json
 ```
 
+When your shell is not in the checkout, add `--checkout CHECKOUT` instead
+of a `cd`, as for `publish`.
+
 `--from-published` fetches the summaries ref and copies the summary the
 site shows as the pull request's newest. A summary an earlier `publish`
 kept in this checkout counts too, when it is newer. It also reads a summary
