@@ -1065,8 +1065,9 @@ Building the daemon settled these choices, which the design above left open.
   the labels and announces nothing. A subscription to a pull request that
   is already `clean` reports nothing until the label comes off, and a
   `state.json` written before this change announces nothing on upgrade.
-- **The panel reloads on events.** When the mod takes a batch of events,
-  it runs a whole poll at once: the drawer's threads, `panel.background`,
-  and an earlier watcher's query. The daemon writes its cache before its
-  events, so an open drawer shows what the events report without waiting
-  for the next 30-second poll.
+- **The panel reloads on events.** When the mod takes a batch of events
+  while the panel is shown, it runs a whole poll at once: the drawer's
+  threads, `panel.background`, and an earlier watcher's query. A hidden
+  panel reads nothing, as on its 5-second ticks. The daemon writes its
+  cache before its events, so an open drawer shows what the events report
+  without waiting for the next 30-second poll.
