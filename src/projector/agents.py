@@ -242,8 +242,7 @@ def recipient(root: Path, session: str, sender: dict, found: dict[str, dict], ca
     if session in candidates and not others:
         raise AgentError("a session cannot send a message to itself")
     if mine:
-        raise AgentError(f"{to} has lapsed: nothing has delivered its events for 5 minutes, so a message could "
-                         "not reach it")
+        raise AgentError(f"{to} has lapsed: nothing delivers its events now, so a message could not reach it")
     if others:
         raise AgentError(f"{to} is signed in as another GitHub login, and a session messages only sessions of its own "
                          "login")
@@ -295,7 +294,7 @@ def send(root: Path, session: str, to: str, text: str, now: float, *, limit: int
     named = [] if answering else [name for name, found in registered.items() if found.get("name") == to.lower()]
     target = recipient(root, session, sender, registered, named or ([to] if to in registered else []), to, now)
     found = registered[target]
-    sent =[item for item in recent(watch.session_folder(root, session), now) if item.get("to") == target]
+    sent = [item for item in recent(watch.session_folder(root, session), now) if item.get("to") == target]
     if len(sent) >= limit:
         raise AgentError(f"this session sent {len(sent)} messages to {label(found, target)} in the past hour, the "
                          f"most agent.message_limit allows; wait, or raise the limit with "
