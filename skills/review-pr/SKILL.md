@@ -1207,10 +1207,15 @@ that history instead of rediscovering it.
   on them.
 - A subagent whose publish the host refused reports the refusal and stops
   that publish; it never retries a refused publish in another form, as this
-  skill and `../summarize-pr/SKILL.md` say. Tell the user once for the
-  session, not once per pull request, that the host's automatic approval
-  refused a publish and that running `project init` in a terminal adds the
-  rules. Then keep reviewing.
+  skill and `../summarize-pr/SKILL.md` say. The subagent's report names
+  why the host refused it and the action that would let it through. Tell
+  the user once for the session, not once per pull request, that the
+  host's automatic approval refused a publish, and relay that action. Send
+  the user to `project init` in a terminal only when the subagent reports
+  the rule missing, as `summary_publish` `false` or no file listed. When it
+  reports a matching rule, ask the user to authorize the publish or to run
+  it themselves, and on Codex say that a new session would load a rule
+  written after this one started. Then keep reviewing.
 
 The session does not inspect code, so its own context stays small however
 many pull requests it reviews. Where the host has no subagents, the session
