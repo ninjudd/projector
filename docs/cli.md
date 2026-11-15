@@ -1983,9 +1983,7 @@ whose `origin` is on GitHub unless you pass `--repo`. Unlike `status` and
 the commands that follow a review, they never take the repository from a
 review set up on this machine, because a command that moves a pull
 request's draft state must not act on a repository it guessed. Each prints
-the draft state and the head that GitHub shows once the state has moved.
-GitHub can take a few seconds to show a head you just pushed, so a command
-you run right after a push can still name the head before it:
+the draft state and the head that GitHub shows once the state has moved:
 
 ```
 $ project review ready 66
@@ -1993,6 +1991,9 @@ marked example/app#66 ready for review at 4f2a9c1
 $ project review hold 66
 converted example/app#66 to a draft at 4f2a9c1
 ```
+
+GitHub can take a few seconds to show a head you just pushed, so a command
+you run right after a push can still name the head before it.
 
 When the pull request is already in that state, the line reads
 `example/app#66 is already ready for review at 4f2a9c1` or
