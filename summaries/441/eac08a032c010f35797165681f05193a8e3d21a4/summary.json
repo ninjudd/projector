@@ -1,0 +1,135 @@
+{
+ "version": 1,
+ "name": "Spec hand-over",
+ "project": "spec-handover",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 441,
+  "title": "Open a spec's pull request and ask the user to review the plan",
+  "head": "eac08a032c010f35797165681f05193a8e3d21a4",
+  "headRef": "spec-handover-impl",
+  "base": "8785be7da92038ac073d5e3d0b5771d51e882d3c",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's <code>spec</code> skill writes a project's plan under <code>docs/projects/</code>. A plan's decisions belong to the user, so the user reads every plan before anyone builds it. Before this change, <code>spec</code> left the plan uncommitted unless asked, and when it did open a pull request it marked it ready at once. Marking a pull request ready is what starts Projector's automated review, so that review read a design the user was about to change.",
+   "After this change, <code>spec</code> commits the plan on a branch, opens a <b>draft</b> pull request, subscribes the session to fix it, and posts one inbox <code>request</code> asking the user to review the plan as GitHub renders it. The pull request stays a draft until the user answers:",
+   "<ul class=\"tight\"><li><b>Looks good</b> or a decline: <code>spec</code> runs <code>project review ready</code>.</li><li><b>Some feedback</b>: <code>spec</code> revises the plan, pushes, and revises the same request.</li><li>A question only the user can answer goes out first as an <code>ask</code>, before the review request.</li><li>Without the inbox tools, <code>spec</code> marks the pull request ready at the hand-over.</li></ul>",
+   "Several other places state the rule that a pull request stays a draft while a test request waits on the user. Each widens one sentence to cover a plan review request too, so <code>fix-pr</code>, <code>work</code>, and <code>cleanup</code> never mark a plan's pull request ready behind the user's back."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Draft</b>: a GitHub pull request state that says its author is still working. A session that reviews the repository waits for it to be marked ready.</li><li><b>Inbox</b>: Projector's panel above the user's prompt, where <code>ask</code>, <code>tell</code>, and <code>request</code> items wait until answered.</li><li><b>Generated section</b>: the <code>Projector conventions</code> block that <code>project init</code> writes into a repository's <code>AGENTS.md</code>, versioned by its begin marker.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><b><code>59e7a6d</code></b>: clean, no finding threads, one suggestion to name the two hand-overs in <code>skills/work/SKILL.md</code>.</li><li><b><code>eac08a0</code></b>: carries that suggestion. Clean, no finding threads, no suggestions. The focused tests, both plugin validations, the hook tests, <code>project check</code>, and <code>git diff --check</code> passed at this head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "spec",
+   "title": "The spec skill's new hand-over",
+   "kicker": "How spec opens the plan's pull request and asks the user to review it",
+   "intro": [
+    "The <code>Validate and hand over</code> section of <code>skills/spec/SKILL.md</code> now ends with two subsections. <code>Open the pull request</code> commits the plan on a branch, checks the whole branch with a range <code>git diff --check</code>, pushes, opens a draft pull request, and subscribes the session. <code>Ask the user to review the plan</code> settles blocking questions with <code>ask</code>, posts one review <code>request</code>, and acts on the answer."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/spec/SKILL.md",
+     "note": "The whole new flow: opening the draft, the review request's fields, and what each answer does.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The bare <code>git diff --check</code> earlier in the section reads only tracked working-tree changes, so it misses a new plan file. The range form against the default branch reads the whole branch.",
+       "line": 181
+      },
+      {
+       "kind": "context",
+       "text": "A spec run that only pushes a refinement to an existing pull request posts no request, because the session that opened that pull request holds its draft state.",
+       "line": 228
+      },
+      {
+       "kind": "verify",
+       "text": "<code>project review ready</code> reports that a pull request is already ready rather than failing, so <code>Looks good</code> after an automated-review-first hand-over is harmless. Checked in <code>set_draft</code> in <code>src/projector/review.py</code>.",
+       "line": 250
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "drafthold",
+   "title": "The draft-hold rule, widened",
+   "kicker": "Every place that keeps a tested pull request a draft now keeps a plan's too",
+   "intro": [
+    "<code>implement</code> keeps a pull request a draft while a device-test request waits on the user. Other skills and the generated section restate that rule so they never mark such a pull request ready. Each restatement widens one sentence to cover a request to review a plan."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The generated block in <code>AGENTS.md</code> is byte-identical to the template with <code>{projects_dir}</code> rendered as <code>docs/projects</code>. <code>CLAUDE.md</code> is a symlink to <code>AGENTS.md</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "Version 26 of the generated section: names <code>spec</code>'s hand-over and widens the draft rule."
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "The repository's own hand-over rule widened, and the generated section refreshed to version 26."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Under <code>Report the result</code>: a draft <code>spec</code> keeps for a plan review is not <code>fix-pr</code>'s to mark ready."
+    },
+    {
+     "path": "skills/work/SKILL.md",
+     "note": "Keeps a plan's pull request a draft until the user answers its review request.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 107,
+       "text": "The sentence names both hand-overs that keep a pull request a draft: <code>../implement/SKILL.md</code> for a test request and <code>../spec/SKILL.md</code> for a plan review request. Both paths resolve from <code>skills/work/</code>, and each file describes its hold."
+      }
+     ]
+    },
+    {
+     "path": "skills/cleanup/SKILL.md",
+     "note": "Counts a draft kept for a test or plan review request as a held pull request, which <code>cleanup</code> marks ready when the user leaves it."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Plan, documentation, and tests",
+   "kicker": "The plan's outcome, the plugin docs, and the two pinned tests",
+   "intro": [
+    "The plan is marked <code>completed</code> with a new § 7 that records what shipped. <code>docs/plugins.md</code> describes the new hand-over. Two tests guard the change: one pins the generated section's version 26 hash, and one now also checks that <code>spec</code> runs no bare <code>gh pr ready</code> in a command block."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/projects/spec-handover/readme.md",
+     "note": "Status moves to <code>completed</code>; § 7 Outcome records the evidence."
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "tests/test_instructions.py"
+    },
+    {
+     "path": "tests/test_review.py"
+    }
+   ]
+  }
+ ]
+}

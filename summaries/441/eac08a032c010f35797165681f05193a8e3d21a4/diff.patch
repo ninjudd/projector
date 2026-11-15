@@ -1,0 +1,328 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 1757df50..270e1630 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -127,8 +127,9 @@ Keep tests and documentation with the code they verify.
+ Open your own pull request as a draft, and draft every layer of a stack you
+ open. A draft says you are still working on it, so a session that reviews
+ the repository waits. Mark it ready with `project review ready` once your
+-work is done, which asks for its review; while a test request waits on the
+-user, keep it a draft until they answer that it looks good.
++work is done, which asks for its review; while a request to test the change
++or to review a plan waits on the user, keep it a draft until they answer
++that it looks good.
+ 
+ Ready is not signed off. A clean review of the head labels the pull request
+ `clean`, and only that label, with the `projector/review` status where a
+@@ -144,7 +145,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 25 -->
++<!-- projector:begin 26 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -199,15 +200,17 @@ skill, `/projector:implement` in Claude Code or `$implement` in Codex,
+ whether it follows a plan under `docs/projects` or only a description,
+ however small. Its hand-over opens the pull request and subscribes the
+ session to fix it, so review findings are fixed as they arrive rather than
+-waiting for someone to notice that nothing is fixing them.
++waiting for someone to notice that nothing is fixing them. Write each plan
++with the `spec` skill, whose hand-over opens the plan's pull request the
++same way.
+ 
+ Open every pull request as a draft, each layer of a stack included, and mark
+ it ready with `project review ready` once your work on it is done. A draft
+ says its author is still working, so marking it ready is what asks for its
+-review. When the hand-over asks the person to test the change, keep it a
+-draft until they answer that it looks good. Ready is not signed off: a clean
+-review of the head labels the pull request `clean`, and only that is the
+-sign-off.
++review. When the hand-over asks the person to test the change or to review
++a plan, keep it a draft until they answer that it looks good. Ready is not
++signed off: a clean review of the head labels the pull request `clean`, and
++only that is the sign-off.
+ 
+ Talk with the person in the conversation as usual. When Projector's `ask`,
+ `tell`, and `request` tools are available, also post anything they must not
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 0f837950..e1be2258 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -18,7 +18,10 @@ The plugin provides `spec`, `implement`, `finish`, `review-pr`, `fix-pr`,
+ `summarize-pr` summarizes a pull request's changes as a guided review page.
+ Claude invokes a plugin skill as `/projector:<skill>`; Codex invokes it as
+ `$<skill>`.
+-`spec` writes a project's technical spec under `docs/projects/`.
++`spec` writes a project's technical spec under `docs/projects/`, opens it as
++a draft pull request, and asks you in the inbox to review the plan as GitHub
++renders it. The pull request stays a draft until you answer, so the
++automated review reads the plan only after you have.
+ `implement` builds from that plan, or from a description of a change small
+ enough to need no spec, such as `/projector:implement fix the typo in the
+ install docs`.
+diff --git a/docs/projects/spec-handover/readme.md b/docs/projects/spec-handover/readme.md
+index 3f7d130b..51686fc9 100644
+--- a/docs/projects/spec-handover/readme.md
++++ b/docs/projects/spec-handover/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: ready
++status: completed
+ priority: now
+ ---
+ 
+@@ -211,3 +211,29 @@ loop.
+ - **A session that ends without `cleanup`.** Its plan pull request stays a
+   draft until someone marks it ready. The panel already shows a draft's
+   state, so this plan defers any automatic fix.
++
++## 7. Outcome
++
++Shipped. `skills/spec/SKILL.md` ends its "Validate and hand over" section
++with `### Open the pull request` and `### Ask the user to review the plan`,
++which carry the flow in § 2.1 and the request in § 2.2. The generated
++section is version 26, and `fix-pr`, `work`, `cleanup`, and the
++repository's own instructions each keep a plan pull request a draft while
++its review request waits.
++
++The evidence:
++
++- **The flow ran once by hand.** This plan's own pull request,
++  [#440](https://github.com/ninjudd/projector/pull/440), followed it
++  before the skill described it. It opened as a draft, a review request
++  linked to the rendered readme, the user's `Looks good` settled the
++  question of which review goes first, and `project review ready` marked
++  it ready. The two review findings it then received are now in § 2.1
++  step 2 and § 2.3.
++- **The tests.** `test_the_skills_move_draft_state_through_the_commands_alone`
++  now covers `spec`, and it fails when a command block in `spec` runs a
++  bare `gh pr ready`. `test_the_template_text_is_pinned_to_its_version`
++  pins version 26.
++- **What no test covers.** The other rows of § 4 describe how an agent
++  follows the skill's prose, which no unit test can run. The next `spec`
++  run exercises them.
+diff --git a/skills/cleanup/SKILL.md b/skills/cleanup/SKILL.md
+index 54caa490..64ffbb8c 100644
+--- a/skills/cleanup/SKILL.md
++++ b/skills/cleanup/SKILL.md
+@@ -110,7 +110,9 @@ gap:
+   standing change request, a conflict with its base, failing checks, or a
+   suggestion neither implemented nor deferred. `fix-pr` does this work.
+ - A pull request the session held, converting it to a draft with
+-  `project review hold`, which says a change is still being built.
++  `project review hold`, which says a change is still being built, or kept
++  a draft while a request asks the user to test the change or to review
++  its plan.
+ - A plan whose `status` or `priority` no longer matches the work, a project
+   the work completed that is not marked `completed`, or a warning from
+   `project check`. `finish` does this work.
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 7b4db37d..6d141dcf 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -470,8 +470,9 @@ manufacture an empty commit to trigger it.
+ 
+ Mark a pull request ready only to end a hold you made. Marking a draft ready
+ starts its review and says its author's work is done, so a draft someone
+-else made, or one `../implement/SKILL.md` keeps while a test request waits on
+-the person, is not yours to mark ready, however finished it looks. A ready
++else made, one `../implement/SKILL.md` keeps while a test request waits on
++the person, or one `../spec/SKILL.md` keeps while a request to review its
++plan waits, is not yours to mark ready, however finished it looks. A ready
+ pull request is not signed off either: only a clean review signs a head off,
+ as `project review status` reports and the `clean` label shows.
+ 
+diff --git a/skills/spec/SKILL.md b/skills/spec/SKILL.md
+index 087c9631..ab22d648 100644
+--- a/skills/spec/SKILL.md
++++ b/skills/spec/SKILL.md
+@@ -163,14 +163,40 @@ Then read the plan as its reviewer would, and confirm each of these:
+   matter.
+ - Every open question has an owner or a deliberate deferral.
+ 
+-Leave the plan changes visible for ordinary Git review; do not commit, push,
+-or open a pull request unless the user or repository workflow asks for those
+-actions.
++### Open the pull request
+ 
+-When you open a pull request for the plan, open it as a draft, mark it ready
+-with `project review ready <number> --repo <owner>/<repo>` once the plan is
+-written, as `../implement/SKILL.md` describes, and subscribe the session to
+-fix it, so review findings on the plan are fixed as they arrive:
++These are the defaults where the repository's instructions are silent.
++Where its written rules or the user say otherwise, follow them, except that
++the merge stays the user's checkpoint either way.
++
++Commit the plan on a branch, never on the default branch, and check the
++whole branch before you push it:
++
++```sh
++git diff --check origin/<default-branch>...HEAD
++```
++
++The bare `git diff --check` above reads only tracked changes in the working
++tree, so it misses a new plan file and anything already committed. The
++range form reads the whole branch. Then push the branch. When it already
++has an open pull request, such as an earlier spec's pull request for the
++plan you are refining, push to that pull request and open no other.
++
++Otherwise, open the pull request with `gh pr create --draft`, and never
++merge it. Follow the writing guide in `../writing.md`, § 10 in particular:
++write the title in the pattern of the default branch's recent subjects, and
++a body that explains why the plan exists. End the body with a `## Testing`
++section that lists these commands, what each prints, and the output that
++would show the plan is wrong:
++
++```sh
++project show <name>
++project check
++git diff --check origin/<default-branch>...HEAD
++```
++
++Then subscribe the session to fix the pull request, so review findings on
++the plan are fixed as they arrive:
+ 
+ ```sh
+ project watch add <owner>/<repo>#<number>
+@@ -179,5 +205,63 @@ project watch add <owner>/<repo>#<number>
+ Subscribe as `../fix-pr/SKILL.md` describes under "Subscribe the session to
+ the pull request": skip the command when
+ `project config get watch.auto_start --default true` prints `false`, and act
+-on the `events:` line it prints. When you hand over the URL, say whether the
+-session is subscribed and how its events arrive.
++on the `events:` line it prints.
++
++### Ask the user to review the plan
++
++A plan's decisions are the user's, and their feedback often changes the
++design itself, so the user reads the plan before any automated review does.
++Keep the pull request a draft until they answer, because marking it ready
++is what starts that review. When the user asks for the automated review to
++go first, mark the pull request ready at the hand-over instead, and still
++ask them to review the plan.
++
++When Projector's `ask` and `request` tools are available:
++
++1. **Settle each blocking question.** For each open question that blocks
++   implementation and needs the user's decision, post an `ask` with the
++   answer you recommend, and link the question's section on the rendered
++   plan in its detail. As each answer arrives, record the decision in the
++   plan, move the status with `project status` once its readiness claim is
++   honest, and push.
++2. **Post one review request.** Once no blocking question waits on the
++   user, post one `request` for the pull request you opened. Post none for
++   a pull request you only pushed a refinement to, because its own session
++   holds its draft state. Read the link's owner, repository, and branch from
++   `gh pr view <number> --json headRepositoryOwner,headRepository,headRefName`,
++   so the link names a fork's branch correctly, and post the request only
++   after your push, so the link never names a branch that GitHub does not
++   have.
++
++   | Field | Value |
++   | --- | --- |
++   | `request` | The project and what it makes true, in a few words, such as `Review the spec-handover plan: specs end with a review request`. |
++   | `detail` | `Spec:` and `https://github.com/<owner>/<repo>/blob/<branch>/<path>/readme.md`, then `PR:` and the pull request's URL. Then a numbered list of the sections to read, each with what the user should find there, so their notes can name the section they are about. |
++   | `options` | `Looks good`, `Some feedback`. |
++   | `start` | None. There is nothing to prepare. |
++   | `pr` | `<owner>/<repo>#<number>`. |
++
++3. **Act on the answer.**
++
++   | Answer | What you do |
++   | --- | --- |
++   | `Looks good` | Run `project review ready <number> --repo <owner>/<repo>`. |
++   | `Some feedback` | Revise the plan from the notes, push, and update the same request with the `revise` tool, which reopens it. Keep the pull request a draft. |
++   | Declined | Run `project review ready <number> --repo <owner>/<repo>`. A decline is the user's no to reviewing the plan in the inbox, not to the plan, and a draft that nobody marks ready can never merge. |
++   | A reply in their own words | Answer it, and leave the request open. |
++
++   The user's approval moves only the pull request's draft state, never the
++   plan's `status`. The status is your readiness claim, and step 1 made it
++   honest.
++
++Run `project review ready` as a command of its own, never as a bare
++`gh pr ready`, as `../fix-pr/SKILL.md` describes under "Hold the pull
++request while changes are built".
++
++Where the inbox tools are not available, raise each blocking question in
++the conversation instead, and mark the pull request ready at the hand-over,
++because no inbox answer would ever arrive to do it.
++
++When you hand over, give the pull request's URL and the rendered plan's
++URL, say whether a review request waits in the inbox, and say whether the
++session is subscribed to fix the pull request and how its events arrive.
+diff --git a/skills/work/SKILL.md b/skills/work/SKILL.md
+index 9feb522d..97a9f704 100644
+--- a/skills/work/SKILL.md
++++ b/skills/work/SKILL.md
+@@ -103,8 +103,9 @@ project review ready <number> --repo <owner>/<repo>
+ 
+ Do not hold a finished pull request in draft until the rest of the work is
+ done. Keep one a draft only while you still have changes to push to it, or
+-while a request asks the user to test it and they have not answered, as
+-the hand-over describes.
++while a request asks the user to test it or to review its plan and they
++have not answered, as `../implement/SKILL.md` describes for a test request
++and `../spec/SKILL.md` for a plan review request.
+ 
+ ## Fix each pull request as reviews arrive
+ 
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index a20537fa..50c909b5 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 25 -->
++<!-- projector:begin 26 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -53,15 +53,17 @@ skill, `/projector:implement` in Claude Code or `$implement` in Codex,
+ whether it follows a plan under `{projects_dir}` or only a description,
+ however small. Its hand-over opens the pull request and subscribes the
+ session to fix it, so review findings are fixed as they arrive rather than
+-waiting for someone to notice that nothing is fixing them.
++waiting for someone to notice that nothing is fixing them. Write each plan
++with the `spec` skill, whose hand-over opens the plan's pull request the
++same way.
+ 
+ Open every pull request as a draft, each layer of a stack included, and mark
+ it ready with `project review ready` once your work on it is done. A draft
+ says its author is still working, so marking it ready is what asks for its
+-review. When the hand-over asks the person to test the change, keep it a
+-draft until they answer that it looks good. Ready is not signed off: a clean
+-review of the head labels the pull request `clean`, and only that is the
+-sign-off.
++review. When the hand-over asks the person to test the change or to review
++a plan, keep it a draft until they answer that it looks good. Ready is not
++signed off: a clean review of the head labels the pull request `clean`, and
++only that is the sign-off.
+ 
+ Talk with the person in the conversation as usual. When Projector's `ask`,
+ `tell`, and `request` tools are available, also post anything they must not
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 2b948ab6..cfc95582 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -37,6 +37,7 @@
+     23: "4e47752eec7802c1853e2ec50f151150c5442f0ac3be75dd127ab6b5398e3a52",
+     24: "25089425a5295bb3e49bb31fe7001160ae9c4901657b2e2ee27567692a7cbe7e",
+     25: "7d367a9dd46f6f7f3f521d3fcb7ac965a5077646fc4313916aed978c5ea013ce",
++    26: "5990a5a0816123c43875a4a06b91f9d3a578681ccd18c1efbc267eaeb39c2d3d",
+ }
+ 
+ 
+diff --git a/tests/test_review.py b/tests/test_review.py
+index deb4fb8b..e3b7ec11 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -3169,7 +3169,7 @@ def test_the_skills_move_draft_state_through_the_commands_alone(self) -> None:
+         # A host's automatic approval can refuse a bare `gh pr ready` as self-approval, where the rule that
+         # allows Projector's commands allows these.
+         skills = Path(cli.__file__).resolve().parents[2] / "skills"
+-        for name in ("fix-pr", "implement"):
++        for name in ("fix-pr", "implement", "spec"):
+             text = (skills / name / "SKILL.md").read_text()
+             with self.subTest(skill=name):
+                 self.assertIn("project review ready <number> --repo <owner>/<repo>", text)
