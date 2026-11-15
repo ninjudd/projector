@@ -92,7 +92,13 @@ project accept messages from other people's agents (§ 6).
    The command refuses when `watch.delivery` reports `none` for the
    session, because a message could not reach it. Its error says what
    delivers on each host: the mod in Claude Code, trusted hooks in Codex,
-   and `project watch stream` elsewhere. The command records:
+   and `project watch stream` elsewhere. A registered session is **live**
+   while `watch.delivery` reports anything but `none` for it, and lapsed
+   otherwise. For Codex that is while `codex_watch.active` holds, whether
+   or not the session has pull request work. The daemon's `scan` counts
+   every live registered session as live, as § 2.4 describes, so an idle
+   agent keeps the daemon running to poll and renew for it. The command
+   records:
    - The login, read with `gh api user` as the daemon reads the operator.
      Registration refuses when `gh` is not signed in.
    - The host: `codex` while `codex_watch.active` holds, `claude` when
@@ -327,7 +333,7 @@ one `sealed.json`.
 | New `src/projector/agents.py` | Registration, name validation and uniqueness, listing, message records, `sent.json` and the rate limit, the event line, and the read notice. It reuses `watch.session_folder`, `watch.delivery`, `watch.append_events`, `codex_watch.Event`, `inbox.locked`, `inbox.write_json`, and `review.origin_repo`. |
 | New `src/projector/crypto.py` | X25519 from RFC 7748, ChaCha20 from RFC 8439, HKDF from RFC 5869 over `hmac`, and `seal` and `open` from § 2.2 step 2. Standard library only. |
 | New `src/projector/relay.py` | Presence and message commits, the outbox and its batched push, the poll, the checks in § 2.2 step 6, the cache, and cleanup. It reuses `summary.git`, `summary.tracking_ref`, and the daemon's login. |
-| `src/projector/watch.py` | Run the relay's poll, renewal, delivery, and cleanup on each pass, and its lease sweep on each full pass. Report each repository's relay state and rejected count in `watch status`. |
+| `src/projector/watch.py` | In `Daemon.scan`, add to `self.live` every session that holds `agent.json` and whose `delivery` is not `none`. Today `scan` adds a Codex session only while `codex_watch.has_work` holds, so an idle Codex agent would never be polled for or delivered to, its presence would be deleted as lapsed, and `tick` would stop the daemon after 5 minutes. Run the relay's poll, renewal, delivery, and cleanup on each pass, and its lease sweep on each full pass. Report each repository's relay state and rejected count in `watch status`. |
 | `src/projector/codex_watch.py` | Let `eligible` accept a `["message", <id>]` key while the folder holds `messages/<id>.json` (§ 2.1 step 5), so `prepare`, `acknowledge`, `drain`, and `Dispatcher._send` keep a peer message. On `SessionEnd`, mark the session so the next pass deletes its relay refs. |
 | `src/projector/cli.py` | Add `project agent register`, `list`, `send`, `reply`, `read`, `key init`, and `key show`, with `--session` and `--json` as the watch commands take them. `send` and `reply` run `ensure_daemon`. |
 | `src/projector/config.py` | Add `agent.message_limit` and `agent.key` to the typed keys, and `agent.message_limit` to the defaults and minimums. Add a set of user-layer-only keys, holding `agent.key`, that the walk never supplies and the permission check guards. |
@@ -462,6 +468,7 @@ config files standing in for two machines.
 | Give machine 1's checkout a pre-push hook that sleeps 30 seconds and logs each run. Send three messages from A, then run one pass that also renews A's lease and deletes a delivered ref. | Each `send` returns in under a second and prints `delivery: relay (queued)`. The hook logs one run for the pass, and all five ref changes land. Catches a send that pushes itself, and a pass that pushes once per change. |
 | Make one queued change's lease fail while two others are valid. | The two land and leave the outbox. The failed one stays, with its error in `watch status`, and lands on a later pass once its lease is right. Catches a batch that loses every change when one fails. |
 | Relay through a repository the fake `gh` reports `PUBLIC`, then `PRIVATE`. | `send` prints `public repository: send nothing private` for the first and not the second. Catches a missing reminder. |
+| Register Codex session B on machine 2 with no subscriptions and an empty queue, and advance machine 2's clock past the daemon's 5-minute idle stop and past a lease renewal. Then send from A on machine 1 and pass on both machines. | Machine 2's daemon is still running, B's presence ref is renewed and never deleted, and the fake `codex` receives one queued prompt with the `PEER MESSAGE` line. Catches a scan that counts an idle Codex agent as not live. |
 | Make the ref deletion fail once on machine 2, then pass again. | B receives the message exactly once, and the ref is deleted on the second pass. Catches a duplicate from a retried delivery. |
 | Let A lapse on machine 1. Separately, stop machine 1's daemon and advance past the lease, then run a full pass on machine 2. Separately, remove `agent.key` from machine 1 and pass. | A's presence and inbox refs are deleted in each case. Catches refs that outlive their agent or the key. |
 | Register the same name on both machines within one poll interval. | `list` shows both with their machines, and `send` to the name is refused as ambiguous. Catches a send that picks one silently. |
@@ -479,7 +486,9 @@ sessions end. Confirm too that pushing the refs starts no workflow run.
 
 - **Idle sessions.** A registered session that receives nothing costs no
   model turn. On one machine it costs nothing more, because the daemon's
-  scan of session folders already exists.
+  scan of session folders already exists. A live registered session keeps
+  the daemon running even with no pull request work, which costs that
+  once-a-second scan and the relay's poll below.
 - **The relay's poll.** With no `agent.key`, the relay costs nothing.
   With it, each pass makes one `git fetch` per repository with a live
   registered session, which transfers only refs and commits this machine
@@ -541,9 +550,11 @@ record and command, and the local layer is useful on its own.
 - `watch.append_events` (`src/projector/watch.py`) routes an event to
   `codex_watch.append` when a Codex registration is enabled, and otherwise
   to the session's `events` file.
-- `codex_watch.has_work` counts queued and pending items. So a Codex
-  session that holds only a message stays live, and the daemon dispatches
-  it, even with no pull request subscriptions.
+- `codex_watch.has_work` counts subscriptions and queued and pending
+  items, and `Daemon.scan` counts a Codex session as live only while it
+  holds. So a Codex session that holds only a queued message stays live
+  until the daemon dispatches it, but an idle one with no subscriptions is
+  not live at all, which is why § 2.4 changes `scan`.
 - The mod's `checkWatch` (`hooks/register.tsx`) renews the session and
   delivers its events every tick, whether or not it has subscriptions or
   the panel is shown. So any Claude session with the mod loaded can
