@@ -291,7 +291,7 @@ test('draws one line per open pull request of the session’s own loops', async 
   await ui.unmount()
 })
 
-test('a row says reviewing, draft, clean, or ready from its labels and draft state, and only clean is green', async ($, on) => {
+test('a row dims a draft number and says reviewing, clean, or nothing from its labels alone', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\no/r#13\no/r#14\no/r#15\n' })
@@ -300,29 +300,30 @@ test('a row says reviewing, draft, clean, or ready from its labels and draft sta
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
 
-  const states = new Map<string, [string, unknown]>()
-  for (const title of [
-    'Signed-off change',
-    'Change waiting for review',
-    'Change a review is reading',
-    'Signed-off change held for a suggestion',
-  ]) {
-    const row = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-    const at = row.indexOf(title)
-    const word = row
-      .slice(0, at)
-      .reverse()
-      .find(text => ['reviewing', 'draft', 'clean', 'ready'].includes(text))
-    const found = (await ui.findAll({ type: 'Text', text: word ?? '' })).map(text => text.props.color)
-    states.set(title, [word ?? '', found[0]])
+  const rows = new Map<string, { word: string; color: unknown; isDim: boolean }>()
+  for (const [number, title] of [
+    [1, 'Signed-off change'],
+    [13, 'Change waiting for review'],
+    [14, 'Change a review is reading'],
+    [15, 'Signed-off change held for a suggestion'],
+  ] as const) {
+    // The word sits right before the title, or before the author column of someone else's.
+    const texts = await ui.findAll({ type: 'Text' })
+    const at = texts.findIndex(found => found.text === title)
+    const word = texts
+      .slice(Math.max(0, at - 2), at)
+      .find(found => ['reviewing', 'clean', 'draft', 'ready'].includes(found.text))
+    const button = await ui.find({ type: 'Button', key: `pr:o/r#${number}` })
+    rows.set(title, { word: word?.text ?? '', color: word?.props.color, isDim: button?.props.dimColor === true })
   }
-  expect(Object.fromEntries(states)).toEqual({
-    'Signed-off change': ['clean', 'success'],
-    'Change waiting for review': ['ready', 'warning'],
+  expect(Object.fromEntries(rows)).toEqual({
+    'Signed-off change': { word: 'clean', color: 'success', isDim: false },
+    // A ready pull request no review has labeled says nothing of its review.
+    'Change waiting for review': { word: '', color: undefined, isDim: false },
     // A review in progress shows over a clean label an earlier head left.
-    'Change a review is reading': ['reviewing', 'warning'],
-    // A held pull request keeps its clean label, and reads as the draft its author is working on.
-    'Signed-off change held for a suggestion': ['draft', 'warning'],
+    'Change a review is reading': { word: 'reviewing', color: 'warning', isDim: false },
+    // A held pull request keeps its clean label beside the dim number of a draft.
+    'Signed-off change held for a suggestion': { word: 'clean', color: 'success', isDim: true },
   })
   await ui.unmount()
 })
