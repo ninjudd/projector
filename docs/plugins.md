@@ -454,8 +454,8 @@ seconds while it stays open, and as soon as the panel takes the daemon's
 events. Taking events runs a whole poll, so `panel.background` and an
 earlier watcher's query run then too. The daemon writes its cache before its
 events, so the panel reloads its lines then as well. It skips the threads
-call when the pull request has no unresolved thread. The skills never depend on the panel, and Codex has no
-equivalent.
+call when the pull request has no unresolved thread. The skills never
+depend on the panel, and Codex has no equivalent.
 
 A session that started a `watch-threads.sh` or `watch-prs.sh` watcher under
 an earlier release keeps it until the session ends, and the panel lists the
