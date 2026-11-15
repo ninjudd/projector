@@ -288,8 +288,9 @@ the first of these that applies:
 - **`clean`**, in green, while it carries the `clean` label, which
   `project review publish` adds once a review signs off the current head.
 - **`draft`**, in the subtle color, while it is a draft.
-- **`ready`**, in light blue, while it is ready and waits for its first
-  review.
+- **`ready`**, in light blue, while it is ready for review and carries
+  neither label. That covers a pull request no review has read yet, and also
+  one whose `clean` label a push removed or whose review requested changes.
 
 So a held draft, which keeps its `clean` label while a change is built,
 reads as a subtle number beside `clean`. The panel reads the draft state and

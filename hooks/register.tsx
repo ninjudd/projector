@@ -1217,7 +1217,7 @@ function notesOf(pr: PullRequest): Note[] {
 /**
  * What a row says of a pull request's review, from the labels a review sets
  * alone: `reviewing` while a review runs, over a `clean` an earlier head left,
- * `clean` once a head is signed off, and nothing before a review.
+ * `clean` once a head is signed off, and nothing while neither is set.
  */
 function reviewLabel(pr: PullRequest): { text: string; color: 'claude' | 'success' } | undefined {
   // Orange, as the drawer draws a reviewer, since yellow marks findings.
@@ -1227,9 +1227,11 @@ function reviewLabel(pr: PullRequest): { text: string; color: 'claude' | 'succes
 }
 
 /**
- * The word after a row's number: its review label once a review sets one,
- * and before that `draft` in the subtle color or `ready` in the theme's light
- * blue, so a held draft still shows its `clean` beside its subtle number.
+ * The word after a row's number: its review label while it carries one, and
+ * otherwise `draft` in the subtle color or `ready` in the theme's light blue.
+ * `ready` means only that no label is set, which is also true after a push
+ * removes `clean` or a review requests changes. A held draft still shows its
+ * `clean` beside its subtle number.
  */
 function rowState(pr: PullRequest): { text: string; color: string } {
   return reviewLabel(pr) ?? (pr.isDraft ? { text: 'draft', color: 'subtle' } : { text: 'ready', color: 'suggestion' })
@@ -1241,7 +1243,7 @@ function rowState(pr: PullRequest): { text: string; color: string } {
  * note or its checks hold it back, yellow while review threads are open, as
  * the row's count of them is, muted for a draft, as the row's number is, then
  * the review label's orange or green, and the default color for a ready pull
- * request before any review. It is muted while it loads.
+ * request that carries neither label. It is muted while it loads.
  */
 function statusColor(pr: PullRequest): string | undefined {
   if (pr.isLoading === true) return 'subtle'
