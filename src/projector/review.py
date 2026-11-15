@@ -34,6 +34,7 @@ longer names their loop, and `publish` checks again before it writes the state a
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -832,10 +833,21 @@ def create_ruleset(repo: str) -> None:
         run_gh(["api", "-X", "POST", f"repos/{repo}/rulesets", "--input", str(path)])
 
 
+# The SHA-256 digests of the clean workflows earlier releases wrote, which `init` replaces with the current one
+# as its own rather than keeping them as a repository's edit. 0.8.14's removed the label without reading the pull
+# request, so a queued or re-run job could take it off a head a review had signed off since the push.
+EARLIER_CLEAN_WORKFLOWS = frozenset({"0da9345e4571de4cf28e74fe3de88c0b68866b94694b87404e186dfe2e92d113"})
+
+
 def clean_workflow_text() -> str:
     """The workflow that takes `clean` off a pull request when a commit is pushed to it."""
     template = resources.files("projector").joinpath("templates/clean-workflow.yml").read_text(encoding="utf-8")
-    return template.replace("{label}", CLEAN_LABEL)
+    return template.replace("{label}", CLEAN_LABEL).replace("{context}", REVIEW_CONTEXT)
+
+
+def is_earlier_clean_workflow(text: str) -> bool:
+    """Whether `text` is a clean workflow an earlier release of Projector wrote, unedited."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest() in EARLIER_CLEAN_WORKFLOWS
 
 
 def backfill_statuses(repo: str, reviewer: str) -> list[dict]:

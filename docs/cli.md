@@ -443,8 +443,13 @@ things in order:
    access, and a private repository needs a paid plan for rulesets. When
    GitHub refuses, `init` says why, exits non-zero, and does nothing else.
 2. Writes `.github/workflows/projector-clean.yml`, which takes the `clean`
-   label off a pull request when a commit is pushed to it. Commit it through a
-   pull request; it runs once it reaches the default branch. With
+   label off a pull request when a commit is pushed to it. Its job reads the
+   pull request when it runs, not as it was at the push, and keeps the label
+   when the current head already has a `success` `projector/review` status.
+   So a job that runs late, or a re-run of an old job, never takes `clean` off
+   a head that a review signed off after the push. Commit the workflow through
+   a pull request; it runs once it reaches the default branch. `init` replaces
+   a workflow that an earlier release wrote and keeps one you edited. With
    `review.labels` set to `false`, `init` writes no workflow, because the
    workflow would take a `clean` label of the repository's own off.
 3. Posts the `success` status on the current head of each open pull request

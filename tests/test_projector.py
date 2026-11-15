@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -1579,6 +1580,28 @@ class RequiredCheckTests(RepositoryTestCase):
         self.assertIn(f"contains(github.event.pull_request.labels.*.name, '{review.CLEAN_LABEL}')", text)
         self.assertIn(f"--remove-label {review.CLEAN_LABEL}\n", text)
         self.assertNotIn("{label}", text)
+        self.assertNotIn("{context}", text)
+        self.assertIn(f'select(.context == "{review.REVIEW_CONTEXT}")', text)
+
+    def test_init_replaces_the_workflow_an_earlier_release_wrote_and_keeps_one_edited_by_hand(self) -> None:
+        self.workflow().parent.mkdir(parents=True)
+        self.workflow().write_text(EARLIER_CLEAN_WORKFLOW)
+        self.assertTrue(review.is_earlier_clean_workflow(EARLIER_CLEAN_WORKFLOW))
+
+        code, out, err = self.init("--require-review")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(review.clean_workflow_text(), self.workflow().read_text())
+        self.assertIn(f"updated {review.CLEAN_WORKFLOW_PATH}", out)
+
+        edited = EARLIER_CLEAN_WORKFLOW.replace("ubuntu-latest", "ubuntu-24.04")
+        self.workflow().write_text(edited)
+
+        code, out, err = self.init("--require-review")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(edited, self.workflow().read_text(), "a hand edit of an earlier workflow is the repository's")
+        self.assertIn(f"kept {review.CLEAN_WORKFLOW_PATH}", out)
 
     def test_a_no_records_the_answer_and_changes_nothing_else(self) -> None:
         code, _, err = self.init(answer="\n")
@@ -1694,6 +1717,112 @@ class RequiredCheckTests(RepositoryTestCase):
         self.assertEqual(0, code, err)
         self.assertEqual("name: mine\n", self.workflow().read_text())
         self.assertIn("has changes Projector did not write", err)
+
+
+# The clean workflow 0.8.14 wrote, which removed the label without reading the pull request.
+EARLIER_CLEAN_WORKFLOW = """name: Projector clean label
+
+# Written by `project init`. Removes the `clean` label when a commit is
+# pushed, because the label says that Projector's newest review of the current
+# head is clean, and a new head has no review yet. `pull_request_target` gives
+# the token write access on a pull request from a fork; the job never checks
+# out the pull request's code. The job-level `if` skips the job, so no runner
+# starts, unless the pull request carries the label.
+on:
+  pull_request_target:
+    types: [synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  unclean:
+    if: contains(github.event.pull_request.labels.*.name, 'clean')
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh pr edit "$PR" --repo "$REPO" --remove-label clean
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+"""
+
+# A stand-in for `gh` on the clean workflow's PATH. It answers `gh api <path> --jq <program>` from the JSON
+# $ANSWERS holds for the path, through the real `jq`, as `gh` prints a `--jq` result, fails on a path it has no
+# answer for, and records every other command in $CALLS.
+STUB_GH = """#!/usr/bin/env python3
+import json, os, subprocess, sys
+args = sys.argv[1:]
+if args[:1] == ["api"]:
+    answers = json.loads(open(os.environ["ANSWERS"]).read())
+    if args[1] not in answers:
+        sys.exit(f"gh: no answer for {args[1]}")
+    sys.exit(subprocess.run(["jq", "-r", args[args.index("--jq") + 1]], input=json.dumps(answers[args[1]]),
+                            text=True).returncode)
+with open(os.environ["CALLS"], "a") as calls:
+    calls.write(json.dumps(args) + "\\n")
+"""
+
+
+@unittest.skipUnless(shutil.which("bash") and shutil.which("jq"), "the workflow's step runs in bash and reads with jq")
+class CleanWorkflowStepTests(unittest.TestCase):
+    """The clean workflow's step, run as GitHub runs it, against a stub `gh`."""
+
+    HEAD = "b" * 40
+
+    def script(self) -> str:
+        lines = review.clean_workflow_text().splitlines()
+        start, end = lines.index("      - run: |") + 1, lines.index("        env:")
+        return "\n".join(line[10:] for line in lines[start:end]) + "\n"
+
+    def run_step(self, labels: list[str], statuses: list[dict] | None) -> tuple[int, str, list[list[str]]]:
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        gh = folder / "bin" / "gh"
+        gh.parent.mkdir()
+        gh.write_text(STUB_GH)
+        gh.chmod(0o755)
+        answers = {"repos/acme/app/pulls/7": {"head": {"sha": self.HEAD}, "labels": [{"name": n} for n in labels]}}
+        if statuses is not None:
+            answers[f"repos/acme/app/commits/{self.HEAD}/status?per_page=100"] = {"statuses": statuses}
+        (folder / "answers.json").write_text(json.dumps(answers))
+        env = {**os.environ, "PATH": f"{gh.parent}{os.pathsep}{os.environ['PATH']}", "PR": "7", "REPO": "acme/app",
+               "ANSWERS": str(folder / "answers.json"), "CALLS": str(folder / "calls")}
+        # GitHub runs a step's script with `bash -e`.
+        done = subprocess.run(["bash", "-e", "-c", self.script()], env=env, capture_output=True, text=True)
+        calls = folder / "calls"
+        recorded = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+        return done.returncode, done.stdout + done.stderr, recorded
+
+    def status(self, state: str, context: str = review.REVIEW_CONTEXT) -> dict:
+        return {"context": context, "state": state}
+
+    def test_keeps_the_label_on_a_head_a_review_signed_off_since_the_push(self) -> None:
+        code, out, calls = self.run_step(["Clean"], [self.status("success")])
+
+        self.assertEqual((0, []), (code, calls), out)
+        self.assertIn(f"signed off its head {self.HEAD[:7]}", out)
+
+    def test_removes_the_label_from_a_head_no_review_signed_off(self) -> None:
+        removal = [["pr", "edit", "7", "--repo", "acme/app", "--remove-label", review.CLEAN_LABEL]]
+        for name, statuses in [("no status", []), ("a failure", [self.status("failure")]),
+                               ("another check's success", [self.status("success", "ci/build")]),
+                               ("a pending status", [self.status("pending")])]:
+            with self.subTest(name):
+                code, out, calls = self.run_step([review.CLEAN_LABEL, "bug"], statuses)
+
+                self.assertEqual((0, removal), (code, calls), out)
+
+    def test_does_nothing_once_the_label_is_gone(self) -> None:
+        code, out, calls = self.run_step(["bug"], None)
+
+        self.assertEqual((0, []), (code, calls), out)
+        self.assertIn("no longer carries", out)
+
+    def test_fails_without_removing_the_label_when_the_status_cannot_be_read(self) -> None:
+        code, out, calls = self.run_step([review.CLEAN_LABEL], None)
+
+        self.assertNotEqual(0, code, out)
+        self.assertEqual([], calls)
 
 
 class ReviewRulesTests(RepositoryTestCase):

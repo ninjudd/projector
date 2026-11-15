@@ -2360,17 +2360,23 @@ def record_required_check(root: Path, value: bool) -> None:
 
 
 def write_clean_workflow(root: Path) -> FileAction:
-    """Write the workflow that takes `clean` off a pushed pull request, keeping one edited by hand."""
+    """Write the workflow that takes `clean` off a pushed pull request, replacing one an earlier release wrote
+    but keeping one edited by hand."""
     path = root / review.CLEAN_WORKFLOW_PATH
     text = review.clean_workflow_text()
+    action = "created"
     if path.is_file():
-        if path.read_text(encoding="utf-8") == text:
+        current = path.read_text(encoding="utf-8")
+        if current == text:
             return FileAction(review.CLEAN_WORKFLOW_PATH, "unchanged")
-        return FileAction(review.CLEAN_WORKFLOW_PATH, "kept",
-                          f"{review.CLEAN_WORKFLOW_PATH} has changes Projector did not write, so it was left alone")
+        if not review.is_earlier_clean_workflow(current):
+            return FileAction(review.CLEAN_WORKFLOW_PATH, "kept",
+                              f"{review.CLEAN_WORKFLOW_PATH} has changes Projector did not write, so it was left "
+                              "alone")
+        action = "updated"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
-    return FileAction(review.CLEAN_WORKFLOW_PATH, "created",
+    return FileAction(review.CLEAN_WORKFLOW_PATH, action,
                       f"commit {review.CLEAN_WORKFLOW_PATH} to the default branch through a pull request; GitHub "
                       "runs the workflow only from there")
 
