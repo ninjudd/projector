@@ -1,0 +1,73 @@
+{
+ "version": 1,
+ "name": "iOS device builds",
+ "project": "ios",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 457,
+  "title": "Prepare an iOS device test with project ios in the implement skill",
+  "head": "f2b221a4a857e77a487aa88d27019c443ff1bda6",
+  "headRef": "ios-skills",
+  "base": "fc7df3d3afd6793d9e1257c99ba46412ff23534d",
+  "baseRef": "ios-command",
+  "basePr": 456
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox lets an agent ask the person to test a change on their phone with a <b>request</b>, an inbox item whose optional <b>start action</b> is the one thing the agent does when the person presses start, such as installing a build. The press is the person's consent to the install. Until now the <code>implement</code> skill said to keep the pull request a draft during such a test but gave no way to prepare it, so each session invented its own build and install.",
+   "This pull request is the second layer of a stack. The layer below, #456, adds <code>project ios</code>, which builds a branch or pull request of a repository's iOS app in a worktree of its own, keeps each build, installs a kept build on a named device, and copies back crash reports and logs. This layer adds a subsection to the <code>implement</code> skill that tells an agent how to use those commands for a device test, and points the <code>work</code> skill's phone-check line at it. It carries out § 2.6 of the plan in <code>docs/projects/ios/readme.md</code>.",
+   "<ol><li><b>Push and build ahead.</b> The agent pushes the branch and runs <code>project ios build &lt;number&gt; --no-install</code>, and posts nothing until that build succeeds. An untrusted head is refused, and the agent never adds <code>--allow-untrusted</code> without the person's word.</li><li><b>Offer an install only to a reachable device.</b> When <code>project ios devices --json</code> lists a device as <code>installable</code>, the request gets a start action naming it, and on <code>STARTED</code> the agent runs <code>project ios install &lt;number&gt; --device &lt;udid&gt;</code>.</li><li><b>Always give the person a command.</b> The request's steps include <code>project ios build &lt;number&gt;</code>, which the person can run on the Mac their device is plugged into.</li><li><b>Bring crashes and logs back.</b> The agent runs <code>project ios crashes</code> when it can reach the device, and otherwise asks the person to run <code>crashes</code> or <code>logs</code>.</li></ol>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One open finding: the subsection names the Mac as in scope, but no step passes <code>--mac</code>, so a Mac check ends up offering a phone install.</li><li>Two suggestions: word the no-device case as \"cannot reach a device\", and pass <code>--device &lt;udid&gt;</code> to <code>crashes</code>.</li><li>Every <code>project ios</code> command and flag the text names exists in the layer below.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "skills",
+   "title": "The device test in the skills",
+   "kicker": "How an agent prepares, starts, and follows up a device test for an iOS app",
+   "intro": [
+    "The new subsection, \"Prepare a device test for an iOS app\", sits in the <code>implement</code> skill's hand-over, beside the rule that keeps a pull request a draft while the person tests it. A <b>kept build</b> is the copy of a built app that <code>project ios build</code> stores per branch or pull request, so a later <code>install</code> of that target installs exactly what was built for it.",
+    "The order of the steps matters for consent. The agent's own build passes <code>--no-install</code>, so nothing reaches the person's device until they press start, and the install names the device's UDID so it cannot land on a different device connected in the meantime."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every command and flag the text names, <code>build --no-install</code>, <code>--allow-untrusted</code>, <code>install --device</code>, <code>devices --json</code> with its <code>installable</code> field, <code>crashes</code>, and <code>logs</code>, exists in <code>add_ios_parser</code> at this head, read in <code>src/projector/cli.py</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "The new subsection and a link to it from the draft-while-testing rule.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 231,
+       "text": "The subsection says a check on the person's Mac goes through these steps, but no step passes <code>--mac</code>. The build targets iOS devices, <code>devices --json</code> lists only iOS devices, and the person's <code>project ios build &lt;number&gt;</code> installs on a phone, so a Mac check ends up offering a phone install. Drop \"or Mac\", or add the <code>--mac</code> variant of each step."
+      },
+      {
+       "kind": "verify",
+       "line": 245,
+       "text": "<code>choose_device</code> in <code>src/projector/ios.py</code> matches <code>--device</code> exactly by name or UDID and refuses a device that has become unreachable, so the install reaches the device the start action names, and the error the agent blocks with says why."
+      },
+      {
+       "kind": "context",
+       "line": 254,
+       "text": "<code>crashes</code> prints each report's path and <code>logs</code> prints the file it wrote, which is the file the person is asked to share."
+      }
+     ]
+    },
+    {
+     "path": "skills/work/SKILL.md",
+     "note": "Points the phone-check line at the new subsection."
+    }
+   ]
+  }
+ ]
+}
