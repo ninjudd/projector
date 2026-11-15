@@ -1,0 +1,92 @@
+{
+ "version": 1,
+ "name": "Clean label workflow",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 452,
+  "title": "Remove the clean label when a push gives a pull request a new head",
+  "head": "2740bd795bdc0c19a653a7fb0df63a5a215c7c03",
+  "headRef": "projector-clean-label",
+  "base": "abafe2b51510ab56ca1de56713a0bf143f55c37e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's reviews label a pull request <code>clean</code> when the newest review of its current head found nothing to fix. A push gives the pull request a new head that no review has read, so the label has to come off. In a repository that requires the <code>projector/review</code> status, <code>project init</code> writes a GitHub Actions workflow that removes the label on each push. This repository requires that status on <code>main</code>, but it did not have the workflow, so a pull request kept a <code>clean</code> label from the review of an older head.",
+   "This change commits the two files <code>project init</code> writes here, unchanged: the workflow, and a <code>.projector.toml</code> that records the answer to the question <code>init</code> asks about the required check. The workflow runs from <code>main</code>, so it takes effect only after this pull request merges."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b><code>clean</code></b>: the label a review adds when it signs the current head off.</li><li><b><code>projector/review</code></b>: the commit status a review posts, <code>success</code> when it signs the head off. The <code>Projector review</code> ruleset requires it on <code>main</code>.</li><li><b><code>pull_request_target</code></b>: a workflow trigger that runs the default branch's copy of the workflow with a token that can edit the pull request, even one from a fork.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>One Projector review at <code>2740bd7</code>, clean, with no finding threads. It suggested correcting one sentence of the pull request body, which says the <code>.projector.toml</code> setting makes reviews post <code>projector/review</code>. The ruleset on <code>main</code> is what makes them post it.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "workflow",
+   "title": "The workflow that removes a stale clean label",
+   "kicker": "A push to a pull request that carries clean takes the label off, unless the new head is already signed off.",
+   "intro": [
+    "The workflow runs on each push to a pull request, and its job starts only when the pull request carried <code>clean</code> at the push. Its one step reads the pull request as it is when the step runs, because a job can run late or be re-run from an old event.",
+    "<ol><li><b>It keeps the label on a signed-off head.</b> When the current head already has a <code>success</code> <code>projector/review</code> status, a review signed it off after the push, so the step leaves the label.</li><li><b>Otherwise it removes the label.</b> It then reads the status again, and gives the label back when a review signed the head off while the step ran.</li><li><b>It takes the label off again after a race.</b> When a push moved the head while the step gave the label back, it removes the label once more.</li></ol>"
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".github/workflows/projector-clean.yml",
+     "note": "The workflow exactly as <code>project review workflow</code> prints it in Projector 0.8.17.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The file is byte-identical to <code>project review workflow</code> at this head and in the installed 0.8.17, checked with <code>diff</code>. So <code>project init</code> reports it <code>unchanged</code>, and a later release that changes the workflow replaces it."
+      },
+      {
+       "kind": "verify",
+       "text": "The job checks out no pull request code. It passes <code>gh</code> only the pull request number, the repository, and the label's own spelling, each quoted, so the write token never runs code a pull request supplies.",
+       "line": 23
+      },
+      {
+       "kind": "context",
+       "text": "This status read is what keeps a late job from taking <code>clean</code> off a head a review already signed off. It works only because the <code>Projector review</code> ruleset requires <code>projector/review</code> on <code>main</code>, so every review posts it.",
+       "line": 45
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "config",
+   "title": "The recorded answer to init's question",
+   "kicker": "A repository setting that tells later init runs to keep the ruleset and the workflow without asking.",
+   "intro": [
+    "<code>project init</code> asks whether the repository relies on Projector alone to sign off pull requests. <code>review.require_check = true</code> records a yes, so a later <code>init</code> asks nothing and recreates whichever of the ruleset and the workflow is missing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".projector.toml",
+     "note": "Records <code>review.require_check = true</code>, in the exact form <code>init</code> writes.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>write_value</code> at this head writes these two lines byte for byte, and <code>project config get review.require_check</code> reads <code>true</code> in the worktree."
+      },
+      {
+       "kind": "context",
+       "text": "<code>publish</code> never reads this key. It posts <code>projector/review</code> wherever the default branch's rules require it, so the setting does not by itself make reviews post the status the workflow reads.",
+       "line": 2
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
