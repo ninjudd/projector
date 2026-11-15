@@ -1,0 +1,102 @@
+{
+ "version": 1,
+ "name": "Work skill",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 437,
+  "title": "Add a work skill that keeps a session working on its own",
+  "head": "1fcffb8d4e9e7bce8a7a53a0ae4115df3438e765",
+  "headRef": "work-skill",
+  "base": "2d3a358662b4e0944af89ef2518490f9f3655dc9",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector ships its agent workflows as <em>skills</em>: Markdown instructions under <code>skills/</code> that both Claude Code and Codex load from the same tree. A session left alone with work tends to stop at its first open question and wait for the user, or to keep every pull request in draft until the whole task is done, so nothing is reviewed in the meantime.",
+   "This pull request adds a <code>work</code> skill, <code>/projector:work</code> in Claude Code and <code>$work</code> in Codex. It switches the session into working on its own: the session decides what has a reasonable answer, posts what the user must decide to Projector's <em>inbox</em> (the list of questions, requests, and notices that waits above the user's prompt), marks each pull request ready for review as soon as its own work on it is done, and runs <code>fix-pr</code> on each pull request as review events arrive.",
+   "The skill adds no code. It cites the sections of <code>implement</code>, <code>fix-pr</code>, and <code>cleanup</code> that already hold the hand-over, event, and subagent rules, rather than restating them. The rest of the change publishes the skill and describes it."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Inbox</b>: the items a session posts for the user with the <code>ask</code>, <code>request</code>, and <code>tell</code> tools in Claude Code, or the <code>project inbox</code> commands elsewhere.</li><li><b>Ready</b>: a pull request out of draft. A session that reviews the repository waits until a pull request is ready before it reviews it.</li><li><b>Review event</b>: a line such as <code>FINDING</code> or <code>VERDICT</code> that the watch daemon sends a session subscribed to fix a pull request.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review, at <code>64c68bd</code>, requested changes with one finding: on a host without Projector's inbox tools, nothing delivered the user's answers back to the session.</li><li><code>1fcffb8</code> fixed it by naming <code>project inbox watch</code>, and the second review, at that head, is clean.</li><li>The packaging tests, both plugin validations, <code>claude plugin test .</code>, <code>project check</code>, and <code>git diff --check</code> pass at this head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "skill",
+   "title": "The work skill",
+   "kicker": "The instructions a session follows to keep working without the user",
+   "intro": [
+    "<code>skills/work/SKILL.md</code> is the whole behavior. It is text an agent follows, so each command and each cited section in it has to match the code and the other skills at this head.",
+    "The skill has five parts, in the order a session uses them:",
+    "<ol><li><b>Decide what you can.</b> The session answers a choice itself when the request, the repository, or a sensible default answers it. It leaves to the user a product choice, a change of scope, an action that is hard to undo or reaches outside the repository, and declining a person's review finding.</li><li><b>Post what the user must see.</b> Decisions go to <code>ask</code> with a recommendation, work only the user can do goes to <code>request</code>, and news they must act on goes to <code>tell</code>. Where an answer is safe to build on and easy to change, the session builds on its recommendation and says so in the item. It never waits for an answer, and when one arrives it acts on it, undoing work built on a recommendation the user did not pick. In Claude Code, Projector's panel delivers the answers. On a host without the tools, the session runs <code>project inbox watch</code> to hear them.</li><li><b>Hand each pull request to review.</b> The session opens each pull request as a draft and marks it ready with <code>project review ready</code> once its own work on it is done.</li><li><b>Fix each pull request as reviews arrive.</b> It runs <code>fix-pr</code> once on each pull request at the start, then again on each review event, in one subagent per pull request.</li><li><b>Keep going until the work is done.</b> It ends a turn only when every piece is done or waits on the user, and then reports its pull requests, decisions, inbox items, and remaining work.</li></ol>"
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The four sections the skill cites exist at this head with those headings: <code>implement</code> \"Hand the work over\", <code>fix-pr</code> \"Give each pull request its own subagent\" and \"Act on the session's events\", and <code>cleanup</code> \"Find the session's id\". The review read each one against what the skill says about it."
+    }
+   ],
+   "files": [
+    {
+     "path": "skills/work/SKILL.md",
+     "note": "The new skill: when the session decides, what it posts to the inbox, how answers reach it on each host, when it marks a pull request ready, and when it stops.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 64,
+       "text": "On a host without Projector's inbox tools, such as Codex, the session starts <code>project inbox watch --session &lt;id&gt;</code>, or runs it with <code>--once</code> between pieces of work, because nothing else delivers the user's answers there: <code>project watch stream</code> prints only pull request events. Checked against the command's <code>--help</code>, <code>docs/cli.md</code> under \"Use the inbox\", and <code>stream</code> in <code>src/projector/watch.py</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 101,
+       "text": "<code>project review ready &lt;number&gt; --repo &lt;owner&gt;/&lt;repo&gt;</code> exists at this head, and marking a finished pull request ready matches the repository's <code>CLAUDE.md</code> under \"Hand work over for review\". Checked against the command's <code>--help</code> and the head's <code>CLAUDE.md</code>."
+      }
+     ]
+    },
+    {
+     "path": "skills/work/agents/openai.yaml",
+     "note": "Codex's display name, short description, and default prompt for the skill, in the same shape as the other skills' files."
+    }
+   ]
+  },
+  {
+   "id": "publish",
+   "title": "Publishing and describing the skill",
+   "kicker": "The published skill set and the documentation that lists it",
+   "intro": [
+    "Both hosts' plugin manifests package the whole <code>skills/</code> tree, so the skill ships without a manifest change. <code>tests/test_packaging.py</code> pins the exact set of published skills, so it gains <code>work</code>. The README and <code>docs/plugins.md</code> add the skill to their lists, and <code>docs/plugins.md</code> gains a paragraph on how to start it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_packaging.py",
+     "note": "Adds <code>work</code> to <code>PUBLISHED_SKILLS</code>, which the test compares with the skills found under <code>skills/</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "<code>PYTHONPATH=src python3 -m unittest tests.test_packaging</code> passes at this head, 13 tests, including the check that every cited section names a real heading."
+      }
+     ]
+    },
+    {
+     "path": "README.md",
+     "note": "Adds <code>work</code> to the README's list of skills."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Adds <code>work</code> to the plugin's skill list, and a paragraph on running <code>/projector:work</code> and what the session then does."
+    }
+   ]
+  }
+ ]
+}
