@@ -1983,7 +1983,9 @@ whose `origin` is on GitHub unless you pass `--repo`. Unlike `status` and
 the commands that follow a review, they never take the repository from a
 review set up on this machine, because a command that moves a pull
 request's draft state must not act on a repository it guessed. Each prints
-the draft state and the head:
+the draft state and the head that GitHub shows once the state has moved.
+GitHub can take a few seconds to show a head you just pushed, so a command
+you run right after a push can still name the head before it:
 
 ```
 $ project review ready 66

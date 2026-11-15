@@ -83,6 +83,8 @@ class FakeGitHub:
         self.after_post = None
         # Runs once, as the next review is submitted and before GitHub records it.
         self.before_post = None
+        # Runs once, right after the next `gh pr ready`, as GitHub catching up with a push it had not yet shown.
+        self.after_ready = None
         # Runs once, right after the next label edit, as a push landing at that moment.
         self.after_edit = None
         # Reviews the listing leaves out, as one GitHub has not indexed yet.
@@ -131,6 +133,9 @@ class FakeGitHub:
             return json.dumps(dict(found, html_url=review_page(review_id), submitted_at=found.get("at")))
         if args[:2] == ["pr", "ready"]:
             self.pr["draft"] = "--undo" in args
+            if self.after_ready:
+                hook, self.after_ready = self.after_ready, None
+                hook()
             return ""
         if args[:3] == ["api", "-X", "DELETE"]:
             del self.comments[int(args[3].rsplit("/", 1)[1])]
@@ -3336,6 +3341,17 @@ class DraftTests(ReviewCase):
         self.assertFalse(self.github.pr["draft"])
         self.assertEqual([["pr", "ready", "1", "--repo", REPO]], self.drafts())
         self.assertEqual({"repo": REPO, "number": 1, "head": self.head, "draft": False, "changed": True}, json.loads(out))
+
+    def test_names_the_head_github_shows_after_the_move_not_the_one_it_showed_before(self) -> None:
+        # Right after a push, GitHub can still show the head before it, so the head the command first read is
+        # stale, and naming it would say an older head was marked ready.
+        pushed = "f" * 40
+        self.github.after_ready = lambda: self.github.pr["head"].update(sha=pushed)
+
+        code, out, err = self.run_draft("ready")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual([f"marked {REPO}#1 ready for review at {pushed[:7]}"], out.splitlines())
 
     def test_a_state_already_reached_changes_nothing(self) -> None:
         for command, draft, line in (("hold", True, "is already a draft"), ("ready", False, "is already ready")):
