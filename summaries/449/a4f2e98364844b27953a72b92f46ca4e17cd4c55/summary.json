@@ -1,0 +1,101 @@
+{
+ "version": 1,
+ "name": "Italic draft pull requests",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 449,
+  "title": "Draw a draft pull request in italic instead of the subtle color",
+  "head": "a4f2e98364844b27953a72b92f46ca4e17cd4c55",
+  "headRef": "draft-italic",
+  "base": "5ce9b6f3a67d400c73239f2a1841db47e4c29605",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the band Claude Code draws above the prompt. It lists each pull request the session watches as a row: the number, a state word (<code>reviewing</code>, <code>clean</code>, <code>draft</code>, or <code>ready</code>), the author when someone else wrote it, the title, and notes such as a conflict or the count of open review threads. A click on the header's count collapses the rows to one line of numbers, such as <code>+ #12 #14</code>, where each number's color stands in for its row.",
+   "The panel marked a draft with the theme's <code>subtle</code> color, on the row's number, on its <code>draft</code> word, and on the collapsed line. On a dark theme that color sits close to the background, so a draft was hard to read. This pull request keeps a draft in the default text color and draws it in italic instead.",
+   "<ul class=\"tight\"><li><b>On a row.</b> The number is italic while the pull request is a draft. The state word is <code>draft</code> in italic when no review label applies. A draft that carries <code>reviewing</code> or <code>clean</code> shows that label in its usual orange or green, beside an italic number.</li><li><b>On the collapsed line.</b> A draft no longer has a color of its own. Its number takes the color its other state gives, red, yellow, orange, green, or the default, and italic alone says it is a draft. A held draft, one that keeps its <code>clean</code> label while its author builds a change, now reads as an italic green number, as its row shows a green <code>clean</code>.</li></ul>",
+   "The Projector review of <code>c261a9d</code> was clean, with one suggestion about a phrase in <code>docs/plugins.md</code>. The next head, <code>a4f2e98</code>, rewrites that phrase, and its incremental review was clean."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "panel",
+   "title": "How the panel draws a draft",
+   "kicker": "The row and the collapsed line mark a draft with italic, not a color.",
+   "intro": [
+    "Two helpers in <code>hooks/register.tsx</code> decide how a pull request looks. <code>rowState</code> picks the word after a row's number and its style. <code>statusColor</code> picks the color of a number on the collapsed line. The draft flag, <code>pr.isDraft</code>, comes from the watch daemon's GitHub query.",
+    "<code>rowState</code> now returns <code>isItalic: true</code> and no color for <code>draft</code>, so its return type makes <code>color</code> optional. <code>statusColor</code> loses its draft branch, which returned <code>subtle</code> ahead of the review labels. Each place that draws a number passes <code>italic={pr.isDraft}</code> to its <code>Text</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The two style helpers, and the row and collapsed line that draw a number with them.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A pull request still loading comes from <code>loadingOf</code> in <code>hooks/github.ts</code>, whose <code>isDraft</code> is <code>false</code>. So <code>statusColor</code> still mutes it with <code>subtle</code>, and no loading number is italic."
+      },
+      {
+       "kind": "verify",
+       "text": "With the draft branch gone, a draft reaches the same red, yellow, and label checks as a ready pull request. The changed collapsed-line test shows a draft with threads as yellow, a held draft as green, and a draft with a conflict as red, each italic. <code>claude plugin test .</code> passed it at this head.",
+       "line": 1252
+      },
+      {
+       "kind": "context",
+       "text": "A draft that carries a review label gets its word from <code>reviewLabel</code>, which sets no italic. Only the number says it is a draft, which matches the docs.",
+       "line": 1237
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests for each row's style",
+   "kicker": "Both panel tests now record color and italic together.",
+   "intro": [
+    "The row test and the collapsed-line test each mount the panel with a set of pull requests in different states, then read the props of each number and word. Each now records a pair, the color and whether the text is italic, and compares all the pairs at once. A draft that loses its italic, or a ready pull request that gains one, makes the comparison fail."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "The row test and the collapsed-line test, which check color and italic on every number.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The row test expects italic on the two drafts' numbers and on the <code>draft</code> word, and on no other row. Its expectation covers both the drafts and the ready rows, so the italic dropped or put on every row fails it.",
+       "line": 330
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Panel documentation",
+   "kicker": "The panel section of the plugin docs says how a draft looks.",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the panel's rows and its collapsed line. The change rewrites both descriptions: a draft's number is italic in the default color, the <code>draft</code> word is italic, and the collapsed line no longer lists a muted color for a draft."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The row and collapsed-line descriptions, rewritten for italic drafts.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "This sentence says a collapsed number's color says what its row says, from its notes and thread count as well as its state. The section above defines the state as the <code>reviewing</code>, <code>clean</code>, <code>draft</code>, or <code>ready</code> word, and red and yellow come from elsewhere. Checked against <code>statusColor</code>: red comes from a conflict, a change request, or failing checks, and yellow from open threads, as the list below says.",
+       "line": 597
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,233 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 04e6ceed..8208af5c 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -278,22 +278,21 @@ not subscribed to before.
+ ```
+ 
+ Each line is the pull request's number, its state, its author when someone
+-else wrote it, and the title. The number is drawn in the theme's subtle color
+-while the pull request is a draft, which means its author is still working on
+-it, and in the default text color once it is ready for review. The state is
+-the first of these that applies:
++else wrote it, and the title. The number is in the default text color, and
++in italic while the pull request is a draft, which means its author is still
++working on it. The state is the first of these that applies:
+ 
+ - **`reviewing`**, in orange, while the pull request carries the
+   `reviewing` label, which `project review setup` adds when a review starts.
+ - **`clean`**, in green, while it carries the `clean` label, which
+   `project review publish` adds once a review signs off the current head.
+-- **`draft`**, in the subtle color, while it is a draft.
++- **`draft`**, in italic, while it is a draft.
+ - **`ready`**, in light blue, while it is ready for review and carries
+   neither label. That covers a pull request no review has read yet, and also
+   one whose `clean` label a push removed or whose review requested changes.
+ 
+ So a held draft, which keeps its `clean` label while a change is built,
+-reads as a subtle number beside `clean`. The panel reads the draft state and
++reads as an italic number beside `clean`. The panel reads the draft state and
+ the labels with the rest of the line, from the watch daemon's query of the
+ pull request.
+ 
+@@ -595,18 +594,20 @@ long list of pull requests or a burst of notices does not push the questions
+ out of view. A collapsed line starts with `+`, where an item's starts with
+ `-`, to say it expands. Collapsed pull requests become a line such as
+ `+ #12 #14 #15` in their place, listing each in the rows' order. With no
+-review label beside it, each number's color says what its row's number and
+-label say together, taking the first of these that applies:
++review label beside it, each number's color says what its row says, from
++its notes and thread count as well as its state, taking the first of these
++that applies:
+ 
+ - **Red** when a conflict, a change request, or failing checks hold it back.
+ - **Yellow** while it has unresolved review threads, which its row counts in
+   yellow.
+-- **Muted** while it is a draft, even one that keeps its `clean` label.
+ - **Orange** while it carries the `reviewing` label.
+ - **Green** while it carries the `clean` label.
+-- **The default text color** when it is ready and no review has labeled it.
++- **The default text color** when it carries neither label.
+ 
+-A pull request that is still loading is muted. The numbers work as tabs:
++A draft's number is italic as well, as on its row, so a held draft that
++keeps its `clean` label reads as an italic green number. A pull request that
++is still loading is muted. The numbers work as tabs:
+ click one to open that pull request's drawer below the line, with its number
+ drawn inverted, and click it again to close the drawer. The pull requests
+ stay collapsed, and only one drawer is open at a time, so clicking another
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 290bb9c8..e1e92b0c 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -292,7 +292,7 @@ test('draws one line per open pull request of the session’s own loops', async
+   await ui.unmount()
+ })
+ 
+-test('a row draws a draft number in the subtle color and says reviewing, clean, draft, or ready after it', async ($, on) => {
++test('a row draws a draft number in italic and says reviewing, clean, draft, or ready after it', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#13\no/r#14\no/r#15\n' })
+@@ -301,7 +301,8 @@ test('a row draws a draft number in the subtle color and says reviewing, clean,
+   await clock.settle()
+   const ui = await $.ui.mount(PANEL)
+ 
+-  const rows = new Map<string, { word: string; color: unknown; number: unknown }>()
++  type Drawn = [color: unknown, isItalic: boolean]
++  const rows = new Map<string, { word: string; style: Drawn; number: Drawn }>()
+   for (const [number, title] of [
+     [1, 'Signed-off change'],
+     [2, 'Change under review'],
+@@ -315,22 +316,27 @@ test('a row draws a draft number in the subtle color and says reviewing, clean,
+     const word = texts
+       .slice(Math.max(0, at - 2), at)
+       .find(found => ['reviewing', 'clean', 'draft', 'ready'].includes(found.text))
+-    // `dimColor` does not dim in every terminal, so the number's color alone carries the draft state.
++    // `dimColor` does not dim in every terminal, so the number's own style carries the draft state.
+     const button = await ui.find({ type: 'Button', key: `pr:o/r#${number}` })
+     expect(button?.props.dimColor).toBeUndefined()
+     const digits = texts.find(found => found.text === `#${number}`)
+-    rows.set(title, { word: word?.text ?? '', color: word?.props.color, number: digits?.props.color })
++    rows.set(title, {
++      word: word?.text ?? '',
++      style: [word?.props.color, word?.props.italic === true],
++      number: [digits?.props.color, digits?.props.italic === true],
++    })
+   }
+   expect(Object.fromEntries(rows)).toEqual({
+-    'Signed-off change': { word: 'clean', color: 'success', number: undefined },
+-    'Change under review': { word: 'draft', color: 'subtle', number: 'subtle' },
++    'Signed-off change': { word: 'clean', style: ['success', false], number: [undefined, false] },
++    // A draft keeps the default color, which stays readable, and is drawn in italic.
++    'Change under review': { word: 'draft', style: [undefined, true], number: [undefined, true] },
+     // A pull request no review has labeled says whether it is ready, in light blue.
+-    'Change waiting for review': { word: 'ready', color: 'suggestion', number: undefined },
++    'Change waiting for review': { word: 'ready', style: ['suggestion', false], number: [undefined, false] },
+     // A review in progress shows over a clean label an earlier head left.
+     // Reviewing is orange, as the drawer's reviewer is, since yellow marks findings.
+-    'Change a review is reading': { word: 'reviewing', color: 'claude', number: undefined },
+-    // A held pull request keeps its clean label beside the subtle number of a draft.
+-    'Signed-off change held for a suggestion': { word: 'clean', color: 'success', number: 'subtle' },
++    'Change a review is reading': { word: 'reviewing', style: ['claude', false], number: [undefined, false] },
++    // A held pull request keeps its clean label beside the italic number of a draft.
++    'Signed-off change held for a suggestion': { word: 'clean', style: ['success', false], number: [undefined, true] },
+   })
+   await ui.unmount()
+ })
+@@ -3552,7 +3558,7 @@ test('the pull requests’ count in the header collapses them to one line in the
+   await ui.unmount()
+ })
+ 
+-test('a collapsed number is red when held back, yellow with findings, muted for a draft, orange reviewing, green clean, and plain when ready', async ($, on) => {
++test('a collapsed number is red when held back, yellow with findings, orange reviewing, green clean, plain otherwise, and italic for a draft', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+   world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#12\no/r#13\no/r#14\no/r#15\no/r#16\n' })
+@@ -3562,22 +3568,23 @@ test('a collapsed number is red when held back, yellow with findings, muted for
+   const ui = await $.ui.mount(PANEL)
+ 
+   await ui.press({ key: 'count:pr' })
+-  const colors: Record<string, unknown> = {}
++  const drawn: Record<string, [unknown, boolean]> = {}
+   for (const text of ['#1', '#2', '#12', '#13', '#14', '#15', '#16']) {
+-    colors[text] = (await ui.find({ type: 'Text', text }))?.props.color
++    const props = (await ui.find({ type: 'Text', text }))?.props
++    drawn[text] = [props?.color, props?.italic === true]
+   }
+-  expect(colors).toEqual({
+-    '#1': 'success',
+-    // An open review thread shows over the draft state, as the row's yellow count of them does.
+-    '#2': 'warning',
+-    '#12': 'error',
++  expect(drawn).toEqual({
++    '#1': ['success', false],
++    // An open review thread colors a draft as it would a ready pull request, and the draft is italic.
++    '#2': ['warning', true],
++    '#12': ['error', false],
+     // A ready pull request no review has labeled takes the default color.
+-    '#13': undefined,
+-    '#14': 'claude',
+-    // A held draft's clean label does not make its number green.
+-    '#15': 'subtle',
+-    // What holds a pull request back shows over its draft state.
+-    '#16': 'error',
++    '#13': [undefined, false],
++    '#14': ['claude', false],
++    // A held draft keeps its clean label's green, in italic, as its row draws an italic number beside `clean`.
++    '#15': ['success', true],
++    // What holds a pull request back shows on a draft too.
++    '#16': ['error', true],
+   })
+   await ui.unmount()
+ })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 235f8e05..e0191dfc 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1228,28 +1228,27 @@ function reviewLabel(pr: PullRequest): { text: string; color: 'claude' | 'succes
+ 
+ /**
+  * The word after a row's number: its review label while it carries one, and
+- * otherwise `draft` in the subtle color or `ready` in the theme's light blue.
+- * `ready` means only that no label is set, which is also true after a push
+- * removes `clean` or a review requests changes. A held draft still shows its
+- * `clean` beside its subtle number.
++ * otherwise `draft` in italic or `ready` in the theme's light blue. `ready`
++ * means only that no label is set, which is also true after a push removes
++ * `clean` or a review requests changes. A held draft still shows its `clean`
++ * beside its italic number.
+  */
+-function rowState(pr: PullRequest): { text: string; color: string } {
+-  return reviewLabel(pr) ?? (pr.isDraft ? { text: 'draft', color: 'subtle' } : { text: 'ready', color: 'suggestion' })
++function rowState(pr: PullRequest): { text: string; color?: string; isItalic?: true } {
++  return reviewLabel(pr) ?? (pr.isDraft ? { text: 'draft', isItalic: true } : { text: 'ready', color: 'suggestion' })
+ }
+ 
+ /**
+  * A pull request's number on the line its collapsed rows give way to, which
+  * has no state beside it, so its color says what the row says: red when a
+  * note or its checks hold it back, yellow while review threads are open, as
+- * the row's count of them is, muted for a draft, as the row's number is, then
+- * the review label's orange or green, and the default color for a ready pull
+- * request that carries neither label. It is muted while it loads.
++ * the row's count of them is, then the review label's orange or green, and
++ * the default color for a pull request that carries neither label. It is
++ * muted while it loads. A draft's number is italic as well, as its row's is.
+  */
+ function statusColor(pr: PullRequest): string | undefined {
+   if (pr.isLoading === true) return 'subtle'
+   if (pr.isConflicting || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.checks === 'failing') return 'error'
+   if (pr.openThreads > 0) return 'warning'
+-  if (pr.isDraft) return 'subtle'
+   return reviewLabel(pr)?.color
+ }
+ 
+@@ -1840,7 +1839,7 @@ export const register: Register = on => {
+                     plain
+                     onPress={() => toggle(key, `open:${key}`, isOpened ? undefined : `discuss:${key}`)}
+                   >
+-                    <Text color={statusColor(pr)} inverse={isOpened}>
++                    <Text color={statusColor(pr)} italic={pr.isDraft} inverse={isOpened}>
+                       {label(pr)}
+                     </Text>
+                   </Button>,
+@@ -2402,13 +2401,15 @@ export const register: Register = on => {
+                 label={label(pr)}
+                 onPress={() => toggle(key, `pr:${key}`, opened === key ? undefined : `discuss:${key}`)}
+               >
+-                {/* `dimColor` does not dim in every terminal, so a draft's number takes the theme's subtle color. */}
+-                <Text color={pr.isDraft ? 'subtle' : undefined}>{label(pr)}</Text>
++                {/* A draft's number is italic, in the default color, which stays readable where `subtle` fades it. */}
++                <Text italic={pr.isDraft}>{label(pr)}</Text>
+               </Button>
+             </Box>
+             {isLoaded && (
+               <Box flexShrink={0}>
+-                <Text color={state.color}>{state.text}</Text>
++                <Text color={state.color} italic={state.isItalic}>
++                  {state.text}
++                </Text>
+               </Box>
+             )}
+             {isLoaded && !isOwn(pr, shown.viewer) && (
