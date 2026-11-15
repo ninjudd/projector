@@ -251,7 +251,7 @@ not subscribed to before.
   /projector                                              2 pull requests  12s   [-]
    #267 List a loop's open pull requests above the Claude Code prompt       2h
    #258 reviewing grace Name the reviewed head in a review's… conflict · 2* 5m
-        reviewing · review-signature · +84 −12 in 5 files · checks passing
+        reviewer · review-signature · +84 −12 in 5 files · checks passing
         7: Discuss  8: Dismiss
         open in github  open in projector
         src/review.py:412 · ada · P2 · The signature names the base, not the head
@@ -343,10 +343,11 @@ there the panel starts with its first row.
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
 one column past the number, under the review label. It names the session's
-roles on the pull request: `fixing` in the terminal palette's blue,
-`reviewing` in Claude's orange, or `fixing and reviewing`. This `reviewing`
-says that this session reviews the pull request, whatever its labels say.
-Then come its
+roles on the pull request: `fixer` in the terminal palette's blue,
+`reviewer` in Claude's orange, or `fixer and reviewer`. `reviewer` says that
+this session is subscribed to review the pull request, whether or not a
+review is running, while the row's `reviewing` label says a review is
+running now, in any session. Then come its
 branch, in the palette's cyan, its size, and its checks. The size reads as a
 diff stat: the insertions, such as `+84`, in green and the deletions, such
 as `−12`, in red. The checks' state takes a color of its own, and the rest,
@@ -443,8 +444,8 @@ equivalent.
 A session that started a `watch-threads.sh` or `watch-prs.sh` watcher under
 an earlier release keeps it until the session ends, and the panel lists the
 pull requests in that watcher's `--tracked` file
-meanwhile: `watch-threads.sh`'s as `fixing`, and `watch-prs.sh`'s as
-`reviewing`. For such a pull request that the daemon has no result for, the
+meanwhile: `watch-threads.sh`'s as `fixer`, and `watch-prs.sh`'s as
+`reviewer`. For such a pull request that the daemon has no result for, the
 panel asks GitHub itself, in one `gh api graphql` call every 30 seconds.
 When that call cannot reach GitHub, the panel keeps showing what GitHub gave
 last, and shows GitHub's error only when it has no pull request to show.

@@ -185,6 +185,13 @@ const BRANCH_COLOR = 'ansi256(6)'
  */
 const ROLE_COLORS: Record<Role, string> = { fixing: 'ansi256(4)', reviewing: 'claude' }
 
+/**
+ * What a drawer calls the session in each role. A noun, so the session's
+ * `reviewer` role never reads as the `reviewing` label on the row above it,
+ * which says a review is running now, in any session.
+ */
+const ROLE_NAMES: Record<Role, string> = { fixing: 'fixer', reviewing: 'reviewer' }
+
 /** The key that closes an open item's drawer, from its line at the drawer's top. */
 const CLOSE_HOTKEY = '0'
 
@@ -2275,7 +2282,7 @@ export const register: Register = on => {
             {roles.flatMap((role, at) => [
               ...(at === 0 ? [] : [' and ']),
               <Text key={`role:${role}`} color={ROLE_COLORS[role]}>
-                {role}
+                {ROLE_NAMES[role]}
               </Text>,
             ])}
             {pr.branch !== '' && ' · '}
