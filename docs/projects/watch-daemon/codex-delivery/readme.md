@@ -250,25 +250,30 @@ A full Python run passed 1,260 tests before the latest documentation and
 Claude panel changes were merged from `main`. The final run passed except
 for sandbox restrictions on the site's loopback servers; all 19 tests in
 `tests.test_site.ServeTests` passed when rerun outside that sandbox.
-Both plugin validations, plan checks, and the hooks type-check pass. The current Claude test runner
+Both plugin validations, plan checks, and the hooks type-check pass. The
+current Claude test runner
 reports 202 passing tests and 25 panel-rendering expectation failures;
 an isolated copy of unchanged `main` has the same 25 failing test names. A live
 Claude session received a notice through its mod while idle and replied.
-A native Codex queue resumed an unloaded test thread and received its
-reply; temporary startup-only hook overrides did not survive that resume,
-so that run does not prove acknowledgment through installed hooks.
 
-The combined live Codex check remains pending. Run
-`PYTHONPATH=src python3 tests/codex_smoke.py --review-hooks` with native
-Codex and Node 22 or newer. The test creates a separate loopback server,
-reviews four temporary hooks in the native hook browser, restarts the server
-to unload the thread, and queues a batch through the real CLI. Success
-requires its `UserPromptSubmit` receipt. It stops its server and archives
-its test thread; it does not change the installed plugin or mutate GitHub.
-Folder and hook trust decisions persist in Codex's local settings.
+The combined live Codex check passed with Codex 0.169.0 and Node 24.22.2:
 
-The project stays in progress until the operator authorizes that temporary
-folder and hook trust and the combined check passes. The test must also
-observe new-head and finding events in a live review workflow before
-completion; the automated producer tests and separate native transport
-observations do not replace that acceptance check.
+```sh
+PYTHONPATH=src python3 tests/codex_smoke.py --review-hooks
+```
+
+The operator authorized the temporary folder and hook trust. Each of the
+four generated hooks was approved individually in Codex's native hook
+browser. The test restarted its separate loopback server to unload the
+thread, then queued a batch through the real CLI. It exited successfully
+with `PASS: an unloaded Codex thread resumed and acknowledged its native
+queued batch`. Its `UserPromptSubmit` receipt proves that the hook's prompt
+matched the sent message exactly; the batch was consumed rather than left
+queued. The harness archived its test thread, stopped its server, and
+removed its temporary files. It changed no installed plugin and made no
+GitHub mutation. Folder and hook trust decisions persist in Codex's local
+settings.
+
+The project stays in progress until new-head and finding events are also
+observed in a live review workflow. The automated producer tests and native
+transport check do not replace that acceptance check.
