@@ -1,0 +1,220 @@
+{
+ "version": 1,
+ "name": "Review once ready for review",
+ "project": "review-on-ready",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 425,
+  "title": "Sign a reviewed head off with labels and a status, not draft state",
+  "head": "575d040f94ab754955b8329956a11f35efa2eea0",
+  "headRef": "review-on-ready",
+  "base": "8fafe864e9fa0ebfdd63acdcf98c89594fd7eeea",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector reviews pull requests for their author and publishes a verdict on each head. On the author's own pull request GitHub refuses both an approval and a change request, so until now Projector carried the verdict in <b>draft state</b>: <code>project review publish</code> converted the pull request to a draft when a review found problems and marked it ready when a review was clean. That left the author no way to say \"I'm still working\", so every head got a full review, including heads replaced minutes later.",
+   "This pull request is the first of three layers that give draft back its GitHub meaning. It moves the sign-off to two other places. A <b>head is signed off</b> when the newest counted Projector verdict on it, from any model, is clean and no Projector finding thread is open. <code>publish</code> then labels the pull request <code>clean</code>, and posts a <code>projector/review</code> commit status on the reviewed commit wherever a ruleset on the default branch requires that status. <code>setup</code> adds a <code>reviewing</code> label while a review runs. The author's hold comment goes, and two commands, <code>project review hold</code> and <code>project review ready</code>, move the author's own draft state.",
+   "The layers above add the daemon's wait for a pull request to be ready (#426) and <code>project init</code>'s setup of the required check and the label workflow (#427). Until they land, this layer still reviews every head, draft or not."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Sign-off</b>: the newest counted verdict on the head is clean and no finding thread is open. <code>sign_off</code> in <code>review.py</code> decides it.</li><li><b><code>clean</code> label</b>: the list-visible view of the sign-off.</li><li><b><code>reviewing</code> label</b>: a review's start comment is live.</li><li><b><code>projector/review</code></b>: the commit status a ruleset can require before a merge.</li><li><b>Hold</b>: converting your own signed-off pull request to a draft while you build a change on it.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first Projector review of <code>575d040</code> requested changes with one finding: <code>fix-pr</code> reads the sign-off from the <code>clean</code> label, which <code>review.labels = false</code> or a refused label edit leaves off. It also listed two suggestions.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "core",
+   "title": "Sign-off in the review commands",
+   "kicker": "How setup, publish, status, and finish decide and show the sign-off",
+   "intro": [
+    "<code>publish</code> no longer runs <code>gh pr ready</code>. After it submits, it re-reads the verdicts and the open finding threads, and <code>sign_off</code> decides whether the head is signed off. It then dismisses standing change requests on another author's signed-off pull request, posts the status when <code>requires_check</code> finds a ruleset that requires it, and changes both labels in one <code>gh pr edit</code>. A refused status fails the run, and a rerun finishes it without a second review. A refused label edit only warns.",
+    "<code>setup</code> adds <code>reviewing</code> and takes off a <code>clean</code> that no clean verdict on the new head supports, which covers a repository with no label workflow. <code>hold</code> and <code>ready</code> replace the hold comment's code, and <code>review.labels = false</code> turns the labels off."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The Python suite passes on this head: 1214 tests, OK with 1 skipped."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "<code>sign_off</code>, the label and status helpers, <code>set_draft</code>, and their use in <code>setup</code>, <code>publish</code>, <code>status</code>, and <code>finish</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 921,
+       "text": "This verdict read runs after the start comment posts and outside the <code>try</code>, so a failed read leaves a posted comment and a held lock with no state. The review lists this as a suggestion."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "The <code>ready</code> subcommand, <code>hold</code> without its options, and the new publish and setup output lines."
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds the <code>review.labels</code> setting."
+    },
+    {
+     "path": "src/projector/permissions.py",
+     "note": "Lets Codex run <code>project review ready</code>."
+    }
+   ]
+  },
+  {
+   "id": "daemon",
+   "title": "The daemon's re-review request",
+   "kicker": "RESPONDED now fires only on a change request",
+   "intro": [
+    "Before this change the daemon also asked for a re-review of the author's own draft, because draft meant \"not signed off\", and it read the hold comment. Draft no longer means that, so <code>RESPONDED</code> fires only when the head's newest verdict requests changes and the author answered. The daemon's query also reads each pull request's labels for the panel."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "The simplified <code>RESPONDED</code> condition, <code>is_held</code> removed, and <code>labels</code> in the query."
+    }
+   ]
+  },
+  {
+   "id": "panel",
+   "title": "The panel's review state",
+   "kicker": "Each row says reviewing, draft, clean, or ready",
+   "intro": [
+    "Projector's panel in Claude Code lists the session's pull requests. A row used to print <code>draft</code> or <code>ready</code>. It now prints the first of <code>reviewing</code>, <code>draft</code>, <code>clean</code>, and <code>ready</code> that applies, and only <code>clean</code> is green, so a held draft that keeps its <code>clean</code> label reads as a draft."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>claude plugin test .</code> shows the same 25 failures on this head as on the base, and the new row-state test passes."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "<code>reviewState</code> picks the row's word and color."
+    },
+    {
+     "path": "hooks/github.ts",
+     "note": "Reads <code>labels</code> and lowercases them in <code>toPullRequest</code>, which every row goes through."
+    },
+    {
+     "path": "hooks/types.d.ts"
+    },
+    {
+     "path": "hooks/panel.test.tsx"
+    },
+    {
+     "path": "hooks/parse.test.ts"
+    }
+   ]
+  },
+  {
+   "id": "skills",
+   "title": "Skills and generated instructions",
+   "kicker": "What agents do with draft state now",
+   "intro": [
+    "Agents still open every pull request as a draft, and now mark it ready with <code>project review ready</code> once their work is done, or once the person answers a test request. <code>fix-pr</code> holds a signed-off pull request by converting it to a draft while it builds a suggestion, and marks it ready after the push. The generated instructions block moves to version 25."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "The hold, the clean conditions, and the report rules.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 434,
+       "text": "The self-review clean condition requires the <code>clean</code> label, and lines 101, 462, and 470 repeat it. With <code>review.labels = false</code>, or after a refused label edit, <code>project review status</code> says the head is signed off while <code>fix-pr</code> reports it waiting on a re-review. Read the sign-off from <code>status</code> instead."
+      }
+     ]
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "The sign-off section and publish's modes."
+    },
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "Marks the pull request ready at the hand-over."
+    },
+    {
+     "path": "skills/spec/SKILL.md"
+    },
+    {
+     "path": "skills/cleanup/SKILL.md"
+    },
+    {
+     "path": "skills/review-repo/SKILL.md"
+    },
+    {
+     "path": "src/projector/templates/agents-block.md"
+    },
+    {
+     "path": "AGENTS.md"
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and plans",
+   "kicker": "Living docs for the commands and panel, and the plan's progress",
+   "intro": [
+    "<code>docs/cli.md</code> and <code>docs/plugins.md</code> describe the new commands, settings, labels, status, and panel states. The <code>review-on-ready</code> plan moves to <code>in-progress</code> and records what this layer settled in a new § 9.1."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The plan moves from <code>ready</code> to <code>in-progress</code>, and every question in its § 7 is explicitly deferred."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "docs/projects/review-on-ready/readme.md",
+     "note": "§ 9.1 records the decisions implementation settled."
+    },
+    {
+     "path": "docs/projects/watch-daemon/readme.md"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Python tests for the labels, the status, the commands, and RESPONDED",
+   "intro": [
+    "The hold tests give way to tests of <code>hold</code> and <code>ready</code>, and the draft-transition tests now assert the labels and the status."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_review.py"
+    },
+    {
+     "path": "tests/test_watch.py"
+    },
+    {
+     "path": "tests/test_instructions.py"
+    },
+    {
+     "path": "tests/test_permissions.py"
+    }
+   ]
+  }
+ ]
+}
