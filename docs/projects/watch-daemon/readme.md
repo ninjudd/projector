@@ -118,7 +118,7 @@ Each session has a folder, `sessions/<session>/`:
 | `subscriptions` | The CLI, under the folder's lock | One subscription a line, as below |
 | `session.json` | The CLI | `deliverer`, which is `mod` or `stream`, and `renewed_at` |
 | `events` | The daemon appends, and `project watch take` empties it | Event lines not yet delivered |
-| `state.json` | The daemon | What it announced to this session and when, and the head it last saw for each review |
+| `state.json` | The daemon | What it announced to this session and when, the head it last saw for each review, and the review labels it last saw for each pull request it fixes (§ 9.4) |
 
 The folder's lock is the inbox's `locked`. A subscription line names a
 target and a role:
@@ -396,6 +396,7 @@ what to do, after ` — `. A session that loaded no loop skill can act on it.
 | `VERDICT` | `fix` | A real `CHANGES_REQUESTED`, including one whose findings are only in its body | The same |
 | `CONFLICT` | `fix` | A branch that conflicts with its base | The same |
 | `REVIEW` | `fix` | A review body with no inline thread, with the count of suggestions it lists | The same |
+| `LABEL` | `fix` | A `clean` or `reviewing` label added or removed since the owner last saw the pull request, as `+clean` or `-reviewing` (§ 9.4) | Tells the user that a clean label means the head is signed off, and otherwise does nothing, because any work behind the change arrives as its own line |
 | `UNREVIEWED` | `fix`, when the session does not also own `review` of it | The pull request is ready for review, its head is not signed off, no live session on this machine owns `review` of it, and no live start comment from the operator or another account whose review would count shows a review of the head under way on any machine | Tells the user that no session on this machine reviews the pull request |
 | `NEW PR` | `review` | A pull request this session now owns, with a head this model has not reviewed | Runs `review-pr` in `review-<n>`, passing the session's id as `--loop` |
 | `NEW HEAD` | `review` | A head this model has not reviewed, or one whose review in this session stalled (§ 2.5) | The same. After a stall, it first stops the stalled subagent, which shares the session's `--loop` and so would pass the fence. |
@@ -1020,7 +1021,8 @@ Building the daemon settled these choices, which the design above left open.
   A session with only subscriptions sends no query for its list.
 - **How often it reads.** While the panel is shown, it reads the
   subscriptions and the cache on every 5-second tick. The fallback query,
-  the drawer's threads, and `panel.background` stay on the 30-second poll.
+  the drawer's threads, and `panel.background` run on the 30-second poll,
+  and also whenever the mod takes a batch of events (§ 9.4).
 - **Showing the panel.** It appears when the session gains a subscription it
   lacked, as a new watcher showed it before. The mod keeps the set it has
   seen in its `panelSubscribed` state.
@@ -1044,3 +1046,27 @@ Building the daemon settled these choices, which the design above left open.
 - **A new session id.** The mod records which session id it last renewed.
   When the engine moves the session to a new id, as `/clear` does, the mod
   renews the new id at the next tick.
+
+### 9.4 Label changes
+
+- **A `LABEL` event.** The daemon tells a pull request's `fix` owner when
+  the `clean` or `reviewing` label is added or removed, as
+  `LABEL acme/app#12 +clean head=9f3c2a1b: …`. A `review` owner hears
+  nothing. The line is not work and is not announced again, because the
+  review commands set both labels and any work behind a change arrives as
+  its own line.
+- **The `labels` record.** The daemon keeps the review labels it last saw
+  for each pull request and role in a `labels` section of the session's
+  `state.json`, matched without regard to case, as GitHub matches them.
+  It drops the record once the session no longer owns the `fix` role, so a
+  closed pull request leaves nothing behind and a new owner starts afresh.
+- **A silent first look.** The first time an owner sees a pull request,
+  and the first time after the `fix` role moves to it, the daemon records
+  the labels and announces nothing. A subscription to a pull request that
+  is already `clean` reports nothing until the label comes off, and a
+  `state.json` written before this change announces nothing on upgrade.
+- **The panel reloads on events.** When the mod takes a batch of events,
+  it runs a whole poll at once: the drawer's threads, `panel.background`,
+  and an earlier watcher's query. The daemon writes its cache before its
+  events, so an open drawer shows what the events report without waiting
+  for the next 30-second poll.
