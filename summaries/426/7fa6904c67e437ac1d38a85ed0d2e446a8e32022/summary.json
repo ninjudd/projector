@@ -1,0 +1,154 @@
+{
+ "version": 1,
+ "name": "Review once ready for review",
+ "project": "review-on-ready",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 426,
+  "title": "Wait for a pull request to be ready before reviewing it",
+  "head": "7fa6904c67e437ac1d38a85ed0d2e446a8e32022",
+  "headRef": "review-on-ready-wait",
+  "base": "f32dfb541ae548dd48721193527c22339cb784e1",
+  "baseRef": "review-on-ready",
+  "basePr": 425
+ },
+ "overview": {
+  "summary": [
+   "Projector's watch daemon is one process per machine. It polls the pull requests that agent sessions subscribe to, and tells each session what to do with a one-line event, such as <code>NEW HEAD</code> when a pull request has a head that no review has read. A <b>repository subscription</b>, which the <code>review-repo</code> skill adds, covers every pull request in a repository. A <b>pull request subscription</b>, which <code>review-pr</code> adds, covers one pull request.",
+   "The layer below this one moved Projector's sign-off from draft state to a <code>clean</code> label and a <code>projector/review</code> commit status. A draft can now mean what GitHub means by it: the author is still working. This layer makes the daemon act on that, so a pull request whose design is still moving costs no reviews until its author marks it ready.",
+   "<ul><li><b>Repository subscriptions wait for ready.</b> For a draft, the daemon announces no <code>NEW PR</code>, <code>NEW HEAD</code>, reminder, or <code>RESPONDED</code>. It keeps the pull request's record, and when the author marks it ready, it announces whatever no review read.</li><li><b>Pull request subscriptions still announce drafts.</b> A person who runs <code>review-pr</code> on a draft asks for its review now, so every head and <code>RESPONDED</code> still arrive.</li><li><b><code>UNREVIEWED</code> replaces <code>DRAFT</code>.</b> The session that fixes a pull request hears it, once per head, for a ready pull request whose head is not signed off and that no session on this machine reviews.</li><li><b>One sign-off rule.</b> The daemon now decides sign-off with <code>review.sign_off</code>, the function <code>project review publish</code> uses, in place of its own copy.</li></ul>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Projector review of 7fa6904",
+    "html": "<p>The newest review is clean. The one earlier finding is settled as fixed. It was that a review that stalled while its pull request was a draft lost the notice that tells the session to stop the stalled subagent. <code>7fa6904</code> now reports that notice on the draft, and the earlier reproduction passes.</p><p class=\"note\">The full unit suite, <code>project check</code>, and <code>git diff --check</code> passed on this head. One suggestion stands: say in the stalled <code>NEW HEAD</code> bullet of <code>review-pr</code>, and in the events table, that the draft variant asks the session to wait for ready.</p>"
+   },
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Record</b>: what the daemon stores per session and pull request: the last head it knew (<code>head</code>), when it last announced one (<code>announced</code>), and the answer it last saw (<code>flag</code>).</li><li><b>Reminder</b>: the <code>NEW HEAD … (still open)</code> line the daemon repeats every <code>watch.renotify</code> seconds while a head waits on a review.</li><li><b>Signed off</b>: the newest counted Projector verdict on the head is clean, and no Projector finding thread is open.</li><li><b>Stalled review</b>: a review whose lock no <code>project review</code> command touched for <code>watch.review_stall</code> seconds.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "The daemon waits on a draft's author",
+   "kicker": "Event routing in the watch daemon, and the sign-off rule it shares with publish",
+   "intro": [
+    "Two functions in <code>watch.py</code> decide what each session hears. <code>route_review</code> serves a session that reviews a pull request, and <code>route_fix</code> serves one that fixes it.",
+    "In <code>route_review</code>, a draft under a repository subscription now returns before any line is built. The record it saves sets up the ready transition. The last head it knew stays, so a head pushed while the pull request was a draft becomes a <code>NEW HEAD</code>. A head that was announced and never reviewed gets <code>announced</code> set to <code>0</code>, so the reminder fires at once on ready rather than after <code>watch.renotify</code>. One exception remains: a review that stalls while the pull request is a draft is reported once. The report is a <code>NEW HEAD</code> line that tells the session to stop the stalled subagent and to review the pull request once it is ready.",
+    "In <code>route_fix</code>, <code>UNREVIEWED</code> replaces <code>DRAFT</code>. It fires only for a ready pull request whose head is not signed off. A live start comment from an account whose review would count still holds it back.",
+    "Both functions now call <code>head_sign_off</code>, which hands the review nodes from the daemon's GraphQL query to <code>review.sign_off</code>. The reviewer's own verdicts count whatever association GitHub gives the account, as they already did for <code>publish</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "The draft gate in <code>route_review</code>, <code>UNREVIEWED</code> in <code>route_fix</code>, and <code>verdict_rows</code> with <code>head_sign_off</code> in place of <code>head_verdicts</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1442,
+       "text": "The stall line on a draft. I reran the earlier reproduction on this head: the pass that clears a stalled lock sends this line. Marking the pull request ready then sends the <code>(still open)</code> reminder at once, because <code>announced</code> is set to <code>0</code>."
+      },
+      {
+       "kind": "context",
+       "line": 1342,
+       "text": "<code>UNREVIEWED</code> needs three things: the pull request is not a draft, no session on this machine owns its review, and its head is not signed off. The live-start-comment check below it only holds the event back."
+      },
+      {
+       "kind": "verify",
+       "line": 1535,
+       "text": "The rows <code>verdict_rows</code> builds carry no <code>id</code> or <code>url</code>. Traced through <code>newest_verdicts</code> and <code>with_full_review</code>: ordering falls back to the submit time, and an incremental review's link to its full review never matches, which affects only the suggestion count the daemon does not read here."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "New <code>ReviewRoleTests</code> cases for the draft gate and the ready transition, and <code>FixRoleTests</code> rewritten for <code>UNREVIEWED</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 421,
+       "text": "<code>FixRoleTests</code> now makes every pull request a draft unless a test says otherwise, so only the tests about review coverage hear <code>UNREVIEWED</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 893,
+       "text": "This test fails if the draft gate ignores the subscription's kind: it expects a pull request subscription to announce a draft's first head."
+      },
+      {
+       "kind": "context",
+       "line": 1504,
+       "text": "This test covers a stall on a draft: one stop notice, nothing on the next pass, and the reminder once the pull request is ready."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Skills and documentation describe the wait",
+   "kicker": "The events table, three skills, and two plans",
+   "intro": [
+    "The skills tell agents what each event means, so they change with the daemon. <code>review-repo</code> says drafts wait for ready and that running <code>review-pr</code> on a draft asks for its review now. <code>review-pr</code> says its own subscription announces drafts. <code>fix-pr</code> describes <code>UNREVIEWED</code> in place of <code>DRAFT</code>.",
+    "<code>docs/cli.md</code> carries the events table and a new paragraph on drafts. The <code>review-on-ready</code> plan records the decisions this layer settled in § 9.2, and the in-progress <code>watch-daemon</code> plan updates its events table."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Searched the head for the old <code>DRAFT</code> event in code, hooks, and site files: nothing outside plan prose reads it."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Events table rows for <code>UNREVIEWED</code>, <code>NEW PR</code>, <code>NEW HEAD</code>, and <code>RESPONDED</code>, and a paragraph on what marking a draft ready announces.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 2622,
+       "text": "This paragraph is the reference for the ready transition and for the one stall notice on a draft. The events table row for <code>NEW HEAD</code> above it does not mention that exception yet."
+      }
+     ]
+    },
+    {
+     "path": "skills/review-repo/SKILL.md",
+     "note": "Adds the rule that drafts wait for ready under a repository subscription.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 92,
+       "text": "The agent's way to review a draft early is to run <code>review-pr</code> on it, which adds a pull request subscription."
+      }
+     ]
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "Says a pull request subscription announces every head and <code>RESPONDED</code>, draft or not."
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Replaces the <code>DRAFT</code> entry with <code>UNREVIEWED</code>."
+    },
+    {
+     "path": "docs/projects/review-on-ready/readme.md",
+     "note": "New § 9.2: the decisions behind the daemon's wait for ready.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 521,
+       "text": "§ 9.2 records three decisions: a draft keeps its record, the daemon uses <code>review.sign_off</code>, and <code>UNREVIEWED</code> keeps <code>DRAFT</code>'s once-per-head and start-comment rules."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/watch-daemon/readme.md",
+     "note": "The events table's <code>DRAFT</code> row becomes <code>UNREVIEWED</code>. The plan's older prose about <code>DRAFT</code> stays as its record."
+    }
+   ]
+  }
+ ]
+}
