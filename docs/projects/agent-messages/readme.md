@@ -195,9 +195,13 @@ The relay runs for a session when its machine holds `agent.key` and its
 checkout has an `origin` it can push to. Repository visibility does not
 matter to the relay, because nothing readable leaves the machine. It still
 matters to what agents write: in a public repository, the skill tells an
-agent to send nothing private (§ 2.4). Every git command below runs in a
-registered session's `cwd` against its `origin`, with the credentials that
-checkout already pushes with. Only the daemon pushes, and it pushes without
+agent to send nothing private (§ 2.4). Every git command below runs in
+the repository's chosen checkout against its `origin`, with the
+credentials that checkout already pushes with. The chosen checkout is the
+`cwd` of a live registered session in that repository when one exists,
+and otherwise the newest checkout the outbox records that still exists
+and whose `origin` still names the repository. With none, the relay waits
+and `watch status` says why. Only the daemon pushes, and it pushes without
 `--no-verify`, as `summary.publish` does.
 
 1. **Make the key.** `project agent key init` creates an X25519 private
@@ -226,28 +230,37 @@ checkout already pushes with. Only the daemon pushes, and it pushes without
 
    The commit's tree holds one `sealed.json`: `v: 1`, the sender's public
    key, `e`'s public key, the ciphertext, and the tag, each in base64.
-3. **Queue every ref change.** No command pushes. A command or pass that
-   changes a relay ref writes the commit locally and appends the change to
-   the repository's outbox, `<root>/outbox/<owner>/<repo>.json`, under its
-   lock: the ref, the new commit or a deletion, and for a moved ref the
-   commit it expects to replace. The daemon checks the outbox each second,
-   as it checks session folders. When an outbox holds changes, it pushes
-   them all in one `git push --porcelain origin` with one refspec per
-   change and a `--force-with-lease=<ref>:<old>` for each moved ref. It
+3. **Queue every ref change.** No command pushes, and no command writes
+   a Git object. A command or pass that changes a relay ref appends the
+   change to the repository's outbox, `<root>/outbox/<owner>/<repo>.json`,
+   under its lock: the ref, the new `sealed.json` or a deletion, and for a
+   moved ref the commit it expects to replace. It also records its own
+   checkout in the outbox. The daemon checks the outbox each second, as it
+   checks session folders. When an outbox holds changes, the daemon picks
+   the chosen checkout and writes each new record there as a blob, a tree,
+   and a parentless commit, with `git hash-object -w`, `git mktree`, and
+   `git commit-tree`. Then it pushes them all from that checkout in one
+   `git push --porcelain origin` with one refspec per change and a
+   `--force-with-lease=<ref>:<old>` for each moved ref. Because the daemon
+   writes every commit in the checkout it pushes from, just before the
+   push, the push never names an object that checkout lacks. That holds
+   when agents queue from two clones of one repository, and when the
+   worktree that queued a change has since been removed. It
    reads each ref's result from the porcelain output, removes the changes
    that landed, and keeps the rest for the next pass, with the error in
    `watch status`. A slow pre-push hook therefore delays only the daemon,
    and runs once per repository per pass however many changes are queued.
 4. **Publish presence.** When `register` changes a record, it queues
-   `refs/projector/agents/<key-id>/<relay-id>` to a commit holding the
-   sealed `agent.json` with an `expires_at` one hour ahead. The daemon
+   `refs/projector/agents/<key-id>/<relay-id>` to the sealed `agent.json`
+   with an `expires_at` one hour ahead. The daemon
    queues a renewal every 30 minutes while the session is live. The commit
    has no parent, so each renewal moves the ref under a lease. `list` shows
    that a record is not yet published while its change waits in the
    outbox.
 5. **Poll.** On each pass, for each repository with a live registered
    session on this machine, the daemon runs one `git fetch --prune origin`
-   for the refspecs `+refs/projector/agents/<key-id>/*` and
+   in the chosen checkout, for the refspecs
+   `+refs/projector/agents/<key-id>/*` and
    `+refs/projector/inbox/<key-id>/*`, into the tracking refs that
    `summary.tracking_ref` names. Git transfers only commits it lacks.
 6. **Open and check.** For each new commit, the daemon checks the tag with
@@ -265,10 +278,8 @@ checkout already pushes with. Only the daemon pushes, and it pushes without
    `<root>/relay/<owner>/<repo>.json`, which `list`, `send`, and name
    checks read. On each full pass, the daemon also records the
    repository's visibility there from `gh repo view --json visibility`.
-7. **Send to another machine.** `send` seals the message, writes the tree
-   and a parentless commit with `git hash-object -w`, `git mktree`, and
-   `git commit-tree`, and queues it for
-   `refs/projector/inbox/<key-id>/<recipient-relay-id>/<id>`. Each message
+7. **Send to another machine.** `send` seals the message and queues it
+   for `refs/projector/inbox/<key-id>/<recipient-relay-id>/<id>`. Each message
    has its own ref, so its push never races and never forces. The command
    returns without waiting for the push and prints `delivery: relay
    (queued)`. The sender's `sent.json` records the message as a local send
@@ -306,7 +317,7 @@ removes the session's files with it.
 | `sessions/<from>/sent.json` | `schema_version: 1` and `items`, each `{id, to, sent_at}`. Entries older than an hour are dropped on each write. |
 | `machine.json` | `schema_version: 1` and `machine`, a UUID4. |
 | `relay/<owner>/<repo>.json` | `schema_version: 1`, `polled_at`, `visibility` (as `gh` last reported it, or `unknown`), `rejected` (a count), and `agents`, each another machine's opened `agent.json` with its `expires_at`. |
-| `outbox/<owner>/<repo>.json` | `schema_version: 1`, the `cwd` to push from, and `items`, each `{ref, new, old, queued_at, last_error}`. `new` is a commit or `null` for a deletion, and `old` is the commit a moved ref's lease expects. Written under its lock; the daemon removes each item once its ref lands. |
+| `outbox/<owner>/<repo>.json` | `schema_version: 1`, `checkouts` (each `{cwd, queued_at}`, the checkouts that queued changes, newest first), and `items`, each `{ref, sealed, old, queued_at, last_error}`. `sealed` is the `sealed.json` content, at most about 22 KiB for the largest message, or `null` for a deletion, and `old` is the commit a moved ref's lease expects. Written under its lock; the daemon removes each item once its ref lands, and a checkout once no item it queued remains and it is not the newest. |
 | `agents/` | Holds only the lock that serializes name claims. |
 
 The relay adds two settings:
@@ -332,7 +343,7 @@ one `sealed.json`.
 | --- | --- |
 | New `src/projector/agents.py` | Registration, name validation and uniqueness, listing, message records, `sent.json` and the rate limit, the event line, and the read notice. It reuses `watch.session_folder`, `watch.delivery`, `watch.append_events`, `codex_watch.Event`, `inbox.locked`, `inbox.write_json`, and `review.origin_repo`. |
 | New `src/projector/crypto.py` | X25519 from RFC 7748, ChaCha20 from RFC 8439, HKDF from RFC 5869 over `hmac`, and `seal` and `open` from § 2.2 step 2. Standard library only. |
-| New `src/projector/relay.py` | Presence and message commits, the outbox and its batched push, the poll, the checks in § 2.2 step 6, the cache, and cleanup. It reuses `summary.git`, `summary.tracking_ref`, and the daemon's login. |
+| New `src/projector/relay.py` | Presence and message records, the outbox, the choice of checkout, the commits written there and their batched push, the poll, the checks in § 2.2 step 6, the cache, and cleanup. It reuses `summary.git`, `summary.tracking_ref`, and the daemon's login. |
 | `src/projector/watch.py` | In `Daemon.scan`, add to `self.live` every session that holds `agent.json` and whose `delivery` is not `none`. Today `scan` adds a Codex session only while `codex_watch.has_work` holds, so an idle Codex agent would never be polled for or delivered to, its presence would be deleted as lapsed, and `tick` would stop the daemon after 5 minutes. Run the relay's poll, renewal, delivery, and cleanup on each pass, and its lease sweep on each full pass. Report each repository's relay state and rejected count in `watch status`. |
 | `src/projector/codex_watch.py` | Let `eligible` accept a `["message", <id>]` key while the folder holds `messages/<id>.json` (§ 2.1 step 5), so `prepare`, `acknowledge`, `drain`, and `Dispatcher._send` keep a peer message. On `SessionEnd`, mark the session so the next pass deletes its relay refs. |
 | `src/projector/cli.py` | Add `project agent register`, `list`, `send`, `reply`, `read`, `key init`, and `key show`, with `--session` and `--json` as the watch commands take them. `send` and `reply` run `ensure_daemon`. |
@@ -466,6 +477,7 @@ config files standing in for two machines.
 | Push a delivered message's record again, and one whose `sent_at` is 8 days old. | Neither is delivered. Catches replay. |
 | Set `agent.key` in a checkout's `.projector.toml` only. Separately, make `~/.projector.toml` readable by its group. | The first is ignored with a warning, and the relay stays off. The second is refused with the `chmod` that fixes it. Catches a repository planting a key, and a key other accounts can read. |
 | Give machine 1's checkout a pre-push hook that sleeps 30 seconds and logs each run. Send three messages from A, then run one pass that also renews A's lease and deletes a delivered ref. | Each `send` returns in under a second and prints `delivery: relay (queued)`. The hook logs one run for the pass, and all five ref changes land. Catches a send that pushes itself, and a pass that pushes once per change. |
+| Clone the repository twice on machine 1 and add a worktree to the first clone. Register A in the worktree and C in the second clone, send a message from each, then remove the worktree and end A. Pass on machine 1. | Both messages and A's cleanup land in one push from the second clone, and the outbox is empty. Then end C and delete the second clone before the next pass: C's cleanup stays queued, nothing is pushed, and `watch status` says no recorded checkout of the repository remains. Catches a push that names an object its checkout lacks, and an outbox that pushes from a removed checkout. |
 | Make one queued change's lease fail while two others are valid. | The two land and leave the outbox. The failed one stays, with its error in `watch status`, and lands on a later pass once its lease is right. Catches a batch that loses every change when one fails. |
 | Relay through a repository the fake `gh` reports `PUBLIC`, then `PRIVATE`. | `send` prints `public repository: send nothing private` for the first and not the second. Catches a missing reminder. |
 | Register Codex session B on machine 2 with no subscriptions and an empty queue, and advance machine 2's clock past the daemon's 5-minute idle stop and past a lease renewal. Then send from A on machine 1 and pass on both machines. | Machine 2's daemon is still running, B's presence ref is renewed and never deleted, and the fake `codex` receives one queued prompt with the `PEER MESSAGE` line. Catches a scan that counts an idle Codex agent as not live. |
