@@ -1,0 +1,129 @@
+{
+ "version": 1,
+ "name": "Review once ready for review",
+ "project": "review-on-ready",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 427,
+  "title": "Set up a required Projector review check from project init",
+  "head": "f7ecc2602d94a9d5967d91e45b9a77037f73020d",
+  "headRef": "review-on-ready-init",
+  "base": "761fa0dc4a88d34f213fb193abf1c82112dd3624",
+  "baseRef": "review-on-ready-wait",
+  "basePr": 426
+ },
+ "overview": {
+  "summary": [
+   "Projector reviews a pull request and, after this stack, signs off a clean head with a <code>clean</code> label and, where the default branch requires it, a <code>projector/review</code> commit status. A status blocks a merge only once a GitHub ruleset requires it. This pull request, the top layer of the stack, lets <code>project init</code> set that requirement up for a repository that relies on Projector alone to sign off pull requests.",
+   "At a terminal, in a GitHub repository whose default branch does not require <code>projector/review</code> yet, <code>init</code> asks one yes-or-no question. <code>--require-review</code> and <code>--no-require-review</code> answer it without a prompt, and without a terminal or a flag <code>init</code> asks nothing. A yes does four things in order:",
+   "<ol><li><b>Creates the ruleset.</b> The <code>Projector review</code> ruleset requires <code>projector/review</code> on the default branch with no bypass. When GitHub refuses, for lack of admin access or a paid plan on a private repository, <code>init</code> exits non-zero and does nothing else.</li><li><b>Writes the label workflow.</b> <code>.github/workflows/projector-clean.yml</code> takes <code>clean</code> off a pull request when a commit is pushed to it. <code>init</code> skips it while <code>review.labels</code> is <code>false</code>.</li><li><b>Backfills the status.</b> It posts <code>success</code> on each open pull request whose current head a review already signed off, so none is blocked on a review it has.</li><li><b>Records the answer.</b> <code>review.require_check = true</code> goes into the repository's <code>.projector.toml</code>.</li></ol>",
+   "A no records <code>false</code>, and <code>init</code> stops asking. A recorded yes puts back a missing ruleset or workflow. The layer also records the plan's end-to-end check and marks the <code>review-on-ready</code> plan <code>completed</code>, because it carries the project's last code."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Ruleset</b>: a set of GitHub branch rules; this one requires a commit status before a merge.</li><li><b><code>projector/review</code></b>: the commit status context that <code>project review publish</code> posts on a reviewed head.</li><li><b>Signed off</b>: the newest counted Projector verdict on the head is clean, and no Projector finding thread is open.</li><li><b><code>review.require_check</code></b>: the recorded answer to <code>init</code>'s question. Unset asks at a terminal, <code>true</code> keeps the setup in place, and <code>false</code> asks no more.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>One Projector review, at <code>f7ecc26</code>, requested changes with one finding: plain <code>project init</code> at a terminal now exits non-zero when <code>gh</code> cannot read the default branch's rules. It also suggested two smaller changes, about a failed backfill and about <code>--require-review</code> outside a repository.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "init",
+   "title": "The question and the setup in init",
+   "kicker": "How init decides whether to ask, and what a yes writes to GitHub and the checkout",
+   "intro": [
+    "<code>init_required_check</code> in <code>cli.py</code> runs after <code>init</code>'s other steps. It reads the answer from the flags and from <code>review.require_check</code>, returns early when there is no person to ask and nothing recorded, reads the default branch's rules, and asks only when the branch does not already require the check.",
+    "The GitHub side lives in <code>review.py</code> beside the constants <code>publish</code> uses: <code>ruleset()</code> builds the ruleset body from <code>REVIEW_CONTEXT</code>, <code>create_ruleset</code> posts it, <code>clean_workflow_text</code> fills the template with <code>CLEAN_LABEL</code>, and <code>backfill_statuses</code> counts each open pull request's verdicts with <code>sign_off</code>, as <code>project review status</code> does."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A refused ruleset raises <code>InitError</code> before the backfill, the workflow, and the setting, so a refusal leaves no partial setup. A failure after the ruleset exists, in the backfill, is not caught the same way."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "The flags, the question, and <code>init_required_check</code> with its helpers for the setting and the workflow file.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 2317,
+       "text": "Open finding: at a terminal, with the setting unset and no flag, a failed read of the rules, such as <code>gh</code> missing, signed out, or offline, becomes an <code>InitError</code>, so plain <code>project init</code> exits 65 where the base exits 0. The site step turns the same failure into a note. The fix is to skip the question with a note unless a flag or a recorded <code>true</code> asked for the check."
+      },
+      {
+       "kind": "verify",
+       "line": 2317,
+       "text": "Reproduced with the repository's own test harness, a GitHub origin, a terminal, and a failing <code>gh</code>: <code>init --no-site --no-publish-rule</code> exits 65 at this head and 0 at the base."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/review.py",
+     "note": "The ruleset body, its creation, the workflow text, and the status backfill, built from the label and context constants <code>publish</code> already uses."
+    },
+    {
+     "path": "src/projector/templates/clean-workflow.yml",
+     "note": "The workflow <code>init</code> writes. It runs on <code>pull_request_target</code> so it can edit a fork's pull request, never checks out the pull request's code, and its job-level <code>if</code> skips the run unless the label is present."
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Registers <code>review.require_check</code> as a boolean setting."
+    },
+    {
+     "path": "pyproject.toml",
+     "note": "Ships <code>templates/*.yml</code> in the wheel, so an installed <code>project</code> can read the workflow template."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "A fake GitHub for the question, the flags, the refusal, and the backfill",
+   "intro": [
+    "<code>RequiredCheckTests</code> runs <code>init</code> in a temporary repository whose origin is <code>acme/app</code>, with <code>run_gh</code> replaced by <code>RulesetGitHub</code>, a fake that keeps the rules, the rulesets, the open pull requests with their verdicts, and the statuses posted. The site's <code>init</code> tests now run without a terminal, so they never meet the question."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The full suite at this head ran 1229 tests, OK with 1 skipped, and <code>RequiredCheckTests</code> ran 9 tests, OK."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_projector.py",
+     "note": "Nine tests: a yes and a later run, a no, no terminal, a refused ruleset, labels off, a branch that already requires the check, a recorded yes with the ruleset gone, and a workflow edited by hand."
+    },
+    {
+     "path": "tests/test_site.py",
+     "note": "Patches <code>isatty</code> to false in the site's <code>init</code> helper, so those tests run as an agent runs <code>init</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The living docs for the question, and the plan's outcome",
+   "intro": [
+    "<code>docs/cli.md</code> gains a section on requiring a clean review before merge and a row for <code>review.require_check</code> in the settings table. The plan gains § 9.3, what implementation settled about the setup, and § 10, the outcome with the end-to-end check run in a public scratch repository, and moves from <code>in-progress</code> to <code>completed</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The question, the flags, the four steps of a yes, and how to turn the check off."
+    },
+    {
+     "path": "docs/projects/review-on-ready/readme.md",
+     "note": "§ 9.3 and § 10 added, test file names corrected to <code>tests/test_projector.py</code>, and the status set to <code>completed</code>."
+    }
+   ]
+  }
+ ]
+}
