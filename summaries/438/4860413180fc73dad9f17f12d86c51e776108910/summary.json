@@ -1,0 +1,107 @@
+{
+ "version": 1,
+ "name": "Drawer role nouns",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 438,
+  "title": "Name a drawer's session roles fixer and reviewer",
+  "head": "4860413180fc73dad9f17f12d86c51e776108910",
+  "headRef": "drawer-role-nouns",
+  "base": "75c89f6a34d300e6154b007db2fa66620263b826",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the area Claude Code draws above the prompt. It lists the pull requests the session fixes or reviews, one line each, and clicking a pull request's number opens a <b>drawer</b> under that line with more about it.",
+   "Two places in the panel used the word <code>reviewing</code> for different facts. The row shows <code>reviewing</code> when the pull request carries the <code>reviewing</code> label, which a Projector review adds while it runs, in any session. The drawer's first line also said <code>reviewing</code>, but there it meant the session's <b>role</b>: this session is subscribed to review the pull request, whether or not a review is running. While a review ran, the two words sat one above the other and looked redundant. After the review published, the label left and the drawer's word stayed, which read as a contradiction.",
+   "This change makes the drawer name the session by its role as a noun: <code>fixer</code>, <code>reviewer</code>, or <code>fixer and reviewer</code>, in the same blue and orange as before. Only the words drawn in the drawer change. The role values inside the mod stay <code>fixing</code> and <code>reviewing</code>, so the toast a dismissal shows still reads <code>stopped fixing and reviewing owner/repo#7</code>."
+  ],
+  "cards": [
+   {
+    "id": "words",
+    "title": "Which word means what",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Where</th><th>Word</th><th>Means</th></tr></thead><tbody><tr><td>Row</td><td><code>reviewing</code></td><td>The pull request carries the <code>reviewing</code> label: a review is running now, in any session.</td></tr><tr><td>Drawer</td><td><code>reviewer</code></td><td>This session is subscribed to review the pull request.</td></tr><tr><td>Drawer</td><td><code>fixer</code></td><td>This session is subscribed to fix the pull request's review findings.</td></tr><tr><td>Dismissal toast</td><td><code>stopped fixing and reviewing</code></td><td>The roles the session stopped, as verbs. Unchanged.</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>A full Projector review at <code>0019219</code> was clean and opened no finding threads. It suggested updating the role table in the draft <code>panel-themes</code> plan.</li><li>The next head, <code>4860413</code>, made that update, and an incremental review of it was clean.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "drawer",
+   "title": "The drawer's role words",
+   "kicker": "A map from each role to the noun the drawer draws for it",
+   "intro": [
+    "A <b>role</b> is what the session does for a pull request, held in the mod as the value <code>fixing</code> or <code>reviewing</code>. The drawer's first line, its <b>facts line</b>, starts with the session's roles, each in its own color, joined by <code>and</code>. That line is the only place the panel draws a role's name.",
+    "The change adds <code>ROLE_NAMES</code>, which maps each role to its noun, and the facts line now draws <code>ROLE_NAMES[role]</code> where it drew the role value. Colors still come from <code>ROLE_COLORS</code>, keyed by the same role values."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The panel's mod. Adds <code>ROLE_NAMES</code> and draws it on the drawer's facts line.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The comment above the map gives the reason for a noun: it keeps the session's role from reading as the <code>reviewing</code> label on the row above.",
+       "line": 193
+      },
+      {
+       "kind": "verify",
+       "text": "The facts line is the only text that renders a role's name. The dismissal toast still joins the raw role values, so it keeps the verbs. Checked by searching the mod for every place that renders a role.",
+       "line": 2285
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "The drawer tests now expect <code>fixer</code>, <code>reviewer</code>, and <code>fixer and reviewer</code> with their colors.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The tests catch a wrong label. With <code>ROLE_NAMES</code> swapped so that a fixer reads <code>reviewer</code>, 7 drawer tests failed, and all 227 passed again with the head's map."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The panel's guide and the theme plan name the new words",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the panel. The change updates the example panel, the paragraph about the drawer, and the note about older watcher scripts to use <code>fixer</code> and <code>reviewer</code>. It adds a sentence that says how the drawer's <code>reviewer</code> differs from the row's <code>reviewing</code> label.",
+    "The draft <code>panel-themes</code> plan, which would let each panel color follow a theme, keeps its theme keys <code>fixing</code> and <code>reviewing</code>, named after the role values. Its role table now says those keys color <code>fixer</code> and <code>reviewer</code> in the drawer."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The panel guide's drawer paragraph, example, and watcher note.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The example panel shows <code>reviewing</code> on the row and <code>reviewer</code> in the drawer, and the dismissal text stays <code>stopped fixing and reviewing</code>, both as the code draws them. Checked against <code>hooks/register.tsx</code> at the head.",
+       "line": 254
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/panel-themes/readme.md",
+     "note": "The draft theme plan's role table names the words the drawer now draws.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The theme keys keep the role values, as <code>ROLE_COLORS</code> does, and only the drawn words change. Checked against <code>hooks/register.tsx</code> at the head.",
+       "line": 87
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

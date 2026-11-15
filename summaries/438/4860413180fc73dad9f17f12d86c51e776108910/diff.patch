@@ -1,0 +1,194 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 52093117..56944f5b 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -251,7 +251,7 @@ not subscribed to before.
+   /projector                                              2 pull requests  12s   [-]
+    #267 List a loop's open pull requests above the Claude Code prompt       2h
+    #258 reviewing grace Name the reviewed head in a review's… conflict · 2* 5m
+-        reviewing · review-signature · +84 −12 in 5 files · checks passing
++        reviewer · review-signature · +84 −12 in 5 files · checks passing
+         7: Discuss  8: Dismiss
+         open in github  open in projector
+         src/review.py:412 · ada · P2 · The signature names the base, not the head
+@@ -343,10 +343,11 @@ there the panel starts with its first row.
+ Click a pull request's number to open a drawer under it, and click it again
+ to close the drawer; opening one drawer closes any other. The drawer starts
+ one column past the number, under the review label. It names the session's
+-roles on the pull request: `fixing` in the terminal palette's blue,
+-`reviewing` in Claude's orange, or `fixing and reviewing`. This `reviewing`
+-says that this session reviews the pull request, whatever its labels say.
+-Then come its
++roles on the pull request: `fixer` in the terminal palette's blue,
++`reviewer` in Claude's orange, or `fixer and reviewer`. `reviewer` says that
++this session is subscribed to review the pull request, whether or not a
++review is running, while the row's `reviewing` label says a review is
++running now, in any session. Then come its
+ branch, in the palette's cyan, its size, and its checks. The size reads as a
+ diff stat: the insertions, such as `+84`, in green and the deletions, such
+ as `−12`, in red. The checks' state takes a color of its own, and the rest,
+@@ -443,8 +444,8 @@ equivalent.
+ A session that started a `watch-threads.sh` or `watch-prs.sh` watcher under
+ an earlier release keeps it until the session ends, and the panel lists the
+ pull requests in that watcher's `--tracked` file
+-meanwhile: `watch-threads.sh`'s as `fixing`, and `watch-prs.sh`'s as
+-`reviewing`. For such a pull request that the daemon has no result for, the
++meanwhile: `watch-threads.sh`'s as `fixer`, and `watch-prs.sh`'s as
++`reviewer`. For such a pull request that the daemon has no result for, the
+ panel asks GitHub itself, in one `gh api graphql` call every 30 seconds.
+ When that call cannot reach GitHub, the panel keeps showing what GitHub gave
+ last, and shows GitHub's error only when it has no pull request to show.
+diff --git a/docs/projects/panel-themes/readme.md b/docs/projects/panel-themes/readme.md
+index 2882e158..8c1429ec 100644
+--- a/docs/projects/panel-themes/readme.md
++++ b/docs/projects/panel-themes/readme.md
+@@ -84,8 +84,8 @@ as § 7 says, and until then step 1 of § 6 keeps the palette slots.
+ | `error` | `conflict`, `changes requested`, `checks failing`, a GitHub error | `error` |
+ | `added` | A drawer's insertions, such as `+84` | `success` |
+ | `removed` | A drawer's deletions, such as `−12` | `error` |
+-| `fixing` | `fixing` in a pull request's drawer | A theme key, picked by preview |
+-| `reviewing` | `reviewing` in a pull request's drawer | `claude` |
++| `fixing` | `fixer` in a pull request's drawer | A theme key, picked by preview |
++| `reviewing` | `reviewer` in a pull request's drawer | `claude` |
+ | `branch` | A pull request's branch in its drawer | A theme key, picked by preview |
+ 
+ Some text stays outside every role, because Claude Code draws it and a
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 948b1825..04791208 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -729,7 +729,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   await ui.press({ key: 'pr:x/y#7' })
+   await clock.settle()
+   // The drawer's facts name no author, whoever wrote the pull request.
+-  const facts = await ui.find({ type: 'Text', text: /^fixing · fix-branch · \+12 −3 in 2 files · checks passing$/ })
++  const facts = await ui.find({ type: 'Text', text: /^fixer · fix-branch · \+12 −3 in 2 files · checks passing$/ })
+   expect(await ui.find({ type: 'Text', text: /\bby\b/ })).toBeUndefined()
+   // What the loop does takes its loop's color, the branch the palette's cyan, and the size reads as a diff stat:
+   // insertions green, deletions red. The checks take theirs, and the files and each `·` keep the default color.
+@@ -738,7 +738,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   expect(
+     pieces.map(piece => (typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.color])),
+   ).toEqual([
+-    ['fixing', 'ansi256(4)'],
++    ['fixer', 'ansi256(4)'],
+     ' · ',
+     ['fix-branch', 'ansi256(6)'],
+     ' · ',
+@@ -1256,12 +1256,12 @@ test('opening one drawer closes the one that was open', async ($, on) => {
+ 
+   const ui = await $.ui.mount(PANEL)
+   await ui.press({ key: 'pr:x/y#7' })
+-  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixing', 'ansi256(4)']])
++  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixer', 'ansi256(4)']])
+   await ui.press({ key: 'pr:o/r#1' })
+   expect(await ui.find({ key: 'github:o/r#1' })).toBeDefined()
+   expect(await ui.find({ key: 'github:x/y#7' })).toBeUndefined()
+-  // Reviewing takes the theme's `claude` orange, as fixing takes the palette's blue.
+-  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewing', 'claude']])
++  // The reviewer takes the theme's `claude` orange, as the fixer takes the palette's blue.
++  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewer', 'claude']])
+   await ui.unmount()
+ })
+ 
+@@ -1279,9 +1279,9 @@ test('lists a pull request both loops track once, as fixed and reviewed, and cou
+   // The header counts its one line once, in the singular.
+   expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
+   await ui.press({ key: 'pr:o/r#1' })
+-  expect(await ui.find({ type: 'Text', text: /^fixing and reviewing/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^fixer and reviewer/ })).toBeDefined()
+   // Each loop takes its own color, and the `and` between them the default color.
+-  expect(await loopsOf(ui, 'o/r#1')).toEqual([['fixing', 'ansi256(4)'], ' and ', ['reviewing', 'claude']])
++  expect(await loopsOf(ui, 'o/r#1')).toEqual([['fixer', 'ansi256(4)'], ' and ', ['reviewer', 'claude']])
+   await ui.unmount()
+ })
+ 
+@@ -5126,21 +5126,21 @@ test('lists the session’s subscriptions from the daemon’s cache, with their
+   expect((await ui.find({ key: 'age:x/y#7' }))?.text).toBe('5m')
+   expect(session.gh()).toEqual([])
+ 
+-  // A drawer names each role the session holds, fixing in blue and reviewing in orange, with the pull request's
++  // A drawer names each role the session holds, the fixer in blue and the reviewer in orange, with the pull request's
+   // changed lines from the cache. The open drawer still asks GitHub for its threads, and nothing else does.
+   await ui.press({ key: 'pr:x/y#7' })
+   await session.clock.settle()
+-  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixing', 'ansi256(4)'], ' and ', ['reviewing', 'claude']])
++  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixer', 'ansi256(4)'], ' and ', ['reviewer', 'claude']])
+   expect(
+-    await ui.find({ type: 'Text', text: /^fixing and reviewing · fix-branch · \+12 −3 in 2 files · checks passing$/ }),
++    await ui.find({ type: 'Text', text: /^fixer and reviewer · fix-branch · \+12 −3 in 2 files · checks passing$/ }),
+   ).toBeDefined()
+   expect(session.gh()).toHaveLength(1)
+   expect(session.gh()[0]).toContain('r0: repository(owner: "x", name: "y") { p7: pullRequest(number: 7) { reviewThreads')
+   await ui.press({ key: 'pr:o/r#4' })
+-  expect(await loopsOf(ui, 'o/r#4')).toEqual([['reviewing', 'claude']])
++  expect(await loopsOf(ui, 'o/r#4')).toEqual([['reviewer', 'claude']])
+   // A loading pull request's drawer names its role and nothing the daemon has yet to say.
+   await ui.press({ key: 'pr:o/r#13' })
+-  expect(await ui.find({ type: 'Text', text: /^fixing$/ })).toBeDefined()
++  expect(await ui.find({ type: 'Text', text: /^fixer$/ })).toBeDefined()
+   expect(await ui.find({ type: 'Text', text: /in 0 files/ })).toBeUndefined()
+   expect(session.gh()).toHaveLength(1)
+   await ui.unmount()
+@@ -5161,7 +5161,7 @@ test('lists the pull requests the daemon adopted for a repository the session re
+   expect(await rowsOf(ui)).toEqual(['pr:o/r#1', 'pr:o/r#11'])
+   expect(session.gh()).toEqual([])
+   await ui.press({ key: 'pr:o/r#11' })
+-  expect(await loopsOf(ui, 'o/r#11')).toEqual([['reviewing', 'claude']])
++  expect(await loopsOf(ui, 'o/r#11')).toEqual([['reviewer', 'claude']])
+   await ui.unmount()
+ })
+ 
+@@ -5182,7 +5182,7 @@ test('reads its rows from the cache on each tick, and asks GitHub only for an ea
+   expect(poll).toContain('p2: pullRequest(number: 2)')
+   expect(poll).not.toContain('p1: pullRequest')
+   await ui.press({ key: 'pr:o/r#1' })
+-  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewing', 'claude']])
++  expect(await loopsOf(ui, 'o/r#1')).toEqual([['reviewer', 'claude']])
+ 
+   // The daemon's next result shows within a tick, with no query of the panel's own.
+   Object.assign(session.files, daemonSaw('Signed off, after the next pass'))
+@@ -5309,14 +5309,14 @@ test('passes the output of a push, a new pull request, or a stack command to pro
+     { argv: add, stdin: `\n${pushed.stderr}` },
+   ])
+ 
+-  // The new pull request's subscription shows the panel, which lists it as fixing.
++  // The new pull request's subscription shows the panel, which names the session its fixer.
+   for (let step = 0; step < 2; step += 1) {
+     await session.clock.advance(1)
+     await session.clock.settle()
+   }
+   expect(await rowsOf(ui)).toEqual(['pr:x/y#7'])
+   await ui.press({ key: 'pr:x/y#7' })
+-  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixing', 'ansi256(4)']])
++  expect(await loopsOf(ui, 'x/y#7')).toEqual([['fixer', 'ansi256(4)']])
+   await ui.unmount()
+ })
+ 
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 230cbe62..f5fc3efd 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -185,6 +185,13 @@ const BRANCH_COLOR = 'ansi256(6)'
+  */
+ const ROLE_COLORS: Record<Role, string> = { fixing: 'ansi256(4)', reviewing: 'claude' }
+ 
++/**
++ * What a drawer calls the session in each role. A noun, so the session's
++ * `reviewer` role never reads as the `reviewing` label on the row above it,
++ * which says a review is running now, in any session.
++ */
++const ROLE_NAMES: Record<Role, string> = { fixing: 'fixer', reviewing: 'reviewer' }
++
+ /** The key that closes an open item's drawer, from its line at the drawer's top. */
+ const CLOSE_HOTKEY = '0'
+ 
+@@ -2275,7 +2282,7 @@ export const register: Register = on => {
+             {roles.flatMap((role, at) => [
+               ...(at === 0 ? [] : [' and ']),
+               <Text key={`role:${role}`} color={ROLE_COLORS[role]}>
+-                {role}
++                {ROLE_NAMES[role]}
+               </Text>,
+             ])}
+             {pr.branch !== '' && ' · '}
