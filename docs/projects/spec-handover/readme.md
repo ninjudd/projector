@@ -133,6 +133,8 @@ not have.
 | `tests/test_instructions.py` | Pin version 26's hash in `PINNED`. |
 | `AGENTS.md`, `CLAUDE.md` | Refresh the generated section with `project init`. Widen "while a test request waits on the user" in the repository's own "Hand work over for review" section the same way. |
 | `skills/cleanup/SKILL.md` | Add a draft kept while a test or plan review request waits to the held-pull-request gap, so the "mark it ready when the user leaves it" rule covers it. |
+| `skills/fix-pr/SKILL.md` | Widen "one `../implement/SKILL.md` keeps while a test request waits on the person" in "Report the result" to also cover a draft `../spec/SKILL.md` keeps while a plan review request waits, so `fix-pr` never marks it ready. |
+| `skills/work/SKILL.md` | Widen "while a request asks the user to test it and they have not answered" to also cover a request to review a plan, so `work` keeps a plan pull request a draft until the user answers. |
 | `docs/plugins.md` | Say that `spec` opens a draft pull request and asks you to review the plan in the inbox. |
 | `tests/test_review.py` | Add `spec` to `test_the_skills_move_draft_state_through_the_commands_alone`. |
 
@@ -151,8 +153,8 @@ not have.
 - **The draft hold reuses `implement`'s rule.** `implement` keeps a pull
   request a draft while a device-test request waits and marks it ready on
   `Looks good` or a decline. The plan review follows the same rule, so the
-  generated section widens one sentence instead of adding an exception,
-  and `cleanup` handles both waits in one gap.
+  generated section, `fix-pr`, and `work` each widen one sentence instead
+  of adding an exception, and `cleanup` handles both waits in one gap.
 - **A blocking question gets an `ask`, not a line in the request.** The
   generated section already says to use `ask` for a decision and `request`
   for work only the user can do. An `ask` carries a recommendation and
