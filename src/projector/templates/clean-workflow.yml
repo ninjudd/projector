@@ -15,8 +15,10 @@ name: Projector clean label
 # that signs a head off posts that status as `success` on it. A review can
 # still sign the head off between that read and the removal, so the step reads
 # the status again after it removes the label, and gives a head signed off by
-# then its label back. The step names the label as the pull request spells it,
-# whatever its case.
+# then its label back. A push while it gives the label back starts a job whose
+# event lists no label, so the step reads the head once more and takes the
+# label off again when the head moved. The step names the label as the pull
+# request spells it, whatever its case.
 on:
   pull_request_target:
     types: [synchronize]
@@ -49,6 +51,12 @@ jobs:
           state=$(status "$sha")
           if [ "$state" = success ]; then
             gh pr edit "$PR" --repo "$REPO" --add-label "$name"
+            now=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')
+            if [ "$now" != "$sha" ]; then
+              gh pr edit "$PR" --repo "$REPO" --remove-label "$name"
+              echo "took $name off #$PR again, because ${now:0:7} was pushed while the step gave it back to ${sha:0:7}"
+              exit 0
+            fi
             echo "gave $name back to #$PR, because a review signed off its head ${sha:0:7} while the step removed it"
           fi
         env:

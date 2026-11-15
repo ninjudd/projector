@@ -445,25 +445,24 @@ things in order:
 2. Writes `.github/workflows/projector-clean.yml`, which takes the `clean`
    label off a pull request when a commit is pushed to it. Its job reads the
    pull request when it runs, not as it was at the push, and keeps the label
-   when the current head already has a `success` `projector/review` status.
-   So a job that runs late, or a re-run of an old job, never takes `clean` off
-   a head that a review signed off after the push. After it removes the label,
-   it reads the status once more and gives the label back when a review
-   signed the head off in the meantime. Commit the workflow through a pull
-   request; it runs once it reaches the default branch. `init` replaces a
+   when the current head already has a `success` `projector/review` status. So
+   a job that runs late, or a re-run of an old job, never takes `clean` off a
+   head that a review signed off after the push. After it removes the label,
+   it reads the status once more and gives the label back when a review signed
+   the head off in the meantime. When a push moved the head while it gave the
+   label back, it takes the label off again. Commit the workflow through a
+   pull request; it runs once it reaches the default branch. `init` replaces a
    workflow that an earlier release wrote and keeps one you edited. A kept
    copy never takes a later release's fixes, so `init` says how to compare it
-   with Projector's current workflow, which `project review workflow`
-   prints:
+   with Projector's current workflow, which `project review workflow` prints:
 
    ```sh
    project review workflow | diff -u .github/workflows/projector-clean.yml -
    project review workflow > .github/workflows/projector-clean.yml
    ```
 
-   With
-   `review.labels` set to `false`, `init` writes no workflow, because the
-   workflow would take a `clean` label of the repository's own off.
+   With `review.labels` set to `false`, `init` writes no workflow, because
+   the workflow would take a `clean` label of the repository's own off.
 3. Posts the `success` status on the current head of each open pull request
    that a review has already signed off, so none waits on a review it has.
    When GitHub refuses that, `init` says so and goes on, because a rerun finds

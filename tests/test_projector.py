@@ -1789,17 +1789,25 @@ class CleanWorkflowStepTests(unittest.TestCase):
         start, end = lines.index("      - run: |") + 1, lines.index("        env:")
         return "\n".join(line[10:] for line in lines[start:end]) + "\n"
 
-    def run_step(self, labels: list[str], *reads: list[dict]) -> tuple[int, str, list[list[str]]]:
+    def run_step(self, labels: list[str], *reads: list[dict], heads: tuple[str, ...] = (HEAD,),
+                 signed: tuple[str, ...] = ()) -> tuple[int, str, list[list[str]]]:
         """Run the step on a pull request carrying `labels`, whose head's statuses each read in turn gives as
-        `reads`, the last for every read after it; with no `reads`, reading the status fails."""
+        `reads`, the last for every read after it; with no `reads`, reading the status fails. Each read of the
+        pull request gives the next of `heads` as its head, the last for every read after it, and each head in
+        `signed` other than `HEAD` has a `success` status."""
         folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
         gh = folder / "bin" / "gh"
         gh.parent.mkdir()
         gh.write_text(STUB_GH)
         gh.chmod(0o755)
-        answers = {"repos/acme/app/pulls/7": [{"head": {"sha": self.HEAD}, "labels": [{"name": n} for n in labels]}]}
+        answers = {"repos/acme/app/pulls/7": [{"head": {"sha": sha}, "labels": [{"name": n} for n in labels]}
+                                              for sha in heads]}
         if reads:
             answers[f"repos/acme/app/commits/{self.HEAD}/status?per_page=100"] = [{"statuses": r} for r in reads]
+        for sha in heads:
+            if sha != self.HEAD:
+                statuses = [self.status("success")] if sha in signed else []
+                answers[f"repos/acme/app/commits/{sha}/status?per_page=100"] = [{"statuses": statuses}]
         (folder / "answers.json").write_text(json.dumps(answers))
         env = {**os.environ, "PATH": f"{gh.parent}{os.pathsep}{os.environ['PATH']}", "PR": "7", "REPO": "acme/app",
                "ANSWERS": str(folder / "answers.json"), "CALLS": str(folder / "calls")}
@@ -1842,6 +1850,24 @@ class CleanWorkflowStepTests(unittest.TestCase):
         self.assertEqual((0, [self.edit("--remove-label", "Clean"), self.edit("--add-label", "Clean")]),
                          (code, calls), out)
         self.assertIn(f"gave Clean back to #7, because a review signed off its head {self.HEAD[:7]}", out)
+
+    def test_reads_the_status_of_the_head_as_it_is_after_the_removal(self) -> None:
+        # A review signs the first head off during the step, and a push moved the head before the second read,
+        # so the signed-off status belongs to a head that is no longer the pull request's.
+        pushed = "c" * 40
+        code, out, calls = self.run_step(["Clean"], [], [self.status("success")], heads=(self.HEAD, pushed))
+
+        self.assertEqual((0, [self.edit("--remove-label", "Clean")]), (code, calls), out)
+
+    def test_takes_the_label_off_again_when_a_push_lands_while_the_step_gives_it_back(self) -> None:
+        # The push after the second read starts a job whose event lists no label, so that job skips.
+        signed, pushed = "c" * 40, "d" * 40
+        code, out, calls = self.run_step(["Clean"], [], heads=(self.HEAD, signed, pushed), signed=(signed,))
+
+        self.assertEqual((0, [self.edit("--remove-label", "Clean"), self.edit("--add-label", "Clean"),
+                              self.edit("--remove-label", "Clean")]), (code, calls), out)
+        self.assertIn(f"took Clean off #7 again, because {pushed[:7]} was pushed while the step gave it back to "
+                      f"{signed[:7]}", out)
 
     def test_does_nothing_once_the_label_is_gone(self) -> None:
         code, out, calls = self.run_step(["bug"])
