@@ -59,8 +59,11 @@ may send at most `agent.message_limit` messages an hour to any one
 recipient, which keeps two agents from answering each other forever.
 
 Messages between machines start when you run `project agent key init`. It
-writes an X25519 private key as `agent.key` in `~/.projector.toml`, and you
-copy that one line to each of your other machines. On a machine that holds
+writes an X25519 private key as `agent.key` in `~/.projector.toml` without
+printing it, and you copy that one line to each of your other machines
+from a terminal with `project agent key export` and
+`project agent key import`. No other command prints
+the key, so it stays out of agents' transcripts. On a machine that holds
 the key, the relay carries the same records between machines through hidden
 refs in the repository the session works in, `refs/projector/agents/…` and
 `refs/projector/inbox/…`, as `refs/projector/summaries` carries summaries.
@@ -207,14 +210,35 @@ and `watch status` says why. Only the daemon pushes, and it pushes without
 1. **Make the key.** `project agent key init` creates an X25519 private
    key from `secrets.token_bytes(32)` and writes it to the user layer,
    `~/.projector.toml`, as `agent.key = "x25519:<base64>"`. It narrows the
-   file to mode `0600` on POSIX and prints the line to copy to your other
-   machines and the key's ID, the first 16 hex digits of the SHA-256 of
-   the public key. `project agent key show` prints the public key and its
-   ID. Projector reads `agent.key` only from the user layer: a value in
-   any checkout's `.projector.toml` is ignored with a warning, so a
-   repository cannot plant a key it knows. On POSIX, Projector refuses a
+   file to mode `0600` on POSIX. It prints the key's ID, the first 16 hex
+   digits of the SHA-256 of the public key, and how to copy the key to
+   another machine, but never the key itself. `project agent key show`
+   prints the public key and its ID. Projector reads `agent.key` only from
+   the user layer: a value in any checkout's `.projector.toml` is ignored
+   with a warning, so a repository cannot plant a key it knows. On POSIX, Projector refuses a
    key in a file that other accounts can read, and the error names the
    `chmod` that fixes it. On Windows it relies on the profile's ACL.
+
+   Keep the key out of transcripts. An agent's command output lands in
+   its transcript and the host's session logs, and a leaked key exposes
+   every record the relay ever pushed (§ 3). So only two commands handle
+   the key itself, and both refuse unless standard input and standard
+   output are a terminal, which an agent's shell command usually is not:
+   - `project agent key export` prints the `agent.key` line for you to
+     copy.
+   - `project agent key import` reads that line from standard input, so
+     the key never appears in a command line or shell history. It writes
+     the key to `~/.projector.toml` with mode `0600` and prints its ID.
+     It refuses to replace a different key unless you pass `--replace`.
+
+   Every other command shows `agent.key` as `<redacted, key ID <id>>`:
+   `project config list` and `project config get`, with or without
+   `--json`, and the old value that `project config unset` reports.
+   `project config set agent.key` refuses and names `key import`, because
+   the value would sit in the command line and in the command's echo. The
+   skill never runs `key export` or `key import`. The guard keeps the key
+   out of ordinary output; an agent that can read `~/.projector.toml`
+   directly can still read it, as it can any file in your home directory.
 2. **Seal every record.** Before pushing an `agent.json` or a message, the
    relay seals it to the recipient's public key `R`, which is your own
    public key by default:
@@ -346,9 +370,9 @@ one `sealed.json`.
 | New `src/projector/relay.py` | Presence and message records, the outbox, the choice of checkout, the commits written there and their batched push, the poll, the checks in § 2.2 step 6, the cache, and cleanup. It reuses `summary.git`, `summary.tracking_ref`, and the daemon's login. |
 | `src/projector/watch.py` | In `Daemon.scan`, add to `self.live` every session that holds `agent.json` and whose `delivery` is not `none`. Today `scan` adds a Codex session only while `codex_watch.has_work` holds, so an idle Codex agent would never be polled for or delivered to, its presence would be deleted as lapsed, and `tick` would stop the daemon after 5 minutes. Run the relay's poll, renewal, delivery, and cleanup on each pass, and its lease sweep on each full pass. Report each repository's relay state and rejected count in `watch status`. |
 | `src/projector/codex_watch.py` | Let `eligible` accept a `["message", <id>]` key while the folder holds `messages/<id>.json` (§ 2.1 step 5), so `prepare`, `acknowledge`, `drain`, and `Dispatcher._send` keep a peer message. On `SessionEnd`, mark the session so the next pass deletes its relay refs. |
-| `src/projector/cli.py` | Add `project agent register`, `list`, `send`, `reply`, `read`, `key init`, and `key show`, with `--session` and `--json` as the watch commands take them. `send` and `reply` run `ensure_daemon`. |
-| `src/projector/config.py` | Add `agent.message_limit` and `agent.key` to `SETTINGS`, and `agent.message_limit` to `MINIMUMS` with 1. `config.py` keeps no defaults, so the default of 12 lives in `agents.py`, which passes it when it reads the setting, as `watch.Settings` holds the watch defaults. Add a set of user-layer-only keys, holding `agent.key`, that the walk never supplies and the permission check guards. |
-| New `skills/message-agent/SKILL.md` | When to register and how to keep the summary current. How to pass the session's model ID, how to find, message, and reply to a peer, how to handle a `PEER MESSAGE` line, and the authority rule from § 2.1 step 6. A peer's request that needs the user goes to the user through the inbox. In a public repository, or whenever `send` prints its public-repository reminder, a message carries nothing private: the agent may name a private repository, but never describes its internals, such as its code, file paths, identifiers, plans, or business details. The skill never runs `key init` unless the user asks for it. |
+| `src/projector/cli.py` | Add `project agent register`, `list`, `send`, `reply`, `read`, `key init`, `key show`, `key export`, and `key import`, with `--session` and `--json` as the watch commands take them. `send` and `reply` run `ensure_daemon`. `key export` and `key import` refuse without a terminal on standard input and output (§ 2.2 step 1). `run_config` and `change_config` print a secret key as `<redacted, key ID <id>>` in `config list`, `config get`, and `config unset`, in text and in `--json`, and `config set` refuses `agent.key` and names `key import`. |
+| `src/projector/config.py` | Add `agent.message_limit` and `agent.key` to `SETTINGS`, and `agent.message_limit` to `MINIMUMS` with 1. `config.py` keeps no defaults, so the default of 12 lives in `agents.py`, which passes it when it reads the setting, as `watch.Settings` holds the watch defaults. Add a set of user-layer-only keys, holding `agent.key`, that the walk never supplies and the permission check guards, and a set of secret keys, also holding `agent.key`, that the CLI redacts. |
+| New `skills/message-agent/SKILL.md` | When to register and how to keep the summary current. How to pass the session's model ID, how to find, message, and reply to a peer, how to handle a `PEER MESSAGE` line, and the authority rule from § 2.1 step 6. A peer's request that needs the user goes to the user through the inbox. In a public repository, or whenever `send` prints its public-repository reminder, a message carries nothing private: the agent may name a private repository, but never describes its internals, such as its code, file paths, identifiers, plans, or business details. The skill never runs `key init` unless the user asks for it, and never runs `key export` or `key import`, which the user runs in a terminal. |
 | `skills/fix-pr/SKILL.md`, `skills/review-pr/SKILL.md`, `skills/review-repo/SKILL.md` | Where each says how the session routes event lines, state that a `PEER MESSAGE` line stays with the main conversation, never a per-PR worker, and point to `message-agent`. |
 | `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `tests/test_packaging.py` | Publish the new skill on both hosts. |
 | `docs/cli.md` | Document the command group, the records, the refs, the key and how to copy it, the limit, and what happens without a deliverer. |
@@ -405,6 +429,12 @@ one `sealed.json`.
   request, so the relay needs no separate setting. Reading it only from
   the user layer keeps a committed `.projector.toml` from turning the
   relay on with a key its author knows.
+- **Print the key only to a terminal.** Agents run Projector's commands
+  and their output is kept in transcripts and session logs, so a key
+  printed by `key init` or `config list` would leak the moment an agent
+  ran either. Keeping the key in one setting means you still copy one
+  line between machines, and `key export` and `key import` do that from a
+  terminal, where only you see it.
 - **Use a key pair, not a shared secret.** One X25519 key copied to each of
   your machines costs no more than a shared secret, and a later project
   can accept other people's agents by their public keys without anyone
@@ -475,6 +505,8 @@ config files standing in for two machines.
 | After that exchange, read every object in `origin` with `git cat-file --batch-all-objects --batch`. | None contains A's or B's name, summary, session ID, or login, or the message text. Catches plaintext reaching the repository. |
 | Push four records under machine 2's key ID: one sealed with another key, one with a flipped ciphertext byte, one unsealed, and a valid message copied to another agent's ref. Pass on machine 2. | None is delivered. All four refs are deleted, and `watch status` counts four rejected. Catches forgery, tampering, a missing seal, and a redirected message. |
 | Push a delivered message's record again, and one whose `sent_at` is 8 days old. | Neither is delivered. Catches replay. |
+| Run `key init` with standard output captured, then run `config list`, `config list --json`, `config get agent.key`, `config get agent.key --json`, and `config unset agent.key --user --json`. | No output contains the key or its base64; each shows `<redacted, key ID <id>>` with the right ID, and `key init` prints the ID and the copy instructions. Catches a key printed by any command an agent may run. |
+| Run `key export` and `key import` with standard input or output not a terminal, run `config set agent.key <value> --user`, and run `key import` from a pseudo-terminal on a second home with a line `key export` printed on the first. | The first three are refused and write nothing, and the refusals name the commands to run in a terminal. The import writes the same key with mode `0600`, prints the same key ID as the first home, and refuses a different key without `--replace`. Catches an export an agent can capture, a key routed through a command line, and an import that silently replaces a key. |
 | Set `agent.key` in a checkout's `.projector.toml` only. Separately, make `~/.projector.toml` readable by its group. | The first is ignored with a warning, and the relay stays off. The second is refused with the `chmod` that fixes it. Catches a repository planting a key, and a key other accounts can read. |
 | Give machine 1's checkout a pre-push hook that sleeps 30 seconds and logs each run. Send three messages from A, then run one pass that also renews A's lease and deletes a delivered ref. | Each `send` returns in under a second and prints `delivery: relay (queued)`. The hook logs one run for the pass, and all five ref changes land. Catches a send that pushes itself, and a pass that pushes once per change. |
 | Clone the repository twice on machine 1 and add a worktree to the first clone. Register A in the worktree and C in the second clone, send a message from each, then remove the worktree and end A. Pass on machine 1. | Both messages and A's cleanup land in one push from the second clone, and the outbox is empty. Then end C and delete the second clone before the next pass: C's cleanup stays queued, nothing is pushed, and `watch status` says no recorded checkout of the repository remains. Catches a push that names an object its checkout lacks, and an outbox that pushes from a removed checkout. |
@@ -553,9 +585,9 @@ record and command, and the local layer is useful on its own.
 1. **Local messages.** § 2.1, its records, `agents.py`, the change to
    `codex_watch.eligible`, the CLI, the skill, and the local criteria in
    § 4.
-2. **The relay.** § 2.2, `crypto.py`, `relay.py`, the key commands and
-   setting, the daemon and Codex hook changes, and the relay criteria in
-   § 4. Run `project done` in this layer.
+2. **The relay.** § 2.2, `crypto.py`, `relay.py`, the key commands, the
+   setting and its redaction, the daemon and Codex hook changes, and the
+   relay criteria in § 4. Run `project done` in this layer.
 
 ## 8. Background
 
