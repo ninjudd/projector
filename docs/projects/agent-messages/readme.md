@@ -77,8 +77,9 @@ so a slow pre-push hook never holds up an agent. A daemon polls for its
 mail with one `git fetch` per pass, delivers what it opens locally, and
 deletes each delivered message's ref. When an agent stops, the daemon deletes that agent's refs, and a
 one-hour lease covers a machine that stops without cleaning up. The
-commands and records are the same on one machine or many, and no host
-integration changes. A key pair, unlike a shared secret, lets a later
+commands and records are the same on one machine or many. The mod needs
+no change, and the Codex adapter needs only to keep message lines in its
+queue. A key pair, unlike a shared secret, lets a later
 project accept messages from other people's agents (§ 6).
 
 ### 2.1 On one machine
@@ -156,8 +157,14 @@ project accept messages from other people's agents (§ 6).
    PEER MESSAGE m-3f2a9c1d from test-writer (codex gpt-5.5) re m-11aa22bb: Which error type should the parser raise on a truncated header? Read it with `project agent read m-3f2a9c1d`.
    ```
 
-   The mod submits the line to a Claude session, and the Codex adapter
-   batches and queues it for a Codex session, with no change to either.
+   The mod submits the line to a Claude session with no change. The Codex
+   adapter batches and queues it for a Codex session, but today it keeps
+   only the queued lines that `codex_watch.eligible` accepts, which are
+   pull request events and terminal events. `prepare`, `acknowledge`,
+   `drain`, and the dispatcher's send all apply that filter, and `prepare`
+   saves the queue without what it rejects, so a `["message", <id>]` key
+   would be dropped on the first dispatch. So `eligible` also accepts a
+   `["message", <id>]` key while the folder holds `messages/<id>.json`.
 6. **Read.** `project agent read <id>` prints the sender's name, host,
    model, machine, repository, and summary, then this notice, then the
    text:
@@ -321,7 +328,7 @@ one `sealed.json`.
 | New `src/projector/crypto.py` | X25519 from RFC 7748, ChaCha20 from RFC 8439, HKDF from RFC 5869 over `hmac`, and `seal` and `open` from § 2.2 step 2. Standard library only. |
 | New `src/projector/relay.py` | Presence and message commits, the outbox and its batched push, the poll, the checks in § 2.2 step 6, the cache, and cleanup. It reuses `summary.git`, `summary.tracking_ref`, and the daemon's login. |
 | `src/projector/watch.py` | Run the relay's poll, renewal, delivery, and cleanup on each pass, and its lease sweep on each full pass. Report each repository's relay state and rejected count in `watch status`. |
-| `src/projector/codex_watch.py` | On `SessionEnd`, mark the session so the next pass deletes its relay refs. |
+| `src/projector/codex_watch.py` | Let `eligible` accept a `["message", <id>]` key while the folder holds `messages/<id>.json` (§ 2.1 step 5), so `prepare`, `acknowledge`, `drain`, and `Dispatcher._send` keep a peer message. On `SessionEnd`, mark the session so the next pass deletes its relay refs. |
 | `src/projector/cli.py` | Add `project agent register`, `list`, `send`, `reply`, `read`, `key init`, and `key show`, with `--session` and `--json` as the watch commands take them. `send` and `reply` run `ensure_daemon`. |
 | `src/projector/config.py` | Add `agent.message_limit` and `agent.key` to the typed keys, and `agent.message_limit` to the defaults and minimums. Add a set of user-layer-only keys, holding `agent.key`, that the walk never supplies and the permission check guards. |
 | New `skills/message-agent/SKILL.md` | When to register and how to keep the summary current. How to pass the session's model ID, how to find, message, and reply to a peer, how to handle a `PEER MESSAGE` line, and the authority rule from § 2.1 step 6. A peer's request that needs the user goes to the user through the inbox. In a public repository, or whenever `send` prints its public-repository reminder, a message carries nothing private: the agent may name a private repository, but never describes its internals, such as its code, file paths, identifiers, plans, or business details. The skill never runs `key init` unless the user asks for it. |
@@ -335,8 +342,9 @@ one `sealed.json`.
 - **Reuse the watch daemon's delivery.** The hard part is waking an idle
   session, and the mod and the Codex adapter already do it, with batching,
   acknowledgment, and retry on Codex. A message is one more event line, so
-  `append_events` picks the transport, and neither host integration
-  changes. A message from another machine becomes a local message before
+  `append_events` picks the transport. The mod needs no change, and the
+  Codex adapter changes only so its queue keeps a line keyed to a message
+  rather than to a pull request. A message from another machine becomes a local message before
   it is delivered, so delivery has one path.
 - **Make registering the opt-in.** Requiring registration to receive a
   message means a session gets peer messages only after it, or its user,
@@ -438,7 +446,7 @@ config files standing in for two machines.
 | Two processes register the same name at once. | Exactly one succeeds. Catches a missing lock. |
 | Register a session whose delivery is `none`, and one with `gh` signed out. | Both are refused, with the setup each needs. Catches a registration that silently cannot receive. |
 | Register session C signed in as another login. Run `list` from A, and send from A to C. | C is absent from the list, and the send is refused. Catches a missing login filter. |
-| A sends a three-line message to B. The daemon runs its dispatch. | The fake `codex` receives one queued prompt with B's thread ID and the `PEER MESSAGE` line naming A, and `read` prints all three lines after the notice. Catches the wrong recipient, a lost message, and a line that holds the raw text. |
+| A sends a three-line message to B, which has no subscriptions. The daemon runs its dispatch. | The fake `codex` receives one queued prompt with B's thread ID and the `PEER MESSAGE` line naming A, B's `UserPromptSubmit` hook returns that line, and `read` prints all three lines after the notice. Catches the wrong recipient, a lost message, a Codex queue that drops a line keyed to a message, and a line that holds the raw text. |
 | B replies to A's message. | A's `events` file gets one `PEER MESSAGE` line with `re <id>`, and the reply's `thread` equals the first message's ID. Catches a reply sent to the wrong session or outside its thread. |
 | A sends to B one more time than `agent.message_limit` within an hour, then again after the hour. Repeat with B on the other machine. | Each extra message is refused and writes no record, line, or ref. Each later one goes through. Catches a limit that counts the wrong pair, never resets, or skips relayed sends. |
 | Send from an unregistered session, to itself, to an unknown name, to a lapsed session, and with 16 KiB plus one byte. | Each is refused with its own message and writes nothing in any folder or ref. Catches a partial write before validation. |
@@ -521,8 +529,9 @@ sessions end. Confirm too that pushing the refs starts no workflow run.
 Build the project as a two-layer stack. The relay depends on every local
 record and command, and the local layer is useful on its own.
 
-1. **Local messages.** § 2.1, its records, `agents.py`, the CLI, the skill,
-   and the local criteria in § 4.
+1. **Local messages.** § 2.1, its records, `agents.py`, the change to
+   `codex_watch.eligible`, the CLI, the skill, and the local criteria in
+   § 4.
 2. **The relay.** § 2.2, `crypto.py`, `relay.py`, the key commands and
    setting, the daemon and Codex hook changes, and the relay criteria in
    § 4. Run `project done` in this layer.
