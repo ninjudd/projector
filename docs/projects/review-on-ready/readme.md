@@ -6,9 +6,9 @@ priority: now
 # Review a pull request once it is ready for review
 
 Projector reviews a pull request only after its author marks it ready for
-review, marks a clean head with a `clean` label, and, in a repository that
-relies on Projector alone, blocks the merge until the current head has a clean
-review.
+review, labels it `reviewing` while a review runs and `clean` once the current
+head's review is clean, and, in a repository that relies on Projector alone,
+blocks the merge until the current head has a clean review.
 
 ## 1. Problem
 
@@ -39,9 +39,9 @@ doesn't request code owners' reviews on a draft, for example.
 Draft goes back to GitHub's meaning: the author is still working. Under a
 repository subscription, the watch daemon announces no review of a draft head,
 so a pull request gets its first review when its author marks it ready for
-review. `project review publish` stops moving draft state. It marks a clean
-head with a `clean` label instead, which a workflow removes when a new commit
-arrives. In a repository whose default branch requires it, `publish` also posts
+review. `project review publish` stops moving draft state. A `reviewing` label
+shows a review in progress, and `publish` replaces it with a `clean` label on a
+clean head, which a workflow removes when a new commit arrives. In a repository whose default branch requires it, `publish` also posts
 a `projector/review` commit status on the reviewed commit, so GitHub blocks the
 merge until the current head has a clean review. `project init` asks whether a
 repository relies on Projector alone, and a yes sets up that requirement and
@@ -59,10 +59,12 @@ keeps the label and needs no check.
    while the agent makes the changes.
 3. The daemon sees a head that isn't a draft and has no verdict by this model,
    and announces `NEW PR` or `NEW HEAD`. The session reviews the head as it
-   does today.
+   does today. `project review setup` adds the `reviewing` label when it posts
+   the review's start comment.
 4. `publish` posts the review, then works out whether the head is signed off
-   (§ 2.2). It adds or removes the `clean` label, and posts the
-   `projector/review` status when the default branch requires it.
+   (§ 2.2). In one label change it removes `reviewing` and adds or removes
+   `clean`, and it posts the `projector/review` status when the default branch
+   requires it.
 5. When the review requests changes, `fix-pr` pushes its fixes to the pull
    request, which stays ready, and the daemon announces each push for review
    as it does today.
@@ -100,12 +102,21 @@ The label means that Projector's newest review of the current head is clean.
 It doesn't mean that the pull request may merge, because a repository can
 still require people's approval.
 
+The `reviewing` label follows the review's start comment, the comment
+`setup` posts to say that a review of a head is under way. `setup` adds the
+label when it posts the comment. `publish` and `finish` remove the label when
+they delete the comment, but only when no other model's live start comment
+is left on the pull request, so one model finishing never hides another
+model's review. A review whose session dies leaves the label, as it leaves its
+start comment, until the next review of the pull request finishes or `finish`
+clears it.
+
 ### 2.3 What Projector writes to GitHub
 
 | Item | Shape |
 | --- | --- |
 | Commit status | `POST repos/{owner}/{repo}/statuses/{sha}` on the SHA the verdict names, with `context` `projector/review`, `state` `success` or `failure`, a `description` of at most 140 characters such as `Clean: claude-opus-5-5` or `Changes requested: 2 open findings`, and `target_url` set to the review's URL |
-| Label | `clean`, color `0e8a16`, description `Projector's newest review of the current head is clean`. `publish` creates it the first time a repository needs it. |
+| Labels | `clean`, color `0e8a16`, description `Projector's newest review of the current head is clean`; and `reviewing`, color `fbca04`, description `A Projector review of this pull request is in progress`. `setup` and `publish` create each label the first time a repository needs it. |
 | Ruleset | Name `Projector review`, `target` `branch`, `enforcement` `active`, `conditions.ref_name.include` `["~DEFAULT_BRANCH"]`, one `required_status_checks` rule that requires the context `projector/review` with `strict_required_status_checks_policy` `false`, and no bypass actors |
 | Workflow | `.github/workflows/projector-clean.yml`, below |
 
@@ -142,12 +153,13 @@ branch rather than the pull request's base, so a stacked pull request's head
 already carries the status when its base retargets to the default branch.
 
 `publish` keeps its order and its retry: it submits the review, re-reads the
-verdicts and threads, posts the status, changes the label, records the review,
-deletes its start comment, and releases the lock. A refused status exits
-non-zero and names the status, and running `publish` again posts it without a
-second review, as a refused draft transition does today. A refused label
-change prints a warning and exits 0, because the label is a view and the
-status is the sign-off.
+verdicts and threads, posts the status, changes the labels, records the
+review, deletes its start comment, and releases the lock. A refused status
+exits non-zero and names the status, and running `publish` again posts it
+without a second review, as a refused draft transition does today. A refused
+label change prints a warning and exits 0, because the labels are a view and
+the status is the sign-off. `setup` treats a refused `reviewing` label the
+same way.
 
 ### 2.4 Commands and settings
 
@@ -161,7 +173,7 @@ status is the sign-off.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `review.clean_label` | bool | `true` | `false` stops `publish` and `setup` from adding or removing the label. |
+| `review.labels` | bool | `true` | `false` stops `setup`, `publish`, and `finish` from adding or removing the `reviewing` and `clean` labels. |
 | `review.require_check` | bool | unset | Records the answer to `init`'s question. Unset, `init` asks at a terminal; `false`, it never asks; `true`, it keeps the ruleset and the workflow in place. `publish` never reads it, because the ruleset decides the status (§ 2.3). |
 
 ### 2.5 Setting up the required check
@@ -212,14 +224,14 @@ while it waits, and it still writes nothing to GitHub.
 
 | File | Change |
 | --- | --- |
-| `src/projector/review.py` | Add one sign-off function (§ 2.2). `publish` posts the status and changes the label in place of the draft transition, never approves a draft, and drops the hold from its approval and dismissal rules. `setup` removes a stale label. `status` reports the sign-off. `ready` and `hold` replace `hold_add`, `hold_drop`, `hold_end`, `hold_lines`, and `HOLD_MARKER`. |
+| `src/projector/review.py` | Add one sign-off function (§ 2.2). `publish` posts the status and changes the label in place of the draft transition, never approves a draft, and drops the hold from its approval and dismissal rules. `setup` adds `reviewing` and removes a stale `clean`. `publish` and `finish` remove `reviewing` once no live start comment is left. `status` reports the sign-off and the labels. `ready` and `hold` replace `hold_add`, `hold_drop`, `hold_end`, `hold_lines`, and `HOLD_MARKER`. |
 | `src/projector/watch.py` | `route_review` announces nothing for a draft under a repository subscription and changes the `RESPONDED` rule. `route_fix` sends `UNREVIEWED` in place of `DRAFT`. `is_held` goes. |
 | `src/projector/cli.py` | `review ready`, the new `review hold`, `publish`'s output, and `init`'s question and flags, beside `--site` and `--publish-rule`. |
-| `src/projector/config.py` | `review.clean_label` and `review.require_check`. |
+| `src/projector/config.py` | `review.labels` and `review.require_check`. |
 | `src/projector/templates/clean-workflow.yml` | New: the workflow text, with the label name filled in from the constant `publish` uses. |
 | `src/projector/templates/agents-block.md` | The draft rules (§ 2.1), at version 25. |
 | `src/projector/permissions.py` | Drop the docstring's note about the hold comment's deletion. |
-| `hooks/github.ts`, `hooks/types.d.ts`, `hooks/register.tsx` | Read each pull request's labels. A row prints `draft`, `ready`, or `clean`, and only `clean` colors it green. |
+| `hooks/github.ts`, `hooks/types.d.ts`, `hooks/register.tsx` | Read each pull request's labels. A row prints `draft`, `ready`, `reviewing`, or `clean`, and only `clean` colors it green. |
 | `skills/review-pr`, `skills/review-repo`, `skills/fix-pr`, `skills/implement`, `skills/spec`, `skills/cleanup` | The rules in § 2.1. `fix-pr` keeps the heading "Hold the pull request while changes are built", which other files cite. |
 | `AGENTS.md`, `CLAUDE.md` | The repository's own hand-over rules and the generated block. |
 | `docs/cli.md`, `docs/plugins.md` | Living documentation for the commands, events, settings, and panel. |
@@ -278,6 +290,11 @@ while it waits, and it still writes nothing to GitHub.
   the reviews of quick pushes without any ceremony, but not of a pull request
   iterated for an hour, which is where the reviews in § 1 went. A debounce can
   be added later on top of this design.
+- **`reviewing` follows the start comment.** The start comment already marks
+  a review in progress, and the daemon and `setup` already read it to tell a
+  live review from a stalled one. Tying the label to it means the label never
+  claims more than the comment does, and needs no state of its own. One label
+  serves every model, so it stays until the last live start comment goes.
 - **One sign-off function.** `publish` computes draft state today from the
   newest counted verdict (`head_verdicts` and `counted_reviews`) and the open
   finding threads. That computation becomes the sign-off function, and
@@ -301,7 +318,10 @@ while it waits, and it still writes nothing to GitHub.
 | Have GitHub refuse the status | `publish` exits non-zero and names the status, and running it again posts the status without a second review |
 | Have GitHub refuse the label | A warning, exit 0, and the status posted |
 | Push after a clean review, in a test repository with the workflow and the ruleset | The workflow removes the label, the new head has no status, and the merge box waits for `projector/review` |
-| Run `setup` on a head that isn't signed off while the label is present | The label removed |
+| Run `setup` on a head that isn't signed off while `clean` is present | `clean` removed and `reviewing` added |
+| Publish a clean review | `reviewing` and `clean` changed in one request |
+| Publish one model's review while another model's start comment is live | `reviewing` stays until the second model publishes or finishes |
+| Run `finish --force` on a review in progress with no other review live | `reviewing` removed |
 | Run `project review ready` or `hold` on someone else's pull request | Refused, with draft state unchanged |
 | Run `init` at a terminal with `review.require_check` unset | The question. `y` creates the ruleset, writes the workflow, posts the status on signed-off heads, and records `true`. `n` records `false` and does nothing else. A second run asks nothing. |
 | Run `init` without a terminal and without a flag | No question and no change |
@@ -328,6 +348,9 @@ Each of these tests fails before the change:
   leftover draft transition.
 - **`test_review.py`: an open finding thread keeps the label off and the status
   failing.** It catches a sign-off that reads the verdict alone.
+- **`test_review.py`: the first model to publish leaves `reviewing` while a
+  second model's start comment is live.** It catches a label removed on the
+  publishing review's own comment alone.
 - **`test_review.py`: `setup` removes a stale label.** It catches a label left
   on a head no review has read, in a repository without the workflow.
 - **`test_cli.py`: `init`'s question, flags, and refusal, in a temporary Git
@@ -351,9 +374,10 @@ with the code they cover.
   saves a full read of the change and a run of the validation gate. Measure
   Projector verdicts per merged pull request before and after, in a repository
   whose pull requests are iterated after they open.
-- **`publish`.** It makes up to four more REST requests per verdict: the branch
-  rules, the status, the label change, and the label's creation once per
-  repository. They are small next to the review.
+- **`setup` and `publish`.** `setup` makes one more REST request per review,
+  adding `reviewing`. `publish` makes up to three more per verdict: the branch
+  rules, the status, and one label change. Each label's creation adds one
+  request, once per repository. They are small next to the review.
 - **The daemon.** It makes no new requests. Its query already reads `isDraft`,
   and marking a pull request ready changes the ETag the daemon already
   watches.
@@ -362,11 +386,15 @@ with the code they cover.
   present.
 - **The panel.** Its query reads each pull request's labels, one connection per
   pull request.
+- **The conversation.** Each review adds two label events to the pull
+  request's conversation: `setup` adding `reviewing`, and `publish`'s one
+  change of both labels.
 - **The summary comment.** A label event shows on the conversation, so it
   buries the summary comment, which the next summary publish then posts again.
-  `publish` adds the label before the summary is published, and the workflow
-  removes it on a push, which buries the comment anyway. So the label causes
-  no extra reposts.
+  `setup` adds `reviewing` at the start of a review whose verdict buries the
+  comment anyway, `publish` changes the labels before the summary is
+  published, and the workflow removes `clean` on a push, which buries the
+  comment anyway. So the labels cause no extra reposts.
 
 ## 6. Rollout
 
