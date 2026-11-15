@@ -313,7 +313,7 @@ The relay adds two settings:
 
 | Setting | Type and meaning |
 | --- | --- |
-| `agent.message_limit` | `int`, default 12, minimum 1. Messages from one sender to one recipient in a rolling hour. |
+| `agent.message_limit` | `int`, default 12 (kept in `agents.py`), minimum 1. Messages from one sender to one recipient in a rolling hour. |
 | `agent.key` | `str`, `x25519:` and a base64 private key. Read only from the user layer. Its presence turns the relay on. |
 
 In the repository, the relay adds two hidden ref namespaces. They hold no
@@ -336,7 +336,7 @@ one `sealed.json`.
 | `src/projector/watch.py` | In `Daemon.scan`, add to `self.live` every session that holds `agent.json` and whose `delivery` is not `none`. Today `scan` adds a Codex session only while `codex_watch.has_work` holds, so an idle Codex agent would never be polled for or delivered to, its presence would be deleted as lapsed, and `tick` would stop the daemon after 5 minutes. Run the relay's poll, renewal, delivery, and cleanup on each pass, and its lease sweep on each full pass. Report each repository's relay state and rejected count in `watch status`. |
 | `src/projector/codex_watch.py` | Let `eligible` accept a `["message", <id>]` key while the folder holds `messages/<id>.json` (§ 2.1 step 5), so `prepare`, `acknowledge`, `drain`, and `Dispatcher._send` keep a peer message. On `SessionEnd`, mark the session so the next pass deletes its relay refs. |
 | `src/projector/cli.py` | Add `project agent register`, `list`, `send`, `reply`, `read`, `key init`, and `key show`, with `--session` and `--json` as the watch commands take them. `send` and `reply` run `ensure_daemon`. |
-| `src/projector/config.py` | Add `agent.message_limit` and `agent.key` to the typed keys, and `agent.message_limit` to the defaults and minimums. Add a set of user-layer-only keys, holding `agent.key`, that the walk never supplies and the permission check guards. |
+| `src/projector/config.py` | Add `agent.message_limit` and `agent.key` to `SETTINGS`, and `agent.message_limit` to `MINIMUMS` with 1. `config.py` keeps no defaults, so the default of 12 lives in `agents.py`, which passes it when it reads the setting, as `watch.Settings` holds the watch defaults. Add a set of user-layer-only keys, holding `agent.key`, that the walk never supplies and the permission check guards. |
 | New `skills/message-agent/SKILL.md` | When to register and how to keep the summary current. How to pass the session's model ID, how to find, message, and reply to a peer, how to handle a `PEER MESSAGE` line, and the authority rule from § 2.1 step 6. A peer's request that needs the user goes to the user through the inbox. In a public repository, or whenever `send` prints its public-repository reminder, a message carries nothing private: the agent may name a private repository, but never describes its internals, such as its code, file paths, identifiers, plans, or business details. The skill never runs `key init` unless the user asks for it. |
 | `skills/fix-pr/SKILL.md`, `skills/review-pr/SKILL.md`, `skills/review-repo/SKILL.md` | Where each says how the session routes event lines, state that a `PEER MESSAGE` line stays with the main conversation, never a per-PR worker, and point to `message-agent`. |
 | `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `tests/test_packaging.py` | Publish the new skill on both hosts. |
