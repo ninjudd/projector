@@ -2619,7 +2619,10 @@ author.
 
 A draft means its author is still working on the pull request, so a
 repository subscription announces nothing for one: no `NEW PR`, `NEW HEAD`,
-reminder, or `RESPONDED`. Marking it ready announces what no review has read:
+reminder, or `RESPONDED`. A review that stalls while it waits is still
+reported once, as a `NEW HEAD` that says to stop the review's subagent and to
+review the pull request once it is ready. Marking it ready announces what no
+review has read:
 `NEW PR` for a pull request never announced, `NEW HEAD` from the last head
 known, or at once the `(still open)` reminder for a head announced before it
 became a draft. A subscription to one pull request, as `review-pr` adds,

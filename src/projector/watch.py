@@ -1435,10 +1435,15 @@ class Pass:
         if pr.get("isDraft") and line.number is None:
             # A draft's author is still working on it, so a repository subscription waits until it is marked
             # ready, and then announces what no review has read: a pull request never announced, a head newer
-            # than the last one known, or, at once, a head announced before it was drafted.
+            # than the last one known, or, at once, a head announced before it was drafted. A review that stalls
+            # meanwhile is reported once, so its subagent still hears to stop.
+            lines = []
+            if (pull, name) in self.stalled_roles and not reviewed:
+                lines.append(f"NEW HEAD {ref} ({branch}) head={head[:7]}, its last review stalled while the pull "
+                             f"request is a draft — stop subagent review-{number}, and review it once it is ready")
             self.states[session].data["review"][label] = {
-                "head": known, "flag": flag, "announced": None if reviewed or announced is None else 0}
-            return []
+                "head": known, "flag": flag, "announced": None if reviewed or announced is None and not lines else 0}
+            return lines
         lines = []
         if (pull, name) in self.stalled_roles and not reviewed:
             lines.append(f"NEW HEAD {ref} ({branch}) head={head[:7]}, its last review stalled — stop subagent "

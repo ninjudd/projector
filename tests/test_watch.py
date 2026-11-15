@@ -1501,6 +1501,28 @@ class OwnerTests(WatchCase):
         self.assertEqual(["NEW HEAD acme/app#1 (feature) head=aaaaaaa, its last review stalled — stop subagent "
                           f"review-1, then {review_action(1, 'A')}"], stalled["A"])
 
+    def test_a_review_that_stalls_on_a_draft_still_tells_its_subagent_to_stop(self) -> None:
+        # A stall is reported on the pass that finds it, so the wait for a draft must not swallow it.
+        self.github.pull_request(1)
+        self.subscribe_live("A", f"acme/app review {MODEL} operator")
+        self.cycle()
+        self.lock("A")
+        self.github.pull_request(1, draft=True)
+        self.cycle()
+
+        self.advance(1800)
+        stalled = self.cycle()
+        self.advance(60)
+        quiet = self.cycle()
+        self.github.pull_request(1)
+        ready = self.cycle()
+
+        self.assertEqual(["NEW HEAD acme/app#1 (feature) head=aaaaaaa, its last review stalled while the pull request "
+                          "is a draft — stop subagent review-1, and review it once it is ready"], stalled["A"])
+        self.assertEqual([], quiet["A"])
+        self.assertEqual([f"NEW HEAD acme/app#1 (still open) (feature) head=aaaaaaa: still needs an exact-head review "
+                          f"— {review_action(1, 'A')}"], ready["A"], "the head no review read is announced at once")
+
     def test_a_lapsed_owner_loses_its_locks_at_once(self) -> None:
         self.github.pull_request(1)
         self.subscribe_live("B", f"acme/app review {MODEL} operator")
