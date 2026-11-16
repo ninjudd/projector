@@ -21,12 +21,19 @@ from typing import Iterator, Optional
 from urllib.parse import quote
 
 from . import review
-from .core import EnvironmentError, ProjectorError, UsageError
+from .core import EnvironmentError, ProjectorError, UsageError, visible_files
 
 TOOLS_MESSAGE = "project ios needs Xcode's command-line tools on macOS"
 DEVICE_DESTINATION = "generic/platform=iOS"
 MAC_DESTINATION = "platform=macOS,arch=arm64,variant=Designed for iPad"
 APPLICATION = "com.apple.product-type.application"
+# CoreDevice runs as an XPC service that launchd starts on demand. Right after a login, an Xcode update, or a
+# device's first connection, it can take longer to start than devicectl waits for it.
+COREDEVICE_TIMEOUT = "Timed out waiting for CoreDeviceService"
+COREDEVICE_HINT = ("CoreDevice was still starting, so run the command again in a minute. If it keeps timing out, run "
+                   "`killall CoreDeviceService` so launchd starts it afresh, and try again")
+SHARED_SCHEMES = ("*.xcodeproj/xcshareddata/xcschemes/* Development.xcscheme",
+                  "*.xcworkspace/xcshareddata/xcschemes/* Development.xcscheme")
 SKIPPED = frozenset({".git", "Pods", "node_modules", "build", ".build"})
 BUNDLES = (".xcworkspace", ".xcodeproj")
 RECORD = "build.json"
@@ -64,9 +71,19 @@ def tool(args: list[str]) -> str:
     """Run one of Apple's tools, `cp`, or `open`, and return its output, or fail with what it printed."""
     result = subprocess.run(args, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if result.returncode:
-        detail = (result.stderr.strip() or result.stdout.strip()).splitlines()
-        raise IosError(f"{' '.join(args[:3])} failed: {detail[-1] if detail else f'exit {result.returncode}'}")
+        output = result.stderr.strip() or result.stdout.strip()
+        detail = output.splitlines()
+        message = f"{' '.join(args[:3])} failed: {detail[-1].strip() if detail else f'exit {result.returncode}'}"
+        if COREDEVICE_TIMEOUT in output:
+            message += f". {COREDEVICE_HINT}"
+        raise IosError(message)
     return result.stdout
+
+
+def development_apps(root: Path) -> list[str]:
+    """The apps that the repository's shared `<app> Development` schemes build, by name."""
+
+    return sorted({path.name.removesuffix(" Development.xcscheme") for path in visible_files(root, *SHARED_SCHEMES)})
 
 
 # State

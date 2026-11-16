@@ -931,6 +931,38 @@ class MutationTests(RepositoryTestCase):
         config.write_text('[ios]\nproject = "ios/App.xcodeproj"\n', encoding="utf-8")
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
 
+    def shared_schemes(self, *names: str, bundle: str = "App/App.xcodeproj") -> None:
+        folder = self.root / bundle / "xcshareddata" / "xcschemes"
+        folder.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            (folder / f"{name}.xcscheme").write_text("<Scheme/>\n", encoding="utf-8")
+
+    def test_check_warns_while_development_schemes_build_several_apps_and_ios_app_names_none(self) -> None:
+        config = self.root / ".projector.toml"
+        # One Development scheme beside plain ones is one app, which needs no setting.
+        self.shared_schemes("Alpha", "Alpha Development", "Beta")
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+        # A workspace's shared schemes count as well as a project's.
+        self.shared_schemes("Beta Development", bundle="App.xcworkspace")
+        code, stdout, stderr = self.invoke("check")
+        self.assertEqual(0, code)
+        self.assertEqual("Project plans are valid.\n", stdout)
+        self.assertEqual(
+            "warning: .projector.toml: Development schemes build Alpha, Beta, and ios.app names none of them, so"
+            " `project ios crashes` and `logs` refuse to choose once two have kept builds (run 'project config set"
+            " ios.app <app>' with the app to build by default) [ios-app-unset]\n",
+            stderr,
+        )
+
+        config.write_text('[ios]\napp = "Alpha"\n', encoding="utf-8")
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+    def test_development_schemes_in_an_ignored_folder_need_no_ios_app(self) -> None:
+        (self.root / ".gitignore").write_text("vendor/\n", encoding="utf-8")
+        self.shared_schemes("Alpha Development", "Beta Development", bundle="vendor/Pods/Pods.xcodeproj")
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
     def test_init_keeps_a_newer_block_and_check_says_to_upgrade(self) -> None:
         agents = self.root / "AGENTS.md"
         shipped = instructions.template_version()
