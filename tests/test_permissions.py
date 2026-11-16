@@ -95,6 +95,15 @@ DECISIONS = (
     ("LANG=C project list", "allow", "none"),
     ("HOME=/tmp project init --publish-rule", "ask", "none"),
     ("projector list", "none", "none"),
+    ("project ios devices --json", "allow", "allow"),
+    ("project ios install 12 --device 00008110-0001", "allow", "allow"),
+    ("project ios crashes --mac", "allow", "allow"),
+    ("project ios cleanup", "allow", "allow"),
+    ("project ios build 12 --no-install", "allow", "none"),
+    ("project ios build feature/login --mac", "allow", "none"),
+    ("project ios build 12 --allow-untrusted", "ask", "none"),
+    ("project ios build --allow-untrusted 12 --ipad", "ask", "none"),
+    ("project ios logs --last 20m", "allow", "none"),
 )
 
 # What the Codex rules leave to Codex's usual approval: each command with the
@@ -102,7 +111,7 @@ DECISIONS = (
 CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "agent": {"key"},
                   "config": {"set", "unset"}, "inbox": {"answer", "decline", "dismiss", "done", "snooze", "start", "unclear"},
                   "review": {"gate"},
-                  "site": {"build", "serve"}}
+                  "site": {"build", "serve"}, "ios": {"build", "logs"}}
 
 # Some of the variables Claude Code lets an allow rule match past. Its list is
 # fixed, and holds none of VISUAL, EDITOR, PATH, HOME, or XDG_STATE_HOME.
@@ -228,6 +237,14 @@ class PermissionRulesTests(unittest.TestCase):
             self.assertEqual("make", cli.parser().parse_args([*command, "--prepare=make"]).prepare)
             self.assertEqual("make", cli.parser().parse_args([*command, "--prepare", "make"]).prepare)
             self.assertTrue(cli.parser().parse_args([*command, "--allow-prepare"]).allow_prepare)
+
+    def test_ios_build_takes_allow_untrusted_only_spelled_in_full(self) -> None:
+        self.assertTrue(cli.parser().parse_args(["ios", "build", "12", "--allow-untrusted"]).allow_untrusted)
+        for abbreviated in ("--allow", "--allow-unt", "--allow-untrust"):
+            with self.subTest(abbreviated):
+                with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as stop:
+                    cli.parser().parse_args(["ios", "build", "12", abbreviated])
+                self.assertEqual(2, stop.exception.code)
 
 
 SKILLS = Path(__file__).resolve().parents[1] / "skills"

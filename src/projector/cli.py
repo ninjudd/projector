@@ -23,7 +23,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import agents, codex_watch, inbox, instructions, loop, permissions, relay, review, site, summary, watch
+from . import agents, codex_watch, inbox, instructions, ios, loop, permissions, relay, review, site, summary, watch
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
@@ -724,6 +724,7 @@ def parser() -> argparse.ArgumentParser:
                                      "full review, when `project review interdiff` allows one")
 
     add_inbox_parser(subcommands)
+    add_ios_parser(subcommands)
     add_loop_parser(subcommands)
     add_watch_parser(subcommands)
     add_agent_parser(subcommands)
@@ -973,6 +974,79 @@ def add_loop_parser(subcommands) -> None:
         command.add_argument("reference", help="the pull request, as owner/repo#number")
         command.add_argument("--tracked", required=True, type=Path, help="the loop's tracked file")
         add_output(command)
+
+
+def add_ios_parser(subcommands) -> None:
+    parser = subcommands.add_parser("ios", help="build a branch's iOS app in a worktree of its own, put it on a "
+                                                 "device, and read the device's crash reports and log")
+    commands = parser.add_subparsers(dest="ios_command", required=True)
+
+    # No command takes an abbreviated option, so the ask rule for --allow-untrusted sees every spelling of it.
+    def command(name: str, help_text: str, chooses: bool = True) -> argparse.ArgumentParser:
+        parsed = commands.add_parser(name, help=help_text, allow_abbrev=False)
+        if chooses:
+            parsed.add_argument("--app", help="the app, whose scheme is `<app> Development` or `<app>`; "
+                                              "the default is ios.app, or the Xcode project's name")
+            where = parsed.add_mutually_exclusive_group()
+            where.add_argument("--device", metavar="NAME_OR_UDID", help="the paired device to use")
+            where.add_argument("--iphone", action="store_const", const="iPhone", dest="kind",
+                               help="the one connected iPhone")
+            where.add_argument("--ipad", action="store_const", const="iPad", dest="kind",
+                               help="the one connected iPad")
+            where.add_argument("--mac", action="store_true",
+                               help="this Mac, which runs the app as Designed for iPad")
+        return parsed
+
+    build = command("build", "fetch a branch or a pull request's head, build its app, keep the build, and "
+                             "install and open it")
+    build.add_argument("target", help="a branch, or a pull request's number")
+    build.add_argument("--no-install", action="store_false", dest="install", help="stop after the build")
+    build.add_argument("--verbose", action="store_true", help="print every line xcodebuild writes")
+    build.add_argument("--allow-untrusted", action="store_true",
+                       help="build a pull request whose head is not trusted, after you read its build phases "
+                            "and scripts")
+    install = command("install", "install and open a kept build")
+    install.add_argument("target", nargs="?", help="the branch or pull request number it was built from; the "
+                                                   "default is the newest kept build")
+    add_output(command("devices", "list paired iOS devices and whether each can take an install", chooses=False))
+    command("crashes", "copy the app's newest crash reports to ios.output and summarize them")
+    logs = command("logs", "write the app's recent log lines to a new file in ios.output")
+    logs.add_argument("--last", default="5m", metavar="SPAN", help="how far back to read, such as 20m (default 5m)")
+    logs.add_argument("--predicate", help="a log predicate to use instead of the app's subsystem and faults")
+    command("cleanup", "remove the worktree, DerivedData, and every kept build", chooses=False)
+
+
+def run_ios(arguments: argparse.Namespace) -> int:
+    command = arguments.ios_command
+    if command == "devices":
+        found = ios.devices()
+        if arguments.json_output:
+            print(json_text({"devices": [device.as_json() for device in found]}))
+            return 0
+        if not found:
+            print("No paired iOS devices.")
+        for device in found:
+            reach = "" if device.installable else ", can't take an install"
+            print(f"{device.name}  {device.kind}  {device.udid}  {device.tunnel}{reach}")
+        return 0
+    checkout = discover_git_root(Path.cwd())
+    if command == "cleanup":
+        ios.clean(checkout)
+        return 0
+    config = load_config(checkout)
+    app = arguments.app or config.setting("ios.app")
+    where = {"app": app, "wanted": arguments.device, "kind": arguments.kind, "mac": arguments.mac}
+    output = Path(config.setting("ios.output") or "~/Desktop").expanduser()
+    if command == "build":
+        ios.build(checkout, arguments.target, project_setting=config.setting("ios.project"), install=arguments.install,
+                  verbose=arguments.verbose, allow_untrusted=arguments.allow_untrusted, **where)
+    elif command == "install":
+        ios.install(checkout, arguments.target, **where)
+    elif command == "crashes":
+        ios.crash_reports(checkout, output=output, **where)
+    else:
+        ios.device_log(checkout, output=output, span=arguments.last, predicate=arguments.predicate, **where)
+    return 0
 
 
 def run_loop(arguments: argparse.Namespace) -> int:
@@ -2706,6 +2780,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_inbox(arguments)
     if arguments.command == "loop":
         return run_loop(arguments)
+    if arguments.command == "ios":
+        return run_ios(arguments)
     if arguments.command == "watch":
         return run_watch(arguments)
     if arguments.command == "agent":

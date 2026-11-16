@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -382,8 +382,8 @@ at that paragraph.
   them, and the `CODEX_RULES` header names them with the other commands it
   leaves out.
 - **Standard library only.** The script's embedded Python already did the
-  JSON work. `plistlib` replaces `PlistBuddy`, and `fcntl.flock` replaces
-  `lockf(1)`. The command checks for `xcrun` rather than for macOS, so the
+  JSON work. `-showBuildSettings` gives the bundle ID that the script read
+  with `PlistBuddy`, and `fcntl.flock` replaces `lockf(1)`. The command checks for `xcrun` rather than for macOS, so the
   tests run on Linux with stand-ins for Apple's tools.
 
 ## 4. Acceptance criteria
@@ -452,3 +452,26 @@ the folder held, because DerivedData for an app can reach several gigabytes.
    layer of a stack.
 2. Open the skill paragraphs of § 2.6 as the second layer, because they name
    commands the first layer adds.
+
+## 7. Implementation notes
+
+The first layer of the stack, the command, settles these points that the
+sections above leave open:
+
+- **`cleanup` keeps the `lock` file.** A run that waits on the lock holds
+  the file open. If `cleanup` deleted it, that run would take a lock on the
+  deleted file while a third run locked a new one, and both would build.
+  `cleanup` removes everything else in the state folder, and says
+  `Nothing to clean up.` when only `lock` is left.
+- **`fcntl` is imported only when a command takes the lock**, so the CLI
+  still loads on a system without it.
+- **A pull request's key comes from its number's value**, so `0012` and
+  `12` name the same kept build.
+- **`tests/test_ios.py` covers every row of § 4** with stand-ins for Apple's
+  tools on `PATH`. The ask rule and the Codex rules are rows of
+  `DECISIONS` in `tests/test_permissions.py`, and its abbreviation test
+  covers `--allow-untrusted`.
+
+The last acceptance criterion in § 4, a build installed and opened on a real
+iPhone, needs the person and their device, so the project stays
+`in-progress` until they run it.
