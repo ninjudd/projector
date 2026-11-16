@@ -76,9 +76,12 @@ without `review.gate_checks` keeps today's behavior.
      that defines none of the named checks, such as a release workflow,
      keeps CI's evidence.
    - **A check that will not run.** While a named check has no run, `gate`
-     also lists the head's workflow runs. When none of them is queued or in
-     progress, no run of the check is coming, and `gate` stops waiting and
-     exits 75, naming the reason. One reason is a workflow run with the
+     also lists the head's workflow runs. A run whose status is `queued`,
+     `in_progress`, `requested`, `waiting`, or `pending` is still coming,
+     including one that an environment approval or a concurrency group
+     holds. When none of them is still coming, no run of the check is
+     coming either, and `gate` stops waiting and exits 75, naming the
+     reason. One reason is a workflow run with the
      status `action_required`, which waits for a maintainer to approve it,
      as GitHub makes a workflow from a fork or a bot wait. Another is a job
      that was renamed, a `paths` filter that skipped the head, or a name in
@@ -104,15 +107,20 @@ without `review.gate_checks` keeps today's behavior.
    § 2.2.1) still demands a passing gate across a moved base.
 7. Independently of any review, the watch daemon reads the head's CI rollup
    on each poll. It sends the `fix` role one `CHECKS` line for that head when
-   a context in the rollup failed: a check run that concluded `FAILURE` or
-   `TIMED_OUT`, or a commit status in the state `FAILURE` or `ERROR`. The
-   `projector/review` status does not count. Projector posts it as
-   `failure` on each head whose verdict requests changes, and the `FINDING`
-   and `VERDICT` events already report that work. The rollup's own `state`
-   does not count either, because it includes that status. A run that waits
-   for approval, or that was cancelled or skipped, is not a failure.
-   `fix-pr` then reads the failing run's log, reproduces the failure, and
-   fixes it, or reports why it cannot.
+   a context in the rollup failed: a check run that concluded `FAILURE`,
+   `TIMED_OUT`, or `STARTUP_FAILURE`, or a commit status in the state
+   `FAILURE` or `ERROR`. The `projector/review` status does not count.
+   Projector posts it as `failure` on each head whose verdict requests
+   changes, and the `FINDING` and `VERDICT` events already report that work.
+   The rollup's own `state` does not count either, because it includes that
+   status. A run that waits for approval, or that was cancelled or skipped,
+   is not a failure. The query reads the first 20 contexts with the rollup's
+   counts of check runs and statuses in each state, which cover every
+   context. When those counts hold more failed contexts than the first 20
+   show, and the connection has a next page, the daemon reads the remaining
+   pages before it decides, so a failed check after the twentieth context
+   still sends `CHECKS`. `fix-pr` then reads the failing run's log,
+   reproduces the failure, and fixes it, or reports why it cannot.
 
 ### 2.2 Data
 
@@ -151,7 +159,7 @@ CHECKS acme/app#12 (still open) head=1a2b3c4d failed: check, lint — <action>
 | `src/projector/config.py` | `review.gate_checks: str` in `SETTINGS`. |
 | `src/projector/review.py` | `gate` takes the parsed names. With names set, the trust check moves from the top of `gate` to the command, which `gate` runs on a trusted head when it is set. Then `gate` calls a new `ci_checks(repo, sha, names)`. That function reads `gh api 'repos/<repo>/commits/<sha>/check-runs?filter=latest&check_name=<name>'` once for each name, so a commit with more check runs than one page holds still shows each named run. It keeps the `github-actions` runs. A new `check_files(repo, worktree, run)` finds the files behind a run (§ 2.4), and `gate` compares them with `git diff --name-only <base> <sha>`. While a named check has no run, `gate` reads `gh api 'repos/<repo>/actions/runs?head_sha=<sha>'` for the early exits in § 2.1 step 4. `gate` waits in a loop that reuses `touch_head`. |
 | `src/projector/cli.py` | `review gate` reads `review.gate_checks`, prints each check's conclusion and the reason for exit 75, and exits as § 2.1 step 5 defines. |
-| `src/projector/watch.py` | `QUERY` reads `statusCheckRollup{ contexts(first:20){ nodes{ … on CheckRun{ name conclusion } … on StatusContext{ context state } } } }`. The fix events add `CHECKS` through `standing`, keyed `checks:<number>:<head>`, from the failed contexts that § 2.1 step 7 names. |
+| `src/projector/watch.py` | `QUERY` reads `statusCheckRollup{ contexts(first:20){ checkRunCountsByState{ state count } statusContextCountsByState{ state count } pageInfo{ hasNextPage endCursor } nodes{ … on CheckRun{ name conclusion } … on StatusContext{ context state } } } }`. When the counts show a failed context that the first page lacks, a follow-up query reads the head's later pages of `contexts(first:100, after:<cursor>)`. The fix events add `CHECKS` through `standing`, keyed `checks:<number>:<head>`, from the failed contexts that § 2.1 step 7 names. |
 | `skills/review-pr/SKILL.md` | The gate paragraph under "Run a head's code only when the head is trusted" says that with `review.gate_checks` set, `gate` reads CI for any head and runs the `review.gate` command only on a trusted one. It says how to handle exit 1, exit 75, and a changed workflow, on a trusted head and on an untrusted one. Under "Review a minimal push incrementally", the sentence "Where `review.gate` is unset, `gate` refuses" names both settings, because `gate` runs with only `review.gate_checks` set. |
 | `skills/implement/SKILL.md` | "Verify the current slice", and the stack rebase rule, say: where `review.gate_checks` is set, run the tests that cover the change and the `review.gate` command, not the full suite, because CI runs it on the push. |
 | `skills/fix-pr/SKILL.md` | Step 2 and the stack layers take the same rule. A new kind of work handles a `CHECKS` line: read the failing job's log with `gh run view <id> --log-failed`, or open the URL of a check from another app or of a commit status. Reproduce the failure locally with the failing test, then fix it. A failure the fixer cannot reproduce, or one in infrastructure the change did not touch, is reported, not patched. |
@@ -282,6 +290,7 @@ that changes only `.github/workflows/release.yml` keeps CI's evidence.
 | No `check` run, and the head's only workflow run has the status `action_required` | Exit 75 within one poll, naming the run that waits for approval. |
 | No `check` run, and every workflow run on the head completed | Exit 75 within one poll, saying that no run of `check` is coming. |
 | No `check` run yet, and another workflow run on the head still queued | `gate` keeps waiting. |
+| No `check` run yet, and another workflow run on the head `waiting` for an environment approval or `pending` in a concurrency group | `gate` keeps waiting. |
 | A `check` run concluding `cancelled` or `skipped` | Exit 75, not 1. |
 | A head with more than 30 check runs, the `check` run beyond the first 30 | `gate` finds the `check` run. |
 | `review.gate` set beside `gate_checks`, with the command failing | Exit 1, whatever CI concluded. |
@@ -289,6 +298,9 @@ that changes only `.github/workflows/release.yml` keeps CI's evidence.
 | An incremental review across a moved base, with a CI-passed gate record | `interdiff` accepts it as a passing gate. |
 | The watch polls a head whose `check` run concluded `FAILURE` | One `CHECKS` line for the `fix` role, naming the failed checks, and no repeat before `watch.renotify`. |
 | A head whose only failed context is the `projector/review` status | No `CHECKS` line. |
+| A head with 25 contexts whose only failed check run is the twenty-fifth | One `CHECKS` line naming it, after the daemon reads the second page. |
+| A head with 25 contexts and no failed context beyond `projector/review` | No `CHECKS` line, and no second page read. |
+| A check run that concluded `STARTUP_FAILURE` | One `CHECKS` line naming it. |
 | A head whose only unfinished workflow run waits for approval | No `CHECKS` line. |
 | A new head after a `CHECKS` line | No `CHECKS` line until a context on that head fails. |
 
@@ -310,6 +322,8 @@ These tests fail before the change:
   repeats on every poll or survives a new head.
 - **The `projector/review` context.** It catches a `CHECKS` line that reports
   a changes-requested verdict as a CI failure.
+- **The failed context past the first page.** It catches a `CHECKS` decision
+  that reads only the first 20 contexts.
 
 The skill changes are prose, which a review reads against this plan. No test
 pins their wording.
@@ -325,10 +339,13 @@ pins their wording.
   the check and one for the head's workflow runs while the check has no run.
   That is at most 180 calls in 30 minutes, plus one call for each named
   check to find its workflow run, against GitHub's 5,000 an hour.
-- **The watch query.** It reads up to 20 rollup contexts per pull request.
-  That adds a few points to the GraphQL cost the query already reports in
-  `rateLimit`. The implementation measures that cost on a pull request with
-  CI and records it here.
+- **The watch query.** It reads up to 20 rollup contexts per pull request,
+  with the rollup's counts by state. That adds a few points to the GraphQL
+  cost the query already reports in `rateLimit`. A further page costs one
+  more query, and only on a head with more than 20 contexts whose counts
+  show a failure the first page lacks, so a head without one never pays it.
+  The implementation measures both costs on a pull request with CI and
+  records them here.
 
 ## 6. Open questions
 
