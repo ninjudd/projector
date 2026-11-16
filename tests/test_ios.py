@@ -65,6 +65,8 @@ if name == "sudo":
     os.execvp(args[0], args)
 if name == "xcrun":
     if args[:3] == ["devicectl", "list", "devices"]:
+        if scenario.get("devices_error"):
+            sys.exit(scenario["devices_error"])
         Path(option("--json-output")).write_text(json.dumps({"result": {"devices": scenario["devices"]}}))
     elif args[:4] == ["devicectl", "device", "install", "app"]:
         record("installed", option("--device"), (Path(args[-1]) / "commit.txt").read_text().strip())
@@ -436,6 +438,26 @@ class DeviceTests(IosCase):
 
         self.assertEqual({"PHONE-UDID": True, "OLD-UDID": False},
                          {entry["udid"]: entry["installable"] for entry in listed})
+
+    def test_a_coredevice_timeout_says_to_run_again_and_how_to_restart_the_service(self) -> None:
+        # devicectl names the timeout first and ends with the error's domain, so only the whole output shows it.
+        self.scenario({"devices_error": "ERROR: Timed out waiting for CoreDeviceService to fully initialize.\n"
+                                        "    (com.apple.dt.CoreDeviceError error 1.)"})
+
+        code, _, err = self.project("devices")
+
+        self.assertEqual(1, code)
+        self.assertIn("xcrun devicectl list failed: (com.apple.dt.CoreDeviceError error 1.)", err)
+        self.assertIn(ios.COREDEVICE_HINT, err)
+
+    def test_another_devicectl_failure_gets_no_coredevice_hint(self) -> None:
+        self.scenario({"devices_error": "ERROR: The device rejected the connection request."})
+
+        code, _, err = self.project("devices")
+
+        self.assertEqual(1, code)
+        self.assertIn("The device rejected the connection request.", err)
+        self.assertNotIn("killall", err)
 
     def test_every_command_without_xcode_exits_69(self) -> None:
         bare = self.tmp / "bare"
