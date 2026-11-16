@@ -1275,7 +1275,7 @@ function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
 
 type Note = { text: string; color?: 'error' | 'warning' | 'success' | 'claude' | 'subtle'; isItalic?: true }
 
-const threadCount = (count: number) => `${count} thread${count === 1 ? '' : 's'}`
+const findingCount = (count: number) => `${count} finding${count === 1 ? '' : 's'}`
 
 type Hold = {
   status: string
@@ -1305,8 +1305,8 @@ const HOLDS: Hold[] = [
     color: 'warning',
     holds: pr => pr.reviewDecision === 'CHANGES_REQUESTED',
   },
-  // The row counts no threads; the drawer counts each file's.
-  { status: 'threads', color: 'warning', holds: pr => pr.openThreads > 0 },
+  // Each unresolved review thread is a finding. The row counts none; the drawer counts each file's.
+  { status: 'findings', color: 'warning', holds: pr => pr.openThreads > 0 },
 ]
 
 /**
@@ -2501,7 +2501,7 @@ export const register: Register = on => {
             <Box key={`file:${key}:${path}`} flexDirection="column">
               <Button key={`toggle-file:${key}:${path}`} plain onPress={() => toggleFile(key, path)}>
                 {`${isFileOpen(key, path) ? '-' : '+'} ${path} `}
-                <Text color="warning">{threadCount(threads.length)}</Text>
+                <Text color="warning">{findingCount(threads.length)}</Text>
               </Button>
               {isFileOpen(key, path) && (
                 <Box flexDirection="column" marginLeft={THREAD_INDENT}>
