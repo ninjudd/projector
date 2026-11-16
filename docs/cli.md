@@ -110,7 +110,8 @@ what it did to each:
     "Bash(project inbox done *)",
     "Bash(project inbox decline *)",
     "Bash(project inbox start *)",
-    "Bash(project inbox unclear *)"
+    "Bash(project inbox unclear *)",
+    "Bash(project ios *allow-untrusted*)"
   ]
   ```
 
@@ -122,7 +123,11 @@ what it did to each:
   `Bash(project site *prepare*)` asks before either flag, as `--prepare x` or
   `--prepare=x`, and before `--no-prepare` too. Those two commands refuse an
   abbreviated option such as `--prep`, so no shorter spelling slips past the
-  rule. `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`,
+  rule. `project ios build --allow-untrusted` builds a pull request whose head
+  is not trusted, which runs that head's build scripts as you, so
+  `Bash(project ios *allow-untrusted*)` asks before it, and every
+  `project ios` command refuses an abbreviated option.
+  `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`,
   `start`, and `unclear` record your answer to an item an agent posted, your
   outcome for a request, your consent to a request's start action, your word
   that you don't understand an item, or your choice to dismiss or put it
@@ -227,6 +232,10 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
+      pattern = ["project", "ios", ["cleanup", "crashes", "devices", "install"]],
+      decision = "allow",
+  )
+  prefix_rule(
       pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
       decision = "allow",
   )
@@ -251,7 +260,8 @@ what it did to each:
   No rule matches `project init`, `project upgrade`, `project config set` or
   `unset`, `project create` or `project edit`, whose editor an agent could
   drive, `project review gate`, `project site build` or `serve`,
-  `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,
+  `project ios build` or `logs`, which run the repository's build scripts or
+  `sudo`, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,
   or `unclear`, which record your choice, or a command line that starts with an
   option, so Codex's usual approval
   decides them, in its sandbox. A command added to Projector later reaches
@@ -762,6 +772,9 @@ reads, which are these:
 | `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
 | `agent.message_limit` | whole number | `12` | `project agent send` and `reply`, from the checkout the sending session works in, as the most messages one session sends to one other session in a rolling hour; at least `1` |
 | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or the inline fallback, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key import`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
+| `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
+| `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
+| `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own
@@ -2642,16 +2655,36 @@ mod and requires no Codex executable.
 Codex receives one batch at a time, with standing work IDs that coalesce
 reminders even when their text differs. An acknowledgment marks a batch
 consumed. An idle session starts no model turn until an event arrives.
-The registration expires after 24 hours without host activity and ends
-when the host sends `SessionEnd`. A daemon exit while Codex is idle needs
-the next hook or a watch command to restart it:
+The registration expires after 24 hours without host activity.
+
+Codex unloads a conversation that sits idle and unopened for 30 minutes,
+and sends `SessionEnd` when it does. Projector keeps delivery enabled
+through that unload: the daemon goes on watching the session's pull
+requests, and `codex queue --resume` loads the thread again when a batch
+arrives. A registered agent stays reachable the same way, so a peer's
+message wakes it. Codex sends the same `SessionEnd` when you archive or
+delete a conversation, so Projector instead checks that the conversation's
+transcript still exists. Once it is gone, the session lapses, `watch status`
+reports it `disconnected`, and Projector never resumes the archived
+conversation. Resuming the conversation reconnects it. To stop delivery
+yourself, use `project watch disconnect`, or remove the subscription.
+
+The `UserPromptSubmit` hook acknowledges each batch as its turn starts.
+When that acknowledgment never arrives, the daemon looks for the batch's
+marker in the conversation's transcript, from where the transcript ended
+when the batch was submitted, and marks the batch consumed once it
+appears, so one lost acknowledgment cannot hold back later batches.
+
+A daemon exit while Codex is idle needs the next hook or a watch command
+to restart it:
 
 ```sh
 project watch status --json
 ```
 
 The `deliveries` object reports the state, expiry, batch ID, and diagnostic
-for each Codex registration. `queued` means Codex accepted the message;
+for each Codex registration, and `unloaded_at` while Codex has the thread
+unloaded. `queued` means Codex accepted the message;
 it does not prove the thread resumed. Resume that thread when its warning
 says it needs attention. `uncertain` means a timeout or interrupted
 submission left acceptance unknown. After checking the thread, use an
@@ -3187,11 +3220,101 @@ Each command refuses, with exit code 65, a reference that is not
 `action`, which is `added`, `dropped`, `restored`, `removed`, or
 `unchanged`, with the `pr` and the `tracked` file.
 
+## Put an iOS app on a device
+
+`project ios` builds a branch or a pull request of the repository's iOS app
+without touching your checkout, puts it on your iPhone, iPad, or Mac, and
+brings that device's crash reports and log back. It needs Xcode's
+command-line tools on macOS, and exits 69 without them.
+
+```sh
+project ios build 12                  # pull request 12, installed and opened on the connected device
+project ios build feature/login       # a branch
+project ios build 12 --no-install     # build only
+project ios install 12                # put pull request 12's kept build on the device again
+project ios devices                   # paired devices, and which can take an install
+project ios crashes                   # the app's newest crash reports, copied and summarized
+project ios logs --last 20m           # the app's log lines from the last 20 minutes, to a file
+project ios cleanup                   # remove the worktree, DerivedData, and kept builds
+```
+
+`build` fetches the branch, or the pull request's head, into one detached
+worktree that Projector keeps for the repository, and builds it into one
+shared DerivedData folder, so moving between branches rebuilds only what
+changed. It keeps a copy of each target's app, so `install 12` installs the
+build of pull request 12 even after you build another target. With no target,
+`install` installs the newest kept build. A pull request's head from a fork,
+or one with a commit by an author who has no write access to the repository,
+is refused with exit 65, because `xcodebuild` runs the project's build
+scripts as you. Read its build phases and scripts, then pass
+`--allow-untrusted` to build it. `build`, `install`, and `cleanup` take
+turns: while one runs in a repository, another of the three waits for it to
+finish. `devices`, `crashes`, and `logs` never wait.
+
+Each of `build`, `install`, `crashes`, and `logs` takes these options:
+
+| Option | Effect |
+| --- | --- |
+| `--app <app>` | Uses that app instead of the default one. |
+| `--device <name-or-UDID>` | Uses that paired device. |
+| `--iphone`, `--ipad` | Uses the one connected iPhone, or the one connected iPad. |
+| `--mac` | Builds the app as Designed for iPad and opens it on this Mac, quitting the copy that is running. `crashes` and `logs` read this Mac instead of a device. |
+
+Without a device option, the commands use the one device that is connected,
+and refuse none or several with the list of paired devices. `build` checks
+the device before it builds, and waits up to five minutes for you to unlock
+a locked device before it opens the app. Outside a terminal, `build` prints
+only the line that starts the build and the line that ends it, and a failed
+build prints its `error:` lines. `--verbose` prints every line, and
+`build.log` keeps them all.
+
+### Find the app by convention
+
+A repository that follows the convention needs no configuration:
+
+- **The Xcode project** is the one `.xcworkspace`, or with none the one
+  `.xcodeproj`, in the repository. Set `ios.project` to the path of another.
+- **The app** is the Xcode project's name, so `MyApp.xcodeproj` gives
+  `MyApp`. Pass `--app`, or set `ios.app`, for another.
+- **The scheme** is `<app> Development` when the project has it, and
+  otherwise `<app>`. A scheme named `MyApp Beta` is the app `MyApp Beta`.
+- **The output folder** for crash reports and log files is `~/Desktop`. Set
+  `ios.output` to move it.
+
+`crashes` copies the app's three newest crash reports to the output folder,
+keeping a copy already there, and prints when each happened, which build it
+was, the exception or the termination code, and the top of the thread that
+crashed. A watchdog kill crashes no thread, so the summary shows the main
+thread. `logs` writes the app's lines to a new file named like
+`MyApp log 2026-11-15 at 14.42.10.txt`, which never replaces an earlier one.
+The lines are those of the app's subsystem, which is its bundle ID or the
+bundle ID without a last part such as `.dev`, and the faults its process
+writes. Pass `--predicate` to choose the lines yourself. On a device, `logs`
+runs `sudo log collect`, which asks for your password and can take a few
+minutes, and deletes the archive it reads.
+
+### Know where the state lives
+
+`project ios` keeps each repository's state in
+`~/.local/state/projector/ios/<owner>/<repo>/`, or under
+`$XDG_STATE_HOME/projector/` when it is set:
+
+| Path | Holds |
+| --- | --- |
+| `worktree/` | The detached worktree. A build discards any change made in it. |
+| `DerivedData/` | The shared build folder. |
+| `build.log` | The newest build's whole log. |
+| `builds/<app>/<key>/` | One target's kept app and its `build.json`. The key is `pr-<number>` for a pull request, and `branch-` with the branch name percent-encoded for a branch. |
+| `lock` | The file a run holds while it works. `cleanup` keeps it. |
+
+`devices --json` prints `devices`, each with its `name`, `udid`, `kind`,
+`tunnel`, and whether it is `installable`.
+
 ## Consume JSON
 
 Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
 `priority`, `done`, `check`, any `config`, `inbox`, or `loop` command, or
-`watch add`, `remove`, `drop`, `restore`, `list`, `take`, or `status`.
+`watch add`, `remove`, `drop`, `restore`, `list`, `take`, or `status`, and to `ios devices`.
 Responses use stdout only for JSON and include `"schema_version": 2`. An `inbox` command that
 prints one item prints it under `item`, and `inbox list` prints `items`.
 `inbox watch --json` prints one JSON object a line, as a watcher reads it.

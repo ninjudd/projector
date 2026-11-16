@@ -22,7 +22,9 @@ ask: `project upgrade` runs an installer it downloads, `project init` writes
 these rules, `project config set` and `unset` can change a setting that
 widens an agent's authority, such as `review.allow_approve`, and
 `project site build` and `serve` run the shell command `--prepare` names, or
-the checkout's own `site.prepare` once `--allow-prepare` allows it. Ask rules
+the checkout's own `site.prepare` once `--allow-prepare` allows it, and
+`project ios build --allow-untrusted` runs the build scripts of a pull request
+whose head `review.trusted_head` does not trust. Ask rules
 also cover what only the person may record: `project inbox answer`,
 `dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear` record the
 person's answer to an item an agent posted, their outcome for a request, their
@@ -50,7 +52,8 @@ only the allow rule, and the CLI refuses it. `Bash(project site *prepare*)`
 asks for both `--prepare` flags in either spelling, `--prepare x` or
 `--prepare=x`, and `site build` and `serve` refuse an abbreviated option such
 as `--prep`, so no shorter spelling slips past it; it asks for `--no-prepare`
-too.
+too. `Bash(project ios *allow-untrusted*)` asks for `--allow-untrusted` the
+same way, and every `project ios` command refuses an abbreviated option.
 
 Two commands open the person's editor, `$VISUAL` or `$EDITOR`: `project edit`,
 and `project create` without `--no-edit`. They need not ask. Each opens the
@@ -76,7 +79,8 @@ option included, falls through to Codex's usual approval. Codex runs an
 allowed command outside its sandbox, and can give it a terminal the agent
 types into, so the rules also leave out every command that can run another
 program: `create` and `edit`, whose editor an agent could drive,
-`review gate`, and `site build` and `serve`. They leave out `inbox answer`,
+`review gate`, `site build` and `serve`, and `ios build` and `logs`, which run
+the repository's build scripts or `sudo`. They leave out `inbox answer`,
 `dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear` too. A new
 command reaches Codex once it is added here and `init` rewrites the file.
 
@@ -107,7 +111,7 @@ ASK = ("Bash(project init *)", "Bash(project upgrade *)", "Bash(project config s
        "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
        "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project inbox done *)",
        "Bash(project inbox decline *)", "Bash(project inbox start *)",
-       "Bash(project inbox unclear *)")
+       "Bash(project inbox unclear *)", "Bash(project ios *allow-untrusted*)")
 # The narrower rules Projector wrote before `Bash(project *)` covered them,
 # which `init` removes from `permissions.allow`.
 SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
@@ -117,7 +121,7 @@ SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "
 RETIRED_ASK = ("Bash(project -*)",)
 
 ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
-         "`--prepare` or `--allow-prepare`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
+         "`--prepare` or `--allow-prepare`, `project ios build --allow-untrusted`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
          "`decline`, `start`, and `unclear`")
 COMMANDS = "every `project` command but the few that reach outside Projector's own state"
 
@@ -135,6 +139,9 @@ CODEX_ALLOW = (
                            "revise", "show", "tell", "watch", "withdraw"]],
      "Posts, revises, reads, withdraws, restores, or delivers an inbox item, or reports on a request's start, "
      "but never records the person's answer to one."),
+    (["project", "ios", ["cleanup", "crashes", "devices", "install"]],
+     "Lists paired iOS devices, installs a kept build, copies crash reports, or removes project ios's worktree "
+     "and builds, but never builds or reads a device's log."),
     (["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release",
                             "rules", "settle", "setup", "status", "suggestions", "workflow"]],
      "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),
@@ -165,7 +172,8 @@ CODEX_RULES = (
     "# Codex's usual approval decides every command these rules leave out: `project init`, `project upgrade`,\n"
     "# `project config set` and `unset`, `project create` and `project edit`, which can open an editor,\n"
     "# `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
-    "# the command line names, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
+    "# the command line names, `project ios build` and `logs`, which run the repository's build scripts or\n"
+    "# `sudo`, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
     "# and `unclear`, which record the person's choice, and a command line that starts with an option.\n"
     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
               f'    justification = "{justification}",\n)\n'
