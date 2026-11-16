@@ -1,0 +1,170 @@
+{
+ "version": 1,
+ "name": "Codex hook trust and resend",
+ "project": "watch-daemon/codex-delivery",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 471,
+  "title": "Keep Codex hooks trusted across upgrades and resend timed-out submissions",
+  "head": "065881738a3bc663ca33c75c68c76019bb090a41",
+  "headRef": "codex-queue-timeout",
+  "base": "16c1fde68c298103ec33fb696587e44f3df04880",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's watch daemon delivers review and fix events to Codex sessions by running <code>codex queue … --resume</code>, and five Codex command hooks, each running <code>project watch codex-hook</code>, register the session and acknowledge each delivered batch. This pull request fixes two ways that delivery failed with nothing reporting it.",
+   "<ol><li><b>Every Projector release untrusted the hooks.</b> Codex trusts a plugin's hooks by a hash of every file in the plugin, and the main <code>projector</code> plugin is the whole repository, so each release changed the hash and Codex stopped running the hooks. The hooks now ship as <code>projector-hooks@projector</code>, a plugin of their own in <code>codex-hooks/</code> that a release leaves unchanged. <code>watch add</code> and <code>watch status</code> ask <code>codex app-server</code> whether Codex runs the hooks, and say how to fix it when it does not.</li><li><b>A timed-out <code>codex queue</code> stranded its session.</b> The daemon killed the call after 15 seconds and marked the batch <code>uncertain</code>, and nothing resent an uncertain batch unless someone ran <code>project watch codex-retry</code>. Because the daemon sends one batch per session at a time, every later event for that session waited. The call now gets 60 seconds, and an uncertain batch is resent 30 minutes after its submission unless the session's transcript shows it arrived.</li></ol>",
+   "Existing Codex users install the new plugin once, through <code>install.sh</code> or <code>project upgrade</code>, and trust its five hooks in <code>/hooks</code>."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Batch</b>: the events the daemon sends a session in one <code>codex queue</code> call, stored under <code>codex-pending/</code> until acknowledged.</li><li><b>Acknowledgment</b>: the <code>UserPromptSubmit</code> hook seeing the batch's <code>PROJECTOR WATCH &lt;id&gt;</code> marker and writing a receipt.</li><li><b>Receipt</b>: <code>codex-receipts/&lt;id&gt;.json</code>, which consumes a batch and blocks any later copy of it.</li><li><b><code>uncertain</code></b>: a batch whose submission timed out or was interrupted, so nobody knows whether Codex accepted it.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<p>The first Projector review, of <code>afb5c69</code>, opened two findings. Four commits answered them, and the review of <code>0658817</code> verified both fixed and found the head clean:</p><ul class=\"tight\"><li>A daemon stopped during a <code>codex queue</code> call no longer waits for it, so it releases its lock within the 10-second stop wait.</li><li>The packaging test now checks that a simulated release leaves <code>codex-hooks/</code> unchanged, instead of comparing versions, so a release to 1.0.0 no longer fails it.</li><li>Both suggestions were taken: <code>listed_hooks</code> closes its pipes, and the skill tables cover the <code>events: none</code> line about Codex hooks.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "resend",
+   "title": "Resending an uncertain submission",
+   "kicker": "The daemon now resends a timed-out batch on its own, 30 minutes after it was sent.",
+   "intro": [
+    "When <code>codex queue</code> does not finish in time, the daemon cannot tell whether Codex accepted the message, so it marks the batch <code>uncertain</code>. The base never resent such a batch, and the session's later events waited behind it. Now <code>_send</code> records <code>submitted_at</code>, a timeout sets <code>next_attempt_at</code> to 30 minutes after it, and <code>uncertain</code> joins the states that <code>prepare</code> and <code>_send</code> send, <code>SENDABLE</code>.",
+    "Before a due resend, <code>Dispatcher.tick</code> still reads the transcript through <code>confirm</code>. A batch that appears there is consumed instead of resent. A copy that reaches Codex after the first was acknowledged finds the receipt and is blocked in <code>UserPromptSubmit</code> before it starts a turn. <code>recover</code> gives a submission the daemon died during the same 30-minute deadline.",
+    "When the daemon stops, <code>Dispatcher.close</code> no longer waits for a running <code>codex queue</code> call, so a replacement daemon can take over within its 10-second wait. The call keeps the session's submission lock, so the next daemon leaves that batch alone, and the old process records the call's result before it exits."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/codex_watch.py",
+     "note": "The resend states and deadline, and the new <code>hook_problem</code> and <code>listed_hooks</code>, which ask <code>codex app-server</code> for <code>hooks/list</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 634,
+       "text": "<code>close</code> returns without waiting for a running call. The submission lock is an <code>flock</code> that the next daemon's <code>recover</code> sees, so the batch stays <code>submitting</code>, and the interpreter joins the pool's thread before exit, which a standalone pool confirmed. With <code>wait=True</code> restored in a copy, <code>test_close_leaves_a_running_submission_to_finish_and_record_its_result</code> fails."
+      },
+      {
+       "kind": "verify",
+       "line": 626,
+       "text": "A timed-out batch goes to <code>uncertain</code> with its deadline at <code>submitted_at</code> plus <code>RESEND</code>, never to <code>queued</code>. The full suite passed at this head, including the resend and consume tests."
+      },
+      {
+       "kind": "verify",
+       "line": 419,
+       "text": "Run against Codex 0.169, <code>listed_hooks</code> returned the five <code>project watch codex-hook</code> hooks with camel-case <code>eventName</code> and <code>trustStatus</code> fields, and <code>hook_problem</code> returned <code>None</code> in about half a second."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_codex_watch.py",
+     "note": "Covers the resend at the deadline, an arrived batch consumed instead of resent, a <code>close</code> that leaves a running submission to finish, and <code>hook_problem</code> against a fake <code>app-server</code>, including one that never answers."
+    }
+   ]
+  },
+  {
+   "id": "report",
+   "title": "Reporting hooks Codex does not run",
+   "kicker": "watch add and watch status say when Codex has stopped running Projector's hooks.",
+   "intro": [
+    "While Codex runs none of the hooks, a new session never registers and a delivered batch is never acknowledged, yet <code>watch add</code> went on printing <code>events: codex</code>. <code>codex_hook_problem</code> in the CLI now asks Codex itself, through <code>hook_problem</code>, which applies Codex's own trust rules. It asks only for a session with a Codex registration, or one whose <code>CODEX_SESSION_ID</code> matches, so Claude Code sessions never start Codex.",
+    "<code>watch add</code> appends the problem and its fix to the <code>events:</code> line and returns it as <code>codex_hooks</code> with <code>--json</code>. <code>watch status</code> prints it as a <code>codex hooks:</code> line and a <code>codex_hooks</code> field."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "On a host with no <code>codex</code>, <code>hook_problem</code> returns <code>None</code> when <code>Popen</code> raises, and <code>codex_hook_problem</code> asks nothing when <code>shutil.which</code> finds no <code>codex</code>. Traced in the code at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "<code>codex_hook_problem</code> decides when to ask Codex, and <code>watch_delivery</code> and <code>watch status</code> print what it finds."
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "Runs <code>watch add</code> against a fake <code>codex app-server</code> for a registered session and for an unregistered Codex session."
+    }
+   ]
+  },
+  {
+   "id": "packaging",
+   "title": "Shipping the hooks as their own plugin",
+   "kicker": "A release no longer changes the hooks plugin, so Codex keeps trusting it.",
+   "intro": [
+    "Codex's marketplace served the <code>projector</code> plugin from the repository root, so its hooks shared a hash with every skill and document. The hooks now live in a <code>projector-hooks</code> plugin whose bundle is <code>codex-hooks/</code>: its own manifest at version 1.0.0 and the unchanged <code>hooks.json</code>. The release script bumps only the two root manifests, so this plugin's hash changes only when its hooks do.",
+    "The main Codex manifest no longer declares hooks, the marketplace lists the new plugin, and <code>install.sh</code> installs it after <code>projector@projector</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "codex-hooks/.codex-plugin/plugin.json",
+     "note": "The new plugin's manifest. Its version moves only when <code>hooks.json</code> changes."
+    },
+    {
+     "path": ".codex-plugin/plugin.json",
+     "note": "Drops the <code>hooks</code> entry."
+    },
+    {
+     "path": ".agents/plugins/marketplace.json",
+     "note": "Serves <code>projector-hooks</code> from <code>./codex-hooks</code>."
+    },
+    {
+     "path": "install.sh",
+     "note": "Installs <code>projector-hooks@projector</code> beside the main plugin."
+    },
+    {
+     "path": "tests/test_packaging.py",
+     "note": "Pins the plugin's contents and runs a release on a temporary copy to check that every file under <code>codex-hooks/</code> stays the same.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 156,
+       "text": "A copy of the release script whose <code>set_version</code> also rewrote the hooks manifest failed this comparison. The loop above it never releases the plugin's own version, so a release to 1.0.0 or past it passes."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_install.py",
+     "note": "Checks that <code>install.sh codex</code> installs the hooks plugin."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and skills",
+   "kicker": "The living docs and the skills describe the resend, the new plugin, and the hook report.",
+   "intro": [
+    "<code>docs/cli.md</code> describes the resend and the <code>codex_hooks</code> field, and <code>docs/plugins.md</code> adds the new plugin to the install and update commands. The <code>implement</code>, <code>fix-pr</code>, and <code>review-pr</code> skills tell an agent to pass a hook problem on to the user, and no longer ask for a decision before an uncertain batch is resent. The completed <code>codex-delivery</code> plan stays as its record."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/plugins.md"
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Adds rows for the <code>events: codex — but …</code> and <code>events: none — Codex is not running …</code> lines, and the 30-minute resend."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "The same changes as <code>fix-pr</code>."
+    },
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "Tells the agent to relay a hook problem, whether the line starts <code>events: codex</code> or <code>events: none</code>."
+    }
+   ]
+  }
+ ]
+}
