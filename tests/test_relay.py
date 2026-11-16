@@ -1192,6 +1192,39 @@ class LifecycleTests(RelayCase):
         self.assertIn(relay.presence_ref(self.key.id, self.b_relay_id()), self.refs())
         self.assertIn("test-writer\tcodex\ttwo", self.one.project("agent", "list", claude=A)[1])
 
+    def test_a_generated_summary_reaches_the_other_machine_again_each_time_the_subscriptions_change(self) -> None:
+        self.pair()
+        self.one.claude(C)
+        for number in (12, 13):
+            self.github.pull_request(number)
+        listed = []
+        for target in ("acme/app#12", "acme/app#13"):
+            code, _, err = self.one.project("watch", "add", target, claude=C)
+            self.assertEqual(0, code, err)
+            self.one.run_pass()
+            self.two.run_pass()
+            listed += [line.split("\t")[-1] for line in self.two.project("agent", "list", claude=B)[1].splitlines()
+                       if line.startswith(C[:8])]
+
+        self.assertEqual(["Fixing acme/app#12", "Fixing acme/app#12 and acme/app#13"], listed)
+
+    def test_a_summary_refreshed_while_its_first_presence_waits_for_a_push_is_published_on_the_next_pass(
+            self) -> None:
+        self.pair()
+        self.one.claude(C)
+        for number in (12, 13):
+            self.github.pull_request(number)
+            code, _, err = self.one.project("watch", "add", f"acme/app#{number}", claude=C)
+            self.assertEqual(0, code, err)
+
+        self.one.run_pass()
+        self.one.run_pass()
+        self.two.run_pass()
+
+        listed = [line.split("\t")[-1] for line in self.two.project("agent", "list", claude=B)[1].splitlines()
+                  if line.startswith(C[:8])]
+        self.assertEqual(["Fixing acme/app#12 and acme/app#13"], listed)
+
     def test_an_idle_codex_agent_keeps_its_daemon_renews_its_lease_and_receives(self) -> None:
         self.one.inline_key(self.private)
         self.two.inline_key(self.private)

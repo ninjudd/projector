@@ -824,6 +824,7 @@ reads, which are these:
 | `watch.review_stall` | whole number | `1800` | the watch daemon, from `~/.projector.toml` only, as the seconds a review's lock can go unchanged before the daemon treats the review as stalled |
 | `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
 | `agent.message_limit` | whole number | `12` | `project agent send` and `reply`, from the checkout the sending session works in, as the most messages one session sends to one other session in a rolling hour; at least `1` |
+| `agent.auto_register` | boolean | `true` | `project watch add` and the Codex hooks, from the checkout the session works in, to register a session that subscribes to a pull request for agent messages, with a generated summary; `false` subscribes it without registering it, as [Registered when it subscribes](#registered-when-it-subscribes) describes |
 | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or the inline fallback, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key import`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
 | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
 | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
@@ -2791,6 +2792,13 @@ untrusted, modified, disabled, or missing, `add` names the problem and
 what to do after the `events:` line, and in `codex_hooks` with `--json`.
 `codex_hooks` is `null` when there is nothing to report.
 
+An `add` that writes a line, or finds the line it would write already
+there, the Codex hooks' subscriptions included, also registers a session
+that is not registered yet for agent messages, with a summary made from its
+subscriptions, unless `agent.auto_register` is `false`. The output of `add`
+stays the same either way, as
+[Registered when it subscribes](#registered-when-it-subscribes) describes.
+
 ### Deliver events to Codex
 
 With the `projector-hooks` plugin installed in local Codex, review and trust
@@ -3107,6 +3115,52 @@ The watch daemon counts a live registered session as live, so an idle Codex
 session with no subscriptions keeps the daemon running and still receives
 messages.
 
+### Registered when it subscribes
+
+A session that subscribes to a pull request registers itself, so a loop that
+fixes or reviews pull requests can receive messages without being asked to
+register. When `project watch add` writes a subscription line, or finds it
+there already, through a target, `--from-output`, or the Codex hook that
+reads a push, and the session has no `agent.json`, `add` registers it the
+way `register` does, with no name and this summary:
+
+```console
+$ project watch add acme/app#12
+added acme/app#12 fix
+events: mod
+$ project agent list
+local only: no agent.key is set; run `project agent key init` to make one
+a1b2c3d4 (you)	claude	laptop	acme/app feature	0s ago	Fixing acme/app#12
+```
+
+The summary says what the session reviews and fixes, such as `Reviewing
+acme/app pull requests; fixing acme/app#12`. When the full list would pass
+120 characters, it counts pull requests instead of naming them, as in
+`Reviewing acme/app pull requests; fixing 39 pull requests`. It names only
+the repository of the session's own checkout, because the relay publishes
+the summary into that repository, which can be public. It counts any other,
+as in `Fixing acme/app#12 and 1 pull request in another repository`. The
+registration takes its model from a `review` subscription, when the session
+has one.
+
+While the summary is the generated one, Projector rewrites it each time the
+session's subscriptions change: through `add`, `remove`, `drop`, and
+`restore`, and when the daemon removes a merged, closed, or missing pull
+request. With the relay on, the daemon publishes the new summary on its next
+poll. Once the session gives its own summary with `register --summary`,
+Projector never changes it again. A registration with `--name` alone keeps
+the generated summary.
+
+The registration is skipped, and `add` still succeeds with the same output,
+when `agent.auto_register` is `false` in the checkout's configuration, when
+nothing delivers the session's events, when `gh` is not signed in, or when
+any other step of the registration fails. A later `add` tries again, even
+for a line the session has, so a session that nothing delivered to when it
+first subscribed, such as one that starts `project watch stream` after `add`
+prints `events: none`, registers on its next `add`. A running watch daemon
+supplies the GitHub login, so the registration asks `gh` for it only when no
+daemon has read it yet.
+
 ### List the sessions
 
 `list` prints the live registered sessions signed in to your login, one a
@@ -3130,7 +3184,8 @@ and the reason: no `agent.key` is set, with the command that makes one, the
 key could not be read, or the checkout has no GitHub origin. With an inline
 key, the header says so and why, such as `relay: on, key 3f2a9c1d7e4b6a05
 stored inline: secret-tool: not installed`. `unpublished` marks a session
-whose presence still waits in the outbox.
+whose current presence the relay has not pushed yet, such as one that still
+waits in the outbox or a generated summary that changed since the last push.
 
 `--all` adds lapsed sessions, marked `lapsed`. With `--json`, `list` prints
 `local_only`, the `relay` header line, and `agents`, each session's record

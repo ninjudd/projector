@@ -42,6 +42,10 @@ else:
         self.patch = mock.patch("shutil.which", return_value=str(self.executable))
         self.patch.start()
         self.addCleanup(self.patch.stop)
+        # A pull request a hook subscribes to registers the session, which asks `gh` for the login.
+        gh = mock.patch.object(watch, "run_gh", return_value=watch.GhResult(1, "", "gh is not signed in"))
+        gh.start()
+        self.addCleanup(gh.stop)
         codex.register(self.folder, "session-A", str(self.root), self.now)
         watch.add(self.root, "session-A", watch.Subscription("Acme/App", 14, "fix"))
         self.dispatcher = codex.Dispatcher(wall=lambda: self.now)

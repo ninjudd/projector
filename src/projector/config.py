@@ -74,6 +74,7 @@ SETTINGS: dict[str, type] = {
     "watch.review_stall": int,
     "panel.background": str,
     "agent.message_limit": int,
+    "agent.auto_register": bool,
     "agent.key": str,
     "ios.app": str,
     "ios.project": str,
