@@ -411,12 +411,18 @@ color of its own. It counts every check run and commit status on the head
 but the `projector/review` status, so a head whose only failure is a
 review's verdict reads `checks passing`, and one whose only check is that
 status shows no checks at all. The rest, ` in 5 files` and each `·` included, keeps
-the default text color. Each label is drawn as GitHub's light theme draws
-it: its name, as GitHub spells it, on the label's own color, in black on a
-light color and white on a dark one. A label whose color the panel has not
-read yet, which a daemon cache from before the panel read colors leaves
-until its next poll, is drawn on GitHub's light gray. The labels come last
-on the line, so a narrow terminal cuts them first. Below
+the default text color. Each label is its name, as GitHub spells it, in
+the label's own color, set off from the one before it by a `·`. When that
+color is too close to the panel's background to read, below a 3:1 contrast
+ratio, the panel mixes it toward white on a dark background and toward
+black on a light one until it reaches 3:1, so a dark red stays red but
+lighter, and a pale yellow turns to a darker gold. When the panel cannot
+know how dark its background is, as with an ANSI theme or an `ansi256(n)`
+setting, it only lightens a label too dark to read on black. A label whose
+color the panel has not read yet, which a daemon cache from before the
+panel read colors leaves until its next poll, is drawn in the default text
+color. The labels come last on the line, so a narrow terminal cuts them
+first. Below
 that come two actions, side by side on one line, on the digits `7` and `8`,
 as [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
 describes. The links to the pull request follow, side by side on the next
