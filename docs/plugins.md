@@ -296,8 +296,8 @@ repository, and otherwise carries the repository's name, as `app#267`, or
 named in lowercase, because GitHub ignores their case, so a repository you
 subscribed to as `Acme/App` shows as `acme/app`. The number is in the default
 text color. While the pull request is a draft, which means its author is
-still working on it, the number and the state are both in italic. The state is the first of these
-that applies:
+still working on it, the number and the state are both in italic. The state
+is the first of these that applies:
 
 - **`reviewing`**, in orange, while the pull request carries the
   `reviewing` label, which `project review setup` adds when a review starts.
