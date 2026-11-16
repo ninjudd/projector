@@ -1,0 +1,80 @@
+{
+ "version": 1,
+ "name": "Italic draft review labels",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 461,
+  "title": "Draw a draft's review label in italic, as its number is",
+  "head": "432f33e5b11f7283e96b51069f0c6a165f547cc9",
+  "headRef": "draft-label-italic",
+  "base": "855e61eda507fe2bc345ab477a736a719145c056",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel in Claude Code lists the session's pull requests, one row each. A row starts with the pull request's number and then a state word: <code>reviewing</code> in orange or <code>clean</code> in green when the pull request carries that review label, and otherwise <code>draft</code> or <code>ready</code>. A draft is a pull request whose author is still working on it.",
+   "Before this change, a draft's number and the word <code>draft</code> were italic, but a review label on a draft was drawn upright. A held draft, which keeps its <code>clean</code> label while its author builds a change, therefore showed the same upright green <code>clean</code> as a ready pull request, and only the number said it was a draft.",
+   "Now the row draws its state word in italic whenever the pull request is a draft, whatever the word is. The color still comes from the label, so a draft shows an italic green <code>clean</code>, an italic orange <code>reviewing</code>, or an italic <code>draft</code>. A ready pull request's word stays upright."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "row",
+   "title": "The row's state word follows the draft state",
+   "kicker": "Italic now comes from the pull request, not from which word the row shows",
+   "intro": [
+    "<code>rowState</code> picks a row's state word and its color. It used to return an italic flag too, set only for the word <code>draft</code>, so a review label never came out italic. The change drops that flag, and the row's renderer sets the word's <code>italic</code> from <code>pr.isDraft</code>, the same field it already used for the number.",
+    "The panel test reads each row's word, color, and italic state for five pull requests. The held draft's expectation changes from upright to italic green <code>clean</code>; the other four rows keep their expectations, so the test still says a ready pull request's word is upright."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The test catches the change both ways. In a scratch worktree, removing <code>italic</code> from the word, and setting it on every row, each turned the row test red while the other 228 tests passed."
+    },
+    {
+     "kind": "verify",
+     "text": "A loading row stays upright. It draws no state word, and <code>loadingOf</code> builds it with <code>isDraft: false</code>, so its number is upright too."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Drops <code>rowState</code>'s italic flag and draws the state word in italic from <code>pr.isDraft</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1235,
+       "text": "The docstring says <code>draft</code> is in the default color and <code>ready</code> in the theme's light blue. That matches <code>rowState</code>, which returns <code>draft</code> with no color and <code>ready</code> with <code>suggestion</code>. A second commit made this wording change after the first review suggested it."
+      },
+      {
+       "kind": "verify",
+       "text": "<code>rowState</code> has no other caller, so removing <code>isItalic</code> from its return type leaves nothing reading it. <code>hooks/typecheck.sh</code> passed.",
+       "line": 1240
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Expects the held draft's <code>clean</code> in italic green, and renames the test to say the word is italic too."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The panel's documentation",
+   "kicker": "docs/plugins.md describes the italic state word",
+   "intro": [
+    "The panel section of <code>docs/plugins.md</code> now says that a draft's number and state are both italic, that <code>draft</code> is in the default text color, and that a held draft reads as an italic number beside an italic green <code>clean</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Describes the row's italic state word on a draft."
+    }
+   ]
+  }
+ ]
+}
