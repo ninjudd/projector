@@ -1281,10 +1281,12 @@ type Hold = {
   status: string
   /**
    * The hold in full, which the row's notes give while its drawer is open,
-   * and give as the status word otherwise. None for a conflict, which always
-   * takes the status, so no note names it.
+   * the one that is the row's word included. A hold without one gives its
+   * status word in both, and only when another hold took the word.
    */
-  phrase?: (pr: PullRequest) => string
+  phrase?: string
+  /** False for a conflict, which always takes the word, so no note names it. */
+  isNoted?: false
   color: 'error' | 'warning'
   holds: (pr: PullRequest) => boolean
 }
@@ -1295,20 +1297,16 @@ type Hold = {
  * holds is the row's status.
  */
 const HOLDS: Hold[] = [
-  { status: 'conflict', color: 'error', holds: pr => pr.isConflicting },
-  { status: 'failing', phrase: () => 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
+  { status: 'conflict', isNoted: false, color: 'error', holds: pr => pr.isConflicting },
+  { status: 'failing', phrase: 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
   {
     status: 'changes',
-    phrase: () => 'changes requested',
+    phrase: 'changes requested',
     color: 'warning',
     holds: pr => pr.reviewDecision === 'CHANGES_REQUESTED',
   },
-  {
-    status: 'threads',
-    phrase: pr => threadCount(pr.openThreads),
-    color: 'warning',
-    holds: pr => pr.openThreads > 0,
-  },
+  // The row counts no threads; the drawer counts each file's.
+  { status: 'threads', color: 'warning', holds: pr => pr.openThreads > 0 },
 ]
 
 /**
@@ -1338,11 +1336,12 @@ const reviewLabel = (pr: PullRequest) => REVIEW_LABELS.find(label => hasLabel(pr
  */
 function notesOf(pr: PullRequest, isOpen: boolean): Note[] {
   const shown = rowState(pr).text
-  const notes = HOLDS.flatMap(({ status, phrase, color, holds }): Note[] =>
-    phrase !== undefined && holds(pr) && (isOpen || status !== shown)
-      ? [{ text: isOpen ? phrase(pr) : status, color }]
-      : [],
-  )
+  const notes = HOLDS.flatMap(({ status, phrase, isNoted, color, holds }): Note[] => {
+    const isSpelled = isOpen && phrase !== undefined
+    return isNoted !== false && holds(pr) && (isSpelled || status !== shown)
+      ? [{ text: isSpelled ? phrase : status, color }]
+      : []
+  })
   notes.push(...REVIEW_LABELS.filter(label => label.text !== shown && hasLabel(pr, label.text)))
   if (pr.isDraft && shown !== 'draft') notes.push({ text: 'draft', isItalic: true })
   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })

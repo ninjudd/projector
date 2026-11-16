@@ -880,12 +880,13 @@ test('a row’s notes name every other status that applies, and an open drawer s
   expect(await notesOf('Change held back')).toEqual([['changes', 'warning'], ' · ', ['threads', 'warning']])
   await ui.press({ key: 'pr:o/r#10' })
   await clock.settle()
-  // Spelled out, the open threads give their count.
-  expect(await notesOf('Change held back')).toEqual([['changes requested', 'warning'], ' · ', ['1 thread', 'warning']])
+  // The row counts no threads, open or closed; the drawer counts each file's.
+  expect(await notesOf('Change held back')).toEqual([['changes requested', 'warning'], ' · ', ['threads', 'warning']])
   expect(await notesOf('Signed-off change failing its checks')).toEqual([['clean', 'success']])
   await ui.press({ key: 'pr:o/r#11' })
   await clock.settle()
-  expect(await notesOf('Approved change')).toEqual([['3 threads', 'warning'], ' · ', ['approved', 'success']])
+  // Open threads are this row's word, and have nothing more to say spelled out, so the open row does not repeat them.
+  expect(await notesOf('Approved change')).toEqual([['approved', 'success']])
 
   // An open drawer spells passing checks out too.
   await ui.press({ key: 'pr:o/r#24' })

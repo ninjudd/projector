@@ -280,7 +280,7 @@ not subscribed to before.
 ```text
   /projector                            1 pull request · 1 review request  12s   [-]
    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
-   #258 threads grace Name the revi… 2 threads · reviewing · checks passing 5m
+   #258 threads grace Name the reviewed head i… reviewing · checks passing 5m
         reviewer · sig-head · +84 −1 in 5 files · checks passing · reviewing
         7: Discuss  8: Dismiss
         open in github  open in projector
@@ -340,10 +340,12 @@ the cancel still counts, so such a head can read `failing` with a
 `failing` with a green `clean` after its title, and a draft that conflicts
 says `draft` as well as its italic number.
 No note names `conflict`, which always takes the state. While a pull
-request's drawer is open, its row spells the holds out as `checks failing`,
-`changes requested`, and the threads' count, such as `2 threads`, and names
-the one its state already says as well. It spells `passing` out as `checks
-passing` too. The ` · ` between two notes keeps
+request's drawer is open, its row spells the holds out as `checks failing`
+and `changes requested`, and names the one its state already says as well.
+It spells `passing` out as `checks passing` too. The row never counts the
+threads, open or closed, and `threads` has nothing to spell out, so an open
+row whose state is `threads` does not repeat it; the drawer counts each
+file's threads. The ` · ` between two notes keeps
 the default text color. The line ends with how long ago the pull request
 last changed, in the column where the inbox's items end with their ages.
 Only the title shortens on a narrow terminal. A pull request that the watch
