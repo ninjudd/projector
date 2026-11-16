@@ -112,6 +112,10 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
       labels: { nodes: [{ name: 'clean' }] },
     }),
+    p22: pr(22, 'Failing change a review is reading', {
+      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+      labels: { nodes: [{ name: 'reviewing' }] },
+    }),
   },
   'x/y': {
     p7: pr(7, 'Conflicting change', {
@@ -735,7 +739,7 @@ test('a panel.background the panel does not take leaves the color to the theme, 
 test('a row’s notes name every other status that applies, and an open drawer spells its row’s holds out', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\n' })
+  world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\no/r#22\n' })
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
@@ -753,6 +757,7 @@ test('a row’s notes name every other status that applies, and an open drawer s
     'Change failing its checks',
     'Change a review is reading',
     'Signed-off change failing its checks',
+    'Failing change a review is reading',
   ]
   const allNotes = async () => Object.fromEntries(await Promise.all(TITLES.map(async title => [title, await notesOf(title)])))
 
@@ -767,6 +772,8 @@ test('a row’s notes name every other status that applies, and an open drawer s
     // and the clean of a signed-off head whose checks fail.
     'Change a review is reading': [['clean', 'success']],
     'Signed-off change failing its checks': [['clean', 'success']],
+    // A running review the failing checks beat shows as well, in the orange the drawer draws a reviewer in.
+    'Failing change a review is reading': [['reviewing', 'claude']],
   })
 
   // An open drawer spells its row's holds out, the one its word names as well, and leaves the other rows short.
