@@ -1,0 +1,120 @@
+{
+ "version": 1,
+ "name": "Codex idle delivery",
+ "project": "watch-daemon/codex-delivery",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 460,
+  "title": "Keep Codex delivery through idle unloads and repair lost acknowledgments",
+  "head": "e8851ec6f46428968a3ffb7c3eb4846d25e0bad3",
+  "headRef": "codex-idle-delivery",
+  "base": "855e61eda507fe2bc345ab477a736a719145c056",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's watch daemon delivers pull request events to a Codex session. It sends each <em>batch</em>, a group of event lines with a unique ID, with <code>codex queue --thread &lt;id&gt; --message &lt;text&gt; --resume</code>. That command loads the conversation again if Codex has unloaded it. Codex's hooks call <code>project watch codex-hook</code> at each step of the session. The <code>UserPromptSubmit</code> hook <em>acknowledges</em> a batch when its turn starts, and the daemon sends the next batch only after that acknowledgment.",
+   "Two faults stopped delivery. First, Codex sends <code>SessionEnd</code> when it unloads a conversation that has been idle for 30 minutes, and also when you archive, delete, or exit one. Its <code>reason</code> field cannot tell these apart. Projector switched delivery off on every <code>SessionEnd</code>, so an idle unload turned off the very wake-up that <code>--resume</code> exists for. Second, one batch reached Codex and ran, but its acknowledgment never arrived. The daemon never resends a batch Codex accepted, so every later batch for that session waited behind it.",
+   "This change fixes both faults:",
+   "<ol><li><b><code>SessionEnd</code> only records the unload.</b> Delivery stays on, and <code>watch status</code> shows <code>unloaded_at</code>. Every hook from the session's own conversation records the <code>transcript_path</code> Codex gives it. Codex moves or removes that file when you archive or delete the conversation, so a missing transcript makes the session lapse everywhere.</li><li><b>The transcript confirms a lost acknowledgment.</b> Every 30 seconds the daemon reads what the transcript gained since a <code>queued</code> or <code>uncertain</code> batch was submitted. It marks the batch consumed once the batch's marker appears there.</li></ol>",
+   "The plugin's <code>hooks.json</code> stays unchanged, so users do not have to trust Projector's hooks again."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Batch</b>: one message the daemon sends to Codex, opened by <code>PROJECTOR WATCH &lt;batch id&gt;</code> and a <code>session=</code> line.</li><li><b>Acknowledgment</b>: the <code>UserPromptSubmit</code> hook matching a batch's prompt, which writes a receipt and deletes the pending batch.</li><li><b>Unload</b>: Codex freeing an idle conversation from memory. <code>queue --resume</code> loads it again.</li><li><b>Transcript</b>: Codex's JSONL record of a conversation, the <code>rollout-…-&lt;thread id&gt;.jsonl</code> file.</li><li><b>Lapsed</b>: no longer counted as live, so the daemon sends nothing and a registered agent stops showing in <code>agent list</code>.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review status",
+    "html": "<p>One finding is open. The pull request body's <code>## Testing</code> section names a test that the last commit renamed, and says 31 tests where 32 now run. The code itself raised no finding.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "delivery",
+   "title": "Delivery survives an unload, and the transcript confirms lost acknowledgments",
+   "kicker": "How hooks, the lease, and the dispatcher treat an ended or archived conversation",
+   "intro": [
+    "<code>codex_watch.py</code> holds Codex delivery: the registration in <code>codex.json</code>, the hook handler, and the <code>Dispatcher</code> that the daemon ticks about once a second. A registration is <em>active</em> while it is enabled, its 24-hour lease has not expired, and, from this change on, its recorded transcript still exists.",
+    "The hook handler now routes every hook except <code>SessionStart</code> through <code>note</code>. <code>note</code> renews the lease, except on <code>SessionEnd</code>, and records the transcript. It sets <code>unloaded_at</code> on <code>SessionEnd</code> and clears it on any other hook. <code>own_transcript</code> keeps a subagent's transcript out, because a subagent's hooks carry the parent's session ID.",
+    "For a batch whose acknowledgment is lost, <code>Dispatcher.confirm</code> runs at most every 30 seconds per session. It calls <code>delivered</code>, which reads the transcript from the byte offset recorded when the batch was submitted. The search string is the batch marker and session line, written as JSON-escaped text."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The transcript cannot confirm a batch before its hook runs. Real Codex transcripts on the reviewing machine show the batch's user message written right after the <code>UserPromptSubmit</code> hook's output, so the hook acknowledges first. Every record that carries a batch marker lies inside that batch's own queue-triggered turn."
+    },
+    {
+     "kind": "context",
+     "text": "An archived session's registration stays <code>enabled</code>. <code>append_events</code> keeps queuing its events into <code>codex-events.json</code>, and they go out once the conversation is resumed. Nothing is dropped."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/codex_watch.py",
+     "note": "Adds <code>own_transcript</code>, <code>gone</code>, <code>note</code>, <code>consume</code>, <code>delivered</code>, and <code>Dispatcher.confirm</code>. It records <code>transcript_offset</code> at each submission and makes <code>active</code> treat a missing transcript as lapsed.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>transcript_offset</code> is taken under the folder lock before <code>codex queue</code> runs, so text written before the submission cannot confirm the batch.",
+       "line": 525
+      },
+      {
+       "kind": "context",
+       "text": "A batch with no offset, from before this change, scans the whole transcript once. After that, the offset moves to the end, leaving room for a marker that is only partly written.",
+       "line": 251
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "<code>watch status</code> says when Codex has the thread unloaded."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Living documentation",
+   "kicker": "What docs/cli.md now says about unloads, archives, and lost acknowledgments",
+   "intro": [
+    "The completed <code>codex-delivery</code> plan still records that <code>SessionEnd</code> disconnects. A completed plan is a record, so <code>docs/cli.md</code> carries the new behavior instead."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Describes the idle unload, archive detection, transcript confirmation, and the new <code>unloaded_at</code> field."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Five new unit tests and a rewritten live smoke test",
+   "intro": [
+    "The unit tests use a fake <code>codex</code> executable that logs its calls, and transcript files in a temporary directory. The live smoke test runs an isolated Codex app server with <code>thread_unload_delay_secs</code>, so Codex sends its own <code>SessionEnd</code>. It then wakes the thread twice and checks that an archived thread gets no batch."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_codex_watch.py",
+     "note": "New tests cover the idle unload, archive and resume, the daemon start on <code>SessionEnd</code>, a lost acknowledgment, and text from before submission.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "The pull request body's <code>## Testing</code> section still names <code>test_archived_conversation_disconnects_at_submission_until_resumed</code> and says 31 tests, four new. At this head the test is <code>test_archived_conversation_lapses_at_once_until_resumed</code>, and 32 tests run, five of them new.",
+       "line": 97
+      }
+     ]
+    },
+    {
+     "path": "tests/codex_smoke.py",
+     "note": "Opt-in live test: it waits for Codex's own unload, delivers, waits for the acknowledgment and the <code>Stop</code> hook twice, then archives the thread."
+    }
+   ]
+  }
+ ]
+}
