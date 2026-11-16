@@ -1232,10 +1232,10 @@ function reviewLabel(pr: PullRequest): { text: string; color: 'claude' | 'succes
 
 /**
  * The word after a row's number: its review label while it carries one, and
- * otherwise `draft` or `ready` in the theme's light blue. `ready` means only
- * that no label is set, which is also true after a push removes `clean` or a
- * review requests changes. A draft's row draws the word in italic, as it
- * draws the number, so a held draft shows an italic `clean`.
+ * otherwise `draft` in the default color or `ready` in the theme's light blue.
+ * `ready` means only that no label is set, which is also true after a push
+ * removes `clean` or a review requests changes. A draft's row draws the word
+ * in italic, as it draws the number, so a held draft shows an italic `clean`.
  */
 function rowState(pr: PullRequest): { text: string; color?: string } {
   return reviewLabel(pr) ?? (pr.isDraft ? { text: 'draft' } : { text: 'ready', color: 'suggestion' })
