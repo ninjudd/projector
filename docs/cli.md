@@ -253,9 +253,22 @@ what it did to each:
   approval instead of running outside the sandbox, while the bare
   `project summary publish` an agent runs stays allowed. Claude Code matches
   the command text, so `Bash(project *)` never matches a path to a program.
-  The rules need Codex 0.107 or newer. An older Codex cannot parse
-  `host_executable`, and a rules file it cannot parse leaves it with no
-  rules at all, your own included, so update Codex before you run `init`.
+  Codex 0.107 is the first to parse `host_executable`, and an older Codex
+  that meets a rules file it cannot parse loads no rules at all, your own
+  included. So `init` runs `codex --version` first. When the `codex` on
+  your `PATH` reports a version older than 0.107, `init` writes the rules
+  without the `host_executable` line and its comment, and says on stderr
+  to update Codex and run `init` again. Such a Codex resolves no program
+  path, so the line closes no hole for it. Every Codex that uses
+  `~/.codex` reads the same rules, though, and while the file lacks the
+  line, any Codex 0.108 or newer that reads it, such as the desktop app or
+  an IDE extension beside an old `codex` command, runs a path to a program
+  named `project` outside its sandbox. So update or remove the old `codex`
+  and run `init` again. When `init` finds no `codex`, or
+  one that reports no version, it writes the whole file, so update a Codex
+  that is not on your `PATH`, such as one only the desktop app runs, to
+  0.107 or newer. `project review rules` reads the version the same way,
+  and reports a file that holds the line for a Codex too old to parse it.
 
   No rule matches `project init`, `project upgrade`, `project config set` or
   `unset`, `project create` or `project edit`, whose editor an agent could

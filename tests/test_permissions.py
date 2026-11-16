@@ -316,3 +316,33 @@ class SummaryPublishTests(unittest.TestCase):
 
         self.assertNotRegex(skill, r"(&&|;|\|)\s*project summary publish")
         self.assertNotRegex(skill, r"project summary publish[^`]*(&&|;|\|)")
+
+
+@unittest.skipIf(os.name == "nt", "the fake codex is a shell script")
+class CodexVersionTests(unittest.TestCase):
+    """`init` reads the version of the `codex` on `PATH` to decide whether the rules can hold `host_executable`."""
+
+    def version_with(self, script: str | None) -> tuple[int, ...] | None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        if script is not None:
+            codex = Path(folder.name) / "codex"
+            codex.write_text(f"#!/bin/sh\n{script}\n")
+            codex.chmod(0o755)
+        return permissions.codex_version({"PATH": folder.name})
+
+    def test_the_version_comes_from_codex_version(self) -> None:
+        self.assertEqual((0, 106, 0), self.version_with('echo "codex-cli 0.106.0"'))
+        self.assertEqual((0, 169, 2), self.version_with('echo "codex-cli 0.169.2-alpha.1"'))
+
+    def test_a_codex_that_says_no_version_reads_as_unknown(self) -> None:
+        for name, script in {"missing": None, "failing": 'echo "codex-cli 0.1.0"; exit 1',
+                             "silent": "true", "no version": 'echo "codex-cli dev"'}.items():
+            with self.subTest(name):
+                self.assertIsNone(self.version_with(script))
+
+    def test_an_old_codex_gets_the_rules_without_the_line_it_cannot_parse(self) -> None:
+        self.assertEqual(permissions.CODEX_RULES_WITHOUT_HOST_EXECUTABLE, permissions.codex_rules((0, 106, 9)))
+        for version in ((0, 107, 0), (0, 169, 0), (1, 0, 0), None):
+            with self.subTest(version=version):
+                self.assertEqual(permissions.CODEX_RULES, permissions.codex_rules(version))
