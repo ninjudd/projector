@@ -1,0 +1,87 @@
+{
+ "version": 1,
+ "name": "Panel repository name case",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 481,
+  "title": "Lowercase repository names as the panel reads them",
+  "head": "0e8a8a5b76dcb2fa3f81873a32b43c4746244eff",
+  "headRef": "lowercase-panel-repos",
+  "base": "52654a3eecab0bb3a656bd5448979c4822872629",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "The Projector panel is the list of pull requests that Claude Code shows above the prompt. It names each row <code>#12</code> when every row belongs to one repository, and adds the repository's name when they do not. It decides that by counting the distinct <code>repo</code> strings among its rows.",
+   "GitHub ignores case in owner and repository names, so <code>o/r</code> and <code>O/R</code> are one repository. The panel kept whatever spelling each source used, though. When one session subscribed to <code>O/R#2</code> and another tracked <code>o/r#1</code>, the panel counted two repositories and labelled the rows <code>r#1</code> and <code>R#2</code>. It also sent GitHub one query per spelling.",
+   "This change lowercases the repository at the three readers that every panel row comes from:",
+   "<ul class=\"tight\"><li><b><code>parseTracked</code></b> reads an earlier watcher's tracked file, one <code>owner/repo#number</code> per line.</li><li><b><code>parseSubscriptions</code></b> reads the session's <code>subscriptions</code> file, which the CLI writes.</li><li><b><code>parseAdopted</code></b> reads the pull requests that the watch daemon adopted for the session's repository subscriptions.</li></ul>",
+   "With one spelling throughout the panel, the lowercasing in <code>keyOf</code>, which names a pull request for comparisons, and in <code>cachePathOf</code>, which finds the daemon's cached result, is redundant, so both now use the name as given. The panel's labels and the references it puts in the prompt now show repositories in lowercase. The CLI and the daemon already compare repositories without regard to case, so nothing outside <code>hooks/</code> changes."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review, of <code>0e8a8a5</code>: clean, with no finding threads.</li><li>One suggestion: say in <code>docs/plugins.md</code> that the panel shows repository names in lowercase.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "parsers",
+   "title": "The panel's readers lowercase each repository",
+   "kicker": "One spelling for each repository, set where the panel reads it",
+   "intro": [
+    "Every pull request the panel shows enters through <code>parseTracked</code>, <code>parseSubscriptions</code>, or <code>parseAdopted</code>. Lowercasing there gives each repository one spelling for everything downstream. That covers the row labels, the GitHub query, which groups pull requests by repository, and the daemon's cache path. It also covers files that an earlier version wrote in mixed case.",
+    "A <code>TrackedPr</code> is the panel's reference to one pull request: a <code>repo</code> and a <code>number</code>. Its type does not enforce lowercase, so the rule holds only while nothing builds a <code>TrackedPr</code> outside the parsers. The type's comment now records that rule."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every <code>TrackedPr</code> in <code>hooks/register.tsx</code> and <code>hooks/github.ts</code> comes from one of the three parsers. <code>subscribedOf</code> builds its entries from parsed lines, and <code>toPullRequest</code> copies the parsed <code>repo</code>. Traced by reading every use of <code>keyOf</code>, <code>cachePathOf</code>, and <code>TrackedPr</code>."
+    },
+    {
+     "kind": "verify",
+     "text": "The CLI and the daemon still agree with the panel. The daemon files its cache under <code>repo.lower()</code> and keys adopted pull requests by the lowercased repository. <code>project watch drop</code> and <code>project loop drop</code>, which Dismiss now runs with the lowercased name, compare repositories case-insensitively. Checked in <code>watch.py</code> and <code>loop.py</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/parse.ts",
+     "note": "The three parsers lowercase <code>repo</code>. <code>keyOf</code>, <code>cachePathOf</code>, and the adopted-review match in <code>subscribedOf</code> stop lowercasing, because their inputs already are.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "<code>keyOf</code> no longer lowercases, so its two sides match only when both come from a parser. The inbox's match in <code>register.tsx</code> lowercases the item's reference before it compares it with <code>keyOf</code>.",
+       "line": 235
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests for one repository in two spellings",
+   "kicker": "A panel test for the labels, and parser tests for each reader",
+   "intro": [
+    "The new panel test tracks <code>o/r#1</code> in one loop and <code>O/R#2</code> in another. It expects the labels <code>#1</code> and <code>#2</code>, and expects Discuss to insert <code>#2 </code>. The parser tests now expect each reader to return the repository in lowercase, and check that the daemon's cache path follows from a parsed subscription.",
+    "The fake GitHub in <code>panel.test.tsx</code> now looks repositories up without regard to case, as GitHub does."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Each test can fail. In a copy of the head, removing the lowercasing from one parser at a time failed at least one test. Dropping it from <code>parseTracked</code> failed the new panel test and the <code>parseTracked</code> test, from <code>parseSubscriptions</code> three tests, and from <code>parseAdopted</code> the daemon's-files test."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx"
+    },
+    {
+     "path": "hooks/parse.test.ts"
+    }
+   ]
+  }
+ ]
+}
