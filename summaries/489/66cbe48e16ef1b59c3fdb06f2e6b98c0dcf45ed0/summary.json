@@ -1,0 +1,113 @@
+{
+ "version": 1,
+ "name": "Panel row notes",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 489,
+  "title": "Note every other state a pull request's row could show, and spell the holds out in an open drawer",
+  "head": "66cbe48e16ef1b59c3fdb06f2e6b98c0dcf45ed0",
+  "headRef": "panel-notes-always",
+  "base": "6ca3a71e08f19d5492c1a85f7f2b19315838407c",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's Claude Code mod draws a panel above the prompt with one line for each pull request the session fixes or reviews. Each line shows the pull request's number, one <b>state</b> word, the title, a few <b>notes</b> after the title, and an age. The state is the most urgent thing that applies, taken in a fixed order: <code>conflict</code>, <code>failing</code>, <code>changes</code>, <code>threads</code>, <code>reviewing</code>, <code>clean</code>, then <code>draft</code> or <code>ready</code>.",
+   "Before this change the notes named only the <b>holds</b> that the state had not already named. A hold is something that keeps the pull request from merging: a conflict, failing checks, a change request, or open review threads. The two labels a review sets, <code>reviewing</code> and <code>clean</code>, never showed as notes. So a signed-off pull request whose checks failed read <code>failing</code>, and nothing on its line showed that it still carried <code>clean</code>.",
+   "Now the notes name every other state that applies, in the state's order and each in its own color: <code>failing</code>, <code>changes</code>, and <code>threads</code> in short, then the <code>reviewing</code> and <code>clean</code> labels, then <code>approved</code>. A conflict always takes the state, so no note names it. While a pull request's drawer is open, its line spells the holds out as <code>checks failing</code>, <code>changes requested</code>, and the threads' count, such as <code>2 threads</code>, and also names the hold that is already the state. The <code>2*</code> count that used to end every line is gone, and each file in a drawer counts its threads the same way, as <code>2 threads</code> or <code>1 thread</code>.",
+   "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Pull request</th><th>State</th><th>Notes, drawer closed</th><th>Notes, drawer open</th></tr></thead><tbody><tr><td>Signed off, checks failing</td><td><code>failing</code></td><td><code>clean</code></td><td><code>checks failing · clean</code></td></tr><tr><td>Conflict, change request, one thread</td><td><code>conflict</code></td><td><code>changes · threads</code></td><td><code>changes requested · 1 thread</code></td></tr><tr><td>Approved, three threads</td><td><code>threads</code></td><td><code>approved</code></td><td><code>3 threads · approved</code></td></tr><tr><td>Review running over an earlier <code>clean</code></td><td><code>reviewing</code></td><td><code>clean</code></td><td><code>clean</code></td></tr><tr><td>Checks failing, review running</td><td><code>failing</code></td><td><code>reviewing</code></td><td><code>checks failing · reviewing</code></td></tr></tbody></table></div>"
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first Projector review read head <code>8f359a0</code> and found it clean, with one suggestion: add a test row that has a hold and a <code>reviewing</code> label. Head <code>423fd9b</code> adds that row, and removing the <code>reviewing</code> note from <code>notesOf</code> now turns the notes test red.</li><li>The full review of <code>423fd9b</code> was clean, with one suggestion: rewrap two long lines in <code>docs/plugins.md</code>. Head <code>66cbe48</code> rewraps them without changing a word, and an incremental review found it clean.</li><li>The repository's gate passed at <code>423fd9b</code>: both <code>claude plugin validate</code> runs, <code>claude plugin test .</code> with 234 passing, <code>hooks/typecheck.sh</code>, and <code>git diff --check</code>. Head <code>66cbe48</code> changes only documentation line breaks.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "notes",
+   "title": "Which notes a row shows",
+   "kicker": "The rule that picks a row's notes, and the open-drawer wording",
+   "intro": [
+    "All of the change's logic is in <code>hooks/register.tsx</code>. <code>HOLDS</code> is the table of holds, most urgent first, and <code>rowState</code> picks the line's state word from it, then from the review labels. <code>notesOf</code> builds the notes after the title, and now takes whether the row's drawer is open.",
+    "Each hold now carries a <code>phrase</code>, a function that gives its full wording, in place of the old <code>note</code>. <code>failing</code>, <code>changes</code>, and <code>threads</code> have one, and the threads' phrase counts them with <code>threadCount</code>, which the drawer's file lines use too. <code>conflict</code> has no phrase, because it always wins the state, so it never becomes a note. The review labels move into a table, <code>REVIEW_LABELS</code>, that both <code>rowState</code> and <code>notesOf</code> read, so the two agree on the labels' order and colors."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A note's color comes from the same <code>HOLDS</code> or <code>REVIEW_LABELS</code> entry that colors the state word, so a red or yellow note always matches the color that hold would get as the state. The collapsed line, which shows only numbers in <code>statusColor</code>, is unchanged."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "<code>notesOf</code> now lists every hold and review label that applies, except the one that is the row's state, and spells the holds out while the drawer is open. Open threads are a hold note like the others, and the drawer's file lines count threads with <code>threadCount</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A closed row leaves out the hold that is its state, and an open row keeps it in its full wording. The <code>isOpen || status !== shown</code> test is the whole difference between the two.",
+       "line": 1293
+      },
+      {
+       "kind": "context",
+       "text": "A review label becomes a note only when a hold, or <code>reviewing</code>, took the state, because otherwise <code>reviewLabel</code> makes that label the state. So a running review over an earlier <code>clean</code> reads <code>reviewing</code> with a <code>clean</code> note.",
+       "line": 1297
+      },
+      {
+       "kind": "context",
+       "text": "<code>threadCount</code> gives both the open row's threads phrase and each drawer file's count, so the two always agree on <code>1 thread</code> and <code>2 threads</code>.",
+       "line": 1232
+      },
+      {
+       "kind": "verify",
+       "text": "A loading row stays muted with no notes. Its placeholder from <code>loadingOf</code> in <code>hooks/github.ts</code> has no labels, no review decision, no threads, and no checks, so <code>notesOf</code> returns nothing for it. Checked by reading both functions.",
+       "line": 2466
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Tests and documentation",
+   "kicker": "The panel test that pins the rule, and the user guide's description of it",
+   "intro": [
+    "The rewritten panel test reads the notes of six rows with every drawer closed, then opens three drawers and reads them again. It compares whole note lists, each part with its color, so a missing note, a repeated state, or the wrong open-drawer wording turns it red. Two new fixtures cover a signed-off pull request whose checks fail, <code>p21</code>, and a failing pull request under a running review, <code>p22</code>. The drawer tests now expect each file's count as <code>2 threads</code> or <code>1 thread</code>.",
+    "<code>docs/plugins.md</code> is the user guide for the panel. Its paragraph on notes now describes the new rule and the open-drawer wording, its drawer section describes the new file counts, and its example panel shows a row with a drawer open."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Replaces the old notes test with one that reads each row's notes by title, closed and open, and updates the drawer tests for the new notes and the spelled-out thread counts.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The new row turns the test red when the <code>reviewing</code> note goes. Removing that label from the notes in <code>notesOf</code> at <code>423fd9b</code> left 233 tests passing and failed this one on the <code>Failing change a review is reading</code> row. Checked by making that change, running <code>claude plugin test</code>, and restoring the file.",
+       "line": 776
+      },
+      {
+       "kind": "context",
+       "text": "The helper takes the Text after a title as that row's notes, unless it is empty or looks like an age such as <code>5m</code>, in which case the row has no notes.",
+       "line": 749
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Describes which notes a row shows, the open-drawer wording, that no note names <code>conflict</code>, and the drawer's spelled-out thread counts.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The paragraph matches <code>notesOf</code>: the order, the colors, the open-drawer phrases, and the rule that no note names <code>conflict</code>. The example's lines still end in one column. Checked by reading both against the head.",
+       "line": 325
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
