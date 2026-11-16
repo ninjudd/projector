@@ -921,6 +921,28 @@ class CiGateTests(ReviewCase):
                 if expected:
                     self.assertIn(f"the head changed {changed}, which decides what check runs", record["reason"])
 
+    def test_a_check_that_runs_the_action_at_the_root_is_decided_by_every_file(self) -> None:
+        # Catches a gate that crashes on `uses: ./`, which an action's own repository uses to test itself, instead of
+        # reading the whole repository as the files behind the check.
+        action = "runs:\n  using: node20\n  main: index.js\n"
+        uses_root = CHECK_YML + "      - uses: ./\n"
+        cases = (
+            ("a change anywhere", {"action.yml": action}, {"src.py": "x = 1\n"}, 75, "the head changed src.py"),
+            ("no action at the root", {}, {"src.py": "x = 1\n"}, 75, "uses the local action ./, which has no action.yml"),
+            ("no change at all", {"action.yml": action}, {}, 0, None),
+        )
+        for case, base, head, expected, words in cases:
+            with self.subTest(case):
+                self.heads({".github/workflows/check.yml": uses_root, "index.js": "run()\n", **base}, head)
+                self.configure()
+                self.github.check_polls = [[check_run("success")]]
+
+                code, record, err = self.gate()
+
+                self.assertEqual(expected, code, err)
+                if words:
+                    self.assertIn(words, record["reason"])
+
     def test_a_check_whose_files_cannot_be_told_gives_no_evidence(self) -> None:
         # Catches a gate that accepts CI when it cannot say which files decided the run.
         expression = CHECK_YML + "      - uses: ${{ matrix.action }}\n"

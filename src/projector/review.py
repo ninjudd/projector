@@ -37,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import posixpath
 import re
 import secrets
 import shutil
@@ -699,12 +700,20 @@ def check_files(repo: str, worktree: Path, sha: str, run: dict) -> set[str]:
                                  f"decide {run.get('name')} are unknown")
             if not value.startswith("./"):
                 continue
-            target = value[2:].rstrip("/")
+            # `./` names the action at the repository's root, whose files are the whole repository.
+            target = posixpath.normpath(value[2:] or ".")
+            if target.startswith(".."):
+                raise NoEvidence(f"{path} uses {value}, which reaches outside the repository, so the files that "
+                                 f"decide {run.get('name')} are unknown")
             if target.endswith((".yml", ".yaml")):
                 queue.append(target)
                 continue
-            listed = git("-C", str(worktree), "ls-tree", "-r", "--name-only", sha, "--", target).splitlines()
-            action = next((name for name in (f"{target}/action.yml", f"{target}/action.yaml") if name in listed), None)
+            prefix = "" if target == "." else f"{target}/"
+            try:
+                listed = git("-C", str(worktree), "ls-tree", "-r", "--name-only", sha, "--", target).splitlines()
+            except ReviewError as exc:
+                raise NoEvidence(f"{path} uses the local action {value}, which cannot be listed at the head") from exc
+            action = next((name for name in (f"{prefix}action.yml", f"{prefix}action.yaml") if name in listed), None)
             if action is None:
                 raise NoEvidence(f"{path} uses the local action {value}, which has no action.yml at the head")
             files.update(name for name in listed if name != action)

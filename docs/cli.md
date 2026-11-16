@@ -2145,11 +2145,12 @@ without it, one waits for a maintainer to approve it, or none started in the
 first two minutes. Last, CI gives none when the head changed a file that
 decides what the check runs. Those are the workflow file GitHub records for
 the check's run, and every reusable workflow and local action that file
-reaches through a `uses: ./` line. A head that changes only another workflow,
-such as a release workflow, keeps CI's evidence. When `gate` cannot tell
-which files decided the run, it gives no evidence rather than guess. On exit
-75, a review runs the repository's full gate locally on a trusted head, and
-reads an untrusted one.
+reaches through a `uses: ./` line. A bare `uses: ./` runs the action at the
+repository's root, so every file in the repository decides that check. A
+head that changes only another workflow, such as a release workflow, keeps
+CI's evidence. When `gate` cannot tell which files decided the run, it gives
+no evidence rather than guess. On exit 75, a review runs the repository's full
+gate locally on a trusted head, and reads an untrusted one.
 
 The state file's gate record then also holds `checks`, each named check's
 `name`, `conclusion`, and `url`, with a `null` conclusion for a check that had

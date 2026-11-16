@@ -192,7 +192,10 @@ from the head, without parsing YAML, which the standard library cannot do:
    `uses:` value that starts with `./`. A reference to a workflow file, such
    as `./.github/workflows/test.yml`, adds that file. Any other local
    reference names the directory of a local action, such as
-   `./.github/actions/setup`, and adds every file under it. `gate` reads each
+   `./.github/actions/setup`, and adds every file under it. A bare `./`
+   names the action at the repository's root, as an action's own repository
+   uses it to test itself, so every file in the repository decides that
+   check. `gate` reads each
    added workflow file, and each action's `action.yml` or `action.yaml`, the
    same way, until no new reference turns up.
 3. `gate` compares that set with `git diff --name-only <base> <sha>`. A file
