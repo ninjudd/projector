@@ -927,6 +927,12 @@ Review of the relay settled these details:
   `RecursionError`, as a record that does not open. So a planted blob of
   nested brackets under the 32 KiB cap is rejected and its ref deleted
   like any other, rather than stopping every later job in the repository.
+  The count is one pass over the bytes, after the 32 KiB cap, that tracks
+  whether it is inside a string and after a backslash. A regular expression
+  that skipped strings backtracked quadratically on a run of escaped
+  quotes, holding the GIL, and so the daemon's loop, for seconds a blob.
+  The relay's other patterns are anchored, and no two neighboring repeats
+  in any of them can match the same character, so each runs in linear time.
 - **The daemon compares changes, not the outbox file.** § 10's "changed
   since the last job" means a queued change, a ref and what it is to hold,
   that the last job did not try to push. The job records the changes its

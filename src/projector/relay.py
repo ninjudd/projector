@@ -53,8 +53,8 @@ RENEW = 1800.0
 MAX_SEALED = 32 * 1024
 # A sealed record and the record inside it are flat objects, so JSON nested deeper was planted and is not parsed.
 MAX_DEPTH = 8
-STRING = re.compile(rb'"(?:[^"\\]|\\.)*"')
-BRACKET = re.compile(rb"[\[\]{}]")
+QUOTE, BACKSLASH = ord('"'), ord("\\")
+OPENS, CLOSES = frozenset(b"[{"), frozenset(b"]}")
 OPEN_LIMIT = 64
 EXAMINE_LIMIT = 4 * OPEN_LIMIT
 FETCH_TIMEOUT = 120.0
@@ -387,17 +387,34 @@ def git(cwd: Path, *args: str, input: Optional[bytes] = None, env: Optional[dict
 
 def shallow(data: bytes) -> bool:
     """Whether the JSON in `data` nests arrays and objects at most `MAX_DEPTH` deep, counting the brackets
-    outside its strings, so `json.loads` never recurses deeply into a blob that anyone who can push planted."""
+    outside its strings, so `json.loads` never recurses deeply into a blob that anyone who can push planted. One
+    pass over the bytes, with no regular expression, so no blob makes it backtrack."""
     depth = 0
-    for found in BRACKET.finditer(STRING.sub(b'""', data)):
-        depth += 1 if found[0] in (b"[", b"{") else -1
-        if depth > MAX_DEPTH:
-            return False
+    inside = escaped = False
+    for byte in data:
+        if inside:
+            if escaped:
+                escaped = False
+            elif byte == BACKSLASH:
+                escaped = True
+            elif byte == QUOTE:
+                inside = False
+        elif byte == QUOTE:
+            inside = True
+        elif byte in OPENS:
+            depth += 1
+            if depth > MAX_DEPTH:
+                return False
+        elif byte in CLOSES:
+            depth -= 1
     return True
 
 
 def parse(data: bytes) -> object:
-    """The JSON an untrusted blob holds, raising `ValueError` for any that does not parse or nests too deeply."""
+    """The JSON an untrusted blob holds, raising `ValueError` for any larger than `MAX_SEALED`, or that does not
+    parse or nests too deeply."""
+    if len(data) > MAX_SEALED:
+        raise ValueError(f"the JSON is larger than {MAX_SEALED} bytes")
     if not shallow(data):
         raise ValueError(f"the JSON nests more than {MAX_DEPTH} deep")
     try:

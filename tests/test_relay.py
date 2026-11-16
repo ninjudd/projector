@@ -488,6 +488,38 @@ class CheckTests(RelayCase):
         self.assertEqual(json.loads(deepest), relay.parse(deepest))
         self.assertEqual(json.loads(quoted), relay.parse(quoted))
 
+    def test_the_depth_check_takes_at_most_50_ms_on_any_blob_up_to_the_cap_and_refuses_a_larger_one(self) -> None:
+        cap = relay.MAX_SEALED
+        escaped = b'"' + b'\\"' * ((cap - 1) // 2)
+        blobs = {"escaped quotes": escaped, "open brackets": b"[" * cap, "backslashes": b'"' + b"\\" * (cap - 1),
+                 "quote pairs": b'""' * (cap // 2), "nested strings": b'["",' * (cap // 4)}
+        slowest = {}
+        for name, data in blobs.items():
+            self.assertLessEqual(len(data), cap, name)
+            started = time.perf_counter()
+            with self.assertRaises(ValueError):
+                relay.parse(data)
+            slowest[name] = time.perf_counter() - started
+
+        self.assertEqual({}, {name: seconds for name, seconds in slowest.items() if seconds >= 0.05})
+        with mock.patch.object(relay, "shallow", side_effect=AssertionError("scanned")), \
+                self.assertRaises(ValueError):
+            relay.parse(b"[]" + b" " * cap)
+
+    def test_the_depth_check_follows_escapes_so_no_bracket_hides_in_or_out_of_a_string(self) -> None:
+        deep = b"[" * (relay.MAX_DEPTH + 1) + b"]" * (relay.MAX_DEPTH + 1)
+        cases = {
+            b'["\\\\", ' + deep + b"]": False,
+            b'["\\"[[[[[[[[[[\\"", 1]': True,
+            b'["' + b'\\"' * 1000 + b'"]': True,
+            b'["' + b'\\"' * 1000 + b'", ' + deep + b"]": False,
+            b'{"a": "}}}}}}}}}}", "b": ' + deep + b"}": False,
+        }
+
+        found = {data[:24]: relay.shallow(data) for data in cases}
+
+        self.assertEqual({data[:24]: expected for data, expected in cases.items()}, found)
+
     def test_a_replayed_stale_or_colliding_message_is_not_delivered_and_a_collision_is_counted(self) -> None:
         self.pair()
         b = self.b_relay_id()
