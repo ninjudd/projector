@@ -290,9 +290,13 @@ not subscribed to before.
 ```
 
 Each line is the pull request's number, its state, its author when someone
-else wrote it, and the title. The number is in the default text color. While
-the pull request is a draft, which means its author is still working on it,
-the number and the state are both in italic. The state is the first of these
+else wrote it, and the title. The number is `#267` when the panel lists one
+repository, and otherwise carries the repository's name, as `app#267`, or
+`acme/app#267` when two repositories share a name. Repositories are always
+named in lowercase, because GitHub ignores their case, so a repository you
+subscribed to as `Acme/App` shows as `acme/app`. The number is in the default
+text color. While the pull request is a draft, which means its author is
+still working on it, the number and the state are both in italic. The state is the first of these
 that applies:
 
 - **`reviewing`**, in orange, while the pull request carries the
@@ -390,8 +394,8 @@ describes. The links to the pull request follow, side by side on the next
 line, and then the unresolved review threads, gathered under their files:
 
 - **Discuss** puts the pull request's number in the prompt at the
-  cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
-  one repository.
+  cursor, as `#258`, or as `owner/repo#258` in lowercase when the panel
+  lists more than one repository.
 - **Dismiss** asks to be sure first, because a dismissed pull request
   leaves the panel at once. It replaces the actions with
   `8: Yes, dismiss it` and `9: No, keep it`, so a stray `8` only asks.
