@@ -281,7 +281,7 @@ not subscribed to before.
   /projector                            1 pull request · 1 review request  12s   [-]
    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
    #258 threads grace Name the reviewed head in a re… 2 threads · reviewing 5m
-        reviewer · sig-head · +84 −1 in 5 files · checks passing ·  reviewing
+        reviewer · sig-head · +84 −1 in 5 files · checks passing · reviewing
         7: Discuss  8: Dismiss
         open in github  open in projector
         src/review.py:412 · ada · P2 · The signature names the base, not the head
