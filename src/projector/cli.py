@@ -1130,7 +1130,8 @@ def run_watch(arguments: argparse.Namespace) -> int:
             for session, found in report["deliveries"].items():
                 expires = found["expires_at"]
                 when = watch.stamp(expires) if isinstance(expires, (int, float)) else "unknown"
-                print(f"delivery {session}: {found['state']}, expires {when}, "
+                unloaded = ", unloaded by Codex until the next batch" if found["unloaded_at"] else ""
+                print(f"delivery {session}: {found['state']}{unloaded}, expires {when}, "
                       f"batch {found['batch_id'] or 'none'} {found['last_error']}")
         return 0
     session = watch.session_id(arguments.session, required=command != "list")

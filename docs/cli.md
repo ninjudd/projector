@@ -2606,16 +2606,35 @@ mod and requires no Codex executable.
 Codex receives one batch at a time, with standing work IDs that coalesce
 reminders even when their text differs. An acknowledgment marks a batch
 consumed. An idle session starts no model turn until an event arrives.
-The registration expires after 24 hours without host activity and ends
-when the host sends `SessionEnd`. A daemon exit while Codex is idle needs
-the next hook or a watch command to restart it:
+The registration expires after 24 hours without host activity.
+
+Codex unloads a conversation that sits idle and unopened for 30 minutes,
+and sends `SessionEnd` when it does. Projector keeps delivery enabled
+through that unload: the daemon goes on watching the session's pull
+requests, and `codex queue --resume` loads the thread again when a batch
+arrives. Codex sends the same `SessionEnd` when you archive or delete a
+conversation, so Projector instead checks, before each submission, that
+the conversation's transcript still exists. When it is gone, Projector
+disconnects delivery rather than resuming an archived conversation, and
+resuming the conversation reconnects it. To stop delivery yourself, use
+`project watch disconnect`, or remove the subscription.
+
+The `UserPromptSubmit` hook acknowledges each batch as its turn starts.
+When that acknowledgment never arrives, the daemon looks for the batch's
+marker in the conversation's transcript, from where the transcript ended
+when the batch was submitted, and marks the batch consumed once it
+appears, so one lost acknowledgment cannot hold back later batches.
+
+A daemon exit while Codex is idle needs the next hook or a watch command
+to restart it:
 
 ```sh
 project watch status --json
 ```
 
 The `deliveries` object reports the state, expiry, batch ID, and diagnostic
-for each Codex registration. `queued` means Codex accepted the message;
+for each Codex registration, and `unloaded_at` while Codex has the thread
+unloaded. `queued` means Codex accepted the message;
 it does not prove the thread resumed. Resume that thread when its warning
 says it needs attention. `uncertain` means a timeout or interrupted
 submission left acceptance unknown. After checking the thread, use an

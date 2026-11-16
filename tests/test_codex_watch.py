@@ -61,6 +61,88 @@ else:
         self.dispatcher.send(self.folder, batch["batch_id"])
         return batch
 
+    def tick(self):
+        self.dispatcher.tick([self.folder])
+        for job in list(self.dispatcher.jobs.values()):
+            job.result()
+
+    def calls(self):
+        path = self.root / "calls.jsonl"
+        return path.read_text().splitlines() if path.exists() else []
+
+    def hook(self, name, transcript=None, **fields):
+        event = {"hook_event_name": name, "session_id": "session-A", "cwd": str(self.root), **fields}
+        if transcript is not None:
+            event["transcript_path"] = str(transcript)
+        return codex.hook(self.root, event, self.now, mock.Mock())
+
+    def transcript(self, folder="sessions"):
+        path = self.root / "codex-home" / folder / "rollout-2026-11-15T12-50-37-session-A.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+        return path
+
+    def test_idle_unload_keeps_delivery_and_the_next_batch_resumes_the_thread(self):
+        self.hook("SessionEnd", self.transcript(), reason="other")
+        self.assertEqual("codex", watch.delivery(self.root, "session-A", self.now))
+        self.assertEqual(self.now, codex.report(self.folder, self.now)["unloaded_at"])
+        self.enqueue()
+        self.tick()
+        self.assertEqual(["--resume"], json.loads(self.calls()[0])["args"][-1:])
+        batch = codex.pending(self.folder)[0][1]
+        self.hook("UserPromptSubmit", prompt=codex.message("session-A", batch))
+        self.assertEqual([], codex.pending(self.folder))
+        self.assertIsNone(codex.report(self.folder, self.now)["unloaded_at"])
+
+    def test_archived_conversation_disconnects_at_submission_until_resumed(self):
+        transcript = self.transcript()
+        self.hook("SessionStart", transcript, source="startup")
+        self.hook("SessionEnd", transcript, reason="other")
+        archived = self.transcript("archived_sessions")
+        transcript.unlink()
+        self.enqueue()
+        self.tick()
+        self.assertEqual([], self.calls())
+        report = codex.report(self.folder, self.now)
+        self.assertEqual("disconnected", report["state"])
+        self.assertIn("archived", report["last_error"])
+        self.hook("SessionStart", archived, source="resume")
+        self.tick()
+        self.assertEqual(1, len(self.calls()))
+
+    def test_lost_acknowledgment_is_confirmed_from_the_transcript_and_unblocks_the_next_batch(self):
+        transcript = self.transcript()
+        self.hook("SessionStart", transcript, source="startup")
+        self.hook("Stop", self.root / "codex-home" / "sessions" / "rollout-subagent-B.jsonl")
+        self.assertEqual(str(transcript), codex.registration(self.folder)["transcript_path"])
+        self.enqueue()
+        self.tick()
+        first = codex.pending(self.folder)[0][1]
+        self.enqueue(self.event("FINDING Acme/App#14 new reply — run fix-pr", "b"))
+        self.tick()
+        self.assertEqual(1, len(self.calls()))
+        with transcript.open("a") as stream:
+            stream.write(json.dumps({"payload": {"role": "user", "text": codex.message("session-A", first)}}) + "\n")
+        self.now += 1
+        self.tick()
+        self.assertEqual(1, len(self.calls()))
+        self.now += codex.CONFIRM_EVERY
+        self.tick()
+        self.assertTrue((self.folder / "codex-receipts" / f"{first['batch_id']}.json").exists())
+        self.assertEqual(2, len(self.calls()))
+        self.assertIn("new reply", json.loads(self.calls()[1])["args"][4])
+
+    def test_transcript_text_from_before_submission_cannot_confirm_a_batch(self):
+        transcript = self.transcript()
+        self.hook("SessionStart", transcript, source="startup")
+        self.enqueue()
+        batch = self.prepare()
+        transcript.write_text(json.dumps({"text": codex.message("session-A", batch)}) + "\n")
+        self.dispatcher.send(self.folder, batch["batch_id"])
+        self.now += codex.CONFIRM_EVERY
+        self.tick()
+        self.assertEqual("queued", codex.pending(self.folder)[0][1]["state"])
+
     def test_reminder_wording_does_not_queue_another_prompt_but_new_reply_survives(self):
         self.enqueue(self.event())
         batch = self.send()
