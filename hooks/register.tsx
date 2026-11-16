@@ -149,8 +149,14 @@ const OTHER_REQUEST_COLOR = 'rgb(255,190,140)'
 /** The kinds of item, in the order the header counts them. */
 const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice']
 
+/** The sections of pull requests, in their order: your own, then the review requests. */
+const PR_SECTIONS = ['pr', 'review'] as const satisfies readonly Section[]
+
 /** What the header counts, in its order: the pull requests, then each kind of item. */
-const SECTIONS: readonly Section[] = ['pr', ...ITEM_KINDS]
+const SECTIONS: readonly Section[] = [...PR_SECTIONS, ...ITEM_KINDS]
+
+/** What the header calls each section of pull requests. */
+const PR_NOUNS: Record<(typeof PR_SECTIONS)[number], string> = { pr: 'pull request', review: 'review request' }
 
 /** Where a started request stands: the agent is doing its start action, did it, or could not. */
 type Stage = 'starting' | 'ready' | 'blocked'
@@ -1289,21 +1295,29 @@ function threadsByFile(threads: readonly Thread[]): [string, Thread[]][] {
   return [...files]
 }
 
-/** Whether the account the panel's `gh` is signed in as wrote a pull request. */
-const isOwn = (pr: PullRequest, viewer: string | null) => viewer !== null && pr.author === viewer
+/**
+ * Whether a pull request is a review request: one someone other than you,
+ * the account the panel's `gh` is signed in as, wrote. GitHub names no author
+ * for a deleted account's, which is someone else's too. Until the panel knows
+ * who you are, and while a pull request is still loading, it cannot tell, so
+ * it lists the pull request with your own.
+ */
+const isReviewRequest = (pr: PullRequest, viewer: string | null) =>
+  viewer !== null && pr.isLoading !== true && pr.author !== viewer
 
 /**
- * The panel's pull requests in the order it lists them: yours first, then
- * everyone else's, each author's together and the authors by login. Within
- * each, they keep the order they came in.
+ * The panel's pull requests in the order it lists them, by section: yours,
+ * in the order they came in, then the review requests, each author's
+ * together and the authors by login, each author's in the order they came in.
  */
-function byAuthor(rows: readonly Row[], viewer: string | null): Row[] {
+function bySection(rows: readonly Row[], viewer: string | null): Record<(typeof PR_SECTIONS)[number], Row[]> {
   const loginOf = (row: Row) => (row.pr.author ?? '').toLowerCase()
-  const others = rows.filter(row => !isOwn(row.pr, viewer))
-  return [
-    ...rows.filter(row => isOwn(row.pr, viewer)),
-    ...others.sort((one, other) => loginOf(one).localeCompare(loginOf(other))),
-  ]
+  return {
+    pr: rows.filter(row => !isReviewRequest(row.pr, viewer)),
+    review: rows
+      .filter(row => isReviewRequest(row.pr, viewer))
+      .sort((one, other) => loginOf(one).localeCompare(loginOf(other))),
+  }
 }
 
 const secondsSince = (time: number, then: number) => Math.max(0, Math.round((time - then) / 1000))
@@ -1681,13 +1695,14 @@ export const register: Register = on => {
     const asking = await read($, asked)
     const opening = await read($, openFiles)
     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
-    // Each count in the header is a button that collapses its pull requests
-    // or its kind of item to one line at the top of their place in the list,
-    // and the line expands them again. A section stays collapsed until it is
-    // expanded, but while it has nothing open the header has no count to
-    // expand it from, so a kind's muted items show.
+    // Each count in the header is a button that collapses your pull requests,
+    // the review requests, or a kind of item to one line at the top of their
+    // place in the list, and the line expands them again. A section stays
+    // collapsed until it is expanded, but while it has nothing open the
+    // header has no count to expand it from, so a kind's muted items show.
+    const sectioned = bySection(shown.rows, shown.viewer)
     const sectionCounts: { section: Section; count: string | undefined }[] = [
-      { section: 'pr', count: countOf(shown.rows.length, 'pull request') },
+      ...PR_SECTIONS.map(section => ({ section, count: countOf(sectioned[section].length, PR_NOUNS[section]) })),
       ...ITEM_KINDS.map(kind => {
         const open = shownItems.filter(
           item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time),
@@ -1715,7 +1730,7 @@ export const register: Register = on => {
     // column too.
     const authorWidth = Math.max(
       0,
-      ...shown.rows.filter(row => !isOwn(row.pr, shown.viewer)).map(row => (row.pr.author ?? '').length),
+      ...sectioned.review.map(row => (row.pr.author ?? '').length),
     )
     const tally = counts.filter(part => part !== undefined).join(' · ')
     const reloaded = shown.fetchedAt === null ? '' : span(secondsSince(time, shown.fetchedAt))
@@ -1809,28 +1824,29 @@ export const register: Register = on => {
       )
     // A collapsed section's line expands it again, so it is bulleted `+`
     // where an item is bulleted `-`. A collapsed kind of item reads as its
-    // count, in the kind's color. Collapsed pull requests are a row of plain
-    // Buttons: the `+` expands them, and each label after it, in the rows'
-    // order and its status's color, works as a tab. Pressing a label opens
-    // its drawer below the line, the section still collapsed, and draws the
-    // label inverted while its drawer is open; pressing it again closes the
-    // drawer. Only one drawer is ever open, so opening one closes another.
+    // count, in the kind's color. A collapsed section of pull requests is a
+    // row of plain Buttons: the `+` expands it, and each label after it, in
+    // the rows' order and its status's color, works as a tab. Pressing a
+    // label opens its drawer below the line, the section still collapsed, and
+    // draws the label inverted while its drawer is open; pressing it again
+    // closes the drawer. Only one drawer is ever open, so opening one closes
+    // another.
     const expander = (section: Section) =>
       shownCounts
         .filter(one => one.section === section && isCollapsed(section))
         .flatMap(({ count }) => {
-          if (section !== 'pr') {
+          if (section !== 'pr' && section !== 'review') {
             return [
               <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
                 <Text color={colorOf[section]}>{`+ ${count}`}</Text>
               </Button>,
             ]
           }
-          const rows = byAuthor(shown.rows, shown.viewer)
+          const rows = sectioned[section]
           const tab = rows.find(row => keyOf(row.pr) === opened)
           return [
-            <Box key="collapsed:pr" flexDirection="row">
-              <Button key="expand:pr" plain onPress={() => fold(section)}>
+            <Box key={`collapsed:${section}`} flexDirection="row">
+              <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
                 <Text>+</Text>
               </Button>
               {rows.flatMap(({ pr }) => {
@@ -2416,7 +2432,7 @@ export const register: Register = on => {
                 </Text>
               </Box>
             )}
-            {isLoaded && !isOwn(pr, shown.viewer) && (
+            {isLoaded && isReviewRequest(pr, shown.viewer) && (
               <Box key={`author:${key}`} flexShrink={0} width={authorWidth}>
                 <Text color="subtle">{pr.author ?? ''}</Text>
               </Box>
@@ -2451,10 +2467,13 @@ export const register: Register = on => {
     const focused = shownItems.find(item => opened === `item:${item.ref}`)
     if (focused !== undefined) return panel(drawItem(focused), false)
 
-    // Collapsed pull requests give way to one line in their place.
+    // Your pull requests come before the review requests, and a collapsed
+    // section gives way to one line in its place.
     return panel([
-      ...expander('pr'),
-      ...(isCollapsed('pr') ? [] : byAuthor(shown.rows, shown.viewer).map(drawRow)),
+      ...PR_SECTIONS.flatMap(section => [
+        ...expander(section),
+        ...(isCollapsed(section) ? [] : sectioned[section].map(drawRow)),
+      ]),
       failure !== undefined && (
         <Text key="failure" color="error">
           {failure}
