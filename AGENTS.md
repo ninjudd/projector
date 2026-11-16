@@ -151,7 +151,7 @@ because squash merges preserve that body as the commit message.
 For review findings, verify first, commit locally, reply with the commit, push,
 resolve the thread, and re-fetch it in that order.
 
-<!-- projector:begin 27 -->
+<!-- projector:begin 28 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -196,6 +196,21 @@ it, and let `gh stack` carry the fix up right away by rebasing every layer
 above, so each layer stays on the current head of the one below and the
 stack can merge as a unit. Chain pull requests by base branch, and update
 them by merging, only where `gh stack` is unavailable.
+
+In a repository with an iOS app, put a build on an iPhone, an iPad, or the
+Mac with `project ios`, not with `xcodebuild` or `devicectl` by hand. It
+builds a branch or a pull request in a worktree of its own, keeps each
+target's build, and refuses a pull request whose head it cannot trust.
+Never pass `--allow-untrusted` yourself: tell the person why it refused,
+and build it only once they have read the head's build scripts and said to.
+Build with `--no-install`, and install on the person's device only when they
+ask, because they may be testing another build and a swap makes it look
+broken. To test on their own Mac, or on a device plugged into it, the person
+runs `project ios build <branch or number>` in any checkout. For a crash,
+run `project ios crashes --device <udid>` for the device they tested on
+when you can reach it. Otherwise, and for a device log, which needs their
+password for `sudo`, ask them to run `project ios crashes` or
+`project ios logs` and share the file it names.
 
 ### Projector skills
 
@@ -253,6 +268,13 @@ press start. They press start when they are ready, and a message that starts
 do exactly what that message quotes and nothing more, and mark the request
 ready with the `ready` tool, or blocked with the `block` tool and what they
 should do first, such as unlocking the phone.
+
+Prepare a test of an iOS app on the person's device as the `implement`
+skill describes under "Prepare a device test for an iOS app". Push the
+branch and run `project ios build <number> --no-install` before you post
+the request, and install the build only in its start action, with
+`project ios install <number> --device <udid>`, so it never replaces a
+build the person is still testing.
 
 When the person picks one of a question's options, the answer reaches you as
 a message that starts `ANSWER`. When they finish a request, its outcome
