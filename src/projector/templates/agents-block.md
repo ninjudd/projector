@@ -50,11 +50,14 @@ builds a branch or a pull request in a worktree of its own, keeps each
 target's build, and refuses a pull request whose head it cannot trust.
 Never pass `--allow-untrusted` yourself: tell the person why it refused,
 and build it only once they have read the head's build scripts and said to.
-To test on their own Mac, or on a device plugged into it, the person runs
-`project ios build <branch or number>` in any checkout. For a crash, run
-`project ios crashes` when you can reach the device. For a device log, which
-needs their password for `sudo`, ask them to run `project ios logs`, and
-read the file it names.
+Build with `--no-install`, and install on the person's device only when they
+ask, because they may be testing another build and a swap makes it look
+broken. To test on their own Mac, or on a device plugged into it, the person
+runs `project ios build <branch or number>` in any checkout. For a crash,
+run `project ios crashes --device <udid>` for the device they tested on
+when you can reach it. Otherwise, and for a device log, which needs their
+password for `sudo`, ask them to run `project ios crashes` or
+`project ios logs` and share the file it names.
 
 ### Projector skills
 
