@@ -1,0 +1,115 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index d23a1ead..eddca244 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -280,7 +280,7 @@ not subscribed to before.
+ ```text
+   /projector                            1 pull request · 1 review request  12s   [-]
+    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
+-   #258 threads grace Name the revi… 2 threads · reviewing · checks passing 5m
++   #258 threads grace Name the reviewed head i… reviewing · checks passing 5m
+         reviewer · sig-head · +84 −1 in 5 files · checks passing · reviewing
+         7: Discuss  8: Dismiss
+         open in github  open in projector
+@@ -340,10 +340,12 @@ the cancel still counts, so such a head can read `failing` with a
+ `failing` with a green `clean` after its title, and a draft that conflicts
+ says `draft` as well as its italic number.
+ No note names `conflict`, which always takes the state. While a pull
+-request's drawer is open, its row spells the holds out as `checks failing`,
+-`changes requested`, and the threads' count, such as `2 threads`, and names
+-the one its state already says as well. It spells `passing` out as `checks
+-passing` too. The ` · ` between two notes keeps
++request's drawer is open, its row spells the holds out as `checks failing`
++and `changes requested`, and names the one its state already says as well.
++It spells `passing` out as `checks passing` too. The row never counts the
++threads, open or closed, and `threads` has nothing to spell out, so an open
++row whose state is `threads` does not repeat it; the drawer counts each
++file's threads. The ` · ` between two notes keeps
+ the default text color. The line ends with how long ago the pull request
+ last changed, in the column where the inbox's items end with their ages.
+ Only the title shortens on a narrow terminal. A pull request that the watch
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 180a093e..ad101f6f 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -880,12 +880,13 @@ test('a row’s notes name every other status that applies, and an open drawer s
+   expect(await notesOf('Change held back')).toEqual([['changes', 'warning'], ' · ', ['threads', 'warning']])
+   await ui.press({ key: 'pr:o/r#10' })
+   await clock.settle()
+-  // Spelled out, the open threads give their count.
+-  expect(await notesOf('Change held back')).toEqual([['changes requested', 'warning'], ' · ', ['1 thread', 'warning']])
++  // The row counts no threads, open or closed; the drawer counts each file's.
++  expect(await notesOf('Change held back')).toEqual([['changes requested', 'warning'], ' · ', ['threads', 'warning']])
+   expect(await notesOf('Signed-off change failing its checks')).toEqual([['clean', 'success']])
+   await ui.press({ key: 'pr:o/r#11' })
+   await clock.settle()
+-  expect(await notesOf('Approved change')).toEqual([['3 threads', 'warning'], ' · ', ['approved', 'success']])
++  // Open threads are this row's word, and have nothing more to say spelled out, so the open row does not repeat them.
++  expect(await notesOf('Approved change')).toEqual([['approved', 'success']])
+ 
+   // An open drawer spells passing checks out too.
+   await ui.press({ key: 'pr:o/r#24' })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 5e16e761..7efb9058 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1281,10 +1281,12 @@ type Hold = {
+   status: string
+   /**
+    * The hold in full, which the row's notes give while its drawer is open,
+-   * and give as the status word otherwise. None for a conflict, which always
+-   * takes the status, so no note names it.
++   * the one that is the row's word included. A hold without one gives its
++   * status word in both, and only when another hold took the word.
+    */
+-  phrase?: (pr: PullRequest) => string
++  phrase?: string
++  /** False for a conflict, which always takes the word, so no note names it. */
++  isNoted?: false
+   color: 'error' | 'warning'
+   holds: (pr: PullRequest) => boolean
+ }
+@@ -1295,20 +1297,16 @@ type Hold = {
+  * holds is the row's status.
+  */
+ const HOLDS: Hold[] = [
+-  { status: 'conflict', color: 'error', holds: pr => pr.isConflicting },
+-  { status: 'failing', phrase: () => 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
++  { status: 'conflict', isNoted: false, color: 'error', holds: pr => pr.isConflicting },
++  { status: 'failing', phrase: 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
+   {
+     status: 'changes',
+-    phrase: () => 'changes requested',
++    phrase: 'changes requested',
+     color: 'warning',
+     holds: pr => pr.reviewDecision === 'CHANGES_REQUESTED',
+   },
+-  {
+-    status: 'threads',
+-    phrase: pr => threadCount(pr.openThreads),
+-    color: 'warning',
+-    holds: pr => pr.openThreads > 0,
+-  },
++  // The row counts no threads; the drawer counts each file's.
++  { status: 'threads', color: 'warning', holds: pr => pr.openThreads > 0 },
+ ]
+ 
+ /**
+@@ -1338,11 +1336,12 @@ const reviewLabel = (pr: PullRequest) => REVIEW_LABELS.find(label => hasLabel(pr
+  */
+ function notesOf(pr: PullRequest, isOpen: boolean): Note[] {
+   const shown = rowState(pr).text
+-  const notes = HOLDS.flatMap(({ status, phrase, color, holds }): Note[] =>
+-    phrase !== undefined && holds(pr) && (isOpen || status !== shown)
+-      ? [{ text: isOpen ? phrase(pr) : status, color }]
+-      : [],
+-  )
++  const notes = HOLDS.flatMap(({ status, phrase, isNoted, color, holds }): Note[] => {
++    const isSpelled = isOpen && phrase !== undefined
++    return isNoted !== false && holds(pr) && (isSpelled || status !== shown)
++      ? [{ text: isSpelled ? phrase : status, color }]
++      : []
++  })
+   notes.push(...REVIEW_LABELS.filter(label => label.text !== shown && hasLabel(pr, label.text)))
+   if (pr.isDraft && shown !== 'draft') notes.push({ text: 'draft', isItalic: true })
+   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })

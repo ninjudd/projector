@@ -1,0 +1,94 @@
+{
+ "version": 1,
+ "name": "Panel row thread count",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 499,
+  "title": "Count no threads on a pull request's row, even with its drawer open",
+  "head": "75258cb835cecbba0d708eb388de022910d846be",
+  "headRef": "drop-thread-count",
+  "base": "715e1e59902235ab73d85084524c92a3f2d3a696",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel, the list above the Claude Code prompt, gives each pull request one row: its number, a state word such as <code>threads</code> or <code>changes</code>, its title, and then notes that name every other state that applies. Clicking a row opens its drawer, and while the drawer is open the row spells each hold out in full, such as <code>checks failing</code> for <code>failing</code> and <code>changes requested</code> for <code>changes</code>. A <em>hold</em> is one of the states that keeps a pull request from merging: a conflict, failing checks, a change request, or unresolved review threads.",
+   "Before this change, the spelled-out form of the <code>threads</code> hold was the thread count, such as <code>1 thread</code>. So an open row put a count back on the row, and when <code>threads</code> was already the row's state word, the open row repeated it as a note. The drawer's file lines already count each file's threads, so the count said nothing new.",
+   "Now <code>threads</code> has no longer form. The row names it as the note <code>threads</code> only when another hold took the state word, with the drawer open or closed, and never counts it. <code>checks failing</code> and <code>changes requested</code> still spell themselves out in an open drawer. The drawer's file lines, such as <code>+ src/a.ts 2 threads</code>, keep their counts."
+  ],
+  "cards": [
+   {
+    "id": "notes",
+    "title": "What an open row's notes read",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Row</th><th>Before</th><th>After</th></tr></thead><tbody><tr><td>State <code>conflict</code>, with a change request and a thread</td><td><code>changes requested · 1 thread</code></td><td class=\"r\"><code>changes requested · threads</code></td></tr><tr><td>State <code>threads</code>, approved</td><td><code>3 threads · approved</code></td><td class=\"r\"><code>approved</code></td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One Projector review of <code>75258cb</code>, clean, with three suggestions and no finding threads.</li><li>The gate passed: plugin validation, <code>claude plugin test .</code> with 237 passing, the hooks type check, and CI's <code>check</code> job.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "notes",
+   "title": "The row's notes stop counting threads",
+   "kicker": "How each hold becomes a note, and the test that pins it",
+   "intro": [
+    "<code>HOLDS</code> lists the holds in the order the state word takes them. Each entry has a <code>status</code>, the short word, and an optional <code>phrase</code>, the spelled-out form an open drawer shows. <code>notesOf</code> turns the holds that apply into the row's notes, skipping the one that is already the state word unless the drawer is open and the hold has a phrase.",
+    "The change makes <code>phrase</code> a plain string, drops the <code>threads</code> entry's phrase, and adds <code>isNoted: false</code> to <code>conflict</code>. Before, a missing phrase was what kept <code>conflict</code> out of the notes. Now a missing phrase means the hold always shows its short word, so <code>conflict</code> needs its own flag."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The row's state word and its color come from <code>rowState</code>, which reads only <code>status</code> and <code>color</code>, so they are unchanged. The review traced every reader of <code>HOLDS</code>, and <code>threadCount</code> now has only the drawer's file lines as its caller."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The panel's module. <code>HOLDS</code> loses the thread count, and <code>notesOf</code> spells a hold out only when it has a phrase.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "For <code>failing</code> and <code>changes</code>, open or closed, the notes give the same text as at the base. For <code>threads</code>, they give <code>threads</code> only when another hold is the state word. The review walked each case, and <code>claude plugin test .</code> passed.",
+       "line": 1341
+      },
+      {
+       "kind": "context",
+       "text": "<code>conflict</code> leads <code>HOLDS</code>, so whenever it holds it is the state word, and <code>status !== shown</code> already keeps it out of the notes. The review suggested dropping <code>isNoted</code> for that reason; the code is correct either way.",
+       "line": 1289
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "The open-drawer assertions now expect <code>threads</code> with no count, and no repeated word on a row whose state is <code>threads</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The panel's documentation",
+   "kicker": "The notes paragraph and the example panel",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the panel. Its paragraph on notes now says the row never counts threads, and its example panel's open row ends with <code>reviewing · checks passing</code> and no count."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The notes paragraph and the example's open row follow the code.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The example's open drawer still lists its threads in a form the drawer no longer draws, without the file lines that carry the counts. That predates this change; the review suggested updating it.",
+       "line": 283
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
