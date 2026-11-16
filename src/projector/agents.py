@@ -3,7 +3,8 @@
 A message is one more event line: `send` stores the message in the recipient's folder and appends a
 `PEER MESSAGE` line through `watch.append_events`, so Projector's mod or the Codex adapter delivers it as it
 delivers a watch event. The recipient reads the text with `project agent read`, which prints a notice that the
-message carries none of the user's authority.
+message carries none of the user's authority. A session on another machine is reached through the relay
+(`relay.py`), which turns a message it carries into a local one before delivering it.
 
 Files under the watch state root:
 
@@ -23,15 +24,17 @@ import secrets
 import socket
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
-from . import codex_watch, review, watch
+from . import codex_watch, relay, review, watch
 from .config import MINIMUMS, Config
 from .core import ProjectorError, UsageError
 from .inbox import SESSION, is_one_line, locked, read_json, write_json
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 MESSAGE = re.compile(r"^m-[0-9a-f]{32}$")
+# The UUID `this_machine` writes. `read_text` prints its first 8 characters before the notice.
+MACHINE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 # A model ID has no space or parenthesis, so the model `event_line` prints before its notice cannot read as prose.
 MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,99}$")
 MAX_SUMMARY = 120
@@ -134,8 +137,10 @@ def check_line(field: str, text: str, most: int) -> None:
 
 
 def register(root: Path, session: str, *, name: Optional[str], summary: Optional[str], model: Optional[str],
-             cwd: Path, now: float, environ: Optional[dict] = None) -> dict:
-    """Record the session's registration and answer it. Fields that are not given keep their recorded values."""
+             cwd: Path, now: float, environ: Optional[dict] = None) -> tuple[dict, str]:
+    """Record the session's registration, and queue its presence for the relay when the relay runs for it.
+    Answers the record and why the relay does not run, if it does not. Fields that are not given keep their
+    recorded values."""
     environ = os.environ if environ is None else environ
     if name is not None:
         name = name.lower()
@@ -153,6 +158,7 @@ def register(root: Path, session: str, *, name: Optional[str], summary: Optional
         raise AgentError(NO_DELIVERY.format(session=session))
     login = operator()
     place = checkout(cwd)
+    key, off = relay.command_key(environ) if place.get("repo") else (None, relay.NO_ORIGIN)
     folder = watch.session_folder(root, session)
     with locked(root / "agents"):
         if name is not None:
@@ -161,6 +167,10 @@ def register(root: Path, session: str, *, name: Optional[str], summary: Optional
                         and live(root, other, now)):
                     raise AgentError(f"the live session {other} of {login} already holds the name {name}; its "
                                      f"summary: {found.get('summary') or '(none)'}")
+            for other, found in relay.remote_agents(root, now).items():
+                if other != session and found.get("name") == name and found.get("login") == login:
+                    raise AgentError(f"the live session {other} of {login} on {found.get('machine_name')} already "
+                                     f"holds the name {name}; its summary: {found.get('summary') or '(none)'}")
         old = record(root, session) or {}
         given = {key: value for key, value in (("name", name), ("summary", summary), ("model", model))
                  if value is not None}
@@ -171,24 +181,43 @@ def register(root: Path, session: str, *, name: Optional[str], summary: Optional
             "machine_name": socket.gethostname().split(".")[0] or "unknown", "cwd": str(cwd), **place,
             "relay_id": old.get("relay_id") or secrets.token_hex(8),
             "registered_at": old.get("registered_at") or watch.stamp(now), "updated_at": watch.stamp(now),
-            "relay": "off",
+            "relay": "pending" if key else ("off" if place.get("repo") else "none"),
         }
         with locked(folder):
             write_json(folder / "agent.json", new)
-    return new
+        if key:
+            relay.publish(root, session, new, key, now)
+    return new, off
+
+
+def mark_published(root: Path, session: str) -> None:
+    folder = watch.session_folder(root, session)
+    with locked(folder):
+        found = record(root, session)
+        if found and found.get("relay") != "published":
+            write_json(folder / "agent.json", {**found, "relay": "published"})
 
 
 # Listing
 
 def listing(root: Path, session: Optional[str], now: float, *, everyone: bool = False) -> list[dict]:
-    """The registered sessions signed in as the caller's login, live ones only unless `everyone`, by label."""
+    """The registered sessions signed in as the caller's login, live ones only unless `everyone`, by label: this
+    machine's, and other machines' agents the relay found in the repositories this machine's live sessions work
+    in."""
     mine = record(root, session) if session else None
     login = mine["login"] if mine else operator()
     rows = []
-    for name, found in records(root).items():
+    local = records(root)
+    worked_in = set()
+    for name, found in local.items():
         alive = live(root, name, now)
+        if alive and found.get("repo"):
+            worked_in.add(found["repo"].lower())
         if found.get("login") == login and (alive or everyone):
             rows.append({**found, "session": name, "live": alive, "you": name == session})
+    for name, found in relay.remote_agents(root, now, worked_in).items():
+        if name not in local and found.get("login") == login:
+            rows.append({**found, "session": name, "live": True, "you": False})
     return sorted(rows, key=lambda row: (label(row, row["session"]), row["session"]))
 
 
@@ -200,7 +229,8 @@ def ago(seconds: float) -> str:
 
 
 def row_text(row: dict, now: float) -> str:
-    marks = [mark for mark, shown in (("(you)", row["you"]), ("lapsed", not row["live"])) if shown]
+    marks = [mark for mark, shown in (("(you)", row["you"]), ("lapsed", not row["live"]),
+                                      ("unpublished", row.get("relay") == "pending")) if shown]
     place = " ".join(part for part in (row.get("repo"), row.get("branch")) if part) or row["cwd"]
     changed = watch.seconds_of(row.get("updated_at"))
     return "\t".join([" ".join([label(row, row["session"]), *marks]), describe(row["host"], row.get("model")),
@@ -229,12 +259,12 @@ def recent(folder: Path, now: float) -> list[dict]:
             and (at := watch.seconds_of(item.get("sent_at"))) is not None and now - at < WINDOW]
 
 
-def recipient(root: Path, session: str, sender: dict, found: dict[str, dict], candidates: list[str], to: str,
-              now: float) -> str:
+def recipient(session: str, sender: dict, found: dict[str, dict], reachable: Callable[[str], bool],
+              candidates: list[str], to: str) -> str:
     """The one live session among `candidates` that `to` names and that may receive from `sender`."""
     others = [name for name in candidates if name != session]
     mine = [name for name in others if found[name].get("login") == sender["login"]]
-    alive = [name for name in mine if live(root, name, now)]
+    alive = [name for name in mine if reachable(name)]
     if len(alive) > 1:
         raise AgentError(f"{to} names {len(alive)} live sessions; send to one by its full session ID")
     if alive:
@@ -281,46 +311,135 @@ def claim(folder: Path) -> tuple[str, Path]:
             return message_id, path
 
 
-def send(root: Path, session: str, to: str, text: str, now: float, *, limit: int,
-         answering: Optional[dict] = None) -> tuple[dict, dict, str]:
-    """Store a message for the session `to` names and append its line, and answer the message, the recipient's
-    registration, and how the recipient's events arrive. A reply `answering` a message goes to its sender."""
+def compose(session: str, sender: dict, message_id: str, to: str, text: str, answering: Optional[dict],
+            now: float) -> dict:
+    return {
+        "schema_version": 1, "id": message_id, "from": session,
+        **({"from_name": sender["name"]} if sender.get("name") else {}),
+        "from_host": sender["host"], **({"from_model": sender["model"]} if sender.get("model") else {}),
+        "from_machine": sender["machine"], "login": sender["login"], "to": to, "text": text,
+        **({"reply_to": answering["id"]} if answering else {}),
+        "thread": (answering.get("thread") or answering["id"]) if answering else message_id,
+        "sent_at": watch.stamp(now),
+    }
+
+
+def send(root: Path, session: str, to: str, text: str, now: float, *, limit: int, answering: Optional[dict] = None,
+         environ: Optional[dict] = None) -> tuple[dict, dict, str]:
+    """Store a message for the session `to` names and append its line, or queue it for the relay when that
+    session is on another machine. Answers the message, the recipient's record with its `session`, and how the
+    message travels. A reply `answering` a message goes to its sender."""
     sender = record(root, session)
     if sender is None:
         raise AgentError("this session is not registered, so a reply could not reach it; run "
                          "`project agent register` first")
     check_text(text)
     registered = records(root)
-    named = [] if answering else [name for name, found in registered.items() if found.get("name") == to.lower()]
-    target = recipient(root, session, sender, registered, named or ([to] if to in registered else []), to, now)
-    found = registered[target]
+    remote = {name: found for name, found in relay.remote_agents(root, now).items() if name not in registered}
+    everyone = {**registered, **remote}
+    named = [] if answering else [name for name, found in everyone.items() if found.get("name") == to.lower()]
+    target = recipient(session, sender, everyone, lambda name: name in remote or live(root, name, now),
+                       named or ([to] if to in everyone else []), to)
+    found = {**everyone[target], "session": target}
     sent = [item for item in recent(watch.session_folder(root, session), now) if item.get("to") == target]
     if len(sent) >= limit:
         raise AgentError(f"this session sent {len(sent)} messages to {label(found, target)} in the past hour, the "
                          f"most agent.message_limit allows; wait, or raise the limit with "
                          f"`project config set agent.message_limit <number> --user`")
+    if target in remote:
+        message = send_relayed(root, session, sender, found, text, answering, now, environ)
+        way = "relay (queued)"
+    else:
+        message = send_local(root, session, sender, target, text, answering, now)
+        way = watch.delivery(root, target, now)
+    sender_folder = watch.session_folder(root, session)
+    with locked(sender_folder):
+        items = [*recent(sender_folder, now), {"id": message["id"], "to": target, "sent_at": message["sent_at"]}]
+        write_json(sender_folder / "sent.json", {"schema_version": 1, "items": items})
+    return message, found, way
+
+
+def send_local(root: Path, session: str, sender: dict, target: str, text: str, answering: Optional[dict],
+               now: float) -> dict:
     folder = watch.session_folder(root, target)
     with locked(folder):
         (folder / "messages").mkdir(exist_ok=True)
         prune(folder, now)
         message_id, path = claim(folder)
-        message = {
-            "schema_version": 1, "id": message_id, "from": session,
-            **({"from_name": sender["name"]} if sender.get("name") else {}),
-            "from_host": sender["host"], **({"from_model": sender["model"]} if sender.get("model") else {}),
-            "from_machine": sender["machine"], "login": sender["login"], "to": target, "text": text,
-            **({"reply_to": answering["id"]} if answering else {}),
-            "thread": (answering.get("thread") or answering["id"]) if answering else message_id,
-            "sent_at": watch.stamp(now),
-        }
+        message = compose(session, sender, message_id, target, text, answering, now)
         write_json(path, message)
     # The record is written before its line, so a delivered line always names a message `read` can open.
     watch.append_events(folder, [codex_watch.Event(event_line(message), ["message", message_id])])
-    sender_folder = watch.session_folder(root, session)
-    with locked(sender_folder):
-        items = [*recent(sender_folder, now), {"id": message_id, "to": target, "sent_at": message["sent_at"]}]
-        write_json(sender_folder / "sent.json", {"schema_version": 1, "items": items})
-    return message, found, watch.delivery(root, target, now)
+    return message
+
+
+def send_relayed(root: Path, session: str, sender: dict, found: dict, text: str, answering: Optional[dict],
+                 now: float, environ: Optional[dict]) -> dict:
+    """Seal a message to a session on another machine and queue it in the outbox of the repository both work in."""
+    where = f"{label(found, found['session'])} on {found.get('machine_name') or 'another machine'}"
+    if (sender.get("repo") or "").lower() != found["repo"].lower():
+        raise AgentError(f"{where} works in {found['repo']}, and a message reaches another machine only through a "
+                         "repository both sessions work in; this session does not work in it")
+    key, off = relay.command_key(environ)
+    if key is None:
+        raise AgentError(f"the relay is off on this machine, so a message cannot reach {where}: {off}")
+    message = compose(session, sender, f"m-{uuid.uuid4().hex}", found["relay_id"], text, answering, now)
+    relay.queue_message(root, found["repo"], sender["cwd"], key, message, now)
+    return message
+
+
+HOSTS = ("claude", "codex", "other")
+
+
+def shaped(value: object, pattern: re.Pattern, optional: bool = False) -> bool:
+    return (optional and value is None) or (isinstance(value, str) and pattern.fullmatch(value) is not None)
+
+
+def plain_line(value: object, most: int) -> bool:
+    return isinstance(value, str) and bool(value.strip()) and is_one_line(value) and "\t" not in value \
+        and len(value) <= most
+
+
+def well_formed(message: dict) -> bool:
+    """Whether a relayed message holds every field a delivered message needs, each in the shape `register` and
+    `send` give it. The event line prints the sender's name, host, and model before the authority notice, so each
+    must be a fixed shape rather than text a sender chose."""
+    text = message.get("text")
+    return (shaped(message.get("id"), MESSAGE) and shaped(message.get("from"), SESSION)
+            and shaped(message.get("from_name"), NAME, optional=True)
+            and message.get("from_host") in HOSTS and shaped(message.get("from_model"), MODEL_ID, optional=True)
+            and shaped(message.get("reply_to"), MESSAGE, optional=True) and shaped(message.get("thread"), MESSAGE)
+            and shaped(message.get("from_machine"), MACHINE)
+            and all(isinstance(message.get(field), str) for field in ("login", "to", "sent_at"))
+            and isinstance(text, str) and bool(text.strip()) and len(text.encode("utf-8")) <= MAX_TEXT)
+
+
+def well_formed_presence(found: dict) -> bool:
+    """Whether another machine's registration holds each field `list`, `send`, and `read` print, in the shape
+    `register` gives it."""
+    return (shaped(found.get("name"), NAME, optional=True) and shaped(found.get("model"), MODEL_ID, optional=True)
+            and found.get("host") in HOSTS
+            and (found.get("summary") is None or plain_line(found["summary"], MAX_SUMMARY))
+            and plain_line(found.get("machine_name"), 64) and plain_line(found.get("cwd"), 4096)
+            and all(found.get(field) is None or plain_line(found[field], 256) for field in ("repo", "branch"))
+            and isinstance(found.get("login"), str) and isinstance(found.get("updated_at"), str))
+
+
+def deliver(root: Path, session: str, message: dict, now: float) -> str:
+    """Write a message the relay carried to the session's folder and append its line, once: answers `delivered`,
+    `replay` for a message already there, or `collision` for another message under a delivered ID."""
+    folder = watch.session_folder(root, session)
+    with locked(folder):
+        (folder / "messages").mkdir(exist_ok=True)
+        prune(folder, now)
+        path = folder / "messages" / f"{message['id']}.json"
+        found = read_json(path)
+        if found is not None:
+            same = all(found.get(field) == message.get(field) for field in ("from", "sent_at", "text"))
+            return "replay" if same else "collision"
+        write_json(path, message)
+    watch.append_events(folder, [codex_watch.Event(event_line(message), ["message", message["id"]])])
+    return "delivered"
 
 
 def own_message(root: Path, session: str, message_id: str) -> tuple[Path, dict]:
@@ -343,7 +462,9 @@ def read(root: Path, session: str, message_id: str, now: float) -> tuple[dict, O
             message["read_at"] = watch.stamp(now)
             write_json(path, message)
     sender = message.get("from")
-    return message, record(root, sender) if isinstance(sender, str) and SESSION.match(sender) else None
+    if not isinstance(sender, str) or not SESSION.match(sender):
+        return message, None
+    return message, record(root, sender) or relay.remote_agents(root, now).get(sender)
 
 
 def reply(root: Path, session: str, message_id: str, text: str, now: float, *, limit: int) -> tuple[dict, dict, str]:
@@ -365,5 +486,5 @@ def read_text(message: dict, sender: Optional[dict]) -> str:
 
 
 def summary_of(message: dict, found: dict, delivery: str) -> str:
-    return (f"Sent {message['id']} to {label(found, message['to'])} ({describe(found['host'], found.get('model'))}); "
-            f"delivery: {delivery}")
+    return (f"Sent {message['id']} to {label(found, found['session'])} "
+            f"({describe(found['host'], found.get('model'))}); delivery: {delivery}")

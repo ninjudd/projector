@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -831,3 +831,117 @@ the change it names. Two processes racing for one name run as two threads,
 which take the name lock through separate file descriptors, as two
 processes do. The criteria that also name another machine, such as the
 rate limit with B on the other machine, keep that half for layer 2.
+
+## 10. What the relay settled
+
+Layer 2 builds § 2.2. Building it settled these details, and changed the
+design where this list says so:
+
+- **`relay` in a record means one of four things.** `pending` while the
+  presence waits in the outbox, `published` once a push lands it, `off`
+  when this machine holds no usable key, and `none` when the checkout has
+  no GitHub origin to relay through.
+- **The cryptography is `seal` and `unseal`.** `unseal` stands for § 2.4's
+  `open`, which would shadow Python's built-in. The tag covers the version,
+  the sender's and the ephemeral public keys, and the ciphertext, and an
+  all-zero key agreement is refused. On the development machine, ChaCha20
+  encrypted 16 KiB in 17.7 ms, and sealing and opening a short record took
+  9 ms together.
+- **`key init` refuses when `agent.key` is set.** Rotation is deferred
+  (§ 6), so `key init` names `key remove` rather than silently making a
+  key that no earlier message opens with.
+- **`key.json` records where the key is stored.** The state root's
+  `key.json` holds the key's ID, its store, and why it is inline, and no
+  secret, so `list` can say why without touching the keychain. `list`
+  reads no keychain: a keychain error in its header comes from the
+  daemon's last read.
+- **The cache records what is on `origin`.** `relay/<owner>/<repo>.json`
+  also holds `remote`, the key's refs and their commits as the last fetch
+  or push left them, and `seen`, what each commit held when it was opened,
+  and keeps `agents` by relay ID. A command reads a moved ref's `old` from
+  `remote` rather than from its own checkout's tracking ref, because the
+  push may come from another clone.
+- **Outbox items carry their checkout and what they hold.** Each item also
+  records the `cwd` that queued it, a `meta` of its kind and expiry or send
+  time, and `stale` after a failed lease, and the outbox records the refs
+  a running push carries as `pushing`, which the daemon clears when it
+  starts.
+- **A failed lease is retried on the commit the next fetch finds.** An
+  update takes that commit as its `old`. A deletion of a ref that belongs
+  to another machine's agent is dropped instead, because the ref moved
+  when that machine renewed it.
+- **A failing push waits for the next poll.** Between polls, the daemon
+  starts a repository's job only when its outbox changed since the last
+  job, so a change that keeps failing does not push every second.
+- **Examining is bounded too.** A job examines at most 256 new refs, four
+  times the 64 it opens, so refs that fail before opening cannot make a job
+  spawn unbounded `git ls-tree` processes.
+- **A stale message counts as rejected.** A message whose `sent_at` is 7
+  days old fails § 2.2 step 6, so it counts under `relay: rejected` as
+  that step says. A replay does not count, and a collision does.
+- **Relayed sender fields keep layer 1's shapes.** A message is rejected,
+  and counted, unless its `from_name` matches the name pattern, its
+  `from_host` is `claude`, `codex`, or `other`, its `from_model` matches
+  `MODEL_ID`, and its IDs are message and session IDs. Presence is held to
+  the same name, model, and host shapes, a one-line summary, and one-line
+  machine, checkout, repository, and branch fields. These are the fields an
+  event line or `list` prints, and the sender chose them.
+- **A key the machine no longer holds is cleaned up by its ID.** A job
+  deletes every ref of this machine's agents under any key other than the
+  one `agent.key` names, and fetches those keys' refs to find the inbox
+  refs addressed to them. A keychain that cannot be read does not count as
+  giving the key up, so a locked keychain deletes nothing.
+- **A lapsed agent keeps its repository polled until its refs are gone.**
+  So its own machine finds and deletes the messages still addressed to it.
+- **The Codex `SessionEnd` mark is starting the daemon.** Disconnecting
+  already lapses the session at once, so the hook writes no other mark; it
+  starts the daemon when the session is registered, so a daemon is
+  running to delete the session's refs.
+- **`--no-gpg-sign` guards a Git that signs `commit-tree`.** Git 2.54's
+  `commit-tree` does not read `commit.gpgSign`, so the identity test cannot
+  fail when the flag is dropped. The flag stays for versions that do.
+- **One process runner bounds every child.** `core.run_bounded` runs the
+  keychain tools and the relay's Git commands in their own process group
+  and kills the group at the timeout, so a hook or helper dies with its
+  parent.
+
+`tests/test_crypto.py` and `tests/test_relay.py` cover the relay criteria
+in § 4, and the second half of the rate-limit criterion. The relay tests
+lower the keychain timeout to 1 second and the push timeout to 2, and the
+Windows backend runs behind a fake `advapi32` only, as no Windows runner
+exercises it. Each security check was broken by hand, and a test failed
+for each but the `--no-gpg-sign` flag above.
+
+## 11. Outcome
+
+Shipped in two layers: the local messages, then the relay. Every
+acceptance criterion in § 4 has a test. The two-session check by hand
+after merge, on one machine and then on two, remains for the user, as § 4
+says.
+
+Review of the relay settled these details:
+
+- **Untrusted JSON nests at most 8 deep.** A job counts the brackets
+  outside strings in a `sealed.json` blob, and in the plaintext it opens,
+  before it parses either, and treats deeper nesting, or a
+  `RecursionError`, as a record that does not open. So a planted blob of
+  nested brackets under the 32 KiB cap is rejected and its ref deleted
+  like any other, rather than stopping every later job in the repository.
+  The count is one pass over the bytes, after the 32 KiB cap, that tracks
+  whether it is inside a string and after a backslash. A regular expression
+  that skipped strings backtracked quadratically on a run of escaped
+  quotes, holding the GIL, and so the daemon's loop, for seconds a blob.
+  The relay's other patterns are anchored, and no two neighboring repeats
+  in any of them can match the same character, so each runs in linear time.
+- **The daemon compares changes, not the outbox file.** § 10's "changed
+  since the last job" means a queued change, a ref and what it is to hold,
+  that the last job did not try to push. The job records the changes its
+  push took under the outbox lock, or, when it pushes nothing, those queued
+  when it started and those it queued. A change queued while a push runs
+  then starts a job on the next tick, while a failure that only gained its
+  error still waits for the next poll. Taking the outbox's file signature
+  after the push, even inside the job, missed the first case, because the
+  job's own write recording the push's outcome came after the new change.
+- **A relayed `from_machine` is the UUID `this_machine` writes.** `read`
+  prints its first 8 characters before the notice when the sender's
+  presence has expired, so § 10's sender shapes include it.
