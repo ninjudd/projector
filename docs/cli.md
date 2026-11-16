@@ -562,9 +562,9 @@ labels up to date, whatever you answer about the check:
 - It gives a label the current color when the label still has a color an
   earlier release created it with and Projector's description, such as the
   yellow `fbca04` and the green `0e8a16` that `reviewing` and `clean` had
-  before they took the panel's colors. Nobody chose that color, so `init`
-  moves it. A label with any other color
-  or description is the repository's own, and `init` leaves it as it is.
+  before they took the panel's colors. Nobody chose those colors, so `init`
+  moves them. A label with any other color or description is the
+  repository's own, and `init` leaves it as it is.
 
 `init` prints a line for each change, such as
 `project: recolored the reviewing label from fbca04 to d77757 on acme/app`.
@@ -2011,10 +2011,10 @@ they add it:
 The colors are the ones the panel draws the two states in on Claude Code's
 dark themes: `reviewing` in Claude's orange, which the light themes share,
 since yellow marks a review's findings, and `clean` in the `success` green.
-A light theme draws `clean` in a darker green. The review commands use a label that already exists as it is, and
-never change its color or description. `project init` gives a label the
-current color only while it still has an earlier release's color and
-Projector's description, as
+A light theme draws `clean` in a darker green. The review commands use a
+label that already exists as it is, and never change its color or
+description. `project init` gives a label the current color only while it
+still has an earlier release's color and Projector's description, as
 [Keep the review labels current](#keep-the-review-labels-current) describes.
 `clean` says that Projector's newest review of the current head is clean,
 not that the pull request may merge, because a repository can still require

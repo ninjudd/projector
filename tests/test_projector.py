@@ -1897,7 +1897,8 @@ class LabelSyncTests(RepositoryTestCase):
         }
         for case, (label, color) in cases.items():
             with self.subTest(case=case):
-                # The clean label an earlier release made, in its green, which every case leaves untouched.
+                # The clean label an earlier release made, in its green. No case edits it by hand, so `init`
+                # recolors it in every case.
                 self.github.labels = [dict(label), {"name": "clean", "color": "0e8a16",
                                                     "description": review.LABELS[review.CLEAN_LABEL][1]}]
 
