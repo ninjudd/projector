@@ -164,8 +164,9 @@ CLAUDE_PUBLISH_RULES = ("Bash(project *)", "Bash(project summary publish *)")
 # match the `project` rules and run outside the sandbox. An empty list keeps
 # every absolute path for `project` to Codex's usual approval, and leaves the
 # bare name, which the skills run, allowed. Codex before 0.107 cannot parse it
-# and drops the whole policy, so `init` leaves it out for a Codex it finds to
-# be older, which resolves no path in any case.
+# and drops the whole policy, so `init` leaves it out for a Codex on `PATH` it
+# finds to be older, which resolves no path. A newer Codex that reads the same
+# rules, such as the desktop app, does, so the note `init` prints says so.
 CODEX_HOST_EXECUTABLE = 'host_executable(name = "project", paths = [])'
 # The first Codex that parses `CODEX_HOST_EXECUTABLE`.
 HOST_EXECUTABLE_SINCE = (0, 107)
@@ -362,10 +363,11 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
     expected = codex_rules(version)
     too_old = version is not None and expected != CODEX_RULES
     codex = f"Codex {shown_version(version)}" if version is not None else "Codex"
-    # Why the file leaves out `CODEX_HOST_EXECUTABLE`, and how to add it.
-    older = (f"{codex} is older than {shown_version(HOST_EXECUTABLE_SINCE)}, the first to parse "
-             f"`{CODEX_HOST_EXECUTABLE}`, so {name} leaves it out; update Codex and run `project init` again to "
-             "add it" if too_old else None)
+    too_old_note = (f"{codex} is older than {shown_version(HOST_EXECUTABLE_SINCE)}, the first to parse "
+                    f"`{CODEX_HOST_EXECUTABLE}`, so {name} leaves it out; while it does, any Codex 0.108 or newer "
+                    "that reads it, such as the desktop app, runs a path to a program named `project` outside its "
+                    "sandbox, so update or remove the old `codex` and run `project init` again to add the line"
+                    if too_old else None)
 
     def kept(reason: str) -> FileAction:
         lines = CODEX_PREFIX_RULES if too_old else (*CODEX_PREFIX_RULES, CODEX_HOST_EXECUTABLE)
@@ -378,7 +380,7 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
     if unreadable:
         return kept(unreadable)
     if text == expected:
-        return FileAction(name, "unchanged", older)
+        return FileAction(name, "unchanged", too_old_note)
     if not apply:
         if too_old and text == CODEX_RULES:
             return FileAction(name, "kept", f"{name} holds `{CODEX_HOST_EXECUTABLE}`, which {codex} cannot parse, so "
@@ -396,7 +398,7 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
         write_through(path, expected)
     except OSError as error:
         return kept(f"could not be written ({error.strerror})")
-    return FileAction(name, "updated" if existed else "created", older)
+    return FileAction(name, "updated" if existed else "created", too_old_note)
 
 
 def codex_allows(text: str, command: Sequence[str]) -> bool:

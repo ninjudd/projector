@@ -259,7 +259,12 @@ what it did to each:
   your `PATH` reports a version older than 0.107, `init` writes the rules
   without the `host_executable` line and its comment, and says on stderr
   to update Codex and run `init` again. Such a Codex resolves no program
-  path, so the line closes no hole there. When `init` finds no `codex`, or
+  path, so the line closes no hole for it. Every Codex that uses
+  `~/.codex` reads the same rules, though, and while the file lacks the
+  line, any Codex 0.108 or newer that reads it, such as the desktop app or
+  an IDE extension beside an old `codex` command, runs a path to a program
+  named `project` outside its sandbox. So update or remove the old `codex`
+  and run `init` again. When `init` finds no `codex`, or
   one that reports no version, it writes the whole file, so update a Codex
   that is not on your `PATH`, such as one only the desktop app runs, to
   0.107 or newer. `project review rules` reads the version the same way,

@@ -1328,7 +1328,10 @@ class MutationTests(RepositoryTestCase):
         self.assertTrue(permissions.CODEX_RULES.startswith(written), "only the line and its comment are left out")
         self.assertTrue(permissions.codex_allows(written, permissions.PUBLISH))
         self.assertIn("Codex 0.106.0 is older than 0.107", stderr)
-        self.assertIn("update Codex and run `project init` again", stderr)
+        # A newer Codex that reads the same rules, such as the desktop app, resolves a path to its basename.
+        self.assertIn("any Codex 0.108 or newer that reads it, such as the desktop app, runs a path to a program "
+                      "named `project` outside its sandbox", stderr)
+        self.assertIn("update or remove the old `codex` and run `project init` again", stderr)
         self.assertIn("unchanged ~/.codex/rules/projector.rules\n", self.invoke("init")[1])
 
         for version in ((0, 107, 0), (0, 169, 0), None):
