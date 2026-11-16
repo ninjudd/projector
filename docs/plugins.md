@@ -281,12 +281,13 @@ not subscribed to before.
   /projector                            1 pull request · 1 review request  12s   [-]
    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
 
-   #258 threads grace Name the revi… 2 threads · reviewing · checks passing 5m
+   #258 findings grace Name the reviewed head i… reviewing · checks passing 5m
         reviewer · sig-head · +84 −1 in 5 files · checks passing · reviewing
         7: Discuss  8: Dismiss
         open in github  open in projector
-        src/review.py:412 · ada · P2 · The signature names the base, not the head
-        docs/cli.md:88 · ada · P3 · Say which head the line names · outdated
+        - src/review.py 1 finding
+          :412 · ada · P2 · The signature names the base, not the head
+        + docs/cli.md 1 finding
                                                            ctrl+x tab to focus
 ```
 
@@ -306,7 +307,7 @@ review wants something:
 - **`failing`**, in red, while the head's checks fail. The panel leaves out
   the `projector/review` status a review posts, as the drawer's checks do.
   A review fails that status when it finds something, which the row already
-  shows as `changes` or `threads`. It also leaves out a failed check run of
+  shows as `changes` or `findings`. It also leaves out a failed check run of
   a cancelled workflow run, as a newer run in the same concurrency group
   cancels it, such as one a review's label starts, when the check started
   at or after the cancel. Only a job that runs `if: always()` to gather the
@@ -315,7 +316,8 @@ review wants something:
   workflow tests the code again, by still running or by running a check of
   the same name rather than skipping or cancelling it.
 - **`changes`**, in yellow, while a review requests changes.
-- **`threads`**, in yellow, while review threads are unresolved.
+- **`findings`**, in yellow, while review threads are unresolved. Each
+  unresolved thread is a finding, whether a review or a person opened it.
 - **`reviewing`**, in orange, while the pull request carries the
   `reviewing` label, which `project review setup` adds when a review starts.
 - **`clean`**, in green, while it carries the `clean` label, which
@@ -331,7 +333,7 @@ draft state and the labels with the rest of the line, from the watch
 daemon's query of the pull request.
 
 Notes follow the title and name every other state that applies, in the
-order above and each in its color: `failing`, `changes`, `threads`,
+order above and each in its color: `failing`, `changes`, `findings`,
 `reviewing`, `clean`, and `draft` in italic, then `approved` in green,
 `passing` in green while the head's checks pass, and last `cancelled`,
 muted, while a workflow's newest run on the head was cancelled, so that
@@ -341,10 +343,12 @@ the cancel still counts, so such a head can read `failing` with a
 `failing` with a green `clean` after its title, and a draft that conflicts
 says `draft` as well as its italic number.
 No note names `conflict`, which always takes the state. While a pull
-request's drawer is open, its row spells the holds out as `checks failing`,
-`changes requested`, and the threads' count, such as `2 threads`, and names
-the one its state already says as well. It spells `passing` out as `checks
-passing` too. The ` · ` between two notes keeps
+request's drawer is open, its row spells the holds out as `checks failing`
+and `changes requested`, and names the one its state already says as well.
+It spells `passing` out as `checks passing` too. The row never counts the
+findings, open or closed, and `findings` has nothing to spell out, so an
+open row whose state is `findings` does not repeat it; the drawer counts each
+file's findings. The ` · ` between two notes keeps
 the default text color. The line ends with how long ago the pull request
 last changed, in the column where the inbox's items end with their ages.
 Only the title shortens on a narrow terminal. A pull request that the watch
@@ -462,7 +466,7 @@ review threads, gathered under their files:
 - **open in projector** opens its Projector summary, when the pull
   request's description links one.
 - **Each file with an unresolved review thread** is a line that names the
-  file and counts its threads in yellow, such as `2 threads`. Every file
+  file and counts its findings in yellow, such as `2 findings`. Every file
   starts collapsed, marked `+`, so the drawer opens as a short list. Click a
   file, or press Enter with the focus ring on it, to show its threads and
   mark it `-`, and again to hide them. A file stays open while its drawer
@@ -470,10 +474,10 @@ review threads, gathered under their files:
   drawer opens. One open file and one collapsed file look like this:
 
   ```text
-  - src/audio/player.ts 2 threads
+  - src/audio/player.ts 2 findings
     :120 · grace · P2 · A failed retry blocks other downloads from recovering
     :188 · grace · outdated · P2 · A background refresh can overwrite a newer cached file
-  + docs/notes.md 1 thread
+  + docs/notes.md 1 finding
   ```
 
   The threads run oldest first within a file, and the files come in the
@@ -672,7 +676,7 @@ out of view. A collapsed line starts with `+`, where an item's starts with
 requests and the review requests collapse apart, each to a line of its own,
 and yours always come first. With no state beside it, each number takes the
 color of its row's state: red for `conflict` or `failing`, yellow for
-`changes` or `threads`, orange for `reviewing`, green for `clean`, the
+`changes` or `findings`, orange for `reviewing`, green for `clean`, the
 default text color for `draft`, and light blue for `ready`. A draft's number
 is italic as well, as on its row, so a held draft that keeps its `clean`
 label reads as an italic green number. A pull request that is still loading
