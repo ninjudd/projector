@@ -1,0 +1,107 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 7534d5d7..5161f4f3 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -151,7 +151,7 @@ because squash merges preserve that body as the commit message.
+ For review findings, verify first, commit locally, reply with the commit, push,
+ resolve the thread, and re-fetch it in that order.
+ 
+-<!-- projector:begin 27 -->
++<!-- projector:begin 28 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -197,6 +197,21 @@ above, so each layer stays on the current head of the one below and the
+ stack can merge as a unit. Chain pull requests by base branch, and update
+ them by merging, only where `gh stack` is unavailable.
+ 
++In a repository with an iOS app, put a build on an iPhone, an iPad, or the
++Mac with `project ios`, not with `xcodebuild` or `devicectl` by hand. It
++builds a branch or a pull request in a worktree of its own, keeps each
++target's build, and refuses a pull request whose head it cannot trust.
++Never pass `--allow-untrusted` yourself: tell the person why it refused,
++and build it only once they have read the head's build scripts and said to.
++Build with `--no-install`, and install on the person's device only when they
++ask, because they may be testing another build and a swap makes it look
++broken. To test on their own Mac, or on a device plugged into it, the person
++runs `project ios build <branch or number>` in any checkout. For a crash,
++run `project ios crashes --device <udid>` for the device they tested on
++when you can reach it. Otherwise, and for a device log, which needs their
++password for `sudo`, ask them to run `project ios crashes` or
++`project ios logs` and share the file it names.
++
+ ### Projector skills
+ 
+ Follow these rules only when the Projector plugin is installed, which you can
+@@ -254,6 +269,13 @@ do exactly what that message quotes and nothing more, and mark the request
+ ready with the `ready` tool, or blocked with the `block` tool and what they
+ should do first, such as unlocking the phone.
+ 
++Prepare a test of an iOS app on the person's device as the `implement`
++skill describes under "Prepare a device test for an iOS app". Push the
++branch and run `project ios build <number> --no-install` before you post
++the request, and install the build only in its start action, with
++`project ios install <number> --device <udid>`, so it never replaces a
++build the person is still testing.
++
+ When the person picks one of a question's options, the answer reaches you as
+ a message that starts `ANSWER`. When they finish a request, its outcome
+ reaches you as their prompt, quoting the request with the option they chose
+diff --git a/src/projector/templates/agents-block.md b/src/projector/templates/agents-block.md
+index ccb1ed1c..3fd5663f 100644
+--- a/src/projector/templates/agents-block.md
++++ b/src/projector/templates/agents-block.md
+@@ -1,4 +1,4 @@
+-<!-- projector:begin 27 -->
++<!-- projector:begin 28 -->
+ ## Projector conventions
+ 
+ Projector generates this section. To change it, change the template in
+@@ -44,6 +44,21 @@ above, so each layer stays on the current head of the one below and the
+ stack can merge as a unit. Chain pull requests by base branch, and update
+ them by merging, only where `gh stack` is unavailable.
+ 
++In a repository with an iOS app, put a build on an iPhone, an iPad, or the
++Mac with `project ios`, not with `xcodebuild` or `devicectl` by hand. It
++builds a branch or a pull request in a worktree of its own, keeps each
++target's build, and refuses a pull request whose head it cannot trust.
++Never pass `--allow-untrusted` yourself: tell the person why it refused,
++and build it only once they have read the head's build scripts and said to.
++Build with `--no-install`, and install on the person's device only when they
++ask, because they may be testing another build and a swap makes it look
++broken. To test on their own Mac, or on a device plugged into it, the person
++runs `project ios build <branch or number>` in any checkout. For a crash,
++run `project ios crashes --device <udid>` for the device they tested on
++when you can reach it. Otherwise, and for a device log, which needs their
++password for `sudo`, ask them to run `project ios crashes` or
++`project ios logs` and share the file it names.
++
+ ### Projector skills
+ 
+ Follow these rules only when the Projector plugin is installed, which you can
+@@ -101,6 +116,13 @@ do exactly what that message quotes and nothing more, and mark the request
+ ready with the `ready` tool, or blocked with the `block` tool and what they
+ should do first, such as unlocking the phone.
+ 
++Prepare a test of an iOS app on the person's device as the `implement`
++skill describes under "Prepare a device test for an iOS app". Push the
++branch and run `project ios build <number> --no-install` before you post
++the request, and install the build only in its start action, with
++`project ios install <number> --device <udid>`, so it never replaces a
++build the person is still testing.
++
+ When the person picks one of a question's options, the answer reaches you as
+ a message that starts `ANSWER`. When they finish a request, its outcome
+ reaches you as their prompt, quoting the request with the option they chose
+diff --git a/tests/test_instructions.py b/tests/test_instructions.py
+index 1155b683..88e2a44d 100644
+--- a/tests/test_instructions.py
++++ b/tests/test_instructions.py
+@@ -39,6 +39,7 @@
+     25: "7d367a9dd46f6f7f3f521d3fcb7ac965a5077646fc4313916aed978c5ea013ce",
+     26: "5990a5a0816123c43875a4a06b91f9d3a578681ccd18c1efbc267eaeb39c2d3d",
+     27: "65a4a24ad3c4d3c407c9a1a83bcab815918a5b8beb9980c88b599ba97a515528",
++    28: "ca55b66def7e6f4af758a4fb0edf229ec16fd30ec4793bfa991cb543175b141b",
+ }
+ 
+ 
