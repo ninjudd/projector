@@ -1,0 +1,311 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index f615eed2..43eda658 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -497,7 +497,9 @@ Does this repository rely on Projector alone to sign off pull requests before me
+ 
+ `--require-review` answers yes and `--no-require-review` answers no, without
+ a prompt, and both are refused outside a Git repository. Without a terminal
+-or a flag, `init` asks nothing and changes nothing. When `gh` cannot read the
++or a flag, `init` asks nothing and changes nothing but the review labels, as
++[Keep the review labels current](#keep-the-review-labels-current) describes.
++When `gh` cannot read the
+ default branch's rules, because it is missing, signed out, or offline,
+ `init` skips the question with a note and changes nothing, unless a flag or a
+ recorded `true` asked for the check, which then fails `init`. A yes does four
+@@ -549,6 +551,27 @@ the workflow, and run:
+ project config set review.require_check false
+ ```
+ 
++### Keep the review labels current
++
++In a GitHub repository, `init` also brings the `reviewing` and `clean`
++labels up to date, whatever you answer about the check:
++
++- It creates each label the repository lacks, with the color and
++  description that
++  [Review a pull request](#review-a-pull-request) lists.
++- It gives a label the current color when the label still has a color an
++  earlier release created it with and Projector's description, such as the
++  yellow `fbca04` and the green `0e8a16` that `reviewing` and `clean` had
++  before they took the panel's colors. Nobody chose that color, so `init`
++  moves it. A label with any other color
++  or description is the repository's own, and `init` leaves it as it is.
++
++`init` prints a line for each change, such as
++`project: recolored the reviewing label from fbca04 to d77757 on acme/app`.
++When GitHub refuses, `init` says so and goes on, because the labels only show
++a review. With `review.labels` set to `false`, `init` leaves the labels
++alone.
++
+ ## Browse projects
+ 
+ Run `list` to group projects by priority without creating an index. Each row
+@@ -1982,13 +2005,20 @@ they add it:
+ 
+ | Label | Color | Description |
+ | --- | --- | --- |
+-| `clean` | `0e8a16` | Projector's newest review of the current head is clean |
+-| `reviewing` | `fbca04` | A Projector review of this pull request is in progress |
+-
+-A label that already exists is used as it is, and Projector never changes
+-its color or description. `clean` says that Projector's newest review of the
+-current head is clean, not that the pull request may merge, because a
+-repository can still require people's approval. A label stays on the pull
++| `clean` | `4eba65` | Projector's newest review of the current head is clean |
++| `reviewing` | `d77757` | A Projector review of this pull request is in progress |
++
++The colors are the ones the panel draws the two states in on Claude Code's
++dark themes: `reviewing` in Claude's orange, which the light themes share,
++since yellow marks a review's findings, and `clean` in the `success` green.
++A light theme draws `clean` in a darker green. The review commands use a label that already exists as it is, and
++never change its color or description. `project init` gives a label the
++current color only while it still has an earlier release's color and
++Projector's description, as
++[Keep the review labels current](#keep-the-review-labels-current) describes.
++`clean` says that Projector's newest review of the current head is clean,
++not that the pull request may merge, because a repository can still require
++people's approval. A label stays on the pull
+ request through a push, so `setup` removes a stale `clean` when the next
+ review starts. `publish` reads the head again after it adds `clean`, and
+ takes the label back off when a push moved the head during the edit. Set
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index e87a62d8..41e2b083 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -2867,6 +2867,25 @@ def init_required_check(arguments: argparse.Namespace, root: Path, files: list[F
+         record_required_check(root, True)
+ 
+ 
++def init_labels(root: Path) -> None:
++    """`init`'s update of the review labels on a repository whose origin is on GitHub, as `review.sync_labels`
++    makes it, so a repository gets a label color a later release chose. Unless `review.labels` is `false`. The
++    labels only show a review, so GitHub refusing them is a warning."""
++    if load_config(root).get("review.labels") is False:
++        return
++    try:
++        repo = review.origin_repo(root)
++    except review.ReviewError:
++        return
++    try:
++        changes = review.sync_labels(repo)
++    except review.ReviewError as error:
++        print(f"project: left {repo}'s review labels as they were: {error}", file=sys.stderr)
++        return
++    for change in changes:
++        print(f"project: {change} on {repo}", file=sys.stderr)
++
++
+ def record_required_check(root: Path, value: bool) -> None:
+     change = write_value(root / CONFIG_NAME, "review.require_check", value)
+     print(f"project: {change.action} review.require_check = {format_value(value)} in {change.path}", file=sys.stderr)
+@@ -3037,6 +3056,7 @@ def run(arguments: argparse.Namespace) -> int:
+                     if needs_admin:
+                         print(f"project: to finish setting it up, {error.steps()}", file=sys.stderr)
+             init_required_check(arguments, root, files)
++            init_labels(root)
+         except InitError as error:
+             # Say what was written before saying what could not be.
+             if not arguments.json_output:
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 31721d85..3774bc00 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -913,8 +913,13 @@ def draft_lines(result: dict) -> list[str]:
+ # docs/projects/review-on-ready/readme.md § 2.3 describes them.
+ CLEAN_LABEL = "clean"
+ REVIEWING_LABEL = "reviewing"
+-LABELS = {CLEAN_LABEL: ("0e8a16", "Projector's newest review of the current head is clean"),
+-          REVIEWING_LABEL: ("fbca04", "A Projector review of this pull request is in progress")}
++# Each label takes the color the panel draws its state in on Claude Code's dark themes: `success`'s green for
++# `clean`, and Claude's orange for `reviewing`, which the light themes share.
++LABELS = {CLEAN_LABEL: ("4eba65", "Projector's newest review of the current head is clean"),
++          REVIEWING_LABEL: ("d77757", "A Projector review of this pull request is in progress")}
++# The colors an earlier release created each label with. `sync_labels` moves a label that still has one, and
++# Projector's description, to the current color, since nobody chose it; any other label is the repository's own.
++FORMER_LABEL_COLORS = {CLEAN_LABEL: ("0e8a16",), REVIEWING_LABEL: ("fbca04",)}
+ REVIEW_CONTEXT = "projector/review"
+ 
+ 
+@@ -933,6 +938,30 @@ def label_names(pr: dict) -> set[str]:
+     return {(label.get("name") or "").lower() for label in pr.get("labels") or []}
+ 
+ 
++def sync_labels(repo: str) -> list[str]:
++    """Create each of Projector's labels that `repo` lacks, and give each that still has a color an earlier
++    release created it with, and Projector's description, the current color. A label with any other color or
++    description is the repository's own and stays as it is. Gives a line for each change."""
++    found = {}
++    for line in run_gh(["api", "--paginate", f"repos/{repo}/labels?per_page=100", "--jq",
++                        ".[] | {name, color, description}"]).splitlines():
++        if line.strip():
++            label = json.loads(line)
++            found[(label.get("name") or "").lower()] = label
++    changes = []
++    for name, (color, description) in LABELS.items():
++        label = found.get(name)
++        if label is None:
++            run_gh(["api", "-X", "POST", f"repos/{repo}/labels", "-f", f"name={name}", "-f", f"color={color}",
++                    "-f", f"description={description}"])
++            changes.append(f"created the {name} label")
++        elif (label.get("color") or "").lower() in FORMER_LABEL_COLORS.get(name, ()) \
++                and label.get("description") == description:
++            run_gh(["api", "-X", "PATCH", f"repos/{repo}/labels/{quote(label['name'])}", "-f", f"color={color}"])
++            changes.append(f"recolored the {name} label from {label['color'].lower()} to {color}")
++    return changes
++
++
+ def change_labels(repo: str, number: int, present: set[str], add: set[str], remove: set[str],
+                   token: Optional[str]) -> dict:
+     """Add `add` and remove `remove`, Projector's labels, in one `gh pr edit`, skipping what `present` already
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 2acd04f4..268833ef 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -15,6 +15,7 @@
+ from contextlib import redirect_stderr, redirect_stdout
+ from io import StringIO
+ from pathlib import Path
++from urllib.parse import unquote
+ from unittest import mock
+ 
+ import importlib.metadata as metadata
+@@ -1615,6 +1616,8 @@ def __init__(self) -> None:
+         self.pulls: dict[int, tuple[str, list[str]]] = {}
+         self.open_findings: set[int] = set()
+         self.statuses: list[dict] = []
++        # The repository's labels, as GitHub lists them.
++        self.labels: list[dict] = []
+         self.calls: list[list[str]] = []
+         # A part of a call's arguments that makes it fail, as gh does offline or signed out.
+         self.fail: str | None = None
+@@ -1658,6 +1661,17 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+             return "{}"
+         if args == ["api", "user", "--jq", ".login"]:
+             return "operator\n"
++        if args == ["api", "--paginate", "repos/acme/app/labels?per_page=100", "--jq",
++                    ".[] | {name, color, description}"]:
++            return "".join(json.dumps(label) + "\n" for label in self.labels)
++        if args[:4] == ["api", "-X", "POST", "repos/acme/app/labels"]:
++            self.labels.append(dict(args[i + 1].split("=", 1) for i, arg in enumerate(args) if arg == "-f"))
++            return "{}"
++        if args[:3] == ["api", "-X", "PATCH"] and args[3].startswith("repos/acme/app/labels/"):
++            name = unquote(args[3].rsplit("/", 1)[1])
++            label = next(label for label in self.labels if label["name"] == name)
++            label.update(args[i + 1].split("=", 1) for i, arg in enumerate(args) if arg == "-f")
++            return "{}"
+         raise AssertionError(f"unexpected gh call: {args}")
+ 
+ 
+@@ -1688,6 +1702,10 @@ def init(self, *extra: str, answer: str | None = None) -> tuple[int, str, str]:
+     def workflow(self) -> Path:
+         return self.root / review.CLEAN_WORKFLOW_PATH
+ 
++    def ruleset_calls(self) -> list[list[str]]:
++        """The calls GitHub saw for the required check, leaving out the update of the labels that follows it."""
++        return [call for call in self.github.calls if not any("/labels" in arg for arg in call)]
++
+     def recorded(self) -> object:
+         path = self.root / ".projector.toml"
+         return tomllib.loads(path.read_text()).get("review", {}).get("require_check") if path.exists() else None
+@@ -1761,14 +1779,14 @@ def test_a_no_records_the_answer_and_changes_nothing_else(self) -> None:
+ 
+         self.assertEqual(0, code, err)
+         self.assertNotIn(cli.REQUIRE_QUESTION, err)
+-        self.assertEqual([], self.github.calls, "a recorded no asks GitHub nothing")
++        self.assertEqual([], self.ruleset_calls(), "a recorded no asks GitHub nothing about the ruleset")
+ 
+     def test_without_a_terminal_or_a_flag_it_asks_and_changes_nothing(self) -> None:
+         code, _, err = self.init()
+ 
+         self.assertEqual(0, code, err)
+         self.assertNotIn(cli.REQUIRE_QUESTION, err)
+-        self.assertEqual([], self.github.calls)
++        self.assertEqual([], self.ruleset_calls())
+         self.assertIsNone(self.recorded())
+         self.assertFalse(self.workflow().exists())
+ 
+@@ -1854,6 +1872,70 @@ def test_the_answer_flags_are_refused_outside_a_repository(self) -> None:
+                 self.assertIn(f"{flag} answers for a repository", err)
+ 
+ 
++class LabelSyncTests(RepositoryTestCase):
++    """`project init`'s update of Projector's review labels in a repository whose origin is acme/app on GitHub."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        subprocess.run(["git", "-C", str(self.root), "remote", "add", "origin", "https://github.com/acme/app.git"],
++                       check=True)
++        self.github = RulesetGitHub()
++        self.enterContext(mock.patch.object(review, "run_gh", self.github))
++
++    def init(self) -> tuple[int, str, str]:
++        return self.invoke("init", "--no-site", "--no-publish-rule", "--no-require-review")
++
++    def colors(self) -> dict[str, str]:
++        return {label["name"]: label["color"] for label in self.github.labels}
++
++    def test_init_recolors_a_label_an_earlier_release_made_and_leaves_one_the_repository_chose(self) -> None:
++        reviewing = review.LABELS[review.REVIEWING_LABEL][1]
++        cases = {
++            "untouched": ({"name": "reviewing", "color": "FBCA04", "description": reviewing}, "d77757"),
++            "recolored by hand": ({"name": "reviewing", "color": "5319e7", "description": reviewing}, "5319e7"),
++            "described by hand": ({"name": "Reviewing", "color": "fbca04", "description": "Under review"}, "fbca04"),
++        }
++        for case, (label, color) in cases.items():
++            with self.subTest(case=case):
++                # The clean label an earlier release made, in its green, which every case leaves untouched.
++                self.github.labels = [dict(label), {"name": "clean", "color": "0e8a16",
++                                                    "description": review.LABELS[review.CLEAN_LABEL][1]}]
++
++                code, _, err = self.init()
++
++                self.assertEqual(0, code, err)
++                self.assertEqual({label["name"]: color, "clean": "4eba65"}, self.colors())
++                self.assertIn("project: recolored the clean label from 0e8a16 to 4eba65 on acme/app", err)
++                said = "project: recolored the reviewing label from fbca04 to d77757 on acme/app"
++                self.assertEqual(case == "untouched", said in err, err)
++
++    def test_init_creates_the_labels_the_repository_lacks_once(self) -> None:
++        code, _, err = self.init()
++
++        self.assertEqual(0, code, err)
++        self.assertEqual({"clean": "4eba65", "reviewing": "d77757"}, self.colors())
++        self.assertIn("project: created the reviewing label on acme/app", err)
++
++        code, _, err = self.init()
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(2, len(self.github.labels), "a rerun finds both labels and changes nothing")
++        self.assertNotIn("label on acme/app", err)
++
++    def test_init_leaves_the_labels_alone_when_review_labels_is_off_and_warns_when_github_refuses(self) -> None:
++        (self.root / ".projector.toml").write_text("[review]\nlabels = false\n", encoding="utf-8")
++        self.assertEqual(0, self.init()[0])
++        self.assertEqual([], [call for call in self.github.calls if any("labels" in arg for arg in call)])
++
++        (self.root / ".projector.toml").unlink()
++        self.github.fail = "repos/acme/app/labels"
++        code, _, err = self.init()
++
++        self.assertEqual(0, code, err)
++        self.assertIn("project: left acme/app's review labels as they were:", err)
++        self.assertEqual([], self.github.labels)
++
++
+ # The clean workflow 0.8.14 wrote, which removed the label without reading the pull request.
+ EARLIER_CLEAN_WORKFLOW = """name: Projector clean label
+ 
+diff --git a/tests/test_review.py b/tests/test_review.py
+index 5063bd68..8805ce70 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -376,7 +376,7 @@ def test_sets_up_the_exact_head_holds_its_lock_and_posts_the_start_comment_as_th
+             self.assertEqual("token-operator" if writes else None, token,
+                              f"only a write carries the reviewer's token: {args}")
+         self.assertEqual(["reviewing"], self.github.labels())
+-        self.assertEqual([{"name": "reviewing", "color": "fbca04",
++        self.assertEqual([{"name": "reviewing", "color": "d77757",
+                            "description": "A Projector review of this pull request is in progress"}],
+                          self.github.created_labels, "the first review in a repository creates the label")
+ 
