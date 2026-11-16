@@ -1,0 +1,137 @@
+{
+ "version": 1,
+ "name": "Ignore cancelled CI runs",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 494,
+  "title": "Leave a cancelled run's checks out of CHECKS and the panel's checks, and note a draft a hold shadows",
+  "head": "0c18ad1a2092955d6a2ed8da58c9109c134d8be9",
+  "headRef": "ignore-cancelled-checks",
+  "base": "f95ab14bef1e9a8c095899cd7e2225fb02d3ac31",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector reads a pull request's CI results in two places. The <b>watch daemon</b> is a background process that polls each pull request a session subscribes to. When a check fails, it sends a <code>CHECKS</code> event to the session that fixes the pull request. The <b>panel</b> is the list of pull requests Projector draws in Claude Code. It colors a failing row <code>failing</code>, and the row's drawer reads <code>checks failing</code>. Both read GitHub's <i>check rollup</i>: every check run and commit status on the head commit, with counts by state.",
+   "Some repositories start CI on GitHub's <code>labeled</code> event and cancel a pull request's earlier run when a new one starts (<code>concurrency: cancel-in-progress</code>). A review adds the <code>reviewing</code> label when it starts, so each review cancels the run in progress. GitHub keeps the cancelled run's checks on the head beside the newer run's. A gathering job, one that runs <code>if: always()</code> once the jobs it needs end, then fails in the cancelled run. So the daemon and the panel reported a failure that no code caused.",
+   "This change tells a cancelled run's two kinds of failure apart. The cancel time is the earliest end of the run's check runs that concluded <code>CANCELLED</code>. Each failure is then handled by when it started:<ul class=\"tight\"><li><b>A check that started at or after the cancel</b> is a gathering job that failed because of the cancel. It is always left out.</li><li><b>A check that started before the cancel</b> failed on its own. It is left out only once a newer run of the same workflow is still running or has run a check of the same name without skipping it.</li></ul>",
+   "A head with nothing failing or pending, whose every workflow's newest run was cancelled, reads <code>checks cancelled</code>. The panel also notes <code>cancelled</code> on a row while a workflow's newest run on the head was cancelled, notes <code>passing</code> in green while the head's checks pass, and notes <code>draft</code> when another status takes a draft's word. <code>docs/cli.md</code> gains a section on keeping review labels from cancelling CI runs."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li><b><code>829877f</code>: changes requested.</b> The first version dropped every failure in a cancelled run, which hid a check that failed before the cancel. It also counted a job that passed before the cancel as passing, so a head whose only run was cancelled could read <code>checks passing</code>.</li><li><b><code>d98ba51</code>: clean.</b> Both findings were fixed and settled. One suggestion asked to rewrap a line of <code>docs/plugins.md</code> and a line of the <code>checksOf</code> comment.</li><li><b><code>0c18ad1</code>: clean.</b> The rewrap landed with the wording unchanged, and the push adds the <code>passing</code> note.</li></ul>"
+   },
+   {
+    "id": "cases",
+    "title": "How a cancelled run's failure reads",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Case</th><th>Daemon and panel</th></tr></thead><tbody><tr><td>A gathering job failed after the cancel</td><td class=\"r\">Left out</td></tr><tr><td>A check failed before the cancel, and a newer run ran it</td><td class=\"r\">Left out; the newer result counts</td></tr><tr><td>A check failed before the cancel, and a newer run is still running</td><td class=\"r\">Left out while pending</td></tr><tr><td>A check failed before the cancel, and the newer run skipped it or nothing ran since</td><td class=\"r\">Counted as failing</td></tr><tr><td>No cancelled check run of that run was read</td><td class=\"r\">Counted as failing</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "daemon",
+   "title": "The daemon leaves out the failures a cancel caused or a newer run retested",
+   "kicker": "How the watch daemon decides which failed checks to report",
+   "intro": [
+    "The daemon's query now asks for each check run's start and end, its suite (workflow run) conclusion, and the workflow run's id, workflow, and start. <code>failures</code> keeps the old rule for what counts as a failure. <code>failed_contexts</code>, which names the checks in a <code>CHECKS</code> event, then drops a failure when <code>caused_by_cancel</code> or <code>superseded</code> says so.",
+    "<code>cancel_times</code> finds when each cancelled run was cancelled, as the earliest end of its check runs that concluded <code>CANCELLED</code>. <code>caused_by_cancel</code> is true for a failure that started at or after that time. <code>superseded</code> is true when a newer run of the same workflow is still running, or ran a check of the same name that neither skipped nor was cancelled. When no cancelled check run of the run was read, the cancel time is unknown, and the failure counts."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "With hand-built rollups against this head: a <code>lint</code> that failed before the cancel, next to a label run that skipped every job, gives <code>['lint']</code>; a gathering job that failed after the cancel gives <code>[]</code>, whether the newer run passed or skipped every job. The panel's <code>checksOf</code> gives <code>failing</code>, <code>passing</code>, and <code>passing</code> for the same rollups."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/watch.py",
+     "note": "Adds <code>run_id</code>, <code>cancel_times</code>, <code>caused_by_cancel</code>, <code>workflow_run</code>, and <code>superseded</code>, and widens the rollup query.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 1033,
+       "text": "The paging loop counts every failure, cancelled-run ones included, so the nodes the daemon writes to its cache hold every failure the counts hold. The panel reads those cached nodes, so it reaches the same answer as the daemon. Checked by reading <code>read_contexts</code> and the paging test."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_watch.py",
+     "note": "Tables of cases for a failure the cancel caused and for one a newer run retests, and a test that a check failed before its run was cancelled is still a CI failure."
+    }
+   ]
+  },
+  {
+   "id": "panel-read",
+   "title": "The panel applies the same rules to its checks",
+   "kicker": "How the panel turns the rollup into one checks state",
+   "intro": [
+    "<code>checksOf</code> now always counts by state and takes out the <code>projector/review</code> status. It then moves each failed check run that <code>causedByCancel</code> or <code>supersededOf</code> picks out from <code>failing</code> to <code>cancelled</code>. These are the same rules the daemon uses. The state is <code>failing</code> or <code>pending</code> when those have a count. Otherwise the state is <code>cancelled</code> when every workflow's newest run on the head was cancelled, and <code>passing</code> after that.",
+    "<code>cancelledOf</code> sets <code>isCancelled</code> when some workflow's newest run on the head was cancelled, using <code>newestRuns</code>. The panel's own query, used for pull requests the daemon has no result for, reads the first 20 contexts with the same fields as the daemon's."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/github.ts",
+     "note": "Adds <code>runOf</code>, <code>cancelTimesOf</code>, <code>causedByCancel</code>, <code>supersededOf</code>, and <code>newestRuns</code>, and rewrites <code>checksOf</code> to count every time.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 284,
+       "text": "A head whose only run passed one job and then was cancelled reads <code>cancelled</code>, not <code>passing</code>, because this check comes before the passing count. Checked with a hand-built rollup and the <code>only a cancelled run, with a passed job</code> case in <code>parse.test.ts</code>."
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds <code>cancelled</code> to <code>Checks</code> and <code>isCancelled</code> to <code>PullRequest</code>."
+    },
+    {
+     "path": "hooks/parse.test.ts",
+     "note": "A table of timed rollups: nothing run since, a newer run that passed, one still running, an unknown cancel time, a check that failed before the cancel with each kind of newer run, and check runs no workflow run made."
+    }
+   ]
+  },
+  {
+   "id": "panel-draw",
+   "title": "The panel draws the cancelled, passing, and draft notes",
+   "kicker": "What a row and its drawer show",
+   "intro": [
+    "A row's notes, the words after its title, now name two more facts about the head's checks. A green <code>passing</code> note follows the approval while the head's checks pass, and an open drawer spells it <code>checks passing</code>, as it spells the holds out. A muted <code>cancelled</code> note comes last while <code>isCancelled</code> holds. A draft whose word another status takes, such as <code>conflict</code>, also gets an italic <code>draft</code> note, because its italic number alone is easy to miss. The drawer's checks read <code>checks cancelled</code> in the muted color."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds the <code>cancelled</code> color, the optional note color and italic, and the <code>draft</code>, <code>passing</code>, and <code>cancelled</code> notes."
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Adds a pull request whose only run a label cancelled, which reads <code>ready</code> with a muted <code>cancelled</code> note and <code>checks cancelled</code> in the drawer. It also adds an approved one whose checks pass, whose notes read <code>approved</code>, <code>passing</code>, and <code>cancelled</code> in that order, with <code>checks passing</code> in an open drawer. It checks that a conflicting draft notes <code>draft</code> in italic."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The CLI guide and the panel's reference",
+   "intro": [
+    "<code>docs/cli.md</code> gains \"Keep review labels from cancelling CI runs\". It explains how Projector tells a cancelled run's two kinds of failure apart and advises leaving <code>labeled</code> out of the checks' workflow. It also shows a separate workflow for a label that should start a fuller run. The <code>CHECKS</code> row of the events table and the panel's states, notes, and drawer checks in <code>docs/plugins.md</code> describe the new behavior."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The new section, and the <code>CHECKS</code> row of the events table."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "The <code>failing</code> state, the notes and their order, the example row, and the drawer's checks."
+    }
+   ]
+  }
+ ]
+}
