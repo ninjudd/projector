@@ -561,8 +561,9 @@ labels up to date, whatever you answer about the check:
   [Review a pull request](#review-a-pull-request) lists.
 - It gives a label the current color when the label still has a color an
   earlier release created it with and Projector's description, such as the
-  yellow `fbca04` that `reviewing` had before it took Claude's orange.
-  Nobody chose that color, so `init` moves it. A label with any other color
+  yellow `fbca04` and the green `0e8a16` that `reviewing` and `clean` had
+  before they took the panel's colors. Nobody chose that color, so `init`
+  moves it. A label with any other color
   or description is the repository's own, and `init` leaves it as it is.
 
 `init` prints a line for each change, such as
@@ -2004,12 +2005,13 @@ they add it:
 
 | Label | Color | Description |
 | --- | --- | --- |
-| `clean` | `0e8a16` | Projector's newest review of the current head is clean |
+| `clean` | `4eba65` | Projector's newest review of the current head is clean |
 | `reviewing` | `d77757` | A Projector review of this pull request is in progress |
 
-The colors are the ones the panel draws the two states in: `reviewing` in
-Claude's orange, since yellow marks a review's findings, and `clean` in
-green. The review commands use a label that already exists as it is, and
+The colors are the ones the panel draws the two states in on Claude Code's
+dark themes: `reviewing` in Claude's orange, which the light themes share,
+since yellow marks a review's findings, and `clean` in the `success` green.
+A light theme draws `clean` in a darker green. The review commands use a label that already exists as it is, and
 never change its color or description. `project init` gives a label the
 current color only while it still has an earlier release's color and
 Projector's description, as

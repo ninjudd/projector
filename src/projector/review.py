@@ -913,11 +913,13 @@ def draft_lines(result: dict) -> list[str]:
 # docs/projects/review-on-ready/readme.md § 2.3 describes them.
 CLEAN_LABEL = "clean"
 REVIEWING_LABEL = "reviewing"
-LABELS = {CLEAN_LABEL: ("0e8a16", "Projector's newest review of the current head is clean"),
+# Each label takes the color the panel draws its state in on Claude Code's dark themes: `success`'s green for
+# `clean`, and Claude's orange for `reviewing`, which the light themes share.
+LABELS = {CLEAN_LABEL: ("4eba65", "Projector's newest review of the current head is clean"),
           REVIEWING_LABEL: ("d77757", "A Projector review of this pull request is in progress")}
 # The colors an earlier release created each label with. `sync_labels` moves a label that still has one, and
 # Projector's description, to the current color, since nobody chose it; any other label is the repository's own.
-FORMER_LABEL_COLORS = {REVIEWING_LABEL: ("fbca04",)}
+FORMER_LABEL_COLORS = {CLEAN_LABEL: ("0e8a16",), REVIEWING_LABEL: ("fbca04",)}
 REVIEW_CONTEXT = "projector/review"
 
 

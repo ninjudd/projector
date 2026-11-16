@@ -1897,13 +1897,15 @@ class LabelSyncTests(RepositoryTestCase):
         }
         for case, (label, color) in cases.items():
             with self.subTest(case=case):
+                # The clean label an earlier release made, in its green, which every case leaves untouched.
                 self.github.labels = [dict(label), {"name": "clean", "color": "0e8a16",
                                                     "description": review.LABELS[review.CLEAN_LABEL][1]}]
 
                 code, _, err = self.init()
 
                 self.assertEqual(0, code, err)
-                self.assertEqual({label["name"]: color, "clean": "0e8a16"}, self.colors())
+                self.assertEqual({label["name"]: color, "clean": "4eba65"}, self.colors())
+                self.assertIn("project: recolored the clean label from 0e8a16 to 4eba65 on acme/app", err)
                 said = "project: recolored the reviewing label from fbca04 to d77757 on acme/app"
                 self.assertEqual(case == "untouched", said in err, err)
 
@@ -1911,7 +1913,7 @@ class LabelSyncTests(RepositoryTestCase):
         code, _, err = self.init()
 
         self.assertEqual(0, code, err)
-        self.assertEqual({"clean": "0e8a16", "reviewing": "d77757"}, self.colors())
+        self.assertEqual({"clean": "4eba65", "reviewing": "d77757"}, self.colors())
         self.assertIn("project: created the reviewing label on acme/app", err)
 
         code, _, err = self.init()
