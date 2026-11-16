@@ -81,8 +81,11 @@ subscriptions change. Once you know what the session is working on, give it
 a name, and a better summary when the generated one says too little:
 
 ```sh
-project agent register --name parser-refactor --summary "Fixing the parser's error handling in acme/app#12"
+project agent register --name parser-refactor --summary "Fixing the parser's error handling in acme/app#12" --model claude-opus-5-5
 ```
+
+Give the model here too, because a registration made from a `fix`
+subscription records none.
 
 A summary you give replaces the generated one for good, so keep it current
 yourself from then on.
