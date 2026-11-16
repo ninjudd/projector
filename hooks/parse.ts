@@ -12,7 +12,11 @@ export type Watcher = {
   written: string
 }
 
-/** One `owner/repo#number` entry of a tracked file. */
+/**
+ * One `owner/repo#number` entry of a tracked file. The parsers lowercase
+ * `repo`, because GitHub ignores case in owner and repository names, so one
+ * repository has one spelling however a file spells it.
+ */
 export type TrackedPr = { repo: string; number: number }
 
 const SCRIPTS: Record<string, LoopKind> = {
@@ -227,8 +231,8 @@ export function isPushCommand(command: string): boolean {
 
 const ENTRY = /^(!?)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$/
 
-/** Names a pull request without regard to case, as GitHub and the watchers do. */
-export const keyOf = (pr: TrackedPr) => `${pr.repo}#${pr.number}`.toLowerCase()
+/** Names a pull request, its repository lowercased as the parsers leave it. */
+export const keyOf = (pr: TrackedPr) => `${pr.repo}#${pr.number}`
 
 /**
  * Reads a tracked file: one `owner/repo#number` per line, where a line
@@ -243,7 +247,7 @@ export function parseTracked(text: string): TrackedPr[] {
     const match = ENTRY.exec(line.trim())
     if (match === null) continue
     const [, bang, repo, number] = match as unknown as [string, string, string, string]
-    const pr = { repo, number: Number(number) }
+    const pr = { repo: repo.toLowerCase(), number: Number(number) }
     const key = keyOf(pr)
     if (bang === '!') {
       excluded.add(key)
@@ -314,7 +318,7 @@ export function parseSubscriptions(text: string): Subscription[] {
     if (model !== undefined && isExcluded && number === undefined) return []
     return [
       {
-        repo,
+        repo: repo.toLowerCase(),
         number: number === undefined ? null : Number(number),
         role: model === undefined ? 'fix' : 'review',
         model: model ?? null,
@@ -356,7 +360,7 @@ export function subscribedOf(lines: readonly Subscription[], adopted: readonly T
   const repositories = live.filter(line => line.number === null)
   for (const pr of adopted) {
     const isReviewed = repositories.some(
-      line => line.repo.toLowerCase() === pr.repo.toLowerCase() && !excluded.has(claimOf(pr, roleOf(line))),
+      line => line.repo === pr.repo && !excluded.has(claimOf(pr, roleOf(line))),
     )
     if (isReviewed) add(pr, 'review')
   }
@@ -379,7 +383,7 @@ export function parseAdopted(text: string): TrackedPr[] {
   if (!isRecord(adopted)) return []
   return Object.entries(adopted).flatMap(([repo, numbers]) =>
     REPO.test(repo) && Array.isArray(numbers)
-      ? numbers.filter((number): number is number => Number.isInteger(number) && number > 0).map(number => ({ repo, number }))
+      ? numbers.filter((number): number is number => Number.isInteger(number) && number > 0).map(number => ({ repo: repo.toLowerCase(), number }))
       : [],
   )
 }
@@ -402,5 +406,4 @@ export function watchRootOf(env: Env): string | undefined {
 }
 
 /** The daemon's last result for a pull request, which it files under the repository's name in lowercase. */
-export const cachePathOf = (root: string, pr: TrackedPr) =>
-  `${root}/cache/${pr.repo.toLowerCase()}/pulls/${pr.number}.json`
+export const cachePathOf = (root: string, pr: TrackedPr) => `${root}/cache/${pr.repo}/pulls/${pr.number}.json`

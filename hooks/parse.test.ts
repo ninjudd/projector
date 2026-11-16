@@ -74,9 +74,9 @@ describe('parseTracked', () => {
     ])
   })
 
-  test('matches entries and exclusions without regard to case', () => {
+  test('lowercases repositories, so entries and exclusions match without regard to case', () => {
     expect(parseTracked('Owner/Repo#5\nowner/repo#5\nowner/repo#6\n!OWNER/REPO#6\n')).toEqual([
-      { repo: 'Owner/Repo', number: 5 },
+      { repo: 'owner/repo', number: 5 },
     ])
   })
 })
@@ -394,8 +394,11 @@ describe('the daemon’s files', () => {
     expect(watchRootOf(() => undefined)).toBeUndefined()
   })
 
-  test('file a pull request’s result under its repository in lowercase', () => {
-    expect(cachePathOf('/w', { repo: 'Acme/App', number: 12 })).toBe('/w/cache/acme/app/pulls/12.json')
+  test('lowercase each repository they read, and file its pull request’s result under that name', () => {
+    const [line] = parseSubscriptions('Acme/App#12 fix\n')
+    expect(line?.repo).toBe('acme/app')
+    expect(parseAdopted('{"adopted": {"Acme/App": [12]}}')).toEqual([{ repo: 'acme/app', number: 12 }])
+    expect(cachePathOf('/w', { repo: line?.repo ?? '', number: 12 })).toBe('/w/cache/acme/app/pulls/12.json')
   })
 
   test('give a pull request’s row from its cached result', () => {
