@@ -850,6 +850,87 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(self.block() + "\n", agents.read_text())
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
 
+    def xcode_project(self, path: str = "App/App.xcodeproj", settings: str = "SDKROOT = iphoneos;") -> Path:
+        project = self.root / path
+        project.mkdir(parents=True)
+        (project / "project.pbxproj").write_text(f"// !$*UTF8*$!\n{{\n\t{settings}\n}}\n", encoding="utf-8")
+        return project
+
+    def test_an_xcode_project_brings_the_ios_rules_into_the_block_and_its_removal_takes_them_out(self) -> None:
+        agents = self.root / "AGENTS.md"
+        project = self.xcode_project()
+
+        # Untracked counts, so a new app is caught before its first commit.
+        code, stdout, stderr = self.invoke("check")
+        self.assertEqual(0, code)
+        self.assertEqual("Project plans are valid.\n", stdout)
+        self.assertIn("warning: AGENTS.md: Projector section leaves out the iOS rules this repository needs", stderr)
+        self.assertIn("[instructions-ios]", stderr)
+        self.assertNotIn("instructions-edited", stderr)
+
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated AGENTS.md\n", stdout)
+        self.assertEqual(instructions.render("docs/projects", ios=True) + "\n", agents.read_text())
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+        subprocess.run(["git", "-C", str(self.root), "add", str(project)], check=True)
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+        subprocess.run(["git", "-C", str(self.root), "rm", "-rq", "--cached", str(project)], check=True)
+        shutil.rmtree(project)
+
+        code, _, stderr = self.invoke("check")
+        self.assertIn("Projector section carries iOS rules this repository does not need", stderr)
+        self.assertIn("[instructions-ios]", stderr)
+        code, stdout, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertIn("updated AGENTS.md\n", stdout)
+        self.assertEqual(self.block() + "\n", agents.read_text())
+
+    def test_an_ignored_xcode_project_brings_no_ios_rules(self) -> None:
+        (self.root / ".gitignore").write_text("vendor/\n", encoding="utf-8")
+        self.xcode_project("vendor/Pods/Pods.xcodeproj")
+        self.xcode_project("vendor/App.xcworkspace")
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+    def test_only_a_project_that_builds_for_ios_brings_the_ios_rules(self) -> None:
+        # `project ios` builds only with the iOS SDK, so a Mac-only app gets no
+        # rules telling its agents to use it, and neither does a workspace,
+        # which names no platform of its own.
+        self.xcode_project("Mac/Mac.xcodeproj", "SDKROOT = macosx;")
+        self.xcode_project("Sim/Sim.xcodeproj", "SDKROOT = iphonesimulator;")
+        workspace = self.root / "App.xcworkspace"
+        workspace.mkdir()
+        (workspace / "contents.xcworkspacedata").write_text("<Workspace/>\n", encoding="utf-8")
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+        # A multiplatform target lists the iOS SDK among its platforms.
+        self.xcode_project("Both/Both.xcodeproj",
+                           'SDKROOT = auto;\n\tSUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";')
+        _, _, stderr = self.invoke("check")
+        self.assertIn("leaves out the iOS rules", stderr)
+        self.assertIn("[instructions-ios]", stderr)
+
+    def test_instructions_ios_overrides_what_the_repository_holds(self) -> None:
+        config = self.root / ".projector.toml"
+        agents = self.root / "AGENTS.md"
+        self.xcode_project()
+        config.write_text("[instructions]\nios = false\n", encoding="utf-8")
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+        shutil.rmtree(self.root / "App")
+        config.write_text("[instructions]\nios = true\n", encoding="utf-8")
+        _, _, stderr = self.invoke("check")
+        self.assertIn("leaves out the iOS rules", stderr)
+        code, _, stderr = self.invoke("init")
+        self.assertEqual(0, code, stderr)
+        self.assertEqual(instructions.render("docs/projects", ios=True) + "\n", agents.read_text())
+
+        # A configured `ios.project` says the repository builds an app with
+        # `project ios`, wherever its Xcode project lives.
+        config.write_text('[ios]\nproject = "ios/App.xcodeproj"\n', encoding="utf-8")
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
     def test_init_keeps_a_newer_block_and_check_says_to_upgrade(self) -> None:
         agents = self.root / "AGENTS.md"
         shipped = instructions.template_version()

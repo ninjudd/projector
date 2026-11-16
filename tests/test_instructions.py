@@ -40,6 +40,7 @@ PINNED = {
     26: "5990a5a0816123c43875a4a06b91f9d3a578681ccd18c1efbc267eaeb39c2d3d",
     27: "65a4a24ad3c4d3c407c9a1a83bcab815918a5b8beb9980c88b599ba97a515528",
     28: "ca55b66def7e6f4af758a4fb0edf229ec16fd30ec4793bfa991cb543175b141b",
+    29: "f057c2028f62fb27b2846b4d73a522dd0bb97b0190945fcbb73bf0a9c51dfb67",
 }
 
 
@@ -63,6 +64,21 @@ class TemplateTests(unittest.TestCase):
         block = instructions.find_block(rendered + "\n")
         self.assertIsNotNone(block)
         self.assertTrue(instructions.block_matches(block, rendered))
+
+    def test_render_keeps_the_ios_rules_only_for_a_repository_with_an_ios_app(self) -> None:
+        without = instructions.render("docs/projects")
+        with_ios = instructions.render("docs/projects", ios=True)
+        for rendered in (without, with_ios):
+            self.assertNotIn("{ios}", rendered)
+            self.assertNotIn("{/ios}", rendered)
+            self.assertNotIn("\n\n\n", rendered)
+        self.assertNotIn("project ios", without)
+        self.assertIn("This repository has an iOS app.", with_ios)
+        self.assertIn("Prepare a test of the iOS app", with_ios)
+        # Dropping the rules leaves the paragraphs around them one blank line apart.
+        self.assertIn("is unavailable.\n\n### Projector skills\n", without)
+        self.assertIn("unlocking the phone.\n\nWhen the person picks", without)
+        self.assertEqual(without, instructions.render("docs/projects", ios=False))
 
 
 class BlockTests(unittest.TestCase):

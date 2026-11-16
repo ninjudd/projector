@@ -56,6 +56,7 @@ const pr = (number: number, title: string, fields: Record<string, unknown> = {})
   reviewDecision: null,
   mergeable: 'MERGEABLE',
   reviewThreads: { nodes: [] },
+  author: { login: VIEWER },
   ...fields,
 })
 
@@ -106,6 +107,7 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       reviewThreads: { nodes: [{ isResolved: false }] },
     }),
     p19: pr(19, 'Draft no review has read', { isDraft: true }),
+    p20: pr(20, 'Change by a deleted account', { author: null }),
   },
   'x/y': {
     p7: pr(7, 'Conflicting change', {
@@ -302,7 +304,7 @@ test('draws one line per open pull request of the session’s own loops', async 
   expect(texts.slice(0, 3).map(found => found.props.color)).toEqual(['subtle', 'subtle', 'subtle'])
   expect(await ui.find({ type: 'Text', text: /─|updated|ago|just now/ })).toBeUndefined()
   // The rows start on the line under the header, with no blank line between.
-  expect(texts.slice(3, 6).map(found => found.text)).toEqual(['#1', 'clean', ''])
+  expect(texts.slice(3, 6).map(found => found.text)).toEqual(['#1', 'clean', 'Signed-off change'])
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
@@ -1202,8 +1204,8 @@ test('lists your pull requests first, then everyone else’s by author, naming t
   // Yours keep their order, then bob's, then grace's two in theirs, with nothing between the groups.
   const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
   expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
-  // The header counts everyone's pull requests the panel lists, the session's own and others'.
-  expect(await headerOf(ui)).toMatch(/^\/projector +5 pull requests  \d+s$/)
+  // The header counts your pull requests apart from the review requests, everyone else's.
+  expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 3 review requests  \d+s$/)
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   expect(texts.filter(text => text === ' ')).toEqual([])
 
@@ -1217,6 +1219,55 @@ test('lists your pull requests first, then everyone else’s by author, naming t
     ['grace', 5],
   ])
   for (const name of await ui.findAll({ type: 'Text', text: /^(bob|grace)$/ })) expect(name.props.color).toBe('subtle')
+  await ui.unmount()
+})
+
+test('your pull requests and the review requests collapse apart, yours always first', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  world(on, { [REVIEW]: 'o/r#4\no/r#9\no/r#5\no/r#20\no/r#6\n', [WATCH]: 'x/y#7\n' })
+  await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
+  await clock.advance(1)
+  await clock.settle()
+  const ui = await $.ui.mount(PANEL)
+  /** The panel's lines, a pull request by its key and a collapsed section by what it reads. */
+  const lines = async () => {
+    const buttons = (await ui.findAll({ type: 'Button' })).filter(button => /^(pr|expand):/.test(button.key ?? ''))
+    return Promise.all(
+      buttons.map(async button =>
+        button.key?.startsWith('expand:') === true
+          ? ((await ui.find({ key: `collapsed:${button.key.slice('expand:'.length)}` }))?.text ?? '')
+          : (button.key ?? ''),
+      ),
+    )
+  }
+
+  // GitHub names no author for a deleted account's pull request, which is someone else's, so it is a review request.
+  expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 4 review requests  \d+s$/)
+
+  // The review requests collapse to one line under your pull requests, listing them in their rows' order.
+  await ui.press({ key: 'count:review' })
+  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', '+ r#20 r#5 r#4 r#6'])
+  expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 4 review requests  \d+s$/)
+
+  // Yours collapse apart from them, and their line still comes first.
+  await ui.press({ key: 'count:pr' })
+  expect(await lines()).toEqual(['+ y#7 r#9', '+ r#20 r#5 r#4 r#6'])
+
+  // A label opens its drawer under its own section's line.
+  await ui.press({ key: 'open:o/r#4' })
+  const boxes = (await ui.findAll({ type: 'Box' })).map(box => box.key ?? '')
+  expect(boxes.filter(key => key === 'collapsed:review' || key.startsWith('drawer:'))).toEqual([
+    'collapsed:review',
+    'drawer:o/r#4',
+  ])
+
+  // Expanding the review requests leaves yours collapsed, and the drawer moves back to its row.
+  await ui.press({ key: 'expand:review' })
+  expect(await lines()).toEqual(['+ y#7 r#9', 'pr:o/r#20', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+  expect(await ui.find({ key: 'drawer:o/r#4' })).toBeDefined()
+  await ui.press({ key: 'count:pr' })
+  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#20', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
   await ui.unmount()
 })
 
@@ -5271,11 +5322,11 @@ test('lists the session’s subscriptions from the daemon’s cache, with their 
   await begin($, session.clock)
 
   // The session's new subscriptions showed the panel. The operator daemon.json names is ada, so her pull request
-  // comes first; then the one still loading, whose author nobody knows yet; then grace's, whose cache file the panel
-  // finds under the repository's name in lowercase. The `!` line keeps #5 out.
+  // comes first; then the one still loading, whose author nobody knows yet, so it counts as hers; then grace's review
+  // request, whose cache file the panel finds under the repository's name in lowercase. The `!` line keeps #5 out.
   const ui = await $.ui.mount(PANEL)
   expect(await rowsOf(ui)).toEqual(['pr:x/y#7', 'pr:o/r#13', 'pr:o/r#4'])
-  expect(await headerOf(ui)).toMatch(/^\/projector +3 pull requests  \d+s$/)
+  expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 1 review request  \d+s$/)
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
   expect(await ui.find({ key: 'author:x/y#7' })).toBeUndefined()
   expect((await ui.find({ key: 'author:o/r#4' }))?.text).toBe('grace')
@@ -5562,7 +5613,7 @@ test('dismiss drops a pull request from each role the session holds and from an 
   ])
   expect(session.toasts).toEqual(['projector: stopped fixing and reviewing x/y#7'])
   expect(await rowsOf(ui)).toEqual(['pr:o/r#4'])
-  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
+  expect(await headerOf(ui)).toMatch(/^\/projector +1 review request  \d+s$/)
   await ui.unmount()
 })
 

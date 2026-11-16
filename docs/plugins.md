@@ -278,7 +278,7 @@ panel. It also appears when the session subscribes to a pull request it had
 not subscribed to before.
 
 ```text
-  /projector                                              2 pull requests  12s   [-]
+  /projector                            1 pull request · 1 review request  12s   [-]
    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
    #258 threads grace Name the reviewed head in a review's summary line  2* 5m
         reviewer · sig-head · +84 −1 in 5 files · checks passing ·  reviewing
@@ -290,9 +290,14 @@ not subscribed to before.
 ```
 
 Each line is the pull request's number, its state, its author when someone
-else wrote it, and the title. The number is in the default text color. While
-the pull request is a draft, which means its author is still working on it,
-the number and the state are both in italic. The state is the first of these
+else wrote it, and the title. The number is `#267` when the panel lists one
+repository, and otherwise carries the repository's name, as `app#267`. Once
+any two repositories share a name, every number carries its repository in
+full, as `acme/app#267`. These lines name repositories in lowercase, because
+GitHub ignores their case, so a repository you subscribed to as `Acme/App`
+shows as `acme/app`. The number is in the default text color. While the pull
+request is a draft, which means its author is still working on it, the
+number and the state are both in italic. The state is the first of these
 that applies. Red means the branch itself cannot merge, and yellow means a
 review wants something:
 
@@ -327,11 +332,15 @@ on a narrow terminal. A pull request that the watch daemon has not queried
 yet has a muted number and reads `loading…` in place of its title, with no
 state, author, or age, until the daemon's first result for it arrives.
 
-Your own pull requests come first, then everyone else's, each author's
-together and the authors in order of login, with no line between the groups.
-The panel tells which are yours by the operator, the account `gh` is signed
-in as, which it reads from the daemon's `daemon.json`. A pull request that
-the session both fixes and reviews is listed once.
+Your own pull requests come first, then everyone else's, which the panel
+calls review requests, each author's together and the authors in order of
+login, with no line between the groups. The header counts the two apart,
+such as `14 pull requests · 10 review requests`. The panel tells which are
+yours by the operator, the account `gh` is signed in as, which it reads from
+the daemon's `daemon.json`. A pull request by a deleted account, which
+GitHub names no author for, is a review request. One that is still loading
+counts as yours until its author is known. A pull request that the session
+both fixes and reviews is listed once.
 
 In a terminal, the panel draws on a background of its own, so a line that
 moves as the panel scrolls is plainly the panel's. It is inset one column
@@ -404,8 +413,8 @@ describes. The links to the pull request follow, side by side on the next
 line, and then the unresolved review threads, gathered under their files:
 
 - **Discuss** puts the pull request's number in the prompt at the
-  cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
-  one repository.
+  cursor, as `#258`, or as `owner/repo#258` in lowercase when the panel
+  lists more than one repository.
 - **Dismiss** asks to be sure first, because a dismissed pull request
   leaves the panel at once. It replaces the actions with
   `8: Yes, dismiss it` and `9: No, keep it`, so a stray `8` only asks.
@@ -604,7 +613,8 @@ open notice's line is drawn in the theme's mid gray, `inactive`, apart from
 the `subtle` of a resolved or snoozed item, so you can tell which items want
 an answer, which want work, and which want a read. Each line ends with the
 pull request the item is about, as the panel labels it, and how long ago it
-was posted. The
+was posted. An item about a pull request the panel does not list names it
+as the agent wrote it, such as `Acme/App#12`. The
 panel appears when an item arrives or is restored, even after you hid it, and
 in a terminal the header counts the open questions, the open requests, and
 the open notices after the pull requests, before its time.
@@ -623,27 +633,29 @@ Click a count in the header to collapse what it counts to one line, so a
 long list of pull requests or a burst of notices does not push the questions
 out of view. A collapsed line starts with `+`, where an item's starts with
 `-`, to say it expands. Collapsed pull requests become a line such as
-`+ #12 #14 #15` in their place, listing each in the rows' order. With no
-state beside it, each number takes the color of its row's state: red for
-`conflict` or `failing`, yellow for `changes` or `threads`, orange for
-`reviewing`, green for `clean`, the default text color for `draft`, and
-light blue for `ready`. A draft's number is italic as well, as on its row,
-so a held draft that keeps its `clean` label reads as an italic green
-number. A pull request that is still loading is muted. The numbers work as tabs:
+`+ #12 #14 #15` in their place, listing each in the rows' order. Your pull
+requests and the review requests collapse apart, each to a line of its own,
+and yours always come first. With no state beside it, each number takes the
+color of its row's state: red for `conflict` or `failing`, yellow for
+`changes` or `threads`, orange for `reviewing`, green for `clean`, the
+default text color for `draft`, and light blue for `ready`. A draft's number
+is italic as well, as on its row, so a held draft that keeps its `clean`
+label reads as an italic green number. A pull request that is still loading
+is muted. The numbers work as tabs:
 click one to open that pull request's drawer below the line, with its number
 drawn inverted, and click it again to close the drawer. The pull requests
 stay collapsed, and only one drawer is open at a time, so clicking another
 number moves the drawer to it.
-A drawer that is open when you collapse the pull requests stays open under
+A drawer that is open when you collapse its pull requests stays open under
 their line. There it starts under the first number, where on its row it
-starts one column past the number. Click the `+` to expand the pull
-requests, and an open drawer moves back to its row. A collapsed kind of
-item becomes a line such as `+ 2 questions` at the top of the items, drawn
-in the kind's color. Click the line, or the count again, to expand it. The
-pull requests, the questions, the requests, and the notices collapse apart
-from each other, and each stays collapsed, new ones included, until you
-expand it. While a collapsed kind has nothing open, the header has no count
-for it, so its muted items show in the list.
+starts one column past the number. Click the `+` to expand those pull
+requests, and an open drawer moves back to its row. A collapsed kind of item
+becomes a line such as `+ 2 questions` at the top of the items, drawn in the
+kind's color. Click the line, or the count again, to expand it. Your pull
+requests, the review requests, the questions, the requests, and the notices
+collapse apart from each other, and each stays collapsed, new ones included,
+until you expand it. While a collapsed kind has nothing open, the header has
+no count for it, so its muted items show in the list.
 
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press Enter on it from the keyboard instead. While

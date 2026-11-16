@@ -217,7 +217,7 @@ def init_digests() -> dict[str, dict[str, str]]:
     """
 
     outputs = {
-        "instructions": ("the Projector section in AGENTS.md and CLAUDE.md", instructions.render("docs/projects")),
+        "instructions": ("the Projector section in AGENTS.md and CLAUDE.md", instructions.render("docs/projects", ios=True)),
         "site-workflow": (f"the site workflow, {WORKFLOW_PATH}", summary.workflow_text("v0")),
         "clean-workflow": (f"the clean label workflow, {review.CLEAN_WORKFLOW_PATH}", review.clean_workflow_text()),
         "permission-rules": (
@@ -1824,6 +1824,17 @@ def instructions_enabled(root: Path) -> bool:
     return load_config(root).setting("instructions.enabled") is not False
 
 
+def instructions_ios(root: Path) -> Optional[bool]:
+    """Whether the Projector section carries the iOS rules, from `instructions.ios`, or true when `ios.project`
+    names the app's project; None leaves it to whether the repository has an iOS Xcode project."""
+
+    config = load_config(root)
+    chosen = config.setting("instructions.ios")
+    if chosen is None and config.setting("ios.project"):
+        return True
+    return chosen
+
+
 def configured_projects_dir(root: Path) -> Optional[Path]:
     """`projects.dir` from configuration, when the flag did not supply one."""
 
@@ -2972,7 +2983,7 @@ def run(arguments: argparse.Namespace) -> int:
     if projects_dir is None:
         projects_dir = configured_projects_dir(root)
 
-    store = ProjectStore(Path.cwd(), root, projects_dir)
+    store = ProjectStore(Path.cwd(), root, projects_dir, ios=instructions_ios(root))
     command = arguments.command
 
     if command == "init":
