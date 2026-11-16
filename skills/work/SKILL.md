@@ -74,7 +74,8 @@ Post each kind of item this way:
   picking another option means a change.
 - **Work only they can do**, such as signing in to a service or checking a
   change on their phone, goes to `request`, with numbered steps in the
-  detail.
+  detail. Prepare a phone check of an iOS app as `../implement/SKILL.md`
+  describes under "Prepare a device test for an iOS app".
 - **News they must act on**, such as a failure you cannot fix, goes to
   `tell`.
 

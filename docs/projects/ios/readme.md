@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 priority: now
 ---
 
@@ -297,10 +297,12 @@ test in a repository where `project ios` finds an Xcode project:
 4. Whether or not there is a start action, the request's steps give the
    command `project ios build <number>` and say to run it in any checkout of
    the repository on the Mac the device is plugged into. When no device can
-   take an install, the agent is on another machine, so that command is the
+   take an install, the agent cannot reach one, for example because it runs
+   on another machine or the device is unplugged, so that command is the
    only way to install, and the request has no start action.
-5. When the person reports a crash or odd behavior, run `project ios crashes`
-   when the agent can reach the device. Otherwise, and for any device log,
+5. When the person reports a crash or odd behavior, run
+   `project ios crashes --device <UDID>` with the UDID of the device they
+   tested on, when the agent can reach it. Otherwise, and for any device log,
    which needs the person's password, ask in a request for the person to run
    `project ios crashes` or `project ios logs` and share the file it names.
 
@@ -472,6 +474,12 @@ sections above leave open:
   `DECISIONS` in `tests/test_permissions.py`, and its abbreviation test
   covers `--allow-untrusted`.
 
-The last acceptance criterion in § 4, a build installed and opened on a real
-iPhone, needs the person and their device, so the project stays
-`in-progress` until they run it.
+## 8. Outcome
+
+The project shipped with the stack that carries the plan, the command, and
+the skills, and every acceptance criterion in § 4 but the last one is
+proven by the tests above. That last criterion, a build installed and opened
+on a real iPhone, needs the person and their device. The session that built
+the command could not reach CoreDevice, and the person chose to run that
+check once the stack merged, with the installed `project ios`. A problem it
+finds is new work on the shipped command, not an open part of this plan.
