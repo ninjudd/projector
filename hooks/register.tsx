@@ -1285,8 +1285,6 @@ type Hold = {
    * status word in both, and only when another hold took the word.
    */
   phrase?: string
-  /** False for a conflict, which always takes the word, so no note names it. */
-  isNoted?: false
   color: 'error' | 'warning'
   holds: (pr: PullRequest) => boolean
 }
@@ -1297,7 +1295,8 @@ type Hold = {
  * holds is the row's status.
  */
 const HOLDS: Hold[] = [
-  { status: 'conflict', isNoted: false, color: 'error', holds: pr => pr.isConflicting },
+  // First, so a conflict is always the row's word and never one of its notes.
+  { status: 'conflict', color: 'error', holds: pr => pr.isConflicting },
   { status: 'failing', phrase: 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
   {
     status: 'changes',
@@ -1336,9 +1335,9 @@ const reviewLabel = (pr: PullRequest) => REVIEW_LABELS.find(label => hasLabel(pr
  */
 function notesOf(pr: PullRequest, isOpen: boolean): Note[] {
   const shown = rowState(pr).text
-  const notes = HOLDS.flatMap(({ status, phrase, isNoted, color, holds }): Note[] => {
+  const notes = HOLDS.flatMap(({ status, phrase, color, holds }): Note[] => {
     const isSpelled = isOpen && phrase !== undefined
-    return isNoted !== false && holds(pr) && (isSpelled || status !== shown)
+    return holds(pr) && (isSpelled || status !== shown)
       ? [{ text: isSpelled ? phrase : status, color }]
       : []
   })

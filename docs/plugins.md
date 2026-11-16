@@ -280,12 +280,13 @@ not subscribed to before.
 ```text
   /projector                            1 pull request · 1 review request  12s   [-]
    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
-   #258 findings grace Name the reviewed head… reviewing · checks passing 5m
+   #258 findings grace Name the reviewed head i… reviewing · checks passing 5m
         reviewer · sig-head · +84 −1 in 5 files · checks passing · reviewing
         7: Discuss  8: Dismiss
         open in github  open in projector
-        src/review.py:412 · ada · P2 · The signature names the base, not the head
-        docs/cli.md:88 · ada · P3 · Say which head the line names · outdated
+        - src/review.py 1 finding
+          :412 · ada · P2 · The signature names the base, not the head
+        + docs/cli.md 1 finding
                                                            ctrl+x tab to focus
 ```
 
