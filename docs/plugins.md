@@ -290,9 +290,14 @@ not subscribed to before.
 ```
 
 Each line is the pull request's number, its state, its author when someone
-else wrote it, and the title. The number is in the default text color. While
-the pull request is a draft, which means its author is still working on it,
-the number and the state are both in italic. The state is the first of these
+else wrote it, and the title. The number is `#267` when the panel lists one
+repository, and otherwise carries the repository's name, as `app#267`. Once
+any two repositories share a name, every number carries its repository in
+full, as `acme/app#267`. These lines name repositories in lowercase, because
+GitHub ignores their case, so a repository you subscribed to as `Acme/App`
+shows as `acme/app`. The number is in the default text color. While the pull
+request is a draft, which means its author is still working on it, the
+number and the state are both in italic. The state is the first of these
 that applies:
 
 - **`reviewing`**, in orange, while the pull request carries the
@@ -394,8 +399,8 @@ describes. The links to the pull request follow, side by side on the next
 line, and then the unresolved review threads, gathered under their files:
 
 - **Discuss** puts the pull request's number in the prompt at the
-  cursor, as `#258`, or as `owner/repo#258` when the panel lists more than
-  one repository.
+  cursor, as `#258`, or as `owner/repo#258` in lowercase when the panel
+  lists more than one repository.
 - **Dismiss** asks to be sure first, because a dismissed pull request
   leaves the panel at once. It replaces the actions with
   `8: Yes, dismiss it` and `9: No, keep it`, so a stray `8` only asks.
@@ -594,7 +599,8 @@ open notice's line is drawn in the theme's mid gray, `inactive`, apart from
 the `subtle` of a resolved or snoozed item, so you can tell which items want
 an answer, which want work, and which want a read. Each line ends with the
 pull request the item is about, as the panel labels it, and how long ago it
-was posted. The
+was posted. An item about a pull request the panel does not list names it
+as the agent wrote it, such as `Acme/App#12`. The
 panel appears when an item arrives or is restored, even after you hid it, and
 in a terminal the header counts the open questions, the open requests, and
 the open notices after the pull requests, before its time.
