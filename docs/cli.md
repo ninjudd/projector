@@ -343,11 +343,15 @@ project config set review.publish_rule false
 
 The Projector section carries rules for building an iOS app with
 [`project ios`](#put-an-ios-app-on-a-device) only in a repository that has
-one. `init` and `check` look for an Xcode project or workspace that Git
-tracks, or that is untracked and not ignored, so a new app counts before its
-first commit and a dependency's project under an ignored folder does not. A
-repository whose `ios.project` names its project gets the rules wherever that
-project lives. To choose for yourself, set `instructions.ios`:
+one. `init` and `check` look for an Xcode project that Git tracks, or that is
+untracked and not ignored, so a new app counts before its first commit and a
+dependency's project under an ignored folder does not. The project counts
+only when its `project.pbxproj` names the iOS SDK, `iphoneos`, as
+`SDKROOT = iphoneos` or a multiplatform target's `SUPPORTED_PLATFORMS` does,
+because `project ios` builds only for iOS. A Mac-only app, and a workspace
+with no iOS project in the repository, get no rules. A repository whose
+`ios.project` names its project gets the rules wherever that project lives.
+To choose for yourself, set `instructions.ios`:
 
 ```sh
 project config set instructions.ios false
@@ -782,7 +786,7 @@ reads, which are these:
 | --- | --- | --- | --- |
 | `projects.dir` | string | `docs/projects` | every command, unless `--projects-dir` is given |
 | `instructions.enabled` | boolean | `true` | `init` and `check`, to manage the Projector section in `AGENTS.md` and `CLAUDE.md` |
-| `instructions.ios` | boolean | whether the repository has an Xcode project, or sets `ios.project` | `init` and `check`, to put the rules for `project ios` in the Projector section |
+| `instructions.ios` | boolean | whether the repository has an Xcode project that builds for iOS, or sets `ios.project` | `init` and `check`, to put the rules for `project ios` in the Projector section |
 | `site.enabled` | boolean | `true` | `init`, to set up the GitHub Pages site and its workflow unless `--site` or `--no-site` says otherwise |
 | `site.prepare` | string | none | `site build` and `site serve`, as a shell command to run in the checkout before building, once allowed with `--allow-prepare`, unless `--prepare` or `--no-prepare` says otherwise |
 | `review.username` | string | the authenticated user | `review-pr` and `review-repo`, as the GitHub login that posts reviews, and `project watch add --role review`, as the login a review subscription names |

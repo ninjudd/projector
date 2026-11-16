@@ -1826,7 +1826,7 @@ def instructions_enabled(root: Path) -> bool:
 
 def instructions_ios(root: Path) -> Optional[bool]:
     """Whether the Projector section carries the iOS rules, from `instructions.ios`, or true when `ios.project`
-    names the app's project; None leaves it to whether the repository has an Xcode project."""
+    names the app's project; None leaves it to whether the repository has an iOS Xcode project."""
 
     config = load_config(root)
     chosen = config.setting("instructions.ios")

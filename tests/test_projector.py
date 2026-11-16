@@ -850,10 +850,10 @@ class MutationTests(RepositoryTestCase):
         self.assertEqual(self.block() + "\n", agents.read_text())
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
 
-    def xcode_project(self, path: str = "App/App.xcodeproj") -> Path:
+    def xcode_project(self, path: str = "App/App.xcodeproj", settings: str = "SDKROOT = iphoneos;") -> Path:
         project = self.root / path
         project.mkdir(parents=True)
-        (project / "project.pbxproj").write_text("// !$*UTF8*$!\n", encoding="utf-8")
+        (project / "project.pbxproj").write_text(f"// !$*UTF8*$!\n{{\n\t{settings}\n}}\n", encoding="utf-8")
         return project
 
     def test_an_xcode_project_brings_the_ios_rules_into_the_block_and_its_removal_takes_them_out(self) -> None:
@@ -893,11 +893,22 @@ class MutationTests(RepositoryTestCase):
         self.xcode_project("vendor/App.xcworkspace")
         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
 
-    def test_a_workspace_alone_brings_the_ios_rules(self) -> None:
+    def test_only_a_project_that_builds_for_ios_brings_the_ios_rules(self) -> None:
+        # `project ios` builds only with the iOS SDK, so a Mac-only app gets no
+        # rules telling its agents to use it, and neither does a workspace,
+        # which names no platform of its own.
+        self.xcode_project("Mac/Mac.xcodeproj", "SDKROOT = macosx;")
+        self.xcode_project("Sim/Sim.xcodeproj", "SDKROOT = iphonesimulator;")
         workspace = self.root / "App.xcworkspace"
         workspace.mkdir()
         (workspace / "contents.xcworkspacedata").write_text("<Workspace/>\n", encoding="utf-8")
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+
+        # A multiplatform target lists the iOS SDK among its platforms.
+        self.xcode_project("Both/Both.xcodeproj",
+                           'SDKROOT = auto;\n\tSUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";')
         _, _, stderr = self.invoke("check")
+        self.assertIn("leaves out the iOS rules", stderr)
         self.assertIn("[instructions-ios]", stderr)
 
     def test_instructions_ios_overrides_what_the_repository_holds(self) -> None:

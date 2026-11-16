@@ -21,6 +21,8 @@ from . import instructions
 STATUSES = ("draft", "ready", "in-progress", "completed")
 PRIORITIES = ("now", "next", "later")
 NAME_PART = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# The iOS SDK's name in a `project.pbxproj`, as a whole word.
+IPHONEOS = re.compile(rb"\biphoneos\b")
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 FRONTMATTER_LINE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):[ \t]*(.*)$")
 
@@ -306,7 +308,7 @@ class ProjectStore:
         ios: Optional[bool] = None,
     ) -> None:
         """`ios` says whether the Projector section carries the iOS rules; None
-        means it does when the repository has an Xcode project."""
+        means it does when the repository has an Xcode project that builds for iOS."""
 
         self.root = (root or discover_git_root(cwd)).resolve()
         self._ios = ios
@@ -489,21 +491,36 @@ class ProjectStore:
 
     def _carries_ios_rules(self) -> bool:
         """Whether the Projector section carries the iOS rules: as the store was
-        told, or else whether Git sees an Xcode project or workspace that is
-        tracked, or untracked and not ignored."""
+        told, or else whether Git sees an Xcode project that builds for iOS and
+        is tracked, or untracked and not ignored.
+
+        `project ios` builds only with the iOS SDK, on a Mac too, where it runs
+        the iPad build. So a project counts only when its `project.pbxproj`
+        names `iphoneos`, as `SDKROOT = iphoneos` or a multiplatform target's
+        `SUPPORTED_PLATFORMS` does, and a Mac-only project does not. A
+        workspace names no platform of its own, so it counts through the
+        projects it holds."""
 
         if self._ios is None:
             try:
                 listed = run_bounded(
                     ["git", "-C", str(self.root), "ls-files", "--cached", "--others", "--exclude-standard",
-                     "-z", "--", "*.xcodeproj/*", "*.xcworkspace/*"],
+                     "-z", "--", "*.xcodeproj/project.pbxproj"],
                     timeout=30,
                 )
             except (OSError, subprocess.TimeoutExpired):
                 self._ios = False
             else:
-                self._ios = listed.returncode == 0 and bool(listed.stdout)
+                paths = listed.stdout.split(b"\0") if listed.returncode == 0 else []
+                self._ios = any(self._builds_for_ios(self.root / os.fsdecode(path)) for path in paths if path)
         return self._ios
+
+    @staticmethod
+    def _builds_for_ios(pbxproj: Path) -> bool:
+        try:
+            return IPHONEOS.search(pbxproj.read_bytes()) is not None
+        except OSError:
+            return False
 
     def _outside(self, path: Path) -> bool:
         """Whether `path` exists as a link that leads out of the repository."""
