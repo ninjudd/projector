@@ -1,0 +1,868 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 927d30da..d888d360 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -280,8 +280,8 @@ not subscribed to before.
+ ```text
+   /projector                            1 pull request · 1 review request  12s   [-]
+    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
+-   #258 reviewing grace Name the reviewed head in a review's… conflict · 2* 5m
+-        reviewer · review-signature · +84 −12 in 5 files · checks passing
++   #258 threads grace Name the reviewed head in a review's summary line  2* 5m
++        reviewer · sig-head · +84 −1 in 5 files · checks passing ·  reviewing
+         7: Discuss  8: Dismiss
+         open in github  open in projector
+         src/review.py:412 · ada · P2 · The signature names the base, not the head
+@@ -298,8 +298,16 @@ GitHub ignores their case, so a repository you subscribed to as `Acme/App`
+ shows as `acme/app`. The number is in the default text color. While the pull
+ request is a draft, which means its author is still working on it, the
+ number and the state are both in italic. The state is the first of these
+-that applies:
+-
++that applies. Red means the branch itself cannot merge, and yellow means a
++review wants something:
++
++- **`conflict`**, in red, while the branch conflicts with its base.
++- **`failing`**, in red, while the head's checks fail. The panel leaves out
++  the `projector/review` status a review posts, as the drawer's checks do.
++  A review fails that status when it finds something, which the row already
++  shows as `changes` or `threads`.
++- **`changes`**, in yellow, while a review requests changes.
++- **`threads`**, in yellow, while review threads are unresolved.
+ - **`reviewing`**, in orange, while the pull request carries the
+   `reviewing` label, which `project review setup` adds when a review starts.
+ - **`clean`**, in green, while it carries the `clean` label, which
+@@ -307,22 +315,25 @@ that applies:
+ - **`draft`**, in the default text color, while it is a draft.
+ - **`ready`**, in light blue, while it is ready for review and carries
+   neither label. That covers a pull request no review has read yet, and also
+-  one whose `clean` label a push removed or whose review requested changes.
++  one whose `clean` label a push removed.
+ 
+ So a held draft, which keeps its `clean` label while a change is built,
+-reads as an italic number beside an italic green `clean`. The panel reads the
+-draft state and the labels with the rest of the line, from the watch daemon's
+-query of the pull request.
+-
+-Notes follow the title when the pull request
+-has them: `conflict` or `changes requested` in red, `approved` in green,
+-and last the number of unresolved review threads before a `*` in yellow,
+-such as `2*`. The ` · ` between two notes keeps the default text color. The
+-line ends with how long ago the pull request last changed, in the column
+-where the inbox's items end with their ages. Only the title shortens on a
+-narrow terminal. A pull request that the watch daemon has not queried yet
+-reads `loading…` in place of its title, with no review label, author, or
+-age, until the daemon's first result for it arrives.
++reads as an italic number beside an italic green `clean`. A label the state
++gives way to, such as the `clean` of a pull request that now conflicts,
++still shows in its drawer. The panel reads the draft state and the labels
++with the rest of the line, from the watch daemon's query of the pull
++request.
++
++Notes follow the title when the pull request has them: whatever else of
++`conflict` and `checks failing` in red and `changes requested` in yellow
++holds it back that the state does not already say, then `approved` in
++green, and last the number of unresolved review threads before a `*` in
++yellow, such as `2*`. The ` · ` between two notes keeps the default text
++color. The line ends with how long ago the pull request last changed, in the
++column where the inbox's items end with their ages. Only the title shortens
++on a narrow terminal. A pull request that the watch daemon has not queried
++yet has a muted number and reads `loading…` in place of its title, with no
++state, author, or age, until the daemon's first result for it arrives.
+ 
+ Your own pull requests come first, then everyone else's, which the panel
+ calls review requests, each author's together and the authors in order of
+@@ -383,16 +394,25 @@ there the panel starts with its first row.
+ 
+ Click a pull request's number to open a drawer under it, and click it again
+ to close the drawer; opening one drawer closes any other. The drawer starts
+-one column past the number, under the review label. It names the session's
++one column past the number, under the state. It names the session's
+ roles on the pull request: `fixer` in the terminal palette's blue,
+ `reviewer` in Claude's orange, or `fixer and reviewer`. `reviewer` says that
+ this session is subscribed to review the pull request, whether or not a
+ review is running, while the row's `reviewing` label says a review is
+ running now, in any session. Then come its
+-branch, in the palette's cyan, its size, and its checks. The size reads as a
+-diff stat: the insertions, such as `+84`, in green and the deletions, such
+-as `−12`, in red. The checks' state takes a color of its own, and the rest,
+-` in 5 files` and each `·` included, keeps the default text color. Below
++branch, in the palette's cyan, its size, its checks, and every label it
++carries. The size reads as a diff stat: the insertions, such as `+84`, in
++green and the deletions, such as `−12`, in red. The checks' state takes a
++color of its own. It counts every check run and commit status on the head
++but the `projector/review` status, so a head whose only failure is a
++review's verdict reads `checks passing`, and one whose only check is that
++status shows no checks at all. The rest, ` in 5 files` and each `·` included, keeps
++the default text color. Each label is drawn as GitHub's light theme draws
++it: its name, as GitHub spells it, on the label's own color, in black on a
++light color and white on a dark one. A label whose color the panel has not
++read yet, which a daemon cache from before the panel read colors leaves
++until its next poll, is drawn on GitHub's light gray. The labels come last
++on the line, so a narrow terminal cuts them first. Below
+ that come two actions, side by side on one line, on the digits `7` and `8`,
+ as [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
+ describes. The links to the pull request follow, side by side on the next
+@@ -621,20 +641,13 @@ out of view. A collapsed line starts with `+`, where an item's starts with
+ `-`, to say it expands. Collapsed pull requests become a line such as
+ `+ #12 #14 #15` in their place, listing each in the rows' order. Your pull
+ requests and the review requests collapse apart, each to a line of its own,
+-and yours always come first. With no review label beside it, each number's
+-color says what its row says, from its notes and thread count as well as its
+-state, taking the first of these that applies:
+-
+-- **Red** when a conflict, a change request, or failing checks hold it back.
+-- **Yellow** while it has unresolved review threads, which its row counts in
+-  yellow.
+-- **Orange** while it carries the `reviewing` label.
+-- **Green** while it carries the `clean` label.
+-- **The default text color** when it carries neither label.
+-
+-A draft's number is italic as well, as on its row, so a held draft that
+-keeps its `clean` label reads as an italic green number. A pull request that
+-is still loading is muted. The numbers work as tabs:
++and yours always come first. With no state beside it, each number takes the
++color of its row's state: red for `conflict` or `failing`, yellow for
++`changes` or `threads`, orange for `reviewing`, green for `clean`, the
++default text color for `draft`, and light blue for `ready`. A draft's number
++is italic as well, as on its row, so a held draft that keeps its `clean`
++label reads as an italic green number. A pull request that is still loading
++is muted. The numbers work as tabs:
+ click one to open that pull request's drawer below the line, with its number
+ drawn inverted, and click it again to close the drawer. The pull requests
+ stay collapsed, and only one drawer is open at a time, so clicking another
+diff --git a/hooks/github.ts b/hooks/github.ts
+index dc83b529..cd5078d5 100644
+--- a/hooks/github.ts
++++ b/hooks/github.ts
+@@ -1,4 +1,4 @@
+-import type { Checks, PullRequest, Thread } from './types'
++import type { Checks, Label, PullRequest, Thread } from './types'
+ import { isRecord, keyOf, type TrackedPr } from './parse'
+ 
+ /** Where one pull request's node sits in the response. */
+@@ -13,11 +13,16 @@ export type Fetched = {
+   error: string | null
+ }
+ 
++/** The commit status a Projector review posts, which says what the review found rather than whether the head builds. */
++const REVIEW_CONTEXT = 'projector/review'
++
+ const FIELDS = `number title url state isDraft reviewDecision mergeable body
+   author { login } headRefName additions deletions changedFiles updatedAt
+-  labels(first: 20) { nodes { name } }
++  labels(first: 20) { nodes { name color } }
+   reviewThreads(first: 100) { nodes { isResolved } }
+-  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`
++  commits(last: 1) { nodes { commit { status { context(name: "${REVIEW_CONTEXT}") { state } }
++    statusCheckRollup { state contexts(first: 1) {
++      checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }`
+ 
+ // What an open drawer lists of its pull request's threads. GitHub counts
+ // `comments` under `reviewThreads(first: 100)` as 100 requests, a point of
+@@ -37,6 +42,25 @@ const CHECKS: Record<string, Checks> = {
+   EXPECTED: 'pending',
+ }
+ 
++/**
++ * What each check run's and commit status's state counts as, with the
++ * failures the watch daemon's CHECKS event counts. A state missing here,
++ * such as `SKIPPED`, holds nothing back.
++ */
++const CONTEXT_CHECKS: Record<'checkRunCountsByState' | 'statusContextCountsByState', Record<string, Checks>> = {
++  checkRunCountsByState: {
++    FAILURE: 'failing',
++    TIMED_OUT: 'failing',
++    STARTUP_FAILURE: 'failing',
++    QUEUED: 'pending',
++    IN_PROGRESS: 'pending',
++    WAITING: 'pending',
++    PENDING: 'pending',
++    REQUESTED: 'pending',
++  },
++  statusContextCountsByState: { FAILURE: 'failing', ERROR: 'failing', PENDING: 'pending', EXPECTED: 'pending' },
++}
++
+ /**
+  * Builds one GraphQL query for every pull request, grouped by repository,
+  * and for the signed-in account's login. Repository names come from
+@@ -107,11 +131,44 @@ function threadOf(node: unknown): Thread | null {
+   }
+ }
+ 
++/**
++ * The head's checks, less the `projector/review` status. GitHub's rollup
++ * counts that status, which a review that requests changes sets to
++ * `failure`, so a head with nothing else failing would read as failing.
++ * Without that status the rollup's own state stands.
++ */
+ function checksOf(node: Record<string, unknown>): Checks | null {
+   const [last] = nodesOf(node.commits)
+   const commit = isRecord(last) ? last.commit : undefined
+   const rollup = isRecord(commit) ? commit.statusCheckRollup : undefined
+-  return isRecord(rollup) && typeof rollup.state === 'string' ? (CHECKS[rollup.state] ?? null) : null
++  const state = isRecord(rollup) && typeof rollup.state === 'string' ? (CHECKS[rollup.state] ?? null) : null
++  const status = isRecord(commit) ? commit.status : undefined
++  const review = isRecord(status) && isRecord(status.context) ? stringOf(status.context.state) : null
++  if (review === null || !isRecord(rollup) || !isRecord(rollup.contexts)) return state
++
++  const { contexts } = rollup
++  const counts = { failing: 0, pending: 0, passing: 0 }
++  for (const key of ['checkRunCountsByState', 'statusContextCountsByState'] as const) {
++    const rows = Array.isArray(contexts[key]) ? (contexts[key] as unknown[]) : []
++    for (const row of rows) {
++      if (isRecord(row) && typeof row.state === 'string' && typeof row.count === 'number') {
++        counts[CONTEXT_CHECKS[key][row.state] ?? 'passing'] += row.count
++      }
++    }
++  }
++  counts[CONTEXT_CHECKS.statusContextCountsByState[review] ?? 'passing'] -= 1
++  if (counts.failing > 0) return 'failing'
++  if (counts.pending > 0) return 'pending'
++  return counts.passing > 0 ? 'passing' : null
++}
++
++const LABEL_COLOR = /^[0-9a-f]{6}$/i
++
++function labelOf(node: unknown): Label[] {
++  const name = isRecord(node) ? stringOf(node.name) : null
++  if (name === null) return []
++  const color = isRecord(node) ? stringOf(node.color) : null
++  return [{ name, color: color !== null && LABEL_COLOR.test(color) ? `#${color.toLowerCase()}` : null }]
+ }
+ 
+ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullRequest {
+@@ -139,10 +196,7 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
+     deletions: numberOf(node.deletions),
+     changedFiles: numberOf(node.changedFiles),
+     checks: checksOf(node),
+-    labels: nodesOf(node.labels).flatMap(label => {
+-      const name = isRecord(label) ? stringOf(label.name) : null
+-      return name === null ? [] : [name.toLowerCase()]
+-    }),
++    labels: nodesOf(node.labels).flatMap(labelOf),
+     updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
+     summaryUrl: summary?.[1] ?? null,
+   }
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 33efd016..fe2976fd 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -90,7 +90,24 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+     p14: pr(14, 'Change a review is reading', { labels: { nodes: [{ name: 'Reviewing' }, { name: 'clean' }] } }),
+     p15: pr(15, 'Signed-off change held for a suggestion', { isDraft: true, labels: { nodes: [{ name: 'clean' }] } }),
+     p16: pr(16, 'Draft that conflicts', { isDraft: true, mergeable: 'CONFLICTING' }),
+-    p17: pr(17, 'Change by a deleted account', { author: null }),
++    p17: pr(17, 'Signed-off change that now conflicts', {
++      mergeable: 'CONFLICTING',
++      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
++      labels: {
++        nodes: [
++          { name: 'clean', color: '0E8A16' },
++          { name: 'good first issue', color: '7057ff' },
++          { name: 'Docs', color: 'fbca04' },
++          { name: 'legacy' },
++        ],
++      },
++    }),
++    p18: pr(18, 'Change a review sent back', {
++      reviewDecision: 'CHANGES_REQUESTED',
++      reviewThreads: { nodes: [{ isResolved: false }] },
++    }),
++    p19: pr(19, 'Draft no review has read', { isDraft: true }),
++    p20: pr(20, 'Change by a deleted account', { author: null }),
+   },
+   'x/y': {
+     p7: pr(7, 'Conflicting change', {
+@@ -294,10 +311,10 @@ test('draws one line per open pull request of the session’s own loops', async
+   await ui.unmount()
+ })
+ 
+-test('a row draws a draft number and its word in italic and says reviewing, clean, draft, or ready after it', async ($, on) => {
++test('a row says what holds it back first, then reviewing, clean, draft, or ready, with a draft’s number and word in italic', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#13\no/r#14\no/r#15\n' })
++  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#10\no/r#11\no/r#12\no/r#13\no/r#14\no/r#15\no/r#16\no/r#18\no/r#19\n' })
+   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+   await clock.advance(1)
+   await clock.settle()
+@@ -308,16 +325,24 @@ test('a row draws a draft number and its word in italic and says reviewing, clea
+   for (const [number, title] of [
+     [1, 'Signed-off change'],
+     [2, 'Change under review'],
++    [10, 'Change held back'],
++    [11, 'Approved change'],
++    [12, 'Change failing its checks'],
+     [13, 'Change waiting for review'],
+     [14, 'Change a review is reading'],
+     [15, 'Signed-off change held for a suggestion'],
++    [16, 'Draft that conflicts'],
++    [18, 'Change a review sent back'],
++    [19, 'Draft no review has read'],
+   ] as const) {
+     // The word sits right before the title, or before the author column of someone else's.
+     const texts = await ui.findAll({ type: 'Text' })
+     const at = texts.findIndex(found => found.text === title)
+     const word = texts
+       .slice(Math.max(0, at - 2), at)
+-      .find(found => ['reviewing', 'clean', 'draft', 'ready'].includes(found.text))
++      .find(found =>
++        ['conflict', 'failing', 'changes', 'threads', 'reviewing', 'clean', 'draft', 'ready'].includes(found.text),
++      )
+     // `dimColor` does not dim in every terminal, so the number's own style carries the draft state.
+     const button = await ui.find({ type: 'Button', key: `pr:o/r#${number}` })
+     expect(button?.props.dimColor).toBeUndefined()
+@@ -330,8 +355,17 @@ test('a row draws a draft number and its word in italic and says reviewing, clea
+   }
+   expect(Object.fromEntries(rows)).toEqual({
+     'Signed-off change': { word: 'clean', style: ['success', false], number: [undefined, false] },
++    // A conflict comes before a change request and open threads, and a broken branch is red.
++    'Change held back': { word: 'conflict', style: ['error', false], number: [undefined, false] },
++    'Change failing its checks': { word: 'failing', style: ['error', false], number: [undefined, false] },
++    // What a review wants is yellow: a change request first, then open threads, which come before an approval.
++    'Change a review sent back': { word: 'changes', style: ['warning', false], number: [undefined, false] },
++    'Approved change': { word: 'threads', style: ['warning', false], number: [undefined, false] },
++    // What holds a draft back shows on it too, in italic.
++    'Change under review': { word: 'threads', style: ['warning', true], number: [undefined, true] },
++    'Draft that conflicts': { word: 'conflict', style: ['error', true], number: [undefined, true] },
+     // A draft keeps the default color, which stays readable, and is drawn in italic.
+-    'Change under review': { word: 'draft', style: [undefined, true], number: [undefined, true] },
++    'Draft no review has read': { word: 'draft', style: [undefined, true], number: [undefined, true] },
+     // A pull request no review has labeled says whether it is ready, in light blue.
+     'Change waiting for review': { word: 'ready', style: ['suggestion', false], number: [undefined, false] },
+     // A review in progress shows over a clean label an earlier head left.
+@@ -703,10 +737,9 @@ test('a pull request’s notes take their own colors, and each ` · ` between th
+   await clock.settle()
+ 
+   const ui = await $.ui.mount(PANEL)
+-  expect(partsOf(await ui.find({ type: 'Text', text: 'conflict · changes requested · 1*' }))).toEqual([
+-    ['conflict', 'error'],
+-    ' · ',
+-    ['changes requested', 'error'],
++  // The conflict is the row's status, so the notes leave it out and name the change request after it.
++  expect(partsOf(await ui.find({ type: 'Text', text: 'changes requested · 1*' }))).toEqual([
++    ['changes requested', 'warning'],
+     ' · ',
+     ['1*', 'warning'],
+   ])
+@@ -733,13 +766,9 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   // The number is a plain button, so no terminal draws a URL beside it.
+   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
+   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
+-  expect(await ui.find({ type: 'Text', text: 'conflict' })).toBeDefined()
+-  // The threads' count comes after the other notes, beside the age, and the ` · ` between them keeps the default color.
+-  expect(partsOf(await ui.find({ type: 'Text', text: 'conflict · 2*' }))).toEqual([
+-    ['conflict', 'error'],
+-    ' · ',
+-    ['2*', 'warning'],
+-  ])
++  // The conflict is the row's status, so its notes hold only the threads' count.
++  expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
++  expect(partsOf(await ui.find({ type: 'Text', text: '2*' }))).toEqual([['2*', 'warning']])
+ 
+   await ui.press({ key: 'pr:x/y#7' })
+   await clock.settle()
+@@ -814,6 +843,44 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   await ui.unmount()
+ })
+ 
++test('a drawer ends its facts with every label as GitHub draws it, a clean the row’s word gave way to among them', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#17\n' })
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++  const ui = await $.ui.mount(PANEL)
++
++  // The conflict is the row's word, over the clean label, and the failing checks, which hold it back too, a note.
++  expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
++  expect(await ui.find({ type: 'Text', text: 'clean' })).toBeUndefined()
++  expect(partsOf(await ui.find({ type: 'Text', text: 'checks failing' }))).toEqual([['checks failing', 'error']])
++
++  await ui.press({ key: 'pr:o/r#17' })
++  await clock.settle()
++  const facts = await ui.find({ type: 'Text', text: /^reviewer · .* · checks failing · / })
++  const pieces = (facts?.children ?? []) as (string | { props: Record<string, unknown>; children: string[] })[]
++  const labels = pieces.slice(pieces.findIndex(piece => piece === ' ·') + 1)
++  // Each label is spaced off the one before it and drawn on its own color, as GitHub spells it: in white on a dark
++  // color, in black on a light one, and on GitHub's gray where the color is unknown.
++  expect(
++    labels.map(piece =>
++      typeof piece === 'string' ? piece : [piece.children.join(''), piece.props.backgroundColor, piece.props.color],
++    ),
++  ).toEqual([
++    ' ',
++    [' clean ', '#0e8a16', '#ffffff'],
++    ' ',
++    [' good first issue ', '#7057ff', '#ffffff'],
++    ' ',
++    [' Docs ', '#fbca04', '#000000'],
++    ' ',
++    [' legacy ', '#ededed', '#000000'],
++  ])
++  await ui.unmount()
++})
++
+ test('names pull requests by number alone when their one repository is spelled in two cases', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+@@ -1158,7 +1225,7 @@ test('lists your pull requests first, then everyone else’s by author, naming t
+ test('your pull requests and the review requests collapse apart, yours always first', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  world(on, { [REVIEW]: 'o/r#4\no/r#9\no/r#5\no/r#17\no/r#6\n', [WATCH]: 'x/y#7\n' })
++  world(on, { [REVIEW]: 'o/r#4\no/r#9\no/r#5\no/r#20\no/r#6\n', [WATCH]: 'x/y#7\n' })
+   await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
+   await clock.advance(1)
+   await clock.settle()
+@@ -1180,12 +1247,12 @@ test('your pull requests and the review requests collapse apart, yours always fi
+ 
+   // The review requests collapse to one line under your pull requests, listing them in their rows' order.
+   await ui.press({ key: 'count:review' })
+-  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', '+ r#17 r#5 r#4 r#6'])
++  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', '+ r#20 r#5 r#4 r#6'])
+   expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 4 review requests  \d+s$/)
+ 
+   // Yours collapse apart from them, and their line still comes first.
+   await ui.press({ key: 'count:pr' })
+-  expect(await lines()).toEqual(['+ y#7 r#9', '+ r#17 r#5 r#4 r#6'])
++  expect(await lines()).toEqual(['+ y#7 r#9', '+ r#20 r#5 r#4 r#6'])
+ 
+   // A label opens its drawer under its own section's line.
+   await ui.press({ key: 'open:o/r#4' })
+@@ -1197,10 +1264,10 @@ test('your pull requests and the review requests collapse apart, yours always fi
+ 
+   // Expanding the review requests leaves yours collapsed, and the drawer moves back to its row.
+   await ui.press({ key: 'expand:review' })
+-  expect(await lines()).toEqual(['+ y#7 r#9', 'pr:o/r#17', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
++  expect(await lines()).toEqual(['+ y#7 r#9', 'pr:o/r#20', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+   expect(await ui.find({ key: 'drawer:o/r#4' })).toBeDefined()
+   await ui.press({ key: 'count:pr' })
+-  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#17', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
++  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#20', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+   await ui.unmount()
+ })
+ 
+@@ -1487,6 +1554,25 @@ test('draws over a snapshot an earlier version left in the session', async ($, o
+   await ui.unmount()
+ })
+ 
++test('draws over a snapshot whose labels an earlier version kept as names alone', async ($, on) => {
++  const clock = mock.clock(on)
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#1\n' })
++  const row = { pr: { repo: 'o/r', number: 1, title: 'Signed-off change', labels: ['clean'] }, roles: ['reviewing'] }
++  const earlier = { rows: [row], viewer: null, fetchedAt: null, error: null }
++  on('state.get', { plugin: 'projector', key: 'panelSnapshot' }, () => ({
++    value: { value: earlier as never, version: 1 },
++  }))
++
++  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
++  await clock.advance(1)
++  await clock.settle()
++
++  const ui = await $.ui.mount(PANEL)
++  expect(await ui.find({ type: 'Text', text: 'Looking for pull requests…' })).toBeDefined()
++  await ui.unmount()
++})
++
+ test('shows its tagline, one space in and in the subtle color, when no loop tracks an open pull request', async ($, on) => {
+   const clock = mock.clock(on)
+   mock.env(on, { HOME })
+@@ -3630,33 +3716,44 @@ test('the pull requests’ count in the header collapses them to one line in the
+   await ui.unmount()
+ })
+ 
+-test('a collapsed number is red when held back, yellow with findings, orange reviewing, green clean, plain otherwise, and italic for a draft', async ($, on) => {
++test('a collapsed number takes the color of its row’s word, and is italic for a draft', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#12\no/r#13\no/r#14\no/r#15\no/r#16\n' })
++  const numbers = ['#1', '#2', '#10', '#11', '#12', '#13', '#14', '#15', '#16', '#17', '#18', '#19']
++  world(on, { [REVIEW]: `${numbers.map(number => `o/r${number}`).join('\n')}\n` })
+   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+   await clock.advance(1)
+   await clock.settle()
+   const ui = await $.ui.mount(PANEL)
+ 
++  // Each row's word is the Text right after its number.
++  const texts = await ui.findAll({ type: 'Text' })
++  const words = numbers.map(number => {
++    const word = texts[texts.findIndex(found => found.text === number) + 1]
++    return [word?.text, word?.props.color]
++  })
++
+   await ui.press({ key: 'count:pr' })
+-  const drawn: Record<string, [unknown, boolean]> = {}
+-  for (const text of ['#1', '#2', '#12', '#13', '#14', '#15', '#16']) {
+-    const props = (await ui.find({ type: 'Text', text }))?.props
+-    drawn[text] = [props?.color, props?.italic === true]
+-  }
+-  expect(drawn).toEqual({
+-    '#1': ['success', false],
+-    // An open review thread colors a draft as it would a ready pull request, and the draft is italic.
+-    '#2': ['warning', true],
+-    '#12': ['error', false],
+-    // A ready pull request no review has labeled takes the default color.
+-    '#13': [undefined, false],
+-    '#14': ['claude', false],
+-    // A held draft keeps its clean label's green, in italic, as its row draws an italic number beside `clean`.
+-    '#15': ['success', true],
+-    // What holds a pull request back shows on a draft too.
+-    '#16': ['error', true],
++  const drawn = await Promise.all(
++    numbers.map(async text => {
++      const props = (await ui.find({ type: 'Text', text }))?.props
++      return [props?.color, props?.italic === true]
++    }),
++  )
++  expect(Object.fromEntries(numbers.map((number, at) => [number, [...(words[at] ?? []), ...(drawn[at] ?? [])]]))).toEqual({
++    '#1': ['clean', 'success', 'success', false],
++    '#2': ['threads', 'warning', 'warning', true],
++    '#10': ['conflict', 'error', 'error', false],
++    '#11': ['threads', 'warning', 'warning', false],
++    '#12': ['failing', 'error', 'error', false],
++    '#13': ['ready', 'suggestion', 'suggestion', false],
++    '#14': ['reviewing', 'claude', 'claude', false],
++    '#15': ['clean', 'success', 'success', true],
++    '#16': ['conflict', 'error', 'error', true],
++    // A `clean` label gives way to the hold, collapsed as on its row.
++    '#17': ['conflict', 'error', 'error', false],
++    '#18': ['changes', 'warning', 'warning', false],
++    '#19': ['draft', undefined, undefined, true],
+   })
+   await ui.unmount()
+ })
+@@ -5238,6 +5335,9 @@ test('lists the session’s subscriptions from the daemon’s cache, with their
+   expect(await ui.find({ type: 'Text', text: 'Change by bob' })).toBeUndefined()
+   // A pull request the daemon has no result for yet says so in its title's place, with no state, author, or age.
+   expect((await ui.find({ type: 'Text', text: 'loading…' }))?.props.color).toBe('subtle')
++  // Its number is muted as its collapsed number is, while a loaded row's keeps the default color.
++  expect((await ui.find({ type: 'Text', text: 'r#13' }))?.props.color).toBe('subtle')
++  expect((await ui.find({ type: 'Text', text: 'y#7' }))?.props.color).toBeUndefined()
+   expect(await ui.find({ key: 'author:o/r#13' })).toBeUndefined()
+   expect((await ui.find({ key: 'age:o/r#13' }))?.text).toBe('')
+   expect((await ui.find({ key: 'age:x/y#7' }))?.text).toBe('5m')
+diff --git a/hooks/parse.test.ts b/hooks/parse.test.ts
+index 2c71d55f..ba47c327 100644
+--- a/hooks/parse.test.ts
++++ b/hooks/parse.test.ts
+@@ -122,7 +122,7 @@ describe('GitHub', () => {
+             deletions: 7,
+             changedFiles: 4,
+             updatedAt: '2026-10-12T12:00:00Z',
+-            labels: { nodes: [{ name: 'Reviewing' }, { name: 'bug' }] },
++            labels: { nodes: [{ name: 'Reviewing', color: 'FBCA04' }, { name: 'bug', color: 'not a color' }] },
+             commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+             body:
+               'Why the change exists.\n\n<!-- projector-summary v=1 sha=' +
+@@ -156,8 +156,11 @@ describe('GitHub', () => {
+       deletions: 7,
+       changedFiles: 4,
+       checks: 'failing',
+-      // Lowercased, as GitHub matches label names, so a row finds `reviewing` however the repository spells it.
+-      labels: ['reviewing', 'bug'],
++      // Spelled as GitHub spells them, with GitHub's color as `#rrggbb`, and none for a color the panel cannot draw.
++      labels: [
++        { name: 'Reviewing', color: '#fbca04' },
++        { name: 'bug', color: null },
++      ],
+       updatedAt: Date.UTC(2026, 9, 12, 12, 0),
+       summaryUrl: 'https://example.com/site/reviews/1',
+     })
+@@ -166,6 +169,66 @@ describe('GitHub', () => {
+     expect(fetched.prs.get('x/y#3')?.url).toBe('https://github.com/x/y/pull/3')
+   })
+ 
++  test('reads a head’s checks without the projector/review status a review posts', () => {
++    // The panel's own query asks for that status and the rollup's counts, as the daemon's does.
++    expect(query.text).toContain('status { context(name: "projector/review") { state } }')
++    expect(query.text).toContain('checkRunCountsByState { state count } statusContextCountsByState { state count }')
++
++    type Counts = { checkRuns?: Record<string, number>; statuses?: Record<string, number> }
++    const checksOf = (rollup: string, review: string | null, { checkRuns = {}, statuses = {} }: Counts) => {
++      const rows = (counts: Record<string, number>) => Object.entries(counts).map(([state, count]) => ({ state, count }))
++      const commit = {
++        status: review === null ? null : { context: { state: review } },
++        statusCheckRollup: {
++          state: rollup,
++          contexts: { checkRunCountsByState: rows(checkRuns), statusContextCountsByState: rows(statuses) },
++        },
++      }
++      const node = { number: 1, commits: { nodes: [{ commit }] } }
++      return parseCache({ repo: 'o/r', number: 1 }, JSON.stringify({ repository: { pullRequest: node } }))?.checks
++    }
++
++    expect({
++      // A review that requests changes fails its status, which fails the rollup when nothing else does.
++      'only the review failed': checksOf('FAILURE', 'FAILURE', { statuses: { FAILURE: 1 } }),
++      'the review failed, the rest passed': checksOf('FAILURE', 'FAILURE', {
++        checkRuns: { SUCCESS: 3, SKIPPED: 1 },
++        statuses: { FAILURE: 1 },
++      }),
++      'the review failed, and so did a check run': checksOf('FAILURE', 'FAILURE', {
++        checkRuns: { FAILURE: 1, SUCCESS: 2 },
++        statuses: { FAILURE: 1 },
++      }),
++      'the review failed, and another status errored': checksOf('FAILURE', 'FAILURE', {
++        checkRuns: { SUCCESS: 1 },
++        statuses: { FAILURE: 1, ERROR: 1 },
++      }),
++      'the review is running, the rest still run': checksOf('PENDING', 'PENDING', {
++        checkRuns: { IN_PROGRESS: 1, SUCCESS: 2 },
++        statuses: { PENDING: 1 },
++      }),
++      'the review is running, the rest passed': checksOf('PENDING', 'PENDING', {
++        checkRuns: { SUCCESS: 2 },
++        statuses: { PENDING: 1 },
++      }),
++      'the review passed, a check run failed': checksOf('FAILURE', 'SUCCESS', {
++        checkRuns: { FAILURE: 1 },
++        statuses: { SUCCESS: 1 },
++      }),
++      // A head with no review status keeps the rollup's own state.
++      'no review status': checksOf('FAILURE', null, { checkRuns: { SUCCESS: 1 } }),
++    }).toEqual({
++      'only the review failed': null,
++      'the review failed, the rest passed': 'passing',
++      'the review failed, and so did a check run': 'failing',
++      'the review failed, and another status errored': 'failing',
++      'the review is running, the rest still run': 'pending',
++      'the review is running, the rest passed': 'passing',
++      'the review passed, a check run failed': 'failing',
++      'no review status': 'failing',
++    })
++  })
++
+   test('reports why gh failed', () => {
+     const offline = parseResponse(query, {
+       exitCode: 1,
+@@ -454,7 +517,7 @@ describe('the daemon’s files', () => {
+       deletions: 4,
+       changedFiles: 3,
+       checks: 'pending',
+-      labels: ['clean'],
++      labels: [{ name: 'clean', color: null }],
+       updatedAt: Date.UTC(2026, 9, 30, 11),
+       summaryUrl: null,
+     })
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index e0f09f85..58455b49 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -119,6 +119,21 @@ const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
+   pending: 'warning',
+ }
+ 
++/** The fill of a label whose color the panel has yet to read: GitHub's gray. */
++const UNKNOWN_LABEL_COLOR = '#ededed'
++
++/**
++ * How a drawer draws a label, as GitHub's light theme does: on its own color,
++ * in black when the color's perceived lightness passes GitHub's threshold of
++ * 0.453, and in white otherwise.
++ */
++function labelStyle(color: string | null): { backgroundColor: string; color: string } {
++  const fill = color ?? UNKNOWN_LABEL_COLOR
++  const [red, green, blue] = [1, 3, 5].map(at => Number.parseInt(fill.slice(at, at + 2), 16) / 255)
++  const lightness = 0.2126 * (red ?? 0) + 0.7152 * (green ?? 0) + 0.0722 * (blue ?? 0)
++  return { backgroundColor: fill, color: lightness > 0.453 ? '#000000' : '#ffffff' }
++}
++
+ /**
+  * The theme color of an open question's line: the one Claude Code gives its
+  * own permission prompts, since an agent's question usually asks leave to do
+@@ -319,7 +334,8 @@ const oldSending = atom({ plugin: 'projector', key: 'bandSending' } as const, {}
+ // so a value an earlier version wrote can have another shape.
+ const isKind = (kind: unknown): kind is LoopKind => KINDS.some(one => one === kind)
+ const current = (value: Snapshot): Snapshot =>
+-  Array.isArray(value.rows) && value.rows.every(row => Array.isArray(row.roles))
++  Array.isArray(value.rows) &&
++  value.rows.every(row => Array.isArray(row.roles) && row.pr.labels.every(label => typeof label === 'object'))
+     ? { ...value, viewer: value.viewer ?? null }
+     : EMPTY
+ 
+@@ -1213,17 +1229,45 @@ function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+ 
+ type Note = { text: string; color: 'error' | 'warning' | 'success' }
+ 
+-/** What a row says after the title: what holds the pull request back, or its approval. */
++type Hold = {
++  status: string
++  /** What the row's notes say when another hold is its status; none for open threads, whose count is always a note. */
++  note?: string
++  color: 'error' | 'warning'
++  holds: (pr: PullRequest) => boolean
++}
++
++/**
++ * What holds a pull request back, most urgent first: red while the branch
++ * itself cannot merge, yellow while a review wants something. The first that
++ * holds is the row's status, and its notes name the rest.
++ */
++const HOLDS: Hold[] = [
++  { status: 'conflict', note: 'conflict', color: 'error', holds: pr => pr.isConflicting },
++  { status: 'failing', note: 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
++  {
++    status: 'changes',
++    note: 'changes requested',
++    color: 'warning',
++    holds: pr => pr.reviewDecision === 'CHANGES_REQUESTED',
++  },
++  { status: 'threads', color: 'warning', holds: pr => pr.openThreads > 0 },
++]
++
++/** What a row says after the title: each hold its status does not name, its approval, and its open threads' count. */
+ function notesOf(pr: PullRequest): Note[] {
+-  const notes: Note[] = []
+-  if (pr.isConflicting) notes.push({ text: 'conflict', color: 'error' })
+-  if (pr.reviewDecision === 'CHANGES_REQUESTED') notes.push({ text: 'changes requested', color: 'error' })
++  const status = rowState(pr).text
++  const notes = HOLDS.flatMap(({ status: word, note, color, holds }): Note[] =>
++    note !== undefined && word !== status && holds(pr) ? [{ text: note, color }] : [],
++  )
+   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
+   // The open threads' count comes last, beside the age.
+   if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, color: 'warning' })
+   return notes
+ }
+ 
++const hasLabel = (pr: PullRequest, name: string) => pr.labels.some(label => label.name.toLowerCase() === name)
++
+ /**
+  * What a row says of a pull request's review, from the labels a review sets
+  * alone: `reviewing` while a review runs, over a `clean` an earlier head left,
+@@ -1231,36 +1275,30 @@ function notesOf(pr: PullRequest): Note[] {
+  */
+ function reviewLabel(pr: PullRequest): { text: string; color: 'claude' | 'success' } | undefined {
+   // Orange, as the drawer draws a reviewer, since yellow marks findings.
+-  if (pr.labels.includes('reviewing')) return { text: 'reviewing', color: 'claude' }
+-  if (pr.labels.includes('clean')) return { text: 'clean', color: 'success' }
++  if (hasLabel(pr, 'reviewing')) return { text: 'reviewing', color: 'claude' }
++  if (hasLabel(pr, 'clean')) return { text: 'clean', color: 'success' }
+   return undefined
+ }
+ 
+ /**
+- * The word after a row's number: its review label while it carries one, and
+- * otherwise `draft` in the default color or `ready` in the theme's light blue.
+- * `ready` means only that no label is set, which is also true after a push
+- * removes `clean` or a review requests changes. A draft's row draws the word
+- * in italic, as it draws the number, so a held draft shows an italic `clean`.
++ * The word after a row's number: the first of `HOLDS` that holds, then its
++ * review label, and otherwise `draft` in the default color or `ready` in the
++ * theme's light blue. A draft's row draws the word in italic, as it draws the
++ * number, so a held draft shows an italic `clean`. A label the word gives way
++ * to still shows in the drawer, which lists every label.
+  */
+ function rowState(pr: PullRequest): { text: string; color?: string } {
++  const hold = HOLDS.find(one => one.holds(pr))
++  if (hold !== undefined) return { text: hold.status, color: hold.color }
+   return reviewLabel(pr) ?? (pr.isDraft ? { text: 'draft' } : { text: 'ready', color: 'suggestion' })
+ }
+ 
+ /**
+  * A pull request's number on the line its collapsed rows give way to, which
+- * has no state beside it, so its color says what the row says: red when a
+- * note or its checks hold it back, yellow while review threads are open, as
+- * the row's count of them is, then the review label's orange or green, and
+- * the default color for a pull request that carries neither label. It is
+- * muted while it loads. A draft's number is italic as well, as its row's is.
++ * has no word beside it, so it takes the color of its row's word. It is muted
++ * while it loads, as the row's number is.
+  */
+-function statusColor(pr: PullRequest): string | undefined {
+-  if (pr.isLoading === true) return 'subtle'
+-  if (pr.isConflicting || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.checks === 'failing') return 'error'
+-  if (pr.openThreads > 0) return 'warning'
+-  return reviewLabel(pr)?.color
+-}
++const statusColor = (pr: PullRequest): string | undefined => (pr.isLoading === true ? 'subtle' : rowState(pr).color)
+ 
+ /** How far a thread's line sits inside the line that names its file. */
+ const THREAD_INDENT = 2
+@@ -2328,6 +2366,13 @@ export const register: Register = on => {
+             {isLoaded && ` in ${pr.changedFiles} file${pr.changedFiles === 1 ? '' : 's'}`}
+             {pr.checks !== null && ' · '}
+             {pr.checks !== null && <Text color={CHECK_COLORS[pr.checks]}>checks {pr.checks}</Text>}
++            {pr.labels.length > 0 && ' ·'}
++            {pr.labels.flatMap(label => [
++              ' ',
++              <Text key={`label:${label.name}`} {...labelStyle(label.color)}>
++                {` ${label.name} `}
++              </Text>,
++            ])}
+           </Text>
+           {drawActions(
+             key,
+@@ -2422,7 +2467,9 @@ export const register: Register = on => {
+                 onPress={() => toggle(key, `pr:${key}`, opened === key ? undefined : `discuss:${key}`)}
+               >
+                 {/* A draft's number is italic, in the default color, which stays readable where `subtle` fades it. */}
+-                <Text italic={pr.isDraft}>{label(pr)}</Text>
++                <Text color={isLoaded ? undefined : 'subtle'} italic={pr.isDraft}>
++                  {label(pr)}
++                </Text>
+               </Button>
+             </Box>
+             {isLoaded && (
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 15321e02..0a2e6c38 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -13,6 +13,13 @@ export type Role = 'fixing' | 'reviewing'
+ 
+ export type Checks = 'passing' | 'failing' | 'pending'
+ 
++/** A label on a pull request, as GitHub spells and colors it. */
++export type Label = {
++  name: string
++  /** GitHub's color for the label, as `#rrggbb`; null when the cache predates the panel reading it. */
++  color: string | null
++}
++
+ /** A review thread no one has resolved, as a pull request's drawer lists it. */
+ export type Thread = {
+   path: string
+@@ -45,8 +52,8 @@ export type PullRequest = {
+   changedFiles: number
+   /** The head commit's combined check state; null when it has no checks. */
+   checks: Checks | null
+-  /** The pull request's label names, lowercased, among them the `reviewing` and `clean` a review sets. */
+-  labels: string[]
++  /** The pull request's labels, among them the `reviewing` and `clean` a review sets. */
++  labels: Label[]
+   /** When the pull request last changed, in milliseconds; null when GitHub did not say. */
+   updatedAt: number | null
+   /** The Projector summary the description links, when one was published. */
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 867beb06..28f11243 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -97,10 +97,11 @@
+ # The query § 2.6 of the watch-daemon plan gives, which Projector's panel reads from the cache too, with
+ # the fields the events name: `mergedAt` and `mergeCommit` for MERGED, each comment's id and times for a
+ # live start comment, and `nameWithOwner` for the review state's path. The panel reads `labels` for the
+-# `reviewing` and `clean` labels a review sets, and the daemon for their LABEL events. `rateLimit` reports what it
+-# cost. The panel reads the head's `statusCheckRollup` `state`, and the daemon reads the rollup's contexts for
+-# CHECKS. GitHub's counts by state cover every context, so they say when a failed one lies past the first page.
+-# The `projector/review` status is among them, so the query reads it too, to take it out of the counts.
++# `reviewing` and `clean` labels a review sets, drawing each label in its `color`, and the daemon for their
++# LABEL events. `rateLimit` reports what it cost. The panel reads the head's `statusCheckRollup` `state`, and
++# the daemon reads the rollup's contexts for CHECKS. GitHub's counts by state cover every context, so they say
++# when a failed one lies past the first page. The `projector/review` status is among them, so the query reads
++# it too, to take it out of the counts.
+ CONTEXT_NODES = "nodes{ __typename ... on CheckRun{ name conclusion } ... on StatusContext{ context state } }"
+ QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
+   repository(owner:$o,name:$r){ visibility nameWithOwner
+@@ -108,7 +109,7 @@
+       number title url body state isDraft reviewDecision mergeable updatedAt mergedAt mergeCommit { oid }
+       headRefOid headRefName baseRefName author { login }
+       additions deletions changedFiles
+-      labels(first:20){ nodes{ name } }
++      labels(first:20){ nodes{ name color } }
+       commits(last:1){ nodes{ commit{ status{ context(name:%s){ state } }
+         statusCheckRollup{ state contexts(first:20){ checkRunCountsByState{ state count }
+           statusContextCountsByState{ state count } pageInfo{ hasNextPage endCursor } %s } } } } }
