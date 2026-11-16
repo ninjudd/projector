@@ -1,0 +1,55 @@
+{
+ "version": 1,
+ "name": "Panel repository name docs",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 484,
+  "title": "Say that the panel names repositories in lowercase",
+  "head": "ee5dbc6f84c6dcac83bb981df4332797aa1aa3bd",
+  "headRef": "document-lowercase-repos",
+  "base": "08b514476ed3e3b8003bece2155c8742952b1a76",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the list above the Claude Code prompt that shows each pull request a session fixes or reviews, one line each. Each line starts with the pull request's number, which the panel labels by how many repositories it lists. Since the change merged as #481, the panel lowercases every repository name as it reads the files that track pull requests. GitHub ignores the case of owner and repository names, so one repository now has one spelling throughout the panel.",
+   "That change made the panel show <code>acme/app#12</code> for a pull request you subscribed to as <code>Acme/App#12</code>, which a reader could take for a bug. This pull request changes only <code>docs/plugins.md</code>. It says how a row's number is labeled, that repositories show in lowercase and why, and that the reference <b>Discuss</b> puts in the prompt is lowercase too. It changes no code."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "docs",
+   "title": "How the panel names a pull request",
+   "kicker": "The panel guide's description of a row's number and the Discuss reference",
+   "intro": [
+    "The panel labels a row's number with <code>labeler</code> in <code>hooks/register.tsx</code>, and builds the reference that Discuss inserts with <code>referencer</code>. Both read <code>repo</code> from the pull requests that the three parsers in <code>hooks/parse.ts</code> return, and each parser lowercases it.",
+    "<ul><li><b>One repository.</b> Every row reads <code>#267</code>, and Discuss inserts <code>#267</code>.</li><li><b>Several repositories with distinct names.</b> Rows read <code>app#267</code>, and Discuss inserts the full <code>acme/app#267</code>.</li><li><b>Two repositories that share a name.</b> Every row reads its full <code>owner/repo#267</code>, not only the two that share the name.</li></ul>"
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The paragraph on a row's number gains the labeling rule and the lowercase rule, and the Discuss bullet says its reference is lowercase.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Each label in the new text matches <code>labeler</code> and <code>referencer</code> at this head, and the reviewer traced the lowercase spelling to <code>parseTracked</code>, <code>parseSubscriptions</code>, and <code>parseAdopted</code>. The panel tests that the pull request body cites exist and expect <code>r#1</code>, <code>y#7</code>, and <code>#1</code> with <code>#2</code>."
+      },
+      {
+       "kind": "flag",
+       "text": "This line runs to 97 columns, where the lines around it wrap at about 75. The repository's <code>CLAUDE.md</code> asks an edit to match the surrounding line wrapping. Rewrap the rest of the paragraph.",
+       "line": 299
+      },
+      {
+       "kind": "context",
+       "text": "\"Always named in lowercase\" holds for the pull request lines. An inbox item about a pull request the panel does not list ends with its <code>pr</code> exactly as the agent wrote it, which can keep capitals.",
+       "line": 295
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
