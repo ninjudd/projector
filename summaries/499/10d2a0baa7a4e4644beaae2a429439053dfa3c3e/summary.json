@@ -1,0 +1,101 @@
+{
+ "version": 1,
+ "name": "Panel row thread count",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 499,
+  "title": "Call a pull request's unresolved threads findings, and count none on its row",
+  "head": "10d2a0baa7a4e4644beaae2a429439053dfa3c3e",
+  "headRef": "drop-thread-count",
+  "base": "715e1e59902235ab73d85084524c92a3f2d3a696",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel, the list above the Claude Code prompt, gives each pull request one row: its number, a state word such as <code>findings</code> or <code>changes</code>, its title, and then notes that name every other state that applies. Clicking a row opens its drawer, and while the drawer is open the row spells each hold out in full, such as <code>checks failing</code> for <code>failing</code> and <code>changes requested</code> for <code>changes</code>. A <em>hold</em> is one of the states that keeps a pull request from merging: a conflict, failing checks, a change request, or unresolved review threads.",
+   "Before this change, the state for unresolved review threads was called <code>threads</code>, and its spelled-out form was the thread count, such as <code>1 thread</code>. So an open row put a count back on the row, and when <code>threads</code> was already the row's state word, the open row repeated it as a note. The drawer's file lines already count each file's threads, so the count said nothing new.",
+   "Now the state is called <code>findings</code>, Projector's word for an unresolved review thread, which the watch daemon's <code>FINDING</code> events already use. It has no longer form: the row names it as the note <code>findings</code> only when another hold took the state word, with the drawer open or closed, and never counts it. <code>checks failing</code> and <code>changes requested</code> still spell themselves out in an open drawer. The drawer's file lines count each file's findings, such as <code>+ src/a.ts 2 findings</code>."
+  ],
+  "cards": [
+   {
+    "id": "notes",
+    "title": "What an open row's notes read",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Row</th><th>Before</th><th>After</th></tr></thead><tbody><tr><td>State <code>conflict</code>, with a change request and a thread</td><td><code>changes requested · 1 thread</code></td><td class=\"r\"><code>changes requested · findings</code></td></tr><tr><td>State <code>threads</code>, now <code>findings</code>, approved</td><td><code>3 threads · approved</code></td><td class=\"r\"><code>approved</code></td></tr></tbody></table></div>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The review of <code>75258cb</code> was clean, with three suggestions. <code>10d2a0b</code> takes all three: it drops <code>isNoted</code>, draws the example drawer's file lines, and lines the example's ages up.</li><li>The review of <code>10d2a0b</code> requests changes for one finding: two test comments still describe a row count of threads.</li><li>The gate passed on <code>10d2a0b</code>: plugin validation, <code>claude plugin test .</code> with 237 passing, the hooks type check, and CI's <code>check</code> job.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "notes",
+   "title": "The row's notes stop counting findings",
+   "kicker": "How each hold becomes a note, and the tests that pin it",
+   "intro": [
+    "<code>HOLDS</code> lists the holds in the order the state word takes them. Each entry has a <code>status</code>, the short word, and an optional <code>phrase</code>, the spelled-out form an open drawer shows. <code>notesOf</code> turns the holds that apply into the row's notes, skipping the one that is already the state word unless the drawer is open and the hold has a phrase.",
+    "The change makes <code>phrase</code> a plain string, drops the phrase of the hold for unresolved threads, and renames that hold's word from <code>threads</code> to <code>findings</code>. A hold without a phrase now always shows its short word. <code>conflict</code> also has no phrase, and stays out of the notes because it is first in <code>HOLDS</code>: whenever it applies, it is the state word."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The row's state word and its color come from <code>rowState</code>, which reads only <code>status</code> and <code>color</code>, so the colors are unchanged. The review traced every reader of <code>HOLDS</code>, and <code>findingCount</code> has only the drawer's file lines as its caller."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The panel's module. The hold for unresolved threads is renamed <code>findings</code> and loses its count, and <code>notesOf</code> spells a hold out only when it has a phrase.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "For <code>failing</code> and <code>changes</code>, open or closed, the notes give the same text as at the base. For <code>findings</code>, they give the word only when another hold is the state word. The review walked each case, and <code>claude plugin test .</code> passed.",
+       "line": 1340
+      },
+      {
+       "kind": "verify",
+       "text": "With <code>isNoted</code> gone, a conflict still never shows as a note. It is the first hold, so it is the state word whenever it applies, and with no phrase <code>status !== shown</code> keeps it out, open or closed.",
+       "line": 1298
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "The tests follow the new word and expect no count on the row, open or closed.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "This comment says the file counts add up to the row's own count of threads, and the comment at line 3975 says the yellow number matches the row's count. No row shows a count any more, so both comments misstate the code. The review asks for both to be reworded.",
+       "line": 1196
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The panel's documentation",
+   "kicker": "The state list, the notes paragraph, and the example panel",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the panel. It now names the <code>findings</code> state, says the row never counts findings, and its example panel's open row ends with <code>reviewing · checks passing</code>, with the drawer's threads under file lines that carry the counts."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "The state list, the notes paragraph, the drawer section, and the example follow the code.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The example's <code>#258</code> line is 78 columns, as the <code>#267</code> line is, so the ages end in one column.",
+       "line": 283
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
