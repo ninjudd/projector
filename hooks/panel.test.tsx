@@ -292,7 +292,7 @@ test('draws one line per open pull request of the session’s own loops', async 
   await ui.unmount()
 })
 
-test('a row draws a draft number in italic and says reviewing, clean, draft, or ready after it', async ($, on) => {
+test('a row draws a draft number and its word in italic and says reviewing, clean, draft, or ready after it', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   world(on, { [REVIEW]: 'o/r#1\no/r#2\no/r#13\no/r#14\no/r#15\n' })
@@ -335,8 +335,8 @@ test('a row draws a draft number in italic and says reviewing, clean, draft, or 
     // A review in progress shows over a clean label an earlier head left.
     // Reviewing is orange, as the drawer's reviewer is, since yellow marks findings.
     'Change a review is reading': { word: 'reviewing', style: ['claude', false], number: [undefined, false] },
-    // A held pull request keeps its clean label beside the italic number of a draft.
-    'Signed-off change held for a suggestion': { word: 'clean', style: ['success', false], number: [undefined, true] },
+    // A held draft keeps its clean label's green, in italic, as its number is.
+    'Signed-off change held for a suggestion': { word: 'clean', style: ['success', true], number: [undefined, true] },
   })
   await ui.unmount()
 })

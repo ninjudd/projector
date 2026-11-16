@@ -278,23 +278,24 @@ not subscribed to before.
 ```
 
 Each line is the pull request's number, its state, its author when someone
-else wrote it, and the title. The number is in the default text color, and
-in italic while the pull request is a draft, which means its author is still
-working on it. The state is the first of these that applies:
+else wrote it, and the title. The number is in the default text color. While
+the pull request is a draft, which means its author is still working on it,
+the number and the state are both in italic. The state is the first of these
+that applies:
 
 - **`reviewing`**, in orange, while the pull request carries the
   `reviewing` label, which `project review setup` adds when a review starts.
 - **`clean`**, in green, while it carries the `clean` label, which
   `project review publish` adds once a review signs off the current head.
-- **`draft`**, in italic, while it is a draft.
+- **`draft`**, in the default text color, while it is a draft.
 - **`ready`**, in light blue, while it is ready for review and carries
   neither label. That covers a pull request no review has read yet, and also
   one whose `clean` label a push removed or whose review requested changes.
 
 So a held draft, which keeps its `clean` label while a change is built,
-reads as an italic number beside `clean`. The panel reads the draft state and
-the labels with the rest of the line, from the watch daemon's query of the
-pull request.
+reads as an italic number beside an italic green `clean`. The panel reads the
+draft state and the labels with the rest of the line, from the watch daemon's
+query of the pull request.
 
 Notes follow the title when the pull request
 has them: `conflict` or `changes requested` in red, `approved` in green,
