@@ -1,0 +1,171 @@
+{
+ "version": 1,
+ "name": "Project ios follow-ups",
+ "project": "ios",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 472,
+  "title": "Pass project ios's bundle ID to AppleScript as an argument, and let a completed plan record a deferred check",
+  "head": "34e03fa3f1c28eb55784999f830051f638a989fd",
+  "headRef": "ios-followups",
+  "base": "0869d7600162311918136385e23b0c1105b4ddc5",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project ios</code> builds a branch of a repository's iOS app and puts it on a device or, with <code>--mac</code>, opens it on this Mac. This pull request takes the follow-ups that the reviews of the original <code>project ios</code> stack left open, now that the stack is merged.",
+   "<ul><li><b>The bundle ID never becomes AppleScript source.</b> On a Mac, the command asks <code>osascript</code> whether the app is running and tells it to quit before opening a new build. The app's bundle ID, which comes from the project's build settings, used to be pasted into the script text, so a quote in it could change the script. Both calls now go through one helper that passes the ID as an argument.</li><li><b>Ctrl-C during <code>logs</code> is tested.</b> <code>logs</code> already removed its half-written file and the device's log archive on any exception, Ctrl-C included. A new test proves it, so narrowing that handler would now fail the suite.</li><li><b>A completed plan may record a deferred check's result.</b> The <code>ios</code> plan is <code>completed</code>, and the repository says to leave a completed plan as it is. Its last acceptance criterion, a real install on an iPhone, could only run after the merge. It ran and passed. At the project owner's direction, the rule gains one exception: a completed plan's outcome may record the result of a check it deferred until after the merge. The plan's § 8 records that result.</li><li><b>One long line in <code>docs/cli.md</code> is rewrapped</b>, with no words changed.</li></ul>",
+   "Both earlier findings are settled. The finding against the plan edit was accepted under the new rule. The finding about the exception's wording was fixed: no text calls the recorded result the only edit a completed plan takes, so the exception sits beside the projects README's other ways a completed plan changes, renames among them."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "applescript",
+   "title": "The bundle ID reaches AppleScript as an argument",
+   "kicker": "One helper builds both osascript calls, and a test proves the ID never enters the script.",
+   "intro": [
+    "Every build of an app shares one bundle ID, the reverse-DNS name such as <code>com.example.myapp</code> that macOS uses to find the app. Before <code>project ios --mac</code> opens a new build, it checks whether a copy with that ID is running, and quits it, through <code>osascript</code>, the command that runs AppleScript.",
+    "The new helper <code>app_script</code> wraps a statement in <code>on run argv … end run</code> and puts the bundle ID after the script as its argument. The statement reads it as <code>item 1 of argv</code>, so the ID is data to AppleScript whatever characters it holds."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/ios.py",
+     "note": "Adds <code>app_script</code> and routes the running check and the quit through it.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 520,
+       "text": "Ran the real <code>osascript</code> with this script form: it returns <code>true</code> for <code>com.apple.finder</code>. A bundle ID holding a quote, a backslash, and a <code>do shell script</code> clause comes back as an unknown-application error, so nothing it holds runs. Nothing was quit or launched."
+      },
+      {
+       "kind": "verify",
+       "line": 531,
+       "text": "The quit script compiles with <code>osacompile</code>, and <code>open_on_mac</code> is the only caller of <code>running</code> and <code>app_script</code>."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_ios.py",
+     "note": "The stand-in <code>osascript</code> finds the running check in any argument now, and two tests are new: a bundle ID with a quote, and Ctrl-C during the log collect.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 494,
+       "text": "Splicing the bundle ID back into the <code>running</code> script on a copy of the head turns this test red."
+      },
+      {
+       "kind": "verify",
+       "line": 678,
+       "text": "Narrowing <code>logs</code>'s <code>except BaseException</code> to <code>except Exception</code> turns this test red, and so does moving the archive removal out of its <code>finally</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rule",
+   "title": "A completed plan may record a deferred check's result",
+   "kicker": "One narrow exception to the completed-plan rule, stated in every text that carries the rule.",
+   "intro": [
+    "A plan under <code>docs/projects</code> guides a project while it is built. Once its status is <code>completed</code>, it becomes a record of what was decided and built, and the repository says to leave it as it is. The <code>ios</code> plan was completed with one acceptance criterion waiting on the person, a real install on an iPhone, which could only run after the merge.",
+    "The exception lets that plan's outcome record the check's result once it runs, and nothing more. The projects README states it, and so do the conventions block that <code>project init</code> generates, the projects README template, and the skills that write, finish, fix, and review plans. The block is versioned, and a test pins each version's hash, so the block moves to version 27."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Every text limits the exception to the result of a check that the plan's outcome deferred until after the merge."
+    }
+   ],
+   "files": [
+    {
+     "path": "docs/projects/README.md",
+     "note": "States the exception beside the existing ways a completed plan changes, which now number three.",
+     "checks": []
+    },
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The conventions block that <code>project init</code> writes into every repository's <code>AGENTS.md</code>, now version 27.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "No text in the template, <code>AGENTS.md</code>, the projects README template, or the skills calls the recorded result the only edit a completed plan takes, so none contradicts the rename provision in <code>docs/projects/README.md</code>. A sweep for “one edit” finds nothing."
+      }
+     ]
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "This repository's copy of the block, rendered from the template.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The block equals the rendered template byte for byte, and <code>CLAUDE.md</code> is a symlink to this file."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins the hash of version 27 of the block, re-pinned for the reworded text.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The pinned hash equals <code>sha256</code> of the template at this head, and the instructions and packaging tests pass."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/templates/project-readme.md",
+     "note": "The projects README that <code>project init</code> writes for other repositories.",
+     "checks": []
+    },
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "Tells the implementer about the exception, pointing at <code>finish</code>.",
+     "checks": []
+    },
+    {
+     "path": "skills/finish/SKILL.md",
+     "note": "Treats a check only the person can run after the merge like a release: say where it is tracked, and record its result once it runs.",
+     "checks": []
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "Has <code>fix-pr</code> decline a finding against that edit alone.",
+     "checks": []
+    },
+    {
+     "path": "skills/review-pr/method.md",
+     "note": "Has a review drop a finding against that edit alone.",
+     "checks": []
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "The plan's outcome and a rewrapped line",
+   "kicker": "The ios plan's § 8 records the iPhone check's result, and one CLI reference line is rewrapped.",
+   "intro": [
+    "The plan's § 8 Outcome said the person would run the iPhone check after the merge. Its text is unchanged, and new sentences after it record that the person ran the check, that it was tracked in their Projector inbox, and that it passed. The rest of the plan matches <code>main</code>. The rewrapped paragraph in <code>docs/cli.md</code> changes no words."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Rewraps the paragraph on which commands take <code>--json</code>."
+    },
+    {
+     "path": "docs/projects/ios/readme.md",
+     "note": "Appends the iPhone check's result to § 8 Outcome. Nothing else in the plan changes.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 486,
+       "text": "Compared with <code>main</code>, the plan differs only by these appended sentences, which the new exception allows."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
