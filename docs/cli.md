@@ -2370,16 +2370,24 @@ Each review label fires GitHub's `labeled` event: `setup` adds `reviewing`,
 and `publish` adds `clean`. In a repository whose CI starts on `labeled` and
 cancels a pull request's earlier run, each label cancels the run in
 progress. `project review ready` does the same in one whose CI starts on
-`ready_for_review`. The `CHECKS` event and the panel's checks leave out a
-failed check run of a cancelled workflow run once a newer run of the same
-workflow on the head tests the code again: while the newer run is still
-running, or once it has run a check of the same name rather than skipping
-or cancelling it. That covers a job that runs `if: always()` to gather the
-others and fails in the cancelled run, and the newer run's own result
-stands for the code. A cancelled run with nothing newer keeps its
-failures, because a check may have failed before the cancel. The cancelled
-runs still cost CI time, and the panel notes `cancelled` on a pull request
-while a workflow's newest run on its head was cancelled.
+`ready_for_review`. The `CHECKS` event and the panel's checks tell the two
+kinds of failure in a cancelled workflow run apart by when each check
+started. The run was cancelled when the first of its check runs that
+concluded `CANCELLED` ended:
+
+- **A check that started at or after the cancel** failed because of it.
+  Only a job that runs `if: always()` to gather the jobs it needs starts
+  then, since it waits for them to end. Projector always leaves it out.
+- **A check that started before the cancel** failed on its own. Projector
+  leaves it out only once a newer run of the same workflow on the head
+  tests the code again: while the newer run is still running, or once it
+  has run a check of the same name rather than skipping or cancelling it.
+  The newer run's own result then stands for the code.
+
+When Projector read none of the run's cancelled check runs, nothing says
+when the cancel came, so each failure counts as one that started before
+it. The cancelled runs still cost CI time, and the panel notes `cancelled`
+on a pull request while a workflow's newest run on its head was cancelled.
 
 Leave `labeled` out of the `types` of the workflow that runs your checks. A
 job's `if` that skips the jobs for other labels is not enough. The
@@ -3020,7 +3028,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
 | `FINDING` | `fix` | An unresolved review thread |
 | `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
 | `CONFLICT` | `fix` | A branch that conflicts with its base |
-| `CHECKS` | `fix` | CI failing on the head, naming each check run that concluded `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE` and each commit status in the state `FAILURE` or `ERROR`; the `projector/review` status does not count, and neither does a run that waits for approval or was cancelled or skipped, nor a failed check run of a cancelled workflow run that a newer run of the same workflow on the head tests again, by still running or by running a check of the same name rather than skipping or cancelling it, such as an `if: always()` job that fails in the cancelled run |
+| `CHECKS` | `fix` | CI failing on the head, naming each check run that concluded `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE` and each commit status in the state `FAILURE` or `ERROR`; the `projector/review` status does not count, and neither does a run that waits for approval or was cancelled or skipped, nor a failed check run of a cancelled workflow run that started at or after the cancel, as an `if: always()` job that gathers the others does, or that a newer run of the same workflow on the head tests again, by still running or by running a check of the same name rather than skipping or cancelling it. The cancel is when the first of the run's check runs that concluded `CANCELLED` ended |
 | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
 | `LABEL` | `fix` | A `clean` or `reviewing` label added or removed since the owner last saw the pull request, as `+clean` or `-reviewing` |
 | `UNREVIEWED` | `fix`, when no session on this machine reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |

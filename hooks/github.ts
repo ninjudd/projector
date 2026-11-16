@@ -23,8 +23,8 @@ const FIELDS = `number title url state isDraft reviewDecision mergeable body
   commits(last: 1) { nodes { commit { status { context(name: "${REVIEW_CONTEXT}") { state } }
     statusCheckRollup { state contexts(first: 20) {
       checkRunCountsByState { state count } statusContextCountsByState { state count }
-      nodes { __typename ... on CheckRun { name conclusion
-        checkSuite { conclusion workflowRun { createdAt workflow { databaseId } } } } } } } } } }`
+      nodes { __typename ... on CheckRun { name conclusion startedAt completedAt
+        checkSuite { conclusion workflowRun { databaseId createdAt workflow { databaseId } } } } } } } } } }`
 
 // What an open drawer lists of its pull request's threads. GitHub counts
 // `comments` under `reviewThreads(first: 100)` as 100 requests, a point of
@@ -149,8 +149,9 @@ function suiteOf(context: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
-/** A check run's GitHub Actions run: its workflow, its start, and its conclusion. */
+/** A check run's GitHub Actions run: its id, its workflow, its start, and its conclusion. */
 interface Run {
+  id: number | null
   workflow: number
   at: string
   conclusion: string | null
@@ -162,7 +163,44 @@ function runOf(context: unknown): Run | undefined {
   const run = isRecord(suite?.workflowRun) ? suite.workflowRun : undefined
   const workflow = isRecord(run?.workflow) ? run.workflow.databaseId : undefined
   const at = stringOf(run?.createdAt)
-  return typeof workflow === 'number' && at !== null ? { workflow, at, conclusion: stringOf(suite?.conclusion) } : undefined
+  const id = typeof run?.databaseId === 'number' ? run.databaseId : null
+  return typeof workflow === 'number' && at !== null
+    ? { id, workflow, at, conclusion: stringOf(suite?.conclusion) }
+    : undefined
+}
+
+/**
+ * When each cancelled workflow run was cancelled: the earliest end of its
+ * check runs that concluded `CANCELLED`. A cancelled run none of whose
+ * cancelled check runs the rollup listed has no time here.
+ */
+function cancelTimesOf(contexts: unknown[]): Map<number, string> {
+  const times = new Map<number, string>()
+  for (const context of contexts) {
+    const run = runOf(context)
+    const ended = isRecord(context) ? stringOf(context.completedAt) : null
+    if (run?.id == null || run.conclusion !== 'CANCELLED' || ended === null) continue
+    if (isRecord(context) && context.conclusion === 'CANCELLED') {
+      const seen = times.get(run.id)
+      if (seen === undefined || ended < seen) times.set(run.id, ended)
+    }
+  }
+  return times
+}
+
+/**
+ * Whether a failed check run of a cancelled workflow run started at or
+ * after the cancel, which only a job that runs `if: always()` to gather the
+ * jobs it needs does: it starts once they end, so in a cancelled run it
+ * starts after the cancel and fails though nothing in the code did. A
+ * failure that started before the cancel is the code's, and so is one in a
+ * run whose cancel time is unknown.
+ */
+function causedByCancel(context: unknown, times: Map<number, string>): boolean {
+  const run = runOf(context)
+  const started = isRecord(context) ? stringOf(context.startedAt) : null
+  const cancelled = run?.id == null ? undefined : times.get(run.id)
+  return run?.conclusion === 'CANCELLED' && cancelled !== undefined && started !== null && started >= cancelled
 }
 
 /**
@@ -170,8 +208,9 @@ function runOf(context: unknown): Run | undefined {
  * of the same workflow on the head tests again: one still running, or one
  * whose check run of the same name ran rather than skipped or was
  * cancelled. The newer run's own result stands for the code. A cancelled
- * run with nothing newer, or whose newer run skipped the check, keeps its
- * failures, since one of them may have failed before the cancel.
+ * run with nothing newer, or whose newer run skipped the check, keeps each
+ * failure that the cancel did not cause, since that check failed before the
+ * cancel.
  */
 function supersededOf(context: unknown, contexts: unknown[]): boolean {
   const run = runOf(context)
@@ -201,11 +240,11 @@ function newestRuns(contexts: unknown[]): Run[] {
  * and commit status, less two kinds of failure that say nothing about the
  * code: the `projector/review` status, which a review that requests changes
  * sets to `failure`, and a failed check run of a cancelled workflow run that
- * a newer run tests again. A newer run in the same concurrency group cancels
- * the one in progress, as a review's label does where CI starts on
- * `labeled`, and the cancelled run's `if: always()` job fails though nothing
- * in the code did. GitHub keeps the cancelled run's checks on the head
- * beside the newer run's. A head with nothing failing or pending reads
+ * the cancel caused or that a newer run tests again. A newer run in the same
+ * concurrency group cancels the one in progress, as a review's label does
+ * where CI starts on `labeled`, and the cancelled run's `if: always()` job
+ * fails though nothing in the code did. GitHub keeps the cancelled run's
+ * checks on the head beside the newer run's. A head with nothing failing or pending reads
  * `cancelled` when every workflow's newest run on it was cancelled. Without
  * the counts the rollup's own state stands.
  */
@@ -228,9 +267,13 @@ function checksOf(commit: Record<string, unknown>): Checks | null {
   const review = isRecord(status) && isRecord(status.context) ? stringOf(status.context.state) : null
   if (review !== null) counts[CONTEXT_CHECKS.statusContextCountsByState[review] ?? 'passing'] -= 1
   const nodes = nodesOf(contexts)
+  const times = cancelTimesOf(nodes)
   for (const context of nodes) {
     const conclusion = isRecord(context) ? stringOf(context.conclusion) : null
-    if (CONTEXT_CHECKS.checkRunCountsByState[conclusion ?? ''] === 'failing' && supersededOf(context, nodes)) {
+    if (
+      CONTEXT_CHECKS.checkRunCountsByState[conclusion ?? ''] === 'failing' &&
+      (causedByCancel(context, times) || supersededOf(context, nodes))
+    ) {
       counts.failing -= 1
       counts.cancelled += 1
     }

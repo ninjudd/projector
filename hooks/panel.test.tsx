@@ -116,7 +116,7 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
       labels: { nodes: [{ name: 'reviewing' }] },
     }),
-    // The only run was cancelled after one job passed, so nothing failed and nothing has run the checks since.
+    // A label started a run that cancelled the only one, whose `if: always()` job then started and failed.
     p23: pr(23, 'Change whose run a label cancelled', {
       commits: {
         nodes: [
@@ -126,19 +126,28 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
                 state: 'FAILURE',
                 contexts: {
                   checkRunCountsByState: [
-                    { state: 'SUCCESS', count: 1 },
                     { state: 'CANCELLED', count: 1 },
+                    { state: 'FAILURE', count: 1 },
                   ],
-                  nodes: [
-                    ['lint', 'SUCCESS'],
-                    ['test', 'CANCELLED'],
-                  ].map(([name, conclusion]) => ({
+                  // The cancel ends `slow` two seconds before `complete` starts.
+                  nodes: (
+                    [
+                      ['slow', 'CANCELLED', NOW - 50_000, NOW - 30_000],
+                      ['complete', 'FAILURE', NOW - 28_000, NOW - 25_000],
+                    ] as const
+                  ).map(([name, conclusion, started, completed]) => ({
                     __typename: 'CheckRun',
                     name,
                     conclusion,
+                    startedAt: new Date(started).toISOString(),
+                    completedAt: new Date(completed).toISOString(),
                     checkSuite: {
                       conclusion: 'CANCELLED',
-                      workflowRun: { createdAt: new Date(NOW - 60_000).toISOString(), workflow: { databaseId: 1 } },
+                      workflowRun: {
+                        databaseId: 7,
+                        createdAt: new Date(NOW - 60_000).toISOString(),
+                        workflow: { databaseId: 1 },
+                      },
                     },
                   })),
                 },
@@ -807,7 +816,7 @@ test('a row’s notes name every other status that applies, and an open drawer s
     'Signed-off change failing its checks': [['clean', 'success']],
     // A running review the failing checks beat shows as well, in the orange the drawer draws a reviewer in.
     'Failing change a review is reading': [['reviewing', 'claude']],
-    // A cancelled run with nothing run since, in which nothing failed, is no failure; the row says so last, muted.
+    // A run a label cancelled, with nothing run since, is no failure; the row says so last, muted.
     'Change whose run a label cancelled': [['cancelled', 'subtle']],
   })
 
@@ -829,8 +838,8 @@ test('a row’s notes name every other status that applies, and an open drawer s
   await clock.settle()
   expect(await notesOf('Approved change')).toEqual([['3 threads', 'warning'], ' · ', ['approved', 'success']])
 
-  // A head whose only run was cancelled is ready, and its drawer says its checks were cancelled, muted, though a
-  // job passed before the cancel.
+  // A head whose only run was cancelled is ready, not failing, though its gathering job failed after the cancel,
+  // and its drawer says its checks were cancelled, muted.
   await ui.press({ key: 'pr:o/r#23' })
   await clock.settle()
   const texts = await ui.findAll({ type: 'Text' })

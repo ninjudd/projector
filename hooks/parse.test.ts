@@ -231,25 +231,45 @@ describe('GitHub', () => {
     })
   })
 
-  test('reads a cancelled run’s failed checks as cancelled once a newer run tests them again, and notes a workflow whose newest run was cancelled', () => {
-    expect(query.text).toContain('CheckRun { name conclusion')
-    expect(query.text).toContain('checkSuite { conclusion workflowRun { createdAt workflow { databaseId } } }')
+  test('reads a cancelled run’s failed checks as cancelled when the cancel caused them or a newer run tests them again, and notes a workflow whose newest run was cancelled', () => {
+    expect(query.text).toContain('CheckRun { name conclusion startedAt completedAt')
+    expect(query.text).toContain('checkSuite { conclusion workflowRun { databaseId createdAt workflow { databaseId } } }')
 
-    // A check run as the rollup lists it: its name and conclusion, and its workflow run's conclusion, workflow,
-    // and start. A check run with no workflow belongs to no workflow run.
-    type Run = [name: string, conclusion: string | null, suite: string | null, workflow: number | null, at: string]
+    // A check run as the rollup lists it: its name and conclusion, its workflow run's conclusion, workflow, and
+    // start, which give the run its id, and its own start and end. A check run with no workflow belongs to no
+    // workflow run.
+    type Run = [
+      name: string,
+      conclusion: string | null,
+      suite: string | null,
+      workflow: number | null,
+      at: string,
+      started?: string,
+      completed?: string,
+    ]
     const FIRST = '2026-11-16T22:00:00Z'
     const LATER = '2026-11-16T22:01:00Z'
+    // When a cancelled run's jobs ran: a job that failed on its own, then the cancel, then the gathering job that
+    // runs `if: always()` once the jobs it needs end.
+    const STARTED = '2026-11-16T22:00:05Z'
+    const FAILED = '2026-11-16T22:00:20Z'
+    const CANCELLED = '2026-11-16T22:00:40Z'
+    const GATHERED = '2026-11-16T22:00:42Z'
     const read = (rollup: string, runs: Run[]) => {
       const counts = new Map<string, number>()
       for (const [, conclusion] of runs) counts.set(conclusion ?? 'IN_PROGRESS', (counts.get(conclusion ?? 'IN_PROGRESS') ?? 0) + 1)
-      const nodes = runs.map(([name, conclusion, suite, workflow, at]) => ({
+      const nodes = runs.map(([name, conclusion, suite, workflow, at, started, completed]) => ({
         __typename: 'CheckRun',
         name,
         conclusion,
+        startedAt: started ?? null,
+        completedAt: completed ?? null,
         checkSuite: {
           conclusion: suite,
-          workflowRun: workflow === null ? null : { createdAt: at, workflow: { databaseId: workflow } },
+          workflowRun:
+            workflow === null
+              ? null
+              : { databaseId: Date.parse(at) / 1000 + workflow, createdAt: at, workflow: { databaseId: workflow } },
         },
       }))
       const contexts = { checkRunCountsByState: [...counts].map(([state, count]) => ({ state, count })), nodes }
@@ -257,47 +277,57 @@ describe('GitHub', () => {
       const found = parseCache({ repo: 'o/r', number: 1 }, JSON.stringify({ repository: { pullRequest: node } }))
       return [found?.checks, found?.isCancelled]
     }
-    // A label starts a run that cancels the one in progress, whose `if: always()` job then fails.
-    const cancelled: Run[] = [
-      ['slow', 'CANCELLED', 'CANCELLED', 1, FIRST],
-      ['complete', 'FAILURE', 'CANCELLED', 1, FIRST],
-    ]
+    // A label starts a run that cancels the one in progress, whose gathering job then starts and fails.
+    const slow: Run = ['slow', 'CANCELLED', 'CANCELLED', 1, FIRST, STARTED, CANCELLED]
+    const gathering: Run = ['complete', 'FAILURE', 'CANCELLED', 1, FIRST, GATHERED]
+    // The run's `lint` failed on its own before the cancel.
+    const lint: Run = ['lint', 'FAILURE', 'CANCELLED', 1, FIRST, STARTED, FAILED]
 
     expect({
+      'nothing ran since': read('FAILURE', [slow, gathering]),
       'the newer run passed': read('FAILURE', [
-        ...cancelled,
+        slow,
+        gathering,
         ['slow', 'SUCCESS', 'SUCCESS', 1, LATER],
         ['complete', 'SUCCESS', 'SUCCESS', 1, LATER],
       ]),
-      'the newer run still runs': read('FAILURE', [...cancelled, ['slow', null, null, 1, LATER]]),
-      // The gathering job's failure cannot be told from a real one, so it stands until a newer run tests again.
-      'nothing ran since': read('FAILURE', cancelled),
-      // A review's label starts a run whose job-level `if` skips every job, after `lint` failed in the run it cancels.
-      'the newer run skipped the failed check': read('FAILURE', [
-        ['lint', 'FAILURE', 'CANCELLED', 1, FIRST],
-        ['test', 'CANCELLED', 'CANCELLED', 1, FIRST],
+      'the newer run still runs': read('FAILURE', [slow, gathering, ['slow', null, null, 1, LATER]]),
+      // Without a cancelled check run of its own run, nothing says when the cancel came.
+      'the cancel time is unknown': read('FAILURE', [gathering]),
+      'a check failed before the cancel, nothing ran since': read('FAILURE', [lint, slow, gathering]),
+      'a check failed before the cancel, the newer run passed it': read('FAILURE', [
+        lint,
+        slow,
+        ['lint', 'SUCCESS', 'SUCCESS', 1, LATER],
+        ['slow', 'SUCCESS', 'SUCCESS', 1, LATER],
+      ]),
+      // A review's label starts a run whose job-level `if` skips every job.
+      'a check failed before the cancel, the newer run skipped it': read('FAILURE', [
+        lint,
+        slow,
         ['lint', 'SKIPPED', 'SUCCESS', 1, LATER],
-        ['test', 'SKIPPED', 'SUCCESS', 1, LATER],
+        ['slow', 'SKIPPED', 'SUCCESS', 1, LATER],
       ]),
       'only a cancelled run, with a passed job': read('FAILURE', [
-        ['lint', 'SUCCESS', 'CANCELLED', 1, FIRST],
-        ['test', 'CANCELLED', 'CANCELLED', 1, FIRST],
+        ['lint', 'SUCCESS', 'CANCELLED', 1, FIRST, STARTED, FAILED],
+        slow,
       ]),
-      'another workflow failed': read('FAILURE', [
-        ...cancelled,
-        ['slow', 'SUCCESS', 'SUCCESS', 1, LATER],
-        ['complete', 'SUCCESS', 'SUCCESS', 1, LATER],
-        ['lint', 'FAILURE', 'FAILURE', 2, FIRST],
-      ]),
+      'another workflow failed': read('FAILURE', [slow, gathering, ['lint', 'FAILURE', 'FAILURE', 2, FIRST]]),
       'a run failed and nothing cancelled it': read('FAILURE', [['lint', 'FAILURE', 'FAILURE', 1, FIRST]]),
-      'a check run that no workflow run made': read('FAILURE', [['external', 'FAILURE', 'CANCELLED', null, FIRST]]),
+      'a check run that no workflow run made': read('FAILURE', [
+        ['other', 'CANCELLED', 'CANCELLED', null, FIRST, STARTED, CANCELLED],
+        ['external', 'FAILURE', 'CANCELLED', null, FIRST, GATHERED],
+      ]),
     }).toEqual({
+      'nothing ran since': ['cancelled', true],
       'the newer run passed': ['passing', false],
       'the newer run still runs': ['pending', false],
-      'nothing ran since': ['failing', true],
-      'the newer run skipped the failed check': ['failing', false],
+      'the cancel time is unknown': ['failing', true],
+      'a check failed before the cancel, nothing ran since': ['failing', true],
+      'a check failed before the cancel, the newer run passed it': ['passing', false],
+      'a check failed before the cancel, the newer run skipped it': ['failing', false],
       'only a cancelled run, with a passed job': ['cancelled', true],
-      'another workflow failed': ['failing', false],
+      'another workflow failed': ['failing', true],
       'a run failed and nothing cancelled it': ['failing', false],
       'a check run that no workflow run made': ['failing', false],
     })
