@@ -419,9 +419,10 @@ so in its report, and the conversation that started it starts the stream.
 
 For Codex delivery problems, inspect `project watch status --json`. A
 queued batch can be waiting for its thread to resume. Never resend it just
-because it has not run. An uncertain submission needs a decision to resend
-before `project watch codex-retry --session <id>` is used, because the first
-message may already be accepted. Stop delivery with `project watch
+because it has not run. Projector resends an uncertain submission 30
+minutes after it was sent unless it arrives first. Run
+`project watch codex-retry --session <id>` only to resend it sooner, because
+the first message may already be accepted. Stop delivery with `project watch
 disconnect --session <id>` before switching transports. Recheck current
 subscriptions and PR state before acting on every queued event.
 

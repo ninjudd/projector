@@ -199,7 +199,7 @@ else:
                                                     codex.message("session-A", batch), self.now))
         self.assertEqual("consumed", codex.report(self.folder, self.now)["state"])
 
-    def test_definite_failure_backs_off_and_timeout_requires_explicit_retry(self):
+    def test_definite_failure_backs_off_and_timeout_is_resent_after_the_resend_delay(self):
         (self.root / "fail").touch()
         self.enqueue()
         self.send()
@@ -207,13 +207,45 @@ else:
         self.now += 30
         batch = self.prepare()
         self.assertIsNotNone(batch)
-        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", 15))
+        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", codex.TIMEOUT))
         self.dispatcher.send(self.folder, batch["batch_id"])
-        self.now += 10000
-        self.assertIsNone(self.prepare())
         self.assertEqual("uncertain", codex.report(self.folder, self.now)["state"])
+        self.now += codex.RESEND - 1
+        self.assertIsNone(self.prepare())
         codex.retry(self.folder, self.now)
         self.assertEqual(batch["batch_id"], self.prepare()["batch_id"])
+
+    def test_timed_out_submission_is_resent_once_unless_the_transcript_shows_it_arrived(self):
+        transcript = self.transcript()
+        self.hook("SessionStart", transcript, source="startup")
+        self.enqueue()
+        batch = self.prepare()
+        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", codex.TIMEOUT))
+        self.dispatcher.send(self.folder, batch["batch_id"])
+        self.dispatcher.run = subprocess.run
+        self.now += codex.RESEND - 1
+        self.tick()
+        self.assertEqual([], self.calls())
+        self.now += 1
+        self.tick()
+        self.assertEqual(1, len(self.calls()))
+        self.assertEqual(batch["batch_id"], codex.pending(self.folder)[0][0].stem)
+        self.assertEqual("queued", codex.pending(self.folder)[0][1]["state"])
+
+    def test_timed_out_submission_that_arrived_is_consumed_instead_of_resent(self):
+        transcript = self.transcript()
+        self.hook("SessionStart", transcript, source="startup")
+        self.enqueue()
+        batch = self.prepare()
+        self.dispatcher.run = mock.Mock(side_effect=subprocess.TimeoutExpired("codex", codex.TIMEOUT))
+        self.dispatcher.send(self.folder, batch["batch_id"])
+        self.dispatcher.run = subprocess.run
+        with transcript.open("a") as stream:
+            stream.write(json.dumps({"text": codex.message("session-A", batch)}) + "\n")
+        self.now += codex.RESEND
+        self.tick()
+        self.assertEqual([], self.calls())
+        self.assertTrue((self.folder / "codex-receipts" / f"{batch['batch_id']}.json").exists())
 
     def test_repeated_queue_failures_wait_until_each_retry_deadline(self):
         (self.root / "fail").touch()

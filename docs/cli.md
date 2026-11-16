@@ -2674,8 +2674,11 @@ for each Codex registration, and `unloaded_at` while Codex has the thread
 unloaded. `queued` means Codex accepted the message;
 it does not prove the thread resumed. Resume that thread when its warning
 says it needs attention. `uncertain` means a timeout or interrupted
-submission left acceptance unknown. After checking the thread, use an
-explicit retry only when resending is intended:
+submission left acceptance unknown. Projector resends an uncertain batch
+30 minutes after submitting it, unless the conversation's transcript shows
+that it arrived first. A copy that arrives after the batch is consumed is
+blocked before it starts a turn. To resend sooner, check the thread, then
+retry:
 
 ```sh
 project watch codex-retry --session <id>
@@ -2692,7 +2695,7 @@ project watch stream --session <id>
 
 Disconnect keeps subscriptions and pending events. The stream takes
 unsent events, while accepted and uncertain batches stay separate until
-acknowledged or explicitly retried. Remove a PR's subscription to stop its
+acknowledged or resent. Remove a PR's subscription to stop its
 work, rather than merely changing its transport. A message Codex already
 accepted cannot be recalled; the skills recheck subscriptions before acting.
 When hooks are unavailable, `events: none` reports the stream fallback.

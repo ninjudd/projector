@@ -21,7 +21,12 @@ from .inbox import locked, read_json, try_lock, unlock, write_json
 
 LEASE = 24 * 3600
 LIMIT = 8 * 1024
-TIMEOUT = 15
+TIMEOUT = 60
+RESEND = 1800
+# An uncertain batch is resent after RESEND unless its transcript shows it arrived first. A copy that
+# arrives after the batch is consumed finds its receipt and is blocked before it starts a turn.
+SENDABLE = ("prepared", "failed", "uncertain")
+UNCERTAIN = "submission outcome unknown; Projector resends it in 30 minutes unless it arrives first"
 CONFIRM_EVERY = 30
 MARKER = re.compile(r"^PROJECTOR WATCH ([0-9a-f-]{36})\n")
 TERMINAL = {"MERGED", "CLOSED", "MISSING", "MOVED"}
@@ -107,7 +112,8 @@ def recover(folder: Path) -> None:
         if receipt.exists():
             path.unlink()
         elif batch["state"] == "submitting" and not sending(folder):
-            batch.update(state="uncertain", last_error="submission outcome unknown; use codex-retry")
+            batch.update(state="uncertain", next_attempt_at=batch.get("submitted_at", 0) + RESEND,
+                         last_error=UNCERTAIN)
             write_json(path, batch)
     items = queued(folder)
     remaining = [item for item in items if item["key"] not in keys]
@@ -161,7 +167,7 @@ def prepare(folder: Path, now: float) -> Optional[dict]:
     batches = pending(folder)
     if batches:
         batch = batches[0][1]
-        if batch["state"] not in ("prepared", "failed") or batch.get("next_attempt_at", 0) > now:
+        if batch["state"] not in SENDABLE or batch.get("next_attempt_at", 0) > now:
             return None
         return batch
     items = [item for item in queued(folder) if eligible(folder, item)]
@@ -483,7 +489,9 @@ class Dispatcher:
                     prune_receipts(folder, self.wall())
                     self.cleaned[folder] = self.wall()
                 batches = pending(folder)
-                if batches and batches[0][1]["state"] in ("queued", "uncertain") and not self.confirm(folder, *batches[0]):
+                waiting = batches[0][1] if batches else {}
+                if (waiting.get("state") in ("queued", "uncertain") and not self.confirm(folder, *batches[0])
+                        and not (waiting["state"] == "uncertain" and waiting.get("next_attempt_at", 0) <= self.wall())):
                     continue
                 batch = prepare(folder, self.wall())
             if batch is not None:
@@ -509,7 +517,7 @@ class Dispatcher:
         with locked(folder):
             record = registration(folder)
             batch = read_json(path)
-            if not active(folder, self.wall()) or not batch or batch["state"] not in ("prepared", "failed"):
+            if not active(folder, self.wall()) or not batch or batch["state"] not in SENDABLE:
                 return
             batch["items"] = [item for item in batch["items"] if eligible(folder, item)]
             if not batch["items"]:
@@ -522,7 +530,8 @@ class Dispatcher:
                 write_json(path, batch)
                 return
             batch.update(state="submitting", attempts=batch["attempts"] + 1,
-                         transcript_offset=Path(transcript).stat().st_size if transcript else 0)
+                         transcript_offset=Path(transcript).stat().st_size if transcript else 0,
+                         submitted_at=self.wall())
             write_json(path, batch)
         try:
             result = self.run([record["executable"], "queue", "--thread", record["thread_id"],
@@ -533,14 +542,15 @@ class Dispatcher:
             error = ("queued with a Codex warning; inspect the thread or resume it manually" if result.stderr else "") \
                 if state == "queued" else "Codex queue failed; retry scheduled"
         except subprocess.TimeoutExpired:
-            state, error = "uncertain", "submission timed out; use codex-retry only if resending is intended"
+            state, error = "uncertain", UNCERTAIN
         except OSError:
             state, error = "failed", "Codex could not start; retry scheduled"
         with locked(folder):
             if (folder / "codex-receipts" / path.name).exists() or not path.exists():
                 return
             batch.update(state=state, last_error=error,
-                         next_attempt_at=self.wall() + (30, 60, 120, 300)[min(batch["attempts"] - 1, 3)])
+                         next_attempt_at=batch["submitted_at"] + RESEND if state == "uncertain" else
+                         self.wall() + (30, 60, 120, 300)[min(batch["attempts"] - 1, 3)])
             write_json(path, batch)
 
     def close(self) -> None:
