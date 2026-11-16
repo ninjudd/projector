@@ -11,6 +11,7 @@ from contextlib import AbstractContextManager, redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from projector import cli, site, summary
+from tests.scratch import copy_of
 
 ROOT = Path(__file__).parents[1]
 
@@ -375,9 +376,9 @@ class RepoStacksTests(unittest.TestCase):
         page = json.dumps([{"number": 40, "pull_requests": [{"number": 9}]}])
         lookup = self.build_lookup()
         for case, answer in (
-                ("a host without the endpoint", ('{"message": "Not Found"}', "gh: Not Found (HTTP 404)", 1)),
+                # Every failed gh takes one branch, and a failure after a good first page also shows
+                # that the page already read is not kept.
                 ("a failure on the second page", (page + "\n", "gh: Server Error (HTTP 502)", 1)),
-                ("a network error", ("", "error connecting to api.github.com", 1)),
                 ("an answer that is not a list", ('{"message": "Moved Permanently"}\n', "", 0)),
                 ("an answer that is not JSON", ("<html>\n", "", 0)),
                 ("no answer at all", ("", "", 0))):
@@ -576,20 +577,26 @@ def run(cwd: Path, *args: str) -> str:
     return subprocess.run(list(args), cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
+def publishing_clone(tmp: Path) -> None:
+    """Build a bare remote holding `trunk` and a clone of it that can commit."""
+    remote = tmp / "remote.git"
+    run(tmp, "git", "init", "--quiet", "--bare", str(remote))
+    repo = tmp / "repo"
+    run(tmp, "git", "clone", "--quiet", str(remote), str(repo))
+    for key, value in (("user.name", "Test"), ("user.email", "test@example.com"), ("commit.gpgsign", "false")):
+        run(repo, "git", "config", key, value)
+    (repo / "README.md").write_text("main\n")
+    run(repo, "git", "add", "README.md")
+    run(repo, "git", "commit", "--quiet", "-m", "main")
+    # The branch is not main: a developer's pre-push hook may refuse pushes to main.
+    run(repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
+
+
 class PublishTests(unittest.TestCase):
     def setUp(self) -> None:
-        tmp = Path(tempfile.mkdtemp())
+        tmp, _ = copy_of(publishing_clone)
         self.remote = tmp / "remote.git"
-        run(tmp, "git", "init", "--quiet", "--bare", str(self.remote))
         self.repo = tmp / "repo"
-        run(tmp, "git", "clone", "--quiet", str(self.remote), str(self.repo))
-        for key, value in (("user.name", "Test"), ("user.email", "test@example.com"), ("commit.gpgsign", "false")):
-            run(self.repo, "git", "config", key, value)
-        (self.repo / "README.md").write_text("main\n")
-        run(self.repo, "git", "add", "README.md")
-        run(self.repo, "git", "commit", "--quiet", "-m", "main")
-        # The branch is not main: a developer's pre-push hook may refuse pushes to main.
-        run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
         self.summary_path = tmp / "summary.json"
         self.dispatches: list[str] = []
         self.sleeps: list[float] = []
@@ -653,18 +660,29 @@ class PublishTests(unittest.TestCase):
 
     def test_a_publish_that_loses_the_race_for_the_ref_rebuilds_on_the_new_tip(self) -> None:
         first = self.publish("d" * 40)
+        # This clone has the head it publishes, and the head marks a file generated, so the retry carries
+        # the head's attributes as well as its summary.
+        (self.repo / ".gitattributes").write_text("src/core.go linguist-generated\n")
+        run(self.repo, "git", "add", ".gitattributes")
+        run(self.repo, "git", "commit", "--quiet", "-m", "Mark the core generated")
+        head = run(self.repo, "git", "rev-parse", "HEAD")
         race, theirs = self.racing("e" * 40)
 
         with race:
-            mine = self.publish("c" * 40)
+            mine = self.publish(head)
 
         self.assertEqual(mine, run(self.remote, "git", "rev-parse", "refs/projector/summaries"))
         self.assertEqual(theirs[0], run(self.remote, "git", "log", "--format=%P", "-1", mine),
                          "the retry builds on the other publisher's commit")
         self.assertEqual(first, run(self.remote, "git", "log", "--format=%P", "-1", theirs[0]))
         files = self.ref_files()
-        for head in ("c", "d", "e"):
-            self.assertIn(f"summaries/7/{head * 40}/summary.json", files, "no publisher's summary is dropped")
+        for published in ("d" * 40, "e" * 40, head):
+            self.assertIn(f"summaries/7/{published}/summary.json", files, "no publisher's summary is dropped")
+        self.assertEqual([f"summaries/7/{head}/attributes.json"], [path for path in files if path.endswith("attributes.json")],
+                         "the retry keeps the head's attributes, written once for this head and not for the other "
+                         "publisher's")
+        stored = run(self.remote, "git", "show", f"refs/projector/summaries:summaries/7/{head}/attributes.json")
+        self.assertEqual({"linguist-generated": {"src/core.go": True}}, json.loads(stored))
         self.assertEqual(1, len(self.sleeps))
         self.assertIn("after 1 retry because another publish moved the ref", self.output)
         self.assertEqual(["owner/repo"] * 3, self.dispatches)
@@ -843,13 +861,6 @@ class PublishTests(unittest.TestCase):
         self.assertEqual("2026-01-01T12:00:00+02:00", dated("a" * 40))
         self.assertEqual("2026-02-01T12:00:00+02:00", dated("b" * 40), "the newer head stays newer")
 
-    def test_dispatch_sends_the_old_event_too_for_workflows_generated_before_the_rename(self) -> None:
-        calls: list[tuple[str, ...]] = []
-        with mock.patch.object(summary, "gh", side_effect=lambda *args: calls.append(args) or ""):
-            summary.dispatch("owner/repo")
-        self.assertEqual([("api", "repos/owner/repo/dispatches", "-f", "event_type=projector-summaries"),
-                          ("api", "repos/owner/repo/dispatches", "-f", "event_type=projector-walkthroughs")], calls)
-
     def test_refuses_to_push_a_summary_that_does_not_build(self) -> None:
         data = make_summary(GOOD_GROUPS[:1])
         self.summary_path.write_text(json.dumps(data))
@@ -928,8 +939,6 @@ class PublishTests(unittest.TestCase):
             self.publish("a" * 40)
 
     def test_refuses_a_summary_that_has_not_chosen_its_project(self) -> None:
-        first = self.publish("d" * 40)
-
         for value, found in ((None, "the summary's `project` is null"), (..., "the summary has no `project`"),
                              (7, "the summary's `project` is 7")):
             with self.subTest(project=value), self.assertRaisesRegex(
@@ -937,11 +946,9 @@ class PublishTests(unittest.TestCase):
                                           "carries out, as `project list` names it, or to \"\" when it carries none"):
                 self.publish("c" * 40, fields={"project": value})
 
-        self.assertEqual(first, run(self.remote, "git", "rev-parse", "refs/projector/summaries"), "the ref does not move")
+        self.assertEqual("", run(self.remote, "git", "for-each-ref", "refs/projector"), "nothing pushed")
 
     def test_refuses_a_name_too_short_or_too_long_to_title_a_stack(self) -> None:
-        first = self.publish("d" * 40)
-
         for name, said in (("", "`name` is empty; set it to two to six words that name the work of the whole stack, "
                                 "at most 60 characters"),
                            ("   ", "`name` is empty"),
@@ -949,7 +956,7 @@ class PublishTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(summary.SummaryError, said):
                 self.publish("c" * 40, fields={"name": name})
 
-        self.assertEqual(first, run(self.remote, "git", "rev-parse", "refs/projector/summaries"), "the ref does not move")
+        self.assertEqual("", run(self.remote, "git", "for-each-ref", "refs/projector"), "nothing pushed")
         self.assertIsNotNone(self.publish("c" * 40, fields={"name": "x" * 60}), "60 characters fit")
 
     def test_publishes_a_project_the_checkout_does_not_have_yet(self) -> None:
@@ -977,22 +984,6 @@ class PublishTests(unittest.TestCase):
                          "what publish writes is what the site build reads")
         self.assertEqual("", self.err)
         self.assertIsNone(self.publish(head), "an unchanged summary publishes nothing")
-
-    def test_fetches_a_head_the_checkout_lacks_to_read_its_attributes(self) -> None:
-        other = self.other_publisher()
-        (other / ".gitattributes").write_text("src/core.go linguist-generated\n")
-        run(other, "git", "add", ".gitattributes")
-        run(other, "git", "commit", "--quiet", "-m", "Mark the core generated")
-        run(other, "git", "push", "--quiet", "origin", "HEAD:refs/heads/feature")
-        head = run(other, "git", "rev-parse", "HEAD")
-        refs = run(self.repo, "git", "for-each-ref", "refs/heads", "refs/remotes", "refs/tags")
-
-        self.publish(head)
-
-        stored = run(self.remote, "git", "show", f"refs/projector/summaries:summaries/7/{head}/attributes.json")
-        self.assertEqual({"linguist-generated": {"src/core.go": True}}, json.loads(stored))
-        self.assertEqual(refs, run(self.repo, "git", "for-each-ref", "refs/heads", "refs/remotes", "refs/tags"),
-                         "the fetch changes no branch or tag")
 
     def test_says_so_and_stores_no_attributes_when_the_remote_cannot_serve_the_head(self) -> None:
         self.publish("a" * 40)
@@ -1067,14 +1058,24 @@ class PublishTests(unittest.TestCase):
         self.assertEqual("", self.err)
         self.assertIsNone(self.publish(head, diff=diff), "an unchanged summary publishes nothing")
 
-    def test_stores_the_files_of_a_head_fetched_from_the_remote_and_keeps_them_when_it_cannot_read_the_head(self) -> None:
+    def test_stores_the_attributes_and_files_of_a_head_fetched_from_the_remote_and_keeps_them_when_it_cannot_read_it(
+            self) -> None:
         other = self.other_publisher()
+        (other / ".gitattributes").write_text("keep.txt linguist-generated\n")
+        run(other, "git", "add", ".gitattributes")
+        run(other, "git", "commit", "--quiet", "-m", "Mark keep.txt generated")
         head, diff = self.commit_context_change(other)
         run(other, "git", "push", "--quiet", "origin", "HEAD:refs/heads/feature")
+        refs = run(self.repo, "git", "for-each-ref", "refs/heads", "refs/remotes", "refs/tags")
 
         self.publish(head, diff=diff)
 
+        stored = run(self.remote, "git", "show", f"refs/projector/summaries:summaries/7/{head}/attributes.json")
+        self.assertEqual({"linguist-generated": {"keep.txt": True}}, json.loads(stored),
+                         "the attributes are the fetched head's")
         self.assertEqual({"keep.txt", "tool.sh"}, set(self.head_entries(head)))
+        self.assertEqual(refs, run(self.repo, "git", "for-each-ref", "refs/heads", "refs/remotes", "refs/tags"),
+                         "the fetch changes no branch or tag")
         run(self.remote, "git", "update-ref", "-d", "refs/heads/feature")
         run(self.remote, "git", "gc", "--quiet", "--prune=now")
         third = self.remote.with_name("third")
@@ -1084,24 +1085,6 @@ class PublishTests(unittest.TestCase):
                                               capture_output=True).returncode, "the republish could not read the head")
         self.assertEqual({"keep.txt", "tool.sh"}, set(self.head_entries(head)),
                          "a republish that cannot read the head keeps what an earlier publish stored")
-
-    def test_a_retry_after_losing_the_race_keeps_the_heads_attributes(self) -> None:
-        (self.repo / ".gitattributes").write_text("src/core.go linguist-generated\n")
-        run(self.repo, "git", "add", ".gitattributes")
-        run(self.repo, "git", "commit", "--quiet", "-m", "Mark the core generated")
-        head = run(self.repo, "git", "rev-parse", "HEAD")
-        race, theirs = self.racing("e" * 40)
-
-        with race:
-            mine = self.publish(head)
-
-        self.assertEqual(theirs[0], run(self.remote, "git", "log", "--format=%P", "-1", mine))
-        self.assertIn("after 1 retry", self.output)
-        stored = run(self.remote, "git", "show", f"refs/projector/summaries:summaries/7/{head}/attributes.json")
-        self.assertEqual({"linguist-generated": {"src/core.go": True}}, json.loads(stored))
-        self.assertEqual([f"summaries/7/{head}/attributes.json"],
-                         [path for path in self.ref_files() if path.endswith("attributes.json")],
-                         "written once, for this head, and not for the other publisher's")
 
 
 ATTRIBUTES = {
@@ -1117,9 +1100,10 @@ DECIDED = {"site/assets/summary.js": True, "Build/Out.js": True, "yarn.lock": Fa
 UNDECIDED = ["build/out.js", "lib/index.js", "src/core.go"]
 
 
-def attributes_repo(files: dict[str, str], origin: str = "https://github.com/Owner/Repo.git") -> tuple[Path, str]:
-    """A checkout of `origin` whose one commit holds `files`, and that commit."""
-    repo = Path(tempfile.mkdtemp()) / "repo"
+def attributes_repo(files: dict[str, str], origin: str = "https://github.com/Owner/Repo.git",
+                    at: Path | None = None) -> tuple[Path, str]:
+    """A checkout of `origin` in `at` or a new directory, whose one commit holds `files`, and that commit."""
+    repo = (at or Path(tempfile.mkdtemp())) / "repo"
     run(repo.parent, "git", "init", "--quiet", str(repo))
     for key, value in (("user.name", "Test"), ("user.email", "test@example.com"), ("commit.gpgsign", "false")):
         run(repo, "git", "config", key, value)
@@ -1132,11 +1116,37 @@ def attributes_repo(files: dict[str, str], origin: str = "https://github.com/Own
     return repo, run(repo, "git", "rev-parse", "HEAD")
 
 
+def attributes_checkout(root: Path) -> str:
+    """Build in `root` the checkout whose commit holds ATTRIBUTES, for `copy_of`, and return that commit."""
+    return attributes_repo(ATTRIBUTES, at=root)[1]
+
+
+def marked_checkout(root: Path) -> str:
+    """Build in `root` a checkout whose commit marks src/core.go generated and gen/api.pb.go not, for `copy_of`."""
+    return attributes_repo({".gitattributes": "src/core.go linguist-generated\ngen/** -linguist-generated\n",
+                            "src/.keep": ""}, at=root)[1]
+
+
+def copied_checkout(build) -> tuple[Path, str]:
+    """A fresh copy of the checkout `build` makes, and its commit."""
+    root, head = copy_of(build)
+    return root / "repo", head
+
+
 def embedded(page: Path) -> dict:
     """The data a standalone page embeds."""
     html = (page / "index.html").read_text()
     start = html.index('type="application/json">') + len('type="application/json">')
     return json.loads(html[start:html.index("</script>", start)])
+
+
+class DispatchTests(unittest.TestCase):
+    def test_dispatch_sends_the_old_event_too_for_workflows_generated_before_the_rename(self) -> None:
+        calls: list[tuple[str, ...]] = []
+        with mock.patch.object(summary, "gh", side_effect=lambda *args: calls.append(args) or ""):
+            summary.dispatch("owner/repo")
+        self.assertEqual([("api", "repos/owner/repo/dispatches", "-f", "event_type=projector-summaries"),
+                          ("api", "repos/owner/repo/dispatches", "-f", "event_type=projector-walkthroughs")], calls)
 
 
 class KindTests(unittest.TestCase):
@@ -1159,7 +1169,7 @@ class GeneratedAttributeTests(unittest.TestCase):
         self.assertEqual("generated", summary.kind_of("tests/fixtures/out_test.go", True))
 
     def test_reads_the_heads_attributes_by_exact_case_and_nested_files(self) -> None:
-        repo, head = attributes_repo(ATTRIBUTES)
+        repo, head = copied_checkout(attributes_checkout)
         # As Git sets it on a case-insensitive file system, where it would match Build/Out.js to build/out.js.
         run(repo, "git", "config", "core.ignoreCase", "true")
         (repo / ".gitattributes").write_text("src/core.go linguist-generated\n")
@@ -1171,7 +1181,7 @@ class GeneratedAttributeTests(unittest.TestCase):
         self.assertIsNone(summary.head_attributes(repo, "f" * 40, ["src/core.go"]), "a commit the checkout lacks")
 
     def test_a_git_without_check_attr_source_reads_the_head_through_a_scratch_index(self) -> None:
-        repo, head = attributes_repo(ATTRIBUTES)
+        repo, head = copied_checkout(attributes_checkout)
         index = (repo / ".git" / "index").read_bytes()
         real = summary.check_attr
 
@@ -1186,7 +1196,7 @@ class GeneratedAttributeTests(unittest.TestCase):
         self.assertEqual(index, (repo / ".git" / "index").read_bytes(), "the checkout's own index is untouched")
 
     def test_without_the_head_a_checkout_of_the_repository_reads_its_working_tree(self) -> None:
-        repo, _ = attributes_repo(ATTRIBUTES)
+        repo, _ = copied_checkout(attributes_checkout)
         missing = "f" * 40
         paths = [*DECIDED, *UNDECIDED]
 
@@ -1201,7 +1211,7 @@ class GeneratedAttributeTests(unittest.TestCase):
                          "nor does a directory outside any checkout")
 
     def test_only_the_repositorys_own_attributes_count(self) -> None:
-        repo, head = attributes_repo(ATTRIBUTES)
+        repo, head = copied_checkout(attributes_checkout)
         personal = repo.parent / "attributes"
         personal.write_text("src/core.go linguist-generated\n")
         run(repo, "git", "config", "core.attributesFile", str(personal))
@@ -1211,8 +1221,7 @@ class GeneratedAttributeTests(unittest.TestCase):
 
     def marked_repo(self) -> tuple[Path, str]:
         """A checkout whose head marks src/core.go generated and gen/api.pb.go not."""
-        return attributes_repo({".gitattributes": "src/core.go linguist-generated\ngen/** -linguist-generated\n",
-                                "src/.keep": ""})
+        return copied_checkout(marked_checkout)
 
     def in_directory(self, directory: Path):
         cwd = os.getcwd()

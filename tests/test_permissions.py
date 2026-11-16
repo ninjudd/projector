@@ -220,6 +220,7 @@ class PermissionRulesTests(unittest.TestCase):
 
     def test_each_command_line_is_one_the_parser_runs_or_refuses_for_its_leading_option(self) -> None:
         incomplete = {"project", "project config", "projector list"}
+        parser = cli.parser()
         for command, _, _ in DECISIONS:
             if command in incomplete:
                 continue
@@ -228,31 +229,33 @@ class PermissionRulesTests(unittest.TestCase):
                 while re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0], re.DOTALL):
                     words.pop(0)
                 if not words[1].startswith("-"):
-                    cli.parser().parse_args(words[1:])
+                    parser.parse_args(words[1:])
                     continue
                 stderr = StringIO()
                 with redirect_stderr(stderr), self.assertRaises(SystemExit) as stop:
-                    cli.parser().parse_args(words[1:])
+                    parser.parse_args(words[1:])
                 self.assertEqual(2, stop.exception.code)
                 self.assertIn(f"error: {words[1]}: options go after the command", stderr.getvalue())
 
     def test_site_build_and_serve_take_the_prepare_flags_only_spelled_in_full(self) -> None:
+        parser = cli.parser()
         for command in (["site", "build", "--out", "site"], ["site", "serve"]):
             for abbreviated in (["--prep", "make"], ["--allow"], ["--allow-prep"], ["--no-prep"]):
                 with self.subTest(command=command[1], flag=abbreviated[0]):
                     with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as stop:
-                        cli.parser().parse_args([*command, *abbreviated])
+                        parser.parse_args([*command, *abbreviated])
                     self.assertEqual(2, stop.exception.code)
-            self.assertEqual("make", cli.parser().parse_args([*command, "--prepare=make"]).prepare)
-            self.assertEqual("make", cli.parser().parse_args([*command, "--prepare", "make"]).prepare)
-            self.assertTrue(cli.parser().parse_args([*command, "--allow-prepare"]).allow_prepare)
+            self.assertEqual("make", parser.parse_args([*command, "--prepare=make"]).prepare)
+            self.assertEqual("make", parser.parse_args([*command, "--prepare", "make"]).prepare)
+            self.assertTrue(parser.parse_args([*command, "--allow-prepare"]).allow_prepare)
 
     def test_ios_build_takes_allow_untrusted_only_spelled_in_full(self) -> None:
-        self.assertTrue(cli.parser().parse_args(["ios", "build", "12", "--allow-untrusted"]).allow_untrusted)
+        parser = cli.parser()
+        self.assertTrue(parser.parse_args(["ios", "build", "12", "--allow-untrusted"]).allow_untrusted)
         for abbreviated in ("--allow", "--allow-unt", "--allow-untrust"):
             with self.subTest(abbreviated):
                 with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as stop:
-                    cli.parser().parse_args(["ios", "build", "12", abbreviated])
+                    parser.parse_args(["ios", "build", "12", abbreviated])
                 self.assertEqual(2, stop.exception.code)
 
 

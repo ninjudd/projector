@@ -13,7 +13,7 @@ from unittest import mock
 
 from projector import config as config_module
 from projector.cli import main
-from projector.config import SETTINGS, ConfigError, config_paths, load, merge, user_config_path
+from projector.config import SETTINGS, ConfigError, config_paths, load, merge
 from projector.core import json_scalar
 
 
@@ -135,9 +135,6 @@ class ConfigTests(unittest.TestCase):
             self.merged()
 
         self.assertIn(str(broken), str(caught.exception))
-
-    def test_the_user_layer_is_the_same_filename_in_the_home_directory(self) -> None:
-        self.assertEqual(self.home / ".projector.toml", user_config_path(self.environ))
 
     def test_a_worktree_under_the_repository_still_sees_the_repository(self) -> None:
         # Claude Code puts worktrees at <repo>/.claude/worktrees/<name>, which

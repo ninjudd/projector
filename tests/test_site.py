@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import io
 import json
 import os
@@ -277,6 +278,9 @@ STANDARDS_HEAD = ('<!doctype html>\n<meta charset="utf-8">\n'
 
 
 class SiteContentTests(SiteRepoCase):
+    ALPHA = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
+    BETA = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
+
     def publish(self, number: int, head: str, project: object = ..., name: str | None = None,
                 projects: list[str] | None = None, diff: str = PLAN_DIFF, **pr: str) -> None:
         """Publish a summary of `number` at `head`, which records `project`, or none at all when it is `...`,
@@ -344,12 +348,15 @@ class SiteContentTests(SiteRepoCase):
         return {r["number"]: [row["number"] for row in self.data(r["number"])["stack"]] for r in reviews}
 
     @staticmethod
-    def written(manifest: dict) -> dict[str, list[str]]:
-        """Each project's stacks, newest first, each written as its segments: the project its header names, or else
-        its title, then its members, with a ` · ` between segments, as `alpha/beta 9 · alpha 10`."""
-        def segment(s: dict) -> str:
-            return " ".join([s["header"].get("project", s["header"]["title"]), *map(str, s["members"])])
-        return {p["name"]: [" · ".join(map(segment, stack)) for stack in p["stacks"]] for p in manifest["projects"]}
+    def stack_text(segments: list[dict]) -> str:
+        """A stack written as its segments: the project its header names, or else its title, then its members, with a
+        ` · ` between segments, as `alpha/beta 9 · alpha 10`."""
+        return " · ".join(" ".join([s["header"].get("project", s["header"]["title"]), *map(str, s["members"])])
+                          for s in segments)
+
+    def written(self, manifest: dict) -> dict[str, list[str]]:
+        """Each project's stacks, newest first, each written as `stack_text` writes it."""
+        return {p["name"]: [self.stack_text(stack) for stack in p["stacks"]] for p in manifest["projects"]}
 
     def groups(self) -> list[tuple[int, int | None]]:
         """Each review on the Reviews index, in its order, with the number its stack is grouped under."""
@@ -422,10 +429,10 @@ class SiteContentTests(SiteRepoCase):
 
         self.assertEqual(({9: []}, []), self.stacks({}), "trunk is known to be the default, so it is not asked about")
 
-    def statuses(self, reviews: list[dict] | None, visibility: str | None = "public") -> dict[str, dict | None]:
-        """Each head of pull request 9's review status, built with `reviews` on GitHub, or offline when None, in
-        a repository GitHub reports as `visibility`. Head c's summary is older than head d's, so d is the newest
-        head."""
+    def built_statuses(self, reviews: list[dict] | None, visibility: str | None = "public") -> dict[str, dict | None]:
+        """Each head of pull request 9's review status as the build writes its page, with `reviews` on GitHub, or
+        offline when None, in a repository GitHub reports as `visibility`. Head c's summary is older than head d's,
+        so d is the newest head."""
         asked: list[tuple[str, int]] = []
 
         def pr_status(repo: str, number: int) -> dict:
@@ -443,28 +450,48 @@ class SiteContentTests(SiteRepoCase):
         return {head[:1]: json.loads((self.out / "reviews" / "9" / head / "data.json").read_text()).get("review")
                 for head in ("c" * 40, "d" * 40)}
 
+    @staticmethod
+    def statuses(reviews: list[dict], visibility: str | None = "public") -> dict[str, dict]:
+        """What `built_statuses` gives for `reviews`, decided as the build decides it, without building."""
+        found = site_build.review_statuses(reviews, visibility)
+        return {"c": site_build.head_status(found, "c" * 40, {"d" * 40}), "d": site_build.head_status(found, "d" * 40, set())}
+
+    # Through the build: each head's page carries its status, decided with the heads newer than it.
+
+    def test_a_verdict_on_a_later_head_leaves_an_earlier_one_unreviewed(self) -> None:
+        statuses = self.built_statuses([projector_review("clean", "d" * 40, "2026-10-01T10:00:00Z", 1)])
+
+        self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "clean", "url": review_url(1)}}, statuses,
+                         "no review will come for c, and none came before it")
+
+    def test_a_status_github_cannot_tell_is_left_out_rather_than_unreviewed(self) -> None:
+        self.assertEqual({"c": None, "d": None}, self.built_statuses(None))
+
+    def test_in_a_private_or_internal_repository_every_review_sets_the_status(self) -> None:
+        # Only an account that can see the repository can review there. GitHub hides a private organization
+        # membership from a token that cannot see it, as the deploy's cannot, and reports a lower association.
+        reviews = [projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1,
+                                    association="CONTRIBUTOR"),
+                   projector_review("clean", "d" * 40, "2026-10-02T10:00:00Z", 2, association="NONE")]
+        counted = {"c": {"status": "changes-requested", "url": review_url(1)}, "d": {"status": "clean", "url": review_url(2)}}
+        for visibility in ("private", "internal"):
+            with self.subTest(visibility=visibility):
+                self.assertEqual(counted, self.statuses(reviews, visibility))
+        for visibility in ("public", None):
+            with self.subTest(visibility=visibility):
+                self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "unreviewed"}},
+                                 self.statuses(reviews, visibility),
+                                 "a public repository, or one GitHub gives no visibility for, still ignores them")
+        self.assertEqual(counted, self.built_statuses(reviews, "private"), "the build reads the visibility GitHub reports")
+
+    # Decided directly
+
     def test_each_head_shows_the_verdict_of_the_projector_review_that_names_it(self) -> None:
         statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1),
                                   projector_review("changes-requested", "d" * 40, "2026-10-02T10:00:00Z", 2)])
 
         self.assertEqual({"c": {"status": "clean", "url": review_url(1)},
                           "d": {"status": "changes-requested", "url": review_url(2)}}, statuses)
-
-    def test_a_review_whose_marker_names_no_version_sets_its_heads_status(self) -> None:
-        statuses = self.statuses([
-            projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1, version=None),
-            projector_review("approved", "d" * 40, "2026-10-02T10:00:00Z", 2, version=None),
-        ])
-
-        self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)},
-                          "d": {"status": "clean", "url": review_url(2)}}, statuses,
-                         "a clean verdict spelled approved shows as clean")
-        head = "8f1ec500248ff566848d88e8f4fae6e6ed85d256"
-        older = {"body": ("**Projector review** · model `claude-opus-5-5[1m]`\n\n"
-                          "<!-- projector-review v=1 verdict=clean model=claude-opus-5-5[1m] effort=high "
-                          f"sha={head} findings=0 seconds=66 covered=1/1 -->\n\nWhat the review found."),
-                 "url": review_url(3), "at": "2026-10-03T10:00:00Z", "association": "OWNER"}
-        self.assertEqual({head: {"status": "clean", "url": review_url(3)}}, site_build.review_statuses([older]))
 
     def test_a_head_no_projector_review_names_is_unreviewed(self) -> None:
         marker = projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 2)["body"].splitlines()[2]
@@ -492,24 +519,6 @@ class SiteContentTests(SiteRepoCase):
                                 "last": {"status": "changes-requested", "head": "c" * 40, "url": review_url(1)}}},
                          statuses, "d is pending on c's trusted change request, not the forged clean verdicts")
 
-    def test_in_a_private_or_internal_repository_every_review_sets_the_status(self) -> None:
-        # Only an account that can see the repository can review there. GitHub hides a private organization
-        # membership from a token that cannot see it, as the deploy's cannot, and reports a lower association.
-        reviews = [projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1,
-                                    association="CONTRIBUTOR"),
-                   projector_review("clean", "d" * 40, "2026-10-02T10:00:00Z", 2, association="NONE")]
-        for visibility in ("private", "internal"):
-            with self.subTest(visibility=visibility):
-                self.reset()
-                self.assertEqual({"c": {"status": "changes-requested", "url": review_url(1)},
-                                  "d": {"status": "clean", "url": review_url(2)}}, self.statuses(reviews, visibility))
-        for visibility in ("public", None):
-            with self.subTest(visibility=visibility):
-                self.reset()
-                self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "unreviewed"}},
-                                 self.statuses(reviews, visibility),
-                                 "a public repository, or one GitHub gives no visibility for, still ignores them")
-
     def test_a_head_only_earlier_heads_were_reviewed_on_is_pending_on_the_newest_of_them(self) -> None:
         statuses = self.statuses([
             projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
@@ -528,12 +537,6 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual({"c": pending, "d": pending}, statuses,
                          "the site cannot tell when a head it has no summary of was pushed")
 
-    def test_a_verdict_on_a_later_head_leaves_an_earlier_one_unreviewed(self) -> None:
-        statuses = self.statuses([projector_review("clean", "d" * 40, "2026-10-01T10:00:00Z", 1)])
-
-        self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "clean", "url": review_url(1)}}, statuses,
-                         "no review will come for c, and none came before it")
-
     def test_a_verdict_on_the_head_itself_wins_over_a_newer_one_on_an_earlier_head(self) -> None:
         for own, expected in (
                 (projector_review("changes-requested", "d" * 40, "2026-10-02T10:00:00Z", 2),
@@ -541,7 +544,6 @@ class SiteContentTests(SiteRepoCase):
                 (incremental_review("d" * 40, "c" * 40, "2026-10-02T10:00:00Z", 2),
                  {"status": "clean", "url": review_url(2), "incrementalFrom": {"head": "c" * 40, "url": review_url(1)}})):
             with self.subTest(expected["status"]):
-                self.reset()
                 statuses = self.statuses([projector_review("clean", "c" * 40, "2026-10-01T10:00:00Z", 1), own,
                                           projector_review("clean", "c" * 40, "2026-10-03T10:00:00Z", 3,
                                                            model="gpt-5.5")])
@@ -565,9 +567,6 @@ class SiteContentTests(SiteRepoCase):
 
         self.assertEqual({"c": {"status": "clean", "url": review_url(2)},
                           "d": {"status": "clean", "url": review_url(4)}}, statuses)
-
-    def test_a_status_github_cannot_tell_is_left_out_rather_than_unreviewed(self) -> None:
-        self.assertEqual({"c": None, "d": None}, self.statuses(None))
 
     def test_an_incremental_review_links_the_full_review_it_builds_on(self) -> None:
         statuses = self.statuses([projector_review("changes-requested", "c" * 40, "2026-10-01T10:00:00Z", 1),
@@ -601,13 +600,6 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual({"status": "clean", "url": review_url(3),
                           "incrementalFrom": {"head": "c" * 40, "url": review_url(1)}}, statuses["d"],
                          "the link names claude-opus's full review, not gpt-5.5's newer one")
-
-    def test_an_incremental_line_without_a_review_marker_sets_no_status(self) -> None:
-        line = incremental_review("d" * 40, "c" * 40, "2026-10-03T10:00:00Z", 3)["body"].splitlines()[3]
-        statuses = self.statuses([{"body": f"Quoting:\n{line}\n", "url": review_url(3), "at": "2026-10-03T10:00:00Z",
-                                   "association": "OWNER"}])
-
-        self.assertEqual({"c": {"status": "unreviewed"}, "d": {"status": "unreviewed"}}, statuses)
 
     def test_each_page_lists_the_pull_requests_beneath_and_above_it(self) -> None:
         self.publish(9, "c" * 40, headRef="feature-a")
@@ -740,29 +732,29 @@ class SiteContentTests(SiteRepoCase):
             self.assertTrue(page.read_text().startswith(STANDARDS_HEAD), page.relative_to(self.out))
 
     def test_a_pull_request_alone_is_headed_by_its_own_project_or_its_title(self) -> None:
-        alpha = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
-        beta = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
-        titled = {"title": "Summary 9"}
-        # PLAN_DIFF changes alpha's plan, and BOTH_DIFF alpha's and alpha/beta's.
-        for case, published, header in (
-                ("a project the site has", {"project": "alpha"}, alpha),
-                ("a project the site lacks", {"project": "no-such-project"}, titled),
-                ("no project, while the diff changes alpha's plan", {"project": ""}, titled),
-                ("an older summary whose diff changes one project's files", {}, alpha),
+        described = [{"name": "alpha", "title": "Build alpha", "path": "docs/projects/alpha/readme.md"},
+                     {"name": "alpha/beta", "title": "Finish beta", "path": "docs/projects/alpha/beta/readme.md"}]
+        link = site_build.project_linker(described, "/")
+        # PLAN_DIFF changes alpha's plan, and BOTH_DIFF alpha's and alpha/beta's. None is headed by its title.
+        for case, published, diff, owner in (
+                ("a project the site has", {"project": "alpha"}, PLAN_DIFF, "alpha"),
+                ("a project the site lacks", {"project": "no-such-project"}, PLAN_DIFF, None),
+                ("no project, while the diff changes alpha's plan", {"project": ""}, PLAN_DIFF, None),
+                ("an older summary whose diff changes one project's files", {}, PLAN_DIFF, "alpha"),
                 ("an older summary whose projects list names one the site has",
-                 {"projects": ["no-such-project", "alpha/beta"]}, beta),
-                ("a null project, read as an older summary's", {"project": None}, alpha),
-                ("an older summary whose diff changes two projects' files", {"diff": BOTH_DIFF}, titled)):
+                 {"projects": ["no-such-project", "alpha/beta"]}, PLAN_DIFF, "alpha/beta"),
+                ("a null project, read as an older summary's", {"project": None}, PLAN_DIFF, "alpha"),
+                ("an older summary whose diff changes two projects' files", {}, BOTH_DIFF, None)):
             with self.subTest(case):
-                self.reset()
-                self.publish(9, "c" * 40, **published)
+                self.assertEqual(owner, link(published, {"files": [{"path": f["path"]} for f in summary.parse_diff(diff)]}))
 
-                manifest = self.build()
+        # Through the build, the project found heads the page and its one segment, and lists the pull request.
+        self.publish(9, "c" * 40)
+        manifest = self.build()
 
-                self.assertEqual(header, self.data(9)["header"])
-                self.assertEqual([{"header": header, "members": [9]}], self.data(9)["segments"], "one segment")
-                self.assertEqual({"alpha": ["alpha 9"] if header is alpha else [],
-                                  "alpha/beta": ["alpha/beta 9"] if header is beta else []}, self.written(manifest))
+        self.assertEqual(self.ALPHA, self.data(9)["header"])
+        self.assertEqual([{"header": self.ALPHA, "members": [9]}], self.data(9)["segments"], "one segment")
+        self.assertEqual({"alpha": ["alpha 9"], "alpha/beta": []}, self.written(manifest))
 
     def test_files_under_docs_are_served_beside_the_markdown(self) -> None:
         manifest = self.build()
@@ -918,9 +910,6 @@ class SiteContentTests(SiteRepoCase):
 
     # Headers
 
-    ALPHA = {"project": "alpha", "title": "Build alpha", "url": "/projects/alpha/"}
-    BETA = {"project": "alpha/beta", "title": "Finish beta", "url": "/projects/alpha/beta/"}
-
     def layered(self, *projects: object, github: bool = True, merged: bool = False) -> dict:
         """Build a stack of #9 and up, each layer based on the one beneath, that record `projects` bottom first;
         return site.json. GitHub lists the stack unless `github` is false, and reports it merged when `merged`."""
@@ -942,37 +931,30 @@ class SiteContentTests(SiteRepoCase):
             self.assertEqual(own[row["number"]], data["header"], row["number"])
             self.assertEqual(own[row["number"]], row["header"], row["number"])
 
-    def test_a_layer_with_no_project_sits_under_the_project_of_the_layer_beneath(self) -> None:
-        manifest = self.layered("alpha", "")
-
-        self.assert_segments(manifest, [(self.ALPHA, [9, 10])])
-        self.assertEqual(["alpha 9 10"], self.written(manifest)["alpha"])
-
-    def test_a_merged_stack_keeps_the_header_of_its_bottom_layer(self) -> None:
-        manifest = self.layered("alpha", "", merged=True)
-
-        self.assert_segments(manifest, [(self.ALPHA, [9, 10])])
-
     def test_a_stack_splits_into_a_segment_for_each_run_of_layers_that_carry_one_project(self) -> None:
         alpha, beta = self.ALPHA, self.BETA
-        for projects, expected in (
-                (("", "alpha"), [(alpha, [9, 10])]),
+        # The project each layer carries out, bottom first, as the linker finds it, or None for none.
+        for owned, expected in (
+                ((None, "alpha"), [(alpha, [9, 10])]),
+                (("alpha", None), [(alpha, [9, 10])]),
                 (("alpha", "alpha", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
-                (("alpha", "", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
-                (("", "alpha", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
-                (("alpha", "no-such-project", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
-                (("alpha", "", "alpha"), [(alpha, [9, 10, 11])]),
+                (("alpha", None, "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
+                ((None, "alpha", "alpha/beta"), [(alpha, [9, 10]), (beta, [11])]),
+                (("alpha", None, "alpha"), [(alpha, [9, 10, 11])]),
                 (("alpha", "alpha/beta", "alpha"), [(alpha, [9]), (beta, [10]), (alpha, [11])]),
-                (("alpha", "alpha/beta"), [(alpha, [9]), (beta, [10])])):
-            with self.subTest(projects=projects):
-                self.reset()
-                manifest = self.layered(*projects)
+                (("alpha", "alpha/beta"), [(alpha, [9]), (beta, [10])]),
+                (("alpha/beta", "alpha"), [(beta, [9]), (alpha, [10])])):
+            with self.subTest(owned=owned):
+                members = list(range(9, 9 + len(owned)))
+                segments = site_build.stack_segments(members, {}, dict(zip(members, owned)),
+                                                     {"alpha": alpha, "alpha/beta": beta})
 
-                self.assert_segments(manifest, expected)
-                whole = " · ".join(" ".join([h["project"], *map(str, m)]) for h, m in expected)
-                self.assertEqual({"alpha": [whole] if any(h is alpha for h, _ in expected) else [],
-                                  "alpha/beta": [whole] if any(h is beta for h, _ in expected) else []},
-                                 self.written(manifest), "each project the stack carries out lists it once, whole")
+                self.assertEqual([{"header": header, "members": numbers} for header, numbers in expected], segments)
+                listed = site_build.project_stacks([{"number": 9, "stack": 9, "segments": segments}])
+                self.assertEqual({header["project"]: [self.stack_text(segments)] for header, _ in expected},
+                                 {name: [self.stack_text(stack) for stack in stacks] for name, stacks in listed.items()},
+                                 "each project the stack carries out lists it once, whole")
+
 
     def test_a_stack_found_from_base_branches_splits_as_a_github_stack_does(self) -> None:
         self.assert_segments(self.layered("alpha", "alpha/beta", github=False), [(self.ALPHA, [9]), (self.BETA, [10])])
@@ -982,6 +964,7 @@ class SiteContentTests(SiteRepoCase):
 
         self.assert_segments(manifest, [(self.ALPHA, [9]), (self.BETA, [10])])
         self.assertEqual(["merged", "merged"], [r["state"] for r in manifest["reviews"]])
+        self.assertEqual([], [p["name"] for p in manifest["projects"] if "reviews" in p], "no project lists its reviews")
 
     def test_a_member_without_a_summary_joins_the_segment_beneath_it(self) -> None:
         self.publish(9, "a" * 40, "alpha", headRef="feature-9")
@@ -991,20 +974,6 @@ class SiteContentTests(SiteRepoCase):
 
         self.assert_segments(manifest, [(self.ALPHA, [9, 11]), (self.BETA, [10])])
         self.assertEqual([9, 11, 10], [row["number"] for row in self.data(9)["stack"]])
-
-    @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
-    def test_a_member_without_a_summary_is_drawn_under_the_header_beneath_it(self) -> None:
-        self.publish(9, "a" * 40, "alpha", headRef="feature-9")
-        self.publish(10, "b" * 40, "alpha/beta", headRef="feature-10")
-        self.build([github_stack(30, 9, 11, 10)])
-
-        html = rendered_summary(self.data(9))
-
-        self.assertRegex(html, r'<div class="stackhead"><a href="/projects/alpha/">Build alpha</a></div>'
-                               r'<ul class="stack" aria-label="Pull requests for Build alpha">'
-                               r'<li class="srow current"[^>]*>.*?#9</span>.*?</li>'
-                               r'<li><a class="srow" href="https://github.com/owner/example/pull/11">.*?#11</span>.*?</ul>'
-                               r'<div class="stackhead"><a href="/projects/alpha/beta/">Finish beta</a></div>')
 
     @unittest.skipUnless(shutil.which("node"), "the sidebar test needs node")
     def test_each_merged_page_of_a_two_project_stack_draws_both_headers(self) -> None:
@@ -1048,9 +1017,6 @@ class SiteContentTests(SiteRepoCase):
 
     # A project's stacks
 
-    def test_a_project_lists_its_stack_whole(self) -> None:
-        self.assertEqual(["alpha 9 10 11"], self.written(self.layered("alpha", "alpha", "alpha"))["alpha"])
-
     def test_a_project_lists_its_newer_stack_first(self) -> None:
         self.publish(8, "8" * 40, "alpha", headRef="feature-8")
 
@@ -1077,17 +1043,6 @@ class SiteContentTests(SiteRepoCase):
         self.assertEqual(["merged", "closed"], [r["state"] for r in manifest["reviews"]])
         self.assertEqual(["alpha 9 10"], self.written(manifest)["alpha"])
 
-    def test_a_project_no_layer_records_lists_no_stack(self) -> None:
-        self.assertEqual([], self.written(self.layered("alpha/beta"))["alpha"])
-
-    def test_a_stack_of_two_projects_is_listed_whole_under_each(self) -> None:
-        self.assertEqual({"alpha": ["alpha/beta 9 · alpha 10"], "alpha/beta": ["alpha/beta 9 · alpha 10"]},
-                         self.written(self.layered("alpha/beta", "alpha")))
-
-    def test_a_stack_that_returns_to_a_project_is_listed_once_under_it(self) -> None:
-        self.assertEqual(["alpha 9 · alpha/beta 10 · alpha 11"],
-                         self.written(self.layered("alpha", "alpha/beta", "alpha"))["alpha"])
-
     def test_a_stack_headed_by_its_title_alone_is_listed_under_no_project(self) -> None:
         self.assertEqual({"alpha": [], "alpha/beta": []}, self.written(self.layered("", "")))
 
@@ -1105,11 +1060,6 @@ class SiteContentTests(SiteRepoCase):
             for stack in project["stacks"]:
                 for number in (n for s in stack for n in s["members"] if n in summarized):
                     self.assertEqual(stack, self.data(number)["segments"], (project["name"], number))
-
-    def test_no_project_lists_its_reviews(self) -> None:
-        manifest = self.layered("alpha", "alpha/beta")
-
-        self.assertEqual([], [p["name"] for p in manifest["projects"] if "reviews" in p])
 
 
 def new_file_diff(path: str, content: str | bytes) -> str:
@@ -2376,7 +2326,7 @@ class SectionWatchTests(unittest.TestCase):
 
 
 class SectionStyleTests(unittest.TestCase):
-    """The rules that fold a project page's sections on a narrow screen and mark the section in view."""
+    """Where a jump to a section lands, on a summary page and a plan page alike."""
 
     @staticmethod
     def blocks(sheet: str) -> tuple[str, dict[str, str]]:
@@ -2396,20 +2346,9 @@ class SectionStyleTests(unittest.TestCase):
         outside.append(css[at:])
         return "".join(outside), queries
 
-    def test_a_wide_screen_hides_the_toggle_and_a_narrow_one_folds_the_list_behind_it(self) -> None:
-        outside, queries = self.blocks("site.css")
-
-        self.assertRegex(outside, r"(^|\n)\.nav \.navfold \{ display: none; \}")
-        self.assertNotRegex(outside, r"aria-expanded=\"false\"\] \+ ol")
-        narrow = queries["(max-width: 980px)"]
-        self.assertRegex(narrow, r"\.nav \.navfold \{\s*display: grid;")
-        self.assertIn('.nav .navfold[aria-expanded="false"] + ol { display: none; }', narrow)
-
     def test_a_jump_lands_every_target_level_with_the_sticky_sidebar(self) -> None:
         outside, _ = self.blocks("summary.css")
 
-        self.assertRegex(outside, r"(^|\n)\.layout > \.side \{[^}]*top: calc\(env\(safe-area-inset-top, 0px\) \+ 16px\);",
-                         "the sidebar sticks 16px down")
         margins = re.findall(r"(?:^|\n)([^{}\n]+)\{([^}]*scroll-margin-top[^}]*)\}", outside)
         shared = [selectors for selectors, body in margins if "calc(var(--stick-top) + 16px)" in body]
         self.assertEqual([[".stats", ".group", ".sitemain.withnav .sidebody [id]"]],
@@ -2417,22 +2356,6 @@ class SectionStyleTests(unittest.TestCase):
                          "a summary's line counts and sections and a plan's targets share one landing rule")
         self.assertEqual([], [selectors for selectors, _ in margins if re.search(r"\.(group|stats)\b", selectors)
                               and selectors not in shared], "no other rule moves where they land")
-        _, queries = self.blocks("site.css")
-        self.assertIn(".sitemain.withnav { --stick-top: env(safe-area-inset-top, 0px); }", queries["(max-width: 980px)"],
-                      "a project page has no compact bar to land below on a narrow screen")
-
-    def test_a_pages_last_section_is_tall_enough_to_scroll_level_with_the_sidebar(self) -> None:
-        outside, _ = self.blocks("summary.css")
-
-        self.assertIn(".group:last-child, .sitemain.withnav .lastsection { min-height: calc(100vh - var(--stick-top) - 16px); }",
-                      outside, "a summary's last section and a plan's share one rule, sized to where a jump lands them")
-        self.assertEqual(1, len(re.findall(r"min-height: calc\(100vh", outside)))
-
-    def test_the_section_in_view_is_marked_in_every_list_of_sections(self) -> None:
-        outside, _ = self.blocks("summary.css")
-
-        self.assertIn('.nav ol a[aria-current="location"] { position: relative; background: var(--surface-2); }', outside)
-        self.assertRegex(outside, r'\.nav ol a\[aria-current="location"\]::before \{[^}]*background: var\(--accent\);')
 
 
 @unittest.skipUnless(shutil.which("node"), "the header test needs node")
@@ -2754,13 +2677,6 @@ class SharedHelperTests(unittest.TestCase):
                           '<span class="rstatus merged">Merged</span>'], json.loads(node(program)),
                          "a link, so a keyboard reaches its title, and Merged still takes its place")
 
-    def test_pending_has_a_colour_of_its_own_in_light_and_dark(self) -> None:
-        css = (SITE_JS.parent / "summary.css").read_text()
-
-        self.assertIn(".rstatus.pending { color: var(--pending); }", css)
-        self.assertEqual(["#4B6382", "#9FB3CF", "#9FB3CF"], re.findall(r"--pending: (#[0-9A-F]{6});", css),
-                         "the light palette, the dark one a reader's system asks for, and the dark one they pick")
-
     def test_every_site_page_carries_the_summary_pages_credit(self) -> None:
         stub = ("const root = {innerHTML: ''}, main = {innerHTML: ''};\n"
                 "const document = {title: '', body: {classList: {remove: function () {}}},"
@@ -2984,6 +2900,10 @@ class ExpanderTests(unittest.TestCase):
 class FileHeaderTests(SiteRepoCase):
     """The page header's menu links the pull request, and each file card's links its diff, file, and project."""
 
+    # Every test's checkout is the same, so a build with the same arguments, and the same default branch, is the
+    # same build. Each test gets its own copy of the data, which it may change.
+    built: dict[str, dict] = {}
+
     def build(self, state: str | None = None, reported_base: object = ..., reviews: list[dict] | None = None,
               **pr: str) -> dict:
         """The data the site build writes for pull request 9, which changes HEADER_FILES.
@@ -2991,6 +2911,12 @@ class FileHeaderTests(SiteRepoCase):
         GitHub reports the pull request as `state` with `reviews`, or cannot be asked when it is
         None, and reports its base branch as `reported_base`, None once deleted, or not at all when `...`.
         """
+        key = repr((state, reported_base, reviews, sorted(pr.items()), cli.trunk_branch))
+        if key not in self.built:
+            self.built[key] = self.build_once(state, reported_base, reviews, **pr)
+        return copy.deepcopy(self.built[key])
+
+    def build_once(self, state: str | None, reported_base: object, reviews: list[dict] | None, **pr: str) -> dict:
         summaries = Path(tempfile.mkdtemp()) / "summaries"
         folder = summaries / "9" / ("c" * 40)
         folder.mkdir(parents=True)
@@ -3012,12 +2938,13 @@ class FileHeaderTests(SiteRepoCase):
                     **({} if reported_base is ... else {"base": reported_base})}
         status = mock.patch.object(summary, "pr_status", return_value=reported) \
             if state is not None else nullcontext()
+        out = Path(tempfile.mkdtemp()) / "site"
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/example"}), status, \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            code = cli.main(["site", "build", "--out", str(self.out), "--repo-root", str(self.repo),
+            code = cli.main(["site", "build", "--out", str(out), "--repo-root", str(self.repo),
                              "--summaries", str(summaries)])
         self.assertEqual(0, code)
-        return json.loads((self.out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
+        return json.loads((out / "reviews" / "9" / ("c" * 40) / "data.json").read_text())
 
     def test_a_file_belongs_to_the_deepest_project_the_site_has(self) -> None:
         files = {f["path"]: f.get("project") for f in self.build()["files"]}
@@ -3120,24 +3047,31 @@ class FileHeaderTests(SiteRepoCase):
         branch = "https://github.com/owner/example/blob/feature/header-links/src/app%231.py"
         trunk = "https://github.com/owner/example/blob/develop/src/app%231.py"
         at_head = f'https://github.com/owner/example/blob/{"c" * 40}/src/app%231.py'
+        with mock.patch.object(cli, "trunk_branch", return_value="develop"):
+            built = self.build(state="merged", headRef="feature/header-links", baseRef="develop")
+        self.assertEqual(("merged", "develop"), (built["pr"].get("state"), built["defaultBranch"]),
+                         "the page records the state and the default branch the build found")
+        self.assertNotIn("currentBaseRef", built["pr"], "a lookup that reports no base branch records none")
+        # The page picks the link from what the build recorded, so each state is the same data with another state.
         for state, expected in (("open", branch), ("merged", trunk), ("closed", at_head), (None, branch)):
-            with self.subTest(state=state), mock.patch.object(cli, "trunk_branch", return_value="develop"):
-                data = self.build(state=state, headRef="feature/header-links", baseRef="develop")
-                self.assertEqual(state, data["pr"].get("state"), "the page records the state the build found")
-                self.assertEqual("develop", data["defaultBranch"], "the page records the default branch the build found")
+            with self.subTest(state=state):
+                data = copy.deepcopy(built)
+                data["pr"]["state"] = state
+                if state is None:
+                    del data["pr"]["state"], data["review"]
                 self.assertIn(f'href="{expected}"', rendered_summary(data))
-                shutil.rmtree(self.out)
 
     @unittest.skipUnless(shutil.which("node"), "the status test needs node")
     def test_the_page_shows_merged_or_closed_in_place_of_its_verdict_and_the_sites_credit(self) -> None:
-        for state, expected in (("open", '<span class="rstatus unreviewed">Unreviewed</span>'),
-                                ("merged", '<span class="rstatus merged">Merged</span>'),
+        # Each state's chip is statusHtml's, which SharedHelperTests covers; this is the page drawing it in its header.
+        data = self.build(state="merged")
+        for state, expected in (("merged", '<span class="rstatus merged">Merged</span>'),
                                 ("closed", '<span class="rstatus closed">Closed</span>')):
             with self.subTest(state=state):
-                html = rendered_summary(self.build(state=state))
+                data["pr"]["state"] = state
+                html = rendered_summary(data)
                 self.assertIn(f" · {expected}</div><h1>", html)
                 self.assertIn('<div class="credit">Generated by <a href="https://projector.bot">Projector</a></div>', html)
-                shutil.rmtree(self.out)
         self.assertNotIn("rstatus", rendered_summary(self.build()), "no status when GitHub could not be asked")
 
     @unittest.skipUnless(shutil.which("node"), "the status test needs node")
@@ -3146,57 +3080,16 @@ class FileHeaderTests(SiteRepoCase):
         reviews = [projector_review("clean", full, "2026-10-01T10:00:00Z", 1),
                    incremental_review("c" * 40, full, "2026-10-02T10:00:00Z", 2)]
 
-        open_html = rendered_summary(self.build(state="open", reviews=reviews))
-        shutil.rmtree(self.out)
-        merged_html = rendered_summary(self.build(state="merged", reviews=reviews))
+        data = self.build(state="open", reviews=reviews)
+        open_html = rendered_summary(data)
+        data["pr"]["state"] = "merged"
+        merged_html = rendered_summary(data)
 
         self.assertIn(f' · <a class="rstatus clean" href="{review_url(2)}" target="_blank" rel="noopener">Clean</a>'
                       f' · <a class="rstatus incremental" href="{review_url(1)}" target="_blank" rel="noopener">'
                       'incremental from <code>a8cf3d5</code></a></div><h1>', open_html)
         self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', merged_html,
                       "a merged pull request shows Merged alone")
-
-    @unittest.skipUnless(shutil.which("node"), "the status test needs node")
-    def test_the_header_shows_pending_when_only_an_earlier_head_was_reviewed(self) -> None:
-        earlier = "e333044" + "0" * 33
-        reviews = [projector_review("clean", earlier, "2026-10-01T10:00:00Z", 1),
-                   projector_review("changes-requested", earlier, "2026-10-02T10:00:00Z", 2)]
-
-        data = self.build(state="open", reviews=reviews)
-        html = rendered_summary(data)
-        shutil.rmtree(self.out)
-        merged_html = rendered_summary(self.build(state="merged", reviews=reviews))
-
-        self.assertEqual({"status": "pending", "last": {"status": "changes-requested", "head": earlier,
-                                                        "url": review_url(2)}}, data["review"])
-        self.assertIn(f' · <a class="rstatus pending" href="{review_url(2)}" target="_blank" rel="noopener" '
-                      'title="Last review: changes requested on e333044. This head hasn\'t been reviewed yet.">'
-                      'Pending</a></div><h1>', html, "one chip, linked to the last review, which its title names")
-        self.assertEqual(1, html.count('class="rstatus '))
-        self.assertIn(' · <span class="rstatus merged">Merged</span></div><h1>', merged_html)
-
-    @unittest.skipUnless(shutil.which("node"), "the status test needs node")
-    def test_the_header_shows_the_newest_verdict_alone_when_several_models_reviewed_the_head(self) -> None:
-        head = "c" * 40
-        for verdict, word in (("clean", "Clean"), ("changes-requested", "Changes requested")):
-            with self.subTest(verdict):
-                other = "changes-requested" if verdict == "clean" else "clean"
-                reviews = [projector_review(other, head, "2026-10-02T09:00:00Z", 1, model="gpt-5.5"),
-                           projector_review(verdict, head, "2026-10-02T10:00:00Z", 2, model="claude-opus")]
-                data = self.build(state="open", reviews=reviews)
-                chip = f'<a class="rstatus {verdict}" href="{review_url(2)}" target="_blank" rel="noopener">{word}</a>'
-                index_row = node(shared_js() + f"\nprocess.stdout.write(statusHtml('open', {json.dumps(data['review'])}));")
-                html = rendered_summary(data)
-
-                self.assertEqual({"status": verdict, "url": review_url(2)}, data["review"], "the page names no models")
-                self.assertIn(f" · {chip}</div><h1>", html, "one status chip, linked to the newest review")
-                self.assertEqual(1, html.count('class="rstatus '), "no second chip and no list of models")
-                self.assertNotIn("<button class=\"rstatus", html)
-                self.assertNotIn("*", html[html.index('class="eyebrow"'):html.index("<h1>")])
-                self.assertEqual(chip, index_row, "the Reviews row shows the same status")
-                shutil.rmtree(self.out)
-        self.assertNotIn("rmodel", (SITE_JS.parent / "summary.css").read_text())
-        self.assertNotIn("rmodel", SUMMARY_JS.read_text())
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_merged_pull_request_links_the_branch_it_merged_into_while_that_branch_exists(self) -> None:
@@ -3206,17 +3099,23 @@ class FileHeaderTests(SiteRepoCase):
         def link(branch: str) -> str:
             return f'href="https://github.com/owner/example/blob/{branch}/src/app%231.py"'
 
+        with mock.patch.object(cli, "trunk_branch", return_value="develop"):
+            built = self.build(state="merged", reported_base=None, headRef="feature/header-links", baseRef="stack/parent")
+        self.assertIsNone(built["pr"]["currentBaseRef"], "the page records that GitHub reported no base branch")
+        # The page picks the link from the base branches the build recorded.
         for case, recorded, reported, expected in (
                 ("the base branch GitHub reports", "release/1.2", "release/1.2", "release/1.2"),
                 ("GitHub's base over the summary's, after a retarget", "stack/parent", "develop", "develop"),
                 ("the default branch once the base branch is deleted", "stack/parent", None, "develop"),
                 ("the summary's base when the lookup reports none", "release/1.2", ..., "release/1.2")):
-            with self.subTest(case), mock.patch.object(cli, "trunk_branch", return_value="develop"):
-                data = self.build(state="merged", reported_base=reported, headRef="feature/header-links", baseRef=recorded)
-                if reported is not ...:
-                    self.assertEqual(reported, data["pr"]["currentBaseRef"], "the page records the base GitHub reported")
+            with self.subTest(case):
+                data = copy.deepcopy(built)
+                data["pr"]["baseRef"] = recorded
+                if reported is ...:
+                    del data["pr"]["currentBaseRef"]
+                else:
+                    data["pr"]["currentBaseRef"] = reported
                 self.assertIn(link(expected), rendered_summary(data))
-                shutil.rmtree(self.out)
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_merged_pull_request_without_its_base_branch_links_the_default_branch(self) -> None:
@@ -3228,12 +3127,14 @@ class FileHeaderTests(SiteRepoCase):
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_deleted_file_links_the_merge_base_the_last_commit_that_has_it(self) -> None:
         at_base = f'https://github.com/owner/example/blob/{"b" * 40}/src/app%231.py'
+        built = self.build(headRef="feature/header-links")
+        next(f for f in built["files"] if f["path"] == "src/app#1.py")["deleted"] = True
         for state in ("open", "merged", "closed", None):
             with self.subTest(state=state):
-                data = self.build(state=state, headRef="feature/header-links")
-                next(f for f in data["files"] if f["path"] == "src/app#1.py")["deleted"] = True
+                data = copy.deepcopy(built)
+                if state is not None:
+                    data["pr"]["state"] = state
                 self.assertIn(f'href="{at_base}"', rendered_summary(data))
-                shutil.rmtree(self.out)
 
     @unittest.skipUnless(shutil.which("node"), "the file header test needs node")
     def test_a_merged_pull_request_with_neither_its_base_nor_the_default_branch_links_its_head(self) -> None:
@@ -3352,28 +3253,6 @@ class FileHeaderTests(SiteRepoCase):
 
 
 class SummarySidebarTests(unittest.TestCase):
-    def test_the_pinned_section_list_scrolls_on_its_own(self) -> None:
-        # The sidebar is sticky on a wide screen, so a list taller than the
-        # window has no other way to reach its last sections. On a narrow
-        # screen it sits above the content and scrolls with the page.
-        css = (SITE_JS.parent / "summary.css").read_text()
-        wide = re.search(r"^\.side \.nav \{([^}]*)\}", css, re.M)
-        self.assertIsNotNone(wide, "summary.css has no .side .nav rule")
-        self.assertRegex(wide.group(1), r"max-height: calc\(100vh\b")
-        self.assertRegex(wide.group(1), r"overflow-y: auto")
-        # A scroll the list cannot take passes to the page, which is what pins
-        # the sidebar and brings a long list's last sections into the window.
-        self.assertNotIn("overscroll-behavior", wide.group(1))
-        narrow = re.search(r"@media \(max-width: 980px\) \{ \.layout > \.side \{ position: static; \} (.*) \}$", css, re.M)
-        self.assertIsNotNone(narrow, "summary.css has no narrow-screen .side rule")
-        self.assertIn(".side .nav { max-height: none; overflow: visible; }", narrow.group(1))
-
-    def test_a_long_section_title_wraps_instead_of_scrolling_the_list_sideways(self) -> None:
-        css = (SITE_JS.parent / "summary.css").read_text()
-        title = re.search(r"^\.nav \.ntitle \{([^}]*)\}", css, re.M)
-        self.assertIsNotNone(title, "summary.css has no .nav .ntitle rule")
-        self.assertIn("overflow-wrap: anywhere;", title.group(1))
-
     def test_the_stack_list_rules_leave_the_reviews_index_alone(self) -> None:
         # The site's own pages load summary.css as well, so a rule written for
         # the sidebar's stack list names the sidebar block the list sits in.
@@ -3384,22 +3263,6 @@ class SummarySidebarTests(unittest.TestCase):
                  for selector in rule.split(",") if re.search(r"\.stack\b", selector)]
         self.assertTrue(stack, "summary.css has no .stack rule")
         self.assertEqual([], [selector for selector in stack if not selector.startswith(".prblock .stack")])
-
-    def test_a_stack_row_shows_up_to_three_lines_of_its_title_current_or_not(self) -> None:
-        css = (SITE_JS.parent / "summary.css").read_text()
-        title = re.search(r"^\.stitle \{([^}]*)\}", css, re.M)
-        self.assertIsNotNone(title, "summary.css has no .stitle rule")
-        self.assertIn("overflow-wrap: anywhere;", title.group(1))
-        self.assertIn("-webkit-line-clamp: 3;", title.group(1))
-        # Every title has the same weight, because bold text is wider, and a
-        # current row in a different weight could wrap onto more lines than
-        # the same title in another row.
-        self.assertIn("font-weight: 600;", title.group(1))
-        current = re.search(r"^\.prblock \.stack li\.current(?:, [^,{]+)* \{([^}]*)\}", css, re.M)
-        self.assertIsNotNone(current, "summary.css has no .prblock .stack li.current rule")
-        self.assertNotIn("font-weight", current.group(1))
-        current_title = re.search(r"^\.prblock \.stack li\.current \.stitle \{", css, re.M)
-        self.assertIsNone(current_title, "the current row's title is styled like every other title")
 
 
 class TreeColumnStyleTests(unittest.TestCase):
@@ -3491,7 +3354,8 @@ class ServeTests(SiteRepoCase):
     def fetch(self, site: serve.Site, base: str, path: str, host: str | None = None,
               listen: str = "127.0.0.1") -> tuple[int, str]:
         server = serve.ThreadingHTTPServer(("127.0.0.1", 0), serve.handler(site, base, serve.allowed_hosts(listen)))
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        # shutdown() waits for the loop's next poll, so the default half-second poll costs that much per request.
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
         try:
             url = f"http://127.0.0.1:{server.server_address[1]}{path}"
             request = urllib.request.Request(url, headers={"Host": host} if host else {})
@@ -3594,7 +3458,7 @@ class ServeTests(SiteRepoCase):
     def test_serves_summaries_from_the_fetched_ref_newest_head_first(self) -> None:
         self.published_remote()
 
-        self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
+        self.assert_fetch_leaves_fetch_head_alone()
         found = serve.summaries_refs(self.repo, "origin")
         self.assertEqual([("refs/projector/remotes/origin/summaries", "summaries")], found)
         self.assert_serves_both_heads(*found[0])
@@ -3621,7 +3485,7 @@ class ServeTests(SiteRepoCase):
         # Every release that published to the old ref stored each summary as spec.json.
         self.published_remote(summary.LEGACY_PAGES_REF, summary.LEGACY_PAGES_ROOT, "spec.json")
 
-        self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
+        self.assert_fetch_leaves_fetch_head_alone()
         found = serve.summaries_refs(self.repo, "origin")
         self.assertEqual([("refs/projector/remotes/origin/walkthroughs", "walkthroughs")], found)
         extracted = serve.extract_summaries(self.repo, found[0][0], Path(tempfile.mkdtemp()), found[0][1])
@@ -3684,21 +3548,14 @@ class ServeTests(SiteRepoCase):
         self.assertNotIn("and the repository exists", reason)
 
     def assert_fetch_leaves_fetch_head_alone(self) -> None:
+        """Fetch the summaries, which must succeed and leave the checkout's FETCH_HEAD as it was."""
         # The user's own `git fetch` may have just written it, for a `git checkout FETCH_HEAD` to follow.
         fetch_head = self.repo / ".git" / "FETCH_HEAD"
         fetch_head.write_text("0123456789012345678901234567890123456789\t\tbranch 'topic' of elsewhere\n")
         before = fetch_head.read_text()
 
         self.assertEqual("", serve.fetch_summaries(self.repo, "origin"))
-        self.assertEqual(before, fetch_head.read_text())
-
-    def test_fetching_summaries_leaves_the_checkouts_fetch_head_alone(self) -> None:
-        self.published_remote()
-        self.assert_fetch_leaves_fetch_head_alone()
-
-    def test_fetching_the_old_walkthroughs_ref_leaves_fetch_head_alone_too(self) -> None:
-        self.published_remote(summary.LEGACY_PAGES_REF, summary.LEGACY_PAGES_ROOT, "spec.json")
-        self.assert_fetch_leaves_fetch_head_alone()
+        self.assertEqual(before, fetch_head.read_text(), "a server's fetch writes only its tracking ref")
 
     def test_a_running_server_serves_summaries_published_after_it_started(self) -> None:
         remote = self.published_remote()

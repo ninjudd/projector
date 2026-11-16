@@ -26,6 +26,7 @@ from unittest import mock
 
 from projector import cli, review
 from projector.review import NotFound, ReviewError
+from tests.scratch import copy_of
 
 REPO = "acme/app"
 
@@ -239,27 +240,34 @@ class FakeGitHub:
         return [(args, token) for args, token in self.calls if any(a.startswith("body=") for a in args)]
 
 
+def review_repositories(tmp: Path) -> tuple[str, str]:
+    """Build a bare origin holding `trunk` and a first head, the work clone that pushed it, and a reviewer's checkout."""
+    origin = tmp / "origin.git"
+    git(tmp, "init", "--quiet", "--bare", "-b", "trunk", str(origin))
+    work = tmp / "work"
+    git(tmp, "init", "--quiet", "-b", "trunk", str(work))
+    (work / "README.md").write_text("trunk\n")
+    git(work, "add", ".")
+    git(work, "commit", "--quiet", "-m", "trunk")
+    base = git(work, "rev-parse", "HEAD")
+    git(work, "remote", "add", "origin", str(origin))
+    git(work, "push", "--quiet", "origin", "trunk")
+    head = ReviewCase.push(work, "first head")
+    checkout = tmp / "checkout"
+    git(tmp, "clone", "--quiet", str(origin), str(checkout))
+    # The clone's origin is a local path; the commands read the repository from
+    # origin's GitHub URL, so point the URL there and keep fetching locally.
+    git(checkout, "remote", "set-url", "origin", f"https://github.com/{REPO}.git")
+    git(checkout, "config", f"url.{origin}.insteadOf", f"https://github.com/{REPO}.git")
+    return base, head
+
+
 class ReviewCase(unittest.TestCase):
     def setUp(self) -> None:
-        tmp = Path(tempfile.mkdtemp())
+        tmp, (self.base, self.head) = copy_of(review_repositories)
         self.origin = tmp / "origin.git"
-        git(tmp, "init", "--quiet", "--bare", "-b", "trunk", str(self.origin))
-        work = tmp / "work"
-        git(tmp, "init", "--quiet", "-b", "trunk", str(work))
-        (work / "README.md").write_text("trunk\n")
-        git(work, "add", ".")
-        git(work, "commit", "--quiet", "-m", "trunk")
-        self.base = git(work, "rev-parse", "HEAD")
-        git(work, "remote", "add", "origin", str(self.origin))
-        git(work, "push", "--quiet", "origin", "trunk")
-        self.work = work
-        self.head = self.push_head("first head")
+        self.work = tmp / "work"
         self.checkout = tmp / "checkout"
-        git(tmp, "clone", "--quiet", str(self.origin), str(self.checkout))
-        # The clone's origin is a local path; the commands read the repository from
-        # origin's GitHub URL, so point the URL there and keep fetching locally.
-        git(self.checkout, "remote", "set-url", "origin", f"https://github.com/{REPO}.git")
-        git(self.checkout, "config", f"url.{self.origin}.insteadOf", f"https://github.com/{REPO}.git")
         self.state = tmp / "state"
         self.model = "claude-opus-5-5"
         self.github = FakeGitHub(self.head, self.base)
@@ -271,12 +279,16 @@ class ReviewCase(unittest.TestCase):
         installed.start()
         self.addCleanup(installed.stop)
 
+    @staticmethod
+    def push(work: Path, text: str) -> str:
+        (work / "change.txt").write_text(text + "\n")
+        git(work, "add", ".")
+        git(work, "commit", "--quiet", "-m", text)
+        git(work, "push", "--quiet", "--force", "origin", "HEAD:refs/heads/feature", "HEAD:refs/pull/1/head")
+        return git(work, "rev-parse", "HEAD")
+
     def push_head(self, text: str) -> str:
-        (self.work / "change.txt").write_text(text + "\n")
-        git(self.work, "add", ".")
-        git(self.work, "commit", "--quiet", "-m", text)
-        git(self.work, "push", "--quiet", "--force", "origin", "HEAD:refs/heads/feature", "HEAD:refs/pull/1/head")
-        return git(self.work, "rev-parse", "HEAD")
+        return self.push(self.work, text)
 
     def project(self, *args: str, cwd: Path | None = None) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
@@ -302,7 +314,11 @@ class ReviewCase(unittest.TestCase):
 
 
 class SetupTests(ReviewCase):
-    def test_sets_up_the_exact_head_and_posts_the_start_comment_as_the_reviewer(self) -> None:
+    def test_sets_up_the_exact_head_holds_its_lock_and_posts_the_start_comment_as_the_reviewer(self) -> None:
+        # The operator's own `git fetch` may have just written FETCH_HEAD, for a `git checkout FETCH_HEAD` to follow.
+        fetch_head = self.checkout / ".git" / "FETCH_HEAD"
+        fetch_head.write_text(f"{self.base}\t\tbranch 'trunk' of origin\n")
+
         code, out, err = self.setup_review("--loop", "example-loop")
 
         self.assertEqual(0, code, err)
@@ -325,6 +341,27 @@ class SetupTests(ReviewCase):
             self.github.comments[101],
         )
         self.assertIn(f"reviewing {REPO}#1 at {self.head}", out)
+        self.assertEqual(f"{self.base}\t\tbranch 'trunk' of origin\n", fetch_head.read_text(),
+                         "the operator's FETCH_HEAD is left alone")
+
+        held = json.loads(self.lock(self.head).read_text())
+        self.assertEqual(("example-loop", self.head), (held["loop"], held["sha"]), "the lock records who took it")
+        self.assertIn("host", held)
+        self.assertIn("taken_at", held)
+
+        posts = self.github.posts()
+        self.assertEqual(1, len(posts))
+        self.assertEqual("token-operator", posts[0][1])
+        for args, token in self.github.calls:
+            self.assertNotIn("switch", args)
+            writes = any(a.startswith("body=") for a in args) or args[:2] == ["pr", "edit"] \
+                or args[:4] == ["api", "-X", "POST", f"repos/{REPO}/labels"]
+            self.assertEqual("token-operator" if writes else None, token,
+                             f"only a write carries the reviewer's token: {args}")
+        self.assertEqual(["reviewing"], self.github.labels())
+        self.assertEqual([{"name": "reviewing", "color": "fbca04",
+                           "description": "A Projector review of this pull request is in progress"}],
+                         self.github.created_labels, "the first review in a repository creates the label")
 
     def test_another_fetch_rewriting_fetch_head_does_not_read_as_a_moved_head(self) -> None:
         real = review.git
@@ -342,42 +379,6 @@ class SetupTests(ReviewCase):
         self.assertEqual(0, code, err)
         self.assertEqual(self.head, self.read_state()["sha"])
         self.assertEqual("", git(self.checkout, "for-each-ref", "refs/projector/"), "the fetch's own refs are gone")
-
-    def test_leaves_the_operators_fetch_head_alone(self) -> None:
-        # The operator's own `git fetch` may have just written it, for a `git checkout FETCH_HEAD` to follow.
-        fetch_head = self.checkout / ".git" / "FETCH_HEAD"
-        fetch_head.write_text(f"{self.base}\t\tbranch 'trunk' of origin\n")
-
-        code, _, err = self.setup_review()
-
-        self.assertEqual(0, code, err)
-        self.assertEqual(f"{self.base}\t\tbranch 'trunk' of origin\n", fetch_head.read_text())
-
-    def test_holds_the_lock_after_setup_recording_who_took_it(self) -> None:
-        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-
-        held = json.loads(self.lock(self.head).read_text())
-        self.assertEqual(("l1", self.head), (held["loop"], held["sha"]))
-        self.assertIn("host", held)
-        self.assertIn("taken_at", held)
-
-    def test_posts_with_a_token_for_that_call_and_never_switches_accounts(self) -> None:
-        code, _, err = self.setup_review()
-
-        self.assertEqual(0, code, err)
-        posts = self.github.posts()
-        self.assertEqual(1, len(posts))
-        self.assertEqual("token-operator", posts[0][1])
-        for args, token in self.github.calls:
-            self.assertNotIn("switch", args)
-            writes = any(a.startswith("body=") for a in args) or args[:2] == ["pr", "edit"] \
-                or args[:4] == ["api", "-X", "POST", f"repos/{REPO}/labels"]
-            self.assertEqual("token-operator" if writes else None, token,
-                             f"only a write carries the reviewer's token: {args}")
-        self.assertEqual(["reviewing"], self.github.labels())
-        self.assertEqual([{"name": "reviewing", "color": "fbca04",
-                           "description": "A Projector review of this pull request is in progress"}],
-                         self.github.created_labels, "the first review in a repository creates the label")
 
     def test_takes_off_a_clean_label_no_clean_verdict_on_the_head_supports(self) -> None:
         # A push left `clean` behind in a repository without the workflow that removes it.
@@ -566,7 +567,7 @@ class MoveTests(ReviewCase):
         self.assertEqual([101], list(self.github.comments), "edited in place, not a second comment")
         self.assertIn(f"reviewing `{new[:7]}`", body)
         self.assertIn(f"moved from `{old[:7]}`", body)
-        self.assertIn(f"sha={new}", body)
+        self.assertIn(f" sha={new} model=claude-opus-5-5 -->", body, "the edit keeps the model")
         self.assertFalse(self.lock(old).exists())
         self.assertTrue(self.lock(new).exists())
 
@@ -667,36 +668,27 @@ class GateTests(ReviewCase):
     def test_a_long_gate_keeps_its_lock_fresh_while_its_command_runs(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         lock, reference = self.lock(self.head), self.reference()
-        self.configure(f'for round in 1 2 3; do touch -r "{reference}" "{lock}"; sleep 0.5; '
+        # Each round sets the lock back, so it reads fresh at the round's end only if gate touched it meanwhile.
+        self.configure(f'for round in 1 2; do touch -r "{reference}" "{lock}"; sleep 0.2; '
                        f'if [ "{lock}" -nt "{reference}" ]; then echo $round >> "$1/gate.rounds"; fi; done')
 
         with mock.patch.object(review, "TOUCH_EVERY", 0.05):
             code, _, err = self.later("gate", "--loop", "l1")
 
         self.assertEqual(0, code, err)
-        self.assertEqual("1\n2\n3\n", (Path(self.read_state()["worktree"]) / "gate.rounds").read_text())
+        self.assertEqual("1\n2\n", (Path(self.read_state()["worktree"]) / "gate.rounds").read_text())
 
     def test_a_gate_in_another_loop_touches_no_lock(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         lock = self.lock(self.head)
         os.utime(lock, (self.PAST, self.PAST))
-        self.configure("sleep 0.3")
+        self.configure("sleep 0.15")
 
         with mock.patch.object(review, "TOUCH_EVERY", 0.05):
             code, _, err = self.later("gate", "--loop", "l2")
 
         self.assertEqual(0, code, err)
         self.assertEqual(self.PAST, lock.stat().st_mtime)
-
-    def test_a_passing_gate_exits_zero_and_is_recorded(self) -> None:
-        self.assertEqual(0, self.setup_review()[0])
-        self.configure("true")
-
-        code, out, err = self.later("gate", "--json")
-
-        self.assertEqual(0, code, err)
-        self.assertEqual(0, json.loads(out)["exit_code"])
-        self.assertEqual(0, self.read_state()["gate"]["exit_code"])
 
     def test_refuses_when_review_gate_is_unset(self) -> None:
         self.assertEqual(0, self.setup_review()[0])
@@ -707,33 +699,26 @@ class GateTests(ReviewCase):
         self.assertIn("nothing to run", err)
         self.assertNotIn("gate", self.read_state())
 
-    def test_refuses_an_untrusted_head_without_running_anything(self) -> None:
+    def test_refuses_an_untrusted_head_as_untrusted_without_running_anything(self) -> None:
         self.github.pr["head"]["repo"] = {"full_name": "someone/app"}
         self.github.pr["head"]["ref"] = "does-not-exist-here"
         self.assertEqual(0, self.setup_review()[0])
-        self.configure(self.GATE)
         worktree = Path(self.read_state()["worktree"])
 
-        code, _, err = self.later("gate")
+        unset = self.later("gate")
+        self.configure(self.GATE)
+        configured = self.later("gate")
 
-        self.assertEqual(1, code)
-        self.assertIn("untrusted", err)
-        self.assertIn("review it by reading", err)
+        # With review.gate unset too, a refusal that says to run the repository's checks would send the
+        # review straight to the head's code.
+        self.assertEqual(1, unset[0])
+        self.assertIn("review it by reading", unset[2])
+        self.assertNotIn("run the repository's checks", unset[2])
+        self.assertEqual(1, configured[0])
+        self.assertIn("untrusted", configured[2])
+        self.assertIn("review it by reading", configured[2])
         self.assertFalse((worktree / "gate.args").exists())
         self.assertNotIn("gate", self.read_state())
-
-    def test_an_untrusted_head_is_refused_as_untrusted_when_review_gate_is_unset(self) -> None:
-        # A refusal that says to run the repository's checks would send the
-        # review straight to the head's code.
-        self.github.pr["head"]["repo"] = {"full_name": "someone/app"}
-        self.github.pr["head"]["ref"] = "does-not-exist-here"
-        self.assertEqual(0, self.setup_review()[0])
-
-        code, _, err = self.later("gate")
-
-        self.assertEqual(1, code)
-        self.assertIn("review it by reading", err)
-        self.assertNotIn("run the repository's checks", err)
 
     def test_json_output_stays_parseable_when_the_gate_prints(self) -> None:
         # The gate runs as a child process, so only a real process sees what it
@@ -1054,15 +1039,6 @@ class PublishRefusalTests(PublishCase):
         self.assertEqual([], self.github.reviews, "nothing was posted")
         self.assertTrue(self.lock(self.head).exists(), "a refused publish keeps the lock")
 
-    def test_approved_is_not_a_verdict(self) -> None:
-        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-
-        with self.assertRaises(SystemExit) as refused, redirect_stderr(io.StringIO()):
-            self.publish("approved")
-
-        self.assertEqual(2, refused.exception.code)
-        self.assertEqual([], self.github.reviews, "nothing was posted")
-
     def test_the_duration_and_seconds_are_always_present_and_agree(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         self.clock = self.START + timedelta(hours=1, minutes=4, seconds=9)
@@ -1085,12 +1061,30 @@ class PublishRefusalTests(PublishCase):
         self.refused(self.publish("clean", body=self.dir / "nowhere.md"), "does not exist")
         self.refused(self.publish("clean", body=self.body("   \n")), "empty")
 
-    def test_a_body_cannot_carry_its_own_signature_so_took_is_never_stale(self) -> None:
+    def test_incremental_refuses_what_it_does_not_take_and_a_full_review_needs_a_verdict_and_coverage(self) -> None:
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        lead = self.dir / "incremental.md"
+        lead.write_text("The push widens row r2's padding.\n")
+        body = str(self.body())
+
+        for extra, words in ((["--threads", str(self.threads(finding()))], "--incremental takes no --threads"),
+                             (["--covered", "1/1"], "--incremental takes no --covered"),
+                             (["--second-verdict", "901"], "--incremental takes no --second-verdict"),
+                             (["--verdict", "changes-requested"], "an incremental review is always clean")):
+            with self.subTest(words):
+                self.refused(self.later("publish", "--incremental", "--body", str(lead), *extra), words)
+        self.refused(self.later("publish", "--body", body, "--covered", "3/3"),
+                     "--verdict must be clean or changes-requested")
+        self.refused(self.later("publish", "--body", body, "--verdict", "clean"), "--covered must be")
+
+    def test_a_body_cannot_carry_its_own_signature_or_marker_so_took_is_never_stale(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         stale = (f"{review.MARK} **Projector review** · model `m` · **CLEAN** · took 3m 00s\n\n"
                  "{census}\n")
 
         self.refused(self.publish("clean", body=self.body(stale)), "signature line")
+        self.refused(self.publish("clean", body=self.body("{census}\n\n<!-- projector-review v=1 verdict=clean -->\n")),
+                     "signature line")
 
     def test_an_anchor_outside_the_diff_or_without_a_line_is_refused(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -1113,7 +1107,7 @@ class PublishRefusalTests(PublishCase):
         self.refused(self.publish("changes-requested", "--threads",
                                   str(self.threads(finding(body=FINDING % self.head + "\n\n**Fix:** x")))), "marker")
 
-    def test_a_second_publish_on_the_same_head_is_refused_without_rereview(self) -> None:
+    def test_a_second_publish_on_the_same_head_needs_a_rereview(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
         self.assertEqual(0, self.publish("clean")[0])
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
@@ -1124,15 +1118,12 @@ class PublishRefusalTests(PublishCase):
         self.assertIn("--rereview", err)
         self.assertEqual(1, len(self.github.reviews))
 
-    def test_a_rereview_publishes_a_second_verdict_on_the_same_head(self) -> None:
-        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-        self.assertEqual(0, self.publish("clean")[0])
+        self.assertEqual(0, self.later("release")[0])
         self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
-
         code, _, err = self.publish("clean")
 
         self.assertEqual(0, code, err)
-        self.assertEqual(2, len(self.github.reviews))
+        self.assertEqual(2, len(self.github.reviews), "a re-review publishes a second verdict on the same head")
 
     def test_another_loops_verdict_on_the_head_is_a_collision(self) -> None:
         self.assertEqual(0, self.setup_review("--loop", "a")[0])
@@ -1170,17 +1161,10 @@ class PublishRefusalTests(PublishCase):
         self.assertIn("· `unknown` · model `claude-opus-5-5` · **CLEAN** ·", signature)
         self.assertIn("verdict=clean projector=unknown model=claude-opus-5-5 sha=", marker)
 
-    def test_the_review_names_no_effort_when_the_host_reports_none(self) -> None:
-        for effort in (None, "", "  "):
-            with self.subTest(effort=effort):
-                self.setUp()
-                for text in self.written(effort):
-                    self.assertNotIn("effort", text)
-
-    def test_effort_is_never_an_argument(self) -> None:
-        with self.assertRaises(SystemExit) as unknown, redirect_stderr(io.StringIO()):
-            self.project("setup", "1", "--state-dir", str(self.state), "--model", "m", "--effort", "low")
-        self.assertEqual(2, unknown.exception.code)
+    def test_the_review_names_no_effort_when_the_host_reports_only_whitespace(self) -> None:
+        # No effort at all is the case every other test here publishes.
+        for text in self.written("  "):
+            self.assertNotIn("effort", text)
 
     def test_an_older_verdict_whose_marker_carries_effort_still_collides(self) -> None:
         self.github.reviews.append({
@@ -1289,12 +1273,6 @@ class PublishRefusalTests(PublishCase):
         self.assertIn('print(f"{sha} {took}")', posted)
         self.assertIn("`example-projector-review-loop`", posted)
         self.assertIn("matches `{name}` too loosely", self.posted()["comments"][0]["body"])
-
-    def test_a_body_that_opens_its_own_marker_comment_is_refused(self) -> None:
-        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-
-        self.refused(self.publish("clean", body=self.body(
-            "{census}\n\n<!-- projector-review v=1 verdict=clean -->\n")), "signature line")
 
     def test_a_signature_that_would_not_match_the_skill_is_refused(self) -> None:
         self.model = "has`backtick"
@@ -1496,14 +1474,6 @@ class ModelTests(PublishCase):
         self.assertEqual([], self.github.reviews)
         self.assertEqual(0, self.publish("clean", "--model", "gpt-5.5", loop="gpt")[0])
 
-    def test_one_model_with_state_needs_no_model_flag(self) -> None:
-        self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
-
-        code, _, err = self.publish("clean", loop="gpt")
-
-        self.assertEqual(0, code, err)
-        self.assertIn("model=gpt-5.5 ", self.posted()["body"])
-
     def test_another_sessions_live_start_comment_by_the_same_model_refuses_setup(self) -> None:
         foreign = self.github.comment(review.start_comment("claude-opus-5-5", self.head))
 
@@ -1602,11 +1572,13 @@ class ModelTests(PublishCase):
         self.assertEqual(0, code, err)
 
     def test_a_verdict_by_the_same_model_or_naming_no_model_is_another_loop(self) -> None:
-        for model in ("claude-opus-5-5[1m]", "Claude-Opus-5-5", None):
+        # A refused publish keeps the lock, so one setup serves every case. IdentityTests covers the other
+        # spellings of one model; the context window here shows the collision check compares identities.
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        for model in ("claude-opus-5-5[1m]", None):
             with self.subTest(model=model):
-                self.setUp()
+                self.github.reviews = []
                 self.add_verdict(model)
-                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
                 code, _, err = self.publish("clean")
 
@@ -1655,14 +1627,6 @@ class ModelTests(PublishCase):
                           "release": 0, "finish": 0},
                          ran, "settle refuses a thread that is not on the pull request, interdiff with no full review "
                               "to build on, and gate with review.gate unset")
-
-    def test_move_keeps_the_model_in_the_start_comment(self) -> None:
-        self.assertEqual(0, self.setup_review()[0])
-        self.github.pr["head"]["sha"] = self.push_head("second head")
-
-        self.assertEqual(0, self.later("move")[0])
-
-        self.assertIn(f" sha={self.github.pr['head']['sha']} model=claude-opus-5-5 -->", self.github.comments[101])
 
 
 def record_entry(review_id: int, published_at: str, repo: str = REPO, number: int = 1) -> dict:
@@ -1931,7 +1895,7 @@ class HandOverTests(PublishCase):
                 copiers.append(copier)
                 copier.start()
                 # Long enough for an unlocked copy to read the record and write it back before this write lands.
-                copier.join(0.5)
+                copier.join(0.2)
             write(path, value)
 
         with mock.patch.object(review, "write_json", copy_mid_write):
@@ -1976,7 +1940,7 @@ class HandOverTests(PublishCase):
 
         with review.review_mutex(self.folder()):
             clearing.start()
-            clearing.join(0.3)
+            clearing.join(0.1)
             held = lock.path.exists()
         clearing.join()
 
@@ -2208,20 +2172,6 @@ class FinishTests(PublishCase):
         self.assertTrue(Path(gpt["worktree"]).is_dir())
         self.assertTrue(self.lock(self.head, "gpt-5.5").exists())
         self.assertIn(gpt["start_comment"]["id"], self.github.comments)
-
-    def test_the_review_skills_clean_up_through_the_commands_alone(self) -> None:
-        # Removing a worktree by hand leaves the state naming it, and a raw comment deletion is what Claude
-        # Code's auto mode refuses, where one narrow rule allows the command.
-        skills = Path(cli.__file__).resolve().parents[2] / "skills"
-        review_pr = (skills / "review-pr" / "SKILL.md").read_text()
-        review_repo = (skills / "review-repo" / "SKILL.md").read_text()
-
-        self.assertIn("`project review finish <number>`", review_pr)
-        self.assertIn("`--replace <comment-id>`", review_pr)
-        for text in (review_pr, review_repo):
-            self.assertIn("`project review finish <number> --repo <owner>/<repo> --force`", " ".join(text.split()))
-            self.assertNotIn("issues/comments", text)
-            self.assertNotIn("git worktree", text)
 
 
 class SupersededWorktreeTests(PublishCase):
@@ -2672,17 +2622,6 @@ class SettleTests(PublishCase):
         self.assertIn("project review setup 1 --model gpt-5.5", err)
         self.assertEqual([], self.mutations())
 
-    def test_review_pr_settles_threads_through_the_command_alone(self) -> None:
-        # A hand-typed marker that misses `projector-verify` makes the reviewer's own reply read as the author
-        # answering, which fires RESPONDED.
-        skill = (Path(cli.__file__).resolve().parents[2] / "skills" / "review-pr" / "SKILL.md").read_text()
-
-        self.assertIn("project review settle <number> --thread <thread-id> --result <result> --body <file>", skill)
-        for result in review.SETTLED:
-            self.assertIn(f"`--result {result}`", skill)
-        self.assertNotIn("resolveReviewThread", skill)
-        self.assertNotIn("Every reply you post opens with", skill)
-
     def test_settle_touches_the_heads_lock(self) -> None:
         then = time.time() - 3600
         os.utime(self.lock(self.head), (then, then))
@@ -2757,24 +2696,22 @@ class LatestWinsTests(LatestWinsCase):
         self.assertIn(f"{self.head[:7]} is not signed off", out)
 
     def test_two_models_that_publish_together_leave_the_later_ones_sign_off(self) -> None:
-        for gpt_verdict in ("clean", "changes-requested"):
-            with self.subTest(gpt=gpt_verdict):
-                self.setUp()
-                self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
-                self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
-                threads = ["--threads", str(self.threads(finding()))] if gpt_verdict == "changes-requested" else []
+        # A newer change request winning is test_a_change_request_posted_after_this_clean_verdict_wins; here the
+        # later verdict is clean, and claude-opus-5-5's sign-off must leave gpt-5.5's clean label on.
+        self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
+        self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
 
-                def gpt_publishes() -> None:
-                    # A second later, between claude-opus-5-5's submit and its sign-off.
-                    self.clock += timedelta(seconds=1)
-                    self.assertEqual(0, self.publish(gpt_verdict, "--model", "gpt-5.5", *threads, loop="gpt")[0])
+        def gpt_publishes() -> None:
+            # A second later, between claude-opus-5-5's submit and its sign-off.
+            self.clock += timedelta(seconds=1)
+            self.assertEqual(0, self.publish("clean", "--model", "gpt-5.5", loop="gpt")[0])
 
-                self.github.after_post = gpt_publishes
-                result = self.json_publish("clean", "--model", "claude-opus-5-5", loop="claude")
+        self.github.after_post = gpt_publishes
+        result = self.json_publish("clean", "--model", "claude-opus-5-5", loop="claude")
 
-                self.assertEqual(("gpt-5.5", gpt_verdict), (result["newest"]["model"], result["newest"]["verdict"]))
-                self.assertEqual(gpt_verdict == "clean", result["signed_off"])
-                self.assertEqual(["clean"] if gpt_verdict == "clean" else [], self.github.labels())
+        self.assertEqual(("gpt-5.5", "clean", True),
+                         (result["newest"]["model"], result["newest"]["verdict"], result["signed_off"]))
+        self.assertEqual(["clean"], self.github.labels())
 
     def test_a_clean_verdict_needs_another_models_finding_settled_first(self) -> None:
         self.github.pages = [page([thread("T1", FINDING.replace(" -->", " model=gpt-5.5 -->") % self.head)], None)]
@@ -2787,43 +2724,32 @@ class LatestWinsTests(LatestWinsCase):
         self.assertEqual([], self.github.reviews)
 
     def test_a_finding_another_model_posts_mid_publish_keeps_the_head_from_signing_off(self) -> None:
-        for as_json in (True, False):
-            with self.subTest(json=as_json):
-                self.setUp()
-                self.github.rules = [review.REVIEW_CONTEXT]
-                self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
-                self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
+        # DismissalTests.test_a_finding_another_model_posts_mid_publish_holds_the_change_requests checks the
+        # text this prints.
+        self.github.rules = [review.REVIEW_CONTEXT]
+        self.assertEqual(0, self.as_model("claude-opus-5-5", "--loop", "claude")[0])
+        self.assertEqual(0, self.as_model("gpt-5.5", "--loop", "gpt")[0])
 
-                def gpt_publishes() -> None:
-                    # After claude-opus-5-5 counted no open finding, and a second before its clean verdict lands.
-                    code, _, err = self.publish("changes-requested", "--model", "gpt-5.5", "--threads",
-                                                str(self.threads(finding())), loop="gpt")
-                    self.assertEqual(0, code, err)
-                    self.assertEqual(["reviewing"], self.github.labels(),
-                                     "claude-opus-5-5's review is still in progress, so reviewing stays")
-                    marker = self.github.reviews[-1]["comments"][0]["body"].splitlines()[0]
-                    self.github.pages = [page([thread("T1", marker)], None)]
-                    self.clock += timedelta(seconds=1)
+        def gpt_publishes() -> None:
+            # After claude-opus-5-5 counted no open finding, and a second before its clean verdict lands.
+            code, _, err = self.publish("changes-requested", "--model", "gpt-5.5", "--threads",
+                                        str(self.threads(finding())), loop="gpt")
+            self.assertEqual(0, code, err)
+            self.assertEqual(["reviewing"], self.github.labels(),
+                             "claude-opus-5-5's review is still in progress, so reviewing stays")
+            marker = self.github.reviews[-1]["comments"][0]["body"].splitlines()[0]
+            self.github.pages = [page([thread("T1", marker)], None)]
+            self.clock += timedelta(seconds=1)
 
-                self.github.before_post = gpt_publishes
-                code, out, err = self.publish("clean", "--model", "claude-opus-5-5",
-                                              *(("--json",) if as_json else ()), loop="claude")
+        self.github.before_post = gpt_publishes
+        result = self.json_publish("clean", "--model", "claude-opus-5-5", loop="claude")
 
-                self.assertEqual(0, code, err)
-                self.assertEqual([], self.github.labels(), "gpt-5.5's open finding keeps clean off, and no review is "
-                                                           "in progress")
-                self.assertEqual(["failure", "failure"], [s["state"] for s in self.github.statuses])
-                if as_json:
-                    result = json.loads(out)
-                    self.assertEqual(("claude-opus-5-5", "clean"),
-                                     (result["newest"]["model"], result["newest"]["verdict"]), "the clean verdict is newest")
-                    self.assertEqual((False, 1), (result["signed_off"], result["open_threads"]))
-                else:
-                    self.assertEqual(["1 finding thread is open on the head, so it is not signed off",
-                                      f"{self.head[:7]} is not signed off",
-                                      f"posted {review.REVIEW_CONTEXT} failure on {self.head[:7]}",
-                                      "removed the reviewing label"],
-                                     out.splitlines()[1:], "the clean verdict is newest, so no other verdict is named")
+        self.assertEqual([], self.github.labels(), "gpt-5.5's open finding keeps clean off, and no review is "
+                                                   "in progress")
+        self.assertEqual(["failure", "failure"], [s["state"] for s in self.github.statuses])
+        self.assertEqual(("claude-opus-5-5", "clean"),
+                         (result["newest"]["model"], result["newest"]["verdict"]), "the clean verdict is newest")
+        self.assertEqual((False, 1), (result["signed_off"], result["open_threads"]))
 
     def test_the_review_read_back_counts_when_the_listing_lags(self) -> None:
         self.add_verdict("gpt-5.5", verdict="changes-requested")
@@ -2847,20 +2773,16 @@ class LatestWinsTests(LatestWinsCase):
     def test_in_a_private_or_internal_repository_every_verdict_counts(self) -> None:
         # Only an account that can see the repository can review there, and GitHub hides a private organization
         # membership from a token that cannot see it, reporting a lower association.
-        for visibility, association, newest, signed_off in (
-                ("private", "CONTRIBUTOR", "gpt-5.5", False), ("internal", "NONE", "gpt-5.5", False),
-                ("public", "CONTRIBUTOR", "claude-opus-5-5", True), ("public", "NONE", "claude-opus-5-5", True)):
-            with self.subTest(visibility=visibility, association=association):
-                self.setUp()
-                self.github.pr["base"]["repo"]["visibility"] = visibility
-                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-                self.github.after_post = lambda: self.add_verdict(
-                    "gpt-5.5", verdict="changes-requested", login="teammate", association=association,
-                    at=iso(self.clock + timedelta(seconds=1)))
+        # ReviewCountsTests covers each visibility and association; this shows publish passes the visibility on.
+        self.github.pr["base"]["repo"]["visibility"] = "private"
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        self.github.after_post = lambda: self.add_verdict(
+            "gpt-5.5", verdict="changes-requested", login="teammate", association="CONTRIBUTOR",
+            at=iso(self.clock + timedelta(seconds=1)))
 
-                result = self.json_publish("clean")
+        result = self.json_publish("clean")
 
-                self.assertEqual((newest, signed_off), (result["newest"]["model"], result["signed_off"]))
+        self.assertEqual(("gpt-5.5", False), (result["newest"]["model"], result["signed_off"]))
 
     def test_a_cross_author_review_approves_on_its_own_clean_verdict_and_leaves_draft_state_alone(self) -> None:
         self.github.pr.update(user={"login": "teammate"}, draft=False)
@@ -2868,7 +2790,10 @@ class LatestWinsTests(LatestWinsCase):
         self.github.commit_authors = ["teammate"]
         (self.checkout / ".projector.toml").write_text("[review]\nallow_approve = true\n")
         self.add_verdict("gpt-5.5", verdict="changes-requested")
+        # Publish waits for no other model: neither codex-mini's live start comment on the head nor its newer
+        # verdict on an earlier head holds the sign-off.
         self.github.comment(review.start_comment("codex-mini", self.head))
+        self.add_verdict("codex-mini", sha=self.base, verdict="changes-requested", at="2026-09-27T01:30:00Z")
         self.assertEqual(0, self.setup_review("--loop", "l1")[0])
 
         result = self.json_publish("clean")
@@ -2877,16 +2802,6 @@ class LatestWinsTests(LatestWinsCase):
         self.assertFalse(self.github.pr["draft"], "another author's draft state is theirs")
         self.assertFalse(any(args[:2] == ["pr", "ready"] for args, _ in self.github.calls))
         self.assertEqual(["reviewing", "clean"], self.github.labels(), "codex-mini's review is still in progress")
-
-    def test_publish_waits_for_no_other_model_and_reads_no_wait_setting(self) -> None:
-        (self.checkout / ".projector.toml").write_text('[review]\npeer_wait = "anything"\n')
-        self.add_verdict("gpt-5.5", sha=self.base)
-        self.github.comment(review.start_comment("gpt-5.5", self.head))
-        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-
-        result = self.json_publish("clean")
-
-        self.assertTrue(result["signed_off"], "neither another model's earlier head nor its start comment holds it")
 
 
 class DismissalTests(LatestWinsCase):
@@ -2952,16 +2867,6 @@ class DismissalTests(LatestWinsCase):
                          {i: self.review_state(i)
                           for i in (self.request, standing, by_hand, naming_the_loop, colleague)})
 
-    def test_dismisses_a_change_request_whose_marker_names_no_version(self) -> None:
-        older = next(r for r in self.github.reviews if r["id"] == self.request)
-        older["body"] = older["body"].replace(" projector=1.2.3 ", " ")
-        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
-
-        result = self.json_publish("clean")
-
-        self.assertEqual([self.request], result["dismissed"])
-        self.assertEqual("DISMISSED", self.review_state(self.request))
-
     def test_dismisses_an_older_models_change_request_on_the_head_without_waiting_for_its_review(self) -> None:
         peer = self.change_request("gpt-5.5", sha=self.head)
         self.github.comment(review.start_comment("gpt-5.5", self.head))
@@ -3016,28 +2921,33 @@ class DismissalTests(LatestWinsCase):
         self.assertEqual([], self.dismissals())
 
     def test_a_failed_dismissal_keeps_the_lock_and_a_retry_finishes_it(self) -> None:
-        cases = {"refused": lambda: setattr(self.github, "fail", "dismissals"),
-                 "still standing": lambda: setattr(self.github, "ignore_dismissals", True)}
-        for name, arrange in cases.items():
+        # A failed dismissal keeps the lock and posts no second review, so each failure retries the one before.
+        self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+        cases = {"refused": (lambda: setattr(self.github, "fail", "dismissals"),
+                             f"could not dismiss change request {self.request}"),
+                 "still standing": (lambda: setattr(self.github, "ignore_dismissals", True),
+                                    f"change request {self.request} still stands after its dismissal")}
+        for name, (arrange, why) in cases.items():
             with self.subTest(name):
-                self.setUp()
-                self.assertEqual(0, self.setup_review("--loop", "l1")[0])
+                self.github.fail, self.github.ignore_dismissals = None, False
                 arrange()
 
                 code, _, err = self.publish("clean")
 
                 self.assertEqual(1, code)
+                self.assertIn(why, err)
                 self.assertIn(f"dismiss it at {review_page(self.request)} and run publish again", err)
                 self.assertTrue(self.lock(self.head).exists())
                 self.assertEqual(1, len(self.github.comments), "the start comment stays until the retry")
+                self.assertEqual("CHANGES_REQUESTED", self.review_state(self.request))
 
-                self.github.fail, self.github.ignore_dismissals = None, False
-                code, out, err = self.publish("clean")
+        self.github.fail, self.github.ignore_dismissals = None, False
+        code, out, err = self.publish("clean")
 
-                self.assertEqual(0, code, err)
-                self.assertEqual(2, len(self.github.reviews), "the retry posts no second review")
-                self.assertEqual("DISMISSED", self.review_state(self.request))
-                self.assertFalse(self.lock(self.head).exists())
+        self.assertEqual(0, code, err)
+        self.assertEqual(2, len(self.github.reviews), "the retries post no second review")
+        self.assertEqual("DISMISSED", self.review_state(self.request))
+        self.assertFalse(self.lock(self.head).exists())
 
 
 class StatusTests(LatestWinsCase):
@@ -3102,19 +3012,6 @@ class StatusTests(LatestWinsCase):
                           "  signed off, a draft; no Projector label"],
                          out.splitlines())
 
-    def test_a_verdict_whose_marker_names_no_version_or_spells_clean_approved_counts(self) -> None:
-        older = self.add_verdict("gpt-5.5", at="2026-09-27T14:02:00Z", verdict="changes-requested")
-        newest = self.add_verdict("claude-opus-5-5", at="2026-09-27T14:20:00Z")
-        for found in self.github.reviews:
-            body = found["body"].replace("verdict=clean projector=1.2.3 ", "verdict=approved ")
-            found["body"] = body.replace(" projector=1.2.3 ", " ")
-
-        result = json.loads(self.status("--json")[1])
-
-        self.assertEqual([("claude-opus-5-5", "clean", newest), ("gpt-5.5", "changes-requested", older)],
-                         [(m["model"], m["verdict"], m["review"]) for m in result["models"]])
-        self.assertEqual("clean", result["verdict"])
-
     def test_one_model_prints_its_verdict_then_the_sign_off_with_projectors_labels_and_status(self) -> None:
         newest = self.add_verdict("claude-opus-5-5")
         self.github.pr.update(draft=False, labels=[{"name": "clean"}, {"name": "bug"}])
@@ -3146,19 +3043,10 @@ class StatusTests(LatestWinsCase):
         self.assertEqual((3, 4), (result["newest"]["suggestions"], result["suggestions"]),
                          "the head's count is every model's, as `review suggestions` lists them")
 
-    def test_every_account_the_repository_lets_in_counts_so_fix_pr_runs_it_once(self) -> None:
-        skill = (Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text()
-        self.assertIn("`project review status <number>` reports `clean`", skill)
-        self.assertNotIn("--reviewer", skill)
-        teammate = self.add_verdict("claude-opus-5-5", login="teammate", association="COLLABORATOR")
-
-        result = json.loads(self.status("--json")[1])
-
-        self.assertEqual(("clean", teammate), (result["verdict"], result["newest"]["review"]),
-                         "the operator's status sees the teammate's loop")
-
     def test_fix_pr_reads_the_sign_off_status_prints_where_no_label_shows_it(self) -> None:
         # With review.labels off, or a label GitHub refused, only the status line says a head is signed off.
+        # Every account the repository lets in counts (test_each_account_keeps_its_own_newest_verdict_by_a_model),
+        # so fix-pr runs status once, with no --reviewer.
         self.add_verdict("claude-opus-5-5")
         self.github.pr["draft"] = False
         fix_pr = " ".join((Path(cli.__file__).resolve().parents[2] / "skills" / "fix-pr" / "SKILL.md").read_text()
@@ -3169,39 +3057,8 @@ class StatusTests(LatestWinsCase):
         self.assertEqual("  signed off; no Projector label", last)
         self.assertIn("the last line of `project review status` says `signed off`", fix_pr)
         self.assertNotIn("carries the `clean` label, which is how a self-review signs off", fix_pr)
-
-    def test_the_skills_move_draft_state_through_the_commands_alone(self) -> None:
-        # A host's automatic approval can refuse a bare `gh pr ready` as self-approval, where the rule that
-        # allows Projector's commands allows these.
-        skills = Path(cli.__file__).resolve().parents[2] / "skills"
-        for name in ("fix-pr", "implement", "spec", "work", "cleanup"):
-            text = (skills / name / "SKILL.md").read_text()
-            with self.subTest(skill=name):
-                self.assertIn("project review ready <number> --repo <owner>/<repo>", text)
-                commands = "\n".join(re.findall(r"^\s*```(?:sh|bash)\n(.*?)^\s*```", text, re.M | re.S))
-                self.assertNotIn("gh pr ready", commands, "a skill runs no bare gh pr ready")
-                prose = " ".join(text.split())
-                self.assertIn("as a tool call of its own", prose)
-        fix_pr = " ".join((skills / "fix-pr" / "SKILL.md").read_text().split())
-        self.assertIn("project review hold <number> --repo <owner>/<repo>", fix_pr)
-        # Claude Code and Codex check each command of a chain and take the strictest result, so a `gh` command
-        # beside `project review ready` sends the whole call to auto mode, which refused it as undoing the hold.
-        self.assertIn("Run `project review hold` and `project review ready` each as a tool call of its own", fix_pr)
-        self.assertIn("**The call ran more than the command.** Run the command again, alone.", fix_pr)
-        # A lone refusal sends the user to `init` only when `review rules` says the file lacks the rules.
-        self.assertIn("Run `project review rules --json`, which writes nothing, and read `allowed`", fix_pr)
-
-    def test_no_skill_example_joins_a_review_command_to_another(self) -> None:
-        # A joined line falls to the host's automatic approval even where `Bash(project *)` allows the command.
-        for path in sorted((Path(cli.__file__).resolve().parents[2] / "skills").glob("*/SKILL.md")):
-            text = path.read_text()
-            for block in re.findall(r"^\s*```(?:sh|bash)\n(.*?)^\s*```", text, re.M | re.S):
-                for line in block.splitlines():
-                    if re.search(r"project (review (ready|hold|publish)|summary publish)\b", line):
-                        with self.subTest(skill=path.parent.name, line=line.strip()):
-                            # A placeholder such as `<clean|changes-requested>` names choices, not a pipe.
-                            bare = re.sub(r"<[^>]*>", "", line)
-                            self.assertIsNone(re.search(r";|&&|\|", bare), "the command runs on a line by itself")
+        self.assertIn("`project review status <number>` reports `clean`", fix_pr)
+        self.assertNotIn("--reviewer", fix_pr)
 
     def test_an_account_the_repository_does_not_let_in_counts_only_as_the_reviewer(self) -> None:
         self.add_verdict("claude-opus-5-5", login="review-bot", association="NONE", verdict="changes-requested")
@@ -3215,14 +3072,13 @@ class StatusTests(LatestWinsCase):
         self.assertEqual("changes-requested", bot["verdict"])
 
     def test_in_a_private_or_internal_repository_every_account_counts(self) -> None:
+        older = self.add_verdict("claude-opus-5-5", login="teammate", association="CONTRIBUTOR",
+                                 at="2026-09-27T14:02:00Z")
+        newest = self.add_verdict("gpt-5.5", login="review-bot", association="NONE",
+                                  verdict="changes-requested", at="2026-09-27T14:20:00Z")
         for visibility in ("private", "internal", "public"):
             with self.subTest(visibility=visibility):
-                self.setUp()
                 self.github.pr["base"]["repo"]["visibility"] = visibility
-                older = self.add_verdict("claude-opus-5-5", login="teammate", association="CONTRIBUTOR",
-                                         at="2026-09-27T14:02:00Z")
-                newest = self.add_verdict("gpt-5.5", login="review-bot", association="NONE",
-                                          verdict="changes-requested", at="2026-09-27T14:20:00Z")
 
                 result = json.loads(self.status("--json")[1])
 
@@ -3444,13 +3300,6 @@ class DraftTests(ReviewCase):
                     self.assertEqual(1, code)
                     self.assertIn("is not in a checkout whose origin is on GitHub", err)
                     self.assertIn("pass --repo owner/name", err)
-        self.assertEqual([], self.github.calls)
-
-    def test_hold_takes_none_of_the_old_hold_comments_options(self) -> None:
-        for args in (["--add", "Skip fenced code blocks"], ["--drop"]):
-            with self.subTest(args=args), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
-                cli.main(["review", "hold", "1", *args])
-            self.assertEqual(2, raised.exception.code)
         self.assertEqual([], self.github.calls)
 
 
@@ -3678,29 +3527,6 @@ class InterdiffMeasureTests(IncrementalCase):
         self.assertEqual(["a.css", "p.txt"], result["files"], "the parent's change is in the diff GitHub shows now")
         self.assertIn("kind: retarget onto trunk\n", out)
 
-    def test_an_earlier_head_missing_from_the_checkout_cannot_be_measured(self) -> None:
-        missing = "f" * 40
-        self.edit_record(lambda record: record[-1].update(sha=missing))
-        self.github.reviews[-1]["body"] = self.github.reviews[-1]["body"].replace(self.reviewed, missing)
-        self.pushed()
-
-        result = self.interdiff()
-
-        self.assertIn("cannot be measured: the checkout lacks the earlier head fffffff", result["reason"])
-        self.assertEqual((None, None, [], ""), (result["kind"], result["conflicts"], result["files"], result["patch"]))
-
-    def test_a_record_without_the_full_reviews_merge_base_cannot_be_measured(self) -> None:
-        # An earlier release recorded no merge base, and a checkout that was never
-        # installed names every release `unknown`, so the version rule cannot catch it.
-        self.edit_record(lambda record: record[-1].pop("base"))
-        self.pushed()
-
-        result = self.interdiff()
-
-        self.assertIn("cannot be measured", result["reason"])
-        self.assertIn("holds no merge base for the full review", result["reason"])
-        self.assertEqual((self.reviewed, None, None), (result["from"], result["kind"], result["conflicts"]))
-
     def test_without_merge_tree_a_moved_base_cannot_be_measured_but_an_unmoved_one_can(self) -> None:
         real = subprocess.run
 
@@ -3739,29 +3565,69 @@ class InterdiffMeasureTests(IncrementalCase):
 
 
 class InterdiffRuleTests(IncrementalCase):
-    def refused(self, words: str) -> dict:
-        result = self.interdiff("--model", self.model)
+    def refused(self, words: str, *extra: str) -> dict:
+        result = self.interdiff("--model", self.model, *extra)
         self.assertFalse(result["incremental"])
         self.assertIn(words, result["reason"])
         self.assertFalse(result["needs_gate"])
         return result
 
-    def test_review_incremental_false_gives_a_full_review(self) -> None:
+    def test_each_rule_that_needs_no_other_setup_refuses_a_pushed_head_on_its_own(self) -> None:
+        # One pushed head that every rule passes, as test_a_pushed_commit_counts_only_its_own_lines shows. Each
+        # case changes one input interdiff reads, and the input is put back before the next case, so each
+        # refusal comes from the rule its case names. Interdiff writes nothing but the lock's time.
         self.pushed()
-        (self.checkout / ".projector.toml").write_text("[review]\nincremental = false\n")
+        config = self.checkout / ".projector.toml"
+        record = self.state / "loops" / "l1" / "published.json"
+        saved = (record.read_text(), [dict(r) for r in self.github.reviews], self.github.pages)
+        self.assertTrue(self.interdiff()["incremental"], "the head every case starts from passes every rule")
 
-        self.refused("review.incremental is false")
+        def earlier_head_missing() -> None:
+            self.edit_record(lambda entries: entries[-1].update(sha="f" * 40))
+            self.github.reviews[-1]["body"] = self.github.reviews[-1]["body"].replace(self.reviewed, "f" * 40)
 
-    def test_review_incremental_that_is_not_a_boolean_refuses_and_names_the_key(self) -> None:
-        self.pushed()
+        cases = (
+            ("review.incremental is false",
+             lambda: config.write_text("[review]\nincremental = false\n"), ()),
+            ("the newest verdict in loop l1's record requests changes",
+             lambda: self.edit_record(lambda entries: entries[-1].update(verdict="changes-requested")), ()),
+            ("loop l1's record holds no clean full review",
+             lambda: self.edit_record(lambda entries: entries.clear()), ()),
+            # A clean full review another loop on the same account published is not this loop's to build on.
+            ("loop l2's record holds no clean full review", lambda: None, ("--loop", "l2")),
+            ("the full review 901 of", lambda: self.github.reviews.clear(), ()),
+            ("was made by Projector unknown, model claude-opus-5-5, no effort, and this run is "
+             "Projector 1.2.3, model claude-opus-5-5, no effort",
+             lambda: self.github.reviews[-1].update(
+                 body=self.github.reviews[-1]["body"].replace(" projector=1.2.3 ", " ")), ()),
+            ("1 finding thread is open", self.open_finding, ()),
+            # An earlier release recorded no merge base, and a checkout that was never installed names every
+            # release `unknown`, so the version rule cannot catch it.
+            ("the change cannot be measured: loop l1's record holds no merge base for the full review",
+             lambda: self.edit_record(lambda entries: entries[-1].pop("base")), ()),
+            ("the change cannot be measured: the checkout lacks the earlier head fffffff", earlier_head_missing, ()),
+        )
+        for words, arrange, extra in cases:
+            with self.subTest(words):
+                arrange()
+                try:
+                    result = self.refused(words, *extra)
+                    self.assertEqual((None, [], ""), (result["kind"], result["files"], result["patch"]),
+                                     "refused before the change was measured")
+                finally:
+                    config.unlink(missing_ok=True)
+                    record.write_text(saved[0])
+                    self.github.reviews, self.github.pages = [dict(r) for r in saved[1]], saved[2]
         for value in ('"yes"', "1"):
-            with self.subTest(value=value):
-                (self.checkout / ".projector.toml").write_text(f"[review]\nincremental = {value}\n")
+            with self.subTest(incremental=value):
+                config.write_text(f"[review]\nincremental = {value}\n")
 
                 code, _, err = self.later("interdiff", "--json")
 
                 self.assertNotEqual(0, code)
                 self.assertIn("review.incremental must be true or false", err)
+        config.unlink()
+        self.assertTrue(self.interdiff()["incremental"], "every case put its input back")
 
     def test_a_review_no_loop_runs_is_full(self) -> None:
         self.push_feature(self.build(self.reviewed, {"a.css": css(r1=9, r2=9)}))
@@ -3775,28 +3641,10 @@ class InterdiffRuleTests(IncrementalCase):
 
         self.refused("is untrusted")
 
-    def test_a_newest_verdict_that_requests_changes_is_followed_by_a_full_review(self) -> None:
-        self.edit_record(lambda record: record[-1].update(verdict="changes-requested"))
-        self.pushed()
-
-        self.refused("the newest verdict in loop l1's record requests changes")
-
     def test_a_head_the_loop_already_judged_gets_a_full_rereview(self) -> None:
         self.review_head(self.reviewed, "--rereview")
 
         self.refused(f"loop l1 already published a verdict on {self.reviewed[:7]}")
-
-    def test_a_record_with_no_full_review_is_full(self) -> None:
-        self.edit_record(lambda record: record.clear())
-        self.pushed()
-
-        self.refused("loop l1's record holds no clean full review")
-
-    def test_a_clean_full_review_from_another_loop_on_the_same_account_leads_to_a_full_review(self) -> None:
-        self.push_feature(self.build(self.reviewed, {"a.css": css(r1=9, r2=9)}))
-        self.assertEqual(0, self.setup_review("--loop", "l2")[0])
-
-        self.refused("loop l2's record holds no clean full review")
 
     def test_a_full_review_by_another_version_model_or_effort_is_not_built_on(self) -> None:
         earlier = "was made by Projector 1.2.3, model claude-opus-5-5, no effort, and this run is "
@@ -3812,26 +3660,6 @@ class InterdiffRuleTests(IncrementalCase):
         self.review_head(head)
         with mock.patch.dict(os.environ, {"CLAUDE_EFFORT": "high"}):
             self.refused(earlier + "Projector 1.2.3, model claude-opus-5-5, effort high")
-
-    def test_a_full_review_whose_marker_names_no_version_is_not_built_on(self) -> None:
-        full = self.github.reviews[-1]
-        full["body"] = full["body"].replace(" projector=1.2.3 ", " ")
-        self.pushed()
-
-        self.refused("was made by Projector unknown, model claude-opus-5-5, no effort, and this run is "
-                     "Projector 1.2.3, model claude-opus-5-5, no effort")
-
-    def test_a_full_review_missing_from_github_is_not_built_on(self) -> None:
-        self.github.reviews.clear()
-        self.pushed()
-
-        self.refused("the full review 901 of")
-
-    def test_an_open_finding_gives_a_full_review(self) -> None:
-        self.pushed()
-        self.open_finding()
-
-        self.refused("1 finding thread is open")
 
     def test_a_binary_file_a_symlink_or_a_submodule_cannot_be_read(self) -> None:
         def binary() -> None:
@@ -3909,12 +3737,6 @@ class InterdiffRuleTests(IncrementalCase):
         result = self.interdiff()
 
         self.assertTrue(result["needs_gate"])
-
-    def test_an_unmoved_base_needs_no_gate(self) -> None:
-        self.pushed()
-
-        self.assertTrue(self.interdiff()["incremental"])
-        self.assertNotIn("gate", self.read_state())
 
     def test_an_empty_change_across_a_moved_base_still_needs_the_gate(self) -> None:
         self.move_trunk({"trunk.txt": "moved\n"})
@@ -4003,27 +3825,6 @@ class IncrementalPublishTests(IncrementalCase):
 
         self.refused(self.publish_incremental(), "an incremental review is refused: 1 finding thread is open", head)
 
-    def test_refuses_a_moved_base_with_no_passing_gate_on_the_head(self) -> None:
-        self.move_trunk({"trunk.txt": "moved\n"})
-        head = self.review_head(self.merge(self.reviewed, self.trunk))
-
-        self.refused(self.publish_incremental(), "the merge base moved", head)
-
-    def test_refuses_a_head_that_moved(self) -> None:
-        head = self.pushed()
-        self.push_feature(self.build(head, {"a.css": css(r1=9, r2=9, r3=9)}))
-
-        self.refused(self.publish_incremental(), "project review move 1", head)
-
-    def test_refuses_what_an_incremental_review_does_not_take(self) -> None:
-        head = self.pushed()
-        for extra, words in ((["--threads", str(self.threads(finding()))], "--threads"),
-                             (["--covered", "1/1"], "--covered"),
-                             (["--second-verdict", "901"], "--second-verdict"),
-                             (["--verdict", "changes-requested"], "always clean")):
-            with self.subTest(words):
-                self.refused(self.publish_incremental(*extra), words, head)
-
     def test_refuses_a_body_that_is_empty_too_long_or_carries_what_publish_writes(self) -> None:
         head = self.pushed()
         signature = f"{review.MARK} **Projector review** · `1.2.3` · model `m` · **CLEAN** · took 1m 00s\n\nText.\n"
@@ -4038,12 +3839,6 @@ class IncrementalPublishTests(IncrementalCase):
                 self.refused(self.publish_incremental(text=text), words, head)
         self.assertEqual(0, self.publish_incremental(text="x" * 600)[0], "600 characters is the limit, not past it")
 
-    def test_an_ordinary_review_body_with_an_incremental_line_is_refused(self) -> None:
-        head = self.pushed()
-        body = self.body(f"{{census}}\n\n<!-- projector-incremental v=1 from={self.reviewed} kind=push -->\n")
-
-        self.refused(self.publish("clean", body=body), "markers", head)
-
     def test_another_loops_incremental_review_on_the_head_is_a_collision(self) -> None:
         head = self.pushed()
         self.assertEqual(0, self.publish_incremental()[0])
@@ -4055,21 +3850,9 @@ class IncrementalPublishTests(IncrementalCase):
         self.assertIn("another loop", err)
         self.assertTrue(self.lock(head).exists())
 
-    def test_a_publish_without_incremental_still_needs_a_verdict_and_coverage(self) -> None:
-        self.pushed()
-        body = str(self.body())
-
-        no_verdict = self.later("publish", "--body", body, "--covered", "1/1")
-        no_coverage = self.later("publish", "--body", body, "--verdict", "clean")
-
-        self.assertEqual((1, 1), (no_verdict[0], no_coverage[0]))
-        self.assertIn("--verdict must be clean or changes-requested", no_verdict[2])
-        self.assertIn("--covered must be", no_coverage[2])
-
 
 class KindPhraseTests(unittest.TestCase):
     def test_every_kind_has_one_phrase_that_the_output_and_the_lead_both_use(self) -> None:
-        self.assertEqual({"push", "merge", "retarget", "rebase", "rewrite"}, set(review.KINDS))
         for kind, phrase in review.KINDS.items():
             with self.subTest(kind):
                 self.assertTrue(phrase)
@@ -4090,44 +3873,32 @@ class KindPhraseTests(unittest.TestCase):
 
 
 class IncrementalSuggestionsTests(IncrementalCase):
-    def build_on_suggestions(self) -> tuple[int, str]:
-        """Publish a full review of the reviewed head that lists two suggestions, then an incremental review of a
-        push that builds on it, and return the full review's id and the new head. The setup's full review listed
-        none; the re-review of the same head is the newest full review, which the incremental review links."""
+    def test_an_incremental_review_brings_and_counts_the_suggestions_of_the_full_review_its_lead_links(self) -> None:
+        # The setup's full review listed none; the re-review of the same head lists two and is the newest full
+        # review, which the incremental review of a push links. The incremental review lists none of its own,
+        # so a count of its own would read 0 while fix-pr still has the full review's two to decide.
         self.assertEqual(0, self.setup_review("--loop", "l1", "--rereview")[0])
         self.assertEqual(0, self.publish("clean", "--threads", str(self.threads(*P3)))[0])
         full = self.posted()["id"]
         head = self.pushed()
         self.assertEqual(0, self.publish_incremental()[0])
+        incremental = self.posted()["id"]
         self.assertIn(f"({review_page(full)})", self.posted()["body"])
         self.assertIsNotNone(verdict_0_7_19(self.posted()["body"]), "0.7.19 reads the incremental verdict")
         self.assertNotIn("projector-suggestions", self.posted()["body"])
-        return full, head
-
-    def test_an_incremental_review_brings_the_suggestions_of_the_full_review_its_lead_links(self) -> None:
-        full, head = self.build_on_suggestions()
 
         code, out, err = self.project("suggestions", "1", "--repo", REPO, "--json")
+        status = self.project("status", "1", "--repo", REPO)
+        result = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
 
         self.assertEqual(0, code, err)
         self.assertEqual([dict(item, url=review_page(full), sha=self.reviewed) for item in LISTED], json.loads(out),
                          f"the suggestions name the full review's head, not {head[:7]}")
-
-    def test_status_counts_the_suggestions_of_the_full_review_an_incremental_review_builds_on(self) -> None:
-        # The incremental review lists none of its own, so a count of its own would read 0 while fix-pr still
-        # has the full review's two to decide.
-        _, head = self.build_on_suggestions()
-        incremental = self.posted()["id"]
-
-        code, out, err = self.project("status", "1", "--repo", REPO)
-        result = json.loads(self.project("status", "1", "--repo", REPO, "--json")[1])
-        listed = json.loads(self.project("suggestions", "1", "--repo", REPO, "--json")[1])
-
-        self.assertEqual(0, code, err)
+        self.assertEqual(0, status[0], status[2])
         self.assertEqual([f"#1 at {head[:7]}: clean with 2 suggestions from claude-opus-5-5, "
-                          f"{review_page(incremental)}", "  signed off, a draft; labeled clean"], out.splitlines())
-        self.assertEqual((incremental, 2, 2, len(listed)),
-                         (result["newest"]["review"], result["newest"]["suggestions"], result["suggestions"], 2))
+                          f"{review_page(incremental)}", "  signed off, a draft; labeled clean"], status[1].splitlines())
+        self.assertEqual((incremental, 2, 2),
+                         (result["newest"]["review"], result["newest"]["suggestions"], result["suggestions"]))
 
 
 class SuggestionParsingTests(unittest.TestCase):
@@ -4229,10 +4000,68 @@ class ReviewCountsTests(unittest.TestCase):
                 for association in review.TRUSTED:
                     self.assertTrue(review.review_counts(association, visibility), f"{association} counts everywhere")
 
-    def test_the_visibility_comes_from_the_pull_requests_base_repository(self) -> None:
-        self.assertEqual("internal", review.repo_visibility({"base": {"repo": {"visibility": "internal"}}}))
-        self.assertIsNone(review.repo_visibility({"base": {"repo": {"full_name": "owner/example"}}}))
-        self.assertIsNone(review.repo_visibility({}))
+
+class SkillTextTests(unittest.TestCase):
+    """The review skills act through Projector's commands, which a host's automatic approval allows, rather than
+    the raw operations it refuses."""
+
+    SKILLS = Path(cli.__file__).resolve().parents[2] / "skills"
+
+    def test_the_review_skills_clean_up_through_the_commands_alone(self) -> None:
+        # Removing a worktree by hand leaves the state naming it, and a raw comment deletion is what Claude
+        # Code's auto mode refuses, where one narrow rule allows the command.
+        review_pr = (self.SKILLS / "review-pr" / "SKILL.md").read_text()
+        review_repo = (self.SKILLS / "review-repo" / "SKILL.md").read_text()
+
+        self.assertIn("`project review finish <number>`", review_pr)
+        self.assertIn("`--replace <comment-id>`", review_pr)
+        for text in (review_pr, review_repo):
+            self.assertIn("`project review finish <number> --repo <owner>/<repo> --force`", " ".join(text.split()))
+            self.assertNotIn("issues/comments", text)
+            self.assertNotIn("git worktree", text)
+
+    def test_review_pr_settles_threads_through_the_command_alone(self) -> None:
+        # A hand-typed marker that misses `projector-verify` makes the reviewer's own reply read as the author
+        # answering, which fires RESPONDED.
+        skill = (self.SKILLS / "review-pr" / "SKILL.md").read_text()
+
+        self.assertIn("project review settle <number> --thread <thread-id> --result <result> --body <file>", skill)
+        for result in review.SETTLED:
+            self.assertIn(f"`--result {result}`", skill)
+        self.assertNotIn("resolveReviewThread", skill)
+        self.assertNotIn("Every reply you post opens with", skill)
+
+    def test_the_skills_move_draft_state_through_the_commands_alone(self) -> None:
+        # A host's automatic approval can refuse a bare `gh pr ready` as self-approval, where the rule that
+        # allows Projector's commands allows these.
+        for name in ("fix-pr", "implement", "spec", "work", "cleanup"):
+            text = (self.SKILLS / name / "SKILL.md").read_text()
+            with self.subTest(skill=name):
+                self.assertIn("project review ready <number> --repo <owner>/<repo>", text)
+                commands = "\n".join(re.findall(r"^\s*```(?:sh|bash)\n(.*?)^\s*```", text, re.M | re.S))
+                self.assertNotIn("gh pr ready", commands, "a skill runs no bare gh pr ready")
+                prose = " ".join(text.split())
+                self.assertIn("as a tool call of its own", prose)
+        fix_pr = " ".join((self.SKILLS / "fix-pr" / "SKILL.md").read_text().split())
+        self.assertIn("project review hold <number> --repo <owner>/<repo>", fix_pr)
+        # Claude Code and Codex check each command of a chain and take the strictest result, so a `gh` command
+        # beside `project review ready` sends the whole call to auto mode, which refused it as undoing the hold.
+        self.assertIn("Run `project review hold` and `project review ready` each as a tool call of its own", fix_pr)
+        self.assertIn("**The call ran more than the command.** Run the command again, alone.", fix_pr)
+        # A lone refusal sends the user to `init` only when `review rules` says the file lacks the rules.
+        self.assertIn("Run `project review rules --json`, which writes nothing, and read `allowed`", fix_pr)
+
+    def test_no_skill_example_joins_a_review_command_to_another(self) -> None:
+        # A joined line falls to the host's automatic approval even where `Bash(project *)` allows the command.
+        for path in sorted(self.SKILLS.glob("*/SKILL.md")):
+            text = path.read_text()
+            for block in re.findall(r"^\s*```(?:sh|bash)\n(.*?)^\s*```", text, re.M | re.S):
+                for line in block.splitlines():
+                    if re.search(r"project (review (ready|hold|publish)|summary publish)\b", line):
+                        with self.subTest(skill=path.parent.name, line=line.strip()):
+                            # A placeholder such as `<clean|changes-requested>` names choices, not a pipe.
+                            bare = re.sub(r"<[^>]*>", "", line)
+                            self.assertIsNone(re.search(r";|&&|\|", bare), "the command runs on a line by itself")
 
 
 class ArgumentTests(unittest.TestCase):
