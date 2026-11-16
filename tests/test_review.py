@@ -790,10 +790,15 @@ class CiGateTests(ReviewCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.github.suites = {7: ".github/workflows/check.yml"}
+        self.rounds = 0
 
     def heads(self, base: dict[str, str], head: dict[str, str | None]) -> None:
         """Move trunk to the first head's trunk plus `base`, push a head that changes `head` on it (None deletes a
-        file), and set the head up for review."""
+        file), and set the head up for review.
+
+        Each call's commits carry their own message, so two calls with the same files in the same second still make
+        two heads, and a subtest never meets the review an earlier one set up."""
+        self.rounds += 1
         git(self.work, "checkout", "--quiet", "--detach", self.base)
         for files in (base, head):
             for name, text in files.items():
@@ -804,7 +809,7 @@ class CiGateTests(ReviewCase):
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(text)
             git(self.work, "add", "-A")
-            git(self.work, "commit", "--quiet", "--allow-empty", "-m", "ci")
+            git(self.work, "commit", "--quiet", "--allow-empty", "-m", f"ci {self.rounds}")
             if files is base:
                 trunk = git(self.work, "rev-parse", "HEAD")
                 git(self.work, "push", "--quiet", "--force", "origin", "HEAD:refs/heads/trunk")
