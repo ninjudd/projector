@@ -42,8 +42,8 @@ The steps are easy to get wrong by hand:
   Neither is something a person does by hand in the middle of a test.
 
 One repository solved this with a 500-line shell script that has run every
-device test there for the past week. Each of its commands is general except
-for the names of the app's Xcode project, schemes, and log subsystem, so other
+device test there for the past week. Each of its commands is general except for the
+names of the app's Xcode project, schemes, and log subsystem, so other
 repositories that use Projector for iOS work would gain from having it in the
 `project` command.
 
@@ -383,11 +383,10 @@ at that paragraph.
   `sudo`, so both fall through to Codex's usual approval, which asks for
   them, and the `CODEX_RULES` header names them with the other commands it
   leaves out.
-- **Standard library only.** The script's embedded Python already did the JSON
-  work. `-showBuildSettings` gives the bundle ID that the script read with
-  `PlistBuddy`, and `fcntl.flock` replaces `lockf(1)`. The command checks for
-  `xcrun` rather than for macOS, so the tests run on Linux with stand-ins for
-  Apple's tools.
+- **Standard library only.** The script's embedded Python already did the
+  JSON work. `-showBuildSettings` gives the bundle ID that the script read
+  with `PlistBuddy`, and `fcntl.flock` replaces `lockf(1)`. The command checks for `xcrun` rather than for macOS, so the
+  tests run on Linux with stand-ins for Apple's tools.
 
 ## 4. Acceptance criteria
 
@@ -478,11 +477,13 @@ sections above leave open:
 ## 8. Outcome
 
 The project shipped with the stack that carries the plan, the command, and
-the skills, and the tests above prove every acceptance criterion in § 4 but
-the last one. That last criterion, a build installed and opened on a real
-iPhone, needed the person and their device. The session that built the
-command could not reach CoreDevice, so the person ran the check once the
-stack merged, with the installed `project ios`, tracked as a request in their
-Projector inbox. It passed: `devices`, `build` and `install` for two apps,
-`crashes`, `logs`, and `cleanup` each worked on an iOS repository and a
+the skills, and every acceptance criterion in § 4 but the last one is
+proven by the tests above. That last criterion, a build installed and opened
+on a real iPhone, needs the person and their device. The session that built
+the command could not reach CoreDevice, and the person chose to run that
+check once the stack merged, with the installed `project ios`. A problem it
+finds is new work on the shipped command, not an open part of this plan. The
+person ran the check after the merge, tracked as a request in their
+Projector inbox, and it passed: `devices`, `build` and `install` for two
+apps, `crashes`, `logs`, and `cleanup` each worked on an iOS repository and a
 paired iPhone.

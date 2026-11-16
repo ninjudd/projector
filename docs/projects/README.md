@@ -153,10 +153,13 @@ behavior a completed plan describes, update the living documentation in
 `docs/` in that change, and record the new decision in the plan of the project
 the later work belongs to, when it has one.
 
-A completed plan still changes in two ways. Its status, priority, and owner
+A completed plan still changes in three ways. Its status, priority, and owner
 change through the `project status`, `project priority`, and `project owner`
 commands, and a reference to a renamed project is updated as
 [Rename a project deliberately](#rename-a-project-deliberately) describes.
+When the plan's outcome deferred a check until after the merge, such as a
+test on a device that only the person can reach, the plan also takes one
+more edit once the check runs: its outcome records the check's result.
 
 ## Find projects
 

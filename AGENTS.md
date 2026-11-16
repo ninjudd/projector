@@ -145,7 +145,7 @@ because squash merges preserve that body as the commit message.
 For review findings, verify first, commit locally, reply with the commit, push,
 resolve the thread, and re-fetch it in that order.
 
-<!-- projector:begin 26 -->
+<!-- projector:begin 27 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -173,7 +173,9 @@ merges. Never open a separate pull request just to mark a shipped project
 completed, and do not wait for a release: Projector does not track releases,
 and a project held open for one tends to stay open. A `completed` plan records
 what was decided and built, so leave it as it is, and when later work changes
-behavior it describes, update the living documentation instead.
+behavior it describes, update the living documentation instead. The one edit
+a completed plan takes is a result: when its outcome deferred a check until
+after the merge, record the check's result in the outcome once it runs.
 
 Write GitHub issues and review comments in the same style. Write a pull request
 body as prose that explains why the change exists, because a squash merge makes
