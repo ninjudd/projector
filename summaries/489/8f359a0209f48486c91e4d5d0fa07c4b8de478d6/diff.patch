@@ -1,0 +1,266 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index d888d360..d4979303 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -280,7 +280,7 @@ not subscribed to before.
+ ```text
+   /projector                            1 pull request · 1 review request  12s   [-]
+    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
+-   #258 threads grace Name the reviewed head in a review's summary line  2* 5m
++   #258 threads grace Name the reviewed head in its summary… reviewing · 2* 5m
+         reviewer · sig-head · +84 −1 in 5 files · checks passing ·  reviewing
+         7: Discuss  8: Dismiss
+         open in github  open in projector
+@@ -318,17 +318,19 @@ review wants something:
+   one whose `clean` label a push removed.
+ 
+ So a held draft, which keeps its `clean` label while a change is built,
+-reads as an italic number beside an italic green `clean`. A label the state
+-gives way to, such as the `clean` of a pull request that now conflicts,
+-still shows in its drawer. The panel reads the draft state and the labels
+-with the rest of the line, from the watch daemon's query of the pull
+-request.
+-
+-Notes follow the title when the pull request has them: whatever else of
+-`conflict` and `checks failing` in red and `changes requested` in yellow
+-holds it back that the state does not already say, then `approved` in
+-green, and last the number of unresolved review threads before a `*` in
+-yellow, such as `2*`. The ` · ` between two notes keeps the default text
++reads as an italic number beside an italic green `clean`. The panel reads the
++draft state and the labels with the rest of the line, from the watch
++daemon's query of the pull request.
++
++Notes follow the title and name every other state that applies, in the
++order above and each in its color: `failing`, `changes`, `reviewing`, and
++`clean`, then `approved` in green, and last the number of unresolved review
++threads before a `*` in yellow, such as `2*`, which stands for `threads`. So
++a signed-off pull request whose checks fail reads `failing` with a green
++`clean` after its title. No note names `conflict`, which always takes the
++state. While a pull request's drawer is open, its row spells the holds out
++as `checks failing` and `changes requested`, and names the one its state
++already says as well. The ` · ` between two notes keeps the default text
+ color. The line ends with how long ago the pull request last changed, in the
+ column where the inbox's items end with their ages. Only the title shortens
+ on a narrow terminal. A pull request that the watch daemon has not queried
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index fe2976fd..64f36876 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -108,6 +108,10 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+     }),
+     p19: pr(19, 'Draft no review has read', { isDraft: true }),
+     p20: pr(20, 'Change by a deleted account', { author: null }),
++    p21: pr(21, 'Signed-off change failing its checks', {
++      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
++      labels: { nodes: [{ name: 'clean' }] },
++    }),
+   },
+   'x/y': {
+     p7: pr(7, 'Conflicting change', {
+@@ -728,27 +732,55 @@ test('a panel.background the panel does not take leaves the color to the theme,
+   await ui.unmount()
+ })
+ 
+-test('a pull request’s notes take their own colors, and each ` · ` between them the default color', async ($, on) => {
++test('a row’s notes name every other status that applies, and an open drawer spells its row’s holds out', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  world(on, { [REVIEW]: 'o/r#10\no/r#11\n' })
++  world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\n' })
+   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+   await clock.advance(1)
+   await clock.settle()
+-
+   const ui = await $.ui.mount(PANEL)
+-  // The conflict is the row's status, so the notes leave it out and name the change request after it.
+-  expect(partsOf(await ui.find({ type: 'Text', text: 'changes requested · 1*' }))).toEqual([
+-    ['changes requested', 'warning'],
+-    ' · ',
+-    ['1*', 'warning'],
+-  ])
+-  expect(partsOf(await ui.find({ type: 'Text', text: 'approved · 3*' }))).toEqual([
+-    ['approved', 'success'],
++
++  // A row's notes are the Text after its title, when it has any; the age comes after them.
++  const notesOf = async (title: string) => {
++    const texts = await ui.findAll({ type: 'Text' })
++    const next = texts[texts.findIndex(found => found.text === title) + 1]
++    return next === undefined || next.text === '' || /^\d+[smhd]$/.test(next.text) ? [] : partsOf(next)
++  }
++  const TITLES = [
++    'Change held back',
++    'Approved change',
++    'Change failing its checks',
++    'Change a review is reading',
++    'Signed-off change failing its checks',
++  ]
++  const allNotes = async () => Object.fromEntries(await Promise.all(TITLES.map(async title => [title, await notesOf(title)])))
++
++  expect(await allNotes()).toEqual({
++    // A conflict always takes the word, so no note names it; the change request it beat follows, in short.
++    'Change held back': [['changes', 'warning'], ' · ', ['1*', 'warning']],
++    'Approved change': [['approved', 'success'], ' · ', ['3*', 'warning']],
++    // The word says what the one hold is, so the closed row does not repeat it.
++    'Change failing its checks': [],
++    // A label the word beat shows too, in its own color: the clean an earlier head left under a running review,
++    // and the clean of a signed-off head whose checks fail.
++    'Change a review is reading': [['clean', 'success']],
++    'Signed-off change failing its checks': [['clean', 'success']],
++  })
++
++  // An open drawer spells its row's holds out, the one its word names as well, and leaves the other rows short.
++  await ui.press({ key: 'pr:o/r#21' })
++  await clock.settle()
++  expect(await notesOf('Signed-off change failing its checks')).toEqual([
++    ['checks failing', 'error'],
+     ' · ',
+-    ['3*', 'warning'],
++    ['clean', 'success'],
+   ])
+-  expect(await ui.find({ type: 'Text', text: /⋮/ })).toBeUndefined()
++  expect(await notesOf('Change held back')).toEqual([['changes', 'warning'], ' · ', ['1*', 'warning']])
++  await ui.press({ key: 'pr:o/r#10' })
++  await clock.settle()
++  expect(await notesOf('Change held back')).toEqual([['changes requested', 'warning'], ' · ', ['1*', 'warning']])
++  expect(await notesOf('Signed-off change failing its checks')).toEqual([['clean', 'success']])
+   await ui.unmount()
+ })
+ 
+@@ -852,10 +884,13 @@ test('a drawer ends its facts with every label as GitHub draws it, a clean the r
+   await clock.settle()
+   const ui = await $.ui.mount(PANEL)
+ 
+-  // The conflict is the row's word, over the clean label, and the failing checks, which hold it back too, a note.
++  // The conflict is the row's word, and the failing checks and the clean label it beat are its notes.
+   expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
+-  expect(await ui.find({ type: 'Text', text: 'clean' })).toBeUndefined()
+-  expect(partsOf(await ui.find({ type: 'Text', text: 'checks failing' }))).toEqual([['checks failing', 'error']])
++  expect(partsOf(await ui.find({ type: 'Text', text: /^failing · clean$/ }))).toEqual([
++    ['failing', 'error'],
++    ' · ',
++    ['clean', 'success'],
++  ])
+ 
+   await ui.press({ key: 'pr:o/r#17' })
+   await clock.settle()
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 58455b49..f50a8881 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -1227,12 +1227,16 @@ function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+   return pr => (isOneRepo ? `#${pr.number}` : `${pr.repo}#${pr.number}`)
+ }
+ 
+-type Note = { text: string; color: 'error' | 'warning' | 'success' }
++type Note = { text: string; color: 'error' | 'warning' | 'success' | 'claude' }
+ 
+ type Hold = {
+   status: string
+-  /** What the row's notes say when another hold is its status; none for open threads, whose count is always a note. */
+-  note?: string
++  /**
++   * The hold in full, which the row's notes give while its drawer is open,
++   * and give as the status word otherwise. None for a conflict, which always
++   * takes the status, or for open threads, whose count is always a note.
++   */
++  phrase?: string
+   color: 'error' | 'warning'
+   holds: (pr: PullRequest) => boolean
+ }
+@@ -1240,52 +1244,62 @@ type Hold = {
+ /**
+  * What holds a pull request back, most urgent first: red while the branch
+  * itself cannot merge, yellow while a review wants something. The first that
+- * holds is the row's status, and its notes name the rest.
++ * holds is the row's status.
+  */
+ const HOLDS: Hold[] = [
+-  { status: 'conflict', note: 'conflict', color: 'error', holds: pr => pr.isConflicting },
+-  { status: 'failing', note: 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
++  { status: 'conflict', color: 'error', holds: pr => pr.isConflicting },
++  { status: 'failing', phrase: 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
+   {
+     status: 'changes',
+-    note: 'changes requested',
++    phrase: 'changes requested',
+     color: 'warning',
+     holds: pr => pr.reviewDecision === 'CHANGES_REQUESTED',
+   },
+   { status: 'threads', color: 'warning', holds: pr => pr.openThreads > 0 },
+ ]
+ 
+-/** What a row says after the title: each hold its status does not name, its approval, and its open threads' count. */
+-function notesOf(pr: PullRequest): Note[] {
+-  const status = rowState(pr).text
+-  const notes = HOLDS.flatMap(({ status: word, note, color, holds }): Note[] =>
+-    note !== undefined && word !== status && holds(pr) ? [{ text: note, color }] : [],
+-  )
+-  if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
+-  // The open threads' count comes last, beside the age.
+-  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, color: 'warning' })
+-  return notes
+-}
++/**
++ * The labels a review sets alone, in the order a row's word takes them:
++ * `reviewing` while a review runs, over a `clean` an earlier head left, and
++ * `clean` once a head is signed off. Reviewing is orange, as the drawer draws a reviewer, since
++ * yellow marks findings.
++ */
++const REVIEW_LABELS: Note[] = [
++  { text: 'reviewing', color: 'claude' },
++  { text: 'clean', color: 'success' },
++]
+ 
+ const hasLabel = (pr: PullRequest, name: string) => pr.labels.some(label => label.name.toLowerCase() === name)
+ 
++/** The review label a row's word gives, when no hold takes it. */
++const reviewLabel = (pr: PullRequest) => REVIEW_LABELS.find(label => hasLabel(pr, label.text))
++
+ /**
+- * What a row says of a pull request's review, from the labels a review sets
+- * alone: `reviewing` while a review runs, over a `clean` an earlier head left,
+- * `clean` once a head is signed off, and nothing while neither is set.
++ * What a row says after the title: every other status that applies, in the
++ * order the word takes them, then its approval and its open threads' count.
++ * While the row's drawer `isOpen`, the holds show in full, and the one that
++ * is the row's word shows as well.
+  */
+-function reviewLabel(pr: PullRequest): { text: string; color: 'claude' | 'success' } | undefined {
+-  // Orange, as the drawer draws a reviewer, since yellow marks findings.
+-  if (hasLabel(pr, 'reviewing')) return { text: 'reviewing', color: 'claude' }
+-  if (hasLabel(pr, 'clean')) return { text: 'clean', color: 'success' }
+-  return undefined
++function notesOf(pr: PullRequest, isOpen: boolean): Note[] {
++  const shown = rowState(pr).text
++  const notes = HOLDS.flatMap(({ status, phrase, color, holds }): Note[] =>
++    phrase !== undefined && holds(pr) && (isOpen || status !== shown)
++      ? [{ text: isOpen ? phrase : status, color }]
++      : [],
++  )
++  notes.push(...REVIEW_LABELS.filter(label => label.text !== shown && hasLabel(pr, label.text)))
++  if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
++  // The open threads' count comes last, beside the age.
++  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, color: 'warning' })
++  return notes
+ }
+ 
+ /**
+  * The word after a row's number: the first of `HOLDS` that holds, then its
+  * review label, and otherwise `draft` in the default color or `ready` in the
+  * theme's light blue. A draft's row draws the word in italic, as it draws the
+- * number, so a held draft shows an italic `clean`. A label the word gives way
+- * to still shows in the drawer, which lists every label.
++ * number, so a held draft shows an italic `clean`. Every other status that
++ * applies follows the title as a note.
+  */
+ function rowState(pr: PullRequest): { text: string; color?: string } {
+   const hold = HOLDS.find(one => one.holds(pr))
+@@ -2444,7 +2458,7 @@ export const register: Register = on => {
+     const drawRow = (row: Row) => {
+       const { pr } = row
+       const key = keyOf(pr)
+-      const notes = notesOf(pr)
++      const notes = notesOf(pr, opened === key)
+       const state = rowState(pr)
+       // A pull request the daemon has no result for yet holds only its
+       // reference, so its line says it is loading in its title's place.
