@@ -478,7 +478,7 @@ def push_command(command: str) -> bool:
 
 
 def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, run: Callable = subprocess.run) -> dict:
-    from . import watch
+    from . import agents, watch
     from .config import load as load_config
     name, session, cwd = event.get("hook_event_name"), event.get("session_id"), event.get("cwd")
     if not isinstance(name, str) or name not in {"SessionStart", "SessionEnd", "UserPromptSubmit", "PostToolUse", "Stop"}:
@@ -506,8 +506,10 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
             ensure()
         return {}
     text = tool_output(event) if name == "PostToolUse" else None
-    if text is not None and load_config(Path(cwd)).setting("watch.auto_start") is not False:
-        watch.add_from_output(root, session, text)
+    if text is not None:
+        config = load_config(Path(cwd))
+        if config.setting("watch.auto_start") is not False and watch.add_from_output(root, session, text)[0]:
+            agents.register_subscriber(root, session, Path(cwd), now, config)
     consumed, lines = acknowledge(folder, session, event.get("prompt", ""), now) if name == "UserPromptSubmit" else (False, [])
     if record.get("enabled") and has_work(folder):
         ensure()

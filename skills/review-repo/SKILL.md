@@ -68,7 +68,10 @@ open.
    `review.username` and then the operator. The command starts the daemon
    when it is not running, and its last line says how the session's events
    arrive. Act on that line as `../review-pr/SKILL.md` describes under
-   "Subscribe the session to the pull request".
+   "Subscribe the session to the pull request". Subscribing also registers
+   the session for agent messages, with a generated summary and no name, so
+   the user's other sessions can reach it; `../message-agent/SKILL.md`
+   describes how to give it a name.
 4. Run `project watch list` and confirm that it shows the repository's
    `review` line for this model. Tell the user which repository the session
    reviews, as which model and reviewer.

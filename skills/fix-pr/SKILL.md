@@ -438,6 +438,10 @@ they ask. Skip the command when
 `project config get watch.auto_start --default true` prints `false`, and say
 in your report that the setting kept the session from subscribing.
 
+Subscribing also registers the session for agent messages, with a generated
+summary and no name, so the user's other sessions can reach it. The
+`message-agent` skill describes how to give it a name.
+
 The command finds the session's id in `CLAUDE_CODE_SESSION_ID`, which Claude
 Code sets in every command, a subagent's included, so a subagent subscribes
 the session it belongs to. On a host that sets no session id, the

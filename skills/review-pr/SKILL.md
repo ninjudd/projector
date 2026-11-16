@@ -249,6 +249,10 @@ newest to the pull request itself, so it outranks the other session's on
 this machine. The review moves here once the other review publishes, and
 this session reviews from the next head.
 
+Subscribing also registers the session for agent messages, with a generated
+summary and no name, so the user's other sessions can reach it. The
+`message-agent` skill describes how to give it a name.
+
 A subscription to the pull request itself announces every later head, draft
 or not, because running this skill asks for the pull request's review now. A
 repository subscription, which `review-repo` adds, waits until a draft is

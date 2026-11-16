@@ -365,6 +365,125 @@ class MessageTests(AgentCase):
         self.assertEqual([], self.events(A))
 
 
+class SubscriberTests(AgentCase):
+    """A session that subscribes to a pull request is registered with a generated summary."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.git_checkout()
+
+    def watch(self, *args: str, claude: str = A, stdin: str = "") -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.chdir(self.work), redirect_stdout(out), redirect_stderr(err), \
+                mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": claude}), \
+                mock.patch("time.time", return_value=self.now), mock.patch.object(sys, "stdin", io.StringIO(stdin)):
+            code = cli.main(["watch", *args])
+        self.assertEqual(0, code, err)
+        return code, out.getvalue(), err.getvalue()
+
+    def summary(self, session: str = A) -> object:
+        return (agents.record(self.root, session) or {}).get("summary")
+
+    def test_an_explicit_add_registers_the_session_without_changing_what_add_prints(self) -> None:
+        self.claude(A)
+
+        _, out, _ = self.watch("add", "acme/app#12")
+
+        found = agents.record(self.root, A) or {}
+        self.assertEqual("added acme/app#12 fix\nevents: mod\n", out)
+        self.assertEqual(("Fixing acme/app#12", True, "operator", "claude", "acme/app", None),
+                         tuple(found.get(key) for key in ("summary", "summary_auto", "login", "host", "repo", "name")))
+
+    def test_an_add_from_a_push_command_registers_the_session(self) -> None:
+        self.claude(A)
+
+        self.watch("add", "--from-output", "-", stdin="https://github.com/acme/app/pull/13\n")
+
+        self.assertEqual("Fixing acme/app#13", self.summary())
+
+    def test_a_pull_request_codex_opens_registers_the_codex_session(self) -> None:
+        self.codex(B)
+        event = {"hook_event_name": "PostToolUse", "session_id": B, "cwd": str(self.work), "tool_name": "Bash",
+                 "tool_input": {"command": "gh pr create --draft"},
+                 "tool_response": {"exit_code": 0, "output": "https://github.com/acme/app/pull/17\n"}}
+
+        codex.hook(self.root, event, self.now, lambda: None)
+
+        self.assertEqual(("Fixing acme/app#17", "codex"),
+                         (self.summary(B), (agents.record(self.root, B) or {}).get("host")))
+
+    def test_auto_register_false_subscribes_without_registering(self) -> None:
+        (self.home / ".projector.toml").write_text("[agent]\nauto_register = false\n")
+        self.claude(A)
+
+        self.watch("add", "acme/app#12")
+
+        self.assertEqual(["acme/app#12 fix"], watch.read_lines(self.folder(A)))
+        self.assertFalse((self.folder(A) / "agent.json").exists())
+
+    def test_a_session_registered_with_its_own_summary_keeps_it_as_its_subscriptions_change(self) -> None:
+        self.claude(A)
+        self.register(A, "--name", "parser-refactor", "--summary", "Refactoring the parser")
+        before = agents.record(self.root, A)
+
+        self.watch("add", "acme/app#12")
+        self.watch("remove", "acme/app#12")
+
+        self.assertEqual(before, agents.record(self.root, A))
+
+    def test_a_generated_summary_follows_adds_and_removes_until_the_session_gives_its_own(self) -> None:
+        self.claude(A)
+        seen = []
+        for args in (["add", "acme/app#12"], ["add", "acme/app#13"], ["remove", "acme/app#12"]):
+            self.watch(*args)
+            seen.append(self.summary())
+        self.register(A, "--summary", "Fixing the parser's pull request")
+        self.watch("add", "acme/app#14")
+        seen.append(self.summary())
+
+        self.assertEqual(["Fixing acme/app#12", "Fixing acme/app#12 and acme/app#13", "Fixing acme/app#13",
+                          "Fixing the parser's pull request"], seen)
+
+    def test_a_review_subscription_gives_the_registration_its_model(self) -> None:
+        self.claude(A)
+
+        self.watch("add", "acme/app", "--role", "review", "--model", MODEL, "--reviewer", "octocat")
+
+        found = agents.record(self.root, A) or {}
+        self.assertEqual(("Reviewing acme/app pull requests", MODEL), (found.get("summary"), found.get("model")))
+
+    def test_a_session_nothing_delivers_to_subscribes_unregistered_with_the_usual_output(self) -> None:
+        _, out, _ = self.watch("add", "acme/app#12")
+
+        self.assertEqual(f"added acme/app#12 fix\nevents: none — start `project watch stream --session {A}` under "
+                         "your host's monitor facility\n", out)
+        self.assertFalse((self.folder(A) / "agent.json").exists())
+
+    def test_a_signed_out_gh_subscribes_unregistered(self) -> None:
+        self.claude(A)
+        self.github.down = True
+
+        self.watch("add", "acme/app#12")
+
+        self.assertFalse((self.folder(A) / "agent.json").exists())
+
+    def test_a_pull_request_in_another_repository_is_counted_and_never_named(self) -> None:
+        self.claude(A)
+
+        self.watch("add", "secret-org/vault#5")
+        self.watch("add", "acme/app#12")
+
+        self.assertEqual("Fixing acme/app#12 and 1 pull request in another repository", self.summary())
+
+    def test_a_summary_of_many_subscriptions_counts_them_to_stay_within_120_characters(self) -> None:
+        self.claude(A)
+        watch.edit_subscriptions(self.folder(A), lambda lines: [f"acme/app#{number} fix" for number in range(1, 40)])
+
+        self.watch("add", "acme/app", "--role", "review", "--model", MODEL, "--reviewer", "octocat")
+
+        self.assertEqual("Reviewing acme/app pull requests; fixing 39 pull requests", self.summary())
+
+
 class DaemonTests(AgentCase):
     def test_an_idle_registered_codex_session_keeps_the_daemon_running_past_its_idle_stop(self) -> None:
         self.codex(B)

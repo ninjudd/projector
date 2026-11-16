@@ -290,11 +290,14 @@ def subscriptions(folder: Path) -> list[Subscription]:
 
 
 def edit_subscriptions(folder: Path, edit: Callable[[list[str]], list[str]]) -> None:
+    from . import agents
     with locked(folder):
         before = read_lines(folder)
         after = edit(list(before))
         if after != before:
             write_text(folder / "subscriptions", "".join(f"{line}\n" for line in after))
+            with contextlib.suppress(OSError):
+                agents.refresh_summary(folder, after, time.time())
 
 
 def parse_target(text: str) -> tuple[str, Optional[int]]:

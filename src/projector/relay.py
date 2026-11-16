@@ -27,6 +27,7 @@ Refs in the repository, each a parentless commit whose tree holds one `sealed.js
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -350,7 +351,7 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
 
 
 def presence(session: str, found: dict, now: float) -> dict:
-    record = {key: value for key, value in found.items() if key not in ("relay", "ended_at")}
+    record = {key: value for key, value in found.items() if key not in ("relay", "ended_at", "summary_auto")}
     return {**record, "session": session, "expires_at": now + LEASE}
 
 
@@ -362,7 +363,19 @@ def publish(root: Path, session: str, found: dict, key: Key, now: float) -> None
     """Queue the session's sealed presence."""
     record = presence(session, found, now)
     queue(root, found["repo"], found["cwd"], [(presence_ref(key.id, found["relay_id"]), seal(key, record),
-                                               {"kind": "agent", "expires_at": record["expires_at"]})], now)
+                                               presence_meta(record))], now)
+
+
+def presence_meta(record: dict) -> dict:
+    """What the outbox keeps beside a sealed presence: its lease, and a digest of what it says, so a push marks
+    the registration published only while the registration still says that."""
+    return {"kind": "agent", "expires_at": record["expires_at"], "digest": digest(record)}
+
+
+def digest(record: dict) -> str:
+    """A digest of a presence record apart from its lease."""
+    content = {key: value for key, value in record.items() if key != "expires_at"}
+    return hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def queue_message(root: Path, repo: str, cwd: str, key: Key, message: dict, now: float) -> None:
@@ -716,11 +729,10 @@ class Job:
             if name in self.live:
                 expires = (self.cache["seen"].get(ref) or {}).get("expires_at")
                 due = ref not in self.cache["remote"] or not isinstance(expires, (int, float)) \
-                    or expires - self.now < RENEW
+                    or expires - self.now < RENEW or found.get("relay") == "pending"
                 if due and ref not in queued:
                     record = presence(name, found, self.now)
-                    self.changes.append((ref, seal(self.key, record),
-                                         {"kind": "agent", "expires_at": record["expires_at"]}))
+                    self.changes.append((ref, seal(self.key, record), presence_meta(record)))
                 continue
             self.delete(ref)
             for other in self.cache["remote"]:
@@ -799,7 +811,7 @@ class Job:
         lines = "".join(f"update {tracking(ref)} {sha}\n" if sha else f"delete {tracking(ref)}\n"
                         for ref, sha in landed.items())
         git(cwd, "update-ref", "--stdin", input=lines.encode())
-        published = set()
+        published: dict[str, Optional[str]] = {}
         for ref, sha in landed.items():
             parsed = parse_ref(ref)
             if sha is None:
@@ -811,9 +823,9 @@ class Job:
             self.cache["remote"][ref] = sha
             self.cache["seen"][ref] = {"sha": sha, **metas.get(ref, {})}
             if parsed and parsed[0] == "agent" and parsed[2] in self.relays:
-                published.add(self.relays[parsed[2]])
-        for name in published:
-            agents.mark_published(self.root, name)
+                published[self.relays[parsed[2]]] = metas.get(ref, {}).get("digest")
+        for name, landed_digest in published.items():
+            agents.mark_published(self.root, name, landed_digest)
 
 
 # The daemon's side
