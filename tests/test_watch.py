@@ -100,9 +100,11 @@ def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:
 FINDING = "<!-- projector-finding v=1 priority=P2 --> A nil deref"
 
 
-def check_run(name, conclusion="SUCCESS"):
-    """A check run in the head's rollup, as the daemon's query reads it; `conclusion` is None until it completes."""
-    return {"__typename": "CheckRun", "name": name, "conclusion": conclusion}
+def check_run(name, conclusion="SUCCESS", suite=None):
+    """A check run in the head's rollup, as the daemon's query reads it; `conclusion` is None until it completes,
+    and `suite` is its workflow run's conclusion, which defaults to its own."""
+    return {"__typename": "CheckRun", "name": name, "conclusion": conclusion,
+            "checkSuite": {"conclusion": suite or conclusion}}
 
 
 def commit_status(context, state="SUCCESS"):
@@ -849,6 +851,31 @@ class FixRoleTests(WatchCase):
                 expected = [] if failed is None else [
                     f"CHECKS acme/app#{number} head=aaaaaaaa failed: {failed} — {fix_action(number)}"]
                 self.assertEqual(expected, [event for event in events if event.startswith(f"CHECKS acme/app#{number} ")])
+
+    def test_a_check_that_failed_in_a_cancelled_run_is_no_ci_failure(self) -> None:
+        # A label starts a run that cancels the one in progress, whose `if: always()` job then fails, and GitHub
+        # keeps both runs' checks on the head.
+        self.github.pull_request(1, contexts=[check_run("slow", "CANCELLED"),
+                                              check_run("complete", "FAILURE", suite="CANCELLED"),
+                                              check_run("slow"), check_run("complete")])
+        self.github.pull_request(2, contexts=[check_run("complete", "FAILURE", suite="CANCELLED"),
+                                              check_run("lint", "FAILURE")])
+        self.fixer("acme/app#1 fix", "acme/app#2 fix")
+
+        events = self.cycle()["fixer"]
+
+        self.assertEqual([f"CHECKS acme/app#2 head=aaaaaaaa failed: lint — {fix_action(2)}"],
+                         [event for event in events if event.startswith("CHECKS ")])
+
+    def test_a_failure_in_a_cancelled_run_reads_no_later_page_of_contexts_for_one_it_cannot_find(self) -> None:
+        # The rollup counts the cancelled run's failure, which the first page holds, so nothing is left to find.
+        self.github.pull_request(1, contexts=[check_run("complete", "FAILURE", suite="CANCELLED"),
+                                              *(check_run(f"job {index}") for index in range(2, 26))])
+        self.fixer("acme/app#1 fix")
+
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(([], []), (events, self.github.pages_read()))
 
     def test_a_failed_check_past_the_first_page_of_contexts_is_found_on_a_later_page(self) -> None:
         self.github.pull_request(1, contexts=[*(check_run(f"job {index}") for index in range(1, 25)),

@@ -116,6 +116,34 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
       labels: { nodes: [{ name: 'reviewing' }] },
     }),
+    // A label started a run that cancelled the only one, whose `if: always()` job then failed.
+    p23: pr(23, 'Change whose run a label cancelled', {
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: 'FAILURE',
+                contexts: {
+                  checkRunCountsByState: [
+                    { state: 'CANCELLED', count: 1 },
+                    { state: 'FAILURE', count: 1 },
+                  ],
+                  nodes: ['CANCELLED', 'FAILURE'].map(conclusion => ({
+                    __typename: 'CheckRun',
+                    conclusion,
+                    checkSuite: {
+                      conclusion: 'CANCELLED',
+                      workflowRun: { createdAt: new Date(NOW - 60_000).toISOString(), workflow: { databaseId: 1 } },
+                    },
+                  })),
+                },
+              },
+            },
+          },
+        ],
+      },
+    }),
   },
   'x/y': {
     p7: pr(7, 'Conflicting change', {
@@ -739,7 +767,7 @@ test('a panel.background the panel does not take leaves the color to the theme, 
 test('a row’s notes name every other status that applies, and an open drawer spells its row’s holds out', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\no/r#22\n' })
+  world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\no/r#22\no/r#23\n' })
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
@@ -758,6 +786,7 @@ test('a row’s notes name every other status that applies, and an open drawer s
     'Change a review is reading',
     'Signed-off change failing its checks',
     'Failing change a review is reading',
+    'Change whose run a label cancelled',
   ]
   const allNotes = async () => Object.fromEntries(await Promise.all(TITLES.map(async title => [title, await notesOf(title)])))
 
@@ -774,6 +803,8 @@ test('a row’s notes name every other status that applies, and an open drawer s
     'Signed-off change failing its checks': [['clean', 'success']],
     // A running review the failing checks beat shows as well, in the orange the drawer draws a reviewer in.
     'Failing change a review is reading': [['reviewing', 'claude']],
+    // A run a label cancelled, with nothing run since, is no failure; the row says so last, muted.
+    'Change whose run a label cancelled': [['cancelled', 'subtle']],
   })
 
   // An open drawer spells its row's holds out, the one its word names as well, and leaves the other rows short.
@@ -793,6 +824,14 @@ test('a row’s notes name every other status that applies, and an open drawer s
   await ui.press({ key: 'pr:o/r#11' })
   await clock.settle()
   expect(await notesOf('Approved change')).toEqual([['3 threads', 'warning'], ' · ', ['approved', 'success']])
+
+  // A head whose only run was cancelled is ready, not failing, and its drawer says its checks were cancelled, muted.
+  await ui.press({ key: 'pr:o/r#23' })
+  await clock.settle()
+  const texts = await ui.findAll({ type: 'Text' })
+  expect(texts[texts.findIndex(found => found.text === 'Change whose run a label cancelled') - 1]?.text).toBe('ready')
+  const checks = await ui.find({ type: 'Text', text: /^checks cancelled$/ })
+  expect(checks?.props.color).toBe('subtle')
   await ui.unmount()
 })
 
@@ -810,9 +849,12 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   // The number is a plain button, so no terminal draws a URL beside it.
   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
-  // The conflict is the row's status, so its notes name only the open threads it beat.
+  // The conflict is the row's status, so its notes name the open threads it beat, and that it is a draft, in italic.
   expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
-  expect(partsOf(await ui.find({ type: 'Text', text: /^threads$/ }))).toEqual([['threads', 'warning']])
+  const notes = await ui.find({ type: 'Text', text: /^threads · draft$/ })
+  expect(partsOf(notes)).toEqual([['threads', 'warning'], ' · ', ['draft', undefined]])
+  const draft = (notes?.children ?? []).at(-1) as { props: { italic?: boolean } } | undefined
+  expect(draft?.props.italic).toBe(true)
 
   await ui.press({ key: 'pr:x/y#7' })
   await clock.settle()

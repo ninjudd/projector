@@ -156,6 +156,7 @@ describe('GitHub', () => {
       deletions: 7,
       changedFiles: 4,
       checks: 'failing',
+      isCancelled: false,
       // Spelled as GitHub spells them, with GitHub's color as `#rrggbb`, and none for a color the panel cannot draw.
       labels: [
         { name: 'Reviewing', color: '#fbca04' },
@@ -215,8 +216,8 @@ describe('GitHub', () => {
         checkRuns: { FAILURE: 1 },
         statuses: { SUCCESS: 1 },
       }),
-      // A head with no review status keeps the rollup's own state.
-      'no review status': checksOf('FAILURE', null, { checkRuns: { SUCCESS: 1 } }),
+      'no review status, a check run failed': checksOf('FAILURE', null, { checkRuns: { FAILURE: 1, SUCCESS: 1 } }),
+      'no review status, every check passed': checksOf('SUCCESS', null, { checkRuns: { SUCCESS: 2 } }),
     }).toEqual({
       'only the review failed': null,
       'the review failed, the rest passed': 'passing',
@@ -225,7 +226,49 @@ describe('GitHub', () => {
       'the review is running, the rest still run': 'pending',
       'the review is running, the rest passed': 'passing',
       'the review passed, a check run failed': 'failing',
-      'no review status': 'failing',
+      'no review status, a check run failed': 'failing',
+      'no review status, every check passed': 'passing',
+    })
+  })
+
+  test('reads a cancelled run’s failed checks as cancelled, and notes a workflow whose newest run was cancelled', () => {
+    expect(query.text).toContain('checkSuite { conclusion workflowRun { createdAt workflow { databaseId } } }')
+
+    // A check run as the rollup lists it: its conclusion, and its workflow run's workflow, start, and conclusion.
+    type Run = [conclusion: string | null, suite: string | null, workflow: number, at: string]
+    const FIRST = '2026-11-16T22:00:00Z'
+    const LATER = '2026-11-16T22:01:00Z'
+    const read = (rollup: string, runs: Run[]) => {
+      const counts = new Map<string, number>()
+      for (const [conclusion] of runs) counts.set(conclusion ?? 'IN_PROGRESS', (counts.get(conclusion ?? 'IN_PROGRESS') ?? 0) + 1)
+      const nodes = runs.map(([conclusion, suite, workflow, at]) => ({
+        __typename: 'CheckRun',
+        conclusion,
+        checkSuite: { conclusion: suite, workflowRun: { createdAt: at, workflow: { databaseId: workflow } } },
+      }))
+      const contexts = { checkRunCountsByState: [...counts].map(([state, count]) => ({ state, count })), nodes }
+      const node = { number: 1, commits: { nodes: [{ commit: { statusCheckRollup: { state: rollup, contexts } } }] } }
+      const found = parseCache({ repo: 'o/r', number: 1 }, JSON.stringify({ repository: { pullRequest: node } }))
+      return [found?.checks, found?.isCancelled]
+    }
+    // A label starts a run that cancels the one in progress, whose `if: always()` job then fails.
+    const cancelled: Run[] = [
+      ['CANCELLED', 'CANCELLED', 1, FIRST],
+      ['FAILURE', 'CANCELLED', 1, FIRST],
+    ]
+
+    expect({
+      'the newer run passed': read('FAILURE', [...cancelled, ['SUCCESS', 'SUCCESS', 1, LATER], ['SUCCESS', 'SUCCESS', 1, LATER]]),
+      'the newer run still runs': read('FAILURE', [...cancelled, [null, null, 1, LATER]]),
+      'nothing ran since': read('FAILURE', cancelled),
+      'another workflow failed': read('FAILURE', [...cancelled, ['FAILURE', 'FAILURE', 2, FIRST]]),
+      'a run failed and nothing cancelled it': read('FAILURE', [['FAILURE', 'FAILURE', 1, FIRST]]),
+    }).toEqual({
+      'the newer run passed': ['passing', false],
+      'the newer run still runs': ['pending', false],
+      'nothing ran since': ['cancelled', true],
+      'another workflow failed': ['failing', true],
+      'a run failed and nothing cancelled it': ['failing', false],
     })
   })
 
@@ -517,6 +560,7 @@ describe('the daemon’s files', () => {
       deletions: 4,
       changedFiles: 3,
       checks: 'pending',
+      isCancelled: false,
       labels: [{ name: 'clean', color: null }],
       updatedAt: Date.UTC(2026, 9, 30, 11),
       summaryUrl: null,

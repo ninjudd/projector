@@ -101,8 +101,10 @@ LABEL_CHANGES = {
 # LABEL events. `rateLimit` reports what it cost. The panel reads the head's `statusCheckRollup` `state`, and
 # the daemon reads the rollup's contexts for CHECKS. GitHub's counts by state cover every context, so they say
 # when a failed one lies past the first page. The `projector/review` status is among them, so the query reads
-# it too, to take it out of the counts.
-CONTEXT_NODES = "nodes{ __typename ... on CheckRun{ name conclusion } ... on StatusContext{ context state } }"
+# it too, to take it out of the counts. Each check run's suite says whether its workflow run was cancelled, and
+# the panel reads the run's workflow and start to tell whether a workflow's newest run on the head was.
+CONTEXT_NODES = ("nodes{ __typename ... on CheckRun{ name conclusion checkSuite{ conclusion"
+                 " workflowRun{ createdAt workflow{ databaseId } } } } ... on StatusContext{ context state } }")
 QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
   repository(owner:$o,name:$r){ visibility nameWithOwner
     pullRequest(number:$n){
@@ -633,17 +635,27 @@ def head_commit(pr: dict) -> dict:
     return (nodes(pr, "commits") or [{}])[-1].get("commit") or {}
 
 
+def failures(contexts: list[dict]) -> list[dict]:
+    """The failed check runs and commit statuses among `contexts`, as the rollup's counts count them, less the
+    `projector/review` status, which a changes-requested verdict posts as `failure` and the VERDICT and FINDING
+    events report."""
+    return [found for found in contexts
+            if (found.get("__typename") == "CheckRun" and found.get("conclusion") in CHECK_FAILURES)
+            or (found.get("__typename") == "StatusContext" and found.get("state") in STATUS_FAILURES
+                and found.get("context") != review.REVIEW_CONTEXT)]
+
+
+def in_cancelled_run(found: dict) -> bool:
+    """Whether a check run belongs to a workflow run that was cancelled, as a newer run in the same concurrency
+    group cancels it. GitHub keeps such a run's checks on the head, and a job that runs `if: always()` to gather
+    the others fails in it, though nothing in the code did."""
+    return (found.get("checkSuite") or {}).get("conclusion") == "CANCELLED"
+
+
 def failed_contexts(contexts: list[dict]) -> list[str]:
-    """The names of the failed check runs and commit statuses among `contexts`, less the `projector/review`
-    status, which a changes-requested verdict posts as `failure` and the VERDICT and FINDING events report."""
-    failed = []
-    for found in contexts:
-        if found.get("__typename") == "CheckRun" and found.get("conclusion") in CHECK_FAILURES:
-            failed.append(found.get("name") or "?")
-        elif found.get("__typename") == "StatusContext" and found.get("state") in STATUS_FAILURES \
-                and found.get("context") != review.REVIEW_CONTEXT:
-            failed.append(found.get("context") or "?")
-    return failed
+    """The names of the failures among `contexts` that CHECKS reports: each but a check run of a cancelled run."""
+    return [found.get("name") or found.get("context") or "?" for found in failures(contexts)
+            if not in_cancelled_run(found)]
 
 
 def failure_count(commit: dict) -> int:
@@ -961,7 +973,7 @@ class Daemon:
         wanted = failure_count(commit)
         read = [found for found in contexts.get("nodes") or [] if isinstance(found, dict)]
         page = contexts.get("pageInfo") or {}
-        while len(failed_contexts(read)) < wanted and page.get("hasNextPage") and page.get("endCursor"):
+        while len(failures(read)) < wanted and page.get("hasNextPage") and page.get("endCursor"):
             data = self.graphql(CONTEXTS_QUERY, now, "-f", f"o={owner}", "-f", f"r={name}", "-f", f"h={head}",
                                 "-f", f"c={page['endCursor']}") or {}
             paged = (data.get("repository") or {}).get("object") or {}
