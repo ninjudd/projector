@@ -94,12 +94,13 @@ else:
         self.assertEqual([], codex.pending(self.folder))
         self.assertIsNone(codex.report(self.folder, self.now)["unloaded_at"])
 
-    def test_archived_conversation_disconnects_at_submission_until_resumed(self):
+    def test_archived_conversation_lapses_at_once_until_resumed(self):
         transcript = self.transcript()
         self.hook("SessionStart", transcript, source="startup")
         self.hook("SessionEnd", transcript, reason="other")
         archived = self.transcript("archived_sessions")
         transcript.unlink()
+        self.assertEqual("none", watch.delivery(self.root, "session-A", self.now))
         self.enqueue()
         self.tick()
         self.assertEqual([], self.calls())
@@ -109,6 +110,15 @@ else:
         self.hook("SessionStart", archived, source="resume")
         self.tick()
         self.assertEqual(1, len(self.calls()))
+
+    def test_session_end_starts_the_daemon_only_for_a_registered_agent(self):
+        ensure = mock.Mock()
+        event = {"hook_event_name": "SessionEnd", "session_id": "session-A", "cwd": str(self.root), "reason": "other"}
+        codex.hook(self.root, event, self.now, ensure)
+        ensure.assert_not_called()
+        (self.folder / "agent.json").write_text("{}")
+        codex.hook(self.root, event, self.now, ensure)
+        ensure.assert_called_once()
 
     def test_lost_acknowledgment_is_confirmed_from_the_transcript_and_unblocks_the_next_batch(self):
         transcript = self.transcript()

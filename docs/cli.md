@@ -2618,12 +2618,13 @@ Codex unloads a conversation that sits idle and unopened for 30 minutes,
 and sends `SessionEnd` when it does. Projector keeps delivery enabled
 through that unload: the daemon goes on watching the session's pull
 requests, and `codex queue --resume` loads the thread again when a batch
-arrives. Codex sends the same `SessionEnd` when you archive or delete a
-conversation, so Projector instead checks, before each submission, that
-the conversation's transcript still exists. When it is gone, Projector
-disconnects delivery rather than resuming an archived conversation, and
-resuming the conversation reconnects it. To stop delivery yourself, use
-`project watch disconnect`, or remove the subscription.
+arrives. A registered agent stays reachable the same way, so a peer's
+message wakes it. Codex sends the same `SessionEnd` when you archive or
+delete a conversation, so Projector instead checks that the conversation's
+transcript still exists. Once it is gone, the session lapses, `watch status`
+reports it `disconnected`, and Projector never resumes the archived
+conversation. Resuming the conversation reconnects it. To stop delivery
+yourself, use `project watch disconnect`, or remove the subscription.
 
 The `UserPromptSubmit` hook acknowledges each batch as its turn starts.
 When that acknowledgment never arrives, the daemon looks for the batch's

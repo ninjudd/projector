@@ -54,7 +54,13 @@ def active(folder: Path, now: float) -> bool:
     record = registration(folder)
     expires = record.get("expires_at")
     return (record.get("schema_version") == 1 and record.get("enabled") is True
-            and isinstance(expires, (int, float)) and expires > now)
+            and isinstance(expires, (int, float)) and expires > now and not gone(record))
+
+
+def gone(record: dict) -> bool:
+    """Whether Codex archived or deleted the conversation, which moves or removes its transcript."""
+    transcript = record.get("transcript_path")
+    return bool(transcript) and not Path(transcript).exists()
 
 
 def pending(folder: Path) -> list[tuple[Path, dict]]:
@@ -297,11 +303,12 @@ def report(folder: Path, now: float) -> dict:
     if not record:
         return {}
     last = (pending(folder) or [(None, read_json(folder / "codex-last.json") or {})])[0][1]
-    state = ("disconnected" if not record.get("enabled") else
+    state = ("disconnected" if not record.get("enabled") or gone(record) else
              "expired" if not active(folder, now) else last.get("state", "idle"))
+    error = ("Codex archived or deleted this conversation; resume it to reconnect" if gone(record) else
+             last.get("last_error") or record.get("last_error", ""))
     return {"transport": "codex", "expires_at": record.get("expires_at"), "state": state,
-            "unloaded_at": record.get("unloaded_at"), "batch_id": last.get("batch_id"),
-            "last_error": last.get("last_error") or record.get("last_error", "")}
+            "unloaded_at": record.get("unloaded_at"), "batch_id": last.get("batch_id"), "last_error": error}
 
 
 def register(folder: Path, session: str, cwd: str, now: float, *, transcript: Optional[str] = None,
@@ -413,6 +420,10 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
     else:
         record = note(folder, now, transcript, unloaded=name == "SessionEnd")
     if name == "SessionEnd":
+        # An end that archived the conversation lapses a registered agent, and only a running daemon
+        # deletes its relay refs.
+        if (folder / "agent.json").exists():
+            ensure()
         return {}
     text = tool_output(event) if name == "PostToolUse" else None
     if text is not None and load_config(Path(cwd)).setting("watch.auto_start") is not False:
@@ -505,10 +516,6 @@ class Dispatcher:
                 path.unlink()
                 return
             transcript = record.get("transcript_path")
-            if transcript and not Path(transcript).exists():
-                write_json(folder / "codex.json", {**record, "enabled": False, "last_error":
-                           "Codex archived or deleted this conversation; resume it to reconnect"})
-                return
             if not Path(record["cwd"]).is_dir() or not Path(record["executable"]).is_file():
                 batch.update(state="failed", next_attempt_at=self.wall() + 300,
                              last_error="registered Codex executable or directory is missing")
