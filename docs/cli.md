@@ -2626,8 +2626,10 @@ minutes. With `--json`, `add` prints the lines it `added` and the
 
 ### Deliver events to Codex
 
-With the Projector plugin installed in local Codex, review and trust its
-command hooks through `/hooks` or the desktop app's hook settings. Use
+With the `projector-hooks` plugin installed in local Codex, review and trust
+its command hooks through `/hooks` or the desktop app's hook settings. The
+hooks ship apart from the main plugin, so a Projector upgrade leaves that
+trust in place. Use
 Codex CLI 0.166.0 or newer with a running local daemon. Projector checks
 that the native executable supports `queue --thread`, `--message`, and
 `--resume`. Remote app-server selection and Windows batch-file shims are

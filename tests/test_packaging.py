@@ -114,7 +114,9 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual("./hooks/types.d.ts", self.manifest("claude")["types"])
         self.assertTrue((ROOT / "hooks" / "types.d.ts").is_file())
         self.assertNotIn("types", self.manifest("codex"))
-        codex_hooks = json.loads((ROOT / self.manifest("codex")["hooks"]).read_text())
+        self.assertNotIn("hooks", self.manifest("codex"))
+        hooks_plugin = json.loads((ROOT / "codex-hooks" / ".codex-plugin" / "plugin.json").read_text())
+        codex_hooks = json.loads((ROOT / "codex-hooks" / hooks_plugin["hooks"]).read_text())
         self.assertNotIn("modules", codex_hooks)
         commands = [handler["command"] for groups in codex_hooks["hooks"].values()
                     for group in groups for handler in group["hooks"]]
@@ -123,6 +125,23 @@ class PackagingTests(unittest.TestCase):
         for command in commands:
             args = cli.parser().parse_args(command.split()[1:])
             self.assertEqual("codex-hook", args.watch_command)
+
+    def test_codex_hooks_ship_in_a_plugin_that_a_release_leaves_unchanged(self) -> None:
+        # Codex trusts a plugin's hooks by a hash of every file in the plugin, so
+        # any file a release touches here would make every user trust the hooks
+        # again. The release bumps only the root manifests.
+        root = ROOT / "codex-hooks"
+        files = sorted(str(path.relative_to(root)) for path in root.rglob("*") if path.is_file())
+        self.assertEqual([".codex-plugin/plugin.json", "hooks.json"], files)
+        plugin = json.loads((root / ".codex-plugin" / "plugin.json").read_text())
+        self.assertEqual("projector-hooks", plugin["name"])
+        self.assertEqual("./hooks.json", plugin["hooks"])
+        self.assertNotEqual(self.manifest("codex")["version"], plugin["version"])
+        release = (ROOT / ".github" / "scripts" / "release.py").read_text()
+        self.assertNotIn("codex-hooks", release)
+        [entry] = [entry for entry in json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text())["plugins"]
+                   if entry["name"] == "projector-hooks"]
+        self.assertEqual({"source": "local", "path": "./codex-hooks"}, entry["source"])
 
     def test_only_claude_code_declares_gh_stack_as_a_dependency(self) -> None:
         # Codex has no plugin dependencies; install.sh adds gh-stack there.

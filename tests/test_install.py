@@ -300,6 +300,7 @@ class InstallTests(unittest.TestCase):
         self.assertIn("claude plugin install projector@projector --scope user", log)
         self.assertRegex(log, r"codex plugin marketplace add \S+\n")
         self.assertIn("codex plugin add projector@projector", log)
+        self.assertIn("codex plugin add projector-hooks@projector\n", log)
 
     def host_has(
         self, host: str, *, marketplace: str, version: str, source: str | None = None
