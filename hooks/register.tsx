@@ -2590,12 +2590,16 @@ export const register: Register = on => {
     const focused = shownItems.find(item => opened === `item:${item.ref}`)
     if (focused !== undefined) return panel(drawItem(focused), false)
 
-    // Your pull requests come before the review requests, and a collapsed
-    // section gives way to one line in its place.
+    // Your pull requests come before the review requests, a blank line between
+    // them, and a collapsed section gives way to one line in its place.
+    const prLines = PR_SECTIONS.map(section => [
+      ...expander(section),
+      ...(isCollapsed(section) ? [] : sectioned[section].map(drawRow)),
+    ]).filter(lines => lines.length > 0)
     return panel([
-      ...PR_SECTIONS.flatMap(section => [
-        ...expander(section),
-        ...(isCollapsed(section) ? [] : sectioned[section].map(drawRow)),
+      ...prLines.flatMap((lines, at) => [
+        ...(at === 0 ? [] : [<Text key="before-reviews"> </Text>]),
+        ...lines,
       ]),
       failure !== undefined && (
         <Text key="failure" color="error">
