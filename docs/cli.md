@@ -931,14 +931,16 @@ project upgrade status
 How it upgrades depends on where pip recorded that the command came from:
 
 - **A release**, installed by `curl -fsSL https://projector.bot/install.sh |
-  bash`, from a release's source archive, or from a Git URL: `upgrade`
-  downloads the installer from the newest release and runs it with the same
-  targets, which reinstalls from the newest release without git. It prints
-  the equivalent `curl ... | bash -s -- <targets>` command on stderr. The
-  installer comes from `https://projector.bot/install.sh`, or, for a command
-  installed from a GitHub fork, from `install.sh` at `PROJECTOR_REF` (default
-  `v0`) in that fork, with `PROJECTOR_REPO` set to the fork.
-  `PROJECTOR_INSTALLER_URL` names another installer to run.
+  bash`, from a release's source archive, or from a Git URL: `upgrade` asks
+  GitHub for the newest release's tag, such as `v0.9.0`, downloads
+  `install.sh` at that tag from `raw.githubusercontent.com`, and runs it with
+  the same targets and `PROJECTOR_REF` set to the tag. The installer and the
+  CLI it installs then come from one release, and a tag never moves, so no
+  cache can serve an older copy of either. `upgrade` asks with
+  `gh api repos/<owner>/<repo>/releases/latest` when `gh` is signed in
+  (`PROJECTOR_GH_COMMAND` names another `gh`), and with GitHub's anonymous
+  API otherwise. It prints the equivalent
+  `curl ... | PROJECTOR_REF=<tag> bash -s -- <targets>` command on stderr.
 - **A checkout**: `pipx` installs a copy of the source, so a checkout that
   moves on leaves the installed command and plugins behind. `upgrade` runs
   the checkout's `install.sh`, prints that command on stderr, and ends with a
@@ -946,14 +948,70 @@ How it upgrades depends on where pip recorded that the command came from:
   means the command just built is older than main, so pull and run `upgrade`
   again.
 
-Either way `upgrade` exits with the installer's status, and targets are the
+A release install upgrades from the repository it was installed from, so a
+command installed from a GitHub fork upgrades from the fork's releases, with
+`PROJECTOR_REPO` set to the fork. These variables change what it installs:
+
+- **`PROJECTOR_REPO`** names another repository, such as `someone/projector`.
+- **`PROJECTOR_REF`** names the release to install, such as `v0.5.7`, and
+  skips the lookup.
+- **`PROJECTOR_INSTALLER_URL`** names another installer to run.
+
+When GitHub cannot name the newest release, as without a network, under the
+anonymous API's rate limit, or in a repository with no release yet,
+`upgrade` prints one warning on stderr that says why, and runs the installer
+that `v0` serves instead: `https://projector.bot/install.sh`, or `install.sh`
+at `v0` in a fork. projector.bot caches that installer for a few minutes, so
+just after a release it can still serve the one before.
+
+`upgrade` exits with the installer's status, and targets are the
 installer's to validate: an unknown one is its usage error, exit 64. See
-[the plugin guide](plugins.md) for what each target does. `upgrade` exits 69
+[the plugin guide](plugins.md) for what each target does. A release install
+that succeeds but does not match its release exits 1, as
+[Check the install against the release](#check-the-install-against-the-release)
+describes. `upgrade` exits 69
 when the command is not an installed distribution, when the record of its
 source is missing, when a checkout or its `install.sh` no longer exists, or
 when the released installer cannot be downloaded.
 
 `upgrade` has no `--json` mode because the installer owns the output.
+
+### Check the install against the release
+
+After a release install succeeds, `upgrade` runs the same installer's
+`status` and checks what it reports for each target it installed:
+
+- **The CLI.** The version of the `project` on your `PATH`, which is the
+  command the install left rather than the one running the upgrade.
+- **Claude Code.** The `projector` plugin.
+- **Codex.** The `projector` and `projector-hooks` plugins.
+
+A host that is not installed is not checked. When everything matches,
+`upgrade` prints one row:
+
+```text
+verified       what this upgrade installed matches the v0.9.0 release
+```
+
+Otherwise it prints each row that names a problem, with the command that
+fixes it, then a `mismatch` row, and exits 1:
+
+```text
+cli-stale      ⚠️  installed 0.8.18, release 0.9.0 -- run project upgrade cli
+hooks-absent   ⚠️  codex projector-hooks@projector -- run project upgrade codex
+mismatch       ⚠️  what this upgrade installed does not match the v0.9.0 release -- run the command each row above names
+```
+
+A `plugin-ahead` row means that a host installed a plugin newer than the
+release. Each host's marketplace follows the default branch, which carries a
+new version a few minutes before its release is published, so run
+`project upgrade` again once the release is out. When `status` has no release
+version to compare with, `upgrade` prints an `unverified` row instead and
+exits 0.
+
+Trusting Projector's hooks in Codex's `/hooks` is a step only you can take,
+so the check does not look at it. A checkout install is not checked, because
+its `status` compares the install with the checkout rather than a release.
 
 ### Know when to run `init` again
 
@@ -1008,8 +1066,8 @@ never changes stdout or the exit status, and `help`, `version`, and
 `upgrade` itself do not print it.
 
 The command reads the release's version from the plugin manifest at
-`PROJECTOR_REF` (default `v0`) in the repository it was installed from, which
-is the release `upgrade` installs. It checks at most once a day, waits at
+`PROJECTOR_REF` (default `v0`, which a release moves last) in the repository
+`upgrade` installs from. It checks at most once a day, waits at
 most two seconds for an answer, and caches the answer in
 `$XDG_CACHE_HOME/projector/release.json` (`~/.cache/projector/release.json`
 by default). A check that fails also waits a day before the next one. Where

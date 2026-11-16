@@ -151,8 +151,9 @@ review. The status covers that commit alone, so a commit you push to the
 release branch waits for a Projector review like any other head. The workflow
 refuses a run dispatched from any branch but `main`, because the release
 branch would carry that branch's unreviewed commits under the status.
-Merging tags the release and moves `v0`, which is what the installer,
-`project upgrade`, and every repository's site workflow use. When the publish
+Merging tags the release, publishes its GitHub release, which
+`project upgrade` installs, and then moves `v0`, which projector.bot's
+installer and every repository's site workflow use. When the publish
 job fails partway, re-run it from the Actions page. It finishes the steps the
 failed run left undone. See
 [Release an update](plugins.md#release-an-update).

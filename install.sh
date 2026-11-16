@@ -545,10 +545,28 @@ report_plugin() {
     printf '%-14s %s\n' "plugin" "$host $installed (no release version to compare against)"
   elif [ "$installed" = "$expected" ]; then
     printf '%-14s %s\n' "plugin-current" "$host $installed"
+  elif [ -z "$REPO" ] && version_older "$expected" "$installed"; then
+    # The marketplace follows the default branch, which carries a release's
+    # version before the release is published.
+    printf '%-14s %s\n' "plugin-ahead" "$host installed $installed, release $expected -- the plugin is newer than the release, as it is while a new release publishes; run $(rerun all) again in a few minutes"
   else
     local from="checkout"
     [ -n "$REPO" ] || from="release"
     printf '%-14s %s\n' "plugin-stale" "$host installed $installed, $from $expected -- run $(rerun "$host")"
+  fi
+}
+
+# Codex runs Projector's hooks from a plugin of their own, which the installer
+# adds beside the main one. A release leaves its version alone, so only its
+# absence is something to fix.
+report_codex_hooks() {
+  local installed
+  command -v "$CODEX_COMMAND" >/dev/null 2>&1 || return 0
+  installed="$(host_plugin_version codex projector-hooks@projector)"
+  if [ -z "$installed" ]; then
+    printf '%-14s %s\n' "hooks-absent" "codex projector-hooks@projector -- run $(rerun codex)"
+  else
+    printf '%-14s %s\n' "hooks" "codex projector-hooks@projector $installed"
   fi
 }
 
@@ -634,6 +652,7 @@ show_status() {
   report_cli
   report_plugin claude "$CLAUDE_COMMAND"
   report_plugin codex "$CODEX_COMMAND"
+  report_codex_hooks
   report_gh_stack
 
   local host source target state

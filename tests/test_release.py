@@ -203,9 +203,9 @@ class TagTests(unittest.TestCase):
             code = release.main(["released", "--branch", "trunk"], root=self.repo)
         return code, out.getvalue()
 
-    def test_a_fresh_release_tags_moves_the_major_tag_and_publishes(self) -> None:
+    def test_a_fresh_release_tags_publishes_and_moves_the_major_tag(self) -> None:
         first = run(self.repo, "git", "rev-parse", "HEAD")
-        self.assertEqual(f"v0.5.0 at {first[:9]} on origin/trunk: tagged v0.5.0, moved v0, published the GitHub release",
+        self.assertEqual(f"v0.5.0 at {first[:9]} on origin/trunk: tagged v0.5.0, published the GitHub release, moved v0",
                          self.tag())
         self.assertEqual(first, self.remote_tag("v0.5.0"))
         self.assertEqual(first, self.remote_tag("v0"))
@@ -240,12 +240,12 @@ class TagTests(unittest.TestCase):
         # A developer's global core.hooksPath would hide the remote's own hooks.
         run(self.remote, "git", "config", "core.hooksPath", str(hook.parent))
         with self.assertRaisesRegex(release.ReleaseError,
-                                    r"(?s)fatal error in commit_refs.*Before that it tagged v0\.5\.1\. "
-                                    r"Run tag again, or re-run the Release workflow, to finish v0\.5\.1"):
+                                    r"(?s)fatal error in commit_refs.*Before that it tagged v0\.5\.1, published the "
+                                    r"GitHub release\. Run tag again, or re-run the Release workflow, to finish v0\.5\.1"):
             self.tag()
         self.assertEqual(second, self.remote_tag("v0.5.1"))
         self.assertEqual(first, self.remote_tag("v0"))
-        self.assertEqual(["v0.5.0"], self.releases())
+        self.assertEqual(["v0.5.0", "v0.5.1"], self.releases())
         tagged = self.remote_tag_object("v0.5.1")
 
         hook.unlink()
@@ -253,39 +253,49 @@ class TagTests(unittest.TestCase):
         # This clone still has the v0 it moved before the push failed, which
         # the remote's v0 has to replace.
         self.assertEqual((release.NOT_RELEASED,
-                          f"v0.5.1 is not released yet; it still needs v0 at {second[:9]}, the GitHub release\n"),
+                          f"v0.5.1 is not released yet; it still needs v0 at {second[:9]}\n"),
                          self.released())
-        self.assertEqual(f"v0.5.1 at {second[:9]} on origin/trunk: moved v0, published the GitHub release "
-                         "(already done: the v0.5.1 tag)", self.tag())
+        self.assertEqual(f"v0.5.1 at {second[:9]} on origin/trunk: moved v0 "
+                         "(already done: the v0.5.1 tag, the GitHub release)", self.tag())
         self.assertEqual(tagged, self.remote_tag_object("v0.5.1"), "finishing a release never retags it")
         self.assertEqual(second, self.remote_tag("v0"), "v0 follows the release, not the branch's newer head")
         self.assertEqual(["v0.5.0", "v0.5.1"], self.releases())
         self.assertEqual((0, "v0.5.1 is released\n"), self.released())
 
-    def test_a_failed_github_release_is_finished_by_running_tag_again(self) -> None:
-        commit = run(self.repo, "git", "rev-parse", "HEAD")
+    def test_v0_stays_on_the_previous_release_until_the_github_release_is_published(self) -> None:
+        # `project upgrade` installs the newest GitHub release, while
+        # projector.bot serves v0's installer, so a v0 that moves first serves
+        # one release's installer while upgrades still find the one before.
+        first = run(self.repo, "git", "rev-parse", "HEAD")
+        self.tag()
+        second = self.commit("0.5.1")
         os.environ["FAKE_GH_FAIL"] = "release create"
         with self.assertRaisesRegex(release.ReleaseError,
-                                    r"gh release create failed: HTTP 403.*Before that it tagged v0\.5\.0, moved v0\."):
+                                    r"gh release create failed: HTTP 403.*Before that it tagged v0\.5\.1\. Run tag"):
             self.tag()
+        self.assertEqual(first, self.remote_tag("v0"))
+        self.assertEqual((release.NOT_RELEASED, "v0.5.1 is not released yet; it still needs the GitHub release, "
+                          f"v0 at {second[:9]}\n"), self.released())
+
         del os.environ["FAKE_GH_FAIL"]
-        self.assertEqual(f"v0.5.0 at {commit[:9]} on origin/trunk: published the GitHub release "
-                         "(already done: the v0.5.0 tag, v0)", self.tag())
-        self.assertEqual(["v0.5.0"], self.releases())
+        self.assertEqual(f"v0.5.1 at {second[:9]} on origin/trunk: published the GitHub release, moved v0 "
+                         "(already done: the v0.5.1 tag)", self.tag())
+        self.assertEqual(second, self.remote_tag("v0"))
+        self.assertEqual(["v0.5.0", "v0.5.1"], self.releases())
 
     def test_tag_does_nothing_once_the_version_is_released(self) -> None:
         commit = run(self.repo, "git", "rev-parse", "HEAD")
         self.tag()
         tagged, major = self.remote_tag_object("v0.5.0"), self.remote_tag_object("v0")
         self.assertEqual(f"v0.5.0 at {commit[:9]} on origin/trunk: nothing to do "
-                         "(already done: the v0.5.0 tag, v0, the GitHub release)", self.tag())
+                         "(already done: the v0.5.0 tag, the GitHub release, v0)", self.tag())
         self.assertEqual((tagged, major), (self.remote_tag_object("v0.5.0"), self.remote_tag_object("v0")))
         self.assertEqual(1, sum(call.startswith("release create") for call in self.gh_calls()))
 
-    def test_released_needs_the_tag_the_major_tag_and_the_github_release(self) -> None:
+    def test_released_needs_the_tag_the_github_release_and_the_major_tag(self) -> None:
         head = run(self.repo, "git", "rev-parse", "HEAD")
         self.assertEqual((release.NOT_RELEASED, "v0.5.0 is not released yet; it still needs the v0.5.0 tag, "
-                          f"v0 at {head[:9]}, the GitHub release\n"), self.released())
+                          f"the GitHub release, v0 at {head[:9]}\n"), self.released())
 
         self.tag()
         self.commit_other_change()
@@ -293,7 +303,7 @@ class TagTests(unittest.TestCase):
 
         bump = self.commit("0.5.1")
         self.assertEqual((release.NOT_RELEASED, "v0.5.1 is not released yet; it still needs the v0.5.1 tag, "
-                          f"v0 at {bump[:9]}, the GitHub release\n"), self.released())
+                          f"the GitHub release, v0 at {bump[:9]}\n"), self.released())
 
     def assert_refused(self, message: str) -> None:
         major = run(self.remote, "git", "tag", "--list", "v0")

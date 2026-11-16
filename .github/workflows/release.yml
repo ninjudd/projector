@@ -1,8 +1,8 @@
 name: Release
 # Start a release by hand: choose patch, minor, or major, and the propose job
 # opens a pull request that raises the version. Merging it is the decision to
-# ship; the publish job then tags the merged version, moves the major tag, and
-# creates the GitHub release.
+# ship; the publish job then tags the merged version, creates the GitHub
+# release, and moves the major tag last.
 on:
   workflow_dispatch:
     inputs:
@@ -70,7 +70,7 @@ jobs:
             -f description="Version-only release; needs no review" \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /dev/null
           cat > "$RUNNER_TEMP/body.md" <<EOF
-          Raises Projector's version to $version in \`pyproject.toml\` and both plugin manifests. Merging this pull request publishes the release: the Release workflow then tags \`v$version\` on the merge commit, moves the major tag to it, and creates the GitHub release with generated notes. The workflow posted the \`projector/review\` status on this commit because it changes only the version; a push to this branch needs a review.
+          Raises Projector's version to $version in \`pyproject.toml\` and both plugin manifests. Merging this pull request publishes the release: the Release workflow then tags \`v$version\` on the merge commit, creates the GitHub release with generated notes, and moves the major tag to it. The workflow posted the \`projector/review\` status on this commit because it changes only the version; a push to this branch needs a review.
 
           ## Testing
 
