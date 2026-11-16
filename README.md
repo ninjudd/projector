@@ -13,7 +13,7 @@ shared `now.md`, `next.md`, or `later.md` queue.
 
 One command installs the `project` command from the newest release and the
 plugin for Claude Code and Codex, whichever you have. It needs Python 3.11 or
-newer, and no git:
+newer, Codex 0.110 or newer if you use Codex, and no git:
 
 ```sh
 curl -fsSL https://projector.bot/install.sh | bash

@@ -84,6 +84,11 @@ Both hosts check each command of a chain such as `a && b` on its own and
 take the strictest result, so a rule covers a `project` command only when
 the call runs it alone, and the skills run each publish that way. No rule
 allows `gh` or the shell to make a chain pass.
+
+Codex matches an absolute program path, such as `/tmp/x/project`, against the
+rules for its basename unless a `host_executable` entry lists the paths it
+accepts, so the Codex rules end with one that lists none. Claude Code matches
+the command text, so `Bash(project *)` never matched a path in the first place.
 """
 
 from __future__ import annotations
@@ -145,6 +150,13 @@ PUBLISH = ("project", "summary", "publish")
 # The Claude Code allow rules that match `PUBLISH`: the broad one, and the
 # narrower one Projector wrote before it.
 CLAUDE_PUBLISH_RULES = ("Bash(project *)", "Bash(project summary publish *)")
+# Codex 0.110 and newer resolve an absolute program path to its basename
+# before matching a rule, so without this line `/tmp/x/project summary` would
+# match the `project` rules and run outside the sandbox. An empty list keeps
+# every absolute path for `project` to Codex's usual approval, and leaves the
+# bare name, which the skills run, allowed. Codex before 0.110 cannot parse it
+# and drops the whole policy, so 0.110 is Projector's minimum Codex version.
+CODEX_HOST_EXECUTABLE = 'host_executable(name = "project", paths = [])'
 # Codex loads every `.rules` file in its rules directory, and writes the
 # approvals a person saves to `default.rules`, so Projector keeps its rules in
 # a file of its own and rewrites that file whole.
@@ -158,6 +170,8 @@ CODEX_RULES = (
     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
               f'    justification = "{justification}",\n)\n'
               for pattern, justification in CODEX_ALLOW)
+    + "# These rules allow only the bare name `project`, never a path to a program of that name.\n"
+    + CODEX_HOST_EXECUTABLE + "\n"
 )
 
 
@@ -301,7 +315,7 @@ def allow_in_codex(apply: bool = True, environ: Mapping[str, str] = os.environ,
 
     def kept(reason: str) -> FileAction:
         return FileAction(name, "kept", f"{name} {reason}, so the Codex rules allowing {COMMANDS} were not added; "
-                                        f"add {' and '.join(CODEX_PREFIX_RULES)} to a .rules file in "
+                                        f"add {' and '.join((*CODEX_PREFIX_RULES, CODEX_HOST_EXECUTABLE))} to a .rules file in "
                                         f"{shown(path.parent, environ)} yourself")
 
     existed = path.exists()

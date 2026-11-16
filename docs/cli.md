@@ -234,7 +234,19 @@ what it did to each:
       pattern = ["project", "site", ["page", "status", "workflow"]],
       decision = "allow",
   )
+  host_executable(name = "project", paths = [])
   ```
+
+  The last line keeps the rules to the bare name `project`. Codex matches an
+  absolute program path, such as `/tmp/x/project`, against the rules for its
+  basename unless a `host_executable` entry lists the paths it accepts. This
+  one lists none, so `/tmp/x/project summary publish` goes to Codex's usual
+  approval instead of running outside the sandbox, while the bare
+  `project summary publish` an agent runs stays allowed. Claude Code matches
+  the command text, so `Bash(project *)` never matches a path to a program.
+  The rules need Codex 0.110 or newer. An older Codex cannot parse
+  `host_executable`, and a rules file it cannot parse leaves it with no
+  rules at all, your own included, so update Codex before you run `init`.
 
   No rule matches `project init`, `project upgrade`, `project config set` or
   `unset`, `project create` or `project edit`, whose editor an agent could
@@ -245,8 +257,9 @@ what it did to each:
   decides them, in its sandbox. A command added to Projector later reaches
   Codex once Projector names it and you run `init` again. To see what the
   rules allow, run
-  `codex execpolicy check --rules ~/.codex/rules/projector.rules project summary publish`.
-  That checks the command alone. Codex checks each command of a chain such as
+  `codex execpolicy check --resolve-host-executables --rules ~/.codex/rules/projector.rules project summary publish`,
+  where `--resolve-host-executables` resolves a program path as a live
+  session does. That checks the command alone. Codex checks each command of a chain such as
   `gh repo view && project summary publish` on its own and takes the
   strictest result, so a command no rule names sends the whole call to its
   usual approval, and an agent runs each `project` command as a call of its
