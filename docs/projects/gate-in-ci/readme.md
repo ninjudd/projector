@@ -41,6 +41,8 @@ run its suite. Where the setting is set, the full suite runs only in CI:
   suite.
 - **The reviewer.** `project review gate` waits for the named checks on the
   head and records their result in the same gate record a local run writes.
+  It reads CI's result for an untrusted head too, because reading a result
+  runs none of the head's code on the reviewer's machine.
 - **The watch.** A new `CHECKS` event tells the fixer when CI fails on the
   head, so a failure the author did not run for still comes back to be fixed.
 
@@ -54,30 +56,63 @@ without `review.gate_checks` keeps today's behavior.
    `review.gate` command, and pushes. CI starts on the new head.
 2. The reviewer sets up the head and reads it by the method. When it reaches
    the gate, it runs `project review gate <number>`.
-3. `gate` checks trust first, as today. Then it checks whether the head
-   changed any file under `.github/workflows/` since the merge base. Such a
-   head defined what CI ran, so its CI result is not evidence about its code.
-   For that head, `gate` refuses to use CI and tells the reviewer to run the
-   repository's full gate locally.
-4. Otherwise, `gate` runs the `review.gate` command when it is set. Then it
-   polls the head's check runs every 20 seconds, touching the review's lock as
-   a long local gate does today, until every named check has a completed run
-   or 30 minutes pass.
+3. `gate` checks trust first, as today, but with `review.gate_checks` set,
+   trust decides only whether the `review.gate` command runs. That command
+   runs the head's code on the reviewer's machine, so it runs only on a head
+   that `setup` recorded as trusted. Reading the head's check runs executes
+   nothing there, so `gate` reads them for any head. Without
+   `review.gate_checks`, `gate` refuses an untrusted head, as today.
+4. On a trusted head, `gate` runs the `review.gate` command when it is set.
+   Then it polls the head's check runs every 20 seconds, touching the review's
+   lock as a long local gate does today, until every named check has a
+   completed run or 30 minutes pass. Two things end the wait early:
+   - **A changed workflow.** As soon as a named check has a run, `gate` finds
+     the files that decided what the run did (§ 2.4). When the head changed
+     any of them since the merge base, the head decided what its own check
+     ran, so the check's result is not evidence about the code. `gate` then
+     refuses to use CI and names the changed file. It tells the reviewer to
+     run the repository's full gate locally on a trusted head, and to review
+     by reading on an untrusted one. A head that changes only a workflow
+     that defines none of the named checks, such as a release workflow,
+     keeps CI's evidence.
+   - **A check that will not run.** While a named check has no run, `gate`
+     also lists the head's workflow runs. When none of them is queued or in
+     progress, no run of the check is coming, and `gate` stops waiting and
+     exits 75, naming the reason. One reason is a workflow run with the
+     status `action_required`, which waits for a maintainer to approve it,
+     as GitHub makes a workflow from a fork or a bot wait. Another is a job
+     that was renamed, a `paths` filter that skipped the head, or a name in
+     `review.gate_checks` that matches no job, which leaves every workflow
+     run completed without the check. A head with no workflow run at all
+     two minutes into the wait gets the same exit.
 5. `gate` writes the gate record (§ 2.2) and exits:
-   - **0** when the command exited 0 and every named check concluded
-     `success`.
+   - **0** when the command, if it ran, exited 0 and every named check
+     concluded `success`.
    - **1** when the command failed, or when any named check concluded
-     otherwise.
-   - **75** when a named check had no completed run within 30 minutes.
-6. The reviewer treats exit 1 as a failing gate, as today. On exit 75 it
-   reviews by reading, as it does an untrusted head, and says in the review's
-   disclosures that CI had not finished. The record's `exit_code` is not 0, so
-   the incremental rule (`incremental-review` § 2.2.1) still demands a passing
-   gate across a moved base.
+     `failure` or `timed_out`.
+   - **75** when a named check gave no evidence: it had no completed run
+     within 30 minutes, step 4 found that no run is coming, or it concluded
+     `cancelled`, `skipped`, `neutral`, `stale`, or `action_required`.
+6. The reviewer treats exit 1 as a failing gate, as today. Exit 75 means CI
+   gave no evidence, so the reviewer does what it does today without
+   `review.gate_checks`. On a trusted head, it runs the repository's full
+   gate locally. On an untrusted head, it reviews by reading. Either way,
+   the review's disclosures say why CI gave no evidence. On an untrusted
+   head, exit 0 says that CI passed and that the `review.gate` command did
+   not run, and the disclosures say both. After exit 75, the record's
+   `exit_code` is not 0, so the incremental rule (`incremental-review`
+   § 2.2.1) still demands a passing gate across a moved base.
 7. Independently of any review, the watch daemon reads the head's CI rollup
-   on each poll. When the rollup is `FAILURE` or `ERROR`, it sends the `fix`
-   role one `CHECKS` line for that head. `fix-pr` then reads the failing run's
-   log, reproduces the failure, and fixes it, or reports why it cannot.
+   on each poll. It sends the `fix` role one `CHECKS` line for that head when
+   a context in the rollup failed: a check run that concluded `FAILURE` or
+   `TIMED_OUT`, or a commit status in the state `FAILURE` or `ERROR`. The
+   `projector/review` status does not count. Projector posts it as
+   `failure` on each head whose verdict requests changes, and the `FINDING`
+   and `VERDICT` events already report that work. The rollup's own `state`
+   does not count either, because it includes that status. A run that waits
+   for approval, or that was cancelled or skipped, is not a failure.
+   `fix-pr` then reads the failing run's log, reproduces the failure, and
+   fixes it, or reports why it cannot.
 
 ### 2.2 Data
 
@@ -94,11 +129,11 @@ four it has, so `gate_passed` reads it unchanged.
 
 | Field | Value |
 | --- | --- |
-| `command` | The `review.gate` command, or `null` when only CI ran. |
+| `command` | The `review.gate` command, or `null` when it did not run, because it is unset or the head is untrusted. |
 | `exit_code` | 0, 1, or 75, as § 2.1 step 5 defines. |
 | `sha` | The head the gate covers. |
 | `ran_at` | When the gate started. |
-| `checks` | New. One `{"name", "conclusion", "url"}` per named check, with `conclusion` `null` for a check still running at the timeout. Absent when `review.gate_checks` is unset. |
+| `checks` | New. One `{"name", "conclusion", "url"}` per named check, with `conclusion` `null` for a check that had no completed run. Absent when `review.gate_checks` is unset. |
 | `source` | New. `ci` when `checks` decided the result, and `local` otherwise. |
 
 The `CHECKS` event, sent once per head and repeated after `watch.renotify` as
@@ -114,16 +149,50 @@ CHECKS acme/app#12 (still open) head=1a2b3c4d failed: check, lint — <action>
 | File | Change |
 | --- | --- |
 | `src/projector/config.py` | `review.gate_checks: str` in `SETTINGS`. |
-| `src/projector/review.py` | `gate` takes the parsed names. It checks the head for changed workflow files with `git diff --name-only <base> <sha> -- .github/workflows`, runs the command when set, then calls a new `ci_checks(repo, sha, names)`. That function reads `gh api repos/<repo>/commits/<sha>/check-runs?filter=latest` and keeps the `github-actions` runs it names. `gate` waits in a loop that reuses `touch_head`. |
-| `src/projector/cli.py` | `review gate` reads `review.gate_checks`, prints each check's conclusion, and exits as § 2.1 step 5 defines. |
-| `src/projector/watch.py` | `QUERY` reads `statusCheckRollup{ state contexts(first:20){ nodes{ … on CheckRun{ name conclusion } … on StatusContext{ context state } } } }`. The fix events add `CHECKS` through `standing`, keyed `checks:<number>:<head>`. |
-| `skills/review-pr/SKILL.md` | The gate paragraph under "Run a head's code only when the head is trusted" says that with `review.gate_checks` set, `gate` waits for CI, and how to handle exits 1 and 75 and a changed workflow. |
+| `src/projector/review.py` | `gate` takes the parsed names. With names set, the trust check moves from the top of `gate` to the command, which `gate` runs on a trusted head when it is set. Then `gate` calls a new `ci_checks(repo, sha, names)`. That function reads `gh api 'repos/<repo>/commits/<sha>/check-runs?filter=latest&check_name=<name>'` once for each name, so a commit with more check runs than one page holds still shows each named run. It keeps the `github-actions` runs. A new `check_files(repo, worktree, run)` finds the files behind a run (§ 2.4), and `gate` compares them with `git diff --name-only <base> <sha>`. While a named check has no run, `gate` reads `gh api 'repos/<repo>/actions/runs?head_sha=<sha>'` for the early exits in § 2.1 step 4. `gate` waits in a loop that reuses `touch_head`. |
+| `src/projector/cli.py` | `review gate` reads `review.gate_checks`, prints each check's conclusion and the reason for exit 75, and exits as § 2.1 step 5 defines. |
+| `src/projector/watch.py` | `QUERY` reads `statusCheckRollup{ contexts(first:20){ nodes{ … on CheckRun{ name conclusion } … on StatusContext{ context state } } } }`. The fix events add `CHECKS` through `standing`, keyed `checks:<number>:<head>`, from the failed contexts that § 2.1 step 7 names. |
+| `skills/review-pr/SKILL.md` | The gate paragraph under "Run a head's code only when the head is trusted" says that with `review.gate_checks` set, `gate` reads CI for any head and runs the `review.gate` command only on a trusted one. It says how to handle exit 1, exit 75, and a changed workflow, on a trusted head and on an untrusted one. Under "Review a minimal push incrementally", the sentence "Where `review.gate` is unset, `gate` refuses" names both settings, because `gate` runs with only `review.gate_checks` set. |
 | `skills/implement/SKILL.md` | "Verify the current slice", and the stack rebase rule, say: where `review.gate_checks` is set, run the tests that cover the change and the `review.gate` command, not the full suite, because CI runs it on the push. |
-| `skills/fix-pr/SKILL.md` | Step 2 and the stack layers take the same rule. A new kind of work handles a `CHECKS` line: read the failing job's log with `gh run view <id> --log-failed`, reproduce the failure locally with the failing test, then fix it. A failure the fixer cannot reproduce, or one in infrastructure the change did not touch, is reported, not patched. |
+| `skills/fix-pr/SKILL.md` | Step 2 and the stack layers take the same rule. A new kind of work handles a `CHECKS` line: read the failing job's log with `gh run view <id> --log-failed`, or open the URL of a check from another app or of a commit status. Reproduce the failure locally with the failing test, then fix it. A failure the fixer cannot reproduce, or one in infrastructure the change did not touch, is reported, not patched. |
 | `skills/finish/SKILL.md` | Step 4 accepts the named checks passing on the head as the complete gate's evidence. |
-| `docs/cli.md` | The settings table gains `review.gate_checks`. The `review gate` section describes the CI wait, the workflow-file refusal, and the exit codes. |
+| `docs/cli.md` | The settings table gains `review.gate_checks`. The `review gate` section describes the CI wait, the untrusted head, the workflow-file refusal, the early exits, and the exit codes. The watch events table, which lists `CONFLICT` for the `fix` role, gains `CHECKS`. |
 | `docs/plugins.md` | The watch events it lists gain `CHECKS` beside `CONFLICT`. |
 | `.projector.toml`, `AGENTS.md` | Projector sets `review.gate_checks = "check"`. `review.gate` names the checks CI cannot run: the two `claude plugin validate` runs, `claude plugin test .`, `hooks/typecheck.sh`, and `git diff --check`. `AGENTS.md` says which part of the gate CI runs. |
+
+### 2.4 The files behind a check
+
+`gate` finds the files that decided what a named check ran from GitHub and
+from the head, without parsing YAML, which the standard library cannot do:
+
+1. The check run names its check suite. `gh api
+   'repos/<repo>/actions/runs?check_suite_id=<id>'` returns the workflow run
+   that the suite belongs to. Its `path` names the workflow file, such as
+   `.github/workflows/check.yml`.
+2. `gate` reads that file at the head and collects each local reference: a
+   `uses:` value that starts with `./`. A reference to a workflow file, such
+   as `./.github/workflows/test.yml`, adds that file. Any other local
+   reference names the directory of a local action, such as
+   `./.github/actions/setup`, and adds every file under it. `gate` reads each
+   added workflow file, and each action's `action.yml` or `action.yaml`, the
+   same way, until no new reference turns up.
+3. `gate` compares that set with `git diff --name-only <base> <sha>`. A file
+   in both makes the refusal in § 2.1 step 4.
+
+A reference to another repository, as `uses: owner/repo/path@ref`, runs the
+file at that ref, not the head's, so it adds nothing to the set.
+
+When `gate` cannot tell which files decided the run, it refuses to use CI, as
+it does for a changed file. That happens when no workflow run matches the
+check suite, when a file in the set cannot be read at the head, or when a
+local `uses:` value contains an expression such as `${{ … }}`. The read goes
+line by line, so it also collects a `uses:` line inside a comment or a
+string. Such a line can only add files to the set: it can make `gate` refuse
+a head it need not refuse, but it cannot make `gate` accept a changed file.
+
+For example, Projector's `check` run comes from `.github/workflows/check.yml`,
+which has no local `uses:` reference. So the set is that one file, and a head
+that changes only `.github/workflows/release.yml` keeps CI's evidence.
 
 ## 3. Why this design
 
@@ -141,11 +210,35 @@ CHECKS acme/app#12 (still open) head=1a2b3c4d failed: check, lint — <action>
   cannot run, so one key does not change meaning depending on another.
 - **Only GitHub Actions runs on the head count.** Anyone with write access
   can post a commit status, but a check run from the `github-actions` app ran
-  the repository's workflow on that commit. The gate runs only on a trusted
-  head, as today. A `pull_request` workflow runs the workflow file from the
-  pull request itself, so a head that edits `.github/workflows/` could make
-  CI pass without testing anything, which is why such a head runs the gate
-  locally.
+  the repository's workflow on that commit.
+- **Reading CI needs no trust.** The trust check keeps the head's code off
+  the reviewer's machine, away from its token and credentials. Reading a
+  check run runs nothing there, so an untrusted head still gets CI's result.
+  That is the head where CI's result matters most, because the reviewer will
+  not run its code locally. The `review.gate` command still runs only on a
+  trusted head. `gate_passed` can read a passing record on an untrusted
+  head, but the incremental rules refuse an untrusted head before they read
+  the gate, so that record decides nothing it should not.
+- **Only the files behind a named check can vouch for a head.** A
+  `pull_request` workflow runs the workflow file from the pull request
+  itself, and a local `uses:` runs the action or reusable workflow from the
+  same checkout. So a head that edits one of those files could make its
+  check pass without testing anything. A head that edits another workflow,
+  such as a release workflow, cannot change what the named check ran, and
+  refusing it would cost a full local gate, or leave an untrusted head with
+  no gate at all, for no reason. GitHub names the workflow file behind each
+  check run, so `gate` needs no guess to find it. Wherever `gate` cannot
+  tell which files decided a run, it refuses, so a mistake costs a local
+  run and never a false pass.
+- **A check that did not run is not a failure, and not a pass.** A run that
+  waits for approval, was cancelled, or was skipped says nothing about the
+  code. Exit 1 would send the fixer after a test failure that never
+  happened, so `gate` exits 75. Exit 75 sends a trusted head to the full
+  local gate rather than to reading alone, so a renamed job or a typo in
+  `review.gate_checks` costs a local run, as today, and never a sign-off
+  that ran no test. `gate` exits 75 as soon as it can tell that no run is
+  coming, because a run that waits on a person, or a job that no longer
+  exists, would otherwise hold every review for 30 minutes.
 - **The author runs focused tests, not nothing.** A push that breaks a test
   for the code it touched wastes a CI run and a review cycle. The tests
   nearest the change catch most of those for a fraction of the suite's cost,
@@ -154,13 +247,23 @@ CHECKS acme/app#12 (still open) head=1a2b3c4d failed: check, lint — <action>
   the panel, and a red CI run on a pull request the session fixes is work for
   the fixer, whether or not the repository sets `gate_checks`. `fix-pr`
   verifies a failure before it patches anything, as it does a finding, so a
-  flaky or unrelated check gets a report instead of a change.
+  flaky or unrelated check gets a report instead of a change. The event reads
+  the rollup's failed contexts, not its `state`, so the `projector/review`
+  status that a changes-requested verdict posts never reads as a CI failure.
 - **Rejected: skip the reviewer's gate when CI is green, without waiting.** A
   review often reaches the gate before CI finishes. Without a wait, the
   reviewer would either run the suite anyway or sign off with no evidence.
 - **Rejected: the reviewer reads the rollup instead of check runs.** The
   rollup mixes every check and status, including ones that do not run the
   suite, such as deploy previews. It cannot say which run covered the gate.
+- **Rejected: refuse CI for any change under `.github/`.** It is simpler, but
+  it refuses every head that touches an unrelated workflow, such as each
+  release pull request that edits a release workflow. And it still misses a
+  local action that a workflow references outside `.github/`.
+- **Rejected: map check names to jobs by parsing the workflow files.** The
+  CLI has no YAML parser, and a check run's name can come from an expression
+  or a matrix, so a parser would still guess. GitHub records which workflow
+  run produced each check run.
 
 ## 4. Acceptance criteria
 
@@ -170,23 +273,43 @@ CHECKS acme/app#12 (still open) head=1a2b3c4d failed: check, lint — <action>
 | The same, with the run concluding `failure` | Exit 1, the record names the check and its URL, and `gate_passed` is false. |
 | The same, with the run still `in_progress` past the wait | Exit 75, `conclusion: null`, and `gate_passed` is false. The test shrinks the wait rather than taking 30 minutes. |
 | A `check` status posted by another app, or a commit status named `check` | It is ignored, and the gate waits for a `github-actions` run. |
-| A head that changes `.github/workflows/check.yml` | `gate` refuses to use CI and names the changed file. |
+| A head that changes `.github/workflows/check.yml`, the workflow whose run produced `check` | `gate` refuses to use CI, names the changed file, and points a trusted head to the full local gate. |
+| A head that changes only `.github/workflows/release.yml`, which defines no named check | `gate` uses CI's result. |
+| A head that changes a file under `.github/actions/setup`, which `check.yml` references with `uses: ./.github/actions/setup` | `gate` refuses to use CI and names the changed file. |
+| A `check` run whose check suite matches no workflow run, or a workflow whose local `uses:` value contains `${{` | `gate` refuses to use CI. |
+| An untrusted head, with `review.gate` and `gate_checks` set and `check` concluding `success` | Exit 0, `command: null`, and the `review.gate` command does not run. |
+| An untrusted head, with `gate_checks` unset | `gate` refuses, as today. |
+| No `check` run, and the head's only workflow run has the status `action_required` | Exit 75 within one poll, naming the run that waits for approval. |
+| No `check` run, and every workflow run on the head completed | Exit 75 within one poll, saying that no run of `check` is coming. |
+| No `check` run yet, and another workflow run on the head still queued | `gate` keeps waiting. |
+| A `check` run concluding `cancelled` or `skipped` | Exit 75, not 1. |
+| A head with more than 30 check runs, the `check` run beyond the first 30 | `gate` finds the `check` run. |
 | `review.gate` set beside `gate_checks`, with the command failing | Exit 1, whatever CI concluded. |
 | `review.gate_checks` unset | `gate` behaves exactly as today. |
 | An incremental review across a moved base, with a CI-passed gate record | `interdiff` accepts it as a passing gate. |
-| The watch polls a head whose rollup is `FAILURE` | One `CHECKS` line for the `fix` role, naming the failed checks, and no repeat before `watch.renotify`. |
-| A new head after a `CHECKS` line | No `CHECKS` line until that head's own rollup fails. |
+| The watch polls a head whose `check` run concluded `FAILURE` | One `CHECKS` line for the `fix` role, naming the failed checks, and no repeat before `watch.renotify`. |
+| A head whose only failed context is the `projector/review` status | No `CHECKS` line. |
+| A head whose only unfinished workflow run waits for approval | No `CHECKS` line. |
+| A new head after a `CHECKS` line | No `CHECKS` line until a context on that head fails. |
 
 These tests fail before the change:
 
 - **The `github-actions` app filter.** A test plants a passing check run from
   another app. It catches a gate that trusts any check named `check`.
 - **The workflow-file refusal.** It catches a gate that lets a head vouch for
-  itself.
+  itself through its workflow or a local action, and one that refuses a head
+  that changed only an unrelated workflow.
+- **The untrusted head.** It catches a gate that runs the `review.gate`
+  command on an untrusted head, and one that refuses CI's result to it.
+- **The early exits.** They catch a gate that waits 30 minutes for a run
+  that waits for approval or will never start.
+- **The check-runs page.** It catches a read that sees only the first page.
 - **The timeout.** It catches a gate that reads a pending check as passed, or
   that never returns.
 - **The `CHECKS` key.** It is keyed per head, which catches an event that
   repeats on every poll or survives a new head.
+- **The `projector/review` context.** It catches a `CHECKS` line that reports
+  a changes-requested verdict as a CI failure.
 
 The skill changes are prose, which a review reads against this plan. No test
 pins their wording.
@@ -198,8 +321,10 @@ pins their wording.
   4-core runner.
 - **The reviewer's wait.** It replaces a local run, so a review's wall time
   stays about the same, and the reviewer's machine spends no CPU on the suite.
-  `gate` makes at most 90 REST calls per run, one every 20 seconds for 30
-  minutes, against GitHub's 5,000 an hour.
+  With one named check, `gate` makes at most two REST calls a poll, one for
+  the check and one for the head's workflow runs while the check has no run.
+  That is at most 180 calls in 30 minutes, plus one call for each named
+  check to find its workflow run, against GitHub's 5,000 an hour.
 - **The watch query.** It reads up to 20 rollup contexts per pull request.
   That adds a few points to the GraphQL cost the query already reports in
   `rateLimit`. The implementation measures that cost on a pull request with
