@@ -1,0 +1,294 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 4bbd0fc7..08cc145f 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -701,6 +701,24 @@ Project plans are valid.
+ | --- | --- | --- |
+ | `site-workflow-outdated` | the site workflow is an earlier shape Projector wrote | `project init`, or `project site workflow --write` |
+ 
++`check` also warns while the repository's shared `<app> Development`
++schemes build more than one app and `ios.app` names none of them. Once two of
++those apps have kept builds, `project ios crashes` and `logs` cannot tell
++which app you mean and refuse to choose, as
++[Find the app by convention](#find-the-app-by-convention) describes. The
++schemes are read from the files Git tracks, or that are untracked and not
++ignored, so `check` needs no Xcode.
++
++```console
++$ project check
++warning: .projector.toml: Development schemes build Alpha, Beta, and ios.app names none of them, so `project ios crashes` and `logs` refuse to choose once two have kept builds (run 'project config set ios.app <app>' with the app to build by default) [ios-app-unset]
++Project plans are valid.
++```
++
++| Code | Condition | Fix |
++| --- | --- | --- |
++| `ios-app-unset` | shared `<app> Development` schemes build several apps, and `ios.app` is unset | `project config set ios.app <app>` |
++
+ ## Read configuration
+ 
+ Projector reads settings from `.projector.toml` files. Put a value in the file
+@@ -3406,10 +3424,14 @@ Each of `build`, `install`, `crashes`, and `logs` takes these options:
+ Without a device option, the commands use the one device that is connected,
+ and refuse none or several with the list of paired devices. `build` checks
+ the device before it builds, and waits up to five minutes for you to unlock
+-a locked device before it opens the app. Outside a terminal, `build` prints
+-only the line that starts the build and the line that ends it, and a failed
+-build prints its `error:` lines. `--verbose` prints every line, and
+-`build.log` keeps them all.
++a locked device before it opens the app. When `devicectl` times out waiting
++for CoreDevice, which can happen right after you log in, update Xcode, or
++connect a device for the first time, the error says to run the command again
++in a minute, and to run `killall CoreDeviceService` if it keeps timing out.
++launchd starts the service again the next time `devicectl` needs it.
++Outside a terminal, `build` prints only the line that starts the build and
++the line that ends it, and a failed build prints its `error:` lines.
++`--verbose` prints every line, and `build.log` keeps them all.
+ 
+ ### Find the app by convention
+ 
+@@ -3418,7 +3440,9 @@ A repository that follows the convention needs no configuration:
+ - **The Xcode project** is the one `.xcworkspace`, or with none the one
+   `.xcodeproj`, in the repository. Set `ios.project` to the path of another.
+ - **The app** is the Xcode project's name, so `MyApp.xcodeproj` gives
+-  `MyApp`. Pass `--app`, or set `ios.app`, for another.
++  `MyApp`. Pass `--app`, or set `ios.app`, for another. Set `ios.app` in a
++  project whose Development schemes build several apps, which `project check`
++  warns about.
+ - **The scheme** is `<app> Development` when the project has it, and
+   otherwise `<app>`. A scheme named `MyApp Beta` is the app `MyApp Beta`.
+ - **The output folder** for crash reports and log files is `~/Desktop`. Set
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 64a9afca..8b993158 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -2682,6 +2682,20 @@ def site_workflow_issues(root: Path) -> list[Issue]:
+                   "(run 'project init' or 'project site workflow --write' to refresh it)", "warning")]
+ 
+ 
++def ios_app_issues(root: Path) -> list[Issue]:
++    """A warning while shared `<app> Development` schemes build several apps and `ios.app` names none, since
++    `project ios crashes` and `logs` refuse to choose once two of those apps have kept builds."""
++    if load_config(root).setting("ios.app") is not None:
++        return []
++    apps = ios.development_apps(root)
++    if len(apps) < 2:
++        return []
++    return [Issue("ios-app-unset", CONFIG_NAME,
++                  f"Development schemes build {', '.join(apps)}, and ios.app names none of them, so `project ios "
++                  "crashes` and `logs` refuse to choose once two have kept builds (run 'project config set ios.app "
++                  "<app>' with the app to build by default)", "warning")]
++
++
+ class NotOnGitHub(ProjectorError):
+     """The checkout's origin is not a GitHub repository, so it has no Pages site to set up."""
+ 
+@@ -3076,7 +3090,7 @@ def run(arguments: argparse.Namespace) -> int:
+         if command == "done":
+             print("Record whether the project shipped, was abandoned, or was superseded.", file=sys.stderr)
+     elif command == "check":
+-        issues = store.check(instructions_enabled(root)) + site_workflow_issues(root)
++        issues = store.check(instructions_enabled(root)) + site_workflow_issues(root) + ios_app_issues(root)
+         # Warnings print but never fail the gate; `valid` and the exit code
+         # follow errors alone.
+         errors = [issue for issue in issues if issue.severity == "error"]
+diff --git a/src/projector/core.py b/src/projector/core.py
+index f0b8efd0..01dc5d9e 100644
+--- a/src/projector/core.py
++++ b/src/projector/core.py
+@@ -99,6 +99,21 @@ class FileAction:
+     note: Optional[str] = None
+ 
+ 
++def visible_files(root: Path, *patterns: str) -> list[Path]:
++    """The files under `root` that match a pathspec in `patterns` and that Git tracks, or that are untracked and not
++    ignored, so a new file counts before its first commit and one in an ignored folder does not. Empty when Git
++    cannot say."""
++
++    try:
++        listed = run_bounded(["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z",
++                              "--", *patterns], timeout=30)
++    except (OSError, subprocess.TimeoutExpired):
++        return []
++    if listed.returncode:
++        return []
++    return [root / os.fsdecode(path) for path in dict.fromkeys(listed.stdout.split(b"\0")) if path]
++
++
+ def run_bounded(args: list[str], *, timeout: float, cwd: Optional[Path] = None, input: Optional[bytes] = None,
+                 env: Optional[dict] = None) -> subprocess.CompletedProcess:
+     """Run `args` with standard input closed, or fed `input`, and capture its output as bytes. Once `timeout`
+@@ -502,17 +517,8 @@ def _carries_ios_rules(self) -> bool:
+         projects it holds."""
+ 
+         if self._ios is None:
+-            try:
+-                listed = run_bounded(
+-                    ["git", "-C", str(self.root), "ls-files", "--cached", "--others", "--exclude-standard",
+-                     "-z", "--", "*.xcodeproj/project.pbxproj"],
+-                    timeout=30,
+-                )
+-            except (OSError, subprocess.TimeoutExpired):
+-                self._ios = False
+-            else:
+-                paths = listed.stdout.split(b"\0") if listed.returncode == 0 else []
+-                self._ios = any(self._builds_for_ios(self.root / os.fsdecode(path)) for path in paths if path)
++            projects = visible_files(self.root, "*.xcodeproj/project.pbxproj")
++            self._ios = any(self._builds_for_ios(path) for path in projects)
+         return self._ios
+ 
+     @staticmethod
+diff --git a/src/projector/ios.py b/src/projector/ios.py
+index c96b7729..b7af9238 100644
+--- a/src/projector/ios.py
++++ b/src/projector/ios.py
+@@ -21,12 +21,19 @@
+ from urllib.parse import quote
+ 
+ from . import review
+-from .core import EnvironmentError, ProjectorError, UsageError
++from .core import EnvironmentError, ProjectorError, UsageError, visible_files
+ 
+ TOOLS_MESSAGE = "project ios needs Xcode's command-line tools on macOS"
+ DEVICE_DESTINATION = "generic/platform=iOS"
+ MAC_DESTINATION = "platform=macOS,arch=arm64,variant=Designed for iPad"
+ APPLICATION = "com.apple.product-type.application"
++# CoreDevice runs as an XPC service that launchd starts on demand. Right after a login, an Xcode update, or a
++# device's first connection, it can take longer to start than devicectl waits for it.
++COREDEVICE_TIMEOUT = "Timed out waiting for CoreDeviceService"
++COREDEVICE_HINT = ("CoreDevice was still starting, so run the command again in a minute. If it keeps timing out, run "
++                   "`killall CoreDeviceService` so launchd starts it afresh, and try again")
++SHARED_SCHEMES = ("*.xcodeproj/xcshareddata/xcschemes/* Development.xcscheme",
++                  "*.xcworkspace/xcshareddata/xcschemes/* Development.xcscheme")
+ SKIPPED = frozenset({".git", "Pods", "node_modules", "build", ".build"})
+ BUNDLES = (".xcworkspace", ".xcodeproj")
+ RECORD = "build.json"
+@@ -64,11 +71,21 @@ def tool(args: list[str]) -> str:
+     """Run one of Apple's tools, `cp`, or `open`, and return its output, or fail with what it printed."""
+     result = subprocess.run(args, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+     if result.returncode:
+-        detail = (result.stderr.strip() or result.stdout.strip()).splitlines()
+-        raise IosError(f"{' '.join(args[:3])} failed: {detail[-1] if detail else f'exit {result.returncode}'}")
++        output = result.stderr.strip() or result.stdout.strip()
++        detail = output.splitlines()
++        message = f"{' '.join(args[:3])} failed: {detail[-1].strip() if detail else f'exit {result.returncode}'}"
++        if COREDEVICE_TIMEOUT in output:
++            message += f". {COREDEVICE_HINT}"
++        raise IosError(message)
+     return result.stdout
+ 
+ 
++def development_apps(root: Path) -> list[str]:
++    """The apps that the repository's shared `<app> Development` schemes build, by name."""
++
++    return sorted({path.name.removesuffix(" Development.xcscheme") for path in visible_files(root, *SHARED_SCHEMES)})
++
++
+ # State
+ 
+ @dataclass(frozen=True)
+diff --git a/tests/test_codex_watch.py b/tests/test_codex_watch.py
+index 565d19f9..fd638a17 100644
+--- a/tests/test_codex_watch.py
++++ b/tests/test_codex_watch.py
+@@ -8,6 +8,7 @@
+ import tempfile
+ import threading
+ import unittest
++from concurrent import futures
+ from pathlib import Path
+ from unittest import mock
+ 
+@@ -446,6 +447,10 @@ def run(args, **kwargs):
+             self.assertLessEqual(len(self.dispatcher.jobs), 4)
+         finally:
+             release.set()
++            # `close` leaves running submissions to finish, so the temporary directory's cleanup would race
++            # the workers still writing under `sessions/`.
++            _, running = futures.wait(self.dispatcher.jobs.values(), timeout=5)
++            self.assertFalse(running, "a submission was still running after its call was released")
+ 
+     def test_close_leaves_a_running_submission_to_finish_and_record_its_result(self):
+         # A stopping daemon unlocks daemon.mutex only once close returns, and a replacement waits 10 seconds
+diff --git a/tests/test_ios.py b/tests/test_ios.py
+index 0eb0b99a..f133e74a 100644
+--- a/tests/test_ios.py
++++ b/tests/test_ios.py
+@@ -65,6 +65,8 @@ def pop(key, default):
+     os.execvp(args[0], args)
+ if name == "xcrun":
+     if args[:3] == ["devicectl", "list", "devices"]:
++        if scenario.get("devices_error"):
++            sys.exit(scenario["devices_error"])
+         Path(option("--json-output")).write_text(json.dumps({"result": {"devices": scenario["devices"]}}))
+     elif args[:4] == ["devicectl", "device", "install", "app"]:
+         record("installed", option("--device"), (Path(args[-1]) / "commit.txt").read_text().strip())
+@@ -437,6 +439,26 @@ def test_devices_json_says_which_device_can_take_an_install(self) -> None:
+         self.assertEqual({"PHONE-UDID": True, "OLD-UDID": False},
+                          {entry["udid"]: entry["installable"] for entry in listed})
+ 
++    def test_a_coredevice_timeout_says_to_run_again_and_how_to_restart_the_service(self) -> None:
++        # devicectl names the timeout first and ends with the error's domain, so only the whole output shows it.
++        self.scenario({"devices_error": "ERROR: Timed out waiting for CoreDeviceService to fully initialize.\n"
++                                        "    (com.apple.dt.CoreDeviceError error 1.)"})
++
++        code, _, err = self.project("devices")
++
++        self.assertEqual(1, code)
++        self.assertIn("xcrun devicectl list failed: (com.apple.dt.CoreDeviceError error 1.)", err)
++        self.assertIn(ios.COREDEVICE_HINT, err)
++
++    def test_another_devicectl_failure_gets_no_coredevice_hint(self) -> None:
++        self.scenario({"devices_error": "ERROR: The device rejected the connection request."})
++
++        code, _, err = self.project("devices")
++
++        self.assertEqual(1, code)
++        self.assertIn("The device rejected the connection request.", err)
++        self.assertNotIn("killall", err)
++
+     def test_every_command_without_xcode_exits_69(self) -> None:
+         bare = self.tmp / "bare"
+         bare.mkdir()
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index 80a61af7..2acd04f4 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -931,6 +931,38 @@ def test_instructions_ios_overrides_what_the_repository_holds(self) -> None:
+         config.write_text('[ios]\nproject = "ios/App.xcodeproj"\n', encoding="utf-8")
+         self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+ 
++    def shared_schemes(self, *names: str, bundle: str = "App/App.xcodeproj") -> None:
++        folder = self.root / bundle / "xcshareddata" / "xcschemes"
++        folder.mkdir(parents=True, exist_ok=True)
++        for name in names:
++            (folder / f"{name}.xcscheme").write_text("<Scheme/>\n", encoding="utf-8")
++
++    def test_check_warns_while_development_schemes_build_several_apps_and_ios_app_names_none(self) -> None:
++        config = self.root / ".projector.toml"
++        # One Development scheme beside plain ones is one app, which needs no setting.
++        self.shared_schemes("Alpha", "Alpha Development", "Beta")
++        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
++
++        # A workspace's shared schemes count as well as a project's.
++        self.shared_schemes("Beta Development", bundle="App.xcworkspace")
++        code, stdout, stderr = self.invoke("check")
++        self.assertEqual(0, code)
++        self.assertEqual("Project plans are valid.\n", stdout)
++        self.assertEqual(
++            "warning: .projector.toml: Development schemes build Alpha, Beta, and ios.app names none of them, so"
++            " `project ios crashes` and `logs` refuse to choose once two have kept builds (run 'project config set"
++            " ios.app <app>' with the app to build by default) [ios-app-unset]\n",
++            stderr,
++        )
++
++        config.write_text('[ios]\napp = "Alpha"\n', encoding="utf-8")
++        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
++
++    def test_development_schemes_in_an_ignored_folder_need_no_ios_app(self) -> None:
++        (self.root / ".gitignore").write_text("vendor/\n", encoding="utf-8")
++        self.shared_schemes("Alpha Development", "Beta Development", bundle="vendor/Pods/Pods.xcodeproj")
++        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
++
+     def test_init_keeps_a_newer_block_and_check_says_to_upgrade(self) -> None:
+         agents = self.root / "AGENTS.md"
+         shipped = instructions.template_version()

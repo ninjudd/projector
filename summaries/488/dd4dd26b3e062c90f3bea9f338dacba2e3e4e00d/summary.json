@@ -1,0 +1,155 @@
+{
+ "version": 1,
+ "name": "iOS device and scheme fixes",
+ "project": "ios",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 488,
+  "title": "Hint at a CoreDevice timeout, warn when ios.app is needed, and fix a racy watch test",
+  "head": "dd4dd26b3e062c90f3bea9f338dacba2e3e4e00d",
+  "headRef": "ios-devices-coredevice-hint",
+  "base": "c7e0d7d3f0d4844fa64c59048d5c14301e26684d",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project ios</code> builds a branch or pull request of an iOS app, installs it on a phone or this Mac, and reads back its crash reports and logs. It talks to devices through Apple's <code>devicectl</code> tool. That tool depends on CoreDevice, a background service that macOS starts when a tool first needs it. This pull request makes three small fixes that came up while an app repository moved onto <code>project ios</code>.",
+   "<ol><li><b>A CoreDevice timeout says what to do.</b> When <code>devicectl</code> gives up waiting for CoreDevice to start, the error now tells the person to run the command again in a minute, and to run <code>killall CoreDeviceService</code> if the timeout repeats. Before this change, the error quoted only the last line of <code>devicectl</code>'s output, which names the error's domain and not the timeout.</li><li><b><code>project check</code> warns when <code>ios.app</code> is needed.</b> A repository can have shared <code>&lt;app&gt; Development</code> schemes for several apps. Once two of those apps have kept builds, <code>project ios crashes</code> and <code>logs</code> refuse to guess which one you mean. The new <code>ios-app-unset</code> warning says so before that happens, and says to set <code>ios.app</code>.</li><li><b>A flaky watch test waits for its workers.</b> A test in <code>tests.test_codex_watch</code> could remove its temporary directory while a worker thread still wrote to it.</li></ol>",
+   "The review found nothing to change. All three fixes are small, and none changes a command's JSON output."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>CoreDevice</b>: Apple's service that <code>devicectl</code> and Xcode use to reach a device. launchd, the macOS service manager, starts it on demand.</li><li><b>Kept build</b>: a build that <code>project ios build</code> saved, so <code>install</code>, <code>crashes</code>, and <code>logs</code> can use it later.</li><li><b>Shared scheme</b>: an Xcode scheme saved under <code>xcshareddata/xcschemes</code>, so it is in the repository rather than in one person's settings.</li></ul>"
+   },
+   {
+    "id": "checks",
+    "title": "What the review ran",
+    "html": "<ul class=\"tight\"><li>The full Python test suite, and the repository's review gate: the plugin validations, the hooks tests, the type check, and <code>git diff --check</code>.</li><li>A mutation of each new test in a copy of the head. Each one turned red.</li><li>A dry run of <code>killall -s CoreDeviceService</code>, which sends no signal.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "listing",
+   "title": "One shared listing of the files Git can see",
+   "kicker": "A helper in core that both the iOS rules detection and the new warning use",
+   "intro": [
+    "Projector writes iOS rules into a repository's AGENTS.md only when the repository has an iOS app. To find out, it already asked Git for the Xcode project files that Git tracks, or that are new and not ignored. The new warning needs the same kind of listing for scheme files. So the listing moves into <code>visible_files</code> in <code>core</code>, and both callers use it.",
+    "Reading Git's listing, rather than walking the folder, has two effects. A file in an ignored folder, such as a vendored dependency, does not count. A new file counts before its first commit."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/core.py",
+     "note": "Adds <code>visible_files</code> and makes <code>_carries_ios_rules</code> call it.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 108,
+       "text": "An error, a timeout, or a non-zero exit from <code>git ls-files</code> still returns no files, as the inline code did, so <code>_carries_ios_rules</code> behaves as before. Read at the head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "ios",
+   "title": "The CoreDevice hint and the list of Development apps",
+   "kicker": "The two additions to project ios itself",
+   "intro": [
+    "<code>tool()</code> runs one of Apple's tools and raises an error that quotes what the tool printed. Every <code>devicectl</code> call goes through it, except one: the retry loop that opens the app after an install. That loop prints the tool's whole output anyway.",
+    "<code>tool()</code> now searches all of the output for <code>Timed out waiting for CoreDeviceService</code>, and adds the hint when it finds it. It still quotes only the last line, now with its leading spaces removed. When Apple changes the wording, the hint stops appearing, and the error is the same as before.",
+    "<code>development_apps</code> lists the apps that the shared <code>&lt;app&gt; Development</code> schemes build, in an <code>.xcodeproj</code> or an <code>.xcworkspace</code>. The warning in the next group reads it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/ios.py",
+     "note": "Adds the timeout hint to <code>tool()</code>, and adds <code>development_apps</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 77,
+       "text": "The hint is attached only when the timeout text is in the output. The test with another <code>devicectl</code> failure turns red when the condition is replaced with <code>True</code>, and the timeout test turns red when only the last line is searched."
+      },
+      {
+       "kind": "verify",
+       "line": 34,
+       "text": "<code>killall -s CoreDeviceService</code>, a dry run, matches only the signed-in user's own process, not the copy that runs as root. So the advice needs no <code>sudo</code> and stops nothing else."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_ios.py",
+     "note": "Two tests through <code>project ios devices</code>, with a stand-in <code>xcrun</code> that fails with the given output."
+    }
+   ]
+  },
+  {
+   "id": "check",
+   "title": "The ios-app-unset warning",
+   "kicker": "project check warns when several Development schemes need ios.app to pick one",
+   "intro": [
+    "<code>project ios build</code> uses <code>--app</code>, then <code>ios.app</code>, then the Xcode project's name to pick the app. <code>crashes</code> and <code>logs</code> pick the app the same way. When neither option is set, they use the one app that has kept builds, and refuse when two apps do.",
+    "<code>ios_app_issues</code> warns when <code>ios.app</code> is unset and the Development schemes name two or more apps. A warning prints but never fails <code>project check</code>, so CI that runs <code>check</code> keeps passing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Adds <code>ios_app_issues</code> and adds its result to the issues that <code>check</code> reports.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 2688,
+       "text": "Setting <code>ios.app</code> clears the refusal that the warning describes: the CLI passes <code>arguments.app or config.setting(\"ios.app\")</code> to <code>crashes</code> and <code>logs</code>, and <code>kept_app</code> then keeps only that app's builds."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "Covers one app, a second app in a workspace, <code>ios.app</code> set, and schemes in an ignored folder."
+    }
+   ]
+  },
+  {
+   "id": "watch-test",
+   "title": "A watch test that no longer races its cleanup",
+   "kicker": "The hung-session test waits for its worker threads",
+   "intro": [
+    "<code>Dispatcher</code> sends queued events to Codex sessions on a pool of four threads. <code>Dispatcher.close</code> lets a running send finish, so a stopping daemon does not lose a result. The test released its slow call and returned straight away. Then the temporary directory could be removed while a worker still wrote to it, and CI once failed with <code>Directory not empty</code>.",
+    "The test now waits up to five seconds for every job it started. It fails if one is still running."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_codex_watch.py",
+     "note": "Waits for the dispatcher's jobs in the test's <code>finally</code> block.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 452,
+       "text": "<code>Dispatcher.jobs</code> changes only in <code>tick</code>, which runs on the test's thread. So no worker changes the dictionary while <code>futures.wait</code> reads it. Read in <code>codex_watch.py</code> at the head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "docs/cli.md describes the warning and the hint",
+   "intro": [
+    "The <code>check</code> section gains the <code>ios-app-unset</code> code, with its condition and fix. The <code>project ios</code> section says what the CoreDevice timeout error tells you, and the convention section says when to set <code>ios.app</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md"
+    }
+   ]
+  }
+ ]
+}
