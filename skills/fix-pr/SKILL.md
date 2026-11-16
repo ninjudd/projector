@@ -222,19 +222,43 @@ the `origin` of the checkout you run them in, and refuse outside one.
    owner drops every change you were about to build, mark it ready without a
    push, because the head the review signed off is still the head.
 
-Each command prints the pull request's draft state and whether it moved;
-`--json` prints the same as one object.
+Each command prints the pull request's draft state, whether it moved, and
+the head it acted on; `--json` prints the same as one object. So you need
+no `gh pr view` after either one.
 
-Run `project review hold` and `project review ready` as commands of their
-own, so the rule that allows them matches, rather than running `gh pr ready`
-yourself. A host's automatic approval, such as Claude Code's auto mode, can
-refuse a bare `gh pr ready` as self-approval. `project init` adds
+Run `project review hold` and `project review ready` each as a tool call of
+its own: not after `cd`, not joined to another command with `;`, `&&`,
+`||`, or `|`, and never as `gh pr ready` yourself. `project init` adds
 `Bash(project *)` to the user's Claude Code settings, which allows every
-Projector command, and the same allowance to their Codex rules, so the
-commands run where the bare call is refused. If the host refuses a command
-anyway, do not retry it as `gh pr ready`. Leave the pull request as it is,
-and ask the user to run `project init` in a terminal, which adds the rules,
-or to run the command themselves.
+Projector command, and the same allowance to their Codex rules. Both Claude
+Code and Codex check each command of a chain against the user's rules and
+take the strictest result, so one command the rules do not name, such as
+`gh pr view` beside `project review ready`, sends the whole call to the
+host's automatic approval. Claude Code's auto mode can refuse such a call,
+judging that marking a held pull request ready undoes the hold, and can
+refuse a bare `gh pr ready` as self-approval.
+
+When the host refuses one of these commands, never retry it as
+`gh pr ready`. Work out why it was refused:
+
+1. **The call ran more than the command.** Run the command again, alone.
+   That is the form the rule matches, not a way around the refusal.
+2. **The command ran alone.** Run `project review rules --json`, which
+   writes nothing, and read `allowed` for the host's file,
+   `~/.claude/settings.json` for Claude Code or
+   `~/.codex/rules/projector.rules` for Codex.
+   - **`false`, or the file is not listed.** The file lacks Projector's
+     current rules. Ask the user to run `project init` themselves in a
+     terminal, then `project review rules` to check it. Codex reads its
+     rules only when a session starts, so a Codex user starts a new session
+     after `init`. Do not run `init` yourself.
+   - **`true`.** The rule is installed, and `init` changes nothing. Ask the
+     user to run the command themselves, and on Codex say that a session
+     started before the rule was written has not loaded it.
+
+Either way, leave the pull request as it is, and say in your result that
+it is still a draft, what refused the command, and the action that would
+let it through.
 
 Hold only when a change is coming: when you defer every suggestion and the
 owner asks for nothing, leave the draft state as it is. Your report lists the

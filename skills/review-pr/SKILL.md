@@ -952,12 +952,15 @@ Claude Code's auto mode refuses a clean self-review's publish as
 self-approval unless the user's Claude Code settings, or the repository's,
 allow it, as `Bash(project *)` does, a rule `project init` adds to the user's
 `~/.claude/settings.json`. For Codex, `init` adds the same allowance to the
-user's Codex rules. Run `publish` as a command of its own so the rule
-matches it. If the host refuses it anyway, do not retry it in another form:
-keep the lock and the body, and ask the user to run `project init` in a
-terminal, which adds the rules to their own settings, or to run the publish
-command themselves. `init` adds the rules only for a person at a terminal, so
-do not run it to add them yourself.
+user's Codex rules. Run `publish` as a tool call of its own, not after `cd`
+and joined to no other command, so the rule matches it. When the host
+refuses it, never retry it in another form. Keep the lock and the body, and
+work out why it was refused as `fix-pr` describes under "Hold the pull
+request while changes are built": run it again alone when the call ran more
+than the publish, and otherwise read `allowed` in
+`project review rules --json` before you ask the user to run `project init`
+in a terminal. `init` adds the rules only for a person at a terminal, so do
+not run it to add them yourself.
 
 After submitting, `publish` re-reads the review it posted, decides the
 sign-off from the newest verdict on the head and its open finding threads,
@@ -1211,14 +1214,17 @@ that history instead of rediscovering it.
   replacement under the same name. It rebuilds its context from GitHub: the
   pull request's Projector reviews, their finding threads, and the replies
   on them.
-- A subagent whose publish the host refused reports the refusal and stops
-  that publish; it never retries a refused publish in another form, as this
-  skill and `../summarize-pr/SKILL.md` say. The subagent's report names
-  why the host refused it and the action that would let it through. Tell
-  the user once for the session, not once per pull request, that the
+- A subagent whose publish the host refused while it was joined to other
+  commands runs it again alone, the form the rule matches, as this skill
+  and `../summarize-pr/SKILL.md` say. A subagent whose publish the host
+  refused when it ran alone reports the refusal and stops that publish; it
+  never retries a refused publish in another form. The subagent's report
+  names why the host refused it and the action that would let it through.
+  Tell the user once for the session, not once per pull request, that the
   host's automatic approval refused a publish, and relay that action. Send
   the user to `project init` in a terminal only when the subagent reports
-  the rule missing, as `summary_publish` `false` or no file listed. When it
+  the rule missing: `allowed` `false` for a review's publish,
+  `summary_publish` `false` for a summary's, or no file listed. When it
   reports a matching rule, ask the user to authorize the publish or to run
   it themselves, and on Codex say that a new session would load a rule
   written after this one started. Then keep reviewing.

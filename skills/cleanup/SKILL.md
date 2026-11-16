@@ -179,7 +179,10 @@ When a gap is a pull request the session held and the user chose an issue or
 to leave it, mark it ready with
 `project review ready <number> --repo <owner>/<repo>` once nothing more will
 be pushed for it. A held pull request that no session marks ready stays a
-draft, which GitHub refuses to merge however clean its review.
+draft, which GitHub refuses to merge however clean its review. Run the
+command as a tool call of its own, not after `cd` and joined to no other
+command, and never as a bare `gh pr ready`, as `../fix-pr/SKILL.md`
+describes under "Hold the pull request while changes are built".
 
 ## Release what the session holds
 

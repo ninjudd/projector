@@ -3174,13 +3174,34 @@ class StatusTests(LatestWinsCase):
         # A host's automatic approval can refuse a bare `gh pr ready` as self-approval, where the rule that
         # allows Projector's commands allows these.
         skills = Path(cli.__file__).resolve().parents[2] / "skills"
-        for name in ("fix-pr", "implement", "spec"):
+        for name in ("fix-pr", "implement", "spec", "work", "cleanup"):
             text = (skills / name / "SKILL.md").read_text()
             with self.subTest(skill=name):
                 self.assertIn("project review ready <number> --repo <owner>/<repo>", text)
                 commands = "\n".join(re.findall(r"^\s*```(?:sh|bash)\n(.*?)^\s*```", text, re.M | re.S))
                 self.assertNotIn("gh pr ready", commands, "a skill runs no bare gh pr ready")
-        self.assertIn("project review hold <number> --repo <owner>/<repo>", (skills / "fix-pr" / "SKILL.md").read_text())
+                prose = " ".join(text.split())
+                self.assertIn("as a tool call of its own", prose)
+        fix_pr = " ".join((skills / "fix-pr" / "SKILL.md").read_text().split())
+        self.assertIn("project review hold <number> --repo <owner>/<repo>", fix_pr)
+        # Claude Code and Codex check each command of a chain and take the strictest result, so a `gh` command
+        # beside `project review ready` sends the whole call to auto mode, which refused it as undoing the hold.
+        self.assertIn("Run `project review hold` and `project review ready` each as a tool call of its own", fix_pr)
+        self.assertIn("**The call ran more than the command.** Run the command again, alone.", fix_pr)
+        # A lone refusal sends the user to `init` only when `review rules` says the file lacks the rules.
+        self.assertIn("Run `project review rules --json`, which writes nothing, and read `allowed`", fix_pr)
+
+    def test_no_skill_example_joins_a_review_command_to_another(self) -> None:
+        # A joined line falls to the host's automatic approval even where `Bash(project *)` allows the command.
+        for path in sorted((Path(cli.__file__).resolve().parents[2] / "skills").glob("*/SKILL.md")):
+            text = path.read_text()
+            for block in re.findall(r"^\s*```(?:sh|bash)\n(.*?)^\s*```", text, re.M | re.S):
+                for line in block.splitlines():
+                    if re.search(r"project (review (ready|hold|publish)|summary publish)\b", line):
+                        with self.subTest(skill=path.parent.name, line=line.strip()):
+                            # A placeholder such as `<clean|changes-requested>` names choices, not a pipe.
+                            bare = re.sub(r"<[^>]*>", "", line)
+                            self.assertIsNone(re.search(r";|&&|\|", bare), "the command runs on a line by itself")
 
     def test_an_account_the_repository_does_not_let_in_counts_only_as_the_reviewer(self) -> None:
         self.add_verdict("claude-opus-5-5", login="review-bot", association="NONE", verdict="changes-requested")
