@@ -3060,7 +3060,9 @@ holds up another session's events. On each pass, a job:
 
 The push runs the repository's pre-push hooks, once however many changes
 are queued. It is killed after 15 minutes and a fetch after 2, with the
-changes kept for the next pass. Each commit names `projector
+changes kept for the next pass. A change queued while a push runs starts
+the next push as soon as that one ends, while a change whose push failed
+waits for the next poll. Each commit names `projector
 <projector@invalid>` as author and committer, at the Unix epoch, with the
 message `projector relay` and no signature, so nothing about you or your
 checkout reaches the repository outside the sealed blob.

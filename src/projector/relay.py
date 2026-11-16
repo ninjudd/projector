@@ -308,6 +308,15 @@ def outbox_items(root: Path, repo: str) -> list[dict]:
     return read_outbox(repo_file(root, "outbox", repo))["items"]
 
 
+def change(ref: str, sealed: Optional[dict]) -> tuple[str, str]:
+    """A queued change as a job tries to push it: its ref and what the ref is to hold."""
+    return ref, json.dumps(sealed, sort_keys=True)
+
+
+def pending(box: dict) -> frozenset[tuple[str, str]]:
+    return frozenset(change(item["ref"], item["sealed"]) for item in box["items"])
+
+
 def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Optional[dict], dict]],
           now: float, remote: Optional[dict[str, str]] = None) -> None:
     """Queue each `(ref, sealed, meta)` change, with `sealed` None for a deletion, keeping at most one item per ref,
@@ -464,8 +473,12 @@ class Job:
                        if isinstance(found.get("relay_id"), str)}
         self.changes: list[tuple[str, Optional[dict], dict]] = []
         self.error = ""
+        # The changes this job tried to push: those its push took, or, when it pushes nothing, those queued when
+        # it started and those it queued. A change queued after that starts the next job without a poll.
+        self.attempted: frozenset[tuple[str, str]] = frozenset()
 
     def run(self) -> dict:
+        self.attempted = pending(read_outbox(repo_file(self.root, "outbox", self.repo)))
         cwd = self.checkout()
         try:
             if self.poll and cwd is not None and self.key_ids():
@@ -479,6 +492,7 @@ class Job:
                 self.read_visibility()
             self.maintain()
             queue(self.root, self.repo, None, self.changes, self.now, self.cache["remote"])
+            self.attempted |= {change(ref, sealed) for ref, sealed, _ in self.changes}
             if cwd is not None:
                 self.push(cwd)
         except RelayError as error:
@@ -704,6 +718,7 @@ class Job:
         with locked(path.parent):
             box = read_outbox(path)
             snapshot = [dict(item) for item in box["items"]]
+            self.attempted = pending(box)
             if not snapshot:
                 return
             box["pushing"] = [item["ref"] for item in snapshot]
@@ -797,11 +812,11 @@ class Relay:
         self.wall = wall
         self.environ = dict(os.environ) if environ is None else environ
         self.pool = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="relay")
-        self.jobs: dict[str, Future] = {}
+        self.jobs: dict[str, tuple[Job, Future]] = {}
         self.results: dict[str, dict] = {}
-        # Each outbox as its repository's last job left it, so a change that keeps failing waits for the next
-        # poll instead of pushing every second.
-        self.settled: dict[str, object] = {}
+        # The changes each repository's last job tried to push, so a change that keeps failing waits for the next
+        # poll instead of pushing every second, while one queued as that job ran starts the next job at once.
+        self.settled: dict[str, frozenset[tuple[str, str]]] = {}
         self.key: Optional[Key] = None
         self.value: Optional[str] = None
         self.key_error = NO_KEY
@@ -820,7 +835,7 @@ class Relay:
                     write_json(path, {**box, "pushing": []})
 
     def busy(self) -> bool:
-        return any(not job.done() for job in self.jobs.values()) or self.reading is not None
+        return any(not future.done() for _, future in self.jobs.values()) or self.reading is not None
 
     def tick(self, live: set[str], polled: bool, full_every: float) -> bool:
         """Read finished jobs, follow `agent.key`, and start each due repository's job. Answers whether the
@@ -847,17 +862,18 @@ class Relay:
                                or any((parsed := parse_ref(ref)) and parsed[2] in lingering for ref in remote))
             job = Job(self.root, repo, self.key, set(live), now, poll=poll, full=full, gh=self.gh,
                       held=self.held())
-            self.jobs[name] = self.pool.submit(job.run)
+            self.jobs[name] = (job, self.pool.submit(job.run))
         return self.status() != before
 
     def repositories(self, records: dict[str, dict], polled: bool, lapsed: set[str]) -> dict[str, str]:
         """The repositories whose job runs now, lowercased, with their spelling: on a poll, every repository a
-        registered session here works in, and otherwise each one whose queued changes changed since its last job,
-        or with a session that just lapsed."""
+        registered session here works in, and otherwise each one with a queued change its last job did not try to
+        push, or with a session that just lapsed."""
         found = {}
         for path in (self.root / "outbox").glob("*/*.json"):
             name = f"{path.parent.name}/{path.stem}"
-            if (polled or watch.file_signature(path) != self.settled.get(name)) and read_outbox(path)["items"]:
+            box = read_outbox(path)
+            if box["items"] and (polled or name not in self.settled or pending(box) - self.settled[name]):
                 found[name] = name
         for name, record in records.items():
             repo = record.get("repo")
@@ -867,12 +883,12 @@ class Relay:
         return found
 
     def collect(self) -> None:
-        for repo, job in list(self.jobs.items()):
-            if job.done():
+        for repo, (job, future) in list(self.jobs.items()):
+            if future.done():
                 del self.jobs[repo]
-                self.settled[repo] = watch.file_signature(repo_file(self.root, "outbox", repo))
+                self.settled[repo] = job.attempted
                 try:
-                    self.results[repo] = job.result()
+                    self.results[repo] = future.result()
                 except Exception as error:
                     self.results[repo] = {"state": "error", "error": f"{type(error).__name__}: {error}"}
         if self.reading is not None and self.reading[1].done():
@@ -920,7 +936,7 @@ class Relay:
 
     def wait(self, timeout: Optional[float] = None) -> None:
         """Wait for every running job and key read, as a test or the daemon's exit does."""
-        for job in [*self.jobs.values(), *([self.reading[1]] if self.reading else [])]:
+        for job in [*(future for _, future in self.jobs.values()), *([self.reading[1]] if self.reading else [])]:
             try:
                 job.result(timeout=timeout)
             except Exception:

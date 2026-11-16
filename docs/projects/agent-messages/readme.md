@@ -927,3 +927,12 @@ Review of the relay settled these details:
   `RecursionError`, as a record that does not open. So a planted blob of
   nested brackets under the 32 KiB cap is rejected and its ref deleted
   like any other, rather than stopping every later job in the repository.
+- **The daemon compares changes, not the outbox file.** § 10's "changed
+  since the last job" means a queued change, a ref and what it is to hold,
+  that the last job did not try to push. The job records the changes its
+  push took under the outbox lock, or, when it pushes nothing, those queued
+  when it started and those it queued. A change queued while a push runs
+  then starts a job on the next tick, while a failure that only gained its
+  error still waits for the next poll. Taking the outbox's file signature
+  after the push, even inside the job, missed the first case, because the
+  job's own write recording the push's outcome came after the new change.

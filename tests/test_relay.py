@@ -859,6 +859,50 @@ class PushTests(RelayCase):
         self.assertEqual([], self.one.outbox())
         self.assertEqual(1, len(self.one.events(A)))
 
+    def ticks(self, machine: Machine, count: int) -> None:
+        """`count` turns of the daemon's loop a second apart, none of them due to poll."""
+        assert machine.daemon is not None
+        for _ in range(count):
+            self.advance(1)
+            machine.daemon.tick()
+            machine.settle()
+            self.assertGreater(machine.daemon.next_pass, self.now, "a tick polled")
+
+    def test_a_message_sent_while_a_push_runs_is_pushed_on_the_next_tick_without_a_poll(self) -> None:
+        self.pair()
+        log = hook(self.one.work)
+        self.one.send(A, "test-writer", "First")
+
+        self.one.start_pass()
+        self.assertTrue(wait_for(lambda: log.exists()))
+        code, out, err = self.one.send(A, "test-writer", "Second")
+        log.with_suffix(".release").touch()
+        self.one.settle()
+        self.ticks(self.one, 3)
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(2, log.read_text().count("start"))
+        self.assertEqual(2, len([ref for ref in self.refs() if ref.startswith(relay.INBOX)]))
+        self.assertEqual([], self.one.outbox())
+
+    def test_a_push_that_keeps_failing_is_tried_again_only_on_the_next_poll(self) -> None:
+        self.pair()
+        path = self.one.work / ".git" / "hooks" / "pre-push"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        log = self.scratch / "refused.log"
+        path.write_text(f'#!/bin/sh\necho run >> "{log}"\nexit 1\n')
+        path.chmod(0o755)
+        self.one.send(A, "test-writer", "Refused")
+
+        self.one.run_pass()
+        self.ticks(self.one, 5)
+        between = log.read_text().count("run")
+        self.advance(watch.Settings().interval)
+        self.one.run_pass()
+
+        self.assertEqual((1, 2), (between, log.read_text().count("run")))
+        self.assertEqual(1, len(self.one.outbox()))
+
     def test_a_push_that_outlasts_its_timeout_is_killed_and_its_changes_wait_for_the_next(self) -> None:
         self.one.inline_key(self.private)
         self.one.claude(A)
