@@ -254,9 +254,9 @@ When Projector's `ask` and `request` tools are available:
    plan's `status`. The status is your readiness claim, and step 1 made it
    honest.
 
-Run `project review ready` as a command of its own, never as a bare
-`gh pr ready`, as `../fix-pr/SKILL.md` describes under "Hold the pull
-request while changes are built".
+Run `project review ready` on a line by itself, joined to no other
+command, and never as a bare `gh pr ready`, as `../fix-pr/SKILL.md`
+describes under "Hold the pull request while changes are built".
 
 Where the inbox tools are not available, raise each blocking question in
 the conversation instead, and mark the pull request ready at the hand-over,

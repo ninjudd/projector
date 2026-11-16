@@ -222,19 +222,28 @@ the `origin` of the checkout you run them in, and refuse outside one.
    owner drops every change you were about to build, mark it ready without a
    push, because the head the review signed off is still the head.
 
-Each command prints the pull request's draft state and whether it moved;
-`--json` prints the same as one object.
+Each command prints the pull request's draft state, whether it moved, and
+the head it acted on; `--json` prints the same as one object. So you need
+no `gh pr view` after either one.
 
-Run `project review hold` and `project review ready` as commands of their
-own, so the rule that allows them matches, rather than running `gh pr ready`
-yourself. A host's automatic approval, such as Claude Code's auto mode, can
-refuse a bare `gh pr ready` as self-approval. `project init` adds
-`Bash(project *)` to the user's Claude Code settings, which allows every
-Projector command, and the same allowance to their Codex rules, so the
-commands run where the bare call is refused. If the host refuses a command
-anyway, do not retry it as `gh pr ready`. Leave the pull request as it is,
-and ask the user to run `project init` in a terminal, which adds the rules,
-or to run the command themselves.
+Run `project review hold` and `project review ready` each on a line by
+itself, never joined to another command with `;`, `&&`, `||`, or a pipe, and
+never as `gh pr ready` yourself. `project init` adds `Bash(project *)` to
+the user's Claude Code settings, which allows every Projector command, and
+the same allowance to their Codex rules. Claude Code allows a line that
+joins several commands only when every command on it matches an allow
+rule, so one `gh` or `git` command beside `project review ready` sends the
+whole line to the host's automatic approval instead. Claude Code's auto
+mode can refuse such a line, judging that marking a held pull request ready
+undoes the hold, and can refuse a bare `gh pr ready` as self-approval.
+
+If the host refuses one of these commands, read the line you ran. When it
+joined the command to others, run the Projector command again on a line by
+itself; that is not working around the refusal, because the allow rule then
+decides it. When the command was already alone, do not retry it as
+`gh pr ready`. Leave the pull request as it is, say in your result that it
+is still a draft and why, and ask the user to run `project init` in a
+terminal, which adds the rules, or to run the command themselves.
 
 Hold only when a change is coming: when you defer every suggestion and the
 owner asks for nothing, leave the draft state as it is. Your report lists the
