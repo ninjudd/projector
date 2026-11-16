@@ -1383,8 +1383,12 @@ test('lists your pull requests first, then everyone else’s by author, naming t
   expect(keys).toEqual(['pr:o/r#9', 'pr:x/y#7', 'pr:o/r#5', 'pr:o/r#6', 'pr:o/r#4'])
   // The header counts your pull requests apart from the review requests, everyone else's.
   expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 3 review requests  \d+s$/)
+  // A blank line sets the review requests apart from yours, and only that one.
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts.filter(text => text === ' ')).toEqual([])
+  expect(texts.filter(text => text === ' ')).toEqual([' '])
+  const gap = texts.indexOf(' ')
+  expect(texts.slice(0, gap)).not.toContain('bob')
+  expect(texts.slice(gap)).toContain('bob')
 
   // Only someone else's line names its author, in `subtle`, in a column as wide as the longest login.
   expect(await ui.find({ key: 'author:x/y#7' })).toBeUndefined()
@@ -1430,6 +1434,9 @@ test('your pull requests and the review requests collapse apart, yours always fi
   // Yours collapse apart from them, and their line still comes first.
   await ui.press({ key: 'count:pr' })
   expect(await lines()).toEqual(['+ r#9 y#7', '+ r#20 r#5 r#6 r#4'])
+  // The blank line still sets the two collapsed lines apart.
+  const collapsed = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  expect(collapsed.slice(collapsed.indexOf('y#7'), collapsed.indexOf('y#7') + 3)).toEqual(['y#7', ' ', '+'])
 
   // A label opens its drawer under its own section's line.
   await ui.press({ key: 'open:o/r#4' })
@@ -5794,6 +5801,8 @@ test('dismiss drops a pull request from each role the session holds and from an 
   expect(session.toasts).toEqual(['projector: stopped fixing and reviewing x/y#7'])
   expect(await rowsOf(ui)).toEqual(['pr:o/r#4'])
   expect(await headerOf(ui)).toMatch(/^\/projector +1 review request  \d+s$/)
+  // With none of your own pull requests left, no blank line opens the list.
+  expect((await ui.findAll({ type: 'Text' })).filter(found => found.text === ' ')).toEqual([])
   await ui.unmount()
 })
 

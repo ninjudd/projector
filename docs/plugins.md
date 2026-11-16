@@ -280,6 +280,7 @@ not subscribed to before.
 ```text
   /projector                            1 pull request · 1 review request  12s   [-]
    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
+
    #258 findings grace Name the reviewed head in a rev… reviewing · passing 5m
         reviewer · sig-head · +84 −1 in 5 files · checks passing · reviewing
         7: Discuss  8: Dismiss
@@ -355,9 +356,11 @@ for it arrives.
 
 Your own pull requests come first, then everyone else's, which the panel
 calls review requests, each author's together and the authors in order of
-login, with no line between the groups. Within each, the pull requests go
-by repository, and each repository's newest first, so a pull request keeps
-its place from one look to the next. The header counts the two apart,
+login, with no line between one author's group and the next. A blank line
+sets the review requests apart from yours whenever both show something,
+whether rows or a collapsed line. Within each, the pull requests go by
+repository, and each repository's newest first, so a pull request keeps its
+place from one look to the next. The header counts the two apart,
 such as `14 pull requests · 10 review requests`. The panel tells which are
 yours by the operator, the account `gh` is signed in as, which it reads from
 the daemon's `daemon.json`. A pull request by a deleted account, which
