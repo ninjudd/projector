@@ -1,0 +1,82 @@
+{
+ "version": 1,
+ "name": "Release pull request sign-off",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 470,
+  "title": "Sign off the release pull request's version bump in the Release workflow",
+  "head": "f00c7ec3407e35322ea7c80dac959e36df45ab63",
+  "headRef": "release-review-status",
+  "base": "16c1fde68c298103ec33fb696587e44f3df04880",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector ships a release through its Release workflow. Someone starts the workflow by hand, its <b>propose</b> job raises the version in <code>pyproject.toml</code> and the two plugin manifests on a <code>release/vX.Y.Z</code> branch, and opens a pull request. Merging that pull request tags and publishes the release.",
+   "<code>main</code> has a ruleset that requires the <code>projector/review</code> commit status, which a clean Projector review posts on the head it reviewed. No review session picks up a pull request that the workflow's own token opened, so every release pull request waited for a review that never came.",
+   "This change has the propose job sign off its own commit. The job first refuses a run dispatched from any ref but <code>main</code>. After the bump commit, it checks that the commit changes exactly the files in <code>release.py</code>'s <code>VERSION_FILES</code>, and fails before the push when anything else changed. After the push, it posts a <code>success</code> <code>projector/review</code> status on that one commit. A later push to the release branch makes a new head with no status, which waits for a review like any other head.",
+   "The first review found that a run dispatched from another branch would carry that branch's commits into the release pull request under the status. The ref check fixes that, and the review of this head is clean."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Propose job</b>: the Release workflow's job that runs on a manual dispatch and opens the release pull request.</li><li><b><code>projector/review</code></b>: the commit status <code>main</code>'s ruleset requires before a merge, normally posted by <code>project review publish</code>.</li><li><b><code>VERSION_FILES</code></b>: the three files that carry Projector's version, listed in <code>.github/scripts/release.py</code>.</li><li><b><code>GITHUB_REF</code></b>: the ref a run was dispatched from, such as <code>refs/heads/main</code>, which the runner sets.</li></ul>"
+   },
+   {
+    "id": "history",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li><b>9ee2813</b>: changes requested. A release dispatched from another branch would sign off that branch's unreviewed commits.</li><li><b>f00c7ec</b>: clean. The job refuses any ref but <code>main</code>, and <code>docs/plugins.md</code> now describes the status.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "workflow",
+   "title": "The propose job signs off its version bump",
+   "kicker": "A ref check, a guard on the release commit, then a success status on it",
+   "intro": [
+    "The propose job gains <code>statuses: write</code>, the permission the commit statuses API needs. Its step now opens with a check that the run was dispatched from <code>main</code>, runs a guard between the commit and the force-push, and posts the status between the push and the pull request.",
+    "The ref check matters because <code>actions/checkout</code> takes the dispatched ref, and the release branch carries every commit that ref has. The guard lists the files the release commit changes, sorted, and compares them with the sorted <code>VERSION_FILES</code> that it imports from <code>release.py</code>. The status carries the description \"Version-only release; needs no review\" and links to the workflow run. The release pull request's body now says the workflow posted it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".github/workflows/release.yml",
+     "note": "The ref check, the guard, the status post, and the permission for it.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The review ran these lines as the workflow writes them: <code>refs/heads/main</code> exits 0, and <code>refs/heads/feature-x</code>, <code>refs/heads/main-x</code>, and <code>refs/tags/v0.8.18</code> exit 1 with <code>run the release from main, not &lt;ref&gt;</code>.",
+       "line": 43
+      },
+      {
+       "kind": "context",
+       "text": "The only dispatch input is <code>bump</code>, so no input picks a ref. A re-run keeps the original run's <code>GITHUB_REF</code> and <code>GITHUB_SHA</code>, so it rebuilds from a commit that was on <code>main</code> at the dispatch.",
+       "line": 43
+      },
+      {
+       "kind": "verify",
+       "text": "The review replayed the job's commit and guard in a clone of the head. A plain patch bump passes and lists the three version files, and a bump with <code>README.md</code> also changed exits 1 and names it.",
+       "line": 56
+      },
+      {
+       "kind": "verify",
+       "text": "The active <code>Projector review</code> ruleset requires the <code>projector/review</code> context from any source, with no bypass, so a status posted with the workflow's token satisfies it.",
+       "line": 69
+      }
+     ]
+    },
+    {
+     "path": "docs/develop.md",
+     "note": "The Release section now says the workflow posts the status, why a later push still needs a review, and that a run from another branch is refused."
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "\"Release an update\" now explains the status, the <code>statuses: write</code> permission, and the refusal of a run from another branch, beside its account of <code>actions: write</code>."
+    }
+   ]
+  }
+ ]
+}
