@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -15,10 +16,14 @@ from unittest import mock
 from projector import cli, review
 
 REPO = "acme/app"
+# The setup commits, and a CI runner has no Git identity configured.
+GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@example.com"}
 
 
 def git(cwd: Path, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
+                          env={**os.environ, **GIT_ENV}).stdout.strip()
 
 
 class WorktreeCommandTests(unittest.TestCase):
