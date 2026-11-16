@@ -19,10 +19,13 @@ Layout of the state root, `$XDG_STATE_HOME/projector/watch/`:
     sessions/<session>/session.json             the deliverer, and when it last renewed the session
     sessions/<session>/events                   event lines not yet delivered
     sessions/<session>/state.json               what the daemon announced to the session, and when
+    sessions/<session>/agent.json               its `project agent` registration, live while delivery reaches it
     cache/<owner>/<repo>/pulls/<number>.json    a pull request's ETags and last result
     cache/<owner>/<repo>/branches/<base>.json   a base branch's ETag
     cache/<owner>/<repo>/open/<page>.json       a page of the repository's open pull requests
     cache/<owner>/<repo>/adopted.json           the pull requests a repository subscription covers
+    outbox/<owner>/<repo>.json                  the relay's ref changes waiting for a push (`relay.py`)
+    relay/<owner>/<repo>.json                   what the relay last found in the repository
 
 Owner and repository names under `cache/` are lowercased, because GitHub ignores their case.
 """
@@ -526,6 +529,16 @@ def run_gh(args: list[str]) -> GhResult:
     return GhResult(done.returncode, done.stdout, done.stderr)
 
 
+def signed_in(gh: Callable[[list[str]], GhResult]) -> Optional[str]:
+    """The login `gh` is signed in as, or None when `gh api user` names none."""
+    result = gh(["api", "user"])
+    try:
+        found = json.loads(result.stdout).get("login") if result.returncode == 0 else None
+    except (ValueError, AttributeError):
+        found = None
+    return found if isinstance(found, str) and found else None
+
+
 @dataclass(frozen=True)
 class Response:
     """What `gh api -i` printed: the status line's code, or None when it printed none, the ETag, and the body.
@@ -686,6 +699,8 @@ class Daemon:
         self.wanted = False
         self.last_pass: Optional[float] = None
         self.codex = codex_watch.Dispatcher(wall=wall)
+        from . import relay
+        self.relay = relay.Relay(root, gh=self.gh, wall=wall)
 
     def log(self, message: str) -> None:
         print(f"{stamp(self.wall())} {message}", flush=True)
@@ -693,6 +708,7 @@ class Daemon:
     def start(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         self.write_daemon()
+        self.relay.start()
         self.read_operator(self.wall())
 
     def write_daemon(self) -> None:
@@ -705,12 +721,8 @@ class Daemon:
         if self.operator is not None and self.operator_read is not None \
                 and now - self.operator_read < self.settings.full_every:
             return
-        result = self.gh(["api", "user"])
-        try:
-            found = json.loads(result.stdout).get("login") if result.returncode == 0 else None
-        except (ValueError, AttributeError):
-            found = None
-        if not isinstance(found, str) or not found:
+        found = signed_in(self.gh)
+        if found is None:
             return
         self.operator_read = now
         if found != self.operator:
@@ -750,11 +762,14 @@ class Daemon:
             self.scan(now)
             if self.live:
                 self.last_live = now
-            elif now - self.last_live >= IDLE:
+            elif now - self.last_live >= IDLE and not self.relay.busy():
                 self.log("stopping: no session has been live for 5 minutes")
                 return False
-            if self.wanted or now >= self.next_pass:
+            polled = self.wanted or now >= self.next_pass
+            if polled:
                 self.run_pass()
+            if self.relay.tick(self.live, polled, self.settings.full_every):
+                self.write_status(self.wall())
             self.codex.tick([self.root / "sessions" / name for name in session_names(self.root)])
             return True
         finally:
@@ -799,6 +814,8 @@ class Daemon:
         live = {name for name, seen in self.sessions.items() if now - seen.at < LAPSE}
         live.update(name for name in names if codex_watch.active(self.root / "sessions" / name, wall)
                     and codex_watch.has_work(self.root / "sessions" / name))
+        live.update(name for name in names if (self.root / "sessions" / name / "agent.json").exists()
+                    and delivery(self.root, name, wall) != "none")
         for name in names:
             mark = file_signature(self.root / "sessions" / name / "subscriptions")
             if name in live and mark != self.marks.get(name) and self.lacks_result(name):
@@ -856,6 +873,7 @@ class Daemon:
             "targets": self.targets,
             "repositories": self.repositories,
             "graphql": [{"at": stamp(at), "cost": cost} for at, cost in self.spent],
+            "relay": self.relay.status(),
         })
 
     def conditional(self, path: str, etag: Optional[str]) -> Response:
@@ -1714,6 +1732,7 @@ def serve(root: Path, version: str, *, sleep: Callable[[float], None] = time.sle
         finally:
             if daemon is not None:
                 daemon.codex.close()
+                daemon.relay.close()
             unlock(descriptor)
     finally:
         os.close(descriptor)
@@ -1731,6 +1750,8 @@ def status(root: Path, now: float) -> dict:
             "operator": daemon.get("operator"), "live_sessions": report.get("live_sessions") or [],
             "targets": report.get("targets") or [], "repositories": report.get("repositories") or [],
             "last_pass": report.get("last_pass"), "graphql_points_last_hour": points,
+            "relay": report.get("relay") or {"key": {"state": "off", "id": None, "store": None, "error": ""},
+                                              "repositories": {}},
             "deliveries": {name: found for name in session_names(root)
                            if (found := codex_watch.report(session_folder(root, name), now))}}
 

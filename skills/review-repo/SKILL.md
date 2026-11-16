@@ -123,7 +123,10 @@ repository already covers the pull request, so it skips the subscription
 step in `review-pr`. Follow `MOVED`, a `NEW HEAD` that says its last review
 stalled, `MERGED`, `CLOSED`, and `MISSING` as `../review-pr/SKILL.md`
 describes under "Act on the session's review events", which also gives the
-rules for each subagent.
+rules for each subagent. A `PEER MESSAGE` line comes from another agent
+session, not from a pull request: keep it in the main conversation, never
+in a review subagent, and handle it as `../message-agent/SKILL.md`
+describes under "Answer a `PEER MESSAGE` line".
 
 Every pushed SHA, including a fix-only SHA, starts a review cycle that ends
 in a verdict published on that SHA, full or incremental. `review-pr` decides

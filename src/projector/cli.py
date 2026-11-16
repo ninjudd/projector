@@ -23,14 +23,17 @@ from typing import Optional
 from urllib.parse import urlparse
 from urllib.request import url2pathname, urlopen
 
-from . import codex_watch, inbox, instructions, loop, permissions, review, site, summary, watch
+from . import agents, codex_watch, inbox, instructions, loop, permissions, relay, review, site, summary, watch
 from .permissions import allow_commands
 from .summary import WORKFLOW_PATH
 from .config import (
     CONFIG_NAME,
+    SECRETS,
     Change,
     ConfigError,
+    Config,
     parse_value,
+    redact,
     same_value,
     unset_value,
     user_config_path,
@@ -714,6 +717,7 @@ def parser() -> argparse.ArgumentParser:
     add_inbox_parser(subcommands)
     add_loop_parser(subcommands)
     add_watch_parser(subcommands)
+    add_agent_parser(subcommands)
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
@@ -1031,6 +1035,161 @@ def add_watch_parser(subcommands) -> None:
     command("stop", "ask the watch daemon to exit", session=False)
 
 
+def add_agent_parser(subcommands) -> None:
+    parser = subcommands.add_parser("agent", help="register the session under a name and a summary, list your "
+                                                   "registered sessions, and message them")
+    commands = parser.add_subparsers(dest="agent_command", required=True)
+
+    def command(name: str, help_text: str) -> argparse.ArgumentParser:
+        parsed = commands.add_parser(name, help=help_text)
+        parsed.add_argument("--session", help="the session's id (default: $PROJECTOR_SESSION, then "
+                                              "$CLAUDE_CODE_SESSION_ID)")
+        add_output(parsed)
+        return parsed
+
+    register = command("register", "record the session's name, summary, and model, so your other sessions can "
+                                   "find and message it")
+    register.add_argument("--name", help="1 to 32 letters, digits, and hyphens, unique among your live sessions")
+    register.add_argument("--summary", help=f"what the session is doing, one line of at most {agents.MAX_SUMMARY} "
+                                            "characters")
+    register.add_argument("--model", help="the model ID the session runs")
+    listed = command("list", "list your live registered sessions")
+    listed.add_argument("--all", action="store_true", dest="everyone", help="list lapsed sessions too")
+    send = command("send", "send a message to another of your registered sessions")
+    send.add_argument("to", help="the session's name, or its full session ID")
+    send.add_argument("text", help="the message, at most 16 KiB; - reads standard input")
+    reply = command("reply", "answer a message, to the session that sent it")
+    reply.add_argument("id", help="the message's ID, m- and 32 hex digits")
+    reply.add_argument("text", help="the reply, at most 16 KiB; - reads standard input")
+    read = command("read", "print a message sent to this session, with who sent it")
+    read.add_argument("id", help="the message's ID, m- and 32 hex digits")
+
+    key = commands.add_parser("key", help="make, show, copy, and remove the key that lets the relay carry "
+                                          "messages between your machines")
+    keys = key.add_subparsers(dest="key_command", required=True)
+    init = keys.add_parser("init", help="make the relay's key and store it in the OS keychain, or inline in "
+                                        f"~/{CONFIG_NAME} where there is none")
+    init.add_argument("--inline", action="store_true", help=f"store the key inline in ~/{CONFIG_NAME}")
+    add_output(init)
+    add_output(keys.add_parser("show", help="print the key's ID, its public key, and where it is stored"))
+    keys.add_parser("export", help="print the key as an agent.key line to copy to another machine; terminal only")
+    imported = keys.add_parser("import", help="read an agent.key line from standard input and store the key; "
+                                              "terminal only")
+    imported.add_argument("--inline", action="store_true", help=f"store the key inline in ~/{CONFIG_NAME}")
+    imported.add_argument("--replace", action="store_true", help="replace a different key this machine holds")
+    add_output(imported)
+    keys.add_parser("remove", help="delete agent.key and its keychain item, which turns the relay off here")
+
+
+def run_agent_key(arguments: argparse.Namespace) -> int:
+    root = watch.state_root()
+    command = arguments.key_command
+    if command in ("export", "import") and not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise EnvironmentError(f"`project agent key {command}` handles the key itself, so it runs only with a "
+                               "terminal on standard input and output, where no agent's transcript records it; run "
+                               f"`project agent key {command}` yourself in a terminal")
+    if command == "export":
+        print(relay.export_line())
+        return 0
+    if command == "show":
+        shown = relay.show_key()
+        if arguments.json_output:
+            print(json_text(shown))
+        else:
+            print(f"key {shown['key_id']}\npublic key: {shown['public_key']}\nstored: {shown['store']}")
+        return 0
+    if command == "remove":
+        removed, found = relay.remove_key(root)
+        watch.ensure_daemon(root, distribution_version(), newer_release)
+        print(f"removed key {removed} from {user_config_path()}; {found}. The relay is off on this machine, and "
+              "the watch daemon deletes this machine's agents' refs on its next pass")
+        return 0
+    if command == "init":
+        key_id, store, reason = relay.init_key(root, inline=arguments.inline)
+    else:
+        print("Paste the agent.key line that `project agent key export` printed:", file=sys.stderr, flush=True)
+        key_id, store, reason = relay.import_key(root, sys.stdin.readline(), inline=arguments.inline,
+                                                 replace=arguments.replace)
+    path = user_config_path()
+    if arguments.json_output:
+        print(json_text({"key_id": key_id, "store": store, "reason": reason, "file": str(path)}))
+        return 0
+    where = (f"stored inline in {path}, mode 0600, because {reason}" if store == "inline"
+             else f"stored in the {store}; {path} names it as agent.key = \"keychain:{key_id}\"")
+    print(f"key {key_id} {where}")
+    print(relay.COPY)
+    return 0
+
+
+def warn_ignored(config: Config) -> None:
+    for path, key in config.ignored:
+        print(f"project: {path} sets {key}, which Projector reads only from {user_config_path()}; ignoring it",
+              file=sys.stderr)
+
+
+def run_agent(arguments: argparse.Namespace) -> int:
+    if arguments.agent_command == "key":
+        return run_agent_key(arguments)
+    root = watch.state_root()
+    command = arguments.agent_command
+    now = time.time()
+    session = watch.session_id(arguments.session, required=command != "list")
+    here = here_config()
+    warn_ignored(here)
+    if command == "list":
+        rows = agents.listing(root, session, now, everyone=arguments.everyone)
+        caller = agents.record(root, session) if session else None
+        repo = (caller or {}).get("repo") or agents.checkout(Path.cwd()).get("repo")
+        running, line = relay.header(root, repo)
+        if arguments.json_output:
+            print(json_text({"local_only": not running, "relay": line, "agents": rows}))
+            return 0
+        print(line)
+        for row in rows:
+            print(agents.row_text(row, now))
+        if not rows:
+            print("no registered session" if arguments.everyone else "no live registered session")
+        return 0
+    if command == "read":
+        message, sender = agents.read(root, session, arguments.id, now)
+        if arguments.json_output:
+            print(json_text({"message": message, "sender": sender, "notice": agents.NOTICE}))
+        else:
+            print(agents.read_text(message, sender))
+        return 0
+    ensure = lambda: watch.ensure_daemon(root, distribution_version(), newer_release)
+    if command == "register":
+        found, off = agents.register(root, session, name=arguments.name, summary=arguments.summary,
+                                     model=arguments.model, cwd=Path.cwd(), now=now)
+        ensure()
+        way = watch.delivery(root, session, now)
+        if arguments.json_output:
+            print(json_text({"session": session, "agent": found, "delivery": way, "relay": found["relay"],
+                             "relay_off": off}))
+        else:
+            place = " ".join(part for part in (found.get("repo"), found.get("branch")) if part) or found["cwd"]
+            relayed = "queued for the relay" if found["relay"] == "pending" else f"local only: {off}"
+            print(f"registered {agents.label(found, session)} ({agents.describe(found['host'], found.get('model'))}) "
+                  f"in {place}; delivery: {way}; {relayed}")
+        return 0
+    text = sys.stdin.read().rstrip("\n") if arguments.text == "-" else arguments.text
+    limit = agents.message_limit(here)
+    if command == "send":
+        message, found, way = agents.send(root, session, arguments.to, text, now, limit=limit)
+    else:
+        message, found, way = agents.reply(root, session, arguments.id, text, now, limit=limit)
+    ensure()
+    public = way.startswith("relay") and relay.visibility(root, found["repo"]) != "PRIVATE"
+    if arguments.json_output:
+        print(json_text({"message": message, "to": found, "delivery": way,
+                         **({"reminder": relay.PUBLIC_REMINDER} if public else {})}))
+    else:
+        print(agents.summary_of(message, found, way))
+        if public:
+            print(relay.PUBLIC_REMINDER)
+    return 0
+
+
 def here_config():
     return load_config(config_start(argparse.Namespace(root=None)))
 
@@ -1127,6 +1286,14 @@ def run_watch(arguments: argparse.Namespace) -> int:
             print(f"repositories: {', '.join(report['repositories']) or 'none'}")
             print(f"last pass: {report['last_pass'] or 'none yet'}")
             print(f"GraphQL points in the last hour: {report['graphql_points_last_hour']}")
+            key = report["relay"]["key"]
+            print(f"relay: on, key {key['id']} ({key['store']})" if key["state"] == "on" else
+                  f"relay: reading key {key['id']}" if key["state"] == "reading" else
+                  f"relay: off ({key['error'] or 'no agent.key'})")
+            for repo, found in report["relay"]["repositories"].items():
+                problems = "; ".join(part for part in (found.get("error"), *found.get("errors", [])) if part)
+                print(f"relay {repo}: {found.get('state')}, {found.get('queued', 0)} queued, "
+                      f"{found.get('rejected', 0)} rejected" + (f"; {problems}" if problems else ""))
             for session, found in report["deliveries"].items():
                 expires = found["expires_at"]
                 when = watch.stamp(expires) if isinstance(expires, (int, float)) else "unknown"
@@ -1295,24 +1462,28 @@ def report_override(arguments: argparse.Namespace, change: Change) -> None:
         return
     source = config.source(change.key)
     if source is not None:
-        print(f"project: {source} sets {change.key} = {format_value(effective)}, which applies here",
-              file=sys.stderr)
+        print(f"project: {source} sets {change.key} = {format_value(redact(change.key, effective))}, which applies "
+              "here", file=sys.stderr)
     else:
         print(f"project: {change.path} is not read here; 'project config paths' lists the files that are",
               file=sys.stderr)
 
 
 def change_config(arguments: argparse.Namespace) -> int:
+    if arguments.config_command == "set" and arguments.key in SECRETS:
+        raise UsageError(f"{arguments.key} holds the relay's private key, which a command line would show; run "
+                         "`project agent key import` in a terminal to set it, or `project agent key init` to make "
+                         "a key")
     path = config_file(arguments)
     if arguments.config_command == "set":
         change = write_value(path, arguments.key, parse_value(arguments.key, arguments.value))
     else:
         change = unset_value(path, arguments.key)
     if arguments.json_output:
-        print(json_text({"action": change.action, "key": change.key, "old": change.old, "new": change.new,
-                         "file": str(change.path)}), flush=True)
+        print(json_text({"action": change.action, "key": change.key, "old": redact(change.key, change.old),
+                         "new": redact(change.key, change.new), "file": str(change.path)}), flush=True)
     else:
-        shown = "" if change.new is None else f" = {format_value(change.new)}"
+        shown = "" if change.new is None else f" = {format_value(redact(change.key, change.new))}"
         print(f"{change.action} {change.key}{shown} in {change.path}", flush=True)
     report_override(arguments, change)
     return 0
@@ -1322,6 +1493,7 @@ def run_config(arguments: argparse.Namespace) -> int:
     if arguments.config_command in ("set", "unset"):
         return change_config(arguments)
     config = load_config(config_start(arguments))
+    warn_ignored(config)
     command = arguments.config_command
 
     if command == "get":
@@ -1330,6 +1502,7 @@ def run_config(arguments: argparse.Namespace) -> int:
             value = arguments.default
             source = None
         else:
+            value = redact(arguments.key, value)
             source = config.source(arguments.key)
         if arguments.json_output:
             print(
@@ -1353,14 +1526,14 @@ def run_config(arguments: argparse.Namespace) -> int:
             print(
                 json_text(
                     {
-                        "config": config.values,
+                        "config": redact("", config.values),
                         "sources": {key: str(path) for key, path in config.sources.items()},
                     }
                 )
             )
         else:
             for key in sorted(flat):
-                print(f"{key} = {format_value(flat[key])}")
+                print(f"{key} = {format_value(redact(key, flat[key]))}")
         return 0
 
     if arguments.json_output:
@@ -2511,6 +2684,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_loop(arguments)
     if arguments.command == "watch":
         return run_watch(arguments)
+    if arguments.command == "agent":
+        return run_agent(arguments)
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.

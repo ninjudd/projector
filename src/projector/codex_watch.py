@@ -137,6 +137,10 @@ def eligible(folder: Path, item: dict) -> bool:
     if item["line"].split(" ", 1)[0] in TERMINAL:
         return True
     key = json.loads(item["key"])
+    if key[:1] == ["message"]:
+        from .agents import message_file
+        path = message_file(folder, key[1]) if len(key) == 2 and isinstance(key[1], str) else None
+        return path is not None and path.is_file()
     if len(key) < 3 or not isinstance(key[1], int):
         return False
     repo, number, role = key[:3]

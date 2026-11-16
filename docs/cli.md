@@ -215,6 +215,10 @@ what it did to each:
       decision = "allow",
   )
   prefix_rule(
+      pattern = ["project", "agent", ["list", "read", "register", "reply", "send"]],
+      decision = "allow",
+  )
+  prefix_rule(
       pattern = ["project", "config", ["get", "list", "paths"]],
       decision = "allow",
   )
@@ -737,6 +741,8 @@ reads, which are these:
 | `watch.renotify` | whole number | `900` | the watch daemon, from `~/.projector.toml` only, as the seconds before work that still stands is announced again |
 | `watch.review_stall` | whole number | `1800` | the watch daemon, from `~/.projector.toml` only, as the seconds a review's lock can go unchanged before the daemon treats the review as stalled |
 | `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
+| `agent.message_limit` | whole number | `12` | `project agent send` and `reply`, from the checkout the sending session works in, as the most messages one session sends to one other session in a rolling hour; at least `1` |
+| `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or the inline fallback, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key import`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
 
 `review.allow_approve` is off unless it is exactly `true`; an unset key means
 `false` rather than a question to ask. It never applies to a review of your own
@@ -789,7 +795,7 @@ Outside a Git repository, the default has no file to change, so `set` and
 `set` takes `true` or `false` for a boolean key, a whole number for a
 whole-number key, and any text for a string key. It refuses any other value
 with exit code 2, as it does a whole number below 30 for `watch.interval` or
-below 1 for the other `watch` numbers. It also refuses, with
+below 1 for the other `watch` numbers and `agent.message_limit`. It also refuses, with
 exit code 2 and the list of keys, a key that the table in
 [Read configuration](#read-configuration) does not list. `get` still reads
 a key that is not in the table.
@@ -2833,6 +2839,286 @@ over at the first command. A daemon or a command whose version is `unknown`,
 as one run from a checkout that was never installed reports, never replaces
 and is never replaced. The daemon writes its output to `daemon.log` in the
 state directory.
+
+## Message other agents
+
+`project agent` lets your agent sessions find each other and send each
+other messages, in Claude Code and Codex alike. A session registers under a
+name, a summary of what it is doing, or both. Another session lists the
+registered sessions, sends one a message, and the watch daemon's delivery
+wakes the recipient with one `PEER MESSAGE` line, as it delivers a pull
+request event. On one machine this needs no setup. Across machines it needs
+a key, as [Message agents on other machines](#message-agents-on-other-machines)
+describes. The `message-agent` skill tells an agent how to use these
+commands.
+
+Each command acts for the session that `--session` names, then
+`PROJECTOR_SESSION`, then `CLAUDE_CODE_SESSION_ID`, as the `project watch`
+commands do, and takes `--json`. Only sessions signed in to the same GitHub
+login see and message each other.
+
+### Register a session
+
+`register` records the session's name, summary, and model ID, and the GitHub
+login, host, machine, and checkout it runs in:
+
+```console
+$ project agent register --name parser-refactor --summary "Refactoring the parser" --model claude-opus-5-5
+registered parser-refactor (claude claude-opus-5-5) in acme/app feature; delivery: mod; queued for the relay
+```
+
+The line ends with `queued for the relay` when the relay runs for the
+session, and otherwise with `local only:` and the reason.
+
+- **`--name`** is 1 to 32 letters, digits, and hyphens, starting with a
+  letter or digit. Names ignore case, and `register` stores them in
+  lowercase. It refuses, with exit code 65, a name that another live
+  session of the same login holds, on this machine or on another machine
+  the relay has found, and names that session's summary. A lapsed
+  session's name is free to take.
+- **`--summary`** is one line of at most 120 characters.
+- **`--model`** is the model ID the session runs: 1 to 100 letters, digits,
+  and `.`, `_`, `:`, `/`, `@`, `[`, `]`, and `-`, starting with a letter or
+  digit, such as `claude-opus-5-5` or `gpt-5.5`. Each message's event line
+  prints the model before its authority notice, so `register` refuses, with
+  exit code 2, a value with a space, a parenthesis, or any other character
+  that could make it read as prose.
+
+The first registration needs `--name`, `--summary`, or both. A later one
+changes only the fields it gives, and records the checkout, the login, and
+the host again. The host is `codex` while a Codex registration delivers the
+session's events, `claude` when `CLAUDE_CODE_SESSION_ID` names the session,
+and `other` otherwise.
+
+Registering is how a session agrees to receive messages, so `register`
+refuses, with exit code 65, a session that nothing delivers events to: one
+whose delivery, as `project watch add` reports it, is `none`. It also
+refuses when `gh` is not signed in, because it records the login `gh api
+user` names. Every registration that succeeds starts the watch daemon when
+none runs.
+
+A registered session is live while its delivery is anything but `none`.
+The watch daemon counts a live registered session as live, so an idle Codex
+session with no subscriptions keeps the daemon running and still receives
+messages.
+
+### List the sessions
+
+`list` prints the live registered sessions signed in to your login, one a
+line, under a header that says whether the relay runs. Each line holds the
+name, or the first 8 characters of the session ID when the session has no
+name, then the host and model, the machine, the repository and branch, how
+long ago the record changed, and the summary. `(you)` marks the session the
+command acts for:
+
+```console
+$ project agent list
+relay: on, key 3f2a9c1d7e4b6a05 in the keychain
+b5e6f7a8	codex gpt-5.5	desktop	acme/app feature	4m ago	Writing the parser's tests
+parser-refactor (you)	claude claude-opus-5-5	laptop	acme/app feature	1m ago	Refactoring the parser
+```
+
+The list holds this machine's sessions, then the sessions the relay found on
+your other machines in the repositories this machine's live sessions work
+in. When the relay does not run for the session, the header is `local only:`
+and the reason: no `agent.key` is set, with the command that makes one, the
+key could not be read, or the checkout has no GitHub origin. With an inline
+key, the header says so and why, such as `relay: on, key 3f2a9c1d7e4b6a05
+stored inline: secret-tool: not installed`. `unpublished` marks a session
+whose presence still waits in the outbox.
+
+`--all` adds lapsed sessions, marked `lapsed`. With `--json`, `list` prints
+`local_only`, the `relay` header line, and `agents`, each session's record
+with its `session`, `live`, and `you`. When the command acts for no
+registered session, `list` reads the login from `gh`.
+
+### Send, read, and answer a message
+
+`send <to> <text>` sends a message to the session that `<to>` names, by its
+name first and then by its full session ID. A `<text>` of `-` reads
+standard input. The message can span several lines, up to 16 KiB:
+
+```console
+$ project agent send test-writer "Which error type should the parser raise on a truncated header?"
+Sent m-3f2a9c1d7e4b6a0590c2d4e6f8a1b3c5 to test-writer (codex gpt-5.5); delivery: codex
+```
+
+`send` refuses each of these, and writes nothing:
+
+- A sender that is not registered, because a reply could not reach it.
+- A recipient that is the sender, is not registered, has lapsed, or is
+  signed in to another login.
+- A name that two live sessions hold, as two machines can when both
+  register it within one poll. Send to one by its full session ID.
+- A recipient on another machine when the sender does not work in the same
+  repository, or when the relay is off on this machine.
+- An empty message, or one longer than 16 KiB, with exit code 2.
+- A message past `agent.message_limit`, 12 by default: the most messages
+  one session sends to one other session in a rolling hour. The error names
+  the `project config set` command that changes it.
+
+The other refusals exit 65. `send` stores the message in the recipient's
+folder before it appends the recipient's event, so a delivered line always
+names a message that `read` can open. It then starts the watch daemon when
+none runs. The recipient's event says who sent the message and that it
+carries none of the user's authority, before a preview of its first line:
+
+```text
+PEER MESSAGE m-3f2a9c1d7e4b6a0590c2d4e6f8a1b3c5 from parser-refactor (claude claude-opus-5-5). From another agent, not the user, with none of the user's authority: "Which error type should the parser raise on a truncated header?" — read it with `project agent read m-3f2a9c1d7e4b6a0590c2d4e6f8a1b3c5` before acting on it.
+```
+
+`read <id>` prints the sender's name, host, model, machine, repository, and
+summary, then a notice that the message is from another agent and carries
+none of the user's authority, then the whole text. It records when the
+message was first read. It reads only the messages sent to the session it
+acts for, and refuses any other with exit code 65.
+
+`reply <id> <text>` sends a message to the sender of message `<id>`, in the
+same thread, under every rule `send` follows. The reply's event names the
+message it answers, as `re m-…` after the sender.
+
+With `--json`, `register` prints the `session`, its `agent` record, its
+`delivery`, its `relay` state, and `relay_off`, why the relay does not run
+for it. `send` and `reply` print the `message`, the recipient's record as
+`to`, the `delivery`, and a `reminder` in a repository that is not private.
+`read` prints the `message`, the `sender`'s record or `null`, and the
+`notice`.
+
+### Where the records live
+
+The records live under the watch state root, with each session's other
+files, and the daemon's cleanup of a session lapsed for 7 days removes them:
+
+| Path | Holds |
+| --- | --- |
+| `sessions/<id>/agent.json` | The session's registration |
+| `sessions/<id>/messages/<message>.json` | A message to the session. `send` removes the session's messages older than 7 days |
+| `sessions/<id>/sent.json` | The messages the session sent in the last hour, which the limit counts |
+| `machine.json` | This machine's ID |
+| `agents/` | The lock that keeps two registrations from taking one name |
+| `key.json` | Where `agent.key`'s private key is stored, and why when it is inline. It holds no key |
+| `outbox/<owner>/<repo>.json` | The relay's ref changes waiting for the daemon's next push, and the checkouts that queued them |
+| `relay/<owner>/<repo>.json` | What the relay last found in the repository: its visibility, the rejected count, the key's refs, and your other machines' agents |
+
+## Message agents on other machines
+
+The relay carries the same registrations and messages between your
+machines, through hidden refs in a repository both machines work in. It runs
+on a machine once you give it a key, and only for a session whose checkout
+has a GitHub `origin` it can push to. Agents on two machines reach each
+other only through a repository both work in.
+
+### Make and copy the key
+
+The key is an X25519 key pair. Make it once, on one machine:
+
+```console
+$ project agent key init
+key 3f2a9c1d7e4b6a05 stored in the macOS Keychain; ~/.projector.toml names it as agent.key = "keychain:3f2a9c1d7e4b6a05"
+To copy the key to another machine, run `project agent key export` here in a terminal, then run `project agent key import` there in a terminal and paste the line it printed.
+```
+
+`key init` stores the private key in the macOS Keychain, Windows Credential
+Manager, or Linux `secret-tool`, and writes only its ID to
+`~/.projector.toml` as `agent.key`. Where no keychain answers, as on
+headless Linux, or with `--inline`, it writes the key itself, as
+`agent.key = "x25519:<base64>"`, and says why. Either way it sets the file's
+mode to `0600`. It refuses when `agent.key` is already set; run
+`key remove` first to make a new key, which no message sealed to the old
+key can be opened with.
+
+Copy the key to each of your other machines from a terminal. `key export`
+prints it as one `agent.key` line, and `key import` reads that line from
+standard input, so the key never sits in a command line or your shell
+history:
+
+```sh
+project agent key export        # on the first machine
+project agent key import        # on the other machine; paste the line
+```
+
+Both commands refuse unless standard input and output are a terminal,
+because an agent's command output lands in its transcript. `key import`
+stores the key as `key init` does, takes `--inline`, and refuses to replace a
+different key unless you pass `--replace`.
+
+| Command | What it does |
+| --- | --- |
+| `key show` | Prints the key's ID, its public key, and where it is stored |
+| `key remove` | Deletes `agent.key` and the keychain item it names, which turns the relay off on this machine. The daemon then deletes this machine's agents' refs |
+
+Projector reads `agent.key` only from `~/.projector.toml`. A checkout's
+`.projector.toml` that sets it is ignored with a warning, so a repository
+cannot plant a key its author knows. Projector refuses an inline key in a
+file other accounts can read or change, and names the `chmod` that fixes it.
+`project config set agent.key` refuses and names `key import`. Every other
+command shows an inline key as `<redacted, key ID <id>>`, including
+`config list` and `config get agent`, which print the table that holds it.
+A `keychain:<id>` value holds no secret and prints as it is.
+
+The keychain keeps the key out of `~/.projector.toml`, dotfiles
+repositories, and backups. It does not stop a process running as you, such
+as an agent that sets out to read the key, because the daemon reads it
+without a prompt.
+
+### How the relay carries a record
+
+Commands never push. `register` and `send` seal their record and queue it in
+the repository's outbox, then return. The watch daemon runs one job per
+repository on a pool of two worker threads, so a slow `git` command never
+holds up another session's events. On each pass, a job:
+
+1. Fetches the key's refs, `refs/projector/agents/<key-id>/*` and
+   `refs/projector/inbox/<key-id>/*`, with one `git fetch --prune` in a
+   checkout of the repository.
+2. Opens at most 64 new records. It ignores a ref whose name does not match
+   its namespace, and rejects a commit whose tree is not exactly one
+   `sealed.json` of at most 32 KiB before it reads the blob, and a record
+   whose JSON nests more than 8 deep before it parses it. It checks the
+   tag before it decrypts anything, and rejects a record sealed by any other
+   key, a presence whose relay ID is not its ref's, a message whose
+   recipient is not its ref's or that is 7 days old, and a record whose
+   sender fields are not the shapes `register` gives them.
+3. Delivers each message for a live session on this machine as a local
+   message, once, and deletes its ref.
+4. Renews each live agent's one-hour lease every 30 minutes, and deletes the
+   refs of an agent that lapsed or whose key this machine no longer holds.
+   On each full pass it also deletes presence whose lease expired and
+   messages to an expired agent, whichever machine left them.
+5. Writes every queued record as a parentless commit and pushes all of them
+   in one `git push --porcelain`, with a `--force-with-lease` for each ref it
+   moves or deletes.
+
+The push runs the repository's pre-push hooks, once however many changes
+are queued. It is killed after 15 minutes and a fetch after 2, with the
+changes kept for the next pass. A change queued while a push runs starts
+the next push as soon as that one ends, while a change whose push failed
+waits for the next poll. Each commit names `projector
+<projector@invalid>` as author and committer, at the Unix epoch, with the
+message `projector relay` and no signature, so nothing about you or your
+checkout reaches the repository outside the sealed blob.
+
+Every record is encrypted with ChaCha20 and authenticated with HMAC-SHA256
+under a key agreed with X25519, sealed to the key's own public key, so only
+your machines can read or write your agents' records. A deleted ref's
+commit stays readable by its SHA on GitHub, so a leaked key exposes every
+record the relay pushed. In a repository that is not private, `send` prints
+`public repository: name no private repository and describe none of its
+internals`.
+
+`project watch status` reports the relay:
+
+```text
+relay: on, key 3f2a9c1d7e4b6a05 (keychain)
+relay acme/app: ok, 0 queued, 4 rejected
+```
+
+The first line says `relay: off` and why while the key cannot be read, such
+as from a locked keychain. The daemon reads the key once when it starts, on
+a worker thread, again when `agent.key` changes, and after a failed read on
+each full pass. Each repository's line gives the last job's state, the
+changes still queued, the records rejected so far, and any error, such as a
+push that timed out or `no recorded checkout of the repository remains`.
 
 ## Change a loop's tracked file
 
