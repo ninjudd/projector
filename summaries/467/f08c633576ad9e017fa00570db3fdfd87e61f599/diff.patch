@@ -1,0 +1,9 @@
+diff --git a/.gitignore b/.gitignore
+index f19f682a..ced3533f 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,3 +10,4 @@ __pycache__/
+ .DS_Store
+ node_modules/
+ .claude-plugin/types/
++.claude/worktrees/

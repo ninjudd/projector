@@ -1,0 +1,49 @@
+{
+ "version": 1,
+ "name": "Ignore Claude Code worktrees",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 467,
+  "title": "Ignore Claude Code worktrees",
+  "head": "f08c633576ad9e017fa00570db3fdfd87e61f599",
+  "headRef": "ignore-claude-worktrees",
+  "base": "16c1fde68c298103ec33fb696587e44f3df04880",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Claude Code can run a session in an isolated Git worktree, a second working directory of the same repository. It creates each one under <code>.claude/worktrees/&lt;name&gt;</code> at the repository root. Nothing in this repository's <code>.gitignore</code> covered that directory, so <code>git status</code> in the main checkout listed <code>.claude/worktrees/</code> as untracked whenever a session ran in a worktree.",
+   "This pull request adds one line, <code>.claude/worktrees/</code>, to <code>.gitignore</code>. The main checkout then stays clean while sessions work in worktrees. The rest of <code>.claude/</code>, such as the tracked <code>.claude/settings.json</code>, is unaffected, and no code, test, or packaging step reads this file."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "ignore",
+   "title": "The ignore entry",
+   "kicker": "One <code>.gitignore</code> line for Claude Code's worktree directory",
+   "intro": [
+    "A <code>.gitignore</code> pattern that holds a slash before its end is anchored to the directory that holds the <code>.gitignore</code>. So <code>.claude/worktrees/</code> matches only that directory at the repository root, and only directories, because of the trailing slash."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".gitignore",
+     "note": "Adds <code>.claude/worktrees/</code> after the existing <code>.claude-plugin/types/</code> entry.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 13,
+       "text": "In a temporary repository that uses this head's <code>.gitignore</code>, <code>git check-ignore -v</code> matches <code>.claude/worktrees/example</code> at line 13, and matches none of <code>.claude/settings.json</code>, <code>.claude-plugin/plugin.json</code>, or a nested <code>sub/.claude/worktrees/</code>."
+      },
+      {
+       "kind": "context",
+       "text": "The pull request body's Testing steps run <code>mkdir -p .claude/worktrees/example</code> and then <code>rmdir</code> on the example. That leaves an empty, ignored <code>.claude/worktrees/</code> behind even when it did not exist before, which the body's last sentence does not say. The review lists this as a suggestion."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
