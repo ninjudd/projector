@@ -312,7 +312,7 @@ test('draws one line per open pull request of the session’s own loops', async 
   expect(texts.slice(0, 3).map(found => found.props.color)).toEqual(['subtle', 'subtle', 'subtle'])
   expect(await ui.find({ type: 'Text', text: /─|updated|ago|just now/ })).toBeUndefined()
   // The rows start on the line under the header, with no blank line between.
-  expect(texts.slice(3, 6).map(found => found.text)).toEqual(['#1', 'clean', 'Signed-off change'])
+  expect(texts.slice(3, 6).map(found => found.text)).toEqual(['#2', 'threads', 'Change under review'])
   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
@@ -1248,9 +1248,10 @@ test('lists your pull requests first, then everyone else’s by author, naming t
   expect(gh[0]?.join(' ')).toContain('viewer { login }')
 
   const ui = await $.ui.mount(PANEL)
-  // Yours keep their order, then bob's, then grace's two in theirs, with nothing between the groups.
+  // Yours by repository, each repository's newest first, whatever order they came in; then bob's, then grace's two,
+  // newest first, with nothing between the groups.
   const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
-  expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+  expect(keys).toEqual(['pr:o/r#9', 'pr:x/y#7', 'pr:o/r#5', 'pr:o/r#6', 'pr:o/r#4'])
   // The header counts your pull requests apart from the review requests, everyone else's.
   expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 3 review requests  \d+s$/)
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
@@ -1294,12 +1295,12 @@ test('your pull requests and the review requests collapse apart, yours always fi
 
   // The review requests collapse to one line under your pull requests, listing them in their rows' order.
   await ui.press({ key: 'count:review' })
-  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', '+ r#20 r#5 r#4 r#6'])
+  expect(await lines()).toEqual(['pr:o/r#9', 'pr:x/y#7', '+ r#20 r#5 r#6 r#4'])
   expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 4 review requests  \d+s$/)
 
   // Yours collapse apart from them, and their line still comes first.
   await ui.press({ key: 'count:pr' })
-  expect(await lines()).toEqual(['+ y#7 r#9', '+ r#20 r#5 r#4 r#6'])
+  expect(await lines()).toEqual(['+ r#9 y#7', '+ r#20 r#5 r#6 r#4'])
 
   // A label opens its drawer under its own section's line.
   await ui.press({ key: 'open:o/r#4' })
@@ -1311,10 +1312,10 @@ test('your pull requests and the review requests collapse apart, yours always fi
 
   // Expanding the review requests leaves yours collapsed, and the drawer moves back to its row.
   await ui.press({ key: 'expand:review' })
-  expect(await lines()).toEqual(['+ y#7 r#9', 'pr:o/r#20', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+  expect(await lines()).toEqual(['+ r#9 y#7', 'pr:o/r#20', 'pr:o/r#5', 'pr:o/r#6', 'pr:o/r#4'])
   expect(await ui.find({ key: 'drawer:o/r#4' })).toBeDefined()
   await ui.press({ key: 'count:pr' })
-  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#20', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+  expect(await lines()).toEqual(['pr:o/r#9', 'pr:x/y#7', 'pr:o/r#20', 'pr:o/r#5', 'pr:o/r#6', 'pr:o/r#4'])
   await ui.unmount()
 })
 
@@ -3783,7 +3784,7 @@ test('a collapsed number takes the color of its row’s word, and is italic for 
   await ui.press({ key: 'count:pr' })
   const drawn = await Promise.all(
     numbers.map(async text => {
-      const props = (await ui.find({ type: 'Text', text }))?.props
+      const props = (await ui.find({ type: 'Text', text: new RegExp(`^${text}$`) }))?.props
       return [props?.color, props?.italic === true]
     }),
   )
@@ -3813,12 +3814,12 @@ test('collapsed pull requests list their labels in the rows’ order and status 
   await clock.advance(1)
   await clock.settle()
   const ui = await $.ui.mount(PANEL)
-  const label = async (text: string) => (await ui.find({ type: 'Text', text }))?.props
+  const label = async (text: string) => (await ui.find({ type: 'Text', text: new RegExp(`^${text}$`) }))?.props
   const drawers = async () =>
     (await ui.findAll({ type: 'Box' })).map(box => box.key ?? '').filter(key => key.startsWith('drawer:'))
 
   await ui.press({ key: 'count:pr' })
-  expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #1 #2 #10 #12')
+  expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #12 #10 #2 #1')
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
   // Clean is green and open review threads yellow, as the row's count of them is; a conflict, a change request, or
   // failing checks is red.
@@ -3831,15 +3832,15 @@ test('collapsed pull requests list their labels in the rows’ order and status 
     false,
   ])
   expect((await ui.findAll({ type: 'Button' })).map(button => button.key).filter(key => /^open:/.test(key ?? ''))).toEqual([
-    'open:o/r#1',
-    'open:o/r#2',
-    'open:o/r#10',
     'open:o/r#12',
+    'open:o/r#10',
+    'open:o/r#2',
+    'open:o/r#1',
   ])
 
   // A label opens its drawer below the line and draws inverted, and the pull requests stay collapsed.
   await ui.press({ key: 'open:o/r#10' })
-  expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #1 #2 #10 #12')
+  expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #12 #10 #2 #1')
   expect(await ui.find({ key: 'pr:o/r#10' })).toBeUndefined()
   expect(await drawers()).toEqual(['drawer:o/r#10'])
   expect((await label('#10'))?.inverse).toBe(true)
@@ -5371,10 +5372,11 @@ test('lists the session’s subscriptions from the daemon’s cache, with their 
   await begin($, session.clock)
 
   // The session's new subscriptions showed the panel. The operator daemon.json names is ada, so her pull request
-  // comes first; then the one still loading, whose author nobody knows yet, so it counts as hers; then grace's review
-  // request, whose cache file the panel finds under the repository's name in lowercase. The `!` line keeps #5 out.
+  // and the one still loading, whose author nobody knows yet, so it counts as hers, come first, by repository; then
+  // grace's review request, whose cache file the panel finds under the repository's name in lowercase. The `!` line
+  // keeps #5 out.
   const ui = await $.ui.mount(PANEL)
-  expect(await rowsOf(ui)).toEqual(['pr:x/y#7', 'pr:o/r#13', 'pr:o/r#4'])
+  expect(await rowsOf(ui)).toEqual(['pr:o/r#13', 'pr:x/y#7', 'pr:o/r#4'])
   expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 1 review request  \d+s$/)
   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
   expect(await ui.find({ key: 'author:x/y#7' })).toBeUndefined()
@@ -5422,7 +5424,7 @@ test('lists the pull requests the daemon adopted for a repository the session re
   await begin($, session.clock)
 
   const ui = await $.ui.mount(PANEL)
-  expect(await rowsOf(ui)).toEqual(['pr:o/r#1', 'pr:o/r#11'])
+  expect(await rowsOf(ui)).toEqual(['pr:o/r#11', 'pr:o/r#1'])
   expect(session.gh()).toEqual([])
   await ui.press({ key: 'pr:o/r#11' })
   expect(await loopsOf(ui, 'o/r#11')).toEqual([['reviewer', 'claude']])
@@ -5680,7 +5682,7 @@ test('dismissing a pull request the daemon adopted takes its line away at once, 
   await begin($, session.clock)
 
   const ui = await $.ui.mount(PANEL)
-  expect(await rowsOf(ui)).toEqual(['pr:o/r#1', 'pr:o/r#11'])
+  expect(await rowsOf(ui)).toEqual(['pr:o/r#11', 'pr:o/r#1'])
   await ui.press({ key: 'pr:o/r#11' })
   await ui.press({ key: 'dismiss:o/r#11' })
   await ui.press({ key: 'confirm:o/r#11' })

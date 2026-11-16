@@ -339,7 +339,9 @@ for it arrives.
 
 Your own pull requests come first, then everyone else's, which the panel
 calls review requests, each author's together and the authors in order of
-login, with no line between the groups. The header counts the two apart,
+login, with no line between the groups. Within each, the pull requests go
+by repository, and each repository's newest first, so a pull request keeps
+its place from one look to the next. The header counts the two apart,
 such as `14 pull requests · 10 review requests`. The panel tells which are
 yours by the operator, the account `gh` is signed in as, which it reads from
 the daemon's `daemon.json`. A pull request by a deleted account, which

@@ -1362,18 +1362,22 @@ function threadsByFile(threads: readonly Thread[]): [string, Thread[]][] {
 const isReviewRequest = (pr: PullRequest, viewer: string | null) =>
   viewer !== null && pr.isLoading !== true && pr.author !== viewer
 
+/** Orders pull requests by repository, and each repository's newest first. */
+const newestFirst = (one: Row, other: Row) =>
+  one.pr.repo.localeCompare(other.pr.repo) || other.pr.number - one.pr.number
+
 /**
  * The panel's pull requests in the order it lists them, by section: yours,
- * in the order they came in, then the review requests, each author's
- * together and the authors by login, each author's in the order they came in.
+ * then the review requests, each author's together and the authors by login.
+ * Within each, they go by repository and newest first.
  */
 function bySection(rows: readonly Row[], viewer: string | null): Record<(typeof PR_SECTIONS)[number], Row[]> {
   const loginOf = (row: Row) => (row.pr.author ?? '').toLowerCase()
   return {
-    pr: rows.filter(row => !isReviewRequest(row.pr, viewer)),
+    pr: rows.filter(row => !isReviewRequest(row.pr, viewer)).sort(newestFirst),
     review: rows
       .filter(row => isReviewRequest(row.pr, viewer))
-      .sort((one, other) => loginOf(one).localeCompare(loginOf(other))),
+      .sort((one, other) => loginOf(one).localeCompare(loginOf(other)) || newestFirst(one, other)),
   }
 }
 
