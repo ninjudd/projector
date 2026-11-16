@@ -100,6 +100,15 @@ def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:
 FINDING = "<!-- projector-finding v=1 priority=P2 --> A nil deref"
 
 
+def check_run(name, conclusion="SUCCESS"):
+    """A check run in the head's rollup, as the daemon's query reads it; `conclusion` is None until it completes."""
+    return {"__typename": "CheckRun", "name": name, "conclusion": conclusion}
+
+
+def commit_status(context, state="SUCCESS"):
+    return {"__typename": "StatusContext", "context": context, "state": state}
+
+
 def finding_thread(*replies, resolved=False):
     return thread("T1", body=FINDING, resolved=resolved, replies=replies)
 
@@ -122,17 +131,26 @@ class FakeGitHub:
             found["visibility"] = visibility
         return found
 
-    def pull_request(self, number, *, repo="acme/app", reviews=(), requested=(), teams=(), **fields) -> None:
+    def pull_request(self, number, *, repo="acme/app", reviews=(), requested=(), teams=(), contexts=(),
+                     **fields) -> None:
+        """A pull request, with `contexts` its head's whole rollup, which the GraphQL queries page through as
+        GitHub does. The REST pull request does not show `contexts`, so only a full pass sees them change."""
         self.repository(repo)["pulls"][number] = {"node": node(number, repo=repo, **fields), "requested": list(requested),
-                                                  "teams": list(teams), "reviews": list(reviews)}
+                                                  "teams": list(teams), "reviews": list(reviews),
+                                                  "contexts": list(contexts)}
 
     def queried(self) -> list[str]:
         found = []
         for call in self.calls:
-            if call[:2] == ["api", "graphql"]:
+            if call[:2] == ["api", "graphql"] and any(arg.startswith("n=") for arg in call):
                 fields = dict(arg.split("=", 1) for arg in call if re.match(r"^[orn]=", arg))
                 found.append(f"{fields['o']}/{fields['r']}#{fields['n']}")
         return found
+
+    def pages_read(self) -> list[str]:
+        """The cursor of each later page of a head's rollup contexts that the daemon read."""
+        return [arg[2:] for call in self.calls if call[:2] == ["api", "graphql"] for arg in call
+                if arg.startswith("c=")]
 
     def __call__(self, args: list[str]) -> watch.GhResult:
         self.calls.append(list(args))
@@ -163,7 +181,7 @@ class FakeGitHub:
             else:
                 return self.unsupported(arg)
         if path == "graphql":
-            if include or paginate or etag or set(fields) != {"query", "o", "r", "n"}:
+            if include or paginate or etag or set(fields) not in ({"query", "o", "r", "n"}, {"query", "o", "r", "h", "c"}):
                 return self.unsupported("graphql with REST flags")
             return self.graphql(fields)
         if fields or path is None or (paginate and include):
@@ -180,6 +198,8 @@ class FakeGitHub:
             return watch.GhResult(1, "", 'Post "https://api.github.com/graphql": dial tcp: connection refused')
         if "repository(owner:$o,name:$r)" not in fields["query"]:
             return self.unsupported("query")
+        if "h" in fields:
+            return self.contexts_page(fields)
         repo = self.repos.get(f"{fields['o']}/{fields['r']}".lower())
         pull = (repo or {}).get("pulls", {}).get(int(fields["n"]))
         if pull is None:
@@ -187,8 +207,44 @@ class FakeGitHub:
             body = {"data": {"repository": {"pullRequest": None} if repo else None},
                     "errors": [{"type": "NOT_FOUND", "message": f"Could not resolve to a {kind}."}]}
             return watch.GhResult(1, json.dumps(body), f"gh: Could not resolve to a {kind}.")
+        found = pull["node"]
+        if pull["contexts"]:
+            found = {**found, "commits": {"nodes": [{"commit": self.rollup(pull["contexts"], fields["query"])}]}}
         data = {"rateLimit": {"cost": 1}, "repository": {"visibility": repo["visibility"], "nameWithOwner": repo["name"],
-                                                         "pullRequest": pull["node"]}}
+                                                         "pullRequest": found}}
+        return watch.GhResult(0, json.dumps({"data": data}))
+
+    @staticmethod
+    def contexts_from(contexts: list[dict], query: str, start: int) -> dict:
+        """The page of `contexts` that begins at `start`, as long as the query's `first` asks."""
+        end = start + int(re.search(r"contexts\(first:(\d+)", query).group(1))
+        return {"pageInfo": {"hasNextPage": end < len(contexts), "endCursor": f"cursor:{min(end, len(contexts))}"},
+                "nodes": contexts[start:end]}
+
+    def rollup(self, contexts: list[dict], query: str) -> dict:
+        """The head commit with GitHub's counts of its check runs and statuses by state, which cover every
+        context, and the state of the status the query names."""
+        runs = [found["conclusion"] or "IN_PROGRESS" for found in contexts if found["__typename"] == "CheckRun"]
+        statuses = [found for found in contexts if found["__typename"] == "StatusContext"]
+        states = [found["state"] for found in statuses]
+        named = re.search(r'status\{ context\(name:"([^"]+)"\)', query).group(1)
+        own = [found["state"] for found in statuses if found["context"] == named]
+        failed = {"FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ERROR"} & {*runs, *states}
+        return {"status": {"context": {"state": own[-1]} if own else None} if statuses else None,
+                "statusCheckRollup": {"state": "FAILURE" if failed else "SUCCESS", "contexts": {
+                    "checkRunCountsByState": [{"state": state, "count": runs.count(state)} for state in set(runs)],
+                    "statusContextCountsByState": [{"state": state, "count": states.count(state)} for state in set(states)],
+                    **self.contexts_from(contexts, query, 0)}}}
+
+    def contexts_page(self, fields: dict) -> watch.GhResult:
+        repo = self.repos.get(f"{fields['o']}/{fields['r']}".lower()) or {"pulls": {}}
+        heads = {pull["node"]["headRefOid"]: pull for pull in repo["pulls"].values()}
+        cursor = re.fullmatch(r"cursor:(\d+)", fields["c"])
+        if fields["h"] not in heads or cursor is None:
+            return watch.GhResult(1, json.dumps({"errors": [{"message": "no such commit or cursor"}]}),
+                                  "gh: no such commit or cursor")
+        page = self.contexts_from(heads[fields["h"]]["contexts"], fields["query"], int(cursor.group(1)))
+        data = {"rateLimit": {"cost": 1}, "repository": {"object": {"statusCheckRollup": {"contexts": page}}}}
         return watch.GhResult(0, json.dumps({"data": data}))
 
     def rest(self, path: str, include: bool, etag: Optional[str], paginate: bool) -> watch.GhResult:
@@ -750,6 +806,88 @@ class FixRoleTests(WatchCase):
         self.assertEqual((["acme/app#1"], ["acme/app#1"]), (unsettled, again))
         self.assertEqual([], settled)
         self.assertEqual({}, self.state("fixer")["fix"]["acme/app#1 fix"])
+
+    def test_a_failed_check_is_announced_once_and_again_only_after_the_renotify_interval(self) -> None:
+        self.github.pull_request(1, contexts=[check_run("check", "FAILURE"), check_run("lint", "FAILURE"),
+                                              check_run("docs"), commit_status("deploy")])
+        self.fixer("acme/app#1 fix")
+
+        first = self.cycle()["fixer"]
+        self.advance(60)
+        second = self.cycle()["fixer"]
+        self.advance(900)
+        third = self.cycle()["fixer"]
+
+        self.assertEqual([f"CHECKS acme/app#1 head=aaaaaaaa failed: check, lint — {fix_action(1)}"], first)
+        self.assertEqual([], second)
+        self.assertEqual([f"CHECKS acme/app#1 (still open) head=aaaaaaaa failed: check, lint — {fix_action(1)}"],
+                         third)
+
+    def test_only_a_context_that_failed_is_a_ci_failure(self) -> None:
+        cases = [
+            (check_run("check", "FAILURE"), "check"),
+            (check_run("check", "TIMED_OUT"), "check"),
+            (check_run("check", "STARTUP_FAILURE"), "check"),
+            (commit_status("ci/build", "FAILURE"), "ci/build"),
+            (commit_status("ci/build", "ERROR"), "ci/build"),
+            (commit_status(review.REVIEW_CONTEXT, "FAILURE"), None),
+            (check_run("check", "ACTION_REQUIRED"), None),
+            (check_run("check", None), None),
+            (check_run("check", "CANCELLED"), None),
+            (check_run("check", "SKIPPED"), None),
+            (check_run("check", "NEUTRAL"), None),
+            (commit_status("ci/build", "PENDING"), None),
+        ]
+        for number, (context, _) in enumerate(cases, 1):
+            self.github.pull_request(number, contexts=[context])
+        self.fixer(*(f"acme/app#{number} fix" for number in range(1, len(cases) + 1)))
+
+        events = self.cycle()["fixer"]
+
+        for number, (context, failed) in enumerate(cases, 1):
+            with self.subTest(context=context):
+                expected = [] if failed is None else [
+                    f"CHECKS acme/app#{number} head=aaaaaaaa failed: {failed} — {fix_action(number)}"]
+                self.assertEqual(expected, [event for event in events if event.startswith(f"CHECKS acme/app#{number} ")])
+
+    def test_a_failed_check_past_the_first_page_of_contexts_is_found_on_a_later_page(self) -> None:
+        self.github.pull_request(1, contexts=[*(check_run(f"job {index}") for index in range(1, 25)),
+                                              check_run("job 25", "FAILURE")])
+        self.fixer("acme/app#1 fix")
+
+        events = self.cycle()["fixer"]
+
+        self.assertEqual([f"CHECKS acme/app#1 head=aaaaaaaa failed: job 25 — {fix_action(1)}"], events)
+        self.assertEqual(["cursor:20"], self.github.pages_read())
+
+    def test_a_failed_projector_review_status_reads_no_later_page_of_contexts(self) -> None:
+        self.github.pull_request(1, contexts=[commit_status(review.REVIEW_CONTEXT, "FAILURE"),
+                                              *(check_run(f"job {index}") for index in range(2, 26))])
+        self.fixer("acme/app#1 fix")
+
+        events = self.cycle()["fixer"]
+
+        self.assertEqual(([], []), (events, self.github.pages_read()))
+
+    def test_a_new_head_hears_no_checks_until_a_context_on_it_fails(self) -> None:
+        self.github.pull_request(1, contexts=[check_run("check", "FAILURE")])
+        self.fixer("acme/app#1 fix")
+        failed = self.cycle()["fixer"]
+
+        self.github.pull_request(1, head=SHA_B, contexts=[check_run("check", None)])
+        pushed = self.cycle()["fixer"]
+        self.advance(900)
+        running = self.cycle()["fixer"]
+        self.github.pull_request(1, head=SHA_B, contexts=[check_run("check", "FAILURE")])
+        self.advance(600)
+        failed_again = self.cycle()["fixer"]
+        self.github.pull_request(1, head=SHA_C, contexts=[check_run("check", "FAILURE")])
+        failed_at_once = self.cycle()["fixer"]
+
+        self.assertEqual([f"CHECKS acme/app#1 head=aaaaaaaa failed: check — {fix_action(1)}"], failed)
+        self.assertEqual(([], []), (pushed, running))
+        self.assertEqual([f"CHECKS acme/app#1 head=bbbbbbbb failed: check — {fix_action(1)}"], failed_again)
+        self.assertEqual([f"CHECKS acme/app#1 head=cccccccc failed: check — {fix_action(1)}"], failed_at_once)
 
     def test_a_merged_pull_request_is_announced_once_and_its_lines_end(self) -> None:
         self.github.pull_request(1, draft=False, threads=[thread("T1")])

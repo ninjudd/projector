@@ -118,10 +118,10 @@ When you start, run `fix-pr` once on each pull request the work includes,
 because review work may already be waiting on it, in one subagent per pull
 request, as `../fix-pr/SKILL.md` describes under "Give each pull request
 its own subagent". Then keep fixing
-as reviews arrive: each `FINDING`, `VERDICT`, `CONFLICT`, and `REVIEW` line
-the session receives runs `fix-pr` for its pull request in that pull
-request's subagent, as `../fix-pr/SKILL.md` describes under "Act on the
-session's events". Run each fix without asking the user first. When
+as reviews arrive: each `FINDING`, `VERDICT`, `CONFLICT`, `REVIEW`, and
+`CHECKS` line the session receives runs `fix-pr` for its pull request in
+that pull request's subagent, as `../fix-pr/SKILL.md` describes under "Act
+on the session's events". Run each fix without asking the user first. When
 `fix-pr` holds a pull request in draft to build a change, it marks it ready
 again once the push that carries the change lands.
 

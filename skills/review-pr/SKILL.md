@@ -427,6 +427,26 @@ and exits with its status. Without `review.gate`, run the checks the
 repository's instructions name. On a head `setup` recorded as untrusted, `gate`
 refuses without running anything, and the review proceeds by reading.
 
+When `.projector.toml` sets `review.gate_checks`, CI runs the repository's
+suite, so run `project review gate <number>` on every head, trusted or not, and
+do not run the suite yourself. `gate` runs the `review.gate` command on a
+trusted head only, then waits for the named GitHub Actions checks on the head.
+Reading their result runs nothing on this machine. When the `review.gate`
+command fails, `gate` exits with the command's own status and reads no CI;
+treat that as a failing gate, as you would a local run. Otherwise act on its
+exit:
+
+- **0.** The gate passed. On an untrusted head, say in the disclosures that CI
+  passed and that no command ran on this machine.
+- **1.** A check failed. Treat it as a failing gate, as you would a local
+  run, and name the check's URL.
+- **75.** CI gave no evidence, and `gate` prints why: the head changed a file
+  that decides what a check runs, a check did not run or was cancelled, CI
+  had not finished in 30 minutes, or a call to GitHub failed. Do what you
+  would do without `review.gate_checks`: on a trusted head, run the checks the repository's
+  instructions name; on an untrusted head, review by reading. Say in the
+  disclosures why CI gave no evidence.
+
 When the head is untrusted, review it by reading. The four-step protocol in
 `method.md` verifies findings without running anything. Before you run
 anything from the head, ask the user, naming why the head is not trusted and
@@ -574,7 +594,8 @@ decision:
 
 When the read decides for an incremental review and the gate is what remains,
 run `project review gate <number>`, and go on only when it exits 0. Where
-`review.gate` is unset, `gate` refuses, and the head gets a full review.
+neither `review.gate` nor `review.gate_checks` is set, `gate` refuses, and the
+head gets a full review.
 
 Then write the body: a few sentences on what changed and what you checked
 about it, at most 600 characters once its placeholders are filled. Leave out

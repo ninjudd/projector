@@ -37,12 +37,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import posixpath
 import re
 import secrets
 import shutil
 import socket
 import subprocess
 import tempfile
+import time
 from collections import Counter
 from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
@@ -50,6 +52,7 @@ from datetime import datetime, timedelta, timezone
 from importlib import resources
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import quote
 
 from .core import ProjectorError, distribution_version
 from .inbox import SESSION, locked, write_json
@@ -491,42 +494,235 @@ def copy_published(source_loop: str, target_loop: str, repo: str, number: int,
     return len(copied)
 
 
-def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False, loop: Optional[str] = None) -> dict:
-    """Run the repository's `review.gate` command in the review's scratch worktree.
+def gate(paths: Paths, command: Optional[str], checks: tuple[str, ...] = (), output_to_stderr: bool = False,
+         loop: Optional[str] = None) -> dict:
+    """Run the repository's gate on the review's head: the `review.gate` command, then the CI checks named in
+    `review.gate_checks`.
 
     The command runs the head's code, so it runs only on a head the state file
-    records as trusted, and trust is checked first: an untrusted head is refused
-    as untrusted whether or not a command is configured, so no refusal points
-    the review at the head's code. The command gets the worktree and the merge
-    base as `$1` and `$2` and as `PROJECTOR_WORKTREE` and `PROJECTOR_BASE`. Its
+    records as trusted. Without `checks`, trust is checked first, so an
+    untrusted head is refused whether or not a command is configured and no
+    refusal points the review at the head's code. Reading CI runs nothing on
+    this machine, so with `checks` an untrusted head skips the command and
+    still gets CI's result. The command gets the worktree and the merge base
+    as `$1` and `$2` and as `PROJECTOR_WORKTREE` and `PROJECTOR_BASE`. Its
     output passes through, its standard output going to this process's
     standard error instead when `output_to_stderr` is set, so a caller printing
-    JSON keeps standard output for that alone. Its exit status, with the
-    command and when it ran, is recorded in the state file and returned.
-    A gate can run for many minutes, so it touches the head's lock as it
-    starts, every `TOUCH_EVERY` seconds while the command runs, and as it
-    ends, as `touch_head` does for `loop`.
+    JSON keeps standard output for that alone. A failing command decides the
+    gate with its own status. Otherwise `await_checks` decides it: 0 when every
+    check passed, 1 when one failed, and `NO_EVIDENCE` when CI gave no
+    evidence, with the reason in the record. The record is written to the state
+    file and returned. A gate can run for many minutes, so it touches the
+    head's lock as it starts, every `TOUCH_EVERY` seconds while it runs, and as
+    it ends, as `touch_head` does for `loop`.
     """
     state = read_state(paths)
     touch_head(paths, state, loop)
-    if not state.get("trusted"):
+    trusted = bool(state.get("trusted"))
+    if not trusted and not checks:
         raise ReviewError(f"the head {state['sha'][:7]} of {state['repo']}#{paths.number} is untrusted "
                           f"({state.get('untrusted_because') or 'no reason recorded'}), so its code does not "
                           "run; review it by reading")
-    if not command:
+    if not command and not checks:
         raise ReviewError("review.gate is not set in .projector.toml, so there is nothing to run; run the "
                           "repository's checks as review-pr describes")
     worktree = Path(state["worktree"])
-    environ = dict(os.environ, PROJECTOR_WORKTREE=str(worktree), PROJECTOR_BASE=state["base"])
-    ran_at = now()
-    process = subprocess.Popen(["sh", "-c", command, "sh", str(worktree), state["base"]],
-                               cwd=worktree, env=environ, stdout=2 if output_to_stderr else None)
-    exit_code = wait_touching(process, lambda: touch_head(paths, state, loop))
-    record = {"command": command, "exit_code": exit_code, "sha": state["sha"], "ran_at": ran_at.isoformat()}
+    record: dict = {"command": None, "exit_code": 0, "sha": state["sha"], "ran_at": now().isoformat(),
+                    "source": "local"}
+
+    def touching() -> None:
+        touch_head(paths, state, loop)
+
+    if command and trusted:
+        environ = dict(os.environ, PROJECTOR_WORKTREE=str(worktree), PROJECTOR_BASE=state["base"])
+        process = subprocess.Popen(["sh", "-c", command, "sh", str(worktree), state["base"]],
+                                   cwd=worktree, env=environ, stdout=2 if output_to_stderr else None)
+        record.update(command=command, exit_code=wait_touching(process, touching))
+    if checks and record["exit_code"] == 0:
+        record.update(await_checks(state["repo"], state["sha"], state["base"], worktree, checks, touching),
+                      source="ci")
     state["gate"] = record
     write_state(paths, state)
     touch_head(paths, state, loop)
     return record
+
+
+# A gate's exit when CI gave no evidence about the head, as `sysexits.h` names a failure worth retrying.
+NO_EVIDENCE = 75
+# How long a gate waits for CI, how often it looks, and how long a head may go without any workflow run.
+CI_WAIT = 30 * 60
+CI_POLL = 20
+CI_START = 2 * 60
+# The workflow run statuses that say a run is still coming, and the check conclusions that are a test failure.
+COMING = frozenset({"queued", "in_progress", "requested", "waiting", "pending"})
+FAILED = frozenset({"failure", "timed_out"})
+USES = re.compile(r"""^\s*(?:-\s*)?uses:\s*["']?([^"'\s#]+)""")
+
+
+class NoEvidence(Exception):
+    """CI's result says nothing about the head's code; the message says why."""
+
+
+def parse_checks(text: Optional[str]) -> tuple[str, ...]:
+    """The check names in `review.gate_checks`, separated by commas."""
+    return tuple(name.strip() for name in (text or "").split(",") if name.strip())
+
+
+def await_checks(repo: str, sha: str, base: str, worktree: Path, names: tuple[str, ...],
+                 touching: Callable[[], None]) -> dict:
+    """Wait for the GitHub Actions runs of the checks `names` on `sha`, and return the gate record's
+    `exit_code`, `checks`, and, when CI gave no evidence, `reason`.
+
+    It looks every `CI_POLL` seconds for up to `CI_WAIT`. Once a check has a
+    run, the files that decided the run (`check_files`) must be unchanged
+    since `base`, or the head vouched for itself and CI gives no evidence.
+    While a check has no run, the head's workflow runs say whether one is
+    coming: none still queued or running, or none at all after `CI_START`,
+    means none is, and the wait ends there. A call to GitHub or Git that
+    fails gives no evidence too, with its error as the reason."""
+    started = time.monotonic()
+    changed: Optional[set[str]] = None
+    vetted: set[str] = set()
+    runs: dict[str, list[dict]] = {}
+
+    def result(exit_code: int, reason: Optional[str] = None) -> dict:
+        found = {"exit_code": exit_code, "checks": [summarize_check(name, runs.get(name) or []) for name in names]}
+        if reason:
+            found["reason"] = reason
+        return found
+
+    while True:
+        try:
+            runs = ci_checks(repo, sha, names)
+            for name in names:
+                if runs[name] and name not in vetted:
+                    if changed is None:
+                        changed = set(git("-C", str(worktree), "diff", "--name-only", base, sha).splitlines())
+                    touched = sorted(set().union(*(check_files(repo, worktree, sha, run) for run in runs[name]))
+                                     & changed)
+                    if touched:
+                        raise NoEvidence(f"the head changed {touched[0]}, which decides what {name} runs, so its "
+                                         "result is not evidence about the head's code")
+                    vetted.add(name)
+            pending = [name for name in names if not runs[name] or any(r["status"] != "completed" for r in runs[name])]
+            if not pending:
+                conclusions = {r.get("conclusion") for name in names for r in runs[name]}
+                if conclusions & FAILED:
+                    return result(1)
+                if conclusions != {"success"}:
+                    others = ", ".join(sorted(c or "none" for c in conclusions - {"success"}))
+                    raise NoEvidence(f"a named check concluded {others}, which says nothing about the code")
+                return result(0)
+            if any(not runs[name] for name in pending):
+                coming(repo, sha, [name for name in pending if not runs[name]], time.monotonic() - started)
+            if time.monotonic() - started >= CI_WAIT:
+                raise NoEvidence(f"{', '.join(pending)} had no completed run within {CI_WAIT // 60} minutes")
+        except NoEvidence as exc:
+            return result(NO_EVIDENCE, str(exc))
+        except ReviewError as exc:
+            # A failed call to GitHub or Git says nothing about the head's code, so it is not a failing check.
+            return result(NO_EVIDENCE, f"reading CI failed: {exc}")
+        touching()
+        time.sleep(CI_POLL)
+
+
+def ci_checks(repo: str, sha: str, names: tuple[str, ...]) -> dict[str, list[dict]]:
+    """The latest GitHub Actions check runs of each name on `sha`, read one name at a time so no run of a named
+    check falls beyond a page of the commit's other runs."""
+    found = {}
+    for name in names:
+        listing = gh_json(["api", f"repos/{repo}/commits/{sha}/check-runs?filter=latest&check_name={quote(name)}"])
+        found[name] = [run for run in (listing or {}).get("check_runs") or []
+                       if (run.get("app") or {}).get("slug") == "github-actions"]
+    return found
+
+
+def coming(repo: str, sha: str, missing: list[str], waited: float) -> None:
+    """Raise `NoEvidence` when no run of the checks `missing` can still come: when every workflow run on the
+    head has finished, waits for a maintainer's approval, or none has started `CI_START` seconds in."""
+    listing = gh_json(["api", f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100"])
+    workflow_runs = (listing or {}).get("workflow_runs") or []
+    if any(run.get("status") in COMING for run in workflow_runs):
+        return
+    names = ", ".join(missing)
+    waiting = next((run for run in workflow_runs if "action_required" in (run.get("status"), run.get("conclusion"))),
+                   None)
+    if waiting:
+        raise NoEvidence(f"no run of {names} is coming: the workflow run {waiting.get('html_url') or waiting.get('id')} "
+                         "waits for a maintainer to approve it")
+    if workflow_runs:
+        raise NoEvidence(f"no run of {names} is coming: every workflow run on the head finished without it, as a "
+                         "renamed job, a paths filter, or a name review.gate_checks does not match leaves it")
+    if waited >= CI_START:
+        raise NoEvidence(f"no workflow run started on the head within {CI_START // 60} minutes")
+
+
+def summarize_check(name: str, runs: list[dict]) -> dict:
+    """A named check as the gate record lists it: the conclusion that decides it, `None` while a run is
+    unfinished, and the URL of the run that decided it."""
+    deciding = next((r for r in runs if r.get("status") != "completed"), None) \
+        or next((r for r in runs if r.get("conclusion") in FAILED), None) \
+        or next((r for r in runs if r.get("conclusion") != "success"), None) \
+        or (runs[0] if runs else None)
+    if deciding is None:
+        return {"name": name, "conclusion": None, "url": None}
+    return {"name": name, "conclusion": deciding.get("conclusion") if deciding.get("status") == "completed" else None,
+            "url": deciding.get("html_url")}
+
+
+def check_files(repo: str, worktree: Path, sha: str, run: dict) -> set[str]:
+    """The files at `sha` that decided what the check run `run` did: the workflow file GitHub records for its
+    check suite, and every reusable workflow and local action that file reaches through a `uses: ./` line.
+
+    It reads lines, not YAML, so a `uses:` line in a comment or a string only adds files. Wherever it cannot
+    tell which files decided the run, it raises `NoEvidence`, so a mistake costs a local gate, never a false
+    pass."""
+    suite = (run.get("check_suite") or {}).get("id")
+    listing = gh_json(["api", f"repos/{repo}/actions/runs?check_suite_id={suite}"]) if suite else None
+    workflow = next((r.get("path") for r in (listing or {}).get("workflow_runs") or [] if r.get("path")), None)
+    if not workflow:
+        raise NoEvidence(f"no workflow run matches the check suite of {run.get('name')}, so the files that "
+                         "decided it are unknown")
+    files: set[str] = set()
+    queue = [workflow]
+    while queue:
+        path = queue.pop()
+        if path in files:
+            continue
+        files.add(path)
+        try:
+            text = git("-C", str(worktree), "show", f"{sha}:{path}")
+        except ReviewError as exc:
+            raise NoEvidence(f"{path}, which decides what {run.get('name')} runs, cannot be read at the head") from exc
+        for line in text.splitlines():
+            match = USES.match(line)
+            if not match:
+                continue
+            value = match.group(1)
+            if "${{" in value:
+                raise NoEvidence(f"{path} names a step with an expression, `uses: {value}`, so the files that "
+                                 f"decide {run.get('name')} are unknown")
+            if not value.startswith("./"):
+                continue
+            # `./` names the action at the repository's root, whose files are the whole repository.
+            target = posixpath.normpath(value[2:] or ".")
+            if target.startswith(".."):
+                raise NoEvidence(f"{path} uses {value}, which reaches outside the repository, so the files that "
+                                 f"decide {run.get('name')} are unknown")
+            if target.endswith((".yml", ".yaml")):
+                queue.append(target)
+                continue
+            prefix = "" if target == "." else f"{target}/"
+            try:
+                listed = git("-C", str(worktree), "ls-tree", "-r", "--name-only", sha, "--", target).splitlines()
+            except ReviewError as exc:
+                raise NoEvidence(f"{path} uses the local action {value}, which cannot be listed at the head") from exc
+            action = next((name for name in (f"{prefix}action.yml", f"{prefix}action.yaml") if name in listed), None)
+            if action is None:
+                raise NoEvidence(f"{path} uses the local action {value}, which has no action.yml at the head")
+            files.update(name for name in listed if name != action)
+            queue.append(action)
+    return files
 
 
 def wait_touching(process: subprocess.Popen, touching: Callable[[], None]) -> int:

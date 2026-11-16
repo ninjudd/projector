@@ -1962,15 +1962,24 @@ def run_review(arguments: argparse.Namespace) -> int:
         if command == "gate":
             state = review.read_state(paths)
             try:
-                configured = load_config(Path(state["checkout"])).get("review.gate")
+                config = load_config(Path(state["checkout"]))
             except ProjectorError:
-                configured = None
+                config = {}
+            configured, checks = config.get("review.gate"), config.get("review.gate_checks")
             result = review.gate(paths, configured if isinstance(configured, str) else None,
+                                 review.parse_checks(checks if isinstance(checks, str) else None),
                                  output_to_stderr=arguments.json_output, loop=loop)
             if arguments.json_output:
                 print(json.dumps(result, indent=2))
             else:
-                print(f"review.gate exited {result['exit_code']} at {result['sha'][:7]}", file=sys.stderr)
+                if result["command"]:
+                    print(f"review.gate ran `{result['command']}`", file=sys.stderr)
+                for check in result.get("checks") or []:
+                    print(f"{check['name']}: {check['conclusion'] or 'no completed run'}"
+                          + (f" {check['url']}" if check["url"] else ""), file=sys.stderr)
+                if result.get("reason"):
+                    print(f"CI gave no evidence: {result['reason']}", file=sys.stderr)
+                print(f"gate exited {result['exit_code']} at {result['sha'][:7]}", file=sys.stderr)
             return result["exit_code"]
         state = review.move(paths, loop)
     if arguments.json_output:

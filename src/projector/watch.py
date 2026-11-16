@@ -98,7 +98,10 @@ LABEL_CHANGES = {
 # the fields the events name: `mergedAt` and `mergeCommit` for MERGED, each comment's id and times for a
 # live start comment, and `nameWithOwner` for the review state's path. The panel reads `labels` for the
 # `reviewing` and `clean` labels a review sets, and the daemon for their LABEL events. `rateLimit` reports what it
-# cost.
+# cost. The panel reads the head's `statusCheckRollup` `state`, and the daemon reads the rollup's contexts for
+# CHECKS. GitHub's counts by state cover every context, so they say when a failed one lies past the first page.
+# The `projector/review` status is among them, so the query reads it too, to take it out of the counts.
+CONTEXT_NODES = "nodes{ __typename ... on CheckRun{ name conclusion } ... on StatusContext{ context state } }"
 QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
   repository(owner:$o,name:$r){ visibility nameWithOwner
     pullRequest(number:$n){
@@ -106,13 +109,26 @@ QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
       headRefOid headRefName baseRefName author { login }
       additions deletions changedFiles
       labels(first:20){ nodes{ name } }
-      commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
+      commits(last:1){ nodes{ commit{ status{ context(name:%s){ state } }
+        statusCheckRollup{ state contexts(first:20){ checkRunCountsByState{ state count }
+          statusContextCountsByState{ state count } pageInfo{ hasNextPage endCursor } %s } } } } }
       comments(last:100){ nodes{ databaseId author{ login } authorAssociation body createdAt updatedAt } }
       reviews(last:100){ nodes{ author{ login } authorAssociation submittedAt body } }
       changesRequested: reviews(states:[CHANGES_REQUESTED], last:1){ nodes{ author{ login } body commit{ oid } } }
       reviewThreads(first:100){ nodes{ id isResolved path line
         first: comments(first:1){ nodes{ databaseId body } }
-        last: comments(last:1){ nodes{ databaseId author{ login } body } } } } } } }"""
+        last: comments(last:1){ nodes{ databaseId author{ login } body } } } } } } }""" % (
+    json.dumps(review.REVIEW_CONTEXT), CONTEXT_NODES)
+
+# The head's later rollup contexts, read by commit so that a push between the two queries cannot mix two heads.
+CONTEXTS_QUERY = """query($o:String!,$r:String!,$h:GitObjectID!,$c:String!){ rateLimit { cost }
+  repository(owner:$o,name:$r){ object(oid:$h){ ... on Commit{ statusCheckRollup{
+    contexts(first:100, after:$c){ pageInfo{ hasNextPage endCursor } %s } } } } } }""" % CONTEXT_NODES
+
+# What makes a rollup context a failure for CHECKS. A run that waits for approval, or that was cancelled or
+# skipped, says nothing about the code.
+CHECK_FAILURES = frozenset({"FAILURE", "TIMED_OUT", "STARTUP_FAILURE"})
+STATUS_FAILURES = frozenset({"FAILURE", "ERROR"})
 
 
 class Excluded(ProjectorError):
@@ -612,6 +628,37 @@ def login(node: Optional[dict]) -> str:
     return ((node or {}).get("author") or {}).get("login") or ""
 
 
+def head_commit(pr: dict) -> dict:
+    return (nodes(pr, "commits") or [{}])[-1].get("commit") or {}
+
+
+def failed_contexts(contexts: list[dict]) -> list[str]:
+    """The names of the failed check runs and commit statuses among `contexts`, less the `projector/review`
+    status, which a changes-requested verdict posts as `failure` and the VERDICT and FINDING events report."""
+    failed = []
+    for found in contexts:
+        if found.get("__typename") == "CheckRun" and found.get("conclusion") in CHECK_FAILURES:
+            failed.append(found.get("name") or "?")
+        elif found.get("__typename") == "StatusContext" and found.get("state") in STATUS_FAILURES \
+                and found.get("context") != review.REVIEW_CONTEXT:
+            failed.append(found.get("context") or "?")
+    return failed
+
+
+def failure_count(commit: dict) -> int:
+    """How many of the head's rollup contexts failed by the rollup's counts, which cover every page, less a
+    failed `projector/review` status."""
+    contexts = (commit.get("statusCheckRollup") or {}).get("contexts") or {}
+
+    def counted(key: str, states: frozenset) -> int:
+        return sum(row["count"] for row in contexts.get(key) or []
+                   if isinstance(row, dict) and row.get("state") in states and isinstance(row.get("count"), int))
+
+    own = ((commit.get("status") or {}).get("context") or {}).get("state")
+    return (counted("checkRunCountsByState", CHECK_FAILURES) + counted("statusContextCountsByState", STATUS_FAILURES)
+            - (own in STATUS_FAILURES))
+
+
 def pull_request(entry: object) -> dict:
     repository = entry.get("repository") if isinstance(entry, dict) else None
     found = repository.get("pullRequest") if isinstance(repository, dict) else None
@@ -880,10 +927,9 @@ class Daemon:
         args = ["api", "-i", *(["-H", f"If-None-Match: {etag}"] if etag else []), path]
         return parse_response(self.gh(args).stdout)
 
-    def query(self, repo: str, number: int, now: float) -> Optional[dict]:
-        owner, name = repo.split("/")
-        result = self.gh(["api", "graphql", "-f", f"query={QUERY}", "-f", f"o={owner}", "-f", f"r={name}",
-                          "-F", f"n={number}"])
+    def graphql(self, query: str, now: float, *fields: str) -> Optional[dict]:
+        """The data a GraphQL query answers, or None when it failed. Its cost counts either way."""
+        result = self.gh(["api", "graphql", "-f", f"query={query}", *fields])
         try:
             payload = json.loads(result.stdout)
         except ValueError:
@@ -893,11 +939,38 @@ class Daemon:
         data = payload.get("data") or {}
         if data:
             self.spent.append((now, ((data.get("rateLimit") or {}).get("cost")) or 1))
+        return None if result.returncode != 0 or payload.get("errors") else data
+
+    def query(self, repo: str, number: int, now: float) -> Optional[dict]:
+        owner, name = repo.split("/")
+        data = self.graphql(QUERY, now, "-f", f"o={owner}", "-f", f"r={name}", "-F", f"n={number}") or {}
         repository = data.get("repository")
-        if result.returncode != 0 or payload.get("errors") or not isinstance(repository, dict) \
-                or not isinstance(repository.get("pullRequest"), dict):
+        if not isinstance(repository, dict) or not isinstance(repository.get("pullRequest"), dict):
             return None
+        self.read_contexts(owner, name, repository["pullRequest"], now)
         return repository
+
+    def read_contexts(self, owner: str, name: str, pr: dict, now: float) -> None:
+        """Add the head's later rollup contexts to the first page while the rollup's counts hold a failed context
+        that the pages read so far lack. A page that fails leaves the contexts read before it."""
+        head, commit = pr.get("headRefOid"), head_commit(pr)
+        contexts = (commit.get("statusCheckRollup") or {}).get("contexts")
+        if not head or not isinstance(contexts, dict):
+            return
+        wanted = failure_count(commit)
+        read = [found for found in contexts.get("nodes") or [] if isinstance(found, dict)]
+        page = contexts.get("pageInfo") or {}
+        while len(failed_contexts(read)) < wanted and page.get("hasNextPage") and page.get("endCursor"):
+            data = self.graphql(CONTEXTS_QUERY, now, "-f", f"o={owner}", "-f", f"r={name}", "-f", f"h={head}",
+                                "-f", f"c={page['endCursor']}") or {}
+            paged = (data.get("repository") or {}).get("object") or {}
+            later = (paged.get("statusCheckRollup") or {}).get("contexts")
+            if not isinstance(later, dict) or not later.get("nodes"):
+                break
+            read += [found for found in later.get("nodes") or [] if isinstance(found, dict)]
+            page = later.get("pageInfo") or {}
+        contexts["nodes"] = read
+        contexts["pageInfo"] = page
 
     def read_reviews(self, repo: str, number: int) -> Optional[list[dict]]:
         result = self.gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews?per_page={PAGE}"])
@@ -1411,6 +1484,12 @@ class Pass:
                      f"CONFLICT {ref} head={head[:8]} base={base}: the branch conflicts with its base; merge the base "
                      f"and resolve it — {action}",
                      f"CONFLICT {ref} (still open) head={head[:8]} base={base}: still conflicts with its base — {action}")
+        failed = list(dict.fromkeys(re.sub(r"\s+", " ", name) for name in
+                                    failed_contexts(nodes(head_commit(pr).get("statusCheckRollup"), "contexts"))))
+        if failed:
+            names = ", ".join(failed)
+            standing(f"checks:{number}:{head}", f"CHECKS {ref} head={head[:8]} failed: {names} — {action}",
+                     f"CHECKS {ref} (still open) head={head[:8]} failed: {names} — {action}", failed)
         if pr.get("reviewDecision") == "CHANGES_REQUESTED":
             for node in nodes(pr, "changesRequested"):
                 sha = (node.get("commit") or {}).get("oid") or "?"
