@@ -1142,6 +1142,15 @@ request's head, so they show on the release pull request like any other
 checks. That is why `.github/workflows/check.yml` lists `workflow_dispatch`
 among its triggers and the Release workflow's propose job has `actions: write`.
 
+`main` requires the `projector/review` status, and no review session picks up
+a pull request that the workflow's token opened. The propose job checks that
+its release commit changes only the three version files and then posts a
+`success` `projector/review` status on that commit, which is why the job also
+has `statuses: write`. The status covers that commit alone, so a commit pushed
+to the release branch waits for a Projector review. The job refuses a run
+dispatched from any branch but `main`, because the release branch would carry
+that branch's commits under the status.
+
 The workflow runs `.github/scripts/release.py`, which also works by hand
 from any checkout. `bump` raises one part of the version and `set` writes an
 exact one, both refusing a version that does not go up:
