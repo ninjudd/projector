@@ -1,0 +1,94 @@
+{
+ "version": 1,
+ "name": "Project ios in agent conventions",
+ "project": "agent-instructions",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 479,
+  "title": "Mention project ios in the AGENTS.md template",
+  "head": "878f3d7e920ea68b5e821cb214f5e89bbb23741d",
+  "headRef": "agents-template-project-ios",
+  "base": "52654a3eecab0bb3a656bd5448979c4822872629",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project init</code> writes a block of Projector conventions into every adopting repository's <code>AGENTS.md</code> and <code>CLAUDE.md</code>. Every agent session in that repository reads it, whether or not the Projector plugin is installed. Until this change the block said nothing about <code>project ios</code>, the command that builds a branch or a pull request of an iOS app in a worktree of its own and installs it on a device. The steps for a device test lived only in the <code>implement</code> skill, which an agent reads only inside Projector's own flows.",
+   "This change adds two paragraphs to the template, both scoped to a repository with an iOS app:",
+   "<ul><li><b>A general paragraph.</b> It applies with or without the plugin. It says to build and install through <code>project ios</code> rather than <code>xcodebuild</code> or <code>devicectl</code>, never to pass <code>--allow-untrusted</code> yourself, which commands the person runs on their own Mac, and how to get crash reports and device logs.</li><li><b>A plugin paragraph.</b> It sits under \"Projector skills\" after the rule about a request's start action. It points at the <code>implement</code> skill's \"Prepare a device test for an iOS app\" and keeps one rule: build with <code>--no-install</code> before posting the request, and install only in the start action.</li></ul>",
+   "The template's version moves from 27 to 28, the test that pins each version's hash gains the new one, and this repository's own <code>AGENTS.md</code> is refreshed to the new block."
+  ],
+  "cards": [
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first review of <code>878f3d7</code> requested changes with one finding: the general paragraph sends agents to <code>project ios build</code>, which installs by default, without saying to install on the person's device only when they ask.</li><li>It suggested matching the <code>implement</code> skill's crash and log advice: <code>crashes --device &lt;udid&gt;</code>, and asking the person to share the log file.</li><li>The full test suite, <code>project check</code>, and <code>git diff --check</code> passed on the head.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "template",
+   "title": "The conventions template",
+   "kicker": "Two new paragraphs about project ios, and the version that marks the change",
+   "intro": [
+    "The template is the single source of the block. Its first line, <code>&lt;!-- projector:begin 28 --&gt;</code>, carries the version that <code>project check</code> compares against a repository's copy, so an older copy is reported as stale.",
+    "Read the general paragraph as an agent without the plugin would. That agent follows only the general conventions, so any rule about when to install on the person's device has to be there, not only under \"Projector skills\"."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every command and flag the paragraphs name exists in the <code>ios</code> parser in <code>cli.py</code>: <code>build</code> with <code>--no-install</code> and <code>--allow-untrusted</code>, <code>install</code> with <code>--device</code>, <code>crashes</code>, and <code>logs</code>. Checked by reading the parser at the head."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The template <code>project init</code> renders into each repository. The version bumps and two iOS paragraphs are added.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 47,
+       "text": "Open review finding: this paragraph applies without the plugin and points agents at <code>project ios</code>, whose <code>build</code> installs and opens the app on the connected device unless <code>--no-install</code> is passed. Nothing here says to install on the person's device only when they ask, so an agent checking its change can replace the build the person is testing."
+      },
+      {
+       "kind": "context",
+       "line": 54,
+       "text": "The <code>implement</code> skill runs <code>project ios crashes --device &lt;udid&gt;</code> for the device the person tested on, and asks the person to share the log file. This line runs a bare <code>crashes</code>, which reads whichever single device is connected, and asks the agent to read the log file itself. The review listed this as a suggestion."
+      },
+      {
+       "kind": "verify",
+       "line": 118,
+       "text": "This paragraph matches the <code>implement</code> skill's steps: push, build with <code>--no-install</code> before posting the request, and run <code>project ios install &lt;number&gt; --device &lt;udid&gt;</code> only after <code>STARTED</code>. Checked by reading both texts side by side."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "generated",
+   "title": "This repository's copy and the pinned hash",
+   "kicker": "The rendered block and the test that keeps the template's version honest",
+   "intro": [
+    "Projector adopts its own conventions, so its <code>AGENTS.md</code> carries the rendered block, and <code>CLAUDE.md</code> is a symlink to it. A test pins a SHA-256 hash of the template text for each version, so editing the text without bumping the version fails the suite."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>AGENTS.md</code> contains <code>instructions.render(\"docs/projects\")</code> exactly, the template's hash equals the pinned hash for version 28, and <code>CLAUDE.md</code> is still a symlink to <code>AGENTS.md</code>. Checked by rendering the template and hashing it at the head, and by running <code>tests.test_instructions</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "AGENTS.md",
+     "note": "The refreshed block, identical to the rendered template."
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins version 28's hash."
+    }
+   ]
+  }
+ ]
+}
