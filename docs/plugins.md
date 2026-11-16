@@ -302,7 +302,10 @@ that applies. Red means the branch itself cannot merge, and yellow means a
 review wants something:
 
 - **`conflict`**, in red, while the branch conflicts with its base.
-- **`failing`**, in red, while the head's checks fail.
+- **`failing`**, in red, while the head's checks fail. The panel leaves out
+  the `projector/review` status a review posts, as the drawer's checks do.
+  A review fails that status when it finds something, which the row already
+  shows as `changes` or `threads`.
 - **`changes`**, in yellow, while a review requests changes.
 - **`threads`**, in yellow, while review threads are unresolved.
 - **`reviewing`**, in orange, while the pull request carries the
@@ -400,7 +403,10 @@ running now, in any session. Then come its
 branch, in the palette's cyan, its size, its checks, and every label it
 carries. The size reads as a diff stat: the insertions, such as `+84`, in
 green and the deletions, such as `−12`, in red. The checks' state takes a
-color of its own, and the rest, ` in 5 files` and each `·` included, keeps
+color of its own. It counts every check run and commit status on the head
+but the `projector/review` status, so a head whose only failure is a
+review's verdict reads `checks passing`, and one whose only check is that
+status shows no checks at all. The rest, ` in 5 files` and each `·` included, keeps
 the default text color. Each label is drawn as GitHub's light theme draws
 it: its name, as GitHub spells it, on the label's own color, in black on a
 light color and white on a dark one. A label whose color the panel has not

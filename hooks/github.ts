@@ -13,11 +13,16 @@ export type Fetched = {
   error: string | null
 }
 
+/** The commit status a Projector review posts, which says what the review found rather than whether the head builds. */
+const REVIEW_CONTEXT = 'projector/review'
+
 const FIELDS = `number title url state isDraft reviewDecision mergeable body
   author { login } headRefName additions deletions changedFiles updatedAt
   labels(first: 20) { nodes { name color } }
   reviewThreads(first: 100) { nodes { isResolved } }
-  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`
+  commits(last: 1) { nodes { commit { status { context(name: "${REVIEW_CONTEXT}") { state } }
+    statusCheckRollup { state contexts(first: 1) {
+      checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }`
 
 // What an open drawer lists of its pull request's threads. GitHub counts
 // `comments` under `reviewThreads(first: 100)` as 100 requests, a point of
@@ -35,6 +40,25 @@ const CHECKS: Record<string, Checks> = {
   ERROR: 'failing',
   PENDING: 'pending',
   EXPECTED: 'pending',
+}
+
+/**
+ * What each check run's and commit status's state counts as, with the
+ * failures the watch daemon's CHECKS event counts. A state missing here,
+ * such as `SKIPPED`, holds nothing back.
+ */
+const CONTEXT_CHECKS: Record<'checkRunCountsByState' | 'statusContextCountsByState', Record<string, Checks>> = {
+  checkRunCountsByState: {
+    FAILURE: 'failing',
+    TIMED_OUT: 'failing',
+    STARTUP_FAILURE: 'failing',
+    QUEUED: 'pending',
+    IN_PROGRESS: 'pending',
+    WAITING: 'pending',
+    PENDING: 'pending',
+    REQUESTED: 'pending',
+  },
+  statusContextCountsByState: { FAILURE: 'failing', ERROR: 'failing', PENDING: 'pending', EXPECTED: 'pending' },
 }
 
 /**
@@ -107,11 +131,35 @@ function threadOf(node: unknown): Thread | null {
   }
 }
 
+/**
+ * The head's checks, less the `projector/review` status. GitHub's rollup
+ * counts that status, which a review that requests changes sets to
+ * `failure`, so a head with nothing else failing would read as failing.
+ * Without that status the rollup's own state stands.
+ */
 function checksOf(node: Record<string, unknown>): Checks | null {
   const [last] = nodesOf(node.commits)
   const commit = isRecord(last) ? last.commit : undefined
   const rollup = isRecord(commit) ? commit.statusCheckRollup : undefined
-  return isRecord(rollup) && typeof rollup.state === 'string' ? (CHECKS[rollup.state] ?? null) : null
+  const state = isRecord(rollup) && typeof rollup.state === 'string' ? (CHECKS[rollup.state] ?? null) : null
+  const status = isRecord(commit) ? commit.status : undefined
+  const review = isRecord(status) && isRecord(status.context) ? stringOf(status.context.state) : null
+  if (review === null || !isRecord(rollup) || !isRecord(rollup.contexts)) return state
+
+  const { contexts } = rollup
+  const counts = { failing: 0, pending: 0, passing: 0 }
+  for (const key of ['checkRunCountsByState', 'statusContextCountsByState'] as const) {
+    const rows = Array.isArray(contexts[key]) ? (contexts[key] as unknown[]) : []
+    for (const row of rows) {
+      if (isRecord(row) && typeof row.state === 'string' && typeof row.count === 'number') {
+        counts[CONTEXT_CHECKS[key][row.state] ?? 'passing'] += row.count
+      }
+    }
+  }
+  counts[CONTEXT_CHECKS.statusContextCountsByState[review] ?? 'passing'] -= 1
+  if (counts.failing > 0) return 'failing'
+  if (counts.pending > 0) return 'pending'
+  return counts.passing > 0 ? 'passing' : null
 }
 
 const LABEL_COLOR = /^[0-9a-f]{6}$/i
