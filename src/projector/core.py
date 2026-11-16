@@ -21,6 +21,8 @@ from . import instructions
 STATUSES = ("draft", "ready", "in-progress", "completed")
 PRIORITIES = ("now", "next", "later")
 NAME_PART = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# The iOS SDK's name in a `project.pbxproj`, as a whole word.
+IPHONEOS = re.compile(rb"\biphoneos\b")
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 FRONTMATTER_LINE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):[ \t]*(.*)$")
 
@@ -303,8 +305,13 @@ class ProjectStore:
         cwd: Path,
         root: Optional[Path] = None,
         projects_dir: Optional[Path] = None,
+        ios: Optional[bool] = None,
     ) -> None:
+        """`ios` says whether the Projector section carries the iOS rules; None
+        means it does when the repository has an Xcode project that builds for iOS."""
+
         self.root = (root or discover_git_root(cwd)).resolve()
+        self._ios = ios
         if projects_dir is None:
             self.projects_dir = self.root / "docs" / "projects"
         elif projects_dir.is_absolute():
@@ -479,8 +486,41 @@ class ProjectStore:
     # import. Both hosts read the repository root, whatever the projects
     # directory is, so these paths hang off `self.root`.
 
-    def _rendered_block(self) -> str:
-        return instructions.render(self._relative(self.projects_dir))
+    def _rendered_block(self, ios: Optional[bool] = None) -> str:
+        return instructions.render(self._relative(self.projects_dir), self._carries_ios_rules() if ios is None else ios)
+
+    def _carries_ios_rules(self) -> bool:
+        """Whether the Projector section carries the iOS rules: as the store was
+        told, or else whether Git sees an Xcode project that builds for iOS and
+        is tracked, or untracked and not ignored.
+
+        `project ios` builds only with the iOS SDK, on a Mac too, where it runs
+        the iPad build. So a project counts only when its `project.pbxproj`
+        names `iphoneos`, as `SDKROOT = iphoneos` or a multiplatform target's
+        `SUPPORTED_PLATFORMS` does, and a Mac-only project does not. A
+        workspace names no platform of its own, so it counts through the
+        projects it holds."""
+
+        if self._ios is None:
+            try:
+                listed = run_bounded(
+                    ["git", "-C", str(self.root), "ls-files", "--cached", "--others", "--exclude-standard",
+                     "-z", "--", "*.xcodeproj/project.pbxproj"],
+                    timeout=30,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                self._ios = False
+            else:
+                paths = listed.stdout.split(b"\0") if listed.returncode == 0 else []
+                self._ios = any(self._builds_for_ios(self.root / os.fsdecode(path)) for path in paths if path)
+        return self._ios
+
+    @staticmethod
+    def _builds_for_ios(pbxproj: Path) -> bool:
+        try:
+            return IPHONEOS.search(pbxproj.read_bytes()) is not None
+        except OSError:
+            return False
 
     def _outside(self, path: Path) -> bool:
         """Whether `path` exists as a link that leads out of the repository."""
@@ -735,13 +775,23 @@ class ProjectStore:
                 f"Projector section is version {block.version}; this command ships version"
                 f" {shipped} (run 'project upgrade', or reinstall the CLI)",
             )
-        if not instructions.block_matches(block, self._rendered_block()):
+        if instructions.block_matches(block, self._rendered_block()):
+            return []
+        if instructions.block_matches(block, self._rendered_block(not self._carries_ios_rules())):
+            if self._carries_ios_rules():
+                change = "leaves out the iOS rules this repository needs"
+            else:
+                change = "carries iOS rules this repository does not need"
             return warn(
-                "instructions-edited",
-                f"Projector section differs from the version {shipped} template (run 'project"
-                " init' to restore it, or change the template in Projector)",
+                "instructions-ios",
+                f"Projector section {change} (run 'project init' to refresh it, or set"
+                " instructions.ios to choose)",
             )
-        return []
+        return warn(
+            "instructions-edited",
+            f"Projector section differs from the version {shipped} template (run 'project"
+            " init' to restore it, or change the template in Projector)",
+        )
 
     def set_status(self, name: str, status: str) -> tuple[Project, bool]:
         if status not in STATUSES:

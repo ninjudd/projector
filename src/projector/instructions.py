@@ -8,12 +8,16 @@ distinct files, carries its own copy of the block. Everything outside the
 markers belongs to the repository. `init` writes and refreshes the block;
 `check` reports when it has drifted from the template this package ships. Both
 render the template through `render`, so they compare the same string.
+`render` keeps the template's iOS rules for a repository with an iOS app and
+drops them for any other, so one version of the template renders two ways.
 
 The template's first line is its own begin marker, and the integer in that
 marker is the template version. It changes only when the text changes, so a
 repository's block can be compared with the installed template without a
-content hash: an older version is refreshed, a newer one is left alone, and an
-equal version with different text was edited by hand.
+content hash: an older version is refreshed, and a newer one is left alone. An
+equal version whose text matches the other rendering, with or without the iOS
+rules, belongs to a repository that gained or lost its app since the block was
+written. An equal version that matches neither was edited by hand.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from typing import Optional
 
 PLACEHOLDER = "{projects_dir}"
 IMPORT_LINE = "@AGENTS.md"
+IOS_SECTION = re.compile(r"^\{ios\}\n(.*?)^\{/ios\}\n(\n?)", re.MULTILINE | re.DOTALL)
 
 # A marker owns its line. The lookahead leaves a CRLF file's `\r` outside the
 # block, so the block text ends at the marker whatever the line endings are.
@@ -74,14 +79,17 @@ def template_version() -> int:
     return int(match.group(1))
 
 
-def render(projects_dir: str) -> str:
+def render(projects_dir: str, ios: bool = False) -> str:
     """The block for a repository, without a trailing newline.
 
     `projects_dir` is the projects directory as written in the block, relative
-    to the repository root when it lies inside it.
+    to the repository root when it lies inside it. `ios` keeps the paragraphs
+    between `{ios}` and `{/ios}` lines, for a repository with an iOS app;
+    without it they are dropped with the blank line that follows them.
     """
 
-    return template().replace(PLACEHOLDER, projects_dir).rstrip("\n")
+    text = IOS_SECTION.sub(r"\1\2" if ios else "", template())
+    return text.replace(PLACEHOLDER, projects_dir).rstrip("\n")
 
 
 def find_block(text: str) -> Optional[Block]:

@@ -1,4 +1,4 @@
-<!-- projector:begin 28 -->
+<!-- projector:begin 29 -->
 ## Projector conventions
 
 Projector generates this section. To change it, change the template in
@@ -44,7 +44,8 @@ above, so each layer stays on the current head of the one below and the
 stack can merge as a unit. Chain pull requests by base branch, and update
 them by merging, only where `gh stack` is unavailable.
 
-In a repository with an iOS app, put a build on an iPhone, an iPad, or the
+{ios}
+This repository has an iOS app. Put a build on an iPhone, an iPad, or the
 Mac with `project ios`, not with `xcodebuild` or `devicectl` by hand. It
 builds a branch or a pull request in a worktree of its own, keeps each
 target's build, and refuses a pull request whose head it cannot trust.
@@ -58,6 +59,7 @@ run `project ios crashes --device <udid>` for the device they tested on
 when you can reach it. Otherwise, and for a device log, which needs their
 password for `sudo`, ask them to run `project ios crashes` or
 `project ios logs` and share the file it names.
+{/ios}
 
 ### Projector skills
 
@@ -116,12 +118,14 @@ do exactly what that message quotes and nothing more, and mark the request
 ready with the `ready` tool, or blocked with the `block` tool and what they
 should do first, such as unlocking the phone.
 
-Prepare a test of an iOS app on the person's device as the `implement`
+{ios}
+Prepare a test of the iOS app on the person's device as the `implement`
 skill describes under "Prepare a device test for an iOS app". Push the
 branch and run `project ios build <number> --no-install` before you post
 the request, and install the build only in its start action, with
 `project ios install <number> --device <udid>`, so it never replaces a
 build the person is still testing.
+{/ios}
 
 When the person picks one of a question's options, the answer reaches you as
 a message that starts `ANSWER`. When they finish a request, its outcome
