@@ -329,12 +329,13 @@ request whose checks fail reads `failing` with a green `clean` after its
 title. No note names `conflict`, which always takes the state. While a pull
 request's drawer is open, its row spells the holds out as `checks failing`,
 `changes requested`, and the threads' count, such as `2 threads`, and names
-the one its state already says as well. The ` · ` between two notes keeps the default text
-color. The line ends with how long ago the pull request last changed, in the
-column where the inbox's items end with their ages. Only the title shortens
-on a narrow terminal. A pull request that the watch daemon has not queried
-yet has a muted number and reads `loading…` in place of its title, with no
-state, author, or age, until the daemon's first result for it arrives.
+the one its state already says as well. The ` · ` between two notes keeps
+the default text color. The line ends with how long ago the pull request
+last changed, in the column where the inbox's items end with their ages.
+Only the title shortens on a narrow terminal. A pull request that the watch
+daemon has not queried yet has a muted number and reads `loading…` in place
+of its title, with no state, author, or age, until the daemon's first result
+for it arrives.
 
 Your own pull requests come first, then everyone else's, which the panel
 calls review requests, each author's together and the authors in order of
@@ -434,11 +435,11 @@ line, and then the unresolved review threads, gathered under their files:
   request's description links one.
 - **Each file with an unresolved review thread** is a line that names the
   file and counts its threads in yellow, such as `2 threads`. Every file
-  starts collapsed, marked `+`, so the drawer opens as a short list. Click a file, or press Enter with the focus ring
-  on it, to show its threads and mark it `-`, and again to hide them. A file
-  stays open while its drawer does, through each poll, and starts collapsed
-  again the next time the drawer opens. One open file and one collapsed file
-  look like this:
+  starts collapsed, marked `+`, so the drawer opens as a short list. Click a
+  file, or press Enter with the focus ring on it, to show its threads and
+  mark it `-`, and again to hide them. A file stays open while its drawer
+  does, through each poll, and starts collapsed again the next time the
+  drawer opens. One open file and one collapsed file look like this:
 
   ```text
   - src/audio/player.ts 2 threads
