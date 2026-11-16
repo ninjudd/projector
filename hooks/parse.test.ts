@@ -122,7 +122,7 @@ describe('GitHub', () => {
             deletions: 7,
             changedFiles: 4,
             updatedAt: '2026-10-12T12:00:00Z',
-            labels: { nodes: [{ name: 'Reviewing' }, { name: 'bug' }] },
+            labels: { nodes: [{ name: 'Reviewing', color: 'FBCA04' }, { name: 'bug', color: 'not a color' }] },
             commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
             body:
               'Why the change exists.\n\n<!-- projector-summary v=1 sha=' +
@@ -156,8 +156,11 @@ describe('GitHub', () => {
       deletions: 7,
       changedFiles: 4,
       checks: 'failing',
-      // Lowercased, as GitHub matches label names, so a row finds `reviewing` however the repository spells it.
-      labels: ['reviewing', 'bug'],
+      // Spelled as GitHub spells them, with GitHub's color as `#rrggbb`, and none for a color the panel cannot draw.
+      labels: [
+        { name: 'Reviewing', color: '#fbca04' },
+        { name: 'bug', color: null },
+      ],
       updatedAt: Date.UTC(2026, 9, 12, 12, 0),
       summaryUrl: 'https://example.com/site/reviews/1',
     })
@@ -454,7 +457,7 @@ describe('the daemon’s files', () => {
       deletions: 4,
       changedFiles: 3,
       checks: 'pending',
-      labels: ['clean'],
+      labels: [{ name: 'clean', color: null }],
       updatedAt: Date.UTC(2026, 9, 30, 11),
       summaryUrl: null,
     })

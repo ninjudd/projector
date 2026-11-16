@@ -280,8 +280,8 @@ not subscribed to before.
 ```text
   /projector                                              2 pull requests  12s   [-]
    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
-   #258 reviewing grace Name the reviewed head in a review's… conflict · 2* 5m
-        reviewer · review-signature · +84 −12 in 5 files · checks passing
+   #258 threads grace Name the reviewed head in a review's summary line  2* 5m
+        reviewer · sig-head · +84 −1 in 5 files · checks passing ·  reviewing
         7: Discuss  8: Dismiss
         open in github  open in projector
         src/review.py:412 · ada · P2 · The signature names the base, not the head
@@ -293,8 +293,13 @@ Each line is the pull request's number, its state, its author when someone
 else wrote it, and the title. The number is in the default text color. While
 the pull request is a draft, which means its author is still working on it,
 the number and the state are both in italic. The state is the first of these
-that applies:
+that applies. Red means the branch itself cannot merge, and yellow means a
+review wants something:
 
+- **`conflict`**, in red, while the branch conflicts with its base.
+- **`failing`**, in red, while the head's checks fail.
+- **`changes`**, in yellow, while a review requests changes.
+- **`threads`**, in yellow, while review threads are unresolved.
 - **`reviewing`**, in orange, while the pull request carries the
   `reviewing` label, which `project review setup` adds when a review starts.
 - **`clean`**, in green, while it carries the `clean` label, which
@@ -302,22 +307,25 @@ that applies:
 - **`draft`**, in the default text color, while it is a draft.
 - **`ready`**, in light blue, while it is ready for review and carries
   neither label. That covers a pull request no review has read yet, and also
-  one whose `clean` label a push removed or whose review requested changes.
+  one whose `clean` label a push removed.
 
 So a held draft, which keeps its `clean` label while a change is built,
-reads as an italic number beside an italic green `clean`. The panel reads the
-draft state and the labels with the rest of the line, from the watch daemon's
-query of the pull request.
+reads as an italic number beside an italic green `clean`. A label the state
+gives way to, such as the `clean` of a pull request that now conflicts,
+still shows in its drawer. The panel reads the draft state and the labels
+with the rest of the line, from the watch daemon's query of the pull
+request.
 
-Notes follow the title when the pull request
-has them: `conflict` or `changes requested` in red, `approved` in green,
-and last the number of unresolved review threads before a `*` in yellow,
-such as `2*`. The ` · ` between two notes keeps the default text color. The
-line ends with how long ago the pull request last changed, in the column
-where the inbox's items end with their ages. Only the title shortens on a
-narrow terminal. A pull request that the watch daemon has not queried yet
-reads `loading…` in place of its title, with no review label, author, or
-age, until the daemon's first result for it arrives.
+Notes follow the title when the pull request has them: whatever else of
+`conflict` and `checks failing` in red and `changes requested` in yellow
+holds it back that the state does not already say, then `approved` in
+green, and last the number of unresolved review threads before a `*` in
+yellow, such as `2*`. The ` · ` between two notes keeps the default text
+color. The line ends with how long ago the pull request last changed, in the
+column where the inbox's items end with their ages. Only the title shortens
+on a narrow terminal. A pull request that the watch daemon has not queried
+yet has a muted number and reads `loading…` in place of its title, with no
+state, author, or age, until the daemon's first result for it arrives.
 
 Your own pull requests come first, then everyone else's, each author's
 together and the authors in order of login, with no line between the groups.
@@ -374,16 +382,22 @@ there the panel starts with its first row.
 
 Click a pull request's number to open a drawer under it, and click it again
 to close the drawer; opening one drawer closes any other. The drawer starts
-one column past the number, under the review label. It names the session's
+one column past the number, under the state. It names the session's
 roles on the pull request: `fixer` in the terminal palette's blue,
 `reviewer` in Claude's orange, or `fixer and reviewer`. `reviewer` says that
 this session is subscribed to review the pull request, whether or not a
 review is running, while the row's `reviewing` label says a review is
 running now, in any session. Then come its
-branch, in the palette's cyan, its size, and its checks. The size reads as a
-diff stat: the insertions, such as `+84`, in green and the deletions, such
-as `−12`, in red. The checks' state takes a color of its own, and the rest,
-` in 5 files` and each `·` included, keeps the default text color. Below
+branch, in the palette's cyan, its size, its checks, and every label it
+carries. The size reads as a diff stat: the insertions, such as `+84`, in
+green and the deletions, such as `−12`, in red. The checks' state takes a
+color of its own, and the rest, ` in 5 files` and each `·` included, keeps
+the default text color. Each label is drawn as GitHub's light theme draws
+it: its name, as GitHub spells it, on the label's own color, in black on a
+light color and white on a dark one. A label whose color the panel has not
+read yet, which a daemon cache from before the panel read colors leaves
+until its next poll, is drawn on GitHub's light gray. The labels come last
+on the line, so a narrow terminal cuts them first. Below
 that come two actions, side by side on one line, on the digits `7` and `8`,
 as [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
 describes. The links to the pull request follow, side by side on the next
@@ -610,20 +624,12 @@ long list of pull requests or a burst of notices does not push the questions
 out of view. A collapsed line starts with `+`, where an item's starts with
 `-`, to say it expands. Collapsed pull requests become a line such as
 `+ #12 #14 #15` in their place, listing each in the rows' order. With no
-review label beside it, each number's color says what its row says, from
-its notes and thread count as well as its state, taking the first of these
-that applies:
-
-- **Red** when a conflict, a change request, or failing checks hold it back.
-- **Yellow** while it has unresolved review threads, which its row counts in
-  yellow.
-- **Orange** while it carries the `reviewing` label.
-- **Green** while it carries the `clean` label.
-- **The default text color** when it carries neither label.
-
-A draft's number is italic as well, as on its row, so a held draft that
-keeps its `clean` label reads as an italic green number. A pull request that
-is still loading is muted. The numbers work as tabs:
+state beside it, each number takes the color of its row's state: red for
+`conflict` or `failing`, yellow for `changes` or `threads`, orange for
+`reviewing`, green for `clean`, the default text color for `draft`, and
+light blue for `ready`. A draft's number is italic as well, as on its row,
+so a held draft that keeps its `clean` label reads as an italic green
+number. A pull request that is still loading is muted. The numbers work as tabs:
 click one to open that pull request's drawer below the line, with its number
 drawn inverted, and click it again to close the drawer. The pull requests
 stay collapsed, and only one drawer is open at a time, so clicking another

@@ -1,4 +1,4 @@
-import type { Checks, PullRequest, Thread } from './types'
+import type { Checks, Label, PullRequest, Thread } from './types'
 import { isRecord, keyOf, type TrackedPr } from './parse'
 
 /** Where one pull request's node sits in the response. */
@@ -15,7 +15,7 @@ export type Fetched = {
 
 const FIELDS = `number title url state isDraft reviewDecision mergeable body
   author { login } headRefName additions deletions changedFiles updatedAt
-  labels(first: 20) { nodes { name } }
+  labels(first: 20) { nodes { name color } }
   reviewThreads(first: 100) { nodes { isResolved } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`
 
@@ -114,6 +114,15 @@ function checksOf(node: Record<string, unknown>): Checks | null {
   return isRecord(rollup) && typeof rollup.state === 'string' ? (CHECKS[rollup.state] ?? null) : null
 }
 
+const LABEL_COLOR = /^[0-9a-f]{6}$/i
+
+function labelOf(node: unknown): Label[] {
+  const name = isRecord(node) ? stringOf(node.name) : null
+  if (name === null) return []
+  const color = isRecord(node) ? stringOf(node.color) : null
+  return [{ name, color: color !== null && LABEL_COLOR.test(color) ? `#${color.toLowerCase()}` : null }]
+}
+
 function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullRequest {
   const threads = nodesOf(node.reviewThreads)
   const state = node.state === 'MERGED' || node.state === 'CLOSED' ? node.state : 'OPEN'
@@ -139,10 +148,7 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
     deletions: numberOf(node.deletions),
     changedFiles: numberOf(node.changedFiles),
     checks: checksOf(node),
-    labels: nodesOf(node.labels).flatMap(label => {
-      const name = isRecord(label) ? stringOf(label.name) : null
-      return name === null ? [] : [name.toLowerCase()]
-    }),
+    labels: nodesOf(node.labels).flatMap(labelOf),
     updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
     summaryUrl: summary?.[1] ?? null,
   }

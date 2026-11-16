@@ -13,6 +13,13 @@ export type Role = 'fixing' | 'reviewing'
 
 export type Checks = 'passing' | 'failing' | 'pending'
 
+/** A label on a pull request, as GitHub spells and colors it. */
+export type Label = {
+  name: string
+  /** GitHub's color for the label, as `#rrggbb`; null when the cache predates the panel reading it. */
+  color: string | null
+}
+
 /** A review thread no one has resolved, as a pull request's drawer lists it. */
 export type Thread = {
   path: string
@@ -45,8 +52,8 @@ export type PullRequest = {
   changedFiles: number
   /** The head commit's combined check state; null when it has no checks. */
   checks: Checks | null
-  /** The pull request's label names, lowercased, among them the `reviewing` and `clean` a review sets. */
-  labels: string[]
+  /** The pull request's labels, among them the `reviewing` and `clean` a review sets. */
+  labels: Label[]
   /** When the pull request last changed, in milliseconds; null when GitHub did not say. */
   updatedAt: number | null
   /** The Projector summary the description links, when one was published. */
