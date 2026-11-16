@@ -1,0 +1,1546 @@
+diff --git a/.projector.toml b/.projector.toml
+index 4173eca8..597fa461 100644
+--- a/.projector.toml
++++ b/.projector.toml
+@@ -1,2 +1,6 @@
+ [review]
+ require_check = true
++# The Check workflow's `check` job runs the test suite, `npm run check`, and `project check` on every push.
++gate_checks = "check"
++# The steps of the gate in AGENTS.md that CI cannot run, run on the review's worktree against the merge base.
++gate = 'claude plugin validate . && claude plugin validate skills && claude plugin test . && hooks/typecheck.sh && git diff --check "$2" HEAD'
+diff --git a/AGENTS.md b/AGENTS.md
+index 3b54a193..59003649 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -84,6 +84,12 @@ hooks/typecheck.sh
+ git diff --check
+ ```
+ 
++The Check workflow's `check` job runs the test suite, `npm run check`, and
++`project check` on every push, and `.projector.toml` names it in
++`review.gate_checks`. So before you push, run the tests that cover your change
++and the other steps above, not the whole suite. A review waits for `check` on
++the head, and a failure comes back to the fixer as a `CHECKS` event.
++
+ The packaging tests validate both plugin manifests and their exact published
+ skill set. `claude plugin validate .` validates the marketplace and the Claude
+ Code hooks module in `hooks/`, while `claude plugin validate skills` validates
+diff --git a/docs/cli.md b/docs/cli.md
+index 1b8eb130..7428f167 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -758,7 +758,8 @@ reads, which are these:
+ | `review.username` | string | the authenticated user | `review-pr` and `review-repo`, as the GitHub login that posts reviews, and `project watch add --role review`, as the login a review subscription names |
+ | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
+ | `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing every `project` command but the few that reach outside Projector's own state to your Claude Code settings and Codex rules |
+-| `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
++| `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2`. With `review.gate_checks` set, it names only the part of the gate CI does not run |
++| `review.gate_checks` | string | none | `project review gate`, which waits for these GitHub Actions checks on the head instead of running the suite, and `implement` and `fix-pr`, which run focused tests before a push instead of the full suite: the names of the CI checks that run the repository's suite, separated by commas, as `check` or `test, lint` |
+ | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
+ | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
+ | `review.labels` | boolean | `true` | `project review setup`, `publish`, and `finish`, to add and remove the `reviewing` label, which shows a review in progress, and the `clean` label, which shows a signed-off head; `false` leaves both labels alone, as a repository whose own `clean` or `reviewing` label means something else needs |
+@@ -2116,9 +2117,46 @@ worktree, with the worktree and the merge base as `$1` and `$2` and as
+ standard error under `--json` so standard output carries only the JSON record;
+ `gate` exits with the command's status, and the state file records the
+ command, its exit status, the head, and when it ran. The command runs the
+-head's code, so `gate` refuses, exiting 1 without running anything, on a head
+-`setup` recorded as untrusted, whether or not `review.gate` is set, and when
+-`review.gate` is unset.
++head's code, so it runs only on a head `setup` recorded as trusted. Without
++`review.gate_checks`, `gate` refuses, exiting 1 without running anything, on
++an untrusted head, whether or not `review.gate` is set, and when `review.gate`
++is unset.
++
++When `review.gate_checks` names the CI checks that run the repository's
++suite, such as `check` or `test, lint`, `gate` runs the `review.gate` command
++on a trusted head when it is set, and then waits for CI instead of running the
++suite. A failing command decides the gate with its own status, and `gate`
++reads no CI. Reading CI runs nothing on your machine, so `gate` reads it for an
++untrusted head too, and leaves the command unrun there. It reads each named
++check's latest run on the head from GitHub Actions, ignoring a check of the
++same name that another app or a commit status posts, and looks every 20
++seconds for up to 30 minutes. It exits:
++
++| Exit | When |
++| --- | --- |
++| 0 | Every named check concluded `success`. |
++| 1 | A named check concluded `failure` or `timed_out`. |
++| 75 | CI gave no evidence about the head's code. The record's `reason` says why. |
++
++CI gives no evidence when a named check is still running after 30 minutes or
++concludes `cancelled`, `skipped`, `neutral`, or the like. It also gives none
++when no run of the check can come: the head's workflow runs have all finished
++without it, one waits for a maintainer to approve it, or none started in the
++first two minutes. A call to GitHub that fails while `gate` reads CI gives
++none either, with the error as the record's `reason`. Last, CI gives none
++when the head changed a file that decides what the check runs. Those are the
++workflow file GitHub records for the check's run, and every reusable workflow
++and local action that file reaches through a `uses: ./` line. A bare `uses: ./` runs the action at the
++repository's root, so every file in the repository decides that check. A
++head that changes only another workflow, such as a release workflow, keeps
++CI's evidence. When `gate` cannot tell which files decided the run, it gives
++no evidence rather than guess. On exit 75, a review runs the repository's full
++gate locally on a trusted head, and reads an untrusted one.
++
++The state file's gate record then also holds `checks`, each named check's
++`name`, `conclusion`, and `url`, with a `null` conclusion for a check that had
++no completed run, and `source`, which is `ci` when CI decided the result and
++`local` otherwise.
+ 
+ `rules` checks whether your own settings hold the rules `init` adds to
+ `~/.claude/settings.json`, and to `~/.codex/rules/projector.rules` where Codex
+@@ -2815,6 +2853,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
+ | `FINDING` | `fix` | An unresolved review thread |
+ | `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
+ | `CONFLICT` | `fix` | A branch that conflicts with its base |
++| `CHECKS` | `fix` | CI failing on the head, naming each check run that concluded `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE` and each commit status in the state `FAILURE` or `ERROR`; the `projector/review` status does not count, and neither does a run that waits for approval or was cancelled or skipped |
+ | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
+ | `LABEL` | `fix` | A `clean` or `reviewing` label added or removed since the owner last saw the pull request, as `+clean` or `-reviewing` |
+ | `UNREVIEWED` | `fix`, when no session on this machine reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
+@@ -2854,7 +2893,7 @@ became a draft. A subscription to one pull request, as `review-pr` adds,
+ announces every head, draft or not, because running `review-pr` asks for its
+ review now.
+ 
+-`FINDING`, `VERDICT`, `CONFLICT`, and `NEW HEAD` report work that
++`FINDING`, `VERDICT`, `CONFLICT`, `CHECKS`, and `NEW HEAD` report work that
+ stands until it is done, so the daemon announces each again, with
+ `(still open)` after the reference, every `watch.renotify` seconds while it
+ stands. A `NEW HEAD` stands while the head has no verdict by the model from
+diff --git a/docs/plugins.md b/docs/plugins.md
+index c1b443a2..b2120671 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -73,8 +73,8 @@ Projector's mod also subscribes the session to fix each pull request that a
+ pushed to, inside a skill or not. A subagent's commands carry its session's
+ id, so a pull request that a subagent opens subscribes the session it
+ belongs to. One background process per machine, the watch daemon, polls
+-every subscribed pull request and sends each finding, conflict, and new head
+-to one session, as a line that ends with what to do:
++every subscribed pull request and sends each finding, conflict, CI failure,
++and new head to one session, as a line that ends with what to do:
+ 
+ ```text
+ CONFLICT acme/app#12 conflicts with main — run fix-pr on acme/app#12 in subagent fix-12
+diff --git a/docs/projects/gate-in-ci/readme.md b/docs/projects/gate-in-ci/readme.md
+index 4cc1d259..a87ca9fe 100644
+--- a/docs/projects/gate-in-ci/readme.md
++++ b/docs/projects/gate-in-ci/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: ready
++status: completed
+ priority: now
+ ---
+ 
+@@ -91,8 +91,10 @@ without `review.gate_checks` keeps today's behavior.
+ 5. `gate` writes the gate record (§ 2.2) and exits:
+    - **0** when the command, if it ran, exited 0 and every named check
+      concluded `success`.
+-   - **1** when the command failed, or when any named check concluded
+-     `failure` or `timed_out`.
++   - **The command's own status** when the command failed. `gate` then reads
++     no CI, and the status matches what `gate` exits without
++     `review.gate_checks`.
++   - **1** when any named check concluded `failure` or `timed_out`.
+    - **75** when a named check gave no evidence: it had no completed run
+      within 30 minutes, step 4 found that no run is coming, or it concluded
+      `cancelled`, `skipped`, `neutral`, `stale`, or `action_required`.
+@@ -106,7 +108,9 @@ without `review.gate_checks` keeps today's behavior.
+    `exit_code` is not 0, so the incremental rule (`incremental-review`
+    § 2.2.1) still demands a passing gate across a moved base.
+ 7. Independently of any review, the watch daemon reads the head's CI rollup
+-   on each poll. It sends the `fix` role one `CHECKS` line for that head when
++   each time it queries the pull request: when the pull request changes, and
++   at least once every `watch.full_every` seconds. It sends the `fix` role
++   one `CHECKS` line for that head when
+    a context in the rollup failed: a check run that concluded `FAILURE`,
+    `TIMED_OUT`, or `STARTUP_FAILURE`, or a commit status in the state
+    `FAILURE` or `ERROR`. The `projector/review` status does not count.
+@@ -116,10 +120,16 @@ without `review.gate_checks` keeps today's behavior.
+    status. A run that waits for approval, or that was cancelled or skipped,
+    is not a failure. The query reads the first 20 contexts with the rollup's
+    counts of check runs and statuses in each state, which cover every
+-   context. When those counts hold more failed contexts than the first 20
+-   show, and the connection has a next page, the daemon reads the remaining
+-   pages before it decides, so a failed check after the twentieth context
+-   still sends `CHECKS`. `fix-pr` then reads the failing run's log,
++   context. The counts include the `projector/review` status, so the query
++   also reads that status's state on the head commit, and a failed one comes
++   out of the counts. When the counts still hold more failed contexts than
++   the first 20 show, and the connection has a next page, the daemon reads
++   the head commit's later pages, 100 contexts at a time, until it has found
++   them all or the pages end. So a failed check after the twentieth context
++   still sends `CHECKS`, and a head whose only failure is the
++   `projector/review` status reads no second page. A page that fails to load
++   leaves the contexts read before it, and the next query tries again.
++   `fix-pr` then reads the failing run's log,
+    reproduces the failure, and fixes it, or reports why it cannot.
+ 
+ ### 2.2 Data
+@@ -132,17 +142,18 @@ without `review.gate_checks` keeps today's behavior.
+ | Default | Unset: everything runs locally, as today. |
+ | Matches | A check run whose `name` equals one of the names and whose `app.slug` is `github-actions`. Only the latest run of each name counts. |
+ 
+-The gate record in the review's `state.json` gains two fields. It keeps the
++The gate record in the review's `state.json` gains three fields. It keeps the
+ four it has, so `gate_passed` reads it unchanged.
+ 
+ | Field | Value |
+ | --- | --- |
+ | `command` | The `review.gate` command, or `null` when it did not run, because it is unset or the head is untrusted. |
+-| `exit_code` | 0, 1, or 75, as § 2.1 step 5 defines. |
++| `exit_code` | 0, 1, 75, or the failed command's status, as § 2.1 step 5 defines. |
+ | `sha` | The head the gate covers. |
+ | `ran_at` | When the gate started. |
+ | `checks` | New. One `{"name", "conclusion", "url"}` per named check, with `conclusion` `null` for a check that had no completed run. Absent when `review.gate_checks` is unset. |
+ | `source` | New. `ci` when `checks` decided the result, and `local` otherwise. |
++| `reason` | New. On exit 75, why CI gave no evidence, as `the head changed .github/workflows/check.yml, which decides what check runs`. Absent otherwise. |
+ 
+ The `CHECKS` event, sent once per head and repeated after `watch.renotify` as
+ `CONFLICT` is:
+@@ -159,7 +170,7 @@ CHECKS acme/app#12 (still open) head=1a2b3c4d failed: check, lint — <action>
+ | `src/projector/config.py` | `review.gate_checks: str` in `SETTINGS`. |
+ | `src/projector/review.py` | `gate` takes the parsed names. With names set, the trust check moves from the top of `gate` to the command, which `gate` runs on a trusted head when it is set. Then `gate` calls a new `ci_checks(repo, sha, names)`. That function reads `gh api 'repos/<repo>/commits/<sha>/check-runs?filter=latest&check_name=<name>'` once for each name, so a commit with more check runs than one page holds still shows each named run. It keeps the `github-actions` runs. A new `check_files(repo, worktree, run)` finds the files behind a run (§ 2.4), and `gate` compares them with `git diff --name-only <base> <sha>`. While a named check has no run, `gate` reads `gh api 'repos/<repo>/actions/runs?head_sha=<sha>'` for the early exits in § 2.1 step 4. `gate` waits in a loop that reuses `touch_head`. |
+ | `src/projector/cli.py` | `review gate` reads `review.gate_checks`, prints each check's conclusion and the reason for exit 75, and exits as § 2.1 step 5 defines. |
+-| `src/projector/watch.py` | `QUERY` reads `statusCheckRollup{ contexts(first:20){ checkRunCountsByState{ state count } statusContextCountsByState{ state count } pageInfo{ hasNextPage endCursor } nodes{ … on CheckRun{ name conclusion } … on StatusContext{ context state } } } }`. When the counts show a failed context that the first page lacks, a follow-up query reads the head's later pages of `contexts(first:100, after:<cursor>)`. The fix events add `CHECKS` through `standing`, keyed `checks:<number>:<head>`, from the failed contexts that § 2.1 step 7 names. |
++| `src/projector/watch.py` | `QUERY` reads the head commit's `status{ context(name:"projector/review"){ state } }` and `statusCheckRollup{ state contexts(first:20){ checkRunCountsByState{ state count } statusContextCountsByState{ state count } pageInfo{ hasNextPage endCursor } nodes{ __typename … on CheckRun{ name conclusion } … on StatusContext{ context state } } } }`, keeping the `state` the panel reads. `failure_count` sums the failed states in the counts, less a failed `projector/review` status, and `failed_contexts` names the failed nodes, never that status. While the nodes read so far name fewer failures than the counts and the connection has a next page, `Daemon.read_contexts` reads `repository.object(oid:<head>)`'s `contexts(first:100, after:<cursor>)` and adds the nodes to the cached first page. The fix events add `CHECKS` through `standing`, keyed `checks:<number>:<head>`, from the failed contexts that § 2.1 step 7 names. |
+ | `skills/review-pr/SKILL.md` | The gate paragraph under "Run a head's code only when the head is trusted" says that with `review.gate_checks` set, `gate` reads CI for any head and runs the `review.gate` command only on a trusted one. It says how to handle exit 1, exit 75, and a changed workflow, on a trusted head and on an untrusted one. Under "Review a minimal push incrementally", the sentence "Where `review.gate` is unset, `gate` refuses" names both settings, because `gate` runs with only `review.gate_checks` set. |
+ | `skills/implement/SKILL.md` | "Verify the current slice", and the stack rebase rule, say: where `review.gate_checks` is set, run the tests that cover the change and the `review.gate` command, not the full suite, because CI runs it on the push. |
+ | `skills/fix-pr/SKILL.md` | Step 2 and the stack layers take the same rule. A new kind of work handles a `CHECKS` line: read the failing job's log with `gh run view <id> --log-failed`, or open the URL of a check from another app or of a commit status. Reproduce the failure locally with the failing test, then fix it. A failure the fixer cannot reproduce, or one in infrastructure the change did not touch, is reported, not patched. |
+@@ -181,7 +192,10 @@ from the head, without parsing YAML, which the standard library cannot do:
+    `uses:` value that starts with `./`. A reference to a workflow file, such
+    as `./.github/workflows/test.yml`, adds that file. Any other local
+    reference names the directory of a local action, such as
+-   `./.github/actions/setup`, and adds every file under it. `gate` reads each
++   `./.github/actions/setup`, and adds every file under it. A bare `./`
++   names the action at the repository's root, as an action's own repository
++   uses it to test itself, so every file in the repository decides that
++   check. `gate` reads each
+    added workflow file, and each action's `action.yml` or `action.yaml`, the
+    same way, until no new reference turns up.
+ 3. `gate` compares that set with `git diff --name-only <base> <sha>`. A file
+@@ -299,7 +313,7 @@ that changes only `.github/workflows/release.yml` keeps CI's evidence.
+ | The watch polls a head whose `check` run concluded `FAILURE` | One `CHECKS` line for the `fix` role, naming the failed checks, and no repeat before `watch.renotify`. |
+ | A head whose only failed context is the `projector/review` status | No `CHECKS` line. |
+ | A head with 25 contexts whose only failed check run is the twenty-fifth | One `CHECKS` line naming it, after the daemon reads the second page. |
+-| A head with 25 contexts and no failed context beyond `projector/review` | No `CHECKS` line, and no second page read. |
++| A head with 25 contexts whose only failed context is a `projector/review` status | No `CHECKS` line, and no second page read, because the status's state comes out of the counts. |
+ | A check run that concluded `STARTUP_FAILURE` | One `CHECKS` line naming it. |
+ | A head whose only unfinished workflow run waits for approval | No `CHECKS` line. |
+ | A new head after a `CHECKS` line | No `CHECKS` line until a context on that head fails. |
+@@ -321,7 +335,8 @@ These tests fail before the change:
+ - **The `CHECKS` key.** It is keyed per head, which catches an event that
+   repeats on every poll or survives a new head.
+ - **The `projector/review` context.** It catches a `CHECKS` line that reports
+-  a changes-requested verdict as a CI failure.
++  a changes-requested verdict as a CI failure, and a daemon that reads a
++  second page on every query of a head whose only failure is that status.
+ - **The failed context past the first page.** It catches a `CHECKS` decision
+   that reads only the first 20 contexts.
+ 
+@@ -340,12 +355,13 @@ pins their wording.
+   That is at most 180 calls in 30 minutes, plus one call for each named
+   check to find its workflow run, against GitHub's 5,000 an hour.
+ - **The watch query.** It reads up to 20 rollup contexts per pull request,
+-  with the rollup's counts by state. That adds a few points to the GraphQL
+-  cost the query already reports in `rateLimit`. A further page costs one
+-  more query, and only on a head with more than 20 contexts whose counts
+-  show a failure the first page lacks, so a head without one never pays it.
+-  The implementation measures both costs on a pull request with CI and
+-  records them here.
++  with the rollup's counts by state and the head's `projector/review`
++  status. On Projector's own pull requests #468, #469, and #470, each with
++  four contexts, `rateLimit` reported a cost of 2 points for the query
++  before the change and 2 after it, so the rollup adds less than a whole
++  point. A further page costs one more query, measured at
++  1 point, and only on a head with more than 20 contexts whose counts show
++  a failure the first page lacks, so a head without one never pays it.
+ 
+ ## 6. Open questions
+ 
+@@ -356,3 +372,23 @@ None blocks implementation.
+ - **Checks that run on a schedule or in a merge queue.** `gate_checks` covers
+   checks that run on each pushed head. A repository whose suite runs only in a
+   merge queue leaves the setting unset. Deferred.
++
++## 7. Outcome
++
++Shipped in one pull request, as § 2 describes. These deviations settled
++during implementation:
++
++- **A failing `review.gate` command keeps its own status.** `gate` exits with
++  it, as it does without `review.gate_checks`, rather than with 1, so a caller
++  that reads the command's status sees no change. § 2.1 step 5 says so.
++- **The gate record has a `reason`.** On exit 75 it holds why CI gave no
++  evidence, which `gate` prints and the review's disclosures repeat.
++- **A failed call gives no evidence.** A call to GitHub or Git that fails
++  during the wait ends `gate` with exit 75 and the error as its `reason`,
++  so a transient GitHub error does not read as a failing check.
++- **The wait's constants live in `review.py`.** `CI_WAIT` is 30 minutes,
++  `CI_POLL` 20 seconds, and `CI_START`, how long a head may go with no
++  workflow run, 2 minutes. The tests shrink them rather than wait.
++- **Projector's own `review.gate`** runs the plugin validations, the hooks
++  tests, `hooks/typecheck.sh`, and `git diff --check "$2" HEAD`, because `git
++  diff --check` alone sees nothing in a clean scratch worktree.
+diff --git a/skills/finish/SKILL.md b/skills/finish/SKILL.md
+index 4fdfaa0b..fe7305fa 100644
+--- a/skills/finish/SKILL.md
++++ b/skills/finish/SKILL.md
+@@ -23,8 +23,12 @@ the outcome.
+    the plan said to build once exists once, nothing the change replaced is
+    still present or referenced, and no stub, dead branch, or compatibility
+    wrapper remains.
+-4. Run the repository's complete validation gate. Treat missing or indirect
+-   evidence as incomplete rather than assuming intent proves delivery.
++4. Run the repository's complete validation gate. Where `.projector.toml`
++   sets `review.gate_checks`, the named CI checks passing on the pull
++   request's head, read with `project review gate <number>` or
++   `gh pr checks <number>`, stand in for the suite, and you run the rest of
++   the gate. Treat missing or indirect evidence as incomplete rather than
++   assuming intent proves delivery.
+ 5. Inspect nested projects. Their independent statuses do not automatically
+    block the parent, but unresolved work that belongs to the parent's promised
+    outcome does.
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index a19d223c..21e4a6e3 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -64,6 +64,14 @@ are resolved. The work outstanding on the head is:
+ 
+ - **A merge conflict**, when `mergeable` is `CONFLICTING`. `UNKNOWN` means
+   GitHub has not computed it yet, so ask again after a few seconds.
++- **A failed CI check** on the head, which a `CHECKS` line names. Read the
++  failing job's log with `gh run view <run-id> --log-failed`, taking the run
++  id from the check's URL, or open the URL of a check from another app or of
++  a commit status. Reproduce the failure locally with the failing test, then
++  fix it as you fix a finding. A failure you cannot reproduce, or one in
++  infrastructure the change did not touch, such as a runner that could not
++  start or a flaky service, is not yours to patch: report it with the
++  check's URL, and change nothing.
+ - **Every unresolved review thread.**
+ - **A standing `CHANGES_REQUESTED`** from a cross-author reviewer, including
+   one whose findings exist only in its body.
+@@ -130,7 +138,12 @@ head the merge produces, and that head is the one the next review reads.
+ 3. Run the repository's full test, lint, format, documentation, and
+    validation gate, on every layer the rebase rewrote for a stack. A merge
+    or rebase without textual conflicts can still break, for example when one
+-   side renames a function and the other adds a call to it.
++   side renames a function and the other adds a call to it. Where
++   `review.gate_checks` is set, CI runs the full suite on the push, so run the
++   smaller gate step 2 of
++   [Hold the pull request while changes are built](#hold-the-pull-request-while-changes-are-built)
++   describes, with the tests that cover each file the merge resolved, and let
++   a `CHECKS` line bring back what CI finds.
+ 4. Commit the merge, push the branch, and confirm that `mergeable` reads
+    `MERGEABLE`. A stack's rebase leaves no merge to commit: once the gate
+    passes on every rewritten layer, push them all with `gh stack push`, and
+@@ -167,7 +180,7 @@ no review lists a suggestion. Decide every suggestion it lists.
+   [Verify and fix findings](#verify-and-fix-findings): quote the lines it
+   names and confirm that the change it describes is correct there. Then hold
+   the pull request, as the next section describes, and build the change the
+-  way you build a fix, through the full gate.
++  way you build a fix, through the gate.
+ - **Defer** a suggestion that is large, reaches beyond this change, needs a
+   decision you cannot make, or does not hold up when you verify it. Record
+   it in your report with a one-line reason, and post nothing about it on the
+@@ -206,7 +219,11 @@ the `origin` of the checkout you run them in, and refuse outside one.
+    on, because the head is still the one the review signed off: a draft that
+    carries `clean` tells a reader that a review signed the pull request off
+    and that its author is building a change on top of it.
+-2. Build each change, run the full gate, commit, and push. The push starts a
++2. Build each change, run the gate, commit, and push. Where
++   `review.gate_checks` is set, CI runs the full suite on the push, so run
++   the smaller gate `../implement/SKILL.md` describes under "Verify the
++   current slice": the tests that cover the change and the `review.gate`
++   command, not the full suite. The push starts a
+    head with no sign-off yet, so the repository's label workflow, or the next
+    review's `setup`, takes `clean` off.
+ 3. As soon as the push that carries every change succeeds, mark the pull
+@@ -373,7 +390,9 @@ Fix code on the stack branch that introduced it. Find the layers above it,
+ and carry each fix up through every one of them, as `../implement/SKILL.md`
+ describes under "Stack dependent work": by rebasing with `gh stack` where it
+ works, and by merging each layer into the one above it where it does not.
+-Either way, run each affected layer's full gate before you push it. Do not
++Either way, run each affected layer's gate before you push it, as step 2 of
++[Hold the pull request while changes are built](#hold-the-pull-request-while-changes-are-built)
++describes. Do not
+ patch parent code inside a child merely to avoid updating the layers above.
+ 
+ The user can merge the whole stack, or its bottom layers, from GitHub at any
+@@ -534,6 +553,10 @@ role are these:
+   findings exist only in its body.
+ - **`CONFLICT`** reports a branch that conflicts with its base. It clears
+   when a push makes the branch mergeable again.
++- **`CHECKS`** reports CI checks that failed on the head, by name. It counts
++  failed check runs and failed commit statuses, but never Projector's own
++  `projector/review` status, which a `VERDICT` already reports. It clears
++  when a push moves the head.
+ - **`REVIEW`** reports a Projector review whose suggestions
+   `project review suggestions` lists, or any other reviewer's review body
+   of the current head that has no inline thread, the shape every `COMMENT`
+@@ -550,7 +573,8 @@ role are these:
+   Tell the user once that no session on this machine reviews it, and that
+   `review-pr` or `review-repo` would, unless they review it elsewhere. Never
+   say that no session reviews it at all. It is not work: any work behind it
+-  arrives as its own `FINDING`, `VERDICT`, `CONFLICT`, or `REVIEW` line. A
++  arrives as its own `FINDING`, `VERDICT`, `CONFLICT`, `CHECKS`, or `REVIEW`
++  line. A
+   draft reports nothing, because it waits on its author, and so does a pull
+   request that a session here reviews, or that a live start comment from the
+   operator or another account whose review would count shows under review
+@@ -572,7 +596,7 @@ role are these:
+   operator cannot see it, and that the daemon removed the subscription.
+   Tell the user.
+ 
+-`FINDING`, `VERDICT`, and `CONFLICT` report work that stands until it is
++`FINDING`, `VERDICT`, `CONFLICT`, and `CHECKS` report work that stands until it is
+ done, and the daemon announces each again every `watch.renotify`
+ seconds, 15 minutes by default, while it stands. So a line about work a
+ subagent already has is a reminder: send it on. A thread the subagent
+@@ -594,7 +618,7 @@ point: on a new round the subagent already knows the findings it answered,
+ the ones it declined and why, and the commits it pushed, so it reads a
+ reopened thread as the recurrence it is instead of as new work.
+ 
+-- On a pull request's first `FINDING`, `VERDICT`, `CONFLICT`, or `REVIEW`,
++- On a pull request's first `FINDING`, `VERDICT`, `CONFLICT`, `CHECKS`, or `REVIEW`,
+   start its subagent under the name the event gives, `fix-<number>`. Give
+   it the repository, the pull request, the operator login, the event lines,
+   and the path of this file, and have it run this skill for the pull
+diff --git a/skills/implement/SKILL.md b/skills/implement/SKILL.md
+index 5686c808..02b65fdd 100644
+--- a/skills/implement/SKILL.md
++++ b/skills/implement/SKILL.md
+@@ -104,6 +104,14 @@ project check
+ git diff --check
+ ```
+ 
++Where `.projector.toml` sets `review.gate_checks`, CI runs the repository's
++full suite on every push, so the gate before a push is smaller: run the tests
++that cover what you changed, the `review.gate` command, and any step of the
++gate the repository's instructions say CI does not run, but not the full
++suite. The named checks passing on the pushed head complete the gate. Read
++`review.gate_checks` with `project config get review.gate_checks`. Where it is
++unset, run the full gate as before.
++
+ Resolve any warning `project check` prints; `project init` refreshes a stale
+ Projector section in `AGENTS.md` without touching the repository's own text.
+ Work built from a description has no project, so skip `project show`. In a
+@@ -325,8 +333,10 @@ Within those rules, work a stack this way:
+   when a layer falls behind or conflicts with its base or a layer below it
+   merges; the rebase drops a squash-merged layer's commits from the layers
+   above it. Resolve a conflict the rebase stops on as the `gh-stack` skill
+-  describes under "Exit 3 recovery". Then run the full gate on every
+-  layer the rebase rewrote, and only once each passes, run `gh stack push`,
++  describes under "Exit 3 recovery". Then run the gate on every layer
++  the rebase rewrote, the smaller gate where `review.gate_checks` is set, as
++  [Verify the current slice](#verify-the-current-slice) describes, and only
++  once each passes, run `gh stack push`,
+   which pushes each branch with `--force-with-lease`. Never merge a base into
+   a layer of a stack `gh stack` works on. In a checkout that does not track
+   the stack yet, `gh stack checkout <number>` sets it up from GitHub.
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 03b9ff60..c2cdad13 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -424,6 +424,26 @@ and exits with its status. Without `review.gate`, run the checks the
+ repository's instructions name. On a head `setup` recorded as untrusted, `gate`
+ refuses without running anything, and the review proceeds by reading.
+ 
++When `.projector.toml` sets `review.gate_checks`, CI runs the repository's
++suite, so run `project review gate <number>` on every head, trusted or not, and
++do not run the suite yourself. `gate` runs the `review.gate` command on a
++trusted head only, then waits for the named GitHub Actions checks on the head.
++Reading their result runs nothing on this machine. When the `review.gate`
++command fails, `gate` exits with the command's own status and reads no CI;
++treat that as a failing gate, as you would a local run. Otherwise act on its
++exit:
++
++- **0.** The gate passed. On an untrusted head, say in the disclosures that CI
++  passed and that no command ran on this machine.
++- **1.** A check failed. Treat it as a failing gate, as you would a local
++  run, and name the check's URL.
++- **75.** CI gave no evidence, and `gate` prints why: the head changed a file
++  that decides what a check runs, a check did not run or was cancelled, CI
++  had not finished in 30 minutes, or a call to GitHub failed. Do what you
++  would do without `review.gate_checks`: on a trusted head, run the checks the repository's
++  instructions name; on an untrusted head, review by reading. Say in the
++  disclosures why CI gave no evidence.
++
+ When the head is untrusted, review it by reading. The four-step protocol in
+ `method.md` verifies findings without running anything. Before you run
+ anything from the head, ask the user, naming why the head is not trusted and
+@@ -571,7 +591,8 @@ decision:
+ 
+ When the read decides for an incremental review and the gate is what remains,
+ run `project review gate <number>`, and go on only when it exits 0. Where
+-`review.gate` is unset, `gate` refuses, and the head gets a full review.
++neither `review.gate` nor `review.gate_checks` is set, `gate` refuses, and the
++head gets a full review.
+ 
+ Then write the body: a few sentences on what changed and what you checked
+ about it, at most 600 characters once its placeholders are filled. Leave out
+diff --git a/skills/work/SKILL.md b/skills/work/SKILL.md
+index ecc809c8..fbe6dd28 100644
+--- a/skills/work/SKILL.md
++++ b/skills/work/SKILL.md
+@@ -118,10 +118,10 @@ When you start, run `fix-pr` once on each pull request the work includes,
+ because review work may already be waiting on it, in one subagent per pull
+ request, as `../fix-pr/SKILL.md` describes under "Give each pull request
+ its own subagent". Then keep fixing
+-as reviews arrive: each `FINDING`, `VERDICT`, `CONFLICT`, and `REVIEW` line
+-the session receives runs `fix-pr` for its pull request in that pull
+-request's subagent, as `../fix-pr/SKILL.md` describes under "Act on the
+-session's events". Run each fix without asking the user first. When
++as reviews arrive: each `FINDING`, `VERDICT`, `CONFLICT`, `REVIEW`, and
++`CHECKS` line the session receives runs `fix-pr` for its pull request in
++that pull request's subagent, as `../fix-pr/SKILL.md` describes under "Act
++on the session's events". Run each fix without asking the user first. When
+ `fix-pr` holds a pull request in draft to build a change, it marks it ready
+ again once the push that carries the change lands.
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index ae7f3668..37f0bae8 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1942,15 +1942,24 @@ def run_review(arguments: argparse.Namespace) -> int:
+         if command == "gate":
+             state = review.read_state(paths)
+             try:
+-                configured = load_config(Path(state["checkout"])).get("review.gate")
++                config = load_config(Path(state["checkout"]))
+             except ProjectorError:
+-                configured = None
++                config = {}
++            configured, checks = config.get("review.gate"), config.get("review.gate_checks")
+             result = review.gate(paths, configured if isinstance(configured, str) else None,
++                                 review.parse_checks(checks if isinstance(checks, str) else None),
+                                  output_to_stderr=arguments.json_output, loop=loop)
+             if arguments.json_output:
+                 print(json.dumps(result, indent=2))
+             else:
+-                print(f"review.gate exited {result['exit_code']} at {result['sha'][:7]}", file=sys.stderr)
++                if result["command"]:
++                    print(f"review.gate ran `{result['command']}`", file=sys.stderr)
++                for check in result.get("checks") or []:
++                    print(f"{check['name']}: {check['conclusion'] or 'no completed run'}"
++                          + (f" {check['url']}" if check["url"] else ""), file=sys.stderr)
++                if result.get("reason"):
++                    print(f"CI gave no evidence: {result['reason']}", file=sys.stderr)
++                print(f"gate exited {result['exit_code']} at {result['sha'][:7]}", file=sys.stderr)
+             return result["exit_code"]
+         state = review.move(paths, loop)
+     if arguments.json_output:
+diff --git a/src/projector/config.py b/src/projector/config.py
+index 160a2ce1..c54ceda8 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -60,6 +60,7 @@
+     "review.allow_approve": bool,
+     "review.publish_rule": bool,
+     "review.gate": str,
++    "review.gate_checks": str,
+     "review.incremental": bool,
+     "review.summarize": bool,
+     "review.labels": bool,
+diff --git a/src/projector/review.py b/src/projector/review.py
+index 138a3fb3..31721d85 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -37,12 +37,14 @@
+ import hashlib
+ import json
+ import os
++import posixpath
+ import re
+ import secrets
+ import shutil
+ import socket
+ import subprocess
+ import tempfile
++import time
+ from collections import Counter
+ from contextlib import AbstractContextManager, suppress
+ from dataclasses import dataclass
+@@ -50,6 +52,7 @@
+ from importlib import resources
+ from pathlib import Path
+ from typing import Callable, Optional
++from urllib.parse import quote
+ 
+ from .core import ProjectorError, distribution_version
+ from .inbox import SESSION, locked, write_json
+@@ -491,44 +494,237 @@ def copy_published(source_loop: str, target_loop: str, repo: str, number: int,
+     return len(copied)
+ 
+ 
+-def gate(paths: Paths, command: Optional[str], output_to_stderr: bool = False, loop: Optional[str] = None) -> dict:
+-    """Run the repository's `review.gate` command in the review's scratch worktree.
++def gate(paths: Paths, command: Optional[str], checks: tuple[str, ...] = (), output_to_stderr: bool = False,
++         loop: Optional[str] = None) -> dict:
++    """Run the repository's gate on the review's head: the `review.gate` command, then the CI checks named in
++    `review.gate_checks`.
+ 
+     The command runs the head's code, so it runs only on a head the state file
+-    records as trusted, and trust is checked first: an untrusted head is refused
+-    as untrusted whether or not a command is configured, so no refusal points
+-    the review at the head's code. The command gets the worktree and the merge
+-    base as `$1` and `$2` and as `PROJECTOR_WORKTREE` and `PROJECTOR_BASE`. Its
++    records as trusted. Without `checks`, trust is checked first, so an
++    untrusted head is refused whether or not a command is configured and no
++    refusal points the review at the head's code. Reading CI runs nothing on
++    this machine, so with `checks` an untrusted head skips the command and
++    still gets CI's result. The command gets the worktree and the merge base
++    as `$1` and `$2` and as `PROJECTOR_WORKTREE` and `PROJECTOR_BASE`. Its
+     output passes through, its standard output going to this process's
+     standard error instead when `output_to_stderr` is set, so a caller printing
+-    JSON keeps standard output for that alone. Its exit status, with the
+-    command and when it ran, is recorded in the state file and returned.
+-    A gate can run for many minutes, so it touches the head's lock as it
+-    starts, every `TOUCH_EVERY` seconds while the command runs, and as it
+-    ends, as `touch_head` does for `loop`.
++    JSON keeps standard output for that alone. A failing command decides the
++    gate with its own status. Otherwise `await_checks` decides it: 0 when every
++    check passed, 1 when one failed, and `NO_EVIDENCE` when CI gave no
++    evidence, with the reason in the record. The record is written to the state
++    file and returned. A gate can run for many minutes, so it touches the
++    head's lock as it starts, every `TOUCH_EVERY` seconds while it runs, and as
++    it ends, as `touch_head` does for `loop`.
+     """
+     state = read_state(paths)
+     touch_head(paths, state, loop)
+-    if not state.get("trusted"):
++    trusted = bool(state.get("trusted"))
++    if not trusted and not checks:
+         raise ReviewError(f"the head {state['sha'][:7]} of {state['repo']}#{paths.number} is untrusted "
+                           f"({state.get('untrusted_because') or 'no reason recorded'}), so its code does not "
+                           "run; review it by reading")
+-    if not command:
++    if not command and not checks:
+         raise ReviewError("review.gate is not set in .projector.toml, so there is nothing to run; run the "
+                           "repository's checks as review-pr describes")
+     worktree = Path(state["worktree"])
+-    environ = dict(os.environ, PROJECTOR_WORKTREE=str(worktree), PROJECTOR_BASE=state["base"])
+-    ran_at = now()
+-    process = subprocess.Popen(["sh", "-c", command, "sh", str(worktree), state["base"]],
+-                               cwd=worktree, env=environ, stdout=2 if output_to_stderr else None)
+-    exit_code = wait_touching(process, lambda: touch_head(paths, state, loop))
+-    record = {"command": command, "exit_code": exit_code, "sha": state["sha"], "ran_at": ran_at.isoformat()}
++    record: dict = {"command": None, "exit_code": 0, "sha": state["sha"], "ran_at": now().isoformat(),
++                    "source": "local"}
++
++    def touching() -> None:
++        touch_head(paths, state, loop)
++
++    if command and trusted:
++        environ = dict(os.environ, PROJECTOR_WORKTREE=str(worktree), PROJECTOR_BASE=state["base"])
++        process = subprocess.Popen(["sh", "-c", command, "sh", str(worktree), state["base"]],
++                                   cwd=worktree, env=environ, stdout=2 if output_to_stderr else None)
++        record.update(command=command, exit_code=wait_touching(process, touching))
++    if checks and record["exit_code"] == 0:
++        record.update(await_checks(state["repo"], state["sha"], state["base"], worktree, checks, touching),
++                      source="ci")
+     state["gate"] = record
+     write_state(paths, state)
+     touch_head(paths, state, loop)
+     return record
+ 
+ 
++# A gate's exit when CI gave no evidence about the head, as `sysexits.h` names a failure worth retrying.
++NO_EVIDENCE = 75
++# How long a gate waits for CI, how often it looks, and how long a head may go without any workflow run.
++CI_WAIT = 30 * 60
++CI_POLL = 20
++CI_START = 2 * 60
++# The workflow run statuses that say a run is still coming, and the check conclusions that are a test failure.
++COMING = frozenset({"queued", "in_progress", "requested", "waiting", "pending"})
++FAILED = frozenset({"failure", "timed_out"})
++USES = re.compile(r"""^\s*(?:-\s*)?uses:\s*["']?([^"'\s#]+)""")
++
++
++class NoEvidence(Exception):
++    """CI's result says nothing about the head's code; the message says why."""
++
++
++def parse_checks(text: Optional[str]) -> tuple[str, ...]:
++    """The check names in `review.gate_checks`, separated by commas."""
++    return tuple(name.strip() for name in (text or "").split(",") if name.strip())
++
++
++def await_checks(repo: str, sha: str, base: str, worktree: Path, names: tuple[str, ...],
++                 touching: Callable[[], None]) -> dict:
++    """Wait for the GitHub Actions runs of the checks `names` on `sha`, and return the gate record's
++    `exit_code`, `checks`, and, when CI gave no evidence, `reason`.
++
++    It looks every `CI_POLL` seconds for up to `CI_WAIT`. Once a check has a
++    run, the files that decided the run (`check_files`) must be unchanged
++    since `base`, or the head vouched for itself and CI gives no evidence.
++    While a check has no run, the head's workflow runs say whether one is
++    coming: none still queued or running, or none at all after `CI_START`,
++    means none is, and the wait ends there. A call to GitHub or Git that
++    fails gives no evidence too, with its error as the reason."""
++    started = time.monotonic()
++    changed: Optional[set[str]] = None
++    vetted: set[str] = set()
++    runs: dict[str, list[dict]] = {}
++
++    def result(exit_code: int, reason: Optional[str] = None) -> dict:
++        found = {"exit_code": exit_code, "checks": [summarize_check(name, runs.get(name) or []) for name in names]}
++        if reason:
++            found["reason"] = reason
++        return found
++
++    while True:
++        try:
++            runs = ci_checks(repo, sha, names)
++            for name in names:
++                if runs[name] and name not in vetted:
++                    if changed is None:
++                        changed = set(git("-C", str(worktree), "diff", "--name-only", base, sha).splitlines())
++                    touched = sorted(set().union(*(check_files(repo, worktree, sha, run) for run in runs[name]))
++                                     & changed)
++                    if touched:
++                        raise NoEvidence(f"the head changed {touched[0]}, which decides what {name} runs, so its "
++                                         "result is not evidence about the head's code")
++                    vetted.add(name)
++            pending = [name for name in names if not runs[name] or any(r["status"] != "completed" for r in runs[name])]
++            if not pending:
++                conclusions = {r.get("conclusion") for name in names for r in runs[name]}
++                if conclusions & FAILED:
++                    return result(1)
++                if conclusions != {"success"}:
++                    others = ", ".join(sorted(c or "none" for c in conclusions - {"success"}))
++                    raise NoEvidence(f"a named check concluded {others}, which says nothing about the code")
++                return result(0)
++            if any(not runs[name] for name in pending):
++                coming(repo, sha, [name for name in pending if not runs[name]], time.monotonic() - started)
++            if time.monotonic() - started >= CI_WAIT:
++                raise NoEvidence(f"{', '.join(pending)} had no completed run within {CI_WAIT // 60} minutes")
++        except NoEvidence as exc:
++            return result(NO_EVIDENCE, str(exc))
++        except ReviewError as exc:
++            # A failed call to GitHub or Git says nothing about the head's code, so it is not a failing check.
++            return result(NO_EVIDENCE, f"reading CI failed: {exc}")
++        touching()
++        time.sleep(CI_POLL)
++
++
++def ci_checks(repo: str, sha: str, names: tuple[str, ...]) -> dict[str, list[dict]]:
++    """The latest GitHub Actions check runs of each name on `sha`, read one name at a time so no run of a named
++    check falls beyond a page of the commit's other runs."""
++    found = {}
++    for name in names:
++        listing = gh_json(["api", f"repos/{repo}/commits/{sha}/check-runs?filter=latest&check_name={quote(name)}"])
++        found[name] = [run for run in (listing or {}).get("check_runs") or []
++                       if (run.get("app") or {}).get("slug") == "github-actions"]
++    return found
++
++
++def coming(repo: str, sha: str, missing: list[str], waited: float) -> None:
++    """Raise `NoEvidence` when no run of the checks `missing` can still come: when every workflow run on the
++    head has finished, waits for a maintainer's approval, or none has started `CI_START` seconds in."""
++    listing = gh_json(["api", f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100"])
++    workflow_runs = (listing or {}).get("workflow_runs") or []
++    if any(run.get("status") in COMING for run in workflow_runs):
++        return
++    names = ", ".join(missing)
++    waiting = next((run for run in workflow_runs if "action_required" in (run.get("status"), run.get("conclusion"))),
++                   None)
++    if waiting:
++        raise NoEvidence(f"no run of {names} is coming: the workflow run {waiting.get('html_url') or waiting.get('id')} "
++                         "waits for a maintainer to approve it")
++    if workflow_runs:
++        raise NoEvidence(f"no run of {names} is coming: every workflow run on the head finished without it, as a "
++                         "renamed job, a paths filter, or a name review.gate_checks does not match leaves it")
++    if waited >= CI_START:
++        raise NoEvidence(f"no workflow run started on the head within {CI_START // 60} minutes")
++
++
++def summarize_check(name: str, runs: list[dict]) -> dict:
++    """A named check as the gate record lists it: the conclusion that decides it, `None` while a run is
++    unfinished, and the URL of the run that decided it."""
++    deciding = next((r for r in runs if r.get("status") != "completed"), None) \
++        or next((r for r in runs if r.get("conclusion") in FAILED), None) \
++        or next((r for r in runs if r.get("conclusion") != "success"), None) \
++        or (runs[0] if runs else None)
++    if deciding is None:
++        return {"name": name, "conclusion": None, "url": None}
++    return {"name": name, "conclusion": deciding.get("conclusion") if deciding.get("status") == "completed" else None,
++            "url": deciding.get("html_url")}
++
++
++def check_files(repo: str, worktree: Path, sha: str, run: dict) -> set[str]:
++    """The files at `sha` that decided what the check run `run` did: the workflow file GitHub records for its
++    check suite, and every reusable workflow and local action that file reaches through a `uses: ./` line.
++
++    It reads lines, not YAML, so a `uses:` line in a comment or a string only adds files. Wherever it cannot
++    tell which files decided the run, it raises `NoEvidence`, so a mistake costs a local gate, never a false
++    pass."""
++    suite = (run.get("check_suite") or {}).get("id")
++    listing = gh_json(["api", f"repos/{repo}/actions/runs?check_suite_id={suite}"]) if suite else None
++    workflow = next((r.get("path") for r in (listing or {}).get("workflow_runs") or [] if r.get("path")), None)
++    if not workflow:
++        raise NoEvidence(f"no workflow run matches the check suite of {run.get('name')}, so the files that "
++                         "decided it are unknown")
++    files: set[str] = set()
++    queue = [workflow]
++    while queue:
++        path = queue.pop()
++        if path in files:
++            continue
++        files.add(path)
++        try:
++            text = git("-C", str(worktree), "show", f"{sha}:{path}")
++        except ReviewError as exc:
++            raise NoEvidence(f"{path}, which decides what {run.get('name')} runs, cannot be read at the head") from exc
++        for line in text.splitlines():
++            match = USES.match(line)
++            if not match:
++                continue
++            value = match.group(1)
++            if "${{" in value:
++                raise NoEvidence(f"{path} names a step with an expression, `uses: {value}`, so the files that "
++                                 f"decide {run.get('name')} are unknown")
++            if not value.startswith("./"):
++                continue
++            # `./` names the action at the repository's root, whose files are the whole repository.
++            target = posixpath.normpath(value[2:] or ".")
++            if target.startswith(".."):
++                raise NoEvidence(f"{path} uses {value}, which reaches outside the repository, so the files that "
++                                 f"decide {run.get('name')} are unknown")
++            if target.endswith((".yml", ".yaml")):
++                queue.append(target)
++                continue
++            prefix = "" if target == "." else f"{target}/"
++            try:
++                listed = git("-C", str(worktree), "ls-tree", "-r", "--name-only", sha, "--", target).splitlines()
++            except ReviewError as exc:
++                raise NoEvidence(f"{path} uses the local action {value}, which cannot be listed at the head") from exc
++            action = next((name for name in (f"{prefix}action.yml", f"{prefix}action.yaml") if name in listed), None)
++            if action is None:
++                raise NoEvidence(f"{path} uses the local action {value}, which has no action.yml at the head")
++            files.update(name for name in listed if name != action)
++            queue.append(action)
++    return files
++
++
+ def wait_touching(process: subprocess.Popen, touching: Callable[[], None]) -> int:
+     """Wait for `process`, calling `touching` every `TOUCH_EVERY` seconds while it runs, and kill it when the wait
+     is interrupted, as `subprocess.run` does."""
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 3918f6ad..867beb06 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -98,7 +98,10 @@
+ # the fields the events name: `mergedAt` and `mergeCommit` for MERGED, each comment's id and times for a
+ # live start comment, and `nameWithOwner` for the review state's path. The panel reads `labels` for the
+ # `reviewing` and `clean` labels a review sets, and the daemon for their LABEL events. `rateLimit` reports what it
+-# cost.
++# cost. The panel reads the head's `statusCheckRollup` `state`, and the daemon reads the rollup's contexts for
++# CHECKS. GitHub's counts by state cover every context, so they say when a failed one lies past the first page.
++# The `projector/review` status is among them, so the query reads it too, to take it out of the counts.
++CONTEXT_NODES = "nodes{ __typename ... on CheckRun{ name conclusion } ... on StatusContext{ context state } }"
+ QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
+   repository(owner:$o,name:$r){ visibility nameWithOwner
+     pullRequest(number:$n){
+@@ -106,13 +109,26 @@
+       headRefOid headRefName baseRefName author { login }
+       additions deletions changedFiles
+       labels(first:20){ nodes{ name } }
+-      commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
++      commits(last:1){ nodes{ commit{ status{ context(name:%s){ state } }
++        statusCheckRollup{ state contexts(first:20){ checkRunCountsByState{ state count }
++          statusContextCountsByState{ state count } pageInfo{ hasNextPage endCursor } %s } } } } }
+       comments(last:100){ nodes{ databaseId author{ login } authorAssociation body createdAt updatedAt } }
+       reviews(last:100){ nodes{ author{ login } authorAssociation submittedAt body } }
+       changesRequested: reviews(states:[CHANGES_REQUESTED], last:1){ nodes{ author{ login } body commit{ oid } } }
+       reviewThreads(first:100){ nodes{ id isResolved path line
+         first: comments(first:1){ nodes{ databaseId body } }
+-        last: comments(last:1){ nodes{ databaseId author{ login } body } } } } } } }"""
++        last: comments(last:1){ nodes{ databaseId author{ login } body } } } } } } }""" % (
++    json.dumps(review.REVIEW_CONTEXT), CONTEXT_NODES)
++
++# The head's later rollup contexts, read by commit so that a push between the two queries cannot mix two heads.
++CONTEXTS_QUERY = """query($o:String!,$r:String!,$h:GitObjectID!,$c:String!){ rateLimit { cost }
++  repository(owner:$o,name:$r){ object(oid:$h){ ... on Commit{ statusCheckRollup{
++    contexts(first:100, after:$c){ pageInfo{ hasNextPage endCursor } %s } } } } } }""" % CONTEXT_NODES
++
++# What makes a rollup context a failure for CHECKS. A run that waits for approval, or that was cancelled or
++# skipped, says nothing about the code.
++CHECK_FAILURES = frozenset({"FAILURE", "TIMED_OUT", "STARTUP_FAILURE"})
++STATUS_FAILURES = frozenset({"FAILURE", "ERROR"})
+ 
+ 
+ class Excluded(ProjectorError):
+@@ -612,6 +628,37 @@ def login(node: Optional[dict]) -> str:
+     return ((node or {}).get("author") or {}).get("login") or ""
+ 
+ 
++def head_commit(pr: dict) -> dict:
++    return (nodes(pr, "commits") or [{}])[-1].get("commit") or {}
++
++
++def failed_contexts(contexts: list[dict]) -> list[str]:
++    """The names of the failed check runs and commit statuses among `contexts`, less the `projector/review`
++    status, which a changes-requested verdict posts as `failure` and the VERDICT and FINDING events report."""
++    failed = []
++    for found in contexts:
++        if found.get("__typename") == "CheckRun" and found.get("conclusion") in CHECK_FAILURES:
++            failed.append(found.get("name") or "?")
++        elif found.get("__typename") == "StatusContext" and found.get("state") in STATUS_FAILURES \
++                and found.get("context") != review.REVIEW_CONTEXT:
++            failed.append(found.get("context") or "?")
++    return failed
++
++
++def failure_count(commit: dict) -> int:
++    """How many of the head's rollup contexts failed by the rollup's counts, which cover every page, less a
++    failed `projector/review` status."""
++    contexts = (commit.get("statusCheckRollup") or {}).get("contexts") or {}
++
++    def counted(key: str, states: frozenset) -> int:
++        return sum(row["count"] for row in contexts.get(key) or []
++                   if isinstance(row, dict) and row.get("state") in states and isinstance(row.get("count"), int))
++
++    own = ((commit.get("status") or {}).get("context") or {}).get("state")
++    return (counted("checkRunCountsByState", CHECK_FAILURES) + counted("statusContextCountsByState", STATUS_FAILURES)
++            - (own in STATUS_FAILURES))
++
++
+ def pull_request(entry: object) -> dict:
+     repository = entry.get("repository") if isinstance(entry, dict) else None
+     found = repository.get("pullRequest") if isinstance(repository, dict) else None
+@@ -880,10 +927,9 @@ def conditional(self, path: str, etag: Optional[str]) -> Response:
+         args = ["api", "-i", *(["-H", f"If-None-Match: {etag}"] if etag else []), path]
+         return parse_response(self.gh(args).stdout)
+ 
+-    def query(self, repo: str, number: int, now: float) -> Optional[dict]:
+-        owner, name = repo.split("/")
+-        result = self.gh(["api", "graphql", "-f", f"query={QUERY}", "-f", f"o={owner}", "-f", f"r={name}",
+-                          "-F", f"n={number}"])
++    def graphql(self, query: str, now: float, *fields: str) -> Optional[dict]:
++        """The data a GraphQL query answers, or None when it failed. Its cost counts either way."""
++        result = self.gh(["api", "graphql", "-f", f"query={query}", *fields])
+         try:
+             payload = json.loads(result.stdout)
+         except ValueError:
+@@ -893,12 +939,39 @@ def query(self, repo: str, number: int, now: float) -> Optional[dict]:
+         data = payload.get("data") or {}
+         if data:
+             self.spent.append((now, ((data.get("rateLimit") or {}).get("cost")) or 1))
++        return None if result.returncode != 0 or payload.get("errors") else data
++
++    def query(self, repo: str, number: int, now: float) -> Optional[dict]:
++        owner, name = repo.split("/")
++        data = self.graphql(QUERY, now, "-f", f"o={owner}", "-f", f"r={name}", "-F", f"n={number}") or {}
+         repository = data.get("repository")
+-        if result.returncode != 0 or payload.get("errors") or not isinstance(repository, dict) \
+-                or not isinstance(repository.get("pullRequest"), dict):
++        if not isinstance(repository, dict) or not isinstance(repository.get("pullRequest"), dict):
+             return None
++        self.read_contexts(owner, name, repository["pullRequest"], now)
+         return repository
+ 
++    def read_contexts(self, owner: str, name: str, pr: dict, now: float) -> None:
++        """Add the head's later rollup contexts to the first page while the rollup's counts hold a failed context
++        that the pages read so far lack. A page that fails leaves the contexts read before it."""
++        head, commit = pr.get("headRefOid"), head_commit(pr)
++        contexts = (commit.get("statusCheckRollup") or {}).get("contexts")
++        if not head or not isinstance(contexts, dict):
++            return
++        wanted = failure_count(commit)
++        read = [found for found in contexts.get("nodes") or [] if isinstance(found, dict)]
++        page = contexts.get("pageInfo") or {}
++        while len(failed_contexts(read)) < wanted and page.get("hasNextPage") and page.get("endCursor"):
++            data = self.graphql(CONTEXTS_QUERY, now, "-f", f"o={owner}", "-f", f"r={name}", "-f", f"h={head}",
++                                "-f", f"c={page['endCursor']}") or {}
++            paged = (data.get("repository") or {}).get("object") or {}
++            later = (paged.get("statusCheckRollup") or {}).get("contexts")
++            if not isinstance(later, dict) or not later.get("nodes"):
++                break
++            read += [found for found in later.get("nodes") or [] if isinstance(found, dict)]
++            page = later.get("pageInfo") or {}
++        contexts["nodes"] = read
++        contexts["pageInfo"] = page
++
+     def read_reviews(self, repo: str, number: int) -> Optional[list[dict]]:
+         result = self.gh(["api", "--paginate", f"repos/{repo}/pulls/{number}/reviews?per_page={PAGE}"])
+         found = decode_pages(result.stdout) if result.returncode == 0 else None
+@@ -1411,6 +1484,12 @@ def standing(key: str, first: str, again: Optional[str], revision: object = None
+                      f"CONFLICT {ref} head={head[:8]} base={base}: the branch conflicts with its base; merge the base "
+                      f"and resolve it — {action}",
+                      f"CONFLICT {ref} (still open) head={head[:8]} base={base}: still conflicts with its base — {action}")
++        failed = list(dict.fromkeys(re.sub(r"\s+", " ", name) for name in
++                                    failed_contexts(nodes(head_commit(pr).get("statusCheckRollup"), "contexts"))))
++        if failed:
++            names = ", ".join(failed)
++            standing(f"checks:{number}:{head}", f"CHECKS {ref} head={head[:8]} failed: {names} — {action}",
++                     f"CHECKS {ref} (still open) head={head[:8]} failed: {names} — {action}", failed)
+         if pr.get("reviewDecision") == "CHANGES_REQUESTED":
+             for node in nodes(pr, "changesRequested"):
+                 sha = (node.get("commit") or {}).get("oid") or "?"
+diff --git a/tests/test_review.py b/tests/test_review.py
+index f55c0cf2..5063bd68 100644
+--- a/tests/test_review.py
++++ b/tests/test_review.py
+@@ -23,6 +23,7 @@
+ from datetime import datetime, timedelta, timezone
+ from pathlib import Path
+ from unittest import mock
++from urllib.parse import unquote
+ 
+ from projector import cli, review
+ from projector.review import NotFound, ReviewError
+@@ -94,6 +95,11 @@ def __init__(self, head: str, base_sha: str) -> None:
+         self.ignore_dismissals = False
+         # The account gh is signed in as, which a call without a token acts as.
+         self.login = "operator"
++        # CI on the head: the check runs each look at the head finds, a poll at a time, the last repeating; the
++        # head's workflow runs; and the workflow file behind each check suite.
++        self.check_polls: list[list[dict]] = [[]]
++        self.workflow_runs: list[dict] = []
++        self.suites: dict[int, str] = {}
+ 
+     def __call__(self, args: list[str], token: str | None = None) -> str:
+         self.calls.append((list(args), token))
+@@ -203,6 +209,17 @@ def __call__(self, args: list[str], token: str | None = None) -> str:
+         if args[:2] == ["api", "--paginate"] and args[2].startswith(f"repos/{REPO}/rules/branches/"):
+             self.rules_branches.append(args[2].removeprefix(f"repos/{REPO}/rules/branches/"))
+             return "".join(f"{context}\n" for context in self.rules)
++        if len(args) == 2 and re.match(rf"repos/{REPO}/commits/[0-9a-f]+/check-runs\?", args[1]):
++            runs = self.check_polls.pop(0) if len(self.check_polls) > 1 else self.check_polls[0]
++            name = re.search(r"check_name=([^&]+)", args[1])
++            # GitHub pages a commit's check runs 30 at a time.
++            listed = [r for r in runs if r["name"] == unquote(name.group(1))] if name else runs[:30]
++            return json.dumps({"total_count": len(listed), "check_runs": listed})
++        if len(args) == 2 and args[1].startswith(f"repos/{REPO}/actions/runs?head_sha="):
++            return json.dumps({"workflow_runs": self.workflow_runs})
++        if len(args) == 2 and args[1].startswith(f"repos/{REPO}/actions/runs?check_suite_id="):
++            suite = int(args[1].rsplit("=", 1)[1])
++            return json.dumps({"workflow_runs": [{"path": self.suites[suite]}] if suite in self.suites else []})
+         if len(args) == 4 and re.fullmatch(rf"repos/{REPO}/commits/[0-9a-f]+/status", args[1]):
+             sha = args[1].split("/")[4]
+             states = [s["state"] for s in self.statuses if s["sha"] == sha and s["context"] == review.REVIEW_CONTEXT]
+@@ -749,6 +766,295 @@ def test_refuses_without_a_review_set_up(self) -> None:
+         self.assertIn("project review setup 1", err)
+ 
+ 
++CHECK_YML = "on: pull_request\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n"
++
++
++def check_run(conclusion: str | None = "success", name: str = "check", app: str = "github-actions",
++              suite: int = 7) -> dict:
++    """A check run as GitHub's check-runs endpoint lists it; a `None` conclusion is a run still in progress."""
++    return {"name": name, "status": "completed" if conclusion else "in_progress", "conclusion": conclusion,
++            "app": {"slug": app}, "check_suite": {"id": suite},
++            "html_url": f"https://github.com/{REPO}/actions/runs/1/job/{suite}"}
++
++
++class CiGateTests(ReviewCase):
++    """`project review gate` with `review.gate_checks`: it reads the head's GitHub Actions check runs instead of
++    running the suite, and gives no evidence where CI cannot vouch for the head's code."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        # The gate looks again at once, and a test whose fake never settles fails in seconds instead of spinning for
++        # the real 30 minutes.
++        for name, value in (("CI_POLL", 0), ("CI_START", 0), ("CI_WAIT", 5)):
++            patcher = mock.patch.object(review, name, value)
++            patcher.start()
++            self.addCleanup(patcher.stop)
++        self.github.suites = {7: ".github/workflows/check.yml"}
++        self.rounds = 0
++
++    def heads(self, base: dict[str, str], head: dict[str, str | None]) -> None:
++        """Move trunk to the first head's trunk plus `base`, push a head that changes `head` on it (None deletes a
++        file), and set the head up for review.
++
++        Each call's commits carry their own message, so two calls with the same files in the same second still make
++        two heads, and a subtest never meets the review an earlier one set up."""
++        self.rounds += 1
++        git(self.work, "checkout", "--quiet", "--detach", self.base)
++        for files in (base, head):
++            for name, text in files.items():
++                path = self.work / name
++                if text is None:
++                    path.unlink()
++                else:
++                    path.parent.mkdir(parents=True, exist_ok=True)
++                    path.write_text(text)
++            git(self.work, "add", "-A")
++            git(self.work, "commit", "--quiet", "--allow-empty", "-m", f"ci {self.rounds}")
++            if files is base:
++                trunk = git(self.work, "rev-parse", "HEAD")
++                git(self.work, "push", "--quiet", "--force", "origin", "HEAD:refs/heads/trunk")
++        self.head = git(self.work, "rev-parse", "HEAD")
++        git(self.work, "push", "--quiet", "--force", "origin", "HEAD:refs/heads/feature", "HEAD:refs/pull/1/head")
++        self.github.pr["head"]["sha"], self.github.pr["base"]["sha"] = self.head, trunk
++        code, _, err = self.setup_review()
++        self.assertEqual(0, code, err)
++
++    def configure(self, checks: str = "check", command: str | None = None) -> None:
++        lines = [f"gate_checks = {json.dumps(checks)}"] + ([f"gate = {json.dumps(command)}"] if command else [])
++        (self.checkout / ".projector.toml").write_text("[review]\n" + "\n".join(lines) + "\n")
++
++    def gate(self) -> tuple[int, dict, str]:
++        code, out, err = self.later("gate", "--json")
++        return code, json.loads(out), err
++
++    def test_a_passing_check_passes_the_gate_without_running_the_suite(self) -> None:
++        # Catches a gate that ignores review.gate_checks, or reads a passing record as anything but a pass.
++        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
++        self.configure()
++        self.github.check_polls = [[check_run("success")]]
++
++        code, record, err = self.gate()
++
++        self.assertEqual(0, code, err)
++        self.assertEqual((None, "ci", [{"name": "check", "conclusion": "success", "url": check_run()["html_url"]}]),
++                         (record["command"], record["source"], record["checks"]))
++        self.assertTrue(review.gate_passed(self.read_state()))
++
++    def test_a_check_that_failed_fails_and_one_that_did_not_run_gives_no_evidence(self) -> None:
++        # Catches a gate that sends the fixer after a test failure that never happened, or that passes a check
++        # that ran nothing.
++        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
++        self.configure()
++        for conclusion, expected in (("failure", 1), ("timed_out", 1), ("cancelled", 75), ("skipped", 75),
++                                     ("neutral", 75)):
++            with self.subTest(conclusion):
++                self.github.check_polls = [[check_run(conclusion)]]
++
++                code, record, err = self.gate()
++
++                self.assertEqual(expected, code, err)
++                self.assertEqual(conclusion, record["checks"][0]["conclusion"])
++                self.assertFalse(review.gate_passed(self.read_state()))
++
++    def test_a_check_still_running_when_the_wait_ends_gives_no_evidence(self) -> None:
++        # Catches a gate that reads a pending check as passed, or that never returns.
++        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
++        self.configure()
++        self.github.check_polls = [[check_run(None)]]
++
++        with mock.patch.object(review, "CI_WAIT", 0):
++            code, record, err = self.gate()
++            printed = self.later("gate")[2]
++
++        self.assertEqual(75, code, err)
++        self.assertEqual(None, record["checks"][0]["conclusion"])
++        self.assertIn("no completed run within", record["reason"])
++        self.assertIn("check: no completed run", printed)
++        self.assertIn("CI gave no evidence: check had no completed run within", printed)
++
++    def test_a_github_call_that_fails_during_the_wait_gives_no_evidence(self) -> None:
++        # Catches a gate that ends with exit 1, which a review reads as a failing check, when GitHub fails to answer.
++        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
++        self.configure()
++        cases = (("the check runs", "check-runs", [check_run("success")]),
++                 ("the head's workflow runs", "head_sha=", []),
++                 ("the check's workflow run", "check_suite_id=", [check_run("success")]))
++        for case, call, polls in cases:
++            with self.subTest(case):
++                self.github.fail = call
++                self.github.check_polls = [polls]
++
++                code, record, err = self.gate()
++
++                self.assertEqual(75, code, err)
++                self.assertIn("HTTP 502", record["reason"])
++
++    def test_only_a_github_actions_run_vouches_for_the_head(self) -> None:
++        # Catches a gate that trusts any check run named `check`, which any app installed on the repository can post.
++        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
++        self.configure()
++        self.github.check_polls = [[check_run("success", app="someone-elses-app")]]
++        self.github.workflow_runs = [{"id": 1, "status": "completed", "conclusion": "success"}]
++
++        code, record, err = self.gate()
++
++        self.assertEqual(75, code, err)
++        self.assertIn("no run of check is coming", record["reason"])
++
++    def test_finds_the_named_check_beyond_the_first_page_of_the_heads_check_runs(self) -> None:
++        # Catches a read of the commit's check runs that sees only the first page of 30.
++        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
++        self.configure()
++        self.github.check_polls = [[check_run("success", name=f"lint {n}") for n in range(30)] + [check_run("success")]]
++
++        code, record, err = self.gate()
++
++        self.assertEqual(0, code, err)
++
++    def test_a_head_that_changed_what_its_check_runs_gives_no_evidence(self) -> None:
++        # Catches a gate that lets a head vouch for itself through its workflow or a local action, and one that
++        # refuses a head for changing a workflow that decides none of the named checks.
++        setup = "runs:\n  using: composite\n  steps:\n    - run: ./install.sh\n      shell: bash\n"
++        uses_setup = CHECK_YML + "      - uses: ./.github/actions/setup\n      - uses: ./.github/workflows/test.yml\n"
++        base = {".github/workflows/check.yml": uses_setup, ".github/workflows/release.yml": "on: push\n",
++                ".github/workflows/test.yml": "on: workflow_call\n", ".github/actions/setup/action.yml": setup,
++                ".github/actions/setup/install.sh": "true\n"}
++        cases = (
++            (".github/workflows/check.yml", {".github/workflows/check.yml": uses_setup + "# skip it\n"}, 75),
++            (".github/workflows/test.yml", {".github/workflows/test.yml": "on: workflow_call\n# skip\n"}, 75),
++            (".github/actions/setup/install.sh", {".github/actions/setup/install.sh": "exit 0\n"}, 75),
++            (".github/actions/setup/action.yml", {".github/actions/setup/action.yml": setup + "# skip\n"}, 75),
++            ("only the release workflow", {".github/workflows/release.yml": "on: [push, workflow_dispatch]\n"}, 0),
++        )
++        for changed, head, expected in cases:
++            with self.subTest(changed):
++                self.heads(base, head)
++                self.configure()
++                self.github.check_polls = [[check_run("success")]]
++
++                code, record, err = self.gate()
++
++                self.assertEqual(expected, code, err)
++                if expected:
++                    self.assertIn(f"the head changed {changed}, which decides what check runs", record["reason"])
++
++    def test_a_check_that_runs_the_action_at_the_root_is_decided_by_every_file(self) -> None:
++        # Catches a gate that crashes on `uses: ./`, which an action's own repository uses to test itself, instead of
++        # reading the whole repository as the files behind the check.
++        action = "runs:\n  using: node20\n  main: index.js\n"
++        uses_root = CHECK_YML + "      - uses: ./\n"
++        cases = (
++            ("a change anywhere", {"action.yml": action}, {"src.py": "x = 1\n"}, 75, "the head changed src.py"),
++            ("no action at the root", {}, {"src.py": "x = 1\n"}, 75, "uses the local action ./, which has no action.yml"),
++            ("no change at all", {"action.yml": action}, {}, 0, None),
++        )
++        for case, base, head, expected, words in cases:
++            with self.subTest(case):
++                self.heads({".github/workflows/check.yml": uses_root, "index.js": "run()\n", **base}, head)
++                self.configure()
++                self.github.check_polls = [[check_run("success")]]
++
++                code, record, err = self.gate()
++
++                self.assertEqual(expected, code, err)
++                if words:
++                    self.assertIn(words, record["reason"])
++
++    def test_a_check_whose_files_cannot_be_told_gives_no_evidence(self) -> None:
++        # Catches a gate that accepts CI when it cannot say which files decided the run.
++        expression = CHECK_YML + "      - uses: ${{ matrix.action }}\n"
++        for case, workflow, suites, words in (
++                ("no workflow run matches its suite", CHECK_YML, {}, "no workflow run matches the check suite"),
++                ("an expression names a step", expression, {7: ".github/workflows/check.yml"}, "an expression"),
++                ("its workflow is gone at the head", CHECK_YML, {7: ".github/workflows/gone.yml"}, "cannot be read")):
++            with self.subTest(case):
++                self.heads({".github/workflows/check.yml": workflow}, {"src.py": "x = 1\n"})
++                self.configure()
++                self.github.suites = suites
++                self.github.check_polls = [[check_run("success")]]
++
++                code, record, err = self.gate()
++
++                self.assertEqual(75, code, err)
++                self.assertIn(words, record["reason"])
++
++    def test_an_untrusted_head_gets_cis_result_and_runs_no_command(self) -> None:
++        # Catches a gate that runs the head's code on an untrusted head, and one that keeps CI's result from it.
++        self.github.pr["head"]["repo"] = {"full_name": "someone/app"}
++        self.github.pr["head"]["ref"] = "does-not-exist-here"
++        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
++        self.assertFalse(self.read_state()["trusted"])
++        self.configure(command=GateTests.GATE)
++        self.github.check_polls = [[check_run("success")]]
++
++        code, record, err = self.gate()
++
++        self.assertEqual(0, code, err)
++        self.assertEqual(None, record["command"])
++        self.assertFalse((Path(self.read_state()["worktree"]) / "gate.args").exists(), "the command did not run")
++
++    def test_a_failing_command_decides_the_gate_before_ci_is_read(self) -> None:
++        # Catches a gate that lets a passing CI run cover a failure in the part of the gate CI cannot run.
++        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
++        self.configure(command="exit 4")
++        self.github.check_polls = [[check_run("success")]]
++
++        code, record, err = self.gate()
++
++        self.assertEqual((4, "exit 4", "local"), (code, record["command"], record["source"]))
++        self.assertFalse(any("check-runs" in " ".join(args) for args, _ in self.github.calls))
++
++    def test_ends_the_wait_as_soon_as_no_run_of_the_check_can_come(self) -> None:
++        # Catches a gate that waits 30 minutes for a run that waits for a person, or for a job that is gone.
++        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
++        self.configure()
++        cases = (
++            ("waits for approval", [{"id": 1, "status": "completed", "conclusion": "action_required",
++                                     "html_url": "https://github.com/acme/app/actions/runs/1"}],
++             "https://github.com/acme/app/actions/runs/1 waits for a maintainer to approve it"),
++            ("every run finished", [{"id": 1, "status": "completed", "conclusion": "success"}],
++             "every workflow run on the head finished without it"),
++            ("no run started", [], "no workflow run started on the head"),
++        )
++        for case, workflow_runs, words in cases:
++            with self.subTest(case):
++                self.github.check_polls = [[]]
++                self.github.workflow_runs = workflow_runs
++
++                # With no wait left, a gate that misses the early exit stops at the timeout, whose reason differs.
++                with mock.patch.object(review, "CI_WAIT", 0):
++                    code, record, err = self.gate()
++
++                self.assertEqual(75, code, err)
++                self.assertIn(words, record["reason"])
++
++    def test_keeps_waiting_while_a_workflow_run_on_the_head_is_still_coming(self) -> None:
++        # Catches a gate that gives up while a run is queued, or held by an environment approval or a concurrency
++        # group.
++        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
++        self.configure()
++        for status in ("queued", "in_progress", "waiting", "pending", "requested"):
++            with self.subTest(status):
++                self.github.workflow_runs = [{"id": 1, "status": status}]
++                self.github.check_polls = [[], [], [check_run("success")]]
++
++                code, record, err = self.gate()
++
++                self.assertEqual(0, code, err)
++
++    def test_without_gate_checks_an_untrusted_head_is_refused_as_before(self) -> None:
++        # Catches a gate that reads CI, or runs anything, for a repository that never named its checks.
++        self.github.pr["head"]["repo"] = {"full_name": "someone/app"}
++        self.github.pr["head"]["ref"] = "does-not-exist-here"
++        self.heads({}, {"src.py": "x = 1\n"})
++
++        code, _, err = self.later("gate")
++
++        self.assertEqual(1, code)
++        self.assertIn("review it by reading", err)
++        self.assertFalse(any("check-runs" in " ".join(args) for args, _ in self.github.calls))
++
++
+ def thread(thread_id: str, body: str, *, resolved: bool = False, outdated: bool = False,
+            path: str = "src/x.py", line: int | None = 3, original: int | None = None) -> dict:
+     return {"id": thread_id, "isResolved": resolved, "isOutdated": outdated, "path": path,
+@@ -3727,6 +4033,22 @@ def test_a_moved_base_needs_a_gate_that_passed_on_this_head(self) -> None:
+         self.assertEqual((1, 0), (failed, passed))
+         self.assertTrue(after_pass["incremental"], after_pass["reason"])
+ 
++    def test_a_moved_base_takes_a_gate_that_ci_passed(self) -> None:
++        # Catches a CI result that the incremental gate rule does not read as a passing gate.
++        (self.work / ".github" / "workflows").mkdir(parents=True)
++        self.move_trunk({".github/workflows/check.yml": CHECK_YML})
++        self.review_head(self.build(self.merge(self.reviewed, self.trunk), {"a.css": css(r1=9, r2=9)}))
++        (self.checkout / ".projector.toml").write_text('[review]\ngate_checks = "check"\n')
++        self.github.suites = {7: ".github/workflows/check.yml"}
++        self.github.check_polls = [[check_run("success")]]
++
++        before = self.interdiff()
++        code, _, err = self.later("gate")
++
++        self.assertTrue(before["needs_gate"])
++        self.assertEqual(0, code, err)
++        self.assertTrue(self.interdiff()["incremental"])
++
+     def test_a_gate_that_passed_on_an_earlier_head_does_not_count(self) -> None:
+         self.move_trunk({"trunk.txt": "moved\n"})
+         merged = self.review_head(self.merge(self.reviewed, self.trunk))
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index 5ff88e90..9c3d7f6b 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -100,6 +100,15 @@ def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:
+ FINDING = "<!-- projector-finding v=1 priority=P2 --> A nil deref"
+ 
+ 
++def check_run(name, conclusion="SUCCESS"):
++    """A check run in the head's rollup, as the daemon's query reads it; `conclusion` is None until it completes."""
++    return {"__typename": "CheckRun", "name": name, "conclusion": conclusion}
++
++
++def commit_status(context, state="SUCCESS"):
++    return {"__typename": "StatusContext", "context": context, "state": state}
++
++
+ def finding_thread(*replies, resolved=False):
+     return thread("T1", body=FINDING, resolved=resolved, replies=replies)
+ 
+@@ -122,18 +131,27 @@ def repository(self, name="acme/app", visibility=None) -> dict:
+             found["visibility"] = visibility
+         return found
+ 
+-    def pull_request(self, number, *, repo="acme/app", reviews=(), requested=(), teams=(), **fields) -> None:
++    def pull_request(self, number, *, repo="acme/app", reviews=(), requested=(), teams=(), contexts=(),
++                     **fields) -> None:
++        """A pull request, with `contexts` its head's whole rollup, which the GraphQL queries page through as
++        GitHub does. The REST pull request does not show `contexts`, so only a full pass sees them change."""
+         self.repository(repo)["pulls"][number] = {"node": node(number, repo=repo, **fields), "requested": list(requested),
+-                                                  "teams": list(teams), "reviews": list(reviews)}
++                                                  "teams": list(teams), "reviews": list(reviews),
++                                                  "contexts": list(contexts)}
+ 
+     def queried(self) -> list[str]:
+         found = []
+         for call in self.calls:
+-            if call[:2] == ["api", "graphql"]:
++            if call[:2] == ["api", "graphql"] and any(arg.startswith("n=") for arg in call):
+                 fields = dict(arg.split("=", 1) for arg in call if re.match(r"^[orn]=", arg))
+                 found.append(f"{fields['o']}/{fields['r']}#{fields['n']}")
+         return found
+ 
++    def pages_read(self) -> list[str]:
++        """The cursor of each later page of a head's rollup contexts that the daemon read."""
++        return [arg[2:] for call in self.calls if call[:2] == ["api", "graphql"] for arg in call
++                if arg.startswith("c=")]
++
+     def __call__(self, args: list[str]) -> watch.GhResult:
+         self.calls.append(list(args))
+         if self.down:
+@@ -163,7 +181,7 @@ def __call__(self, args: list[str]) -> watch.GhResult:
+             else:
+                 return self.unsupported(arg)
+         if path == "graphql":
+-            if include or paginate or etag or set(fields) != {"query", "o", "r", "n"}:
++            if include or paginate or etag or set(fields) not in ({"query", "o", "r", "n"}, {"query", "o", "r", "h", "c"}):
+                 return self.unsupported("graphql with REST flags")
+             return self.graphql(fields)
+         if fields or path is None or (paginate and include):
+@@ -180,6 +198,8 @@ def graphql(self, fields: dict) -> watch.GhResult:
+             return watch.GhResult(1, "", 'Post "https://api.github.com/graphql": dial tcp: connection refused')
+         if "repository(owner:$o,name:$r)" not in fields["query"]:
+             return self.unsupported("query")
++        if "h" in fields:
++            return self.contexts_page(fields)
+         repo = self.repos.get(f"{fields['o']}/{fields['r']}".lower())
+         pull = (repo or {}).get("pulls", {}).get(int(fields["n"]))
+         if pull is None:
+@@ -187,8 +207,44 @@ def graphql(self, fields: dict) -> watch.GhResult:
+             body = {"data": {"repository": {"pullRequest": None} if repo else None},
+                     "errors": [{"type": "NOT_FOUND", "message": f"Could not resolve to a {kind}."}]}
+             return watch.GhResult(1, json.dumps(body), f"gh: Could not resolve to a {kind}.")
++        found = pull["node"]
++        if pull["contexts"]:
++            found = {**found, "commits": {"nodes": [{"commit": self.rollup(pull["contexts"], fields["query"])}]}}
+         data = {"rateLimit": {"cost": 1}, "repository": {"visibility": repo["visibility"], "nameWithOwner": repo["name"],
+-                                                         "pullRequest": pull["node"]}}
++                                                         "pullRequest": found}}
++        return watch.GhResult(0, json.dumps({"data": data}))
++
++    @staticmethod
++    def contexts_from(contexts: list[dict], query: str, start: int) -> dict:
++        """The page of `contexts` that begins at `start`, as long as the query's `first` asks."""
++        end = start + int(re.search(r"contexts\(first:(\d+)", query).group(1))
++        return {"pageInfo": {"hasNextPage": end < len(contexts), "endCursor": f"cursor:{min(end, len(contexts))}"},
++                "nodes": contexts[start:end]}
++
++    def rollup(self, contexts: list[dict], query: str) -> dict:
++        """The head commit with GitHub's counts of its check runs and statuses by state, which cover every
++        context, and the state of the status the query names."""
++        runs = [found["conclusion"] or "IN_PROGRESS" for found in contexts if found["__typename"] == "CheckRun"]
++        statuses = [found for found in contexts if found["__typename"] == "StatusContext"]
++        states = [found["state"] for found in statuses]
++        named = re.search(r'status\{ context\(name:"([^"]+)"\)', query).group(1)
++        own = [found["state"] for found in statuses if found["context"] == named]
++        failed = {"FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ERROR"} & {*runs, *states}
++        return {"status": {"context": {"state": own[-1]} if own else None} if statuses else None,
++                "statusCheckRollup": {"state": "FAILURE" if failed else "SUCCESS", "contexts": {
++                    "checkRunCountsByState": [{"state": state, "count": runs.count(state)} for state in set(runs)],
++                    "statusContextCountsByState": [{"state": state, "count": states.count(state)} for state in set(states)],
++                    **self.contexts_from(contexts, query, 0)}}}
++
++    def contexts_page(self, fields: dict) -> watch.GhResult:
++        repo = self.repos.get(f"{fields['o']}/{fields['r']}".lower()) or {"pulls": {}}
++        heads = {pull["node"]["headRefOid"]: pull for pull in repo["pulls"].values()}
++        cursor = re.fullmatch(r"cursor:(\d+)", fields["c"])
++        if fields["h"] not in heads or cursor is None:
++            return watch.GhResult(1, json.dumps({"errors": [{"message": "no such commit or cursor"}]}),
++                                  "gh: no such commit or cursor")
++        page = self.contexts_from(heads[fields["h"]]["contexts"], fields["query"], int(cursor.group(1)))
++        data = {"rateLimit": {"cost": 1}, "repository": {"object": {"statusCheckRollup": {"contexts": page}}}}
+         return watch.GhResult(0, json.dumps({"data": data}))
+ 
+     def rest(self, path: str, include: bool, etag: Optional[str], paginate: bool) -> watch.GhResult:
+@@ -751,6 +807,88 @@ def test_an_unsettled_mergeability_is_queried_each_pass_and_is_not_a_conflict(se
+         self.assertEqual([], settled)
+         self.assertEqual({}, self.state("fixer")["fix"]["acme/app#1 fix"])
+ 
++    def test_a_failed_check_is_announced_once_and_again_only_after_the_renotify_interval(self) -> None:
++        self.github.pull_request(1, contexts=[check_run("check", "FAILURE"), check_run("lint", "FAILURE"),
++                                              check_run("docs"), commit_status("deploy")])
++        self.fixer("acme/app#1 fix")
++
++        first = self.cycle()["fixer"]
++        self.advance(60)
++        second = self.cycle()["fixer"]
++        self.advance(900)
++        third = self.cycle()["fixer"]
++
++        self.assertEqual([f"CHECKS acme/app#1 head=aaaaaaaa failed: check, lint — {fix_action(1)}"], first)
++        self.assertEqual([], second)
++        self.assertEqual([f"CHECKS acme/app#1 (still open) head=aaaaaaaa failed: check, lint — {fix_action(1)}"],
++                         third)
++
++    def test_only_a_context_that_failed_is_a_ci_failure(self) -> None:
++        cases = [
++            (check_run("check", "FAILURE"), "check"),
++            (check_run("check", "TIMED_OUT"), "check"),
++            (check_run("check", "STARTUP_FAILURE"), "check"),
++            (commit_status("ci/build", "FAILURE"), "ci/build"),
++            (commit_status("ci/build", "ERROR"), "ci/build"),
++            (commit_status(review.REVIEW_CONTEXT, "FAILURE"), None),
++            (check_run("check", "ACTION_REQUIRED"), None),
++            (check_run("check", None), None),
++            (check_run("check", "CANCELLED"), None),
++            (check_run("check", "SKIPPED"), None),
++            (check_run("check", "NEUTRAL"), None),
++            (commit_status("ci/build", "PENDING"), None),
++        ]
++        for number, (context, _) in enumerate(cases, 1):
++            self.github.pull_request(number, contexts=[context])
++        self.fixer(*(f"acme/app#{number} fix" for number in range(1, len(cases) + 1)))
++
++        events = self.cycle()["fixer"]
++
++        for number, (context, failed) in enumerate(cases, 1):
++            with self.subTest(context=context):
++                expected = [] if failed is None else [
++                    f"CHECKS acme/app#{number} head=aaaaaaaa failed: {failed} — {fix_action(number)}"]
++                self.assertEqual(expected, [event for event in events if event.startswith(f"CHECKS acme/app#{number} ")])
++
++    def test_a_failed_check_past_the_first_page_of_contexts_is_found_on_a_later_page(self) -> None:
++        self.github.pull_request(1, contexts=[*(check_run(f"job {index}") for index in range(1, 25)),
++                                              check_run("job 25", "FAILURE")])
++        self.fixer("acme/app#1 fix")
++
++        events = self.cycle()["fixer"]
++
++        self.assertEqual([f"CHECKS acme/app#1 head=aaaaaaaa failed: job 25 — {fix_action(1)}"], events)
++        self.assertEqual(["cursor:20"], self.github.pages_read())
++
++    def test_a_failed_projector_review_status_reads_no_later_page_of_contexts(self) -> None:
++        self.github.pull_request(1, contexts=[commit_status(review.REVIEW_CONTEXT, "FAILURE"),
++                                              *(check_run(f"job {index}") for index in range(2, 26))])
++        self.fixer("acme/app#1 fix")
++
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(([], []), (events, self.github.pages_read()))
++
++    def test_a_new_head_hears_no_checks_until_a_context_on_it_fails(self) -> None:
++        self.github.pull_request(1, contexts=[check_run("check", "FAILURE")])
++        self.fixer("acme/app#1 fix")
++        failed = self.cycle()["fixer"]
++
++        self.github.pull_request(1, head=SHA_B, contexts=[check_run("check", None)])
++        pushed = self.cycle()["fixer"]
++        self.advance(900)
++        running = self.cycle()["fixer"]
++        self.github.pull_request(1, head=SHA_B, contexts=[check_run("check", "FAILURE")])
++        self.advance(600)
++        failed_again = self.cycle()["fixer"]
++        self.github.pull_request(1, head=SHA_C, contexts=[check_run("check", "FAILURE")])
++        failed_at_once = self.cycle()["fixer"]
++
++        self.assertEqual([f"CHECKS acme/app#1 head=aaaaaaaa failed: check — {fix_action(1)}"], failed)
++        self.assertEqual(([], []), (pushed, running))
++        self.assertEqual([f"CHECKS acme/app#1 head=bbbbbbbb failed: check — {fix_action(1)}"], failed_again)
++        self.assertEqual([f"CHECKS acme/app#1 head=cccccccc failed: check — {fix_action(1)}"], failed_at_once)
++
+     def test_a_merged_pull_request_is_announced_once_and_its_lines_end(self) -> None:
+         self.github.pull_request(1, draft=False, threads=[thread("T1")])
+         self.fixer("acme/app#1 fix", "!acme/app#1 review claude-opus-5-5 operator")
