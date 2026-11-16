@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "projector-cli"
+version = "0.8.18"
+description = "Git-native project plans for people and coding agents"
+readme = "README.md"
+authors = [{ name = "Justin Balthrop" }]
+license = "MIT"
+requires-python = ">=3.11"
+
+[project.scripts]
+project = "projector.cli:main"
+
+# The site's assets live with its TypeScript in site/, outside src/, and ship
+# inside the wheel as projector.site.assets. Mapping a directory from outside
+# src/ rules out packages.find, so every package is listed.
+[tool.setuptools]
+packages = ["projector", "projector.site", "projector.site.assets"]
+package-dir = { "" = "src", "projector.site.assets" = "site/assets" }
+include-package-data = false
+
+[tool.setuptools.package-data]
+projector = ["templates/*.md", "templates/*.yml"]
+"projector.site.assets" = ["*.css", "*.js", "*.svg"]

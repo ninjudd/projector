@@ -1,0 +1,57 @@
+{
+ "version": 1,
+ "name": "Projector 0.8.18 version bump",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 466,
+  "title": "Release 0.8.18",
+  "head": "babf41de0e92013087317fcc5c5b54e02f4a27e1",
+  "headRef": "release/v0.8.18",
+  "base": "d759795ad403aade1170333d660f8be749e34e8a",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "This pull request releases Projector 0.8.18. Projector keeps one version number, and three files carry it: <code>pyproject.toml</code> for the Python CLI, and the Claude Code and Codex plugin manifests. This change raises that number from 0.8.17 to 0.8.18 in all three and changes nothing else.",
+   "The Release workflow opened this pull request with <code>.github/scripts/release.py bump patch</code>. Merging it is what publishes the release: the workflow then tags <code>v0.8.18</code> on the merge commit, moves the major tag <code>v0</code> to it, and creates the GitHub release."
+  ],
+  "cards": [
+   {
+    "id": "checked",
+    "title": "What the review checked",
+    "html": "<ul class=\"tight\"><li>The head is one commit directly on top of <code>main</code>, and it changes one line in each of the three files.</li><li>All three files now read <code>0.8.18</code>, and they are exactly the files <code>VERSION_FILES</code> in <code>release.py</code> reads and writes.</li><li><code>main</code> and the latest release both name 0.8.17, so 0.8.18 is the next patch. No <code>v0.8.18</code> tag exists yet.</li><li>The Check workflow dispatched on this commit passed.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "version",
+   "title": "The version number",
+   "kicker": "One line in each file that carries Projector's version",
+   "intro": [
+    "Each file names the same version, and the release script refuses to bump or tag when they disagree. The plugin manifests tell Claude Code and Codex which release of the plugin is installed, and <code>pyproject.toml</code> sets the version the <code>project</code> CLI reports."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "The three files agree on <code>0.8.18</code>, and no other file in the tree names a Projector version. Checked by searching the head for <code>0.8.17</code> and <code>0.8.18</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": "pyproject.toml",
+     "note": "The Python package's version, raised to 0.8.18."
+    },
+    {
+     "path": ".claude-plugin/plugin.json",
+     "note": "The Claude Code plugin manifest's version, raised to 0.8.18."
+    },
+    {
+     "path": ".codex-plugin/plugin.json",
+     "note": "The Codex plugin manifest's version, raised to 0.8.18."
+    }
+   ]
+  }
+ ]
+}

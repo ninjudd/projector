@@ -1,0 +1,38 @@
+diff --git a/.claude-plugin/plugin.json b/.claude-plugin/plugin.json
+index 280ad4e3..429a02c1 100644
+--- a/.claude-plugin/plugin.json
++++ b/.claude-plugin/plugin.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "projector",
+   "displayName": "Projector",
+-  "version": "0.8.17",
++  "version": "0.8.18",
+   "description": "Git-native project plans and agent workflows for any repository",
+   "author": {
+     "name": "Justin Balthrop",
+diff --git a/.codex-plugin/plugin.json b/.codex-plugin/plugin.json
+index 3d48d1d9..6c45c5cf 100644
+--- a/.codex-plugin/plugin.json
++++ b/.codex-plugin/plugin.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "projector",
+-  "version": "0.8.17",
++  "version": "0.8.18",
+   "description": "Git-native project plans and agent workflows for any repository",
+   "author": {
+     "name": "Justin Balthrop",
+diff --git a/pyproject.toml b/pyproject.toml
+index 2955c566..49f10364 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
+ 
+ [project]
+ name = "projector-cli"
+-version = "0.8.17"
++version = "0.8.18"
+ description = "Git-native project plans for people and coding agents"
+ readme = "README.md"
+ authors = [{ name = "Justin Balthrop" }]
