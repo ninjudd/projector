@@ -6,10 +6,12 @@ import contextlib
 import hashlib
 import json
 import os
+import queue
 import re
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -350,6 +352,75 @@ def register(folder: Path, session: str, cwd: str, now: float, *, transcript: Op
         if not supported:
             raise UsageError("this Codex CLI lacks queue --resume; automatic delivery is unavailable")
         return record
+
+
+HOOK_COMMAND = "project watch codex-hook"
+HOOK_EVENTS = {"sessionStart", "sessionEnd", "userPromptSubmit", "postToolUse", "stop"}
+
+
+def hook_problem(executable: str, cwd: str, *, popen: Callable = subprocess.Popen,
+                 timeout: float = 10.0) -> Optional[str]:
+    """What keeps Codex from running Projector's hooks, by Codex's own `hooks/list`, or None when it runs
+    all five or cannot say. Codex re-gates a plugin's hooks whenever any file in the plugin changes."""
+    hooks = listed_hooks(executable, cwd, popen=popen, timeout=timeout)
+    if hooks is None:
+        return None
+    ours = [hook for hook in hooks if hook.get("command") == HOOK_COMMAND]
+    running = {hook.get("eventName") for hook in ours
+               if hook.get("enabled") and hook.get("trustStatus") in ("trusted", "managed")}
+    if running >= HOOK_EVENTS:
+        return None
+    if not ours:
+        return ("Codex has no Projector hooks; run `codex plugin add projector-hooks@projector`, "
+                "then trust its hooks in /hooks")
+    states = sorted({str(hook.get("trustStatus")) if hook.get("enabled") else "disabled"
+                     for hook in ours if hook.get("eventName") not in running})
+    return f"Codex is not running Projector's hooks ({', '.join(states)}); trust them in /hooks"
+
+
+def listed_hooks(executable: str, cwd: str, *, popen: Callable, timeout: float) -> Optional[list[dict]]:
+    """Every hook `codex app-server` lists for `cwd`, over its stdio JSON-RPC. The server exits at the end
+    of its input before it answers, so stdin stays open until the answer arrives."""
+    try:
+        process = popen([executable, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", cwd=cwd)
+    except OSError:
+        return None
+    lines: queue.Queue = queue.Queue()
+
+    def read() -> None:
+        for line in process.stdout:
+            lines.put(line)
+        lines.put(None)
+
+    threading.Thread(target=read, daemon=True).start()
+    deadline = time.monotonic() + timeout
+
+    def send(message: dict) -> None:
+        process.stdin.write(json.dumps({"jsonrpc": "2.0", **message}) + "\n")
+        process.stdin.flush()
+
+    def call(number: int, method: str, params: dict) -> object:
+        send({"id": number, "method": method, "params": params})
+        while True:
+            line = lines.get(timeout=max(0.0, deadline - time.monotonic()))
+            if line is None:
+                raise EOFError
+            answer = json.loads(line)
+            if isinstance(answer, dict) and answer.get("id") == number:
+                return answer["result"]
+
+    try:
+        call(1, "initialize", {"clientInfo": {"name": "projector", "version": "1"},
+                               "capabilities": {"experimentalApi": True}})
+        send({"method": "initialized"})
+        result = call(2, "hooks/list", {"cwds": [cwd]})
+        return [hook for entry in result["data"] for hook in entry["hooks"] if isinstance(hook, dict)]
+    except (OSError, ValueError, EOFError, queue.Empty, KeyError, TypeError):
+        return None
+    finally:
+        process.kill()
+        process.wait()
 
 
 def tool_output(event: dict) -> Optional[str]:

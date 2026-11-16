@@ -1299,18 +1299,32 @@ def watch_subscription(arguments: argparse.Namespace, repo: str, number: Optiona
     return watch.Subscription(repo, number, "review", arguments.model, watch_reviewer(arguments.reviewer))
 
 
-def watch_delivery(root: Path, session: str) -> tuple[str, str]:
+def codex_hook_problem(root: Path, session: str, way: str) -> Optional[str]:
+    """Why Codex runs no Projector hooks for this session, or None. A Codex session whose hooks never ran
+    has no registration, so it is known by the `CODEX_SESSION_ID` Codex sets for the commands it runs."""
+    if way not in ("codex", "none"):
+        return None
+    record = codex_watch.registration(watch.session_folder(root, session))
+    if record.get("executable") and record.get("cwd"):
+        return codex_watch.hook_problem(record["executable"], record["cwd"])
+    if os.environ.get("CODEX_SESSION_ID") == session and (executable := shutil.which("codex")):
+        return codex_watch.hook_problem(executable, os.getcwd())
+    return None
+
+
+def watch_delivery(root: Path, session: str) -> tuple[str, str, Optional[str]]:
     way = watch.delivery(root, session, time.time())
+    problem = codex_hook_problem(root, session, way)
     if way != "none":
-        return way, f"events: {way}"
-    return way, (f"events: none — start `project watch stream --session {session}` under your host's monitor "
-                 "facility")
+        return way, f"events: {way}" + (f" — but {problem}" if problem else ""), problem
+    advice = f"start `project watch stream --session {session}` under your host's monitor facility"
+    return way, "events: none — " + (f"{problem}; until then, {advice}" if problem else advice), problem
 
 
 def report_added(root: Path, session: str, added: list[str], json_output: bool, unchanged: str) -> None:
-    way, line = watch_delivery(root, session)
+    way, line, problem = watch_delivery(root, session)
     if json_output:
-        print(json_text({"added": added, "delivery": way}))
+        print(json_text({"added": added, "delivery": way, "codex_hooks": problem}))
         return
     for written in added:
         print(f"added {written}")
@@ -1357,6 +1371,10 @@ def run_watch(arguments: argparse.Namespace) -> int:
     started = watch.ensure_daemon(root, version, newer_release)
     if command == "status":
         report = {"daemon": started, **watch.status(root, time.time())}
+        registered = [record for name in report["deliveries"]
+                      if (record := codex_watch.registration(watch.session_folder(root, name))).get("executable")]
+        report["codex_hooks"] = (codex_watch.hook_problem(registered[-1]["executable"], registered[-1]["cwd"])
+                                 if registered else None)
         if json_output:
             print(json_text(report))
         else:
@@ -1377,6 +1395,8 @@ def run_watch(arguments: argparse.Namespace) -> int:
                 problems = "; ".join(part for part in (found.get("error"), *found.get("errors", [])) if part)
                 print(f"relay {repo}: {found.get('state')}, {found.get('queued', 0)} queued, "
                       f"{found.get('rejected', 0)} rejected" + (f"; {problems}" if problems else ""))
+            if report["codex_hooks"]:
+                print(f"codex hooks: {report['codex_hooks']}")
             for session, found in report["deliveries"].items():
                 expires = found["expires_at"]
                 when = watch.stamp(expires) if isinstance(expires, (int, float)) else "unknown"

@@ -524,3 +524,42 @@ class RoutingTests(WatchCase):
         self.assertNotIn("codex-review", restarted.live)
         self.daemon.scan(self.clock.mono())
         self.assertNotIn("codex-review", self.daemon.live)
+
+
+class HookTrustTests(unittest.TestCase):
+    """`hook_problem` reads Codex's own `hooks/list` over `codex app-server`'s stdio."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def fake(self, hooks, *, answers=True):
+        executable = self.root / "codex"
+        executable.write_text(f"#!{sys.executable}\nimport json, sys\nhooks = {hooks!r}\nanswers = {answers!r}\n" + '''
+for line in sys.stdin:
+    message = json.loads(line)
+    if not answers:
+        continue
+    if message.get("id") == 1:
+        print(json.dumps({"id": 1, "result": {}}), flush=True)
+    elif message.get("id") == 2:
+        print(json.dumps({"id": 2, "result": {"data": [{"hooks": hooks}]}}), flush=True)
+''')
+        executable.chmod(0o755)
+        return str(executable)
+
+    def hooks(self, status, command=codex.HOOK_COMMAND):
+        return [{"eventName": name, "command": command, "enabled": True, "trustStatus": status}
+                for name in sorted(codex.HOOK_EVENTS)]
+
+    def test_five_trusted_hooks_are_no_problem(self):
+        self.assertIsNone(codex.hook_problem(self.fake(self.hooks("trusted")), str(self.root)))
+
+    def test_missing_hooks_name_the_plugin_to_install(self):
+        problem = codex.hook_problem(self.fake(self.hooks("trusted", "trip on")), str(self.root))
+        self.assertIn("codex plugin add projector-hooks@projector", problem)
+
+    def test_a_silent_server_is_given_up_on_without_a_verdict(self):
+        executable = self.fake(self.hooks("modified"), answers=False)
+        self.assertIsNone(codex.hook_problem(executable, str(self.root), timeout=0.5))

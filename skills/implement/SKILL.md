@@ -211,7 +211,9 @@ the pull request, and how its events arrive, from the `events:` line that
   prompt.
 - **`events: codex`** means trusted Codex hooks register the parent session
   and the daemon queues events as prompts. Start no stream. Use the recovery
-  rules in `../fix-pr/SKILL.md` if delivery needs attention.
+  rules in `../fix-pr/SKILL.md` if delivery needs attention. When the line
+  adds that Codex is not running Projector's hooks, tell the user what it
+  says to do, such as trusting them in `/hooks`.
 - **`events: stream`** means a `project watch stream` that the session
   runs prints them.
 - **`events: none`** means nothing delivers them yet. Start the

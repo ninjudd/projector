@@ -2127,7 +2127,49 @@ class CommandTests(unittest.TestCase):
         code, out, err = self.project("add", "https://github.com/acme/app/pull/12/files", "--json")
 
         self.assertEqual(0, code, err)
-        self.assertEqual({"added": ["acme/app#12 fix"], "delivery": "mod", "schema_version": 2}, json.loads(out))
+        self.assertEqual({"added": ["acme/app#12 fix"], "delivery": "mod", "codex_hooks": None, "schema_version": 2},
+                         json.loads(out))
+
+    def fake_codex(self, status: str) -> Path:
+        """A `codex` whose `app-server` lists Projector's five hooks with `status`."""
+        executable = self.scratch / "codex"
+        hooks = [{"eventName": name, "command": "project watch codex-hook", "enabled": True, "trustStatus": status}
+                 for name in ("sessionStart", "sessionEnd", "userPromptSubmit", "postToolUse", "stop")]
+        executable.write_text(f"#!{sys.executable}\nimport json, sys\nhooks = {hooks!r}\n" + '''
+for line in sys.stdin:
+    message = json.loads(line)
+    if message.get("id") == 1:
+        print(json.dumps({"id": 1, "result": {}}), flush=True)
+    elif message.get("id") == 2:
+        print(json.dumps({"id": 2, "result": {"data": [{"hooks": hooks}]}}), flush=True)
+''')
+        executable.chmod(0o755)
+        return executable
+
+    def test_add_reports_codex_hooks_codex_has_stopped_running(self) -> None:
+        folder = watch.session_folder(self.root, "codex-A")
+        folder.mkdir(parents=True)
+        watch.write_json(folder / "codex.json", {"schema_version": 1, "thread_id": "codex-A", "enabled": True,
+                                           "executable": str(self.fake_codex("modified")), "cwd": str(self.cwd),
+                                           "expires_at": time.time() + 3600})
+
+        code, out, err = self.project("add", "acme/app#12", "--session", "codex-A")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual("added acme/app#12 fix\nevents: codex — but Codex is not running Projector's hooks "
+                         "(modified); trust them in /hooks\n", out)
+
+    def test_add_reports_untrusted_hooks_for_a_codex_session_they_never_registered(self) -> None:
+        executable = self.fake_codex("untrusted")
+        with mock.patch.dict(os.environ, {"CODEX_SESSION_ID": "codex-B"}), \
+                mock.patch.object(shutil, "which", lambda name: str(executable) if name == "codex" else None):
+            code, out, err = self.project("add", "acme/app#12", "--session", "codex-B", "--json")
+            _, trusted, _ = self.project("add", "acme/app#13", "--session", "top-level", "--json")
+
+        self.assertEqual(0, code, err)
+        self.assertEqual("Codex is not running Projector's hooks (untrusted); trust them in /hooks",
+                         json.loads(out)["codex_hooks"])
+        self.assertIsNone(json.loads(trusted)["codex_hooks"])
 
     def test_add_lands_in_the_session_the_host_names(self) -> None:
         self.project("add", "acme/app#12")
