@@ -364,6 +364,10 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
     folder = watch.session_folder(root, session)
     if name == "SessionEnd":
         disconnect(folder)
+        # Disconnecting lapses a registered agent at once. Its relay refs go on the daemon's next pass, so a
+        # daemon must be running to take them.
+        if (folder / "agent.json").exists():
+            ensure()
         return {}
     record = registration(folder)
     if name == "SessionStart":

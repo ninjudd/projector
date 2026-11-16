@@ -5,6 +5,7 @@ import importlib.metadata
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import tempfile
@@ -94,6 +95,27 @@ class FileAction:
     path: str
     action: str
     note: Optional[str] = None
+
+
+def run_bounded(args: list[str], *, timeout: float, cwd: Optional[Path] = None, input: Optional[bytes] = None,
+                env: Optional[dict] = None) -> subprocess.CompletedProcess:
+    """Run `args` with standard input closed, or fed `input`, and capture its output as bytes. Once `timeout`
+    seconds pass, kill its whole process group, so a hook or helper it started dies with it, and raise
+    `subprocess.TimeoutExpired`."""
+    group: dict = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+                   else {"start_new_session": True})
+    process = subprocess.Popen(args, cwd=cwd, env=env, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, **group)
+    try:
+        stdout, stderr = process.communicate(input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            process.kill()
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+        process.communicate()
+        raise
+    return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
 
 
 class InitError(ProjectorError):

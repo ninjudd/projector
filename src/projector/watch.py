@@ -24,6 +24,8 @@ Layout of the state root, `$XDG_STATE_HOME/projector/watch/`:
     cache/<owner>/<repo>/branches/<base>.json   a base branch's ETag
     cache/<owner>/<repo>/open/<page>.json       a page of the repository's open pull requests
     cache/<owner>/<repo>/adopted.json           the pull requests a repository subscription covers
+    outbox/<owner>/<repo>.json                  the relay's ref changes waiting for a push (`relay.py`)
+    relay/<owner>/<repo>.json                   what the relay last found in the repository
 
 Owner and repository names under `cache/` are lowercased, because GitHub ignores their case.
 """
@@ -686,6 +688,8 @@ class Daemon:
         self.wanted = False
         self.last_pass: Optional[float] = None
         self.codex = codex_watch.Dispatcher(wall=wall)
+        from . import relay
+        self.relay = relay.Relay(root, gh=self.gh, wall=wall)
 
     def log(self, message: str) -> None:
         print(f"{stamp(self.wall())} {message}", flush=True)
@@ -693,6 +697,7 @@ class Daemon:
     def start(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         self.write_daemon()
+        self.relay.start()
         self.read_operator(self.wall())
 
     def write_daemon(self) -> None:
@@ -746,11 +751,14 @@ class Daemon:
             self.scan(now)
             if self.live:
                 self.last_live = now
-            elif now - self.last_live >= IDLE:
+            elif now - self.last_live >= IDLE and not self.relay.busy():
                 self.log("stopping: no session has been live for 5 minutes")
                 return False
-            if self.wanted or now >= self.next_pass:
+            polled = self.wanted or now >= self.next_pass
+            if polled:
                 self.run_pass()
+            if self.relay.tick(self.live, polled, self.settings.full_every):
+                self.write_status(self.wall())
             self.codex.tick([self.root / "sessions" / name for name in session_names(self.root)])
             return True
         finally:
@@ -854,6 +862,7 @@ class Daemon:
             "targets": self.targets,
             "repositories": self.repositories,
             "graphql": [{"at": stamp(at), "cost": cost} for at, cost in self.spent],
+            "relay": self.relay.status(),
         })
 
     def conditional(self, path: str, etag: Optional[str]) -> Response:
@@ -1692,6 +1701,7 @@ def serve(root: Path, version: str, *, sleep: Callable[[float], None] = time.sle
         finally:
             if daemon is not None:
                 daemon.codex.close()
+                daemon.relay.close()
             unlock(descriptor)
     finally:
         os.close(descriptor)
@@ -1709,6 +1719,8 @@ def status(root: Path, now: float) -> dict:
             "operator": daemon.get("operator"), "live_sessions": report.get("live_sessions") or [],
             "targets": report.get("targets") or [], "repositories": report.get("repositories") or [],
             "last_pass": report.get("last_pass"), "graphql_points_last_hour": points,
+            "relay": report.get("relay") or {"key": {"state": "off", "id": None, "store": None, "error": ""},
+                                              "repositories": {}},
             "deliveries": {name: found for name in session_names(root)
                            if (found := codex_watch.report(session_folder(root, name), now))}}
 

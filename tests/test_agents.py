@@ -122,7 +122,7 @@ class RegisterTests(AgentCase):
         code, out, err = self.project("list", claude=A)
 
         self.assertEqual(0, code, err)
-        self.assertEqual("local only\n"
+        self.assertEqual("local only: no agent.key is set; run `project agent key init` to make one\n"
                          "b5e6f7a8\tcodex\tlaptop\tacme/app feature\t1m ago\tWriting the parser's tests\n"
                          f"parser-refactor (you)\tclaude {MODEL}\tlaptop\tacme/app feature\t1m ago\t"
                          "Refactoring the parser\n", out)

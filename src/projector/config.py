@@ -31,14 +31,18 @@ comments and layout a person wrote survive every change.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import re
+import stat
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from . import crypto
 from .core import ProjectorError, UsageError, write_through
 
 
@@ -68,6 +72,7 @@ SETTINGS: dict[str, type] = {
     "watch.review_stall": int,
     "panel.background": str,
     "agent.message_limit": int,
+    "agent.key": str,
 }
 
 # The least value `project config set` accepts for each whole-number key. The
@@ -82,8 +87,71 @@ MINIMUMS: dict[str, int] = {
 }
 
 
+# Keys read only from the user layer, `~/.projector.toml`. A walked file's value
+# is ignored, so a repository cannot plant a key its author knows.
+USER_ONLY = frozenset({"agent.key"})
+
+# Keys whose value can be a secret. A value under `keychain:` names an item in
+# the OS keychain and holds no secret; any other value is the secret itself.
+SECRETS = frozenset({"agent.key"})
+KEYCHAIN = "keychain:"
+INLINE_KEY = "x25519:"
+
+
 class ConfigError(ProjectorError):
     exit_code = 78
+
+
+def is_secret(key: str, value: Any) -> bool:
+    return key in SECRETS and isinstance(value, str) and not value.startswith(KEYCHAIN)
+
+
+def inline_key(value: str) -> bytes:
+    """The private key an inline `agent.key` holds: `x25519:` and the base64 of 32 bytes."""
+
+    if not value.startswith(INLINE_KEY):
+        raise ConfigError("agent.key is neither keychain:<key-id> nor x25519:<base64 key>")
+    try:
+        private = base64.b64decode(value[len(INLINE_KEY):], validate=True)
+    except (binascii.Error, ValueError):
+        private = b""
+    if len(private) != 32:
+        raise ConfigError("agent.key holds no 32-byte X25519 key after x25519:")
+    return private
+
+
+def redact(key: str, value: Any) -> Any:
+    """`value`, found at the dotted `key`, with each inline secret at or under `key` shown by its key ID."""
+
+    if isinstance(value, dict):
+        return {name: redact(f"{key}.{name}" if key else name, child) for name, child in value.items()}
+    if not is_secret(key, value):
+        return value
+    try:
+        found = crypto.key_id(crypto.public_key(inline_key(value)))
+    except ConfigError:
+        found = "unknown"
+    return f"<redacted, key ID {found}>"
+
+
+def check_private(path: Path) -> None:
+    """Refuse a file that holds an inline secret when other accounts can read or change it. Windows relies on
+    the profile's ACL instead."""
+
+    if os.name == "posix" and stat.S_IMODE(path.stat().st_mode) & 0o077:
+        raise ConfigError(f"{path} holds agent.key inline, and other accounts can read it; run `chmod 600 {path}`")
+
+
+def user_value(key: str, environ: Optional[dict[str, str]] = None) -> Any:
+    """A key from `SETTINGS` in the user layer alone, checking that a file holding an inline secret is private."""
+
+    path = user_config_path(environ)
+    if not path.is_file():
+        return None
+    value = Config(read_config_file(path), {}, []).setting(key)
+    if is_secret(key, value):
+        check_private(path)
+    return value
 
 
 def same_value(one: Any, other: Any) -> bool:
@@ -219,10 +287,12 @@ def _flatten(mapping: dict[str, Any], prefix: str = "") -> dict[str, Any]:
 class Config:
     """A merged configuration plus where each value came from."""
 
-    def __init__(self, values: dict[str, Any], sources: dict[str, Path], paths: list[Path]) -> None:
+    def __init__(self, values: dict[str, Any], sources: dict[str, Path], paths: list[Path],
+                 ignored: Optional[list[tuple[Path, str]]] = None) -> None:
         self.values = values
         self.sources = sources
         self.paths = paths
+        self.ignored = ignored or []
 
     def get(self, key: str, default: Any = None) -> Any:
         """Look a value up by dotted key, so `review.username` reaches a table."""
@@ -258,10 +328,21 @@ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, s
         home = Path(env.get("HOME") or Path.home())
 
     paths = config_paths(start, home, env)
+    user = user_config_path(env)
+    user = user.resolve() if user.is_file() else None
     values: dict[str, Any] = {}
     sources: dict[str, Path] = {}
+    ignored: list[tuple[Path, str]] = []
     for path in paths:
         loaded = read_config_file(path)
+        if path != user:
+            for key in sorted(USER_ONLY & set(_flatten(loaded))):
+                *tables, name = key.split(".")
+                table = loaded
+                for part in tables:
+                    table = table[part]
+                del table[name]
+                ignored.append((path, key))
         values = merge(values, loaded)
         # Recorded after merging so the last writer of each leaf wins, which is
         # the file whose value actually survived.
@@ -273,7 +354,7 @@ def load(start: Path, home: Optional[Path] = None, environ: Optional[dict[str, s
     # key the merged result does not actually have.
     final = _flatten(values)
     sources = {key: path for key, path in sources.items() if key in final}
-    return Config(values, sources, paths)
+    return Config(values, sources, paths, ignored)
 
 
 @dataclass(frozen=True)
