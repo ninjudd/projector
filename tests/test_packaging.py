@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
+import shutil
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
+spec = importlib.util.spec_from_file_location("release", ROOT / ".github" / "scripts" / "release.py")
+release = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(release)
 PUBLISHED_SKILLS = {
     "spec",
     "implement",
@@ -136,9 +142,18 @@ class PackagingTests(unittest.TestCase):
         plugin = json.loads((root / ".codex-plugin" / "plugin.json").read_text())
         self.assertEqual("projector-hooks", plugin["name"])
         self.assertEqual("./hooks.json", plugin["hooks"])
-        self.assertNotEqual(self.manifest("codex")["version"], plugin["version"])
-        release = (ROOT / ".github" / "scripts" / "release.py").read_text()
-        self.assertNotIn("codex-hooks", release)
+        with tempfile.TemporaryDirectory() as temporary:
+            copy = Path(temporary)
+            for name in release.VERSION_FILES:
+                (copy / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(ROOT / name, copy / name)
+            shutil.copytree(root, copy / "codex-hooks")
+            # A release that wrote the plugin's own version over it would change
+            # no byte, so release a version other than the plugin's.
+            while release.bump(copy, "patch") == plugin["version"]:
+                pass
+            for name in files:
+                self.assertEqual((root / name).read_bytes(), (copy / "codex-hooks" / name).read_bytes(), name)
         [entry] = [entry for entry in json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text())["plugins"]
                    if entry["name"] == "projector-hooks"]
         self.assertEqual({"source": "local", "path": "./codex-hooks"}, entry["source"])
