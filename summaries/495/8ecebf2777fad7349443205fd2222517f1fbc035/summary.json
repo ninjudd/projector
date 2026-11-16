@@ -1,0 +1,100 @@
+{
+ "version": 1,
+ "name": "Panel label colors",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 495,
+  "title": "Draw a drawer's labels as colored text, lightened or darkened to read on the panel",
+  "head": "8ecebf2777fad7349443205fd2222517f1fbc035",
+  "headRef": "panel-label-text",
+  "base": "ddf0fb96085f012bc0eca5171b9affe028fe2940",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's Claude Code mod draws a panel above the prompt that lists the session's pull requests. Opening a pull request's <em>drawer</em> shows a line of facts about it: the session's roles, the branch, the diff size, the checks, and last the pull request's GitHub labels. Until this change each label was a <em>pill</em>: its name padded with spaces on a fill of the label's GitHub color, in black or white text. In a terminal those blocks of color are loud next to the rest of the line, which is plain colored text separated by <code>·</code>.",
+   "This change draws each label like the other facts: its name in the label's own color, with no fill, set off by <code> · </code>. A bare color must now read against the panel's own background, and some GitHub colors do not, such as dark red <code>#b60205</code> on the dark theme or pale yellow <code>#fbca04</code> on the light theme. So the new <code>labelColor</code> function measures each label's WCAG contrast ratio against the background and, below 3:1, mixes it toward white or black in steps of a twentieth until it reaches 3:1.",
+   "Only the drawing changes. The label names that GitHub stores, and the <code>reviewing</code> and <code>clean</code> labels that decide a row's state word, are read exactly as before."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Drawer</b>: the lines that open under a pull request's row in the panel when you press its number.</li><li><b>Contrast ratio</b>: WCAG's measure of how far apart two colors' luminances are, from 1:1 (identical) to 21:1 (black on white). 3:1 is WCAG's minimum for large text.</li><li><b>Panel background</b>: <code>rgb(20,20,20)</code> on the dark themes, <code>rgb(240,240,240)</code> on the light ones, <code>inverseText</code> on an ANSI theme, or whatever <code>panel.background</code> sets.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>One open finding: the example panel in <code>docs/plugins.md</code> still shows the old two-space gap before a label.</li><li>The gate passed on this head: 236 hook tests, the type check, and the plugin validations, and CI's <code>check</code> job.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "drawing",
+   "title": "Labels drawn as colored text",
+   "kicker": "How the drawer picks each label's color and lays the labels out",
+   "intro": [
+    "<code>hooks/register.tsx</code> holds the whole mod. The change replaces <code>labelStyle</code>, which returned a fill and a black or white text color, with <code>labelColor</code>, which returns one text color for the label's name on the panel's background.",
+    "<code>labelColor</code> parses both colors with <code>rgbOf</code>, computes WCAG relative luminance with <code>luminanceOf</code>, and compares them with <code>contrastOf</code>. A label that already reaches 3:1 keeps its own color. Otherwise it is mixed toward white when white contrasts more with the background, or toward black when black does, one twentieth at a time, and the first mix that reaches 3:1 is drawn. A background with no color the panel can measure, such as <code>inverseText</code>, <code>ansi256(n)</code>, or the <code>sidebar</code> setting, counts as black, so the panel only ever lightens a too-dark label there."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The panel reads 3:1 rather than WCAG's 4.5:1 for text this size on purpose: 4.5:1 would shift GitHub's common green <code>#0e8a16</code> and purple <code>#7057ff</code> away from the colors people recognize. Both already clear 3:1 on both themes."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "Adds <code>labelColor</code> and its color helpers, and draws each label in the drawer's facts line as bare colored text.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Worked by hand: <code>#b60205</code> has a luminance of about 0.0999, a 2.999:1 contrast with black, so one step toward white gives <code>#ba0f12</code>, the value the <code>light-ansi</code> test expects. Full white or full black always clears 3:1 against any background, so the loop returns before its fallback.",
+       "line": 166
+      },
+      {
+       "kind": "context",
+       "text": "<code>color</code> here is the panel's background, read from <code>panel.background</code> or the theme a few hundred lines up. A label with no color yet, which an old daemon cache leaves, is a plain string in the default text color.",
+       "line": 2442
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Turns the single label test into one case per theme, <code>dark</code>, <code>light</code>, and <code>light-ansi</code>, and adds a dark red <code>breaking</code> label to the fixture.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Each case compares every label's text and computed color with literal values, so a wrong name, a raw unadjusted color, or a color on the colorless <code>legacy</code> label turns it red. All 236 hook tests passed on this head."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The panel's description in the plugin guide",
+   "intro": [
+    "<code>docs/plugins.md</code> describes the drawer's facts line. The change rewrites its paragraph on labels to describe the bare colored names, the 3:1 adjustment, and the ANSI fallback."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Rewrites the paragraph on how the drawer draws labels.",
+     "checks": [
+      {
+       "kind": "flag",
+       "text": "The example panel at line 284 still reads <code>checks passing ·  reviewing</code>, with two spaces, the pill's old padding. The drawer now draws <code>checks passing · reviewing</code>, so the example needs the extra space removed.",
+       "line": 414
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
