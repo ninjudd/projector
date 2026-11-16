@@ -2795,7 +2795,8 @@ what to do after the `events:` line, and in `codex_hooks` with `--json`.
 An `add` that writes a line, or finds the line it would write already
 there, the Codex hooks' subscriptions included, also registers a session
 that is not registered yet for agent messages, with a summary made from its
-subscriptions, unless `agent.auto_register` is `false`. The output of `add` stays the same either way, as
+subscriptions, unless `agent.auto_register` is `false`. The output of `add`
+stays the same either way, as
 [Registered when it subscribes](#registered-when-it-subscribes) describes.
 
 ### Deliver events to Codex
