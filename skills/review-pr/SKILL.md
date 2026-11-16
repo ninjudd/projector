@@ -952,15 +952,15 @@ Claude Code's auto mode refuses a clean self-review's publish as
 self-approval unless the user's Claude Code settings, or the repository's,
 allow it, as `Bash(project *)` does, a rule `project init` adds to the user's
 `~/.claude/settings.json`. For Codex, `init` adds the same allowance to the
-user's Codex rules. Run `publish` on a line by itself, joined to no other
-command, so the rule matches it, as `fix-pr` describes for `project review
-ready` under "Hold the pull request while changes are built". If the host
-refuses a line that joined it to other commands, run it again by itself. If
-it refuses `publish` alone, do not retry it in another form: keep the lock
-and the body, and ask the user to run `project init` in a terminal, which
-adds the rules to their own settings, or to run the publish command
-themselves. `init` adds the rules only for a person at a terminal, so
-do not run it to add them yourself.
+user's Codex rules. Run `publish` as a tool call of its own, not after `cd`
+and joined to no other command, so the rule matches it. When the host
+refuses it, never retry it in another form. Keep the lock and the body, and
+work out why it was refused as `fix-pr` describes under "Hold the pull
+request while changes are built": run it again alone when the call ran more
+than the publish, and otherwise read `allowed` in
+`project review rules --json` before you ask the user to run `project init`
+in a terminal. `init` adds the rules only for a person at a terminal, so do
+not run it to add them yourself.
 
 After submitting, `publish` re-reads the review it posted, decides the
 sign-off from the newest verdict on the head and its open finding threads,

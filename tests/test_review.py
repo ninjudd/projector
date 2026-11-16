@@ -3181,14 +3181,15 @@ class StatusTests(LatestWinsCase):
                 commands = "\n".join(re.findall(r"^\s*```(?:sh|bash)\n(.*?)^\s*```", text, re.M | re.S))
                 self.assertNotIn("gh pr ready", commands, "a skill runs no bare gh pr ready")
                 prose = " ".join(text.split())
-                self.assertIn("on a line by itself", prose)
+                self.assertIn("as a tool call of its own", prose)
         fix_pr = " ".join((skills / "fix-pr" / "SKILL.md").read_text().split())
         self.assertIn("project review hold <number> --repo <owner>/<repo>", fix_pr)
-        # Claude Code allows a line that joins commands only when each matches an allow rule, so a `gh` command
-        # beside `project review ready` sends the whole line to auto mode, which refused it as undoing the hold.
-        self.assertIn("Run `project review hold` and `project review ready` each on a line by itself", fix_pr)
-        self.assertIn("When it joined the command to others, run the Projector command again on a line by itself",
-                      fix_pr)
+        # Claude Code and Codex check each command of a chain and take the strictest result, so a `gh` command
+        # beside `project review ready` sends the whole call to auto mode, which refused it as undoing the hold.
+        self.assertIn("Run `project review hold` and `project review ready` each as a tool call of its own", fix_pr)
+        self.assertIn("**The call ran more than the command.** Run the command again, alone.", fix_pr)
+        # A lone refusal sends the user to `init` only when `review rules` says the file lacks the rules.
+        self.assertIn("Run `project review rules --json`, which writes nothing, and read `allowed`", fix_pr)
 
     def test_no_skill_example_joins_a_review_command_to_another(self) -> None:
         # A joined line falls to the host's automatic approval even where `Bash(project *)` allows the command.

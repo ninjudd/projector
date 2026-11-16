@@ -159,9 +159,9 @@ answer: mark it ready when they answer `Looks good` or decline the request,
 and keep it a draft while you build what `Some feedback` asks for, marking it
 ready once that work is done. Ready is not signed off: a clean review of the
 head labels the pull request `clean`, and only that is the sign-off. Run the
-command on a line by itself, joined to no other command, and never as a bare
-`gh pr ready`, as `../fix-pr/SKILL.md` describes under "Hold the pull request
-while changes are built".
+command as a tool call of its own, not after `cd` and joined to no other
+command, and never as a bare `gh pr ready`, as `../fix-pr/SKILL.md`
+describes under "Hold the pull request while changes are built".
 
 Follow the writing guide in `../writing.md`, § 10 in particular, when you
 write each commit message, the title, and the body. Its first rule starts
