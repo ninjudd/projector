@@ -1,0 +1,90 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index a231cc30..fabe98b3 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -280,6 +280,7 @@ not subscribed to before.
+ ```text
+   /projector                            1 pull request · 1 review request  12s   [-]
+    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
++
+    #258 findings grace Name the reviewed head i… reviewing · checks passing 5m
+         reviewer · sig-head · +84 −1 in 5 files · checks passing · reviewing
+         7: Discuss  8: Dismiss
+@@ -357,9 +358,11 @@ for it arrives.
+ 
+ Your own pull requests come first, then everyone else's, which the panel
+ calls review requests, each author's together and the authors in order of
+-login, with no line between the groups. Within each, the pull requests go
+-by repository, and each repository's newest first, so a pull request keeps
+-its place from one look to the next. The header counts the two apart,
++login, with no line between one author's group and the next. A blank line
++sets the review requests apart from yours whenever both show something,
++whether rows or a collapsed line. Within each, the pull requests go by
++repository, and each repository's newest first, so a pull request keeps its
++place from one look to the next. The header counts the two apart,
+ such as `14 pull requests · 10 review requests`. The panel tells which are
+ yours by the operator, the account `gh` is signed in as, which it reads from
+ the daemon's `daemon.json`. A pull request by a deleted account, which
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index ecb35178..077dc340 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -1405,8 +1405,12 @@ test('lists your pull requests first, then everyone else’s by author, naming t
+   expect(keys).toEqual(['pr:o/r#9', 'pr:x/y#7', 'pr:o/r#5', 'pr:o/r#6', 'pr:o/r#4'])
+   // The header counts your pull requests apart from the review requests, everyone else's.
+   expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 3 review requests  \d+s$/)
++  // A blank line sets the review requests apart from yours, and only that one.
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+-  expect(texts.filter(text => text === ' ')).toEqual([])
++  expect(texts.filter(text => text === ' ')).toEqual([' '])
++  const gap = texts.indexOf(' ')
++  expect(texts.slice(0, gap)).not.toContain('bob')
++  expect(texts.slice(gap)).toContain('bob')
+ 
+   // Only someone else's line names its author, in `subtle`, in a column as wide as the longest login.
+   expect(await ui.find({ key: 'author:x/y#7' })).toBeUndefined()
+@@ -1452,6 +1456,9 @@ test('your pull requests and the review requests collapse apart, yours always fi
+   // Yours collapse apart from them, and their line still comes first.
+   await ui.press({ key: 'count:pr' })
+   expect(await lines()).toEqual(['+ r#9 y#7', '+ r#20 r#5 r#6 r#4'])
++  // The blank line still sets the two collapsed lines apart.
++  const collapsed = (await ui.findAll({ type: 'Text' })).map(found => found.text)
++  expect(collapsed.slice(collapsed.indexOf('y#7'), collapsed.indexOf('y#7') + 3)).toEqual(['y#7', ' ', '+'])
+ 
+   // A label opens its drawer under its own section's line.
+   await ui.press({ key: 'open:o/r#4' })
+@@ -5816,6 +5823,8 @@ test('dismiss drops a pull request from each role the session holds and from an
+   expect(session.toasts).toEqual(['projector: stopped fixing and reviewing x/y#7'])
+   expect(await rowsOf(ui)).toEqual(['pr:o/r#4'])
+   expect(await headerOf(ui)).toMatch(/^\/projector +1 review request  \d+s$/)
++  // With none of your own pull requests left, no blank line opens the list.
++  expect((await ui.findAll({ type: 'Text' })).filter(found => found.text === ' ')).toEqual([])
+   await ui.unmount()
+ })
+ 
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index f9a5beee..3519de0c 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -2590,12 +2590,16 @@ export const register: Register = on => {
+     const focused = shownItems.find(item => opened === `item:${item.ref}`)
+     if (focused !== undefined) return panel(drawItem(focused), false)
+ 
+-    // Your pull requests come before the review requests, and a collapsed
+-    // section gives way to one line in its place.
++    // Your pull requests come before the review requests, a blank line between
++    // them, and a collapsed section gives way to one line in its place.
++    const prLines = PR_SECTIONS.map(section => [
++      ...expander(section),
++      ...(isCollapsed(section) ? [] : sectioned[section].map(drawRow)),
++    ]).filter(lines => lines.length > 0)
+     return panel([
+-      ...PR_SECTIONS.flatMap(section => [
+-        ...expander(section),
+-        ...(isCollapsed(section) ? [] : sectioned[section].map(drawRow)),
++      ...prLines.flatMap((lines, at) => [
++        ...(at === 0 ? [] : [<Text key="before-reviews"> </Text>]),
++        ...lines,
+       ]),
+       failure !== undefined && (
+         <Text key="failure" color="error">
