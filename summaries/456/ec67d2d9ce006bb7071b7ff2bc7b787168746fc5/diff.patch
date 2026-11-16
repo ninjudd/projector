@@ -1,0 +1,2043 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 39039ac7..6ae5712b 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -110,7 +110,8 @@ what it did to each:
+     "Bash(project inbox done *)",
+     "Bash(project inbox decline *)",
+     "Bash(project inbox start *)",
+-    "Bash(project inbox unclear *)"
++    "Bash(project inbox unclear *)",
++    "Bash(project ios *allow-untrusted*)"
+   ]
+   ```
+ 
+@@ -122,7 +123,11 @@ what it did to each:
+   `Bash(project site *prepare*)` asks before either flag, as `--prepare x` or
+   `--prepare=x`, and before `--no-prepare` too. Those two commands refuse an
+   abbreviated option such as `--prep`, so no shorter spelling slips past the
+-  rule. `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`,
++  rule. `project ios build --allow-untrusted` builds a pull request whose head
++  is not trusted, which runs that head's build scripts as you, so
++  `Bash(project ios *allow-untrusted*)` asks before it, and every
++  `project ios` command refuses an abbreviated option.
++  `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`,
+   `start`, and `unclear` record your answer to an item an agent posted, your
+   outcome for a request, your consent to a request's start action, your word
+   that you don't understand an item, or your choice to dismiss or put it
+@@ -226,6 +231,10 @@ what it did to each:
+       pattern = ["project", "inbox", ["ask", "block", "claim", "delivered", "list", "ready", "reopen", "request", "restore", "revise", "show", "tell", "watch", "withdraw"]],
+       decision = "allow",
+   )
++  prefix_rule(
++      pattern = ["project", "ios", ["cleanup", "crashes", "devices", "install"]],
++      decision = "allow",
++  )
+   prefix_rule(
+       pattern = ["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release", "rules", "settle", "setup", "status", "suggestions", "workflow"]],
+       decision = "allow",
+@@ -239,7 +248,8 @@ what it did to each:
+   No rule matches `project init`, `project upgrade`, `project config set` or
+   `unset`, `project create` or `project edit`, whose editor an agent could
+   drive, `project review gate`, `project site build` or `serve`,
+-  `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,
++  `project ios build` or `logs`, which run the repository's build scripts or
++  `sudo`, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,
+   or `unclear`, which record your choice, or a command line that starts with an
+   option, so Codex's usual approval
+   decides them, in its sandbox. A command added to Projector later reaches
+@@ -743,6 +753,9 @@ reads, which are these:
+ | `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
+ | `agent.message_limit` | whole number | `12` | `project agent send` and `reply`, from the checkout the sending session works in, as the most messages one session sends to one other session in a rolling hour; at least `1` |
+ | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or the inline fallback, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key import`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
++| `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
++| `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
++| `ios.output` | string | `~/Desktop` | `project ios crashes` and `logs`, as the folder they write crash reports and log files to |
+ 
+ `review.allow_approve` is off unless it is exactly `true`; an unset key means
+ `false` rather than a question to ask. It never applies to a review of your own
+@@ -3157,11 +3170,101 @@ Each command refuses, with exit code 65, a reference that is not
+ `action`, which is `added`, `dropped`, `restored`, `removed`, or
+ `unchanged`, with the `pr` and the `tracked` file.
+ 
++## Put an iOS app on a device
++
++`project ios` builds a branch or a pull request of the repository's iOS app
++without touching your checkout, puts it on your iPhone, iPad, or Mac, and
++brings that device's crash reports and log back. It needs Xcode's
++command-line tools on macOS, and exits 69 without them.
++
++```sh
++project ios build 12                  # pull request 12, installed and opened on the connected device
++project ios build feature/login       # a branch
++project ios build 12 --no-install     # build only
++project ios install 12                # put pull request 12's kept build on the device again
++project ios devices                   # paired devices, and which can take an install
++project ios crashes                   # the app's newest crash reports, copied and summarized
++project ios logs --last 20m           # the app's log lines from the last 20 minutes, to a file
++project ios cleanup                   # remove the worktree, DerivedData, and kept builds
++```
++
++`build` fetches the branch, or the pull request's head, into one detached
++worktree that Projector keeps for the repository, and builds it into one
++shared DerivedData folder, so moving between branches rebuilds only what
++changed. It keeps a copy of each target's app, so `install 12` installs the
++build of pull request 12 even after you build another target. With no target,
++`install` installs the newest kept build. A pull request's head from a fork,
++or one with a commit by an author who has no write access to the repository,
++is refused with exit 65, because `xcodebuild` runs the project's build
++scripts as you. Read its build phases and scripts, then pass
++`--allow-untrusted` to build it. `build`, `install`, and `cleanup` take
++turns: while one runs in a repository, another of the three waits for it to
++finish. `devices`, `crashes`, and `logs` never wait.
++
++Each of `build`, `install`, `crashes`, and `logs` takes these options:
++
++| Option | Effect |
++| --- | --- |
++| `--app <app>` | Uses that app instead of the default one. |
++| `--device <name-or-UDID>` | Uses that paired device. |
++| `--iphone`, `--ipad` | Uses the one connected iPhone, or the one connected iPad. |
++| `--mac` | Builds the app as Designed for iPad and opens it on this Mac, quitting the copy that is running. `crashes` and `logs` read this Mac instead of a device. |
++
++Without a device option, the commands use the one device that is connected,
++and refuse none or several with the list of paired devices. `build` checks
++the device before it builds, and waits up to five minutes for you to unlock
++a locked device before it opens the app. Outside a terminal, `build` prints
++only the line that starts the build and the line that ends it, and a failed
++build prints its `error:` lines. `--verbose` prints every line, and
++`build.log` keeps them all.
++
++### Find the app by convention
++
++A repository that follows the convention needs no configuration:
++
++- **The Xcode project** is the one `.xcworkspace`, or with none the one
++  `.xcodeproj`, in the repository. Set `ios.project` to the path of another.
++- **The app** is the Xcode project's name, so `MyApp.xcodeproj` gives
++  `MyApp`. Pass `--app`, or set `ios.app`, for another.
++- **The scheme** is `<app> Development` when the project has it, and
++  otherwise `<app>`. A scheme named `MyApp Beta` is the app `MyApp Beta`.
++- **The output folder** for crash reports and log files is `~/Desktop`. Set
++  `ios.output` to move it.
++
++`crashes` copies the app's three newest crash reports to the output folder,
++keeping a copy already there, and prints when each happened, which build it
++was, the exception or the termination code, and the top of the thread that
++crashed. A watchdog kill crashes no thread, so the summary shows the main
++thread. `logs` writes the app's lines to a new file named like
++`MyApp log 2026-11-15 at 14.42.10.txt`, which never replaces an earlier one.
++The lines are those of the app's subsystem, which is its bundle ID or the
++bundle ID without a last part such as `.dev`, and the faults its process
++writes. Pass `--predicate` to choose the lines yourself. On a device, `logs`
++runs `sudo log collect`, which asks for your password and can take a few
++minutes, and deletes the archive it reads.
++
++### Know where the state lives
++
++`project ios` keeps each repository's state in
++`~/.local/state/projector/ios/<owner>/<repo>/`, or under
++`$XDG_STATE_HOME/projector/` when it is set:
++
++| Path | Holds |
++| --- | --- |
++| `worktree/` | The detached worktree. A build discards any change made in it. |
++| `DerivedData/` | The shared build folder. |
++| `build.log` | The newest build's whole log. |
++| `builds/<app>/<key>/` | One target's kept app and its `build.json`. The key is `pr-<number>` for a pull request, and `branch-` with the branch name percent-encoded for a branch. |
++| `lock` | The file a run holds while it works. `cleanup` keeps it. |
++
++`devices --json` prints `devices`, each with its `name`, `udid`, `kind`,
++`tunnel`, and whether it is `installable`.
++
+ ## Consume JSON
+ 
+ Pass `--json` to `init`, `list`, `show`, `search`, `create`, `status`,
+ `priority`, `done`, `check`, any `config`, `inbox`, or `loop` command, or
+-`watch add`, `remove`, `drop`, `restore`, `list`, `take`, or `status`.
++`watch add`, `remove`, `drop`, `restore`, `list`, `take`, or `status`, and to `ios devices`.
+ Responses use stdout only for JSON and include `"schema_version": 2`. An `inbox` command that
+ prints one item prints it under `item`, and `inbox list` prints `items`.
+ `inbox watch --json` prints one JSON object a line, as a watcher reads it.
+diff --git a/docs/projects/ios/readme.md b/docs/projects/ios/readme.md
+index d15c108b..e4ed5b20 100644
+--- a/docs/projects/ios/readme.md
++++ b/docs/projects/ios/readme.md
+@@ -1,5 +1,5 @@
+ ---
+-status: ready
++status: in-progress
+ priority: now
+ ---
+ 
+@@ -382,8 +382,8 @@ at that paragraph.
+   them, and the `CODEX_RULES` header names them with the other commands it
+   leaves out.
+ - **Standard library only.** The script's embedded Python already did the
+-  JSON work. `plistlib` replaces `PlistBuddy`, and `fcntl.flock` replaces
+-  `lockf(1)`. The command checks for `xcrun` rather than for macOS, so the
++  JSON work. `-showBuildSettings` gives the bundle ID that the script read
++  with `PlistBuddy`, and `fcntl.flock` replaces `lockf(1)`. The command checks for `xcrun` rather than for macOS, so the
+   tests run on Linux with stand-ins for Apple's tools.
+ 
+ ## 4. Acceptance criteria
+@@ -452,3 +452,26 @@ the folder held, because DerivedData for an app can reach several gigabytes.
+    layer of a stack.
+ 2. Open the skill paragraphs of § 2.6 as the second layer, because they name
+    commands the first layer adds.
++
++## 7. Implementation notes
++
++The first layer of the stack, the command, settles these points that the
++sections above leave open:
++
++- **`cleanup` keeps the `lock` file.** A run that waits on the lock holds
++  the file open. If `cleanup` deleted it, that run would take a lock on the
++  deleted file while a third run locked a new one, and both would build.
++  `cleanup` removes everything else in the state folder, and says
++  `Nothing to clean up.` when only `lock` is left.
++- **`fcntl` is imported only when a command takes the lock**, so the CLI
++  still loads on a system without it.
++- **A pull request's key comes from its number's value**, so `0012` and
++  `12` name the same kept build.
++- **`tests/test_ios.py` covers every row of § 4** with stand-ins for Apple's
++  tools on `PATH`. The ask rule and the Codex rules are rows of
++  `DECISIONS` in `tests/test_permissions.py`, and its abbreviation test
++  covers `--allow-untrusted`.
++
++The last acceptance criterion in § 4, a build installed and opened on a real
++iPhone, needs the person and their device, so the project stays
++`in-progress` until they run it.
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 929fc8d0..efa53982 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -23,7 +23,7 @@
+ from urllib.parse import urlparse
+ from urllib.request import url2pathname, urlopen
+ 
+-from . import agents, codex_watch, inbox, instructions, loop, permissions, relay, review, site, summary, watch
++from . import agents, codex_watch, inbox, instructions, ios, loop, permissions, relay, review, site, summary, watch
+ from .permissions import allow_commands
+ from .summary import WORKFLOW_PATH
+ from .config import (
+@@ -715,6 +715,7 @@ def parser() -> argparse.ArgumentParser:
+                                      "full review, when `project review interdiff` allows one")
+ 
+     add_inbox_parser(subcommands)
++    add_ios_parser(subcommands)
+     add_loop_parser(subcommands)
+     add_watch_parser(subcommands)
+     add_agent_parser(subcommands)
+@@ -966,6 +967,79 @@ def add_loop_parser(subcommands) -> None:
+         add_output(command)
+ 
+ 
++def add_ios_parser(subcommands) -> None:
++    parser = subcommands.add_parser("ios", help="build a branch's iOS app in a worktree of its own, put it on a "
++                                                 "device, and read the device's crash reports and log")
++    commands = parser.add_subparsers(dest="ios_command", required=True)
++
++    # No command takes an abbreviated option, so the ask rule for --allow-untrusted sees every spelling of it.
++    def command(name: str, help_text: str, chooses: bool = True) -> argparse.ArgumentParser:
++        parsed = commands.add_parser(name, help=help_text, allow_abbrev=False)
++        if chooses:
++            parsed.add_argument("--app", help="the app, whose scheme is `<app> Development` or `<app>`; "
++                                              "the default is ios.app, or the Xcode project's name")
++            where = parsed.add_mutually_exclusive_group()
++            where.add_argument("--device", metavar="NAME_OR_UDID", help="the paired device to use")
++            where.add_argument("--iphone", action="store_const", const="iPhone", dest="kind",
++                               help="the one connected iPhone")
++            where.add_argument("--ipad", action="store_const", const="iPad", dest="kind",
++                               help="the one connected iPad")
++            where.add_argument("--mac", action="store_true",
++                               help="this Mac, which runs the app as Designed for iPad")
++        return parsed
++
++    build = command("build", "fetch a branch or a pull request's head, build its app, keep the build, and "
++                             "install and open it")
++    build.add_argument("target", help="a branch, or a pull request's number")
++    build.add_argument("--no-install", action="store_false", dest="install", help="stop after the build")
++    build.add_argument("--verbose", action="store_true", help="print every line xcodebuild writes")
++    build.add_argument("--allow-untrusted", action="store_true",
++                       help="build a pull request whose head is not trusted, after you read its build phases "
++                            "and scripts")
++    install = command("install", "install and open a kept build")
++    install.add_argument("target", nargs="?", help="the branch or pull request number it was built from; the "
++                                                   "default is the newest kept build")
++    add_output(command("devices", "list paired iOS devices and whether each can take an install", chooses=False))
++    command("crashes", "copy the app's newest crash reports to ios.output and summarize them")
++    logs = command("logs", "write the app's recent log lines to a new file in ios.output")
++    logs.add_argument("--last", default="5m", metavar="SPAN", help="how far back to read, such as 20m (default 5m)")
++    logs.add_argument("--predicate", help="a log predicate to use instead of the app's subsystem and faults")
++    command("cleanup", "remove the worktree, DerivedData, and every kept build", chooses=False)
++
++
++def run_ios(arguments: argparse.Namespace) -> int:
++    command = arguments.ios_command
++    if command == "devices":
++        found = ios.devices()
++        if arguments.json_output:
++            print(json_text({"devices": [device.as_json() for device in found]}))
++            return 0
++        if not found:
++            print("No paired iOS devices.")
++        for device in found:
++            reach = "" if device.installable else ", can't take an install"
++            print(f"{device.name}  {device.kind}  {device.udid}  {device.tunnel}{reach}")
++        return 0
++    checkout = discover_git_root(Path.cwd())
++    if command == "cleanup":
++        ios.clean(checkout)
++        return 0
++    config = load_config(checkout)
++    app = arguments.app or config.setting("ios.app")
++    where = {"app": app, "wanted": arguments.device, "kind": arguments.kind, "mac": arguments.mac}
++    output = Path(config.setting("ios.output") or "~/Desktop").expanduser()
++    if command == "build":
++        ios.build(checkout, arguments.target, project_setting=config.setting("ios.project"), install=arguments.install,
++                  verbose=arguments.verbose, allow_untrusted=arguments.allow_untrusted, **where)
++    elif command == "install":
++        ios.install(checkout, arguments.target, **where)
++    elif command == "crashes":
++        ios.crash_reports(checkout, output=output, **where)
++    else:
++        ios.device_log(checkout, output=output, span=arguments.last, predicate=arguments.predicate, **where)
++    return 0
++
++
+ def run_loop(arguments: argparse.Namespace) -> int:
+     reference = arguments.reference
+     tracked = arguments.tracked
+@@ -2681,6 +2755,8 @@ def run(arguments: argparse.Namespace) -> int:
+         return run_inbox(arguments)
+     if arguments.command == "loop":
+         return run_loop(arguments)
++    if arguments.command == "ios":
++        return run_ios(arguments)
+     if arguments.command == "watch":
+         return run_watch(arguments)
+     if arguments.command == "agent":
+diff --git a/src/projector/config.py b/src/projector/config.py
+index 053f90d2..160a2ce1 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -73,6 +73,9 @@
+     "panel.background": str,
+     "agent.message_limit": int,
+     "agent.key": str,
++    "ios.app": str,
++    "ios.project": str,
++    "ios.output": str,
+ }
+ 
+ # The least value `project config set` accepts for each whole-number key. The
+diff --git a/src/projector/ios.py b/src/projector/ios.py
+new file mode 100644
+index 00000000..535951b0
+--- /dev/null
++++ b/src/projector/ios.py
+@@ -0,0 +1,814 @@
++"""`project ios`: build a branch's iOS app in a worktree Projector keeps, put it on a device, and bring the
++device's crash reports and log back. `docs/projects/ios/readme.md` is the plan this follows."""
++
++from __future__ import annotations
++
++import collections
++import glob
++import json
++import os
++import re
++import shutil
++import subprocess
++import sys
++import tempfile
++import time
++from contextlib import contextmanager
++from dataclasses import dataclass
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Iterator, Optional
++from urllib.parse import quote
++
++from . import review
++from .core import EnvironmentError, ProjectorError, UsageError
++
++TOOLS_MESSAGE = "project ios needs Xcode's command-line tools on macOS"
++DEVICE_DESTINATION = "generic/platform=iOS"
++MAC_DESTINATION = "platform=macOS,arch=arm64,variant=Designed for iPad"
++APPLICATION = "com.apple.product-type.application"
++SKIPPED = frozenset({".git", "Pods", "node_modules", "build", ".build"})
++BUNDLES = (".xcworkspace", ".xcodeproj")
++RECORD = "build.json"
++NUMBER = re.compile(r"[0-9]+")
++SPAN = re.compile(r"[1-9][0-9]*[smhd]")
++# A log entry starts with its date; `log show` adds a header and a footer that do not.
++LOG_ENTRY = re.compile(r"^[0-9]{4}-")
++WINDOW = 10
++SHOWN_ERRORS = 20
++TAIL = 30
++CRASHES = 3
++FRAMES = 20
++LAUNCH_RETRY = 2
++LAUNCH_WAIT = 300
++QUIT_WAIT = 30
++GRAY, PLAIN = "\033[90m", "\033[0m"
++
++
++class IosError(ProjectorError):
++    exit_code = 1
++
++
++class BuildFailed(IosError):
++    def __init__(self, message: str, status: int) -> None:
++        super().__init__(message)
++        self.exit_code = status
++
++
++def require_tools() -> None:
++    if not (shutil.which("xcrun") and shutil.which("xcodebuild")):
++        raise EnvironmentError(TOOLS_MESSAGE)
++
++
++def tool(args: list[str]) -> str:
++    """Run one of Apple's tools, `cp`, or `open`, and return its output, or fail with what it printed."""
++    result = subprocess.run(args, capture_output=True, text=True, stdin=subprocess.DEVNULL)
++    if result.returncode:
++        detail = (result.stderr.strip() or result.stdout.strip()).splitlines()
++        raise IosError(f"{' '.join(args[:3])} failed: {detail[-1] if detail else f'exit {result.returncode}'}")
++    return result.stdout
++
++
++# State
++
++@dataclass(frozen=True)
++class State:
++    folder: Path
++
++    @property
++    def lock(self) -> Path:
++        return self.folder / "lock"
++
++    @property
++    def worktree(self) -> Path:
++        return self.folder / "worktree"
++
++    @property
++    def derived(self) -> Path:
++        return self.folder / "DerivedData"
++
++    @property
++    def log(self) -> Path:
++        return self.folder / "build.log"
++
++    @property
++    def builds(self) -> Path:
++        return self.folder / "builds"
++
++    @property
++    def mac(self) -> Path:
++        return self.folder / "mac"
++
++
++def state_for(repo: str) -> State:
++    return State(review.state_home() / "ios" / repo)
++
++
++@contextmanager
++def locked(state: State, what: str) -> Iterator[None]:
++    """Hold the repository's lock while the block runs, waiting for a run that holds it. The kernel drops
++    a `flock` when its holder exits, however it exits, so a crash leaves nothing to clear."""
++    import fcntl
++
++    state.folder.mkdir(parents=True, exist_ok=True)
++    with open(state.lock, "a+") as handle:
++        try:
++            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            handle.seek(0)
++            holder = handle.read().strip() or "another run"
++            print(f"Waiting for {holder} to finish…", file=sys.stderr, flush=True)
++            fcntl.flock(handle, fcntl.LOCK_EX)
++        handle.seek(0)
++        handle.truncate()
++        handle.write(f"process {os.getpid()}, project ios {what}")
++        handle.flush()
++        try:
++            yield
++        finally:
++            handle.seek(0)
++            handle.truncate()
++
++
++# Devices
++
++@dataclass(frozen=True)
++class Device:
++    name: str
++    udid: str
++    kind: str
++    tunnel: str
++
++    @property
++    def installable(self) -> bool:
++        return self.tunnel != "unavailable"
++
++    @property
++    def label(self) -> str:
++        return f"{self.name} ({self.udid}, {self.tunnel})"
++
++    def as_json(self) -> dict:
++        return {"name": self.name, "udid": self.udid, "kind": self.kind, "tunnel": self.tunnel,
++                "installable": self.installable}
++
++
++def paired_devices() -> list[Device]:
++    with tempfile.TemporaryDirectory() as folder:
++        listing = Path(folder) / "devices.json"
++        tool(["xcrun", "devicectl", "list", "devices", "--json-output", str(listing)])
++        found = json.loads(listing.read_text())["result"]["devices"]
++    devices = []
++    for entry in found:
++        hardware = entry.get("hardwareProperties") or {}
++        connection = entry.get("connectionProperties") or {}
++        if (hardware.get("reality"), hardware.get("platform"), connection.get("pairingState")) != \
++                ("physical", "iOS", "paired"):
++            continue
++        devices.append(Device((entry.get("deviceProperties") or {}).get("name", "?"), hardware.get("udid", ""),
++                              hardware.get("deviceType", "device"), connection.get("tunnelState", "")))
++    return devices
++
++
++def reach(device: str) -> str:
++    return (f"Unlock {device}, plug it into this Mac and tap Trust if it asks, or open Xcode's "
++            "Window > Devices and Simulators with it plugged in.")
++
++
++def choose_device(devices: list[Device], wanted: Optional[str], kind: Optional[str]) -> Device:
++    """The device `--device` names, or the one connected device of `kind`, or of any kind, preferring a
++    connected tunnel to one that is merely not `unavailable`."""
++    paired = "Paired devices:\n  " + ("\n  ".join(device.label for device in devices) or "none")
++    if wanted:
++        matches = [device for device in devices if wanted in (device.udid, device.name)]
++        if not matches:
++            raise IosError(f"no paired device is named {wanted}. {paired}")
++        if len(matches) > 1:
++            raise IosError(f"more than one paired device is named {wanted}; pass its UDID. {paired}")
++        if not matches[0].installable:
++            raise IosError(f"{matches[0].label} can't be reached. {reach('it')}")
++        return matches[0]
++    what = kind or "device"
++    candidates = [device for device in devices if not kind or device.kind == kind]
++    matches = ([device for device in candidates if device.tunnel == "connected"]
++               or [device for device in candidates if device.installable])
++    if not matches:
++        raise IosError(f"no {what} is connected. {reach('your ' + what)}\n{paired}")
++    if len(matches) > 1:
++        raise IosError(f"more than one {what} is connected; pass --device with a name or UDID. {paired}")
++    return matches[0]
++
++
++# The head
++
++@dataclass(frozen=True)
++class Target:
++    text: str
++    key: str
++    ref: str
++    branch: str
++    sha: Optional[str]
++
++
++def target_key(text: str) -> str:
++    """The folder a target's kept build lives in. Percent-encoding keeps every branch name one folder
++    deep and apart from every other."""
++    return f"pr-{int(text)}" if NUMBER.fullmatch(text) else "branch-" + quote(text, safe="")
++
++
++def resolve_target(repo: str, text: str, allow_untrusted: bool) -> Target:
++    """The ref to fetch for a branch or a pull request. A pull request whose head is not trusted is
++    refused before anything is fetched, because `xcodebuild` runs the project's build scripts as the
++    person."""
++    if not NUMBER.fullmatch(text):
++        return Target(text, target_key(text), f"refs/heads/{text}", text, None)
++    number = int(text)
++    pr = review.read_pull_request(repo, number)
++    trusted, why = review.trusted_head(repo, pr, review.authenticated_login())
++    if not trusted and not allow_untrusted:
++        raise ProjectorError(f"{repo}#{number} is not trusted to build: {why}. xcodebuild runs its build "
++                             "phases' scripts as you, so read them, then pass --allow-untrusted to build it")
++    return Target(text, target_key(text), review.head_ref(repo, pr), pr["head"]["ref"], pr["head"]["sha"])
++
++
++def fetched(checkout: Path, target: Target) -> str:
++    sha = review.fetch(checkout, target.ref)
++    if target.sha and sha != target.sha:
++        raise IosError(f"#{target.text}'s head moved to {sha[:7]} while it was fetched; run the command again")
++    return sha
++
++
++def place_worktree(checkout: Path, state: State, target: Target) -> str:
++    """Put the worktree at the target's head and return the commit. A worktree belongs to the clone that
++    made it, which may be another clone of the repository, so the fetch and checkout run through the
++    worktree itself while its clone exists."""
++    worktree = state.worktree
++    if worktree.exists():
++        try:
++            review.git("-C", str(worktree), "rev-parse", "--git-common-dir")
++        except review.ReviewError:
++            shutil.rmtree(worktree)
++        else:
++            sha = fetched(worktree, target)
++            review.git("-C", str(worktree), "checkout", "--quiet", "--force", "--detach", sha)
++            return sha
++    review.git("-C", str(checkout), "worktree", "prune")
++    sha = fetched(checkout, target)
++    review.add_worktree(checkout, worktree, sha)
++    return sha
++
++
++def remove_worktree(worktree: Path) -> None:
++    try:
++        common = review.git("-C", str(worktree), "rev-parse", "--path-format=absolute", "--git-common-dir")
++        review.git("--git-dir", common, "worktree", "remove", "--force", str(worktree))
++    except review.ReviewError:
++        shutil.rmtree(worktree, ignore_errors=True)
++
++
++# The app
++
++@dataclass(frozen=True)
++class Product:
++    name: str
++    bundle_id: str
++    path: Path
++
++
++def find_project(worktree: Path, configured: Optional[str]) -> Path:
++    if configured:
++        path = worktree / configured
++        if path.suffix not in BUNDLES or not path.is_dir():
++            raise IosError(f"ios.project is {configured}, which is no Xcode project or workspace in the worktree")
++        return path
++    found: dict[str, list[Path]] = {suffix: [] for suffix in BUNDLES}
++    for folder, names, _ in os.walk(worktree):
++        kept = []
++        for name in sorted(names):
++            suffix = Path(name).suffix
++            if suffix in found:
++                found[suffix].append(Path(folder) / name)
++            elif name not in SKIPPED:
++                kept.append(name)
++        names[:] = kept
++    for suffix in BUNDLES:
++        paths = found[suffix]
++        if len(paths) == 1:
++            return paths[0]
++        if paths:
++            listed = ", ".join(str(path.relative_to(worktree)) for path in paths)
++            raise IosError(f"the worktree has more than one {suffix}: {listed}; choose one with "
++                           "`project config set ios.project <path>`")
++    raise IosError("the worktree has no .xcworkspace or .xcodeproj; name one with "
++                   "`project config set ios.project <path>`")
++
++
++def project_args(project: Path) -> list[str]:
++    return ["-workspace" if project.suffix == ".xcworkspace" else "-project", str(project)]
++
++
++def choose_scheme(project: Path, app: str) -> str:
++    listing = json.loads(tool(["xcodebuild", "-list", "-json", *project_args(project)]))
++    schemes = (listing.get("workspace") or listing.get("project") or {}).get("schemes") or []
++    for scheme in (f"{app} Development", app):
++        if scheme in schemes:
++            return scheme
++    raise IosError(f"{project.name} has no scheme named {app} Development or {app}; its schemes are "
++                   f"{', '.join(schemes) or 'none'}. Pass one as --app")
++
++
++def read_product(project: Path, scheme: str, destination: str, derived: Path) -> Product:
++    entries = json.loads(tool(["xcodebuild", "-showBuildSettings", "-json", *project_args(project),
++                               "-scheme", scheme, "-destination", destination, "-derivedDataPath", str(derived)]))
++    for entry in entries:
++        settings = entry.get("buildSettings") or {}
++        if settings.get("PRODUCT_TYPE") == APPLICATION:
++            name = settings["FULL_PRODUCT_NAME"]
++            return Product(name, settings["PRODUCT_BUNDLE_IDENTIFIER"], Path(settings["TARGET_BUILD_DIR"]) / name)
++    raise IosError(f"the scheme {scheme} builds no app")
++
++
++# The build
++
++def took(start: float) -> str:
++    seconds = int(time.monotonic() - start)
++    return f"{seconds // 60}m {seconds % 60:02d}s"
++
++
++def build_errors(lines: list[str]) -> list[str]:
++    errors: list[str] = []
++    for line in lines:
++        is_error = " error: " in line or line.startswith("error: ")
++        if is_error and "failed with exit code 0" not in line and line not in errors:
++            errors.append(line)
++    return errors[:SHOWN_ERRORS] or lines[-TAIL:]
++
++
++def run_build(command: list[str], log_path: Path, verbose: bool) -> None:
++    """Run the build with every line in `log_path`. A terminal sees the last lines scroll by in gray; any
++    other reader, such as an agent's shell, sees only the result, unless `verbose` passes every line."""
++    window = sys.stdout.isatty() and not verbose
++    recent: collections.deque[str] = collections.deque(maxlen=WINDOW)
++    shown = 0
++    drawn = 0.0
++
++    def draw() -> None:
++        nonlocal shown
++        width = max(20, shutil.get_terminal_size().columns - 1)
++        frame = f"\033[{shown}F" if shown else ""
++        for line in recent:
++            frame += f"\033[2K{GRAY}{line[:width]}{PLAIN}\n"
++        shown = len(recent)
++        sys.stdout.write(frame)
++        sys.stdout.flush()
++
++    def clear() -> None:
++        if shown:
++            sys.stdout.write(f"\033[{shown}F\033[J")
++            sys.stdout.flush()
++
++    start = time.monotonic()
++    log_path.parent.mkdir(parents=True, exist_ok=True)
++    with open(log_path, "w") as log:
++        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
++                                   stderr=subprocess.STDOUT, text=True, errors="replace")
++        assert process.stdout is not None
++        try:
++            for line in process.stdout:
++                log.write(line)
++                if verbose:
++                    sys.stdout.write(line)
++                elif window:
++                    recent.append(line.rstrip("\n").expandtabs(4))
++                    if time.monotonic() - drawn > 0.05:
++                        draw()
++                        drawn = time.monotonic()
++            status = process.wait()
++        except KeyboardInterrupt:
++            process.terminate()
++            process.wait()
++            clear()
++            raise
++    clear()
++    gray, plain = (GRAY, PLAIN) if window else ("", "")
++    if status == 0:
++        print(f"{gray}Built in {took(start)}. Log: {log_path}{plain}", flush=True)
++        return
++    lines = log_path.read_text(errors="replace").splitlines(keepends=True)
++    sys.stdout.flush()
++    sys.stderr.write("".join(build_errors(lines)))
++    raise BuildFailed(f"the build failed after {took(start)}; its whole log is {log_path}", status)
++
++
++# Kept builds
++
++@dataclass(frozen=True)
++class Kept:
++    folder: Path
++    record: dict
++
++    @property
++    def app(self) -> str:
++        return self.record["app"]
++
++    @property
++    def app_path(self) -> Path:
++        return self.folder / self.record["product"]
++
++    @property
++    def product(self) -> str:
++        return self.record["product"].removesuffix(".app")
++
++    @property
++    def described(self) -> str:
++        return f"{self.app} from {self.record['target']} at {self.record['sha'][:7]}"
++
++
++def copy_app(source: Path, destination: Path) -> None:
++    """Copy an app folder. On a Mac `cp -c` makes an APFS clone, which costs no time or space until one
++    copy changes; other systems copy every file."""
++    if sys.platform == "darwin":
++        tool(["cp", "-cR", str(source), str(destination)])
++    else:
++        shutil.copytree(source, destination, symlinks=True)
++
++
++def keep(state: State, app: str, scheme: str, target: Target, sha: str, product: Product, mac: bool) -> Kept:
++    folder = state.builds / quote(app, safe=" ") / target.key
++    if folder.exists():
++        shutil.rmtree(folder)
++    folder.mkdir(parents=True)
++    copy_app(product.path, folder / product.name)
++    record = {"app": app, "scheme": scheme, "target": target.text, "branch": target.branch, "sha": sha,
++              "destination": "mac" if mac else "device", "product": product.name, "bundle_id": product.bundle_id,
++              "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
++    (folder / RECORD).write_text(json.dumps(record, indent=2) + "\n")
++    return Kept(folder, record)
++
++
++def kept_builds(state: State) -> list[Kept]:
++    """Every kept build, oldest first."""
++    builds = []
++    for path in state.builds.glob(f"*/*/{RECORD}"):
++        try:
++            builds.append(Kept(path.parent, json.loads(path.read_text())))
++        except (OSError, ValueError):
++            continue
++    return sorted(builds, key=lambda kept: kept.record.get("built_at", ""))
++
++
++def kept_target(state: State, app: Optional[str], target: Optional[str]) -> Kept:
++    """The newest kept build of `target`, or with none the newest of all, of `app` when it is given."""
++    key = target_key(target) if target else None
++    builds = [kept for kept in kept_builds(state)
++              if (app is None or kept.app == app) and (key is None or kept.folder.name == key)]
++    if not builds:
++        of = f" of {target}" if target else ""
++        command = f"project ios build {target or '<branch-or-number>'}" + (f" --app '{app}'" if app else "")
++        raise IosError(f"no kept build{of}; run `{command}` to make one")
++    return builds[-1]
++
++
++def kept_app(state: State, app: Optional[str]) -> Kept:
++    """The newest kept build of `app`, or of the one app with kept builds, which names the product and bundle
++    ID that crash reports and log lines carry."""
++    builds = kept_builds(state)
++    if app is None:
++        apps = sorted({kept.app for kept in builds})
++        if len(apps) > 1:
++            raise IosError(f"there are kept builds of {', '.join(apps)}; pass --app with one of them")
++    builds = [kept for kept in builds if app is None or kept.app == app]
++    if not builds:
++        of = f" of {app}" if app else ""
++        raise IosError(f"no kept build{of} names the app; run `project ios build <branch-or-number>` first")
++    return builds[-1]
++
++
++# Install and open
++
++def install_on(device: Device, kept: Kept) -> None:
++    """Install the kept build and open it. A locked device takes the install but refuses the launch, as it
++    often is by the time a build ends, so the launch waits for the unlock."""
++    tool(["xcrun", "devicectl", "device", "install", "app", "--quiet", "--device", device.udid,
++          str(kept.app_path)])
++    print(f"Installed {kept.described} on {device.name}.", flush=True)
++    waiting: Optional[float] = None
++    while True:
++        result = subprocess.run(["xcrun", "devicectl", "device", "process", "launch", "--quiet", "--device",
++                                 device.udid, "--terminate-existing", kept.record["bundle_id"]],
++                                capture_output=True, text=True, stdin=subprocess.DEVNULL)
++        if result.returncode == 0:
++            print("Opened it.")
++            return
++        output = (result.stderr.strip() or result.stdout.strip())
++        if "locked" not in output.lower():
++            raise IosError(f"{kept.app} is installed, but it could not be opened: {output}")
++        if waiting is None:
++            print(f"Unlock your {device.kind} to open it. Waiting…", flush=True)
++            waiting = time.monotonic()
++        elif time.monotonic() - waiting >= LAUNCH_WAIT:
++            raise IosError(f"your {device.kind} stayed locked; unlock it and open {kept.app} yourself")
++        time.sleep(LAUNCH_RETRY)
++
++
++def running(bundle_id: str) -> bool:
++    result = subprocess.run(["osascript", "-e", f'application id "{bundle_id}" is running'],
++                            capture_output=True, text=True, stdin=subprocess.DEVNULL)
++    return result.stdout.strip() == "true"
++
++
++def open_on_mac(state: State, kept: Kept) -> None:
++    """Open the kept build on this Mac. Every build of an app shares one bundle ID, so `open` would bring
++    forward a copy already running, which therefore quits first. macOS opens an iOS app only from a wrapper:
++    a folder named like an app that holds it in `Wrapper/` beside a `WrappedBundle` link to it."""
++    bundle_id = kept.record["bundle_id"]
++    if running(bundle_id):
++        tool(["osascript", "-e", f'tell application id "{bundle_id}" to quit'])
++        deadline = time.monotonic() + QUIT_WAIT
++        while running(bundle_id):
++            if time.monotonic() >= deadline:
++                raise IosError(f"{kept.app} didn't quit; quit it and run "
++                               f"`project ios install {kept.record['target']} --mac`")
++            time.sleep(1)
++    name = kept.record["product"]
++    wrapper = state.mac / name
++    if wrapper.exists():
++        shutil.rmtree(wrapper)
++    (wrapper / "Wrapper").mkdir(parents=True)
++    copy_app(kept.app_path, wrapper / "Wrapper" / name)
++    (wrapper / "WrappedBundle").symlink_to(f"Wrapper/{name}")
++    tool(["open", str(wrapper)])
++    print(f"Opened {kept.described} on this Mac.")
++
++
++# Crash reports
++
++def crash_summary(path: Path) -> str:
++    """What a crash report says: when, which build, the exception or the termination, and the top of the
++    thread that crashed. A watchdog kill crashes no thread, so it shows the main thread, which is the one
++    that kept the app from answering."""
++    try:
++        header_text, _, body_text = path.read_text(errors="replace").partition("\n")
++        header, body = json.loads(header_text), json.loads(body_text)
++    except ValueError:
++        return f"\n{path}\n  not a crash report this command can read"
++    lines = ["", str(path),
++             f"  {header.get('timestamp')}  {header.get('app_name')} {header.get('app_version')} "
++             f"({header.get('build_version')})  {header.get('os_version')}"]
++    exception = body.get("exception")
++    if exception:
++        lines.append(f"  {exception.get('type')} {exception.get('signal', '')} {exception.get('codes', '')}".rstrip())
++    termination = body.get("termination") or {}
++    if termination:
++        code = termination.get("code")
++        code = hex(code) if isinstance(code, int) else code
++        lines.append(f"  termination {termination.get('namespace', '')} {code}".rstrip())
++        lines.extend(f"    {reason}" for reason in termination.get("reasons", []))
++    images = body.get("usedImages") or []
++    threads = body.get("threads") or []
++    crashed = body.get("faultingThread")
++    index = 0 if crashed is None else crashed
++    if index < len(threads):
++        thread = threads[index]
++        name = thread.get("queue") or thread.get("name") or ""
++        heading = f"  thread {index} {name}".rstrip()
++        lines.append(heading if crashed is not None else f"{heading}, the main thread, since no thread crashed")
++        for frame in (thread.get("frames") or [])[:FRAMES]:
++            image_index = frame.get("imageIndex", -1)
++            image = images[image_index] if 0 <= image_index < len(images) else {}
++            where = frame.get("symbol") or f"+{frame.get('imageOffset', 0):#x}"
++            source = f" {frame['sourceFile']}:{frame.get('sourceLine', '')}" if frame.get("sourceFile") else ""
++            lines.append(f"    {image.get('name', '?')}  {where}{source}")
++    return "\n".join(lines)
++
++
++def crashes(state: State, app: Optional[str], device: Optional[Device], output: Path) -> None:
++    """Copy the app's newest crash reports from the device, or with no device from this Mac, to `output`,
++    keeping a copy already there, and print what each says."""
++    product = kept_app(state, app).product
++    output.mkdir(parents=True, exist_ok=True)
++    pattern = f"{glob.escape(product)}-*.ips"
++    if device is None:
++        reports = Path.home() / "Library" / "Logs" / "DiagnosticReports"
++        found = sorted([*reports.glob(pattern), *(reports / "Retired").glob(pattern)],
++                       key=lambda path: path.stat().st_mtime, reverse=True)[:CRASHES]
++        if not found:
++            print(f"No {product} crash reports on this Mac.")
++            return
++        for report in found:
++            copy = output / report.name
++            if not copy.exists():
++                shutil.copy2(report, copy)
++            print(crash_summary(copy))
++        return
++    with tempfile.TemporaryDirectory() as folder:
++        listing = Path(folder) / "files.json"
++        tool(["xcrun", "devicectl", "device", "info", "files", "--quiet", "--device", device.udid,
++              "--domain-type", "systemCrashLogs", "--json-output", str(listing)])
++        files = json.loads(listing.read_text())["result"]["files"]
++    reports = [entry for entry in files
++               if not (entry.get("resources") or {}).get("isDirectory")
++               and entry["name"].startswith(product + "-") and entry["name"].endswith(".ips")]
++    reports.sort(key=lambda entry: (entry.get("metadata") or {}).get("lastModDate", ""), reverse=True)
++    if not reports:
++        print(f"No {product} crash reports on {device.name}.")
++        return
++    for entry in reports[:CRASHES]:
++        copy = output / Path(entry["relativePath"]).name
++        if not copy.exists():
++            tool(["xcrun", "devicectl", "device", "copy", "from", "--quiet", "--device", device.udid,
++                  "--domain-type", "systemCrashLogs", "--source", entry["relativePath"], "--destination", str(copy)])
++        print(crash_summary(copy))
++
++
++# The log
++
++def log_predicate(bundle_id: str, process: str) -> str:
++    """The lines that belong to the app: its subsystem's and the faults its process writes, where a Swift
++    `fatalError` message lands. An app logs under a subsystem such as `com.example.myapp` while its
++    Development build's bundle ID is `com.example.myapp.dev`, so the bundle ID without its last part
++    counts too, unless that leaves a two-part vendor prefix that the vendor's other apps share."""
++    subsystems = [f'subsystem == "{bundle_id}"', f'subsystem BEGINSWITH "{bundle_id}."']
++    parts = bundle_id.split(".")
++    if len(parts) - 1 >= 3:
++        subsystems.append(f'subsystem == "{".".join(parts[:-1])}"')
++    return f'({" OR ".join(subsystems)}) OR (process == "{process}" AND messageType == fault)'
++
++
++def local_now() -> datetime:
++    return datetime.now()
++
++
++def claim_log(output: Path, product: str) -> Path:
++    """A new file for the log, named like a screenshot. Each name is claimed by an exclusive create, so a
++    run in the same second takes the next name rather than writing over this one."""
++    stamp = local_now().strftime("%Y-%m-%d at %H.%M.%S")
++    for number in range(1, 101):
++        path = output / f"{product} log {stamp}{'' if number == 1 else f' {number}'}.txt"
++        try:
++            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644))
++        except FileExistsError:
++            continue
++        return path
++    raise IosError(f"can't create a log file in {output}")
++
++
++def remove_archive(folder: Path) -> None:
++    """Delete a device's log archive. `log collect` writes it as root, so plain removal can fail, and sudo,
++    whose password the collect already asked for, finishes it."""
++    try:
++        shutil.rmtree(folder)
++    except FileNotFoundError:
++        pass
++    except PermissionError:
++        subprocess.run(["sudo", "rm", "-rf", str(folder)], check=False)
++
++
++def logs(state: State, app: Optional[str], device: Optional[Device], output: Path, span: str,
++         predicate: Optional[str]) -> None:
++    """Write the app's log lines over the last `span`, from the device or with no device from this Mac, to a
++    new file in `output`. A failure or Ctrl-C removes the file and the archive, which holds the whole
++    device's log."""
++    kept = kept_app(state, app)
++    filter_text = predicate or log_predicate(kept.record["bundle_id"], kept.product)
++    output.mkdir(parents=True, exist_ok=True)
++    path = claim_log(output, kept.product)
++    show = ["--style", "compact", "--info", "--debug", "--predicate", filter_text]
++    archive: Optional[Path] = None
++    try:
++        with open(path, "w") as written:
++            if device is None:
++                subprocess.run(["log", "show", "--last", span, *show], stdout=written, check=True)
++            else:
++                state.folder.mkdir(parents=True, exist_ok=True)
++                archive = Path(tempfile.mkdtemp(prefix="log-", dir=state.folder))
++                print(f"Collecting the last {span} of {device.name}'s log. sudo asks for your password, and "
++                      "collecting can take a few minutes…", flush=True)
++                collected = archive / "device.logarchive"
++                subprocess.run(["sudo", "log", "collect", "--device-udid", device.udid, "--last", span,
++                                "--output", str(collected)], stdout=subprocess.DEVNULL, check=True)
++                subprocess.run(["sudo", "log", "show", str(collected), *show], stdout=written, check=True)
++    except BaseException as error:
++        path.unlink(missing_ok=True)
++        if isinstance(error, subprocess.CalledProcessError):
++            raise IosError(f"{' '.join(error.cmd[:3])} exited {error.returncode}, so no log was written") from error
++        raise
++    finally:
++        if archive is not None:
++            remove_archive(archive)
++    with open(path, errors="replace") as written:
++        entries = sum(1 for line in written if LOG_ENTRY.match(line))
++    print(f"Wrote {entries} lines of {kept.product}'s log to {path}")
++
++
++# Cleanup
++
++def folder_size(folder: Path) -> int:
++    total = 0
++    for parent, _, names in os.walk(folder):
++        for name in names:
++            try:
++                total += (Path(parent) / name).lstat().st_size
++            except OSError:
++                continue
++    return total
++
++
++def human_size(size: float) -> str:
++    for unit in ("B", "K", "M", "G"):
++        if size < 1024:
++            return f"{size:.0f}{unit}" if unit == "B" else f"{size:.1f}{unit}"
++        size /= 1024
++    return f"{size:.1f}T"
++
++
++def cleanup(checkout: Path, state: State) -> None:
++    """Remove the worktree, DerivedData, and kept builds. The lock file stays, so a run waiting on it never
++    ends up holding a lock on a file this one deleted while another run locks a new one."""
++    with locked(state, "cleanup"):
++        leftovers = [path for path in state.folder.iterdir() if path.name != state.lock.name]
++        if not leftovers:
++            review.git("-C", str(checkout), "worktree", "prune")
++            print("Nothing to clean up.")
++            return
++        size = folder_size(state.folder)
++        if state.worktree.exists():
++            remove_worktree(state.worktree)
++        for path in leftovers:
++            if path.is_dir() and not path.is_symlink():
++                shutil.rmtree(path, ignore_errors=True)
++            else:
++                path.unlink(missing_ok=True)
++        review.git("-C", str(checkout), "worktree", "prune")
++        print(f"Removed {state.folder} ({human_size(size)}): the worktree, DerivedData, and every kept build.")
++
++
++# Commands
++
++def devices() -> list[Device]:
++    require_tools()
++    return paired_devices()
++
++
++def target_device(mac: bool, wanted: Optional[str], kind: Optional[str]) -> Optional[Device]:
++    return None if mac else choose_device(paired_devices(), wanted, kind)
++
++
++def build(checkout: Path, text: str, *, app: Optional[str], project_setting: Optional[str], wanted: Optional[str],
++          kind: Optional[str], mac: bool, install: bool, verbose: bool, allow_untrusted: bool) -> None:
++    require_tools()
++    repo = review.origin_repo(checkout)
++    state = state_for(repo)
++    device = target_device(mac, wanted, kind) if install else None
++    with locked(state, f"build {text}"):
++        target = resolve_target(repo, text, allow_untrusted)
++        sha = place_worktree(checkout, state, target)
++        project = find_project(state.worktree, project_setting)
++        name = app or project.stem
++        scheme = choose_scheme(project, name)
++        destination = MAC_DESTINATION if mac else DEVICE_DESTINATION
++        product = read_product(project, scheme, destination, state.derived)
++        commit = review.git("-C", str(state.worktree), "log", "-1", "--format=%h %s")
++        print(f"Building {scheme}{' for this Mac' if mac else ''} from {target.branch} at {commit}", flush=True)
++        run_build(["xcodebuild", "build", *project_args(project), "-scheme", scheme, "-destination", destination,
++                   "-derivedDataPath", str(state.derived), "-allowProvisioningUpdates"], state.log, verbose)
++        kept = keep(state, name, scheme, target, sha, product, mac)
++        if not install:
++            return
++        if device is None:
++            open_on_mac(state, kept)
++        else:
++            install_on(device, kept)
++
++
++def install(checkout: Path, text: Optional[str], *, app: Optional[str], wanted: Optional[str], kind: Optional[str],
++            mac: bool) -> None:
++    require_tools()
++    state = state_for(review.origin_repo(checkout))
++    device = target_device(mac, wanted, kind)
++    with locked(state, f"install {text or ''}".rstrip()):
++        kept = kept_target(state, app, text)
++        if device is None:
++            open_on_mac(state, kept)
++        else:
++            install_on(device, kept)
++
++
++def crash_reports(checkout: Path, *, app: Optional[str], wanted: Optional[str], kind: Optional[str], mac: bool,
++                  output: Path) -> None:
++    require_tools()
++    state = state_for(review.origin_repo(checkout))
++    crashes(state, app, target_device(mac, wanted, kind), output)
++
++
++def device_log(checkout: Path, *, app: Optional[str], wanted: Optional[str], kind: Optional[str], mac: bool,
++               output: Path, span: str, predicate: Optional[str]) -> None:
++    require_tools()
++    if not SPAN.fullmatch(span):
++        raise UsageError(f"--last takes a span such as 5m, 20m, 2h, or 1d, not {span!r}")
++    state = state_for(review.origin_repo(checkout))
++    logs(state, app, target_device(mac, wanted, kind), output, span, predicate)
++
++
++def clean(checkout: Path) -> None:
++    require_tools()
++    cleanup(checkout, state_for(review.origin_repo(checkout)))
+diff --git a/src/projector/permissions.py b/src/projector/permissions.py
+index a3592d31..4d5f3036 100644
+--- a/src/projector/permissions.py
++++ b/src/projector/permissions.py
+@@ -22,7 +22,9 @@
+ these rules, `project config set` and `unset` can change a setting that
+ widens an agent's authority, such as `review.allow_approve`, and
+ `project site build` and `serve` run the shell command `--prepare` names, or
+-the checkout's own `site.prepare` once `--allow-prepare` allows it. Ask rules
++the checkout's own `site.prepare` once `--allow-prepare` allows it, and
++`project ios build --allow-untrusted` runs the build scripts of a pull request
++whose head `review.trusted_head` does not trust. Ask rules
+ also cover what only the person may record: `project inbox answer`,
+ `dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear` record the
+ person's answer to an item an agent posted, their outcome for a request, their
+@@ -50,7 +52,8 @@
+ asks for both `--prepare` flags in either spelling, `--prepare x` or
+ `--prepare=x`, and `site build` and `serve` refuse an abbreviated option such
+ as `--prep`, so no shorter spelling slips past it; it asks for `--no-prepare`
+-too.
++too. `Bash(project ios *allow-untrusted*)` asks for `--allow-untrusted` the
++same way, and every `project ios` command refuses an abbreviated option.
+ 
+ Two commands open the person's editor, `$VISUAL` or `$EDITOR`: `project edit`,
+ and `project create` without `--no-edit`. They need not ask. Each opens the
+@@ -76,7 +79,8 @@
+ allowed command outside its sandbox, and can give it a terminal the agent
+ types into, so the rules also leave out every command that can run another
+ program: `create` and `edit`, whose editor an agent could drive,
+-`review gate`, and `site build` and `serve`. They leave out `inbox answer`,
++`review gate`, `site build` and `serve`, and `ios build` and `logs`, which run
++the repository's build scripts or `sudo`. They leave out `inbox answer`,
+ `dismiss`, `snooze`, `done`, `decline`, `start`, and `unclear` too. A new
+ command reaches Codex once it is added here and `init` rewrites the file.
+ """
+@@ -96,7 +100,7 @@
+        "Bash(project config unset *)", "Bash(project site *prepare*)", "Bash(project inbox answer *)",
+        "Bash(project inbox dismiss *)", "Bash(project inbox snooze *)", "Bash(project inbox done *)",
+        "Bash(project inbox decline *)", "Bash(project inbox start *)",
+-       "Bash(project inbox unclear *)")
++       "Bash(project inbox unclear *)", "Bash(project ios *allow-untrusted*)")
+ # The narrower rules Projector wrote before `Bash(project *)` covered them,
+ # which `init` removes from `permissions.allow`.
+ SUPERSEDED = ("Bash(project review publish *)", "Bash(project review hold *)", "Bash(project review finish *)",
+@@ -106,7 +110,7 @@
+ RETIRED_ASK = ("Bash(project -*)",)
+ 
+ ASKED = ("`project init`, `project upgrade`, `project config set` and `unset`, `project site` with "
+-         "`--prepare` or `--allow-prepare`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
++         "`--prepare` or `--allow-prepare`, `project ios build --allow-untrusted`, and `project inbox answer`, `dismiss`, `snooze`, `done`, "
+          "`decline`, `start`, and `unclear`")
+ COMMANDS = "every `project` command but the few that reach outside Projector's own state"
+ 
+@@ -124,6 +128,9 @@
+                            "revise", "show", "tell", "watch", "withdraw"]],
+      "Posts, revises, reads, withdraws, restores, or delivers an inbox item, or reports on a request's start, "
+      "but never records the person's answer to one."),
++    (["project", "ios", ["cleanup", "crashes", "devices", "install"]],
++     "Lists paired iOS devices, installs a kept build, copies crash reports, or removes project ios's worktree "
++     "and builds, but never builds or reads a device's log."),
+     (["project", "review", ["census", "finish", "hold", "interdiff", "move", "prune", "publish", "ready", "release",
+                             "rules", "settle", "setup", "status", "suggestions", "workflow"]],
+      "Runs a step of a Projector review other than its gate, which runs the repository's own checks."),
+@@ -140,7 +147,8 @@
+     "# Codex's usual approval decides every command these rules leave out: `project init`, `project upgrade`,\n"
+     "# `project config set` and `unset`, `project create` and `project edit`, which can open an editor,\n"
+     "# `project review gate` and `project site build` and `serve`, which run a command the repository or\n"
+-    "# the command line names, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
++    "# the command line names, `project ios build` and `logs`, which run the repository's build scripts or\n"
++    "# `sudo`, `project inbox answer`, `dismiss`, `snooze`, `done`, `decline`, `start`,\n"
+     "# and `unclear`, which record the person's choice, and a command line that starts with an option.\n"
+     + "".join(f'prefix_rule(\n    pattern = {json.dumps(pattern)},\n    decision = "allow",\n'
+               f'    justification = "{justification}",\n)\n'
+diff --git a/src/projector/review.py b/src/projector/review.py
+index f07c1d88..138a3fb3 100644
+--- a/src/projector/review.py
++++ b/src/projector/review.py
+@@ -214,12 +214,17 @@ def trusted(login: str) -> bool:
+ 
+ # State
+ 
++def state_home(environ: Optional[dict] = None) -> Path:
++    """Projector's own folder under `$XDG_STATE_HOME`, or under `~/.local/state` without it."""
++    environ = os.environ if environ is None else environ
++    base = environ.get("XDG_STATE_HOME")
++    return (Path(base) if base else Path.home() / ".local" / "state") / "projector"
++
++
+ def state_dir(explicit: Optional[Path] = None, environ: Optional[dict] = None) -> Path:
+     if explicit is not None:
+         return explicit
+-    environ = os.environ if environ is None else environ
+-    base = environ.get("XDG_STATE_HOME")
+-    return (Path(base) if base else Path.home() / ".local" / "state") / "projector" / "reviews"
++    return state_home(environ) / "reviews"
+ 
+ 
+ @dataclass
+@@ -571,13 +576,18 @@ def fetch(checkout: Path, ref: str) -> str:
+             git("-C", str(checkout), "update-ref", "-d", local)
+ 
+ 
++def head_ref(repo: str, pr: dict) -> str:
++    """The ref origin holds the pull request's head under: its branch when the head is in `repo`, and
++    `refs/pull/<n>/head` when it is in a fork, whose branch origin does not have."""
++    same = ((pr["head"].get("repo") or {}).get("full_name")) == repo
++    return f"refs/heads/{pr['head']['ref']}" if same else f"refs/pull/{pr['number']}/head"
++
++
+ def fetch_head(checkout: Path, repo: str, pr: dict) -> str:
+     """Fetch the head — its branch in this repository, or `pull/<n>/head` from a fork — and
+     the base into the checkout, verify the head, and return the merge base."""
+     sha = pr["head"]["sha"]
+-    same = ((pr["head"].get("repo") or {}).get("full_name")) == repo
+-    ref = f"refs/heads/{pr['head']['ref']}" if same else f"refs/pull/{pr['number']}/head"
+-    fetched = fetch(checkout, ref)
++    fetched = fetch(checkout, head_ref(repo, pr))
+     if fetched != sha:
+         raise ReviewError(f"the head moved to {fetched[:7]} while it was fetched; run the command again")
+     fetch(checkout, f"refs/heads/{pr['base']['ref']}")
+diff --git a/tests/test_ios.py b/tests/test_ios.py
+new file mode 100644
+index 00000000..9829da35
+--- /dev/null
++++ b/tests/test_ios.py
+@@ -0,0 +1,722 @@
++"""The `project ios` commands, against a real Git remote and stand-ins for Apple's tools.
++
++Git runs for real: a bare origin holds `trunk`, branches, and GitHub's `refs/pull/<n>/head`, and each
++checkout is a clone of it. `xcrun`, `xcodebuild`, `osascript`, `open`, `log`, and `sudo` are one stand-in
++script on `PATH`, which answers from a scenario file and records every call, so the tests run on a Linux
++runner with no Xcode. The stand-in `xcodebuild` writes an app holding the commit it was built from, and the
++stand-in install records that commit, so a test can see which build reached the device. GitHub is a fake
++in place of `review.run_gh`.
++"""
++
++from __future__ import annotations
++
++import io
++import json
++import os
++import queue
++import re
++import shutil
++import subprocess
++import sys
++import tempfile
++import threading
++import unittest
++from contextlib import redirect_stderr, redirect_stdout
++from datetime import datetime
++from pathlib import Path
++from unittest import mock
++
++from projector import cli, ios, review
++
++REPO = "acme/app"
++GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t",
++           "GIT_COMMITTER_EMAIL": "t@example.com"}
++SRC = Path(__file__).resolve().parents[1] / "src"
++STANDIN = r'''
++import json, os, shutil, subprocess, sys
++from pathlib import Path
++
++name = Path(sys.argv[0]).name
++args = sys.argv[1:]
++scenario_path = Path(os.environ["IOS_SCENARIO"])
++scenario = json.loads(scenario_path.read_text())
++
++
++def record(*entry):
++    with open(os.environ["IOS_CALLS"], "a") as calls:
++        calls.write(json.dumps(list(entry)) + "\n")
++
++
++def option(flag):
++    return args[args.index(flag) + 1]
++
++
++def pop(key, default):
++    values = scenario.get(key) or []
++    if not values:
++        return default
++    value = values.pop(0)
++    scenario_path.write_text(json.dumps(scenario))
++    return value
++
++
++record(name, *args)
++if name == "sudo":
++    os.execvp(args[0], args)
++if name == "xcrun":
++    if args[:3] == ["devicectl", "list", "devices"]:
++        Path(option("--json-output")).write_text(json.dumps({"result": {"devices": scenario["devices"]}}))
++    elif args[:4] == ["devicectl", "device", "install", "app"]:
++        record("installed", option("--device"), (Path(args[-1]) / "commit.txt").read_text().strip())
++    elif args[:4] == ["devicectl", "device", "process", "launch"]:
++        result = pop("launches", "ok")
++        if result != "ok":
++            sys.exit(result)
++    elif args[:4] == ["devicectl", "device", "info", "files"]:
++        Path(option("--json-output")).write_text(json.dumps({"result": {"files": scenario["crash_files"]}}))
++    elif args[:4] == ["devicectl", "device", "copy", "from"]:
++        shutil.copy(Path(scenario["crash_dir"]) / option("--source"), option("--destination"))
++    sys.exit(0)
++if name == "xcodebuild":
++    project = Path(option("-project") if "-project" in args else option("-workspace"))
++    products = Path(option("-derivedDataPath") if "-derivedDataPath" in args else "DerivedData")
++    products = products / "Build" / "Products" / "Debug-iphoneos"
++    if "-list" in args:
++        print(json.dumps({"project": {"name": project.stem, "schemes": scenario["schemes"]}}))
++    elif "-showBuildSettings" in args:
++        print(json.dumps([
++            {"target": "MyAppTests", "buildSettings": {"PRODUCT_TYPE": "com.apple.product-type.bundle.unit-test"}},
++            {"target": "MyApp", "buildSettings": {
++                "PRODUCT_TYPE": "com.apple.product-type.application", "FULL_PRODUCT_NAME": "MyApp.app",
++                "PRODUCT_BUNDLE_IDENTIFIER": scenario["bundle_id"], "TARGET_BUILD_DIR": str(products)}}]))
++    else:
++        for line in scenario.get("build_lines") or [f"line {n}" for n in range(scenario.get("build_line_count", 3))]:
++            print(line)
++        if scenario.get("build_status", 0) == 0:
++            app = products / "MyApp.app"
++            app.mkdir(parents=True, exist_ok=True)
++            commit = subprocess.run(["git", "-C", str(project.parent), "rev-parse", "HEAD"], check=True,
++                                    capture_output=True, text=True).stdout
++            (app / "commit.txt").write_text(commit)
++        sys.exit(scenario.get("build_status", 0))
++if name == "osascript":
++    if args[-1].endswith("is running"):
++        print("true" if pop("running", False) else "false")
++    sys.exit(0)
++if name == "log":
++    if args[0] == "collect":
++        if scenario.get("collect_status"):
++            sys.exit(scenario["collect_status"])
++        Path(option("--output")).mkdir(parents=True)
++        (Path(option("--output")) / "logdata").write_text("the whole device's log")
++    else:
++        print("Timestamp               Ty Process[PID:TID]")
++        for line in scenario.get("log_lines", []):
++            print(line)
++        print("--------------------------------------------------------------------------------------------------")
++    sys.exit(0)
++if name == "cp":
++    shutil.copytree(args[-2], args[-1], symlinks=True)
++'''
++TOOLS = ("xcrun", "xcodebuild", "osascript", "open", "log", "sudo")
++
++
++def git(cwd: Path, *args: str) -> str:
++    return subprocess.run(["git", *args], cwd=cwd, env=dict(os.environ, **GIT_ENV), check=True, capture_output=True,
++                          text=True).stdout.strip()
++
++
++def device(name: str, udid: str, kind: str = "iPhone", tunnel: str = "connected") -> dict:
++    return {"hardwareProperties": {"reality": "physical", "platform": "iOS", "udid": udid, "deviceType": kind},
++            "deviceProperties": {"name": name},
++            "connectionProperties": {"pairingState": "paired", "tunnelState": tunnel}}
++
++
++PHONE = device("Pat's iPhone", "PHONE-UDID")
++TABLET = device("Pat's iPad", "TABLET-UDID", kind="iPad")
++
++
++class FakeGitHub:
++    """The pull requests `project ios build` reads, and who has write access to the repository."""
++
++    def __init__(self) -> None:
++        self.prs: dict[int, dict] = {}
++        self.authors: dict[int, list[str]] = {}
++        self.permissions = {"operator": "admin"}
++
++    def add(self, number: int, sha: str, branch: str, head_repo: str = REPO, author: str = "operator") -> None:
++        self.prs[number] = {"number": number, "state": "open", "user": {"login": author},
++                            "head": {"sha": sha, "ref": branch, "repo": {"full_name": head_repo}}}
++
++    def __call__(self, args: list[str], token: str | None = None) -> str:
++        if args == ["api", "user", "--jq", ".login"]:
++            return "operator\n"
++        path = args[2] if args[:2] == ["api", "--paginate"] else args[1]
++        if found := re.fullmatch(rf"repos/{REPO}/pulls/(\d+)", path):
++            if int(found.group(1)) not in self.prs:
++                raise review.NotFound("HTTP 404")
++            return json.dumps(self.prs[int(found.group(1))])
++        if found := re.fullmatch(rf"repos/{REPO}/pulls/(\d+)/commits", path):
++            return "\n".join(self.authors.get(int(found.group(1)), ["operator"])) + "\n"
++        if found := re.fullmatch(rf"repos/{REPO}/collaborators/([^/]+)/permission", path):
++            return self.permissions.get(found.group(1), "read") + "\n"
++        raise AssertionError(f"unexpected gh call: {args}")
++
++
++class IosCase(unittest.TestCase):
++    def setUp(self) -> None:
++        self.tmp = Path(tempfile.mkdtemp())
++        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
++        self.origin = self.tmp / "origin.git"
++        git(self.tmp, "init", "--quiet", "--bare", "-b", "trunk", str(self.origin))
++        self.work = self.tmp / "work"
++        git(self.tmp, "init", "--quiet", "-b", "trunk", str(self.work))
++        (self.work / "ios" / "MyApp.xcodeproj").mkdir(parents=True)
++        (self.work / "ios" / "MyApp.xcodeproj" / "project.pbxproj").write_text("// project\n")
++        git(self.work, "add", ".")
++        git(self.work, "commit", "--quiet", "-m", "trunk")
++        git(self.work, "remote", "add", "origin", str(self.origin))
++        git(self.work, "push", "--quiet", "origin", "trunk")
++        self.checkout = self.clone("checkout")
++        self.bin = self.tmp / "bin"
++        self.bin.mkdir()
++        standin = self.bin / "standin.py"
++        standin.write_text(f"#!{sys.executable}\n{STANDIN}")
++        standin.chmod(0o755)
++        for name in TOOLS:
++            (self.bin / name).symlink_to(standin)
++        self.home = self.tmp / "home"
++        self.desktop = self.home / "Desktop"
++        self.state = self.tmp / "state" / "projector" / "ios" / REPO
++        self.calls_file = self.tmp / "calls.jsonl"
++        self.calls_file.touch()
++        self.scenario_file = self.tmp / "scenario.json"
++        self.scenario({"devices": [PHONE], "schemes": ["MyApp", "MyApp Development"],
++                       "bundle_id": "com.example.myapp.dev"})
++        environment = mock.patch.dict(os.environ, {
++            "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}", "HOME": str(self.home),
++            "XDG_STATE_HOME": str(self.tmp / "state"), "IOS_SCENARIO": str(self.scenario_file),
++            "IOS_CALLS": str(self.calls_file)})
++        environment.start()
++        self.addCleanup(environment.stop)
++        self.github = FakeGitHub()
++        github = mock.patch.object(review, "run_gh", self.github)
++        github.start()
++        self.addCleanup(github.stop)
++
++    def clone(self, name: str) -> Path:
++        path = self.tmp / name
++        git(self.tmp, "clone", "--quiet", str(self.origin), str(path))
++        # The commands read the repository from origin's GitHub URL, which insteadOf points back at the bare origin.
++        git(path, "remote", "set-url", "origin", f"https://github.com/{REPO}.git")
++        git(path, "config", f"url.{self.origin}.insteadOf", f"https://github.com/{REPO}.git")
++        return path
++
++    def scenario(self, values: dict) -> None:
++        current = json.loads(self.scenario_file.read_text()) if self.scenario_file.exists() else {}
++        self.scenario_file.write_text(json.dumps({**current, **values}))
++
++    def push(self, branch: str, text: str, ref: str | None = None) -> str:
++        """Commit `text` on `branch` in the working repository and push it, to `ref` when one is given."""
++        git(self.work, "checkout", "--quiet", "-B", branch, "trunk")
++        (self.work / "change.txt").write_text(text + "\n")
++        git(self.work, "add", ".")
++        git(self.work, "commit", "--quiet", "-m", text)
++        git(self.work, "push", "--quiet", "--force", "origin", f"HEAD:{ref or f'refs/heads/{branch}'}")
++        return git(self.work, "rev-parse", "HEAD")
++
++    def project(self, *args: str, cwd: Path | None = None) -> tuple[int, str, str]:
++        out, err = io.StringIO(), io.StringIO()
++        with mock.patch.object(cli.Path, "cwd", return_value=cwd or self.checkout), \
++                redirect_stdout(out), redirect_stderr(err):
++            code = cli.main(["ios", *args])
++        return code, out.getvalue(), err.getvalue()
++
++    def succeeds(self, *args: str, cwd: Path | None = None) -> str:
++        code, out, err = self.project(*args, cwd=cwd)
++        self.assertEqual(0, code, err)
++        return out
++
++    def calls(self, name: str | None = None) -> list[list[str]]:
++        calls = [json.loads(line) for line in self.calls_file.read_text().splitlines()]
++        return [call for call in calls if name is None or call[0] == name]
++
++    def builds(self) -> list[list[str]]:
++        return [call for call in self.calls("xcodebuild") if "build" in call]
++
++    def installed(self) -> list[tuple[str, str]]:
++        return [(udid, commit) for _, udid, commit in self.calls("installed")]
++
++    def worktree_head(self) -> str:
++        return git(self.state / "worktree", "rev-parse", "HEAD")
++
++
++class TrustTests(IosCase):
++    def test_a_forks_pull_request_builds_from_refs_pull_once_allowed(self) -> None:
++        sha = self.push("patch-1", "from a fork", ref="refs/pull/12/head")
++        self.github.add(12, sha, "patch-1", head_repo="someone/fork", author="someone")
++
++        self.succeeds("build", "12", "--allow-untrusted", "--no-install")
++
++        self.assertEqual(sha, self.worktree_head())
++
++    def test_an_untrusted_head_is_refused_before_anything_is_fetched_or_built(self) -> None:
++        fork = self.push("patch-1", "from a fork", ref="refs/pull/12/head")
++        self.github.add(12, fork, "patch-1", head_repo="someone/fork", author="someone")
++        stranger = self.push("feature", "a stranger's commit")
++        self.github.add(13, stranger, "feature")
++        self.github.authors[13] = ["operator", "stranger"]
++
++        for number, reason in (("12", "its head is in someone/fork"), ("13", "a commit names stranger")):
++            with self.subTest(number):
++                code, _, err = self.project("build", number)
++
++                self.assertEqual(65, code)
++                self.assertIn(reason, err)
++                self.assertIn("--allow-untrusted", err)
++        self.assertEqual([], self.calls("xcodebuild"))
++        self.assertFalse((self.state / "worktree").exists())
++        self.assertNotEqual(0, subprocess.run(["git", "-C", str(self.checkout), "cat-file", "-e", fork],
++                                              capture_output=True).returncode, "the fork's head was fetched")
++
++
++class WorktreeTests(IosCase):
++    def test_a_build_in_a_second_clone_fetches_into_the_clone_that_owns_the_worktree(self) -> None:
++        self.push("feature", "first")
++        self.succeeds("build", "feature", "--no-install")
++        second = self.clone("second")
++        moved = self.push("feature", "second")
++
++        self.succeeds("build", "feature", "--no-install", cwd=second)
++
++        self.assertEqual(moved, self.worktree_head())
++        common = git(self.state / "worktree", "rev-parse", "--path-format=absolute", "--git-common-dir")
++        self.assertEqual((self.checkout / ".git").resolve(), Path(common).resolve())
++
++    def test_a_worktree_whose_clone_is_gone_is_made_again_from_this_clone(self) -> None:
++        sha = self.push("feature", "first")
++        self.succeeds("build", "feature", "--no-install")
++        second = self.clone("second")
++        shutil.rmtree(self.checkout)
++
++        self.succeeds("build", "feature", "--no-install", cwd=second)
++
++        self.assertEqual(sha, self.worktree_head())
++        common = git(self.state / "worktree", "rev-parse", "--path-format=absolute", "--git-common-dir")
++        self.assertEqual((second / ".git").resolve(), Path(common).resolve())
++
++    def test_cleanup_in_another_clone_removes_the_worktree_from_the_clone_that_owns_it(self) -> None:
++        self.push("feature", "first")
++        self.succeeds("build", "feature", "--no-install")
++        second = self.clone("second")
++
++        self.assertIn("Removed", self.succeeds("cleanup", cwd=second))
++
++        self.assertEqual(["lock"], [path.name for path in self.state.iterdir()])
++        self.assertEqual(1, len(git(self.checkout, "worktree", "list").splitlines()))
++        self.assertEqual("Nothing to clean up.\n", self.succeeds("cleanup", cwd=second))
++
++
++class KeptBuildTests(IosCase):
++    def test_install_puts_the_named_targets_build_on_the_device_after_another_target_built(self) -> None:
++        first = self.push("first", "first")
++        self.succeeds("build", "first")
++        self.push("second", "second")
++        self.succeeds("build", "second", "--no-install")
++
++        self.succeeds("install", "first")
++
++        self.assertEqual([("PHONE-UDID", first), ("PHONE-UDID", first)], self.installed())
++
++    def test_a_branch_and_the_pull_request_on_it_keep_separate_builds_in_flat_folders(self) -> None:
++        on_branch = self.push("feature/login", "first")
++        self.succeeds("build", "feature/login", "--no-install")
++        on_pr = self.push("feature/login", "second")
++        self.github.add(12, on_pr, "feature/login")
++        self.succeeds("build", "12", "--no-install")
++
++        self.assertEqual({"branch-feature%2Flogin", "pr-12"},
++                         {path.name for path in (self.state / "builds" / "MyApp").iterdir()})
++        self.succeeds("install", "feature/login")
++        self.succeeds("install", "12")
++        self.assertEqual([("PHONE-UDID", on_branch), ("PHONE-UDID", on_pr)], self.installed())
++
++    def test_install_of_a_target_with_no_kept_build_says_how_to_make_one(self) -> None:
++        self.push("feature", "first")
++        self.succeeds("build", "feature", "--no-install")
++
++        code, _, err = self.project("install", "other")
++
++        self.assertEqual(1, code)
++        self.assertIn("`project ios build other`", err)
++        self.assertEqual([], self.installed())
++
++    def test_a_mac_clones_the_app_and_other_systems_copy_it(self) -> None:
++        (self.bin / "cp").symlink_to(self.bin / "standin.py")
++        self.push("feature", "first")
++        with mock.patch.object(ios.sys, "platform", "darwin"):
++            self.succeeds("build", "feature", "--no-install")
++        with mock.patch.object(ios.sys, "platform", "linux"):
++            self.succeeds("build", "feature", "--no-install")
++
++        self.assertEqual(1, len(self.calls("cp")))
++        self.assertEqual("-cR", self.calls("cp")[0][1])
++        self.assertTrue((self.state / "builds" / "MyApp" / "branch-feature" / "MyApp.app" / "commit.txt").exists())
++
++
++class AppTests(IosCase):
++    def test_the_development_scheme_wins_over_the_plain_one(self) -> None:
++        self.push("feature", "first")
++
++        self.succeeds("build", "feature", "--no-install")
++
++        build = self.builds()[0]
++        self.assertEqual("MyApp Development", build[build.index("-scheme") + 1])
++
++    def test_a_project_with_neither_scheme_fails_and_lists_its_schemes(self) -> None:
++        self.scenario({"schemes": ["Other", "Other Tests"]})
++        self.push("feature", "first")
++
++        code, _, err = self.project("build", "feature", "--no-install")
++
++        self.assertEqual(1, code)
++        self.assertIn("Other, Other Tests", err)
++        self.assertEqual([], self.builds())
++
++    def test_two_projects_and_no_setting_fail_naming_both(self) -> None:
++        git(self.work, "checkout", "--quiet", "-B", "two", "trunk")
++        (self.work / "tools" / "Helper.xcodeproj").mkdir(parents=True)
++        (self.work / "tools" / "Helper.xcodeproj" / "project.pbxproj").write_text("// helper\n")
++        git(self.work, "add", ".")
++        git(self.work, "commit", "--quiet", "-m", "two projects")
++        git(self.work, "push", "--quiet", "origin", "two")
++
++        code, _, err = self.project("build", "two", "--no-install")
++
++        self.assertEqual(1, code)
++        self.assertIn("ios/MyApp.xcodeproj", err)
++        self.assertIn("tools/Helper.xcodeproj", err)
++        self.assertEqual([], self.builds())
++
++
++class DeviceTests(IosCase):
++    def test_two_connected_devices_fail_before_the_build_and_list_both(self) -> None:
++        self.scenario({"devices": [PHONE, TABLET]})
++        self.push("feature", "first")
++
++        code, _, err = self.project("build", "feature")
++
++        self.assertEqual(1, code)
++        self.assertIn("Pat's iPhone (PHONE-UDID, connected)", err)
++        self.assertIn("Pat's iPad (TABLET-UDID, connected)", err)
++        self.assertEqual([], self.calls("xcodebuild"))
++
++    def test_ipad_picks_the_connected_ipad_beside_a_connected_iphone(self) -> None:
++        self.scenario({"devices": [PHONE, TABLET]})
++        sha = self.push("feature", "first")
++
++        self.succeeds("build", "feature", "--ipad")
++
++        self.assertEqual([("TABLET-UDID", sha)], self.installed())
++
++    def test_an_unavailable_device_fails_before_the_build_and_says_how_to_reach_it(self) -> None:
++        self.scenario({"devices": [device("Pat's iPhone", "PHONE-UDID", tunnel="unavailable")]})
++        self.push("feature", "first")
++
++        code, _, err = self.project("build", "feature")
++
++        self.assertEqual(1, code)
++        self.assertIn("plug it into this Mac and tap Trust", err)
++        self.assertEqual([], self.calls("xcodebuild"))
++
++    def test_devices_json_says_which_device_can_take_an_install(self) -> None:
++        self.scenario({"devices": [PHONE, device("Old iPad", "OLD-UDID", kind="iPad", tunnel="unavailable")]})
++
++        listed = json.loads(self.succeeds("devices", "--json"))["devices"]
++
++        self.assertEqual({"PHONE-UDID": True, "OLD-UDID": False},
++                         {entry["udid"]: entry["installable"] for entry in listed})
++
++    def test_every_command_without_xcode_exits_69(self) -> None:
++        bare = self.tmp / "bare"
++        bare.mkdir()
++        (bare / "git").symlink_to(shutil.which("git"))
++        with mock.patch.dict(os.environ, {"PATH": str(bare)}):
++            for command in (["devices"], ["build", "feature"], ["install"], ["logs", "--mac"], ["cleanup"]):
++                with self.subTest(command[0]):
++                    code, _, err = self.project(*command)
++
++                    self.assertEqual(69, code)
++                    self.assertIn(ios.TOOLS_MESSAGE, err)
++
++
++class LaunchTests(IosCase):
++    def setUp(self) -> None:
++        super().setUp()
++        sleep = mock.patch.object(ios.time, "sleep")
++        sleep.start()
++        self.addCleanup(sleep.stop)
++        self.push("feature", "first")
++
++    def test_a_locked_device_is_waited_for_with_one_message(self) -> None:
++        self.scenario({"launches": ["The device is locked.", "The device is locked.", "ok"]})
++
++        out = self.succeeds("build", "feature")
++
++        self.assertEqual(1, out.count("Waiting…"))
++        self.assertTrue(out.endswith("Opened it.\n"))
++        self.assertEqual(3, sum("launch" in call for call in self.calls("xcrun")))
++
++    def test_another_launch_error_ends_the_run_at_once(self) -> None:
++        self.scenario({"launches": ["The application could not be found."]})
++
++        code, _, err = self.project("build", "feature")
++
++        self.assertEqual(1, code)
++        self.assertIn("The application could not be found.", err)
++        self.assertEqual(1, sum("launch" in call for call in self.calls("xcrun")))
++
++    def test_mac_quits_the_running_copy_and_opens_a_wrapper(self) -> None:
++        self.scenario({"running": [True, False]})
++
++        self.succeeds("build", "feature", "--mac")
++
++        build = self.builds()[0]
++        self.assertEqual(ios.MAC_DESTINATION, build[build.index("-destination") + 1])
++        self.assertTrue(any(call[-1].endswith("to quit") for call in self.calls("osascript")))
++        wrapper = self.state / "mac" / "MyApp.app"
++        self.assertEqual([["open", str(wrapper)]], self.calls("open"))
++        self.assertEqual("Wrapper/MyApp.app", os.readlink(wrapper / "WrappedBundle"))
++        self.assertTrue((wrapper / "Wrapper" / "MyApp.app" / "commit.txt").exists())
++        self.assertEqual([], self.installed())
++
++
++class BuildOutputTests(IosCase):
++    def test_a_build_outside_a_terminal_prints_two_lines_and_logs_them_all(self) -> None:
++        self.scenario({"build_line_count": 5000})
++        self.push("feature", "first")
++
++        out = self.succeeds("build", "feature", "--no-install")
++
++        self.assertEqual(2, len(out.splitlines()), out)
++        self.assertEqual(5000, len((self.state / "build.log").read_text().splitlines()))
++
++    def test_a_failed_build_prints_each_error_once_and_exits_with_its_status(self) -> None:
++        errors = [f"/src/File{n}.swift:1:2: error: thing {n} is wrong" for n in range(25)]
++        self.scenario({"build_lines": ["Compiling", *errors, errors[0], "** BUILD FAILED **"], "build_status": 3})
++        self.push("feature", "first")
++
++        code, _, err = self.project("build", "feature", "--no-install")
++
++        self.assertEqual(3, code)
++        self.assertEqual(1, err.count("thing 0 is wrong"))
++        self.assertIn("thing 19 is wrong", err)
++        self.assertNotIn("thing 20 is wrong", err)
++        self.assertIn(str(self.state / "build.log"), err)
++        self.assertFalse((self.state / "builds").exists())
++
++
++def crash_report(body: dict) -> str:
++    header = {"app_name": "MyApp", "timestamp": "2026-11-15 10:00:00.00 -0800", "app_version": "1.0",
++              "build_version": "7", "os_version": "iPhone OS 26.1"}
++    return json.dumps(header) + "\n" + json.dumps(body, indent=2)
++
++
++EXCEPTION = {"exception": {"type": "EXC_BREAKPOINT", "signal": "SIGTRAP"}, "faultingThread": 1,
++             "usedImages": [{"name": "MyApp"}],
++             "threads": [{"frames": [{"imageIndex": 0, "symbol": "main"}]},
++                         {"queue": "player", "frames": [{"imageIndex": 0, "symbol": "Player.play()",
++                                                         "sourceFile": "Player.swift", "sourceLine": 42}]}]}
++WATCHDOG = {"termination": {"namespace": "FRONTBOARD", "code": 0x8badf00d,
++                            "reasons": ["scene-update watchdog transgression"]},
++            "usedImages": [{"name": "MyApp"}],
++            "threads": [{"frames": [{"imageIndex": 0, "symbol": "Library.load()"}]},
++                        {"frames": [{"imageIndex": 0, "symbol": "idle()"}]}]}
++
++
++class CrashTests(IosCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.push("feature", "first")
++        self.succeeds("build", "feature", "--no-install")
++        self.reports = self.home / "Library" / "Logs" / "DiagnosticReports"
++        self.reports.mkdir(parents=True)
++
++    def test_a_crash_summary_shows_the_exception_and_the_thread_that_crashed(self) -> None:
++        (self.reports / "MyApp-2026-11-15-100000.ips").write_text(crash_report(EXCEPTION))
++
++        out = self.succeeds("crashes", "--mac")
++
++        self.assertIn("EXC_BREAKPOINT SIGTRAP", out)
++        self.assertIn("Player.play() Player.swift:42", out)
++        self.assertNotIn("main", out.split("thread")[-1])
++        self.assertTrue((self.desktop / "MyApp-2026-11-15-100000.ips").exists())
++
++    def test_a_watchdog_summary_shows_the_code_in_hex_and_the_main_thread(self) -> None:
++        (self.reports / "Retired").mkdir()
++        (self.reports / "Retired" / "MyApp-2026-11-15-100000.ips").write_text(crash_report(WATCHDOG))
++
++        out = self.succeeds("crashes", "--mac")
++
++        self.assertIn("termination FRONTBOARD 0x8badf00d", out)
++        self.assertIn("thread 0, the main thread, since no thread crashed", out)
++        self.assertIn("Library.load()", out)
++        self.assertNotIn("idle()", out)
++
++    def test_a_device_gives_its_newest_three_reports_of_this_app(self) -> None:
++        crash_dir = self.tmp / "device-crashes"
++        crash_dir.mkdir()
++        files = []
++        for day in range(1, 6):
++            name = f"MyApp-2026-11-0{day}-100000.ips"
++            (crash_dir / name).write_text(crash_report(EXCEPTION))
++            files.append({"name": name, "relativePath": name, "resources": {"isDirectory": False},
++                          "metadata": {"lastModDate": f"2026-11-0{day}T10:00:00Z"}})
++        files.append({"name": "Other-2026-11-09-100000.ips", "relativePath": "Other-2026-11-09-100000.ips",
++                      "resources": {"isDirectory": False}, "metadata": {"lastModDate": "2026-11-09T10:00:00Z"}})
++        self.scenario({"crash_files": files, "crash_dir": str(crash_dir)})
++
++        self.succeeds("crashes")
++
++        self.assertEqual(["MyApp-2026-11-03-100000.ips", "MyApp-2026-11-04-100000.ips", "MyApp-2026-11-05-100000.ips"],
++                         sorted(path.name for path in self.desktop.iterdir()))
++
++
++def selects(predicate: str, subsystem: str) -> bool:
++    """Whether `predicate`'s subsystem clauses keep a line from `subsystem`."""
++    exact = re.findall(r'subsystem == "([^"]+)"', predicate)
++    prefixes = re.findall(r'subsystem BEGINSWITH "([^"]+)"', predicate)
++    return subsystem in exact or any(subsystem.startswith(prefix) for prefix in prefixes)
++
++
++class LogTests(IosCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.scenario({"log_lines": ["2026-11-15 14:42:10.1 Df MyApp[1:2] [com.example.myapp:audio] started",
++                                     "2026-11-15 14:42:11.2 F  MyApp[1:2] Fatal error: index out of range"]})
++
++    def build(self, bundle_id: str = "com.example.myapp.dev") -> None:
++        self.scenario({"bundle_id": bundle_id})
++        self.push("feature", "first")
++        self.succeeds("build", "feature", "--no-install")
++
++    def predicate(self) -> str:
++        show = next(call for call in self.calls("log") if call[1] == "show")
++        return show[show.index("--predicate") + 1]
++
++    def test_the_filter_keeps_the_apps_subsystem_and_not_the_vendors(self) -> None:
++        for bundle_id, kept, left in (
++                ("com.example.myapp.dev", ["com.example.myapp", "com.example.myapp.dev", "com.example.myapp.dev.net"],
++                 ["com.example", "com.example.myappx", "com.example.other"]),
++                ("com.example.myapp", ["com.example.myapp", "com.example.myapp.net"],
++                 ["com.example", "com.example.other"])):
++            with self.subTest(bundle_id):
++                self.calls_file.write_text("")
++                self.build(bundle_id)
++
++                self.succeeds("logs", "--mac")
++
++                predicate = self.predicate()
++                self.assertEqual(kept, [subsystem for subsystem in kept if selects(predicate, subsystem)])
++                self.assertEqual([], [subsystem for subsystem in left if selects(predicate, subsystem)])
++                self.assertIn('process == "MyApp" AND messageType == fault', predicate)
++
++    def test_logs_read_the_app_from_its_kept_build_without_a_worktree(self) -> None:
++        code, _, err = self.project("logs", "--mac")
++        self.assertEqual(1, code)
++        self.assertIn("`project ios build <branch-or-number>`", err)
++
++        self.build()
++        shutil.rmtree(self.state / "worktree")
++        out = self.succeeds("logs", "--mac")
++
++        self.assertIn("Wrote 2 lines of MyApp's log", out)
++
++    def test_two_logs_in_one_second_get_two_files(self) -> None:
++        self.build()
++        with mock.patch.object(ios, "local_now", return_value=datetime(2026, 11, 15, 14, 42, 10)):
++            self.succeeds("logs", "--mac")
++            self.succeeds("logs", "--mac")
++
++        self.assertEqual(["MyApp log 2026-11-15 at 14.42.10 2.txt", "MyApp log 2026-11-15 at 14.42.10.txt"],
++                         sorted(path.name for path in self.desktop.iterdir()))
++
++    def test_a_devices_log_comes_through_sudo_and_leaves_no_archive(self) -> None:
++        self.build()
++
++        out = self.succeeds("logs", "--last", "20m")
++
++        collect = next(call for call in self.calls("sudo") if call[2] == "collect")
++        self.assertEqual(["--device-udid", "PHONE-UDID", "--last", "20m"], collect[3:7])
++        self.assertIn("Wrote 2 lines", out)
++        self.assertEqual([], list(self.state.glob("log-*")))
++
++    def test_a_failed_collect_leaves_no_file_and_no_archive(self) -> None:
++        self.build()
++        self.scenario({"collect_status": 130})
++
++        code, _, err = self.project("logs")
++
++        self.assertEqual(1, code)
++        self.assertIn("no log was written", err)
++        self.assertFalse(self.desktop.exists() and any(self.desktop.iterdir()))
++        self.assertEqual([], list(self.state.glob("log-*")))
++
++    def test_a_span_that_is_not_one_is_refused(self) -> None:
++        self.build()
++
++        code, _, err = self.project("logs", "--mac", "--last", "20")
++
++        self.assertEqual(2, code)
++        self.assertIn("--last takes a span", err)
++        self.assertEqual([], [call for call in self.calls("log") if call[1] == "show"])
++
++
++@unittest.skipIf(sys.platform == "win32", "the lock is an flock")
++class LockTests(IosCase):
++    def setUp(self) -> None:
++        super().setUp()
++        self.push("feature", "first")
++        self.succeeds("build", "feature", "--no-install")
++
++    def install_process(self) -> subprocess.Popen:
++        return subprocess.Popen([sys.executable, "-m", "projector", "ios", "install", "feature"], cwd=self.checkout,
++                                env=dict(os.environ, PYTHONPATH=str(SRC)), stdout=subprocess.PIPE,
++                                stderr=subprocess.PIPE, text=True)
++
++    def test_a_second_run_waits_for_the_holder_and_says_so_once(self) -> None:
++        import fcntl
++
++        with open(self.state / "lock", "a+") as held:
++            fcntl.flock(held, fcntl.LOCK_EX)
++            held.write("process 1, project ios build other")
++            held.flush()
++            waiting = self.install_process()
++            lines: queue.Queue[str] = queue.Queue()
++            threading.Thread(target=lambda: lines.put(waiting.stderr.readline()), daemon=True).start()
++            self.assertIn("Waiting for process 1, project ios build other to finish", lines.get(timeout=30))
++            self.assertEqual([], self.installed())
++        out, err = waiting.communicate(timeout=60)
++
++        self.assertEqual(0, waiting.returncode, err)
++        self.assertNotIn("Waiting", err)
++        self.assertEqual(1, len(self.installed()))
++
++    def test_a_killed_holder_leaves_no_lock_behind(self) -> None:
++        holder = subprocess.Popen([sys.executable, "-c", "import fcntl, sys, time\n"
++                                   "lock = open(sys.argv[1], 'a+')\nfcntl.flock(lock, fcntl.LOCK_EX)\n"
++                                   "print('held', flush=True)\ntime.sleep(120)", str(self.state / "lock")],
++                                  stdout=subprocess.PIPE, text=True)
++        self.assertEqual("held\n", holder.stdout.readline())
++        holder.kill()
++        holder.wait()
++        holder.stdout.close()
++
++        code, _, err = self.project("install", "feature")
++
++        self.assertEqual(0, code, err)
++        self.assertNotIn("Waiting", err)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_permissions.py b/tests/test_permissions.py
+index 886d1ca3..3520c8b2 100644
+--- a/tests/test_permissions.py
++++ b/tests/test_permissions.py
+@@ -95,6 +95,15 @@
+     ("LANG=C project list", "allow", "none"),
+     ("HOME=/tmp project init --publish-rule", "ask", "none"),
+     ("projector list", "none", "none"),
++    ("project ios devices --json", "allow", "allow"),
++    ("project ios install 12 --device 00008110-0001", "allow", "allow"),
++    ("project ios crashes --mac", "allow", "allow"),
++    ("project ios cleanup", "allow", "allow"),
++    ("project ios build 12 --no-install", "allow", "none"),
++    ("project ios build feature/login --mac", "allow", "none"),
++    ("project ios build 12 --allow-untrusted", "ask", "none"),
++    ("project ios build --allow-untrusted 12 --ipad", "ask", "none"),
++    ("project ios logs --last 20m", "allow", "none"),
+ )
+ 
+ # What the Codex rules leave to Codex's usual approval: each command with the
+@@ -102,7 +111,7 @@
+ CODEX_LEFT_OUT = {"init": None, "upgrade": None, "create": None, "edit": None, "agent": {"key"},
+                   "config": {"set", "unset"}, "inbox": {"answer", "decline", "dismiss", "done", "snooze", "start", "unclear"},
+                   "review": {"gate"},
+-                  "site": {"build", "serve"}}
++                  "site": {"build", "serve"}, "ios": {"build", "logs"}}
+ 
+ # Some of the variables Claude Code lets an allow rule match past. Its list is
+ # fixed, and holds none of VISUAL, EDITOR, PATH, HOME, or XDG_STATE_HOME.
+@@ -228,3 +237,11 @@ def test_site_build_and_serve_take_the_prepare_flags_only_spelled_in_full(self)
+             self.assertEqual("make", cli.parser().parse_args([*command, "--prepare=make"]).prepare)
+             self.assertEqual("make", cli.parser().parse_args([*command, "--prepare", "make"]).prepare)
+             self.assertTrue(cli.parser().parse_args([*command, "--allow-prepare"]).allow_prepare)
++
++    def test_ios_build_takes_allow_untrusted_only_spelled_in_full(self) -> None:
++        self.assertTrue(cli.parser().parse_args(["ios", "build", "12", "--allow-untrusted"]).allow_untrusted)
++        for abbreviated in ("--allow", "--allow-unt", "--allow-untrust"):
++            with self.subTest(abbreviated):
++                with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as stop:
++                    cli.parser().parse_args(["ios", "build", "12", abbreviated])
++                self.assertEqual(2, stop.exception.code)

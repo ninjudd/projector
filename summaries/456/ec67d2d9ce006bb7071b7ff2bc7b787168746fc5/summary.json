@@ -1,0 +1,189 @@
+{
+ "version": 1,
+ "name": "iOS device builds",
+ "project": "ios",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 456,
+  "title": "Add project ios to build a branch's iOS app and put it on a device",
+  "head": "ec67d2d9ce006bb7071b7ff2bc7b787168746fc5",
+  "headRef": "ios-command",
+  "base": "0ebef6721b698c60148aec430bf8766518edc5ef",
+  "baseRef": "ios-spec",
+  "basePr": 450
+ },
+ "overview": {
+  "summary": [
+   "Projector's inbox lets an agent ask the person to test a change on their phone, with a start button whose press runs one action, such as installing a build. Until now Projector gave the agent nothing to build or install with, so each iOS repository wrote its own script. This pull request adds <code>project ios</code>, a command group that builds any branch or pull request of a repository's iOS app without touching the person's checkout, puts it on their iPhone, iPad, or Mac, and brings the device's crash reports and log back.",
+   "It is the first layer of a stack. The plan, <code>docs/projects/ios/readme.md</code>, sits in the pull request below, and the skill paragraphs that tell an agent how to use the command sit in the one above. The plan moves from <code>ready</code> to <code>in-progress</code> here, and stays there until the person runs a real build on a real iPhone.",
+   "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Command</th><th>What it does</th></tr></thead><tbody><tr><td><code>build &lt;branch-or-number&gt;</code></td><td>Fetches the head into Projector's own worktree, builds it, keeps a copy of the app for that target, then installs and opens it. <code>--no-install</code> stops after the build.</td></tr><tr><td><code>install [&lt;target&gt;]</code></td><td>Installs and opens that target's kept build, or the newest one.</td></tr><tr><td><code>devices [--json]</code></td><td>Lists paired devices and whether each can take an install.</td></tr><tr><td><code>crashes</code></td><td>Copies the app's three newest crash reports to the Desktop and summarizes each.</td></tr><tr><td><code>logs [--last 5m]</code></td><td>Writes the app's recent log lines to a new file on the Desktop.</td></tr><tr><td><code>cleanup</code></td><td>Removes the worktree, DerivedData, and every kept build.</td></tr></tbody></table></div>"
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Target</b>: the branch name or pull request number the person passes to <code>build</code>. Each target keeps its own build.</li><li><b>Kept build</b>: a copy of the built <code>.app</code> under <code>builds/&lt;App&gt;/&lt;key&gt;/</code>, with a <code>build.json</code> record of the app, commit, and bundle ID.</li><li><b>Key</b>: the folder name for a target, <code>pr-12</code> for a pull request and <code>branch-</code> plus the percent-encoded branch name, such as <code>branch-feature%2Flogin</code>.</li><li><b>Trusted head</b>: a pull request head that <code>review.trusted_head</code> accepts. It lives in this repository, and its author and every commit's author is the operator or has write access.</li><li><b>DerivedData</b>: Xcode's build folder. One shared folder per repository lets a branch switch rebuild only what changed.</li></ul>"
+   },
+   {
+    "id": "history",
+    "title": "Review so far",
+    "html": "<p>The plan's reviews settled the trust rule, the log filter, how builds are copied, the target keys, the Codex allow list, and the device flags. The first review of this layer, at <code>fc7df3d</code>, found no blocking problem and listed five suggestions. This head rebases the layer onto the plan's branch after that branch moved onto <code>main</code>, which brought in the agent-messages commands. The conflicts in <code>cli.py</code>, <code>config.py</code>, and <code>docs/cli.md</code> keep both sides. The head also takes two suggestions: the CLI reference now says which commands wait for the lock, and the <code>tool</code> docstring names the programs its callers pass. Three suggestions stand, such as passing the bundle ID to <code>osascript</code> as an argument rather than inside the script.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "command",
+   "title": "The project ios module",
+   "kicker": "Device choice, the lock, the worktree, the build, kept builds, install, crashes, logs, and cleanup",
+   "intro": [
+    "<code>ios.py</code> is a port of a shell script one repository used for device tests, rewritten on the standard library. Each command follows the same order: check that <code>xcrun</code> and <code>xcodebuild</code> exist, pick the device, take the repository's lock, then do the work. Picking the device before the build means a phone that cannot take the install fails in seconds rather than after a ten-minute build.",
+    "<h4>Builds are kept per target</h4>",
+    "All branches share one worktree and one DerivedData folder, so builds run one at a time under an <code>fcntl.flock</code> lock. After each build, the app is copied into a folder for its target, so <code>install 12</code> installs pull request 12's build even after another agent built something else. That is what lets the inbox's start button install the change its request describes.",
+    "<h4>Untrusted heads are refused</h4>",
+    "<code>xcodebuild</code> runs the project's build scripts as the person. So before it fetches a pull request, <code>build</code> asks <code>review.trusted_head</code>, the same rule a Projector review uses, and refuses an untrusted head with exit 65 unless the person passes <code>--allow-untrusted</code>. A branch name is trusted, because only an account with write access can push a branch to the repository."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "The tests stand in for <code>xcrun</code>, <code>xcodebuild</code>, <code>osascript</code>, <code>open</code>, <code>log</code>, <code>sudo</code>, and <code>cp</code> with one script on <code>PATH</code>, and run Git for real against a bare origin, so they run on Linux with no Xcode. No test touches a real device."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/ios.py",
+     "note": "The whole command. Each section header in the file, such as <code># Kept builds</code>, matches one step of the plan's build flow.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 226,
+       "text": "The trust check runs before any fetch. The fetch at line 235 also refuses a head that moved after the check, so a commit pushed in between is never built."
+      },
+      {
+       "kind": "context",
+       "line": 246,
+       "text": "When the worktree already exists, the fetch and the checkout run through the worktree itself, which puts the commit into whichever clone created it. A worktree whose clone was deleted makes <code>rev-parse</code> fail, and is removed and made again from this clone."
+      },
+      {
+       "kind": "context",
+       "line": 429,
+       "text": "On a Mac, <code>cp -cR</code> makes an APFS clone that costs no time or space. Elsewhere, such as on CI's Linux runner, the copy is a plain <code>copytree</code>. The choice follows <code>sys.platform</code>, so Linux never depends on what its <code>cp</code> does with <code>-c</code>."
+      },
+      {
+       "kind": "context",
+       "line": 514,
+       "text": "The bundle ID is placed inside the AppleScript source here and at line 525. It comes from the build settings of a head that was trusted or that the person allowed. The review suggested passing it as an argument instead, so a strange bundle ID cannot change the script."
+      },
+      {
+       "kind": "context",
+       "line": 632,
+       "text": "The log filter keeps the bundle ID, its dotted children, and the bundle ID without its last part only when that leaves three or more parts. So <code>com.example.myapp.dev</code> also matches <code>com.example.myapp</code>, and no bundle ID ever matches the vendor prefix <code>com.example</code>."
+      },
+      {
+       "kind": "context",
+       "line": 690,
+       "text": "Any exit from the collect, a Ctrl-C included, deletes the claimed log file, and the <code>finally</code> deletes the archive, which holds the whole device's log. The tests exercise the failed collect, not the Ctrl-C."
+      },
+      {
+       "kind": "context",
+       "line": 728,
+       "text": "<code>cleanup</code> keeps the <code>lock</code> file. Deleting it while another run waits on it would let a third run lock a new file and build at the same time."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_ios.py",
+     "note": "One test for each row of the plan's acceptance table, named after the behavior it checks."
+    }
+   ]
+  },
+  {
+   "id": "review",
+   "title": "Helpers shared with reviews",
+   "kicker": "Two small refactors so the command reuses what reviews already do",
+   "intro": [
+    "Reviews already fetch a pull request's head and keep state under Projector's state folder. Two functions move out so <code>ios.py</code> can call them. Neither changes what a review does."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/review.py",
+     "note": "<code>head_ref</code> picks the branch for a head in this repository and <code>refs/pull/&lt;n&gt;/head</code> for a fork. <code>state_home</code> names <code>$XDG_STATE_HOME/projector</code>, or <code>~/.local/state/projector</code> without it."
+    }
+   ]
+  },
+  {
+   "id": "cli",
+   "title": "The command line and its settings",
+   "kicker": "The argparse tree for project ios, and three new settings",
+   "intro": [
+    "<code>add_ios_parser</code> builds the subcommands, and <code>run_ios</code> reads the settings and calls into <code>ios.py</code>. The settings let a repository that does not follow the naming convention name its app, its Xcode project, and where crash reports and logs go.",
+    "The rebase onto <code>main</code> put this group beside the new <code>project agent</code> commands. The import line, <code>config.SETTINGS</code>, and the parser hold both, and <code>run</code> sends <code>ios</code> and <code>agent</code> to separate handlers."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Every subcommand parser sets <code>allow_abbrev=False</code>, so <code>--allow-unt</code> is an error rather than a spelling the ask rule would miss.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 975,
+       "text": "This comment is why the ask rule works. Without <code>allow_abbrev=False</code>, argparse accepts any unique prefix of <code>--allow-untrusted</code>, and the rule matches only the full word."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "<code>ios.app</code>, <code>ios.project</code>, and <code>ios.output</code>, all strings."
+    }
+   ]
+  },
+  {
+   "id": "permissions",
+   "title": "Permission rules for agents",
+   "kicker": "One new ask rule in Claude Code, and four allowed commands in Codex",
+   "intro": [
+    "<code>project init</code> writes the rules that decide which <code>project</code> commands an agent may run without asking. In Claude Code every <code>project</code> command is allowed, so the new rule <code>Bash(project ios *allow-untrusted*)</code> makes Claude Code ask before building an untrusted head.",
+    "Codex allows commands by name and runs an allowed command outside its sandbox. So Codex allows only the four <code>project ios</code> commands that run no repository code: <code>devices</code>, <code>install</code>, <code>crashes</code>, and <code>cleanup</code>. It still asks for <code>build</code>, which runs the repository's build scripts, and for <code>logs</code>, which runs <code>sudo</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/permissions.py",
+     "note": "The rule in <code>ASK</code>, the new <code>CODEX_ALLOW</code> entry, and the explanations that name them."
+    },
+    {
+     "path": "tests/test_permissions.py",
+     "note": "New rows in <code>DECISIONS</code> give each command's decision in both hosts, and a new test refuses each abbreviation of <code>--allow-untrusted</code>."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and the plan",
+   "kicker": "The CLI reference section, and the plan's status and implementation notes",
+   "intro": [
+    "<code>docs/cli.md</code> gains a section, \"Put an iOS app on a device\", and lists the new rules and settings where the reference lists the others. The plan moves to <code>in-progress</code> and gains section 7, which records what this layer settled, such as keeping the <code>lock</code> file in <code>cleanup</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "The new section and the rule and settings entries.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 3200,
+       "text": "Only <code>build</code>, <code>install</code>, and <code>cleanup</code> take the lock, which this paragraph now says. <code>devices</code>, <code>crashes</code>, and <code>logs</code> never wait."
+      }
+     ]
+    },
+    {
+     "path": "docs/projects/ios/readme.md",
+     "note": "The status change and section 7, \"Implementation notes\"."
+    }
+   ]
+  }
+ ]
+}
