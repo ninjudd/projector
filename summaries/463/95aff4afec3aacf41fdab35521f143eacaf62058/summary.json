@@ -1,0 +1,126 @@
+{
+ "version": 1,
+ "name": "Draft-state commands run alone",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 463,
+  "title": "Run each draft-state and publish command on a line by itself",
+  "head": "95aff4afec3aacf41fdab35521f143eacaf62058",
+  "headRef": "ready-own-line",
+  "base": "d733f522ba209c642a84e6911067116b7e2d992e",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's skills tell agents to move a pull request's draft state with <code>project review hold</code> and <code>project review ready</code>, and to post a review with <code>project review publish</code>. <code>project init</code> adds the allow rule <code>Bash(project *)</code> to the user's Claude Code settings, and matching prefix rules to their Codex rules, so these commands run without a prompt and without the host's automatic approval judging them.",
+   "That rule decides a call only when every command in it matches a rule. Claude Code and Codex check each command of a chain, such as one joined with <code>&amp;&amp;</code>, and take the strictest result. So a <code>gh pr view</code> joined to <code>project review ready</code> sent the whole call to auto mode, which refused it as undoing a hold. The skill then told the agent to stop and ask the user, so the pull request stayed a draft.",
+   "This change tells the agent to run each of the three commands as a tool call of its own, not after <code>cd</code> and joined to nothing. When the host refuses one, the agent tells a joined call from a missing rule, as <code>summarize-pr</code> already does for <code>project summary publish</code> after #446, which this branch merged. A new test fails when any skill's shell example joins one of the three commands to another command."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Hold.</b> <code>project review hold</code> converts a signed-off pull request to a draft while its author builds a change on it, so nobody merges it meanwhile.</li><li><b>Allow rule.</b> A Claude Code permission rule, such as <code>Bash(project *)</code>, or a Codex prefix rule, that lets a command run without a prompt.</li><li><b>Auto mode.</b> Claude Code's automatic approval, which judges commands no rule decides and can refuse them.</li><li><b><code>project review rules --json</code>.</b> Reports, for each host's settings file, whether it holds every rule <code>project init</code> writes (<code>allowed</code>) and whether it allows <code>project summary publish</code> (<code>summary_publish</code>). It writes nothing.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li><b><code>c951842</code>.</b> Clean, with three suggestions.</li><li><b><code>95aff4a</code>.</b> Clean, as a full review. #446 on <code>main</code> settled most of the suggestion for <code>summarize-pr</code>. Three suggestions remain: align the subagent bullet in <code>review-pr</code> with the rewritten publish paragraph, cover <code>project summary publish</code> in the shell-example test, and add the rule where <code>work</code> and <code>cleanup</code> mark a pull request ready.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "fix-pr",
+   "title": "Why a joined call loses the allow rule",
+   "kicker": "The full rule, its reason, and the refusal steps, in the skill that holds pull requests",
+   "intro": [
+    "<code>fix-pr</code> fixes review findings on a pull request. When a clean pull request needs a change, it holds the pull request as a draft, pushes the change, and marks it ready again. This group rewrites the passage on those two commands.",
+    "The passage now says that each command prints the draft state and the head it acted on, so no <code>gh pr view</code> is needed after it. It says to run each command as a tool call of its own, and why a chained call falls to automatic approval. It then gives two steps for a refusal:",
+    "<ol><li><b>The call ran more than the command.</b> Run the command again, alone.</li><li><b>The command ran alone.</b> Read <code>allowed</code> in <code>project review rules --json</code>. Send the user to <code>project init</code> when it is <code>false</code> or the file is not listed. When it is <code>true</code>, ask the user to run the command themselves.</li></ol>"
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/fix-pr/SKILL.md",
+     "note": "The passage under \"Hold the pull request while changes are built\" that says how to run <code>hold</code> and <code>ready</code>, and what to do when the host refuses one.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Each command prints the head. <code>set_draft</code> in <code>src/projector/review.py</code> returns the head it read after the change, and <code>draft_lines</code> prints it, as in <code>marked ninjudd/projector#463 ready for review at c951842</code>.",
+       "line": 226
+      },
+      {
+       "kind": "verify",
+       "text": "The rule <code>project init</code> adds is <code>Bash(project *)</code>, as the text says: <code>ALLOW</code> in <code>src/projector/permissions.py</code>. Its Codex prefix rules include <code>review hold</code>, <code>ready</code>, and <code>publish</code>. Both commands act on <code>--repo</code> from any directory, so the rule against a <code>cd</code> leaves them runnable.",
+       "line": 233
+      },
+      {
+       "kind": "context",
+       "text": "Running the command again alone is the same command, not another form of it. A command refused while alone still goes to the user, never to <code>gh pr ready</code>.",
+       "line": 244
+      },
+      {
+       "kind": "verify",
+       "text": "Each file's <code>allowed</code> in <code>review_rules</code> is true only when <code>init</code> would leave that file unchanged, and the Codex file is listed only where Codex is installed. So <code>false</code> or a missing file is the case <code>init</code> fixes.",
+       "line": 247
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "callers",
+   "title": "The skills that point at the rule",
+   "kicker": "Three skills repeat the rule where they mark ready or publish",
+   "intro": [
+    "<code>implement</code> and <code>spec</code> mark a pull request ready at the hand-over, and <code>review-pr</code> publishes a review. Each now says to run its command as a tool call of its own, not after <code>cd</code> and joined to no other command, and points at <code>fix-pr</code> for the reason.",
+    "<code>review-pr</code> also follows <code>fix-pr</code>'s refusal steps for a refused publish. It runs the publish again alone after a joined call, and reads <code>allowed</code> before it asks the user to run <code>project init</code>."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "skills/implement/SKILL.md",
+     "note": "The hand-over's sentence on running <code>project review ready</code>."
+    },
+    {
+     "path": "skills/spec/SKILL.md",
+     "note": "The plan-review hand-over's sentence on running <code>project review ready</code>."
+    },
+    {
+     "path": "skills/review-pr/SKILL.md",
+     "note": "The publish section's paragraph on auto mode refusing a clean self-review's publish.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The subagent bullet near the end of this file, which <code>main</code> last changed, names only <code>summary_publish</code> as the sign of a missing rule. It still says a subagent whose publish was refused stops that publish. The review suggested aligning it with this paragraph."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests that keep the rule in the skills",
+   "kicker": "Skill text and shell examples checked for joined commands",
+   "intro": [
+    "<code>test_the_skills_move_draft_state_through_the_commands_alone</code> now checks that <code>fix-pr</code>, <code>implement</code>, and <code>spec</code> say \"as a tool call of its own\". It also checks that <code>fix-pr</code> carries both refusal steps.",
+    "<code>test_no_skill_example_joins_a_review_command_to_another</code> reads every fenced <code>sh</code> or <code>bash</code> block in every skill. It fails on a line that runs <code>project review ready</code>, <code>hold</code>, or <code>publish</code> beside <code>;</code>, <code>&amp;&amp;</code>, or a pipe. It strips <code>&lt;…&gt;</code> placeholders first, so <code>&lt;clean|changes-requested&gt;</code> is not read as a pipe."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_review.py",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The new test catches the bug it names. With <code>&amp;&amp; gh pr view &lt;number&gt;</code> appended to the <code>project review ready</code> example in a copy of <code>fix-pr</code> at this head, it fails on <code>&amp;&amp;</code>.",
+       "line": 3194
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
