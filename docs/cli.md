@@ -2370,22 +2370,26 @@ Each review label fires GitHub's `labeled` event: `setup` adds `reviewing`,
 and `publish` adds `clean`. In a repository whose CI starts on `labeled` and
 cancels a pull request's earlier run, each label cancels the run in
 progress. `project review ready` does the same in one whose CI starts on
-`ready_for_review`. A cancelled run is no CI failure to Projector: the
-`CHECKS` event and the panel's checks leave out every check run of a
-workflow run that was cancelled, including a job that runs `if: always()`
-to gather the others and fails in it. The cancelled runs still cost CI
-time, and the panel notes `cancelled` on a pull request while a workflow's
-newest run on its head was cancelled.
+`ready_for_review`. The `CHECKS` event and the panel's checks leave out a
+failed check run of a cancelled workflow run once a newer run of the same
+workflow on the head tests the code again: while the newer run is still
+running, or once it has run a check of the same name rather than skipping
+or cancelling it. That covers a job that runs `if: always()` to gather the
+others and fails in the cancelled run, and the newer run's own result
+stands for the code. A cancelled run with nothing newer keeps its
+failures, because a check may have failed before the cancel. The cancelled
+runs still cost CI time, and the panel notes `cancelled` on a pull request
+while a workflow's newest run on its head was cancelled.
 
 Leave `labeled` out of the `types` of the workflow that runs your checks. A
 job's `if` that skips the jobs for other labels is not enough. The
 workflow's concurrency group cancels the earlier run before any job's `if`
 is read. GitHub also counts a skipped job as a passing check, and the newest
 check of a name as that check, so a label's skipped run would cover a
-failure. When a label is meant to start a fuller run, give that run a
-workflow of its own, so every other label starts nothing that the checks'
-workflow counts. Name the label in its concurrency group, so a review label
-cannot cancel the fuller run either:
+failure on GitHub, though Projector still reports it. When a label is meant
+to start a fuller run, give that run a workflow of its own, so every other
+label starts nothing that the checks' workflow counts. Name the label in its
+concurrency group, so a review label cannot cancel the fuller run either:
 
 ```yaml
 # .github/workflows/integration.yml
@@ -3016,7 +3020,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
 | `FINDING` | `fix` | An unresolved review thread |
 | `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
 | `CONFLICT` | `fix` | A branch that conflicts with its base |
-| `CHECKS` | `fix` | CI failing on the head, naming each check run that concluded `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE` and each commit status in the state `FAILURE` or `ERROR`; the `projector/review` status does not count, and neither does a run that waits for approval or was cancelled or skipped, nor any check run of a workflow run that was cancelled, such as an `if: always()` job that fails in it |
+| `CHECKS` | `fix` | CI failing on the head, naming each check run that concluded `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE` and each commit status in the state `FAILURE` or `ERROR`; the `projector/review` status does not count, and neither does a run that waits for approval or was cancelled or skipped, nor a failed check run of a cancelled workflow run that a newer run of the same workflow on the head tests again, by still running or by running a check of the same name rather than skipping or cancelling it, such as an `if: always()` job that fails in the cancelled run |
 | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
 | `LABEL` | `fix` | A `clean` or `reviewing` label added or removed since the owner last saw the pull request, as `+clean` or `-reviewing` |
 | `UNREVIEWED` | `fix`, when no session on this machine reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |

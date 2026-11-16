@@ -102,7 +102,7 @@ LABEL_CHANGES = {
 # the daemon reads the rollup's contexts for CHECKS. GitHub's counts by state cover every context, so they say
 # when a failed one lies past the first page. The `projector/review` status is among them, so the query reads
 # it too, to take it out of the counts. Each check run's suite says whether its workflow run was cancelled, and
-# the panel reads the run's workflow and start to tell whether a workflow's newest run on the head was.
+# the run's workflow and start say whether a newer run of that workflow on the head tests the code again.
 CONTEXT_NODES = ("nodes{ __typename ... on CheckRun{ name conclusion checkSuite{ conclusion"
                  " workflowRun{ createdAt workflow{ databaseId } } } } ... on StatusContext{ context state } }")
 QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
@@ -645,17 +645,41 @@ def failures(contexts: list[dict]) -> list[dict]:
                 and found.get("context") != review.REVIEW_CONTEXT)]
 
 
-def in_cancelled_run(found: dict) -> bool:
-    """Whether a check run belongs to a workflow run that was cancelled, as a newer run in the same concurrency
-    group cancels it. GitHub keeps such a run's checks on the head, and a job that runs `if: always()` to gather
-    the others fails in it, though nothing in the code did."""
-    return (found.get("checkSuite") or {}).get("conclusion") == "CANCELLED"
+def workflow_run(found: dict) -> Optional[tuple[int, str]]:
+    """The workflow and start of the GitHub Actions run a check run belongs to, or None for a check run that no
+    workflow run made."""
+    run = (found.get("checkSuite") or {}).get("workflowRun") or {}
+    workflow, at = (run.get("workflow") or {}).get("databaseId"), run.get("createdAt")
+    return (workflow, at) if isinstance(workflow, int) and isinstance(at, str) else None
+
+
+def superseded(found: dict, contexts: list[dict]) -> bool:
+    """Whether a check run belongs to a cancelled workflow run that a newer run of the same workflow on the head
+    tests again: one still running, or one whose check run of the same name ran rather than skipped or was
+    cancelled. A newer run in the same concurrency group cancels the one in progress, as a review's label does
+    where CI starts on `labeled`, and GitHub keeps the cancelled run's checks on the head, where a job that runs
+    `if: always()` to gather the others fails though nothing in the code did. The newer run's own result stands
+    for the code. A cancelled run with nothing newer, or whose newer run skipped the check, keeps its failures,
+    since one of them may have failed before the cancel."""
+    run = workflow_run(found)
+    if run is None or (found.get("checkSuite") or {}).get("conclusion") != "CANCELLED":
+        return False
+    for other in contexts:
+        newer = workflow_run(other) if other.get("__typename") == "CheckRun" else None
+        if newer is None or newer[0] != run[0] or newer[1] <= run[1]:
+            continue
+        if (other.get("checkSuite") or {}).get("conclusion") is None:
+            return True
+        if other.get("name") == found.get("name") and other.get("conclusion") not in {"SKIPPED", "CANCELLED"}:
+            return True
+    return False
 
 
 def failed_contexts(contexts: list[dict]) -> list[str]:
-    """The names of the failures among `contexts` that CHECKS reports: each but a check run of a cancelled run."""
+    """The names of the failures among `contexts` that CHECKS reports: each but a check run of a cancelled run
+    that a newer run tests again."""
     return [found.get("name") or found.get("context") or "?" for found in failures(contexts)
-            if not in_cancelled_run(found)]
+            if not superseded(found, contexts)]
 
 
 def failure_count(commit: dict) -> int:

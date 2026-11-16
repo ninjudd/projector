@@ -100,11 +100,16 @@ def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:
 FINDING = "<!-- projector-finding v=1 priority=P2 --> A nil deref"
 
 
-def check_run(name, conclusion="SUCCESS", suite=None):
+def check_run(name, conclusion="SUCCESS", suite=None, *, workflow=None, at="2026-11-16T22:00:00Z"):
     """A check run in the head's rollup, as the daemon's query reads it; `conclusion` is None until it completes,
-    and `suite` is its workflow run's conclusion, which defaults to its own."""
+    and `suite` is its workflow run's conclusion, which defaults to its own. A check run with a `workflow` id
+    belongs to a run of that workflow started `at`; one without belongs to no workflow run."""
+    run = None if workflow is None else {"createdAt": at, "workflow": {"databaseId": workflow}}
     return {"__typename": "CheckRun", "name": name, "conclusion": conclusion,
-            "checkSuite": {"conclusion": suite or conclusion}}
+            "checkSuite": {"conclusion": suite or conclusion, "workflowRun": run}}
+
+
+LATER = "2026-11-16T22:01:00Z"
 
 
 def commit_status(context, state="SUCCESS"):
@@ -852,25 +857,59 @@ class FixRoleTests(WatchCase):
                     f"CHECKS acme/app#{number} head=aaaaaaaa failed: {failed} — {fix_action(number)}"]
                 self.assertEqual(expected, [event for event in events if event.startswith(f"CHECKS acme/app#{number} ")])
 
-    def test_a_check_that_failed_in_a_cancelled_run_is_no_ci_failure(self) -> None:
+    def test_a_failure_in_a_cancelled_run_that_a_newer_run_tests_again_is_no_ci_failure(self) -> None:
         # A label starts a run that cancels the one in progress, whose `if: always()` job then fails, and GitHub
-        # keeps both runs' checks on the head.
-        self.github.pull_request(1, contexts=[check_run("slow", "CANCELLED"),
-                                              check_run("complete", "FAILURE", suite="CANCELLED"),
-                                              check_run("slow"), check_run("complete")])
-        self.github.pull_request(2, contexts=[check_run("complete", "FAILURE", suite="CANCELLED"),
-                                              check_run("lint", "FAILURE")])
+        # keeps both runs' checks on the head. The newer run's own result stands for the code.
+        cancelled = [check_run("slow", "CANCELLED", workflow=1),
+                     check_run("complete", "FAILURE", "CANCELLED", workflow=1)]
+        cases = {
+            "the newer run passed": ([check_run("slow", workflow=1, at=LATER),
+                                      check_run("complete", workflow=1, at=LATER)], None),
+            "the newer run failed": ([check_run("slow", "FAILURE", workflow=1, at=LATER),
+                                      check_run("complete", "FAILURE", workflow=1, at=LATER)], "slow, complete"),
+            # Its gathering job has not started, so it has no check run yet.
+            "the newer run still runs": ([check_run("slow", None, workflow=1, at=LATER)], None),
+            "nothing ran since": ([], "complete"),
+            "the newer run skipped the job": ([check_run("slow", "SKIPPED", workflow=1, at=LATER),
+                                               check_run("complete", "SKIPPED", workflow=1, at=LATER)], "complete"),
+            "only another workflow ran since": ([check_run("complete", workflow=2, at=LATER)], "complete"),
+            "the cancelled run is the newer one": ([check_run("complete", workflow=1, at="2026-11-16T21:59:00Z")],
+                                                   "complete"),
+        }
+        for number, (later, _) in enumerate(cases.values(), 1):
+            self.github.pull_request(number, contexts=[*cancelled, *later])
+        self.fixer(*(f"acme/app#{number} fix" for number in range(1, len(cases) + 1)))
+
+        events = self.cycle()["fixer"]
+
+        for number, (case, (_, failed)) in enumerate(cases.items(), 1):
+            with self.subTest(case=case):
+                expected = [] if failed is None else [
+                    f"CHECKS acme/app#{number} head=aaaaaaaa failed: {failed} — {fix_action(number)}"]
+                self.assertEqual(expected, [event for event in events if event.startswith(f"CHECKS acme/app#{number} ")])
+
+    def test_a_check_that_failed_before_its_run_was_cancelled_is_a_ci_failure(self) -> None:
+        # CI starts on `labeled`, and a job-level `if` skips every job for a review's label, whose run cancels
+        # the run in which `lint` had already failed. The skipped `lint` tests nothing, so the failure stands.
+        self.github.pull_request(1, contexts=[check_run("lint", "FAILURE", "CANCELLED", workflow=1),
+                                              check_run("test", "CANCELLED", workflow=1),
+                                              check_run("lint", "SKIPPED", workflow=1, at=LATER),
+                                              check_run("test", "SKIPPED", workflow=1, at=LATER)])
+        # A check run that no workflow run made is never a cancelled run's, whatever its suite concluded.
+        self.github.pull_request(2, contexts=[check_run("external", "FAILURE", "CANCELLED")])
         self.fixer("acme/app#1 fix", "acme/app#2 fix")
 
         events = self.cycle()["fixer"]
 
-        self.assertEqual([f"CHECKS acme/app#2 head=aaaaaaaa failed: lint — {fix_action(2)}"],
-                         [event for event in events if event.startswith("CHECKS ")])
+        self.assertEqual([f"CHECKS acme/app#1 head=aaaaaaaa failed: lint — {fix_action(1)}",
+                          f"CHECKS acme/app#2 head=aaaaaaaa failed: external — {fix_action(2)}"],
+                         sorted(event for event in events if event.startswith("CHECKS ")))
 
     def test_a_failure_in_a_cancelled_run_reads_no_later_page_of_contexts_for_one_it_cannot_find(self) -> None:
         # The rollup counts the cancelled run's failure, which the first page holds, so nothing is left to find.
-        self.github.pull_request(1, contexts=[check_run("complete", "FAILURE", suite="CANCELLED"),
-                                              *(check_run(f"job {index}") for index in range(2, 26))])
+        self.github.pull_request(1, contexts=[check_run("complete", "FAILURE", "CANCELLED", workflow=1),
+                                              check_run("complete", workflow=1, at=LATER),
+                                              *(check_run(f"job {index}") for index in range(3, 26))])
         self.fixer("acme/app#1 fix")
 
         events = self.cycle()["fixer"]

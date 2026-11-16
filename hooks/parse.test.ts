@@ -231,20 +231,26 @@ describe('GitHub', () => {
     })
   })
 
-  test('reads a cancelled run’s failed checks as cancelled, and notes a workflow whose newest run was cancelled', () => {
+  test('reads a cancelled run’s failed checks as cancelled once a newer run tests them again, and notes a workflow whose newest run was cancelled', () => {
+    expect(query.text).toContain('CheckRun { name conclusion')
     expect(query.text).toContain('checkSuite { conclusion workflowRun { createdAt workflow { databaseId } } }')
 
-    // A check run as the rollup lists it: its conclusion, and its workflow run's workflow, start, and conclusion.
-    type Run = [conclusion: string | null, suite: string | null, workflow: number, at: string]
+    // A check run as the rollup lists it: its name and conclusion, and its workflow run's conclusion, workflow,
+    // and start. A check run with no workflow belongs to no workflow run.
+    type Run = [name: string, conclusion: string | null, suite: string | null, workflow: number | null, at: string]
     const FIRST = '2026-11-16T22:00:00Z'
     const LATER = '2026-11-16T22:01:00Z'
     const read = (rollup: string, runs: Run[]) => {
       const counts = new Map<string, number>()
-      for (const [conclusion] of runs) counts.set(conclusion ?? 'IN_PROGRESS', (counts.get(conclusion ?? 'IN_PROGRESS') ?? 0) + 1)
-      const nodes = runs.map(([conclusion, suite, workflow, at]) => ({
+      for (const [, conclusion] of runs) counts.set(conclusion ?? 'IN_PROGRESS', (counts.get(conclusion ?? 'IN_PROGRESS') ?? 0) + 1)
+      const nodes = runs.map(([name, conclusion, suite, workflow, at]) => ({
         __typename: 'CheckRun',
+        name,
         conclusion,
-        checkSuite: { conclusion: suite, workflowRun: { createdAt: at, workflow: { databaseId: workflow } } },
+        checkSuite: {
+          conclusion: suite,
+          workflowRun: workflow === null ? null : { createdAt: at, workflow: { databaseId: workflow } },
+        },
       }))
       const contexts = { checkRunCountsByState: [...counts].map(([state, count]) => ({ state, count })), nodes }
       const node = { number: 1, commits: { nodes: [{ commit: { statusCheckRollup: { state: rollup, contexts } } }] } }
@@ -253,22 +259,47 @@ describe('GitHub', () => {
     }
     // A label starts a run that cancels the one in progress, whose `if: always()` job then fails.
     const cancelled: Run[] = [
-      ['CANCELLED', 'CANCELLED', 1, FIRST],
-      ['FAILURE', 'CANCELLED', 1, FIRST],
+      ['slow', 'CANCELLED', 'CANCELLED', 1, FIRST],
+      ['complete', 'FAILURE', 'CANCELLED', 1, FIRST],
     ]
 
     expect({
-      'the newer run passed': read('FAILURE', [...cancelled, ['SUCCESS', 'SUCCESS', 1, LATER], ['SUCCESS', 'SUCCESS', 1, LATER]]),
-      'the newer run still runs': read('FAILURE', [...cancelled, [null, null, 1, LATER]]),
+      'the newer run passed': read('FAILURE', [
+        ...cancelled,
+        ['slow', 'SUCCESS', 'SUCCESS', 1, LATER],
+        ['complete', 'SUCCESS', 'SUCCESS', 1, LATER],
+      ]),
+      'the newer run still runs': read('FAILURE', [...cancelled, ['slow', null, null, 1, LATER]]),
+      // The gathering job's failure cannot be told from a real one, so it stands until a newer run tests again.
       'nothing ran since': read('FAILURE', cancelled),
-      'another workflow failed': read('FAILURE', [...cancelled, ['FAILURE', 'FAILURE', 2, FIRST]]),
-      'a run failed and nothing cancelled it': read('FAILURE', [['FAILURE', 'FAILURE', 1, FIRST]]),
+      // A review's label starts a run whose job-level `if` skips every job, after `lint` failed in the run it cancels.
+      'the newer run skipped the failed check': read('FAILURE', [
+        ['lint', 'FAILURE', 'CANCELLED', 1, FIRST],
+        ['test', 'CANCELLED', 'CANCELLED', 1, FIRST],
+        ['lint', 'SKIPPED', 'SUCCESS', 1, LATER],
+        ['test', 'SKIPPED', 'SUCCESS', 1, LATER],
+      ]),
+      'only a cancelled run, with a passed job': read('FAILURE', [
+        ['lint', 'SUCCESS', 'CANCELLED', 1, FIRST],
+        ['test', 'CANCELLED', 'CANCELLED', 1, FIRST],
+      ]),
+      'another workflow failed': read('FAILURE', [
+        ...cancelled,
+        ['slow', 'SUCCESS', 'SUCCESS', 1, LATER],
+        ['complete', 'SUCCESS', 'SUCCESS', 1, LATER],
+        ['lint', 'FAILURE', 'FAILURE', 2, FIRST],
+      ]),
+      'a run failed and nothing cancelled it': read('FAILURE', [['lint', 'FAILURE', 'FAILURE', 1, FIRST]]),
+      'a check run that no workflow run made': read('FAILURE', [['external', 'FAILURE', 'CANCELLED', null, FIRST]]),
     }).toEqual({
       'the newer run passed': ['passing', false],
       'the newer run still runs': ['pending', false],
-      'nothing ran since': ['cancelled', true],
-      'another workflow failed': ['failing', true],
+      'nothing ran since': ['failing', true],
+      'the newer run skipped the failed check': ['failing', false],
+      'only a cancelled run, with a passed job': ['cancelled', true],
+      'another workflow failed': ['failing', false],
       'a run failed and nothing cancelled it': ['failing', false],
+      'a check run that no workflow run made': ['failing', false],
     })
   })
 

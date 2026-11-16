@@ -23,7 +23,7 @@ const FIELDS = `number title url state isDraft reviewDecision mergeable body
   commits(last: 1) { nodes { commit { status { context(name: "${REVIEW_CONTEXT}") { state } }
     statusCheckRollup { state contexts(first: 20) {
       checkRunCountsByState { state count } statusContextCountsByState { state count }
-      nodes { __typename ... on CheckRun { conclusion
+      nodes { __typename ... on CheckRun { name conclusion
         checkSuite { conclusion workflowRun { createdAt workflow { databaseId } } } } } } } } } }`
 
 // What an open drawer lists of its pull request's threads. GitHub counts
@@ -149,16 +149,65 @@ function suiteOf(context: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
+/** A check run's GitHub Actions run: its workflow, its start, and its conclusion. */
+interface Run {
+  workflow: number
+  at: string
+  conclusion: string | null
+}
+
+/** The workflow run a check run belongs to, or none for a check run that no workflow run made. */
+function runOf(context: unknown): Run | undefined {
+  const suite = suiteOf(context)
+  const run = isRecord(suite?.workflowRun) ? suite.workflowRun : undefined
+  const workflow = isRecord(run?.workflow) ? run.workflow.databaseId : undefined
+  const at = stringOf(run?.createdAt)
+  return typeof workflow === 'number' && at !== null ? { workflow, at, conclusion: stringOf(suite?.conclusion) } : undefined
+}
+
+/**
+ * Whether a check run belongs to a cancelled workflow run that a newer run
+ * of the same workflow on the head tests again: one still running, or one
+ * whose check run of the same name ran rather than skipped or was
+ * cancelled. The newer run's own result stands for the code. A cancelled
+ * run with nothing newer, or whose newer run skipped the check, keeps its
+ * failures, since one of them may have failed before the cancel.
+ */
+function supersededOf(context: unknown, contexts: unknown[]): boolean {
+  const run = runOf(context)
+  if (run?.conclusion !== 'CANCELLED' || !isRecord(context)) return false
+  return contexts.some(other => {
+    const newer = runOf(other)
+    if (newer === undefined || !isRecord(other) || newer.workflow !== run.workflow || newer.at <= run.at) return false
+    const conclusion = stringOf(other.conclusion)
+    return newer.conclusion === null || (other.name === context.name && conclusion !== 'SKIPPED' && conclusion !== 'CANCELLED')
+  })
+}
+
+/** Each workflow's newest run on the head, among the check runs the rollup lists. */
+function newestRuns(contexts: unknown[]): Run[] {
+  const newest = new Map<number, Run>()
+  for (const context of contexts) {
+    const run = runOf(context)
+    if (run === undefined) continue
+    const seen = newest.get(run.workflow)
+    if (seen === undefined || run.at > seen.at) newest.set(run.workflow, run)
+  }
+  return [...newest.values()]
+}
+
 /**
  * The head's checks from the rollup's counts, which cover every check run
- * and commit status, less two failures that say nothing about the code: the
- * `projector/review` status, which a review that requests changes sets to
- * `failure`, and a failed check run of a cancelled workflow run, such as a
- * newer run in the same concurrency group cancels, whose `if: always()` job
- * fails though nothing in the code did. GitHub keeps the cancelled run's
- * checks on the head beside the newer run's. A head with only a cancelled
- * run's checks reads `cancelled`. Without the counts the rollup's own state
- * stands.
+ * and commit status, less two kinds of failure that say nothing about the
+ * code: the `projector/review` status, which a review that requests changes
+ * sets to `failure`, and a failed check run of a cancelled workflow run that
+ * a newer run tests again. A newer run in the same concurrency group cancels
+ * the one in progress, as a review's label does where CI starts on
+ * `labeled`, and the cancelled run's `if: always()` job fails though nothing
+ * in the code did. GitHub keeps the cancelled run's checks on the head
+ * beside the newer run's. A head with nothing failing or pending reads
+ * `cancelled` when every workflow's newest run on it was cancelled. Without
+ * the counts the rollup's own state stands.
  */
 function checksOf(commit: Record<string, unknown>): Checks | null {
   const rollup = commit.statusCheckRollup
@@ -178,14 +227,19 @@ function checksOf(commit: Record<string, unknown>): Checks | null {
   const status = commit.status
   const review = isRecord(status) && isRecord(status.context) ? stringOf(status.context.state) : null
   if (review !== null) counts[CONTEXT_CHECKS.statusContextCountsByState[review] ?? 'passing'] -= 1
-  for (const context of nodesOf(contexts)) {
+  const nodes = nodesOf(contexts)
+  for (const context of nodes) {
     const conclusion = isRecord(context) ? stringOf(context.conclusion) : null
-    if (suiteOf(context)?.conclusion === 'CANCELLED' && CONTEXT_CHECKS.checkRunCountsByState[conclusion ?? ''] === 'failing') {
+    if (CONTEXT_CHECKS.checkRunCountsByState[conclusion ?? ''] === 'failing' && supersededOf(context, nodes)) {
       counts.failing -= 1
       counts.cancelled += 1
     }
   }
-  return (['failing', 'pending', 'passing', 'cancelled'] as const).find(checks => counts[checks] > 0) ?? null
+  if (counts.failing > 0) return 'failing'
+  if (counts.pending > 0) return 'pending'
+  const newest = newestRuns(nodes)
+  if (newest.length > 0 && newest.every(run => run.conclusion === 'CANCELLED')) return 'cancelled'
+  return (['passing', 'cancelled'] as const).find(checks => counts[checks] > 0) ?? null
 }
 
 /**
@@ -197,17 +251,7 @@ function checksOf(commit: Record<string, unknown>): Checks | null {
 function cancelledOf(commit: Record<string, unknown>): boolean {
   const rollup = commit.statusCheckRollup
   const contexts = isRecord(rollup) ? nodesOf(rollup.contexts) : []
-  const newest = new Map<number, { at: string; conclusion: unknown }>()
-  for (const context of contexts) {
-    const suite = suiteOf(context)
-    const run = isRecord(suite?.workflowRun) ? suite.workflowRun : undefined
-    const workflow = isRecord(run?.workflow) ? run.workflow.databaseId : undefined
-    const at = stringOf(run?.createdAt)
-    if (typeof workflow !== 'number' || at === null) continue
-    const seen = newest.get(workflow)
-    if (seen === undefined || at > seen.at) newest.set(workflow, { at, conclusion: suite?.conclusion })
-  }
-  return [...newest.values()].some(run => run.conclusion === 'CANCELLED')
+  return newestRuns(contexts).some(run => run.conclusion === 'CANCELLED')
 }
 
 const LABEL_COLOR = /^[0-9a-f]{6}$/i

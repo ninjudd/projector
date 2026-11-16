@@ -305,9 +305,12 @@ review wants something:
 - **`failing`**, in red, while the head's checks fail. The panel leaves out
   the `projector/review` status a review posts, as the drawer's checks do.
   A review fails that status when it finds something, which the row already
-  shows as `changes` or `threads`. It also leaves out every check run of a
-  workflow run that was cancelled, as a newer run in the same concurrency
-  group cancels it, such as one a review's label starts.
+  shows as `changes` or `threads`. It also leaves out a failed check run of
+  a cancelled workflow run once a newer run of the same workflow tests the
+  code again, by still running or by running a check of the same name
+  rather than skipping or cancelling it. A newer run in the same
+  concurrency group cancels the one in progress, such as one a review's
+  label starts. A cancelled run with nothing newer keeps its failures.
 - **`changes`**, in yellow, while a review requests changes.
 - **`threads`**, in yellow, while review threads are unresolved.
 - **`reviewing`**, in orange, while the pull request carries the
@@ -328,9 +331,11 @@ Notes follow the title and name every other state that applies, in the
 order above and each in its color: `failing`, `changes`, `threads`,
 `reviewing`, `clean`, and `draft` in italic, then `approved` in green, and
 last `cancelled`, muted, while a workflow's newest run on the head was
-cancelled, so that nothing has run its checks since. So a signed-off pull
-request whose checks fail reads `failing` with a green `clean` after its
-title, and a draft that conflicts says `draft` as well as its italic number.
+cancelled, so that nothing has run its checks since. A failure in that
+run still counts, so such a head can read `failing` with a `cancelled`
+note. So a signed-off pull request whose checks fail reads `failing` with a
+green `clean` after its title, and a draft that conflicts says `draft` as
+well as its italic number.
 No note names `conflict`, which always takes the state. While a pull
 request's drawer is open, its row spells the holds out as `checks failing`,
 `changes requested`, and the threads' count, such as `2 threads`, and names
@@ -411,10 +416,11 @@ branch, in the palette's cyan, its size, its checks, and every label it
 carries. The size reads as a diff stat: the insertions, such as `+84`, in
 green and the deletions, such as `−12`, in red. The checks' state takes a
 color of its own. It counts every check run and commit status on the head
-but the `projector/review` status and the check runs of a cancelled
-workflow run. So a head whose only failure is a review's verdict reads
-`checks passing`, one whose only check is that status shows no checks at
-all, and one that has only a cancelled run's checks reads `checks
+but the `projector/review` status and the failed check runs of a
+cancelled workflow run that a newer run tests again. So a head whose only
+failure is a review's verdict reads `checks passing`, one whose only check
+is that status shows no checks at all, and one with nothing failing or
+running whose every workflow's newest run was cancelled reads `checks
 cancelled`, muted. The rest, ` in 5 files` and each `·` included, keeps the
 default text color. Each label is drawn as GitHub's light theme draws
 it: its name, as GitHub spells it, on the label's own color, in black on a

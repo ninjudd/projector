@@ -116,7 +116,7 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
       commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
       labels: { nodes: [{ name: 'reviewing' }] },
     }),
-    // A label started a run that cancelled the only one, whose `if: always()` job then failed.
+    // The only run was cancelled after one job passed, so nothing failed and nothing has run the checks since.
     p23: pr(23, 'Change whose run a label cancelled', {
       commits: {
         nodes: [
@@ -126,11 +126,15 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
                 state: 'FAILURE',
                 contexts: {
                   checkRunCountsByState: [
+                    { state: 'SUCCESS', count: 1 },
                     { state: 'CANCELLED', count: 1 },
-                    { state: 'FAILURE', count: 1 },
                   ],
-                  nodes: ['CANCELLED', 'FAILURE'].map(conclusion => ({
+                  nodes: [
+                    ['lint', 'SUCCESS'],
+                    ['test', 'CANCELLED'],
+                  ].map(([name, conclusion]) => ({
                     __typename: 'CheckRun',
+                    name,
                     conclusion,
                     checkSuite: {
                       conclusion: 'CANCELLED',
@@ -803,7 +807,7 @@ test('a row’s notes name every other status that applies, and an open drawer s
     'Signed-off change failing its checks': [['clean', 'success']],
     // A running review the failing checks beat shows as well, in the orange the drawer draws a reviewer in.
     'Failing change a review is reading': [['reviewing', 'claude']],
-    // A run a label cancelled, with nothing run since, is no failure; the row says so last, muted.
+    // A cancelled run with nothing run since, in which nothing failed, is no failure; the row says so last, muted.
     'Change whose run a label cancelled': [['cancelled', 'subtle']],
   })
 
@@ -825,7 +829,8 @@ test('a row’s notes name every other status that applies, and an open drawer s
   await clock.settle()
   expect(await notesOf('Approved change')).toEqual([['3 threads', 'warning'], ' · ', ['approved', 'success']])
 
-  // A head whose only run was cancelled is ready, not failing, and its drawer says its checks were cancelled, muted.
+  // A head whose only run was cancelled is ready, and its drawer says its checks were cancelled, muted, though a
+  // job passed before the cancel.
   await ui.press({ key: 'pr:o/r#23' })
   await clock.settle()
   const texts = await ui.findAll({ type: 'Text' })
