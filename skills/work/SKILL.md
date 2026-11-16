@@ -101,6 +101,10 @@ repository reviews it:
 project review ready <number> --repo <owner>/<repo>
 ```
 
+Run it as a tool call of its own, not after `cd` and joined to no other
+command, and never as a bare `gh pr ready`, as `../fix-pr/SKILL.md`
+describes under "Hold the pull request while changes are built".
+
 Do not hold a finished pull request in draft until the rest of the work is
 done. Keep one a draft only while you still have changes to push to it, or
 while a request asks the user to test it or to review its plan and they

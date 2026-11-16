@@ -1214,14 +1214,17 @@ that history instead of rediscovering it.
   replacement under the same name. It rebuilds its context from GitHub: the
   pull request's Projector reviews, their finding threads, and the replies
   on them.
-- A subagent whose publish the host refused reports the refusal and stops
-  that publish; it never retries a refused publish in another form, as this
-  skill and `../summarize-pr/SKILL.md` say. The subagent's report names
-  why the host refused it and the action that would let it through. Tell
-  the user once for the session, not once per pull request, that the
+- A subagent whose publish the host refused while it was joined to other
+  commands runs it again alone, the form the rule matches, as this skill
+  and `../summarize-pr/SKILL.md` say. A subagent whose publish the host
+  refused when it ran alone reports the refusal and stops that publish; it
+  never retries a refused publish in another form. The subagent's report
+  names why the host refused it and the action that would let it through.
+  Tell the user once for the session, not once per pull request, that the
   host's automatic approval refused a publish, and relay that action. Send
   the user to `project init` in a terminal only when the subagent reports
-  the rule missing, as `summary_publish` `false` or no file listed. When it
+  the rule missing: `allowed` `false` for a review's publish,
+  `summary_publish` `false` for a summary's, or no file listed. When it
   reports a matching rule, ask the user to authorize the publish or to run
   it themselves, and on Codex say that a new session would load a rule
   written after this one started. Then keep reviewing.

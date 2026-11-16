@@ -3174,7 +3174,7 @@ class StatusTests(LatestWinsCase):
         # A host's automatic approval can refuse a bare `gh pr ready` as self-approval, where the rule that
         # allows Projector's commands allows these.
         skills = Path(cli.__file__).resolve().parents[2] / "skills"
-        for name in ("fix-pr", "implement", "spec"):
+        for name in ("fix-pr", "implement", "spec", "work", "cleanup"):
             text = (skills / name / "SKILL.md").read_text()
             with self.subTest(skill=name):
                 self.assertIn("project review ready <number> --repo <owner>/<repo>", text)
@@ -3197,7 +3197,7 @@ class StatusTests(LatestWinsCase):
             text = path.read_text()
             for block in re.findall(r"^\s*```(?:sh|bash)\n(.*?)^\s*```", text, re.M | re.S):
                 for line in block.splitlines():
-                    if re.search(r"project review (ready|hold|publish)\b", line):
+                    if re.search(r"project (review (ready|hold|publish)|summary publish)\b", line):
                         with self.subTest(skill=path.parent.name, line=line.strip()):
                             # A placeholder such as `<clean|changes-requested>` names choices, not a pipe.
                             bare = re.sub(r"<[^>]*>", "", line)
