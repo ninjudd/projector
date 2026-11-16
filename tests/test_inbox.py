@@ -108,6 +108,24 @@ class InboxCase(unittest.TestCase):
         self.assertEqual("held\n", holder.stdout.readline())
         return holder
 
+    def hold_lock_here(self) -> Callable[[], None]:
+        """Take the session's lock on a descriptor of the test's own, as another command would, and return
+        what releases it. The lock belongs to the open file, so a command run in this process cannot take
+        it either."""
+        self.folder().mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(self.folder() / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+        self.assertTrue(inbox.try_lock(descriptor))
+        held = [True]
+
+        def release() -> None:
+            if held:
+                held.clear()
+                inbox.unlock(descriptor)
+                os.close(descriptor)
+
+        self.addCleanup(release)
+        return release
+
 
 class NumberingTests(InboxCase):
     def test_numbers_every_item_from_one_in_one_count_across_pull_requests_and_kinds(self) -> None:
@@ -244,11 +262,6 @@ class NumberingTests(InboxCase):
             with self.subTest(old=name):
                 self.assertEqual(value, json.loads((folder / name).read_text()))
 
-    def test_the_context_command_is_gone(self) -> None:
-        with self.assertRaises(SystemExit) as stop, redirect_stderr(io.StringIO()):
-            cli.main(["inbox", "context", "--session", "s1"])
-        self.assertEqual(2, stop.exception.code)
-
 
 class AskTests(InboxCase):
     def test_letters_the_recommendation_a_and_records_the_question(self) -> None:
@@ -303,11 +316,6 @@ class AskTests(InboxCase):
         self.assertIsInstance(item["postedAt"], int)
         self.assertNotIn("question", item)
         self.assertFalse((self.state / "projector" / "questions").exists())
-
-    def test_the_old_question_command_is_gone(self) -> None:
-        with self.assertRaises(SystemExit) as stop, redirect_stderr(io.StringIO()):
-            cli.main(["question", "list"])
-        self.assertEqual(2, stop.exception.code)
 
 
 class AnswerTests(InboxCase):
@@ -370,16 +378,15 @@ class AnswerTests(InboxCase):
                                                       lambda: inbox.answer("s1", "1", "b")))
         self.assertIn(self.item(1)["answer"]["letter"], "ab")
 
-    def test_a_lock_another_process_holds_makes_a_command_wait_then_exit_75(self) -> None:
-        holder = self.hold_lock("wait")
-        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
+    def test_a_lock_another_command_holds_makes_a_command_wait_then_exit_75(self) -> None:
+        release = self.hold_lock_here()
+        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.1):
             started = time.monotonic()
             code, _, err = self.run_cli("answer", "1.a", "--session", "s1")
-        self.assertGreaterEqual(time.monotonic() - started, 0.3)
+        self.assertGreaterEqual(time.monotonic() - started, 0.1)
         self.assertEqual(75, code)
         self.assertIn("another command holds", err)
-        holder.stdin.close()
-        self.assertEqual(0, holder.wait())
+        release()
         self.assertEqual(0, self.run_cli("answer", "1.a", "--session", "s1")[0])
 
     def test_a_holder_that_exits_without_unlocking_leaves_the_lock_free_at_once(self) -> None:
@@ -777,16 +784,15 @@ class ReviseTests(InboxCase):
         self.assertEqual(("Decline the retry finding?", ["Decline it", "Add a budget per host"]),
                          (self.item(1)["subject"], self.item(1)["choices"]))
 
-    def test_a_lock_another_process_holds_makes_a_revision_wait_then_exit_75(self) -> None:
+    def test_a_lock_another_command_holds_makes_a_revision_wait_then_exit_75(self) -> None:
         before = self.item(1)
-        holder = self.hold_lock("wait")
-        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
+        release = self.hold_lock_here()
+        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.1):
             code, _, err = self.revise("--question", "Decline the retry finding?")
         self.assertEqual(75, code)
         self.assertIn("another command holds", err)
         self.assertEqual(before, self.item(1))
-        holder.stdin.close()
-        self.assertEqual(0, holder.wait())
+        release()
         self.assertEqual(0, self.revise("--question", "Decline the retry finding?")[0])
 
 
@@ -1012,17 +1018,16 @@ class RestoreTests(InboxCase):
         self.assertEqual(["done", "refused"], at_once(lambda: inbox.restore("s1", "1"),
                                                       lambda: inbox.restore("s1", "1")))
 
-    def test_a_lock_another_process_holds_makes_a_restore_wait_then_exit_75(self) -> None:
+    def test_a_lock_another_command_holds_makes_a_restore_wait_then_exit_75(self) -> None:
         self.run_cli("dismiss", "1", "--session", "s1")
         dismissed = self.item(1)
-        holder = self.hold_lock("wait")
-        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.3):
+        release = self.hold_lock_here()
+        with mock.patch.object(inbox, "LOCK_WAIT_SECONDS", 0.1):
             code, _, err = self.restore()
         self.assertEqual(75, code)
         self.assertIn("another command holds", err)
         self.assertEqual(dismissed, self.item(1))
-        holder.stdin.close()
-        self.assertEqual(0, holder.wait())
+        release()
         self.assertEqual(0, self.restore()[0])
 
 

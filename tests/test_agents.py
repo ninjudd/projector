@@ -178,14 +178,23 @@ class RegisterTests(AgentCase):
     def test_two_registrations_racing_for_one_name_leave_exactly_one_holder(self) -> None:
         self.claude(A)
         self.claude(B)
-        inside, release = threading.Event(), threading.Event()
+        inside, release, waiting = threading.Event(), threading.Event(), threading.Event()
         claim = agents.this_machine
+        lock = agents.locked
 
         def held_open(root: Path) -> str:
             if not inside.is_set():
                 inside.set()
                 release.wait(10)
             return claim(root)
+
+        @contextlib.contextmanager
+        def watched(folder: Path):
+            # The second registration reaching the names' lock while the first holds it open.
+            if folder == self.root / "agents" and inside.is_set():
+                waiting.set()
+            with lock(folder):
+                yield
 
         results: dict[str, str] = {}
 
@@ -197,13 +206,13 @@ class RegisterTests(AgentCase):
             except agents.AgentError as error:
                 results[session] = str(error)
 
-        with mock.patch.object(agents, "this_machine", held_open):
+        with mock.patch.object(agents, "this_machine", held_open), mock.patch.object(agents, "locked", watched):
             first = threading.Thread(target=register, args=(A,))
             first.start()
             self.assertTrue(inside.wait(10))
             second = threading.Thread(target=register, args=(B,))
             second.start()
-            second.join(0.5)
+            self.assertTrue(waiting.wait(10), "the second registration never took the names' lock")
             release.set()
             first.join(10)
             second.join(10)

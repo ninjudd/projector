@@ -28,5 +28,5 @@ jobs:
       # Type-checks the site's TypeScript and lints it with the strict rule set.
       - run: npm run check
         working-directory: site
-      - run: PYTHONPATH=src python3 -m unittest discover -v
+      - run: PYTHONPATH=src python3 -m tests
       - run: PYTHONPATH=src python3 -m projector check

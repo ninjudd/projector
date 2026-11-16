@@ -101,7 +101,7 @@ first:
    declarations.
 
 ```sh
-PYTHONPATH=src python3 -m unittest discover -v
+PYTHONPATH=src python3 -m tests
 PYTHONPATH=src python3 -m projector check
 claude plugin validate .
 claude plugin validate skills
@@ -121,6 +121,18 @@ libraries from beside itself and checks this worktree's files, as the
 worktree's own would. The script writes nothing to either checkout. When
 neither checkout has `tsc`, or neither has the declarations, the script fails
 and says how to get them.
+
+`python3 -m tests` runs the suite in one worker process per CPU, each
+running `unittest` on a few tests of one class, and prints each failing
+chunk's output before one summary. Pass `-j` to set the number of workers,
+`-v` for every test's name, or a module, class, or test to run only that,
+as `unittest` takes it:
+
+```sh
+PYTHONPATH=src python3 -m tests tests.test_review.GateTests
+```
+
+`python3 -m unittest` still runs any part of the suite in one process.
 
 The Check workflow runs `npm run check`, the tests, and `project check` on
 every pull request. It cannot type-check `hooks/`, because only an

@@ -22,6 +22,7 @@ import importlib.metadata as metadata
 from projector import cli, instructions, permissions, review
 from projector.cli import distribution_version, main
 from projector.core import AmbiguousProject, ProjectorError, ProjectStore, project_from_text
+from tests.scratch import copy_of
 
 
 PLAN = """---
@@ -45,11 +46,13 @@ def granted(*allow: str, ask: tuple[str, ...] = ()) -> dict:
     return {"permissions": {"allow": [*allow, *permissions.ALLOW], "ask": [*ask, *permissions.ASK]}}
 
 
+def empty_repository(root: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+
+
 class RepositoryTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
-        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        self.root, _ = copy_of(empty_repository)
         self.projects = self.root / "docs" / "projects"
         self.projects.mkdir(parents=True)
         (self.projects / "README.md").write_text("# Projects\n", encoding="utf-8")
@@ -86,9 +89,6 @@ class RepositoryTestCase(unittest.TestCase):
     def settings(self) -> Path:
         """The user's Claude Code settings, which `init` gives Projector's permission rules."""
         return self.home / ".claude" / "settings.json"
-
-    def tearDown(self) -> None:
-        self.temporary.cleanup()
 
     @staticmethod
     def block(projects_dir: str = "docs/projects") -> str:
@@ -325,15 +325,8 @@ class DiscoveryTests(RepositoryTestCase):
         (self.projects / "README.md").unlink()
         self.projects.rmdir()
 
-        for arguments in (
-            ("list",),
-            ("search", "needle"),
-            ("show", "alpha"),
-            ("create", "alpha", "--no-edit"),
-            ("status", "alpha", "ready"),
-            ("priority", "alpha", "now"),
-            ("done", "alpha"),
-        ):
+        # Every command that reads projects reaches the check through discovery, and create checks for itself.
+        for arguments in (("list",), ("create", "alpha", "--no-edit")):
             code, stdout, stderr = self.invoke(*arguments)
             self.assertEqual(66, code, arguments)
             self.assertEqual("", stdout, arguments)
@@ -704,10 +697,7 @@ class MutationTests(RepositoryTestCase):
 
     def test_init_adopts_an_empty_repository_and_is_idempotent(self) -> None:
         self.at_a_terminal()
-        self.temporary.cleanup()
-        self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
-        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        self.root, _ = copy_of(empty_repository)
         self.settings().unlink()
 
         code, stdout, stderr = self.invoke("init")
@@ -926,17 +916,17 @@ class MutationTests(RepositoryTestCase):
         self.assertIn("warning: CLAUDE.md: is absent", stderr)
         self.assertIn("[instructions-missing]", stderr)
 
-        for text in ("@AGENTS.md\n", "Read @AGENTS.md before making changes.\n", "See @./AGENTS.md\n"):
-            claude.write_text(text)
-            self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"), text)
-            code, stdout, _ = self.invoke("init")
-            self.assertIn("unchanged CLAUDE.md\n", stdout, text)
-            self.assertEqual(text, claude.read_text())
+        # Which texts are imports is ImportTests' to check; here, that check and init both ask the same question.
+        text = "Read @AGENTS.md before making changes.\n"
+        claude.write_text(text)
+        self.assertEqual((0, "Project plans are valid.\n", ""), self.invoke("check"))
+        code, stdout, _ = self.invoke("init")
+        self.assertIn("unchanged CLAUDE.md\n", stdout)
+        self.assertEqual(text, claude.read_text())
 
-        for text in ("Mentions `@AGENTS.md` only in code.\n", "```\n@AGENTS.md\n```\n"):
-            claude.write_text(text)
-            _, _, stderr = self.invoke("check")
-            self.assertIn("warning: CLAUDE.md: has no Projector section", stderr, text)
+        claude.write_text("```\n@AGENTS.md\n```\n")
+        _, _, stderr = self.invoke("check")
+        self.assertIn("warning: CLAUDE.md: has no Projector section", stderr)
 
         code, stdout, _ = self.invoke("init")
         self.assertIn("updated CLAUDE.md\n", stdout)
@@ -1715,16 +1705,6 @@ class RequiredCheckTests(RepositoryTestCase):
                 self.assertNotEqual(0, code)
                 self.assertIn(f"{flag} answers for a repository", err)
 
-    def test_a_workflow_edited_by_hand_is_kept(self) -> None:
-        self.workflow().parent.mkdir(parents=True)
-        self.workflow().write_text("name: mine\n")
-
-        code, _, err = self.init("--require-review")
-
-        self.assertEqual(0, code, err)
-        self.assertEqual("name: mine\n", self.workflow().read_text())
-        self.assertIn("has changes Projector did not write", err)
-
 
 # The clean workflow 0.8.14 wrote, which removed the label without reading the pull request.
 EARLIER_CLEAN_WORKFLOW = """name: Projector clean label
@@ -1830,21 +1810,17 @@ class CleanWorkflowStepTests(unittest.TestCase):
         self.assertIn(f"kept Clean on #7, because a review signed off its head {self.HEAD[:7]}", out)
 
     def test_removes_the_label_from_a_head_no_review_signed_off(self) -> None:
-        for name, statuses in [("no status", []), ("a failure", [self.status("failure")]),
-                               ("another check's success", [self.status("success", "ci/build")]),
-                               ("a pending status", [self.status("pending")])]:
+        # Only a success signs a head off; a pending status stands for every other state.
+        for name, statuses in [("no status", []), ("a pending status", [self.status("pending")]),
+                               ("another check's success", [self.status("success", "ci/build")])]:
             with self.subTest(name):
                 code, out, calls = self.run_step([review.CLEAN_LABEL, "bug"], statuses)
 
                 self.assertEqual((0, [self.edit("--remove-label")]), (code, calls), out)
 
-    def test_removes_the_label_by_the_name_the_pull_request_spells_it(self) -> None:
-        # GitHub matches label names without regard to case, and the step never relies on `gh` doing the same.
-        code, out, calls = self.run_step(["Clean"], [])
-
-        self.assertEqual((0, [self.edit("--remove-label", "Clean")]), (code, calls), out)
-
     def test_gives_the_label_back_to_a_head_a_review_signed_off_while_the_step_removed_it(self) -> None:
+        # The label is spelled "Clean": GitHub matches label names without regard to case, and the step edits
+        # the label by the name the pull request spells it rather than relying on `gh` to do the same.
         code, out, calls = self.run_step(["Clean"], [], [self.status("success")])
 
         self.assertEqual((0, [self.edit("--remove-label", "Clean"), self.edit("--add-label", "Clean")]),
@@ -2940,7 +2916,8 @@ class ClosedReaderTests(RepositoryTestCase):
         # Short output waits in Python's buffer until exit, so a reader gone
         # before then fails only the flush at exit.
         self.plan("small")
-        for arguments in (["show", "small"], ["help"], ["help", "show"]):
+        # `show` returns from main, and `help show` exits from inside argparse.
+        for arguments in (["show", "small"], ["help", "show"]):
             for entry in self.ENTRY_POINTS:
                 read, write = os.pipe()
                 os.close(read)

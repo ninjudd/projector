@@ -13,6 +13,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 from pathlib import Path
 
+from tests.scratch import copy_of
+
 ROOT = Path(__file__).parents[1]
 spec = importlib.util.spec_from_file_location("release", ROOT / ".github" / "scripts" / "release.py")
 release = importlib.util.module_from_spec(spec)
@@ -113,19 +115,42 @@ class SetTests(unittest.TestCase):
             release.current(self.root)
 
 
+def commit_version(repo: Path, version: str) -> str:
+    """Commit `version` to the three version files and push it to the remote's `trunk`."""
+    for name in FILES:
+        path = repo / name
+        if name == "pyproject.toml":
+            path.write_text('[project]\nname = "projector-cli"\nversion = "%s"\n' % version)
+        else:
+            data = json.loads(path.read_text())
+            data["version"] = version
+            path.write_text(json.dumps(data, indent=2) + "\n")
+    run(repo, "git", "add", "-A")
+    run(repo, "git", "commit", "--quiet", "-m", version)
+    # The branch is not main: a developer's pre-push hook may refuse pushes to main.
+    run(repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
+    return run(repo, "git", "rev-parse", "HEAD")
+
+
+def released_clone(tmp: Path) -> None:
+    """Build a bare remote and a clone of it whose `trunk` carries version 0.5.0."""
+    remote = tmp / "remote.git"
+    run(tmp, "git", "init", "--quiet", "--bare", str(remote))
+    repo = tmp / "repo"
+    run(tmp, "git", "clone", "--quiet", str(remote), str(repo))
+    for key, value in (("user.name", "Test"), ("user.email", "test@example.com"),
+                       ("commit.gpgsign", "false"), ("tag.gpgsign", "false")):
+        run(repo, "git", "config", key, value)
+    copy_version_files(repo)
+    commit_version(repo, "0.5.0")
+
+
 class TagTests(unittest.TestCase):
     def setUp(self) -> None:
-        tmp = Path(tempfile.mkdtemp())
+        tmp, _ = copy_of(released_clone)
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         self.remote = tmp / "remote.git"
-        run(tmp, "git", "init", "--quiet", "--bare", str(self.remote))
         self.repo = tmp / "repo"
-        run(tmp, "git", "clone", "--quiet", str(self.remote), str(self.repo))
-        for key, value in (("user.name", "Test"), ("user.email", "test@example.com"),
-                           ("commit.gpgsign", "false"), ("tag.gpgsign", "false")):
-            run(self.repo, "git", "config", key, value)
-        copy_version_files(self.repo)
-        self.commit("0.5.0")
         self.github = tmp / "github"
         self.github.mkdir()
         bin_dir = tmp / "bin"
@@ -151,19 +176,7 @@ class TagTests(unittest.TestCase):
         return path.read_text().splitlines() if path.exists() else []
 
     def commit(self, version: str) -> str:
-        for name in FILES:
-            path = self.repo / name
-            if name == "pyproject.toml":
-                path.write_text('[project]\nname = "projector-cli"\nversion = "%s"\n' % version)
-            else:
-                data = json.loads(path.read_text())
-                data["version"] = version
-                path.write_text(json.dumps(data, indent=2) + "\n")
-        run(self.repo, "git", "add", "-A")
-        run(self.repo, "git", "commit", "--quiet", "-m", version)
-        # The branch is not main: a developer's pre-push hook may refuse pushes to main.
-        run(self.repo, "git", "push", "--quiet", "origin", "HEAD:trunk")
-        return run(self.repo, "git", "rev-parse", "HEAD")
+        return commit_version(self.repo, version)
 
     def commit_other_change(self) -> None:
         (self.repo / "notes.txt").write_text("not a release\n")
@@ -197,6 +210,8 @@ class TagTests(unittest.TestCase):
         self.assertEqual(first, self.remote_tag("v0.5.0"))
         self.assertEqual(first, self.remote_tag("v0"))
         self.assertEqual(["v0.5.0"], self.releases())
+        # --verify-tag keeps GitHub from making the tag itself when the push did not land.
+        self.assertIn("release create v0.5.0 --verify-tag --generate-notes --repo test/projector", self.gh_calls())
 
         second = self.commit("0.5.1")
         self.tag()
@@ -204,10 +219,6 @@ class TagTests(unittest.TestCase):
         self.assertEqual(second, self.remote_tag("v0.5.1"))
         self.assertEqual(second, self.remote_tag("v0"))
         self.assertEqual(["v0.5.0", "v0.5.1"], self.releases())
-
-    def test_creates_the_github_release_for_the_exact_tag(self) -> None:
-        self.tag()
-        self.assertIn("release create v0.5.0 --verify-tag --generate-notes --repo test/projector", self.gh_calls())
 
     def test_no_release_pushes_only_the_tags(self) -> None:
         self.tag(github_release=False)

@@ -75,7 +75,7 @@ a repository, branch, review, or account does not authorize mutation.
 Run the full gate from the repository root:
 
 ```sh
-PYTHONPATH=src python3 -m unittest discover -v
+PYTHONPATH=src python3 -m tests
 PYTHONPATH=src python3 -m projector check
 claude plugin validate .
 claude plugin validate skills

@@ -105,6 +105,12 @@ class InstallTests(unittest.TestCase):
             # GitHub, which a unit test must not reach for.
             "PROJECTOR_OFFLINE": "1",
         }
+        # The installer parses JSON with `python3`, which a version manager's
+        # shim on PATH can make ten times slower to start.
+        (self.fake_bin / "python3").symlink_to(sys.executable)
+        # Without a `project` of its own, `status` would ask the one installed
+        # on the machine running the tests. A test about that row fakes its own.
+        self.fake_project(None)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()

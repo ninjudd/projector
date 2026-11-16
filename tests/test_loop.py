@@ -121,13 +121,12 @@ class DropTests(LoopCase):
         self.assertEqual("acme/app#2\n  !ACME/App#2  \n", self.tracked.read_text())
 
     def test_refuses_a_reference_that_is_not_owner_repo_number(self) -> None:
+        # The forms check_reference refuses are AddTests' table; this checks that drop asks it.
         self.tracked.write_text("acme/app#1\n")
-        for written in ("acme/app", "acme/app#0", "#12", "acme/app#12 extra", "!acme/app#12"):
-            with self.subTest(written=written):
-                code, out, err = self.run_cli("drop", written)
 
-                self.assertEqual((65, ""), (code, out))
-                self.assertEqual(f"project: {written!r} is not owner/repo#number\n", err)
+        code, out, err = self.run_cli("drop", "acme/app")
+
+        self.assertEqual((65, "", "project: 'acme/app' is not owner/repo#number\n"), (code, out, err))
         self.assertEqual("acme/app#1\n", self.tracked.read_text())
 
     def test_refuses_a_tracked_file_that_does_not_exist(self) -> None:
@@ -218,13 +217,12 @@ class RemoveTests(LoopCase):
         self.assertEqual("acme/app#1\n", self.tracked.read_text())
 
     def test_refuses_a_reference_that_is_not_owner_repo_number(self) -> None:
+        # The forms check_reference refuses are AddTests' table; this checks that remove asks it.
         self.tracked.write_text("acme/app#1\n")
-        for written in ("acme/app", "acme/app#0", "#12", "acme/app#1 extra", "!acme/app#1"):
-            with self.subTest(written=written):
-                code, out, err = self.run_cli("remove", written)
 
-                self.assertEqual((65, ""), (code, out))
-                self.assertEqual(f"project: {written!r} is not owner/repo#number\n", err)
+        code, out, err = self.run_cli("remove", "acme/app#1 extra")
+
+        self.assertEqual((65, "", "project: 'acme/app#1 extra' is not owner/repo#number\n"), (code, out, err))
         self.assertEqual("acme/app#1\n", self.tracked.read_text())
 
     def test_refuses_a_tracked_file_that_does_not_exist(self) -> None:

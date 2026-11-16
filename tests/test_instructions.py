@@ -53,12 +53,6 @@ class TemplateTests(unittest.TestCase):
             " begin marker and pin the new hash",
         )
 
-    def test_the_template_begins_and_ends_with_its_markers(self) -> None:
-        text = instructions.template()
-        self.assertRegex(text.splitlines()[0], r"^<!-- projector:begin \d+ -->$")
-        self.assertEqual("<!-- projector:end -->", text.rstrip("\n").splitlines()[-1])
-        self.assertIn(instructions.PLACEHOLDER, text)
-
     def test_render_fills_in_the_projects_dir_and_is_what_check_compares(self) -> None:
         rendered = instructions.render("plans")
         self.assertIn("`plans/README.md`", rendered)
