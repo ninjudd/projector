@@ -87,6 +87,9 @@ or completes an acceptance criterion. Follow the writing guide in
 sections rather than renumbering cited sections. When this change alters
 behavior that a `completed` plan describes, update the living documentation
 and leave that plan as it is, because it records what was decided and built.
+A completed plan still records a result: when its outcome deferred a check
+until after the merge, record the check's result in the outcome once it
+runs, as `../finish/SKILL.md` describes.
 Create a nested project only when it has an independently useful lifecycle.
 Put details that belong to the parent in a supplemental document.
 

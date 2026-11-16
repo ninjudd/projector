@@ -482,4 +482,8 @@ proven by the tests above. That last criterion, a build installed and opened
 on a real iPhone, needs the person and their device. The session that built
 the command could not reach CoreDevice, and the person chose to run that
 check once the stack merged, with the installed `project ios`. A problem it
-finds is new work on the shipped command, not an open part of this plan.
+finds is new work on the shipped command, not an open part of this plan. The
+person ran the check after the merge, tracked as a request in their
+Projector inbox, and it passed: `devices`, `build` and `install` for two
+apps, `crashes`, `logs`, and `cleanup` each worked on an iOS repository and a
+paired iPhone.

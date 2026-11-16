@@ -264,7 +264,9 @@ Apply these rules to the verified set, in this order:
   that keeps `docs/` current. When living documentation describes the same
   behavior and the change left it stale, the finding asks for that document
   instead. A plan the change itself marks `completed` is not a record yet, so
-  a finding about the outcome it records stands.
+  a finding about the outcome it records stands. A completed plan's outcome
+  may still record the result of a check it deferred until after the merge,
+  once the check runs. A finding against that edit alone is dropped.
 - **One root cause is one finding.** The same defect at several sites becomes
   one finding that lists every location and anchors at the first. Two
   candidates on the same defect merge, keeping a second framing only when it

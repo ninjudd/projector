@@ -307,7 +307,10 @@ reply with that reason and leave the plan as it is. When living documentation
 describes the same behavior and the change left it stale, the finding holds
 for that document: fix it there, and say in the reply that the plan stays as
 it is. A plan this pull request marks `completed` is not a record yet, so fix
-a finding about the outcome it records as you would any other.
+a finding about the outcome it records as you would any other. A change may
+also record, in a completed plan's outcome, the result of a check that
+outcome deferred until after the merge. Decline a finding that flags that
+edit alone, citing `../review-pr/method.md` § 6.
 
 If the correct behavior requires a user decision, ask instead of guessing and
 go on with unrelated findings. If a finding recurs after a pushed fix, stop

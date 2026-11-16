@@ -100,7 +100,7 @@ if name == "xcodebuild":
             (app / "commit.txt").write_text(commit)
         sys.exit(scenario.get("build_status", 0))
 if name == "osascript":
-    if args[-1].endswith("is running"):
+    if any(arg.endswith("is running") for arg in args):
         print("true" if pop("running", False) else "false")
     sys.exit(0)
 if name == "log":
@@ -483,12 +483,25 @@ class LaunchTests(IosCase):
 
         build = self.builds()[0]
         self.assertEqual(ios.MAC_DESTINATION, build[build.index("-destination") + 1])
-        self.assertTrue(any(call[-1].endswith("to quit") for call in self.calls("osascript")))
+        self.assertTrue(any("tell application id (item 1 of argv) to quit" in call
+                            for call in self.calls("osascript")))
         wrapper = self.state / "mac" / "MyApp.app"
         self.assertEqual([["open", str(wrapper)]], self.calls("open"))
         self.assertEqual("Wrapper/MyApp.app", os.readlink(wrapper / "WrappedBundle"))
         self.assertTrue((wrapper / "Wrapper" / "MyApp.app" / "commit.txt").exists())
         self.assertEqual([], self.installed())
+
+    def test_the_bundle_id_reaches_applescript_as_an_argument_never_as_source(self) -> None:
+        self.scenario({"running": [True, False], "bundle_id": 'com.example.my"app'})
+
+        self.succeeds("build", "feature", "--mac")
+
+        scripts = self.calls("osascript")
+        self.assertEqual(3, len(scripts))
+        for call in scripts:
+            with self.subTest(call):
+                self.assertEqual('com.example.my"app', call[-1])
+                self.assertNotIn("com.example", " ".join(call[1:-1]))
 
 
 class BuildOutputTests(IosCase):
@@ -660,6 +673,22 @@ class LogTests(IosCase):
         self.assertEqual(1, code)
         self.assertIn("no log was written", err)
         self.assertFalse(self.desktop.exists() and any(self.desktop.iterdir()))
+        self.assertEqual([], list(self.state.glob("log-*")))
+
+    def test_ctrl_c_during_the_collect_leaves_no_file_and_no_archive(self) -> None:
+        self.build()
+        run = subprocess.run
+
+        def interrupted(args, *rest, **options):
+            if "collect" in args:
+                raise KeyboardInterrupt
+            return run(args, *rest, **options)
+
+        with mock.patch.object(ios.subprocess, "run", side_effect=interrupted), \
+                self.assertRaises(KeyboardInterrupt):
+            self.project("logs")
+
+        self.assertEqual([], list(self.desktop.iterdir()))
         self.assertEqual([], list(self.state.glob("log-*")))
 
     def test_a_span_that_is_not_one_is_refused(self) -> None:
