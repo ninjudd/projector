@@ -847,7 +847,7 @@ test('a row’s notes name every other status that applies, and an open drawer s
   expect(await allNotes()).toEqual({
     // A conflict always takes the word, so no note names it; the change request it beat follows, in short.
     'Change held back': [['changes', 'warning'], ' · ', ['findings', 'warning']],
-    // Open threads are this row's word, so its closed row names only the approval.
+    // Findings are this row's word, so its closed row names only the approval.
     'Approved change': [['approved', 'success']],
     // The word says what the one hold is, so the closed row does not repeat it.
     'Change failing its checks': [],
@@ -885,7 +885,7 @@ test('a row’s notes name every other status that applies, and an open drawer s
   expect(await notesOf('Signed-off change failing its checks')).toEqual([['clean', 'success']])
   await ui.press({ key: 'pr:o/r#11' })
   await clock.settle()
-  // Open threads are this row's word, and have nothing more to say spelled out, so the open row does not repeat them.
+  // Findings are this row's word, and have nothing more to say spelled out, so the open row does not repeat them.
   expect(await notesOf('Approved change')).toEqual([['approved', 'success']])
 
   // An open drawer spells passing checks out too.
@@ -924,7 +924,7 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   // The number is a plain button, so no terminal draws a URL beside it.
   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
-  // The conflict is the row's status, so its notes name the open threads it beat, that it is a draft, in italic,
+  // The conflict is the row's status, so its notes name the findings it beat, that it is a draft, in italic,
   // and that its checks pass.
   expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
   const notes = await ui.find({ type: 'Text', text: /^findings · draft · passing$/ })
@@ -1193,7 +1193,7 @@ test('collapses each file in a drawer to its name and count, until a press opens
   const files = async () => (await fileLinesOf(ui)).map(file => file.text)
   const links = async () => (await ui.findAll({ type: 'Link' })).map(link => link.props.href)
 
-  // The count of 2 and of 1 add up to the row's own count of threads, and no thread draws until its file opens.
+  // Each file counts its own findings, the only count the panel draws, and no thread draws until its file opens.
   expect(await files()).toEqual(['+ src/a.ts 2 findings', '+ src/b.ts 1 finding'])
   expect(await links()).toEqual([])
   const toggle = await ui.find({ type: 'Button', key: 'toggle-file:x/y#7:src/a.ts' })
@@ -3972,8 +3972,8 @@ test('collapsed pull requests list their labels in the rows’ order and status 
   await ui.press({ key: 'count:pr' })
   expect((await ui.find({ key: 'collapsed:pr' }))?.text).toBe('+ #12 #10 #2 #1')
   expect(await ui.find({ type: 'Text', text: 'Signed-off change' })).toBeUndefined()
-  // Clean is green and open review threads yellow, as the row's count of them is; a conflict, a change request, or
-  // failing checks is red.
+  // Clean is green and findings yellow, as the drawer's file counts are; a conflict, a change request, or failing
+  // checks is red.
   const colors = await Promise.all(['#1', '#2', '#10', '#12'].map(async text => (await label(text))?.color))
   expect(colors).toEqual(['success', 'warning', 'error', 'error'])
   expect(await Promise.all(['#1', '#2', '#10', '#12'].map(async text => (await label(text))?.inverse))).toEqual([
