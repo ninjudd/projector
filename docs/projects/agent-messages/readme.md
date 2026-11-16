@@ -1,5 +1,5 @@
 ---
-status: ready
+status: in-progress
 priority: now
 ---
 
@@ -509,7 +509,8 @@ one `sealed.json`.
 | `src/projector/config.py` | Add `agent.message_limit` and `agent.key` to `SETTINGS`, and `agent.message_limit` to `MINIMUMS` with 1. `config.py` keeps no defaults, so the default of 12 lives in `agents.py`, which passes it when it reads the setting, as `watch.Settings` holds the watch defaults. Add a set of user-layer-only keys, holding `agent.key`, that the walk never supplies and the permission check guards, and a set of secret keys, also holding `agent.key`. Add `redact(key, value)`, which replaces each inline secret, a value of a secret key that is not `keychain:<key-id>`, at or under the dotted `key` inside `value`, a table or a scalar, with `<redacted, key ID <id>>`. |
 | New `skills/message-agent/SKILL.md` | When to register and how to keep the summary current. How to pass the session's model ID, how to find, message, and reply to a peer, how to handle a `PEER MESSAGE` line, and the authority rule from § 2.1 step 6. A peer's request that needs the user goes to the user through the inbox. In a public repository, or whenever `send` prints its public-repository reminder, a message carries nothing private: it names no private repository and describes none of a private repository's internals, such as its code, file paths, identifiers, plans, or business details. Where the agent needs to refer to one, it writes "a private repository" instead of its name. The skill never runs `key init` unless the user asks for it, and never runs `key export`, `key import`, or `key remove`, which the user runs in a terminal. |
 | `skills/fix-pr/SKILL.md`, `skills/review-pr/SKILL.md`, `skills/review-repo/SKILL.md` | Where each says how the session routes event lines, state that a `PEER MESSAGE` line stays with the main conversation, never a per-PR worker, and point to `message-agent`. |
-| `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `tests/test_packaging.py` | Publish the new skill on both hosts. |
+| `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `tests/test_packaging.py` | Publish the new skill on both hosts. Both manifests package the whole `skills/` tree, so only the packaging test's list of published skills changes. |
+| `src/projector/permissions.py`, `tests/test_permissions.py` | Let the Codex rules allow `project agent register`, `list`, `send`, `reply`, and `read` by name, so an idle Codex agent answers a message without an approval prompt. The key commands stay out of the rules. |
 | `docs/cli.md` | Document the command group, the records, the refs, the key and how to copy it, the limit, and what happens without a deliverer. |
 | New `tests/test_agents.py`, `tests/test_crypto.py`, and `tests/test_relay.py` | The criteria in § 4. |
 
@@ -746,11 +747,12 @@ Build the project as a two-layer stack. The relay depends on every local
 record and command, and the local layer is useful on its own.
 
 1. **Local messages.** § 2.1, its records, `agents.py`, the change to
-   `codex_watch.eligible`, the CLI, the skill, and the local criteria in
-   § 4.
+   `codex_watch.eligible`, the change to `Daemon.scan` that counts a live
+   registered session as live, `agent.message_limit`, the CLI, the skill,
+   and the local criteria in § 4. § 9 records what this layer settled.
 2. **The relay.** § 2.2, `crypto.py`, `keychain.py`, `relay.py`, the key
-   commands, the setting and its redaction, the daemon and Codex hook
-   changes, and the relay criteria in § 4. Run `project done` in this
+   commands, `agent.key` and its redaction, the relay's daemon and Codex
+   hook changes, and the relay criteria in § 4. Run `project done` in this
    layer.
 
 ## 8. Background
@@ -784,3 +786,48 @@ record and command, and the local layer is useful on its own.
   22.6 ms, and a pure-Python X25519 matched RFC 7748's § 6.1 vectors at
   1.2 ms an operation. An empty `git fetch` of a `refs/projector/`
   namespace from GitHub took 0.81 to 0.84 seconds.
+
+## 9. What the local layer settled
+
+Layer 1 builds § 2.1 on one machine. Building it settled these details,
+which layer 2 keeps unless it says otherwise:
+
+- **Names are stored in lowercase.** `register` lowercases `--name` before
+  it checks the pattern, so `Parser-Refactor` and `parser-refactor` are one
+  name, and every record and line shows the lowercase form.
+- **A summary holds no tab.** `list` separates its columns with tabs, as
+  `project watch list` does, so `register` refuses a tab in a summary.
+- **A model must be shaped like a model ID.** The event line prints the
+  sender's model before the authority notice, so a model that holds prose
+  would put the sender's words ahead of the trust boundary that step 5
+  places first. `register` therefore accepts only 1 to 100 letters, digits,
+  and `. _ : / @ [ ] -`, starting with a letter or digit, which admits IDs
+  such as `claude-opus-4-6[1m]` and `openai/gpt-5.5` and refuses a space, a
+  parenthesis, and a tab. The name and the host are already fixed shapes,
+  so the model was the one field before the notice that a sender could
+  fill with text. Layer 2 holds a record from the relay to the same shape
+  before its model reaches a line.
+- **The limit is read from the sender's checkout.** `send` and `reply` read
+  `agent.message_limit` from the working directory's configuration, with
+  the user layer under it, as `project config get` would. The refusal names
+  `project config set agent.message_limit <number> --user`.
+- **`relay` is `off` in every local record.** Layer 2 writes `published`,
+  `pending`, and `none`.
+- **`list` says only `local only`.** Its header gives no reason until the
+  relay exists. Layer 2 adds the reasons in § 2.1 step 3.
+- **`from_machine` holds the sender's machine ID.** `read` takes the
+  sender's machine name, repository, branch, and summary from the sender's
+  registration, so it leaves them out once that registration is gone.
+- **The Codex rules allow the commands.** `project init` writes a Codex rule
+  that allows `project agent register`, `list`, `send`, `reply`, and `read`,
+  so a Codex agent woken by a message can read and answer it without an
+  approval prompt.
+- **The skill's relay rules wait for layer 2.** A local message never leaves
+  the machine, so the skill's rule for public repositories and its rules for
+  the key commands arrive with the relay, beside the reminder `send` prints.
+
+`tests/test_agents.py` covers the local criteria in § 4, each run against
+the change it names. Two processes racing for one name run as two threads,
+which take the name lock through separate file descriptors, as two
+processes do. The criteria that also name another machine, such as the
+rate limit with B on the other machine, keep that half for layer 2.

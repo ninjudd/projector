@@ -67,6 +67,7 @@ SETTINGS: dict[str, type] = {
     "watch.renotify": int,
     "watch.review_stall": int,
     "panel.background": str,
+    "agent.message_limit": int,
 }
 
 # The least value `project config set` accepts for each whole-number key. The
@@ -77,6 +78,7 @@ MINIMUMS: dict[str, int] = {
     "watch.full_every": 1,
     "watch.renotify": 1,
     "watch.review_stall": 1,
+    "agent.message_limit": 1,
 }
 
 
