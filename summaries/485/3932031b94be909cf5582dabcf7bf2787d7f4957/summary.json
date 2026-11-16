@@ -1,0 +1,144 @@
+{
+ "version": 1,
+ "name": "iOS rules only where needed",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 485,
+  "title": "Write the iOS rules into AGENTS.md only for a repository with an iOS app",
+  "head": "3932031b94be909cf5582dabcf7bf2787d7f4957",
+  "headRef": "agents-block-ios-when-present",
+  "base": "674a8f2042ed1f558c8a885acae27c442ad456e8",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project init</code> writes a marked section, the <b>Projector section</b>, into every adopting repository's <code>AGENTS.md</code>, and Claude Code reads it through <code>CLAUDE.md</code>. <code>project check</code> warns when the committed section differs from the template the CLI ships. The template's version number is in its begin marker, so a section with the template's version but different text reads as a hand edit.",
+   "Version 28 added two paragraphs about building an iOS app with <code>project ios</code>. Every repository got them, including the many with no app. This pull request keeps those paragraphs only where an iOS app exists:",
+   "<ol><li><b>The template marks the paragraphs.</b> <code>agents-block.md</code>, now version 29, wraps them in <code>{ios}</code> and <code>{/ios}</code> lines. <code>instructions.render</code> keeps them, or drops them with the blank line after each.</li><li><b>The store decides which rendering a repository gets.</b> <code>ProjectStore._carries_ios_rules</code> asks Git for each <code>*.xcodeproj/project.pbxproj</code> that is tracked, or untracked and not ignored, and counts one only when it names the iOS SDK, <code>iphoneos</code>. A configured <code>ios.project</code> forces the rules on. The new boolean <code>instructions.ios</code> overrides both.</li><li><b><code>check</code> tells the renderings apart.</b> A same-version section that matches the other rendering gets the new warning <code>instructions-ios</code> instead of <code>instructions-edited</code>, and <code>init</code> rewrites it.</li></ol>",
+   "This repository has no Xcode project, so its own <code>AGENTS.md</code> drops the two paragraphs. The first review found two problems, and the second head fixes both. A Mac-only Xcode project no longer counts as an iOS app, because <code>project ios</code> builds only for iOS. The module docstring of <code>instructions.py</code> now describes both renderings. The review of <code>3932031</code> is clean."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Projector section</b>: the block between <code>&lt;!-- projector:begin N --&gt;</code> and <code>&lt;!-- projector:end --&gt;</code> that <code>init</code> owns.</li><li><b>Rendering</b>: the section's text for one repository, with or without the iOS paragraphs.</li><li><b>Pin</b>: the SHA-256 of the template that <code>tests/test_instructions.py</code> records per version, so a text change without a version bump fails the suite.</li></ul>"
+   },
+   {
+    "id": "decide",
+    "title": "Which rendering a repository gets",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Setting or state</th><th class=\"r\">iOS rules</th></tr></thead><tbody><tr><td><code>instructions.ios = true</code></td><td class=\"r\">kept</td></tr><tr><td><code>instructions.ios = false</code></td><td class=\"r\">dropped</td></tr><tr><td>unset, and <code>ios.project</code> is set</td><td class=\"r\">kept</td></tr><tr><td>unset, and Git lists a <code>project.pbxproj</code> that is not ignored and names <code>iphoneos</code></td><td class=\"r\">kept</td></tr><tr><td>otherwise</td><td class=\"r\">dropped</td></tr></tbody></table></div>"
+   },
+   {
+    "id": "history",
+    "title": "Review history so far",
+    "html": "<ul class=\"tight\"><li><b><code>95b1249</code>: changes requested.</b> Any Xcode project counted, so a Mac-only app got rules saying it had an iOS app. The module docstring still called every same-version difference a hand edit.</li><li><b><code>3932031</code>: clean.</b> Detection reads each <code>project.pbxproj</code> for <code>iphoneos</code>, and the docstring describes both renderings.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "template",
+   "title": "The template marks the iOS paragraphs",
+   "kicker": "Version 29 of the section, and how render keeps or drops its iOS part",
+   "intro": [
+    "The template is the one source for every repository's Projector section. It now marks the two iOS paragraphs so that <code>render</code> can leave them out. Because the paragraphs now appear only where an app exists, the first opens with \"This repository has an iOS app\" in place of \"In a repository with an iOS app\".",
+    "The version moves from 28 to 29 and gets a new pin. The pin hashes the template, not a rendering, so one pin per version covers both renderings."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/templates/agents-block.md",
+     "note": "The template: the version bump, the <code>{ios}</code> and <code>{/ios}</code> lines around both paragraphs, and the new opening sentence.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "text": "This sentence now states as fact that the repository has an iOS app. The detection in <code>core.py</code> decides when it appears, so a false positive there makes this sentence false.",
+       "line": 48
+      }
+     ]
+    },
+    {
+     "path": "src/projector/instructions.py",
+     "note": "<code>IOS_SECTION</code> matches each marked paragraph run and its following blank line. <code>render</code> gains an <code>ios</code> flag, false by default.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The module docstring now says that one template version renders two ways, and that a same-version block matching the other rendering belongs to a repository that gained or lost its app.",
+       "line": 11
+      }
+     ]
+    },
+    {
+     "path": "tests/test_instructions.py",
+     "note": "Pins version 29 and checks that both renderings drop the markers and keep the paragraphs around the iOS part one blank line apart."
+    }
+   ]
+  },
+  {
+   "id": "detect",
+   "title": "The store chooses a rendering and check tells them apart",
+   "kicker": "Detection, the configuration that overrides it, and the new warning",
+   "intro": [
+    "<code>ProjectStore</code> now holds an optional <code>ios</code> answer. When configuration gives none, <code>_carries_ios_rules</code> runs <code>git ls-files --cached --others --exclude-standard</code> for <code>*.xcodeproj/project.pbxproj</code>, once per command, and caches the result. A project counts only when its file names <code>iphoneos</code> as a whole word, as <code>SDKROOT = iphoneos</code> or a multiplatform target's <code>SUPPORTED_PLATFORMS</code> does. <code>project ios</code> builds only for iOS, so a Mac-only project gets no rules. A new iOS project counts before its first commit, and a dependency's project in an ignored folder does not.",
+    "<code>_block_issues</code> compares the section with the detected rendering first, then with the other one. Only a section that matches neither is <code>instructions-edited</code>. <code>init</code> writes the detected rendering, so it adds or removes the rules when an app arrives or leaves."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "<code>project ios</code> finds its project differently. <code>ios.find_project</code> walks a fresh worktree at a commit, skips <code>Pods</code>, <code>node_modules</code>, <code>build</code>, and <code>.build</code>, and needs exactly one project or workspace. The section's detection also counts untracked files and drops only ignored ones. A workspace counts only through the projects it holds."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/core.py",
+     "note": "The detection in <code>_carries_ios_rules</code> and <code>_builds_for_ios</code>, and the second comparison in <code>_block_issues</code> that gives <code>instructions-ios</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "Checked in temporary repositories at this head. A <code>macosx</code> project and a watchOS project that mentions only <code>IPHONEOS_DEPLOYMENT_TARGET</code> get no rules. A multiplatform target that lists <code>iphoneos</code> gets them, and so does an iOS project beside a workspace. A tracked <code>project.pbxproj</code> that is missing from the working tree gets none, and neither does an unreadable one.",
+       "line": 521
+      },
+      {
+       "kind": "verify",
+       "text": "In this repository, the committed <code>AGENTS.md</code> matches <code>render(\"docs/projects\")</code> and not <code>render(\"docs/projects\", ios=True)</code>, and <code>project check</code> prints no warning. Checked by running both at the head.",
+       "line": 778
+      }
+     ]
+    },
+    {
+     "path": "src/projector/cli.py",
+     "note": "<code>instructions_ios</code> reads <code>instructions.ios</code>, falls back to true when <code>ios.project</code> is set, and is passed to the store in <code>run</code>. The digest that <code>upgrade</code> compares renders the iOS variant, so a change to either part of the template changes it."
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Registers <code>instructions.ios</code> as a boolean setting."
+    },
+    {
+     "path": "tests/test_projector.py",
+     "note": "End-to-end <code>check</code> and <code>init</code> runs in temporary repositories: an untracked, then tracked, then removed iOS project, an ignored project, Mac-only, simulator-only, and workspace-only repositories that get no rules, a multiplatform target that does, and the two settings overriding detection."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and this repository's section",
+   "kicker": "The CLI guide and the regenerated AGENTS.md",
+   "intro": [
+    "<code>docs/cli.md</code> describes the detection, the setting, and the new warning code. <code>AGENTS.md</code> is this repository's own Projector section, rendered at version 29 without the iOS paragraphs. <code>CLAUDE.md</code> is a link to it."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "A paragraph under adopting a repository that gives the <code>iphoneos</code> rule, a row for <code>instructions-ios</code> in the warning table, and a row for <code>instructions.ios</code> in the settings table."
+    },
+    {
+     "path": "AGENTS.md",
+     "note": "The regenerated section: version 29, without the two iOS paragraphs."
+    }
+   ]
+  }
+ ]
+}
