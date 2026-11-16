@@ -154,8 +154,12 @@ export type Item = Question | Notice | Request
 /** An item whose answer or outcome goes back to the agent that posted it. */
 export type Answerable = Question | Request
 
-/** What the panel's header counts, and can collapse to one line: the pull requests, or a kind of item. */
-export type Section = 'pr' | Item['kind']
+/**
+ * What the panel's header counts, and can collapse to one line: your own pull
+ * requests, the review requests someone else's pull requests make, or a kind
+ * of item.
+ */
+export type Section = 'pr' | 'review' | Item['kind']
 
 /**
  * An answer the panel claimed and is delivering: the claim's token, the route
@@ -199,7 +203,7 @@ declare module 'claude-code' {
       panelOpenFiles: { drawer: string; paths: string[] } | null
       /** The session's inbox, as the panel last read it. */
       panelInbox: Item[]
-      /** The pull requests and the kinds of item collapsed to one line, from the header's counts. */
+      /** The sections of pull requests and the kinds of item collapsed to one line, from the header's counts. */
       panelCollapsed: Section[]
       /** The answers the panel is delivering, by reference. */
       panelSending: Record<string, Sending>
