@@ -95,6 +95,12 @@ DECISIONS = (
     ("LANG=C project list", "allow", "none"),
     ("HOME=/tmp project init --publish-rule", "ask", "none"),
     ("projector list", "none", "none"),
+    # A path to a program named `project` matches no rule: Claude Code matches
+    # the command text, and Codex resolves the path to its basename only for
+    # a path a `host_executable` entry lists, and the rules list none.
+    ("/tmp/x/project summary publish --summary summary.json", "none", "none"),
+    ("/usr/local/bin/project list --json", "none", "none"),
+    ("./project review publish 12 --body body.md", "none", "none"),
     ("project ios devices --json", "allow", "allow"),
     ("project ios install 12 --device 00008110-0001", "allow", "allow"),
     ("project ios crashes --mac", "allow", "allow"),
@@ -179,8 +185,9 @@ class PermissionRulesTests(unittest.TestCase):
         rules.write_text(permissions.CODEX_RULES)
         for command, _, codex in DECISIONS:
             with self.subTest(command):
-                result = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules),
-                                         *shlex.split(command)],
+                # A live session resolves program paths, which the check does only when asked.
+                result = subprocess.run(["codex", "execpolicy", "check", "--resolve-host-executables",
+                                         "--rules", str(rules), *shlex.split(command)],
                                         check=True, capture_output=True, text=True,
                                         env={**os.environ, "CODEX_HOME": home.name})
                 self.assertEqual(codex, json.loads(result.stdout).get("decision", "none"))
@@ -208,6 +215,8 @@ class PermissionRulesTests(unittest.TestCase):
         documented = re.findall(r"^ *pattern = (\[.*\]),$", documentation, re.MULTILINE)
 
         self.assertEqual([pattern for pattern, _ in permissions.CODEX_ALLOW], list(map(json.loads, documented)))
+        self.assertIn(f"  {permissions.CODEX_HOST_EXECUTABLE}\n", documentation)
+        self.assertTrue(permissions.CODEX_RULES.endswith(permissions.CODEX_HOST_EXECUTABLE + "\n"))
 
     def test_each_command_line_is_one_the_parser_runs_or_refuses_for_its_leading_option(self) -> None:
         incomplete = {"project", "project config", "projector list"}
