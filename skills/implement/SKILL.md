@@ -104,6 +104,14 @@ project check
 git diff --check
 ```
 
+Where `.projector.toml` sets `review.gate_checks`, CI runs the repository's
+full suite on every push, so the gate before a push is smaller: run the tests
+that cover what you changed, the `review.gate` command, and any step of the
+gate the repository's instructions say CI does not run, but not the full
+suite. The named checks passing on the pushed head complete the gate. Read
+`review.gate_checks` with `project config get review.gate_checks`. Where it is
+unset, run the full gate as before.
+
 Resolve any warning `project check` prints; `project init` refreshes a stale
 Projector section in `AGENTS.md` without touching the repository's own text.
 Work built from a description has no project, so skip `project show`. In a
@@ -325,8 +333,10 @@ Within those rules, work a stack this way:
   when a layer falls behind or conflicts with its base or a layer below it
   merges; the rebase drops a squash-merged layer's commits from the layers
   above it. Resolve a conflict the rebase stops on as the `gh-stack` skill
-  describes under "Exit 3 recovery". Then run the full gate on every
-  layer the rebase rewrote, and only once each passes, run `gh stack push`,
+  describes under "Exit 3 recovery". Then run the gate on every layer
+  the rebase rewrote, the smaller gate where `review.gate_checks` is set, as
+  [Verify the current slice](#verify-the-current-slice) describes, and only
+  once each passes, run `gh stack push`,
   which pushes each branch with `--force-with-lease`. Never merge a base into
   a layer of a stack `gh stack` works on. In a checkout that does not track
   the stack yet, `gh stack checkout <number>` sets it up from GitHub.

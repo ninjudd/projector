@@ -84,6 +84,12 @@ hooks/typecheck.sh
 git diff --check
 ```
 
+The Check workflow's `check` job runs the test suite, `npm run check`, and
+`project check` on every push, and `.projector.toml` names it in
+`review.gate_checks`. So before you push, run the tests that cover your change
+and the other steps above, not the whole suite. A review waits for `check` on
+the head, and a failure comes back to the fixer as a `CHECKS` event.
+
 The packaging tests validate both plugin manifests and their exact published
 skill set. `claude plugin validate .` validates the marketplace and the Claude
 Code hooks module in `hooks/`, while `claude plugin validate skills` validates

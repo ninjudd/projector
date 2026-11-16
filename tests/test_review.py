@@ -23,6 +23,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
+from urllib.parse import unquote
 
 from projector import cli, review
 from projector.review import NotFound, ReviewError
@@ -94,6 +95,11 @@ class FakeGitHub:
         self.ignore_dismissals = False
         # The account gh is signed in as, which a call without a token acts as.
         self.login = "operator"
+        # CI on the head: the check runs each look at the head finds, a poll at a time, the last repeating; the
+        # head's workflow runs; and the workflow file behind each check suite.
+        self.check_polls: list[list[dict]] = [[]]
+        self.workflow_runs: list[dict] = []
+        self.suites: dict[int, str] = {}
 
     def __call__(self, args: list[str], token: str | None = None) -> str:
         self.calls.append((list(args), token))
@@ -203,6 +209,17 @@ class FakeGitHub:
         if args[:2] == ["api", "--paginate"] and args[2].startswith(f"repos/{REPO}/rules/branches/"):
             self.rules_branches.append(args[2].removeprefix(f"repos/{REPO}/rules/branches/"))
             return "".join(f"{context}\n" for context in self.rules)
+        if len(args) == 2 and re.match(rf"repos/{REPO}/commits/[0-9a-f]+/check-runs\?", args[1]):
+            runs = self.check_polls.pop(0) if len(self.check_polls) > 1 else self.check_polls[0]
+            name = re.search(r"check_name=([^&]+)", args[1])
+            # GitHub pages a commit's check runs 30 at a time.
+            listed = [r for r in runs if r["name"] == unquote(name.group(1))] if name else runs[:30]
+            return json.dumps({"total_count": len(listed), "check_runs": listed})
+        if len(args) == 2 and args[1].startswith(f"repos/{REPO}/actions/runs?head_sha="):
+            return json.dumps({"workflow_runs": self.workflow_runs})
+        if len(args) == 2 and args[1].startswith(f"repos/{REPO}/actions/runs?check_suite_id="):
+            suite = int(args[1].rsplit("=", 1)[1])
+            return json.dumps({"workflow_runs": [{"path": self.suites[suite]}] if suite in self.suites else []})
         if len(args) == 4 and re.fullmatch(rf"repos/{REPO}/commits/[0-9a-f]+/status", args[1]):
             sha = args[1].split("/")[4]
             states = [s["state"] for s in self.statuses if s["sha"] == sha and s["context"] == review.REVIEW_CONTEXT]
@@ -747,6 +764,251 @@ class GateTests(ReviewCase):
 
         self.assertEqual(1, code)
         self.assertIn("project review setup 1", err)
+
+
+CHECK_YML = "on: pull_request\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n"
+
+
+def check_run(conclusion: str | None = "success", name: str = "check", app: str = "github-actions",
+              suite: int = 7) -> dict:
+    """A check run as GitHub's check-runs endpoint lists it; a `None` conclusion is a run still in progress."""
+    return {"name": name, "status": "completed" if conclusion else "in_progress", "conclusion": conclusion,
+            "app": {"slug": app}, "check_suite": {"id": suite},
+            "html_url": f"https://github.com/{REPO}/actions/runs/1/job/{suite}"}
+
+
+class CiGateTests(ReviewCase):
+    """`project review gate` with `review.gate_checks`: it reads the head's GitHub Actions check runs instead of
+    running the suite, and gives no evidence where CI cannot vouch for the head's code."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # The gate looks again at once, and a test whose fake never settles fails in seconds instead of spinning for
+        # the real 30 minutes.
+        for name, value in (("CI_POLL", 0), ("CI_START", 0), ("CI_WAIT", 5)):
+            patcher = mock.patch.object(review, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.github.suites = {7: ".github/workflows/check.yml"}
+
+    def heads(self, base: dict[str, str], head: dict[str, str | None]) -> None:
+        """Move trunk to the first head's trunk plus `base`, push a head that changes `head` on it (None deletes a
+        file), and set the head up for review."""
+        git(self.work, "checkout", "--quiet", "--detach", self.base)
+        for files in (base, head):
+            for name, text in files.items():
+                path = self.work / name
+                if text is None:
+                    path.unlink()
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(text)
+            git(self.work, "add", "-A")
+            git(self.work, "commit", "--quiet", "--allow-empty", "-m", "ci")
+            if files is base:
+                trunk = git(self.work, "rev-parse", "HEAD")
+                git(self.work, "push", "--quiet", "--force", "origin", "HEAD:refs/heads/trunk")
+        self.head = git(self.work, "rev-parse", "HEAD")
+        git(self.work, "push", "--quiet", "--force", "origin", "HEAD:refs/heads/feature", "HEAD:refs/pull/1/head")
+        self.github.pr["head"]["sha"], self.github.pr["base"]["sha"] = self.head, trunk
+        code, _, err = self.setup_review()
+        self.assertEqual(0, code, err)
+
+    def configure(self, checks: str = "check", command: str | None = None) -> None:
+        lines = [f"gate_checks = {json.dumps(checks)}"] + ([f"gate = {json.dumps(command)}"] if command else [])
+        (self.checkout / ".projector.toml").write_text("[review]\n" + "\n".join(lines) + "\n")
+
+    def gate(self) -> tuple[int, dict, str]:
+        code, out, err = self.later("gate", "--json")
+        return code, json.loads(out), err
+
+    def test_a_passing_check_passes_the_gate_without_running_the_suite(self) -> None:
+        # Catches a gate that ignores review.gate_checks, or reads a passing record as anything but a pass.
+        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
+        self.configure()
+        self.github.check_polls = [[check_run("success")]]
+
+        code, record, err = self.gate()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual((None, "ci", [{"name": "check", "conclusion": "success", "url": check_run()["html_url"]}]),
+                         (record["command"], record["source"], record["checks"]))
+        self.assertTrue(review.gate_passed(self.read_state()))
+
+    def test_a_check_that_failed_fails_and_one_that_did_not_run_gives_no_evidence(self) -> None:
+        # Catches a gate that sends the fixer after a test failure that never happened, or that passes a check
+        # that ran nothing.
+        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
+        self.configure()
+        for conclusion, expected in (("failure", 1), ("timed_out", 1), ("cancelled", 75), ("skipped", 75),
+                                     ("neutral", 75)):
+            with self.subTest(conclusion):
+                self.github.check_polls = [[check_run(conclusion)]]
+
+                code, record, err = self.gate()
+
+                self.assertEqual(expected, code, err)
+                self.assertEqual(conclusion, record["checks"][0]["conclusion"])
+                self.assertFalse(review.gate_passed(self.read_state()))
+
+    def test_a_check_still_running_when_the_wait_ends_gives_no_evidence(self) -> None:
+        # Catches a gate that reads a pending check as passed, or that never returns.
+        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
+        self.configure()
+        self.github.check_polls = [[check_run(None)]]
+
+        with mock.patch.object(review, "CI_WAIT", 0):
+            code, record, err = self.gate()
+            printed = self.later("gate")[2]
+
+        self.assertEqual(75, code, err)
+        self.assertEqual(None, record["checks"][0]["conclusion"])
+        self.assertIn("no completed run within", record["reason"])
+        self.assertIn("check: no completed run", printed)
+        self.assertIn("CI gave no evidence: check had no completed run within", printed)
+
+    def test_only_a_github_actions_run_vouches_for_the_head(self) -> None:
+        # Catches a gate that trusts any check run named `check`, which any app installed on the repository can post.
+        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
+        self.configure()
+        self.github.check_polls = [[check_run("success", app="someone-elses-app")]]
+        self.github.workflow_runs = [{"id": 1, "status": "completed", "conclusion": "success"}]
+
+        code, record, err = self.gate()
+
+        self.assertEqual(75, code, err)
+        self.assertIn("no run of check is coming", record["reason"])
+
+    def test_finds_the_named_check_beyond_the_first_page_of_the_heads_check_runs(self) -> None:
+        # Catches a read of the commit's check runs that sees only the first page of 30.
+        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
+        self.configure()
+        self.github.check_polls = [[check_run("success", name=f"lint {n}") for n in range(30)] + [check_run("success")]]
+
+        code, record, err = self.gate()
+
+        self.assertEqual(0, code, err)
+
+    def test_a_head_that_changed_what_its_check_runs_gives_no_evidence(self) -> None:
+        # Catches a gate that lets a head vouch for itself through its workflow or a local action, and one that
+        # refuses a head for changing a workflow that decides none of the named checks.
+        setup = "runs:\n  using: composite\n  steps:\n    - run: ./install.sh\n      shell: bash\n"
+        uses_setup = CHECK_YML + "      - uses: ./.github/actions/setup\n      - uses: ./.github/workflows/test.yml\n"
+        base = {".github/workflows/check.yml": uses_setup, ".github/workflows/release.yml": "on: push\n",
+                ".github/workflows/test.yml": "on: workflow_call\n", ".github/actions/setup/action.yml": setup,
+                ".github/actions/setup/install.sh": "true\n"}
+        cases = (
+            (".github/workflows/check.yml", {".github/workflows/check.yml": uses_setup + "# skip it\n"}, 75),
+            (".github/workflows/test.yml", {".github/workflows/test.yml": "on: workflow_call\n# skip\n"}, 75),
+            (".github/actions/setup/install.sh", {".github/actions/setup/install.sh": "exit 0\n"}, 75),
+            (".github/actions/setup/action.yml", {".github/actions/setup/action.yml": setup + "# skip\n"}, 75),
+            ("only the release workflow", {".github/workflows/release.yml": "on: [push, workflow_dispatch]\n"}, 0),
+        )
+        for changed, head, expected in cases:
+            with self.subTest(changed):
+                self.heads(base, head)
+                self.configure()
+                self.github.check_polls = [[check_run("success")]]
+
+                code, record, err = self.gate()
+
+                self.assertEqual(expected, code, err)
+                if expected:
+                    self.assertIn(f"the head changed {changed}, which decides what check runs", record["reason"])
+
+    def test_a_check_whose_files_cannot_be_told_gives_no_evidence(self) -> None:
+        # Catches a gate that accepts CI when it cannot say which files decided the run.
+        expression = CHECK_YML + "      - uses: ${{ matrix.action }}\n"
+        for case, workflow, suites, words in (
+                ("no workflow run matches its suite", CHECK_YML, {}, "no workflow run matches the check suite"),
+                ("an expression names a step", expression, {7: ".github/workflows/check.yml"}, "an expression"),
+                ("its workflow is gone at the head", CHECK_YML, {7: ".github/workflows/gone.yml"}, "cannot be read")):
+            with self.subTest(case):
+                self.heads({".github/workflows/check.yml": workflow}, {"src.py": "x = 1\n"})
+                self.configure()
+                self.github.suites = suites
+                self.github.check_polls = [[check_run("success")]]
+
+                code, record, err = self.gate()
+
+                self.assertEqual(75, code, err)
+                self.assertIn(words, record["reason"])
+
+    def test_an_untrusted_head_gets_cis_result_and_runs_no_command(self) -> None:
+        # Catches a gate that runs the head's code on an untrusted head, and one that keeps CI's result from it.
+        self.github.pr["head"]["repo"] = {"full_name": "someone/app"}
+        self.github.pr["head"]["ref"] = "does-not-exist-here"
+        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
+        self.assertFalse(self.read_state()["trusted"])
+        self.configure(command=GateTests.GATE)
+        self.github.check_polls = [[check_run("success")]]
+
+        code, record, err = self.gate()
+
+        self.assertEqual(0, code, err)
+        self.assertEqual(None, record["command"])
+        self.assertFalse((Path(self.read_state()["worktree"]) / "gate.args").exists(), "the command did not run")
+
+    def test_a_failing_command_decides_the_gate_before_ci_is_read(self) -> None:
+        # Catches a gate that lets a passing CI run cover a failure in the part of the gate CI cannot run.
+        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
+        self.configure(command="exit 4")
+        self.github.check_polls = [[check_run("success")]]
+
+        code, record, err = self.gate()
+
+        self.assertEqual((4, "exit 4", "local"), (code, record["command"], record["source"]))
+        self.assertFalse(any("check-runs" in " ".join(args) for args, _ in self.github.calls))
+
+    def test_ends_the_wait_as_soon_as_no_run_of_the_check_can_come(self) -> None:
+        # Catches a gate that waits 30 minutes for a run that waits for a person, or for a job that is gone.
+        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
+        self.configure()
+        cases = (
+            ("waits for approval", [{"id": 1, "status": "completed", "conclusion": "action_required",
+                                     "html_url": "https://github.com/acme/app/actions/runs/1"}],
+             "https://github.com/acme/app/actions/runs/1 waits for a maintainer to approve it"),
+            ("every run finished", [{"id": 1, "status": "completed", "conclusion": "success"}],
+             "every workflow run on the head finished without it"),
+            ("no run started", [], "no workflow run started on the head"),
+        )
+        for case, workflow_runs, words in cases:
+            with self.subTest(case):
+                self.github.check_polls = [[]]
+                self.github.workflow_runs = workflow_runs
+
+                # With no wait left, a gate that misses the early exit stops at the timeout, whose reason differs.
+                with mock.patch.object(review, "CI_WAIT", 0):
+                    code, record, err = self.gate()
+
+                self.assertEqual(75, code, err)
+                self.assertIn(words, record["reason"])
+
+    def test_keeps_waiting_while_a_workflow_run_on_the_head_is_still_coming(self) -> None:
+        # Catches a gate that gives up while a run is queued, or held by an environment approval or a concurrency
+        # group.
+        self.heads({".github/workflows/check.yml": CHECK_YML}, {"src.py": "x = 1\n"})
+        self.configure()
+        for status in ("queued", "in_progress", "waiting", "pending", "requested"):
+            with self.subTest(status):
+                self.github.workflow_runs = [{"id": 1, "status": status}]
+                self.github.check_polls = [[], [], [check_run("success")]]
+
+                code, record, err = self.gate()
+
+                self.assertEqual(0, code, err)
+
+    def test_without_gate_checks_an_untrusted_head_is_refused_as_before(self) -> None:
+        # Catches a gate that reads CI, or runs anything, for a repository that never named its checks.
+        self.github.pr["head"]["repo"] = {"full_name": "someone/app"}
+        self.github.pr["head"]["ref"] = "does-not-exist-here"
+        self.heads({}, {"src.py": "x = 1\n"})
+
+        code, _, err = self.later("gate")
+
+        self.assertEqual(1, code)
+        self.assertIn("review it by reading", err)
+        self.assertFalse(any("check-runs" in " ".join(args) for args, _ in self.github.calls))
 
 
 def thread(thread_id: str, body: str, *, resolved: bool = False, outdated: bool = False,
@@ -3726,6 +3988,22 @@ class InterdiffRuleTests(IncrementalCase):
             self.assertEqual("merge", result["kind"], "every other rule passed, so the change was measured")
         self.assertEqual((1, 0), (failed, passed))
         self.assertTrue(after_pass["incremental"], after_pass["reason"])
+
+    def test_a_moved_base_takes_a_gate_that_ci_passed(self) -> None:
+        # Catches a CI result that the incremental gate rule does not read as a passing gate.
+        (self.work / ".github" / "workflows").mkdir(parents=True)
+        self.move_trunk({".github/workflows/check.yml": CHECK_YML})
+        self.review_head(self.build(self.merge(self.reviewed, self.trunk), {"a.css": css(r1=9, r2=9)}))
+        (self.checkout / ".projector.toml").write_text('[review]\ngate_checks = "check"\n')
+        self.github.suites = {7: ".github/workflows/check.yml"}
+        self.github.check_polls = [[check_run("success")]]
+
+        before = self.interdiff()
+        code, _, err = self.later("gate")
+
+        self.assertTrue(before["needs_gate"])
+        self.assertEqual(0, code, err)
+        self.assertTrue(self.interdiff()["incremental"])
 
     def test_a_gate_that_passed_on_an_earlier_head_does_not_count(self) -> None:
         self.move_trunk({"trunk.txt": "moved\n"})

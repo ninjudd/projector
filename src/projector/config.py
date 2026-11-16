@@ -60,6 +60,7 @@ SETTINGS: dict[str, type] = {
     "review.allow_approve": bool,
     "review.publish_rule": bool,
     "review.gate": str,
+    "review.gate_checks": str,
     "review.incremental": bool,
     "review.summarize": bool,
     "review.labels": bool,

@@ -758,7 +758,8 @@ reads, which are these:
 | `review.username` | string | the authenticated user | `review-pr` and `review-repo`, as the GitHub login that posts reviews, and `project watch add --role review`, as the login a review subscription names |
 | `review.allow_approve` | boolean | `false` | `review-pr` and `project review publish`, to permit a real `APPROVE` on a clean cross-author review |
 | `review.publish_rule` | boolean | `true` | `init`, to add the rules allowing every `project` command but the few that reach outside Projector's own state to your Claude Code settings and Codex rules |
-| `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2` |
+| `review.gate` | string | none | `project review gate`, as the repository's validation gate: a shell command run in the review's scratch worktree with the worktree and the merge base as `$1` and `$2`. With `review.gate_checks` set, it names only the part of the gate CI does not run |
+| `review.gate_checks` | string | none | `project review gate`, which waits for these GitHub Actions checks on the head instead of running the suite, and `implement` and `fix-pr`, which run focused tests before a push instead of the full suite: the names of the CI checks that run the repository's suite, separated by commas, as `check` or `test, lint` |
 | `review.incremental` | boolean | `true` | `project review interdiff` and `project review publish --incremental`, to allow an incremental review of a minimal push; `false` gives every head a full review |
 | `review.summarize` | boolean | `true` | `review-pr`, to publish a summary of each pull request it reviews to the repository's Projector site after the review |
 | `review.labels` | boolean | `true` | `project review setup`, `publish`, and `finish`, to add and remove the `reviewing` label, which shows a review in progress, and the `clean` label, which shows a signed-off head; `false` leaves both labels alone, as a repository whose own `clean` or `reviewing` label means something else needs |
@@ -2116,9 +2117,44 @@ worktree, with the worktree and the merge base as `$1` and `$2` and as
 standard error under `--json` so standard output carries only the JSON record;
 `gate` exits with the command's status, and the state file records the
 command, its exit status, the head, and when it ran. The command runs the
-head's code, so `gate` refuses, exiting 1 without running anything, on a head
-`setup` recorded as untrusted, whether or not `review.gate` is set, and when
-`review.gate` is unset.
+head's code, so it runs only on a head `setup` recorded as trusted. Without
+`review.gate_checks`, `gate` refuses, exiting 1 without running anything, on
+an untrusted head, whether or not `review.gate` is set, and when `review.gate`
+is unset.
+
+When `review.gate_checks` names the CI checks that run the repository's
+suite, such as `check` or `test, lint`, `gate` runs the `review.gate` command
+on a trusted head when it is set, and then waits for CI instead of running the
+suite. A failing command decides the gate with its own status, and `gate`
+reads no CI. Reading CI runs nothing on your machine, so `gate` reads it for an
+untrusted head too, and leaves the command unrun there. It reads each named
+check's latest run on the head from GitHub Actions, ignoring a check of the
+same name that another app or a commit status posts, and looks every 20
+seconds for up to 30 minutes. It exits:
+
+| Exit | When |
+| --- | --- |
+| 0 | Every named check concluded `success`. |
+| 1 | A named check concluded `failure` or `timed_out`. |
+| 75 | CI gave no evidence about the head's code. The record's `reason` says why. |
+
+CI gives no evidence when a named check is still running after 30 minutes or
+concludes `cancelled`, `skipped`, `neutral`, or the like. It also gives none
+when no run of the check can come: the head's workflow runs have all finished
+without it, one waits for a maintainer to approve it, or none started in the
+first two minutes. Last, CI gives none when the head changed a file that
+decides what the check runs. Those are the workflow file GitHub records for
+the check's run, and every reusable workflow and local action that file
+reaches through a `uses: ./` line. A head that changes only another workflow,
+such as a release workflow, keeps CI's evidence. When `gate` cannot tell
+which files decided the run, it gives no evidence rather than guess. On exit
+75, a review runs the repository's full gate locally on a trusted head, and
+reads an untrusted one.
+
+The state file's gate record then also holds `checks`, each named check's
+`name`, `conclusion`, and `url`, with a `null` conclusion for a check that had
+no completed run, and `source`, which is `ci` when CI decided the result and
+`local` otherwise.
 
 `rules` checks whether your own settings hold the rules `init` adds to
 `~/.claude/settings.json`, and to `~/.codex/rules/projector.rules` where Codex
@@ -2815,6 +2851,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
 | `FINDING` | `fix` | An unresolved review thread |
 | `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
 | `CONFLICT` | `fix` | A branch that conflicts with its base |
+| `CHECKS` | `fix` | CI failing on the head, naming each check run that concluded `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE` and each commit status in the state `FAILURE` or `ERROR`; the `projector/review` status does not count, and neither does a run that waits for approval or was cancelled or skipped |
 | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
 | `LABEL` | `fix` | A `clean` or `reviewing` label added or removed since the owner last saw the pull request, as `+clean` or `-reviewing` |
 | `UNREVIEWED` | `fix`, when no session on this machine reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
@@ -2854,7 +2891,7 @@ became a draft. A subscription to one pull request, as `review-pr` adds,
 announces every head, draft or not, because running `review-pr` asks for its
 review now.
 
-`FINDING`, `VERDICT`, `CONFLICT`, and `NEW HEAD` report work that
+`FINDING`, `VERDICT`, `CONFLICT`, `CHECKS`, and `NEW HEAD` report work that
 stands until it is done, so the daemon announces each again, with
 `(still open)` after the reference, every `watch.renotify` seconds while it
 stands. A `NEW HEAD` stands while the head has no verdict by the model from

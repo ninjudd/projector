@@ -23,8 +23,12 @@ the outcome.
    the plan said to build once exists once, nothing the change replaced is
    still present or referenced, and no stub, dead branch, or compatibility
    wrapper remains.
-4. Run the repository's complete validation gate. Treat missing or indirect
-   evidence as incomplete rather than assuming intent proves delivery.
+4. Run the repository's complete validation gate. Where `.projector.toml`
+   sets `review.gate_checks`, the named CI checks passing on the pull
+   request's head, read with `project review gate <number>` or
+   `gh pr checks <number>`, stand in for the suite, and you run the rest of
+   the gate. Treat missing or indirect evidence as incomplete rather than
+   assuming intent proves delivery.
 5. Inspect nested projects. Their independent statuses do not automatically
    block the parent, but unresolved work that belongs to the parent's promised
    outcome does.

@@ -73,8 +73,8 @@ Projector's mod also subscribes the session to fix each pull request that a
 pushed to, inside a skill or not. A subagent's commands carry its session's
 id, so a pull request that a subagent opens subscribes the session it
 belongs to. One background process per machine, the watch daemon, polls
-every subscribed pull request and sends each finding, conflict, and new head
-to one session, as a line that ends with what to do:
+every subscribed pull request and sends each finding, conflict, CI failure,
+and new head to one session, as a line that ends with what to do:
 
 ```text
 CONFLICT acme/app#12 conflicts with main — run fix-pr on acme/app#12 in subagent fix-12

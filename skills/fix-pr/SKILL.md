@@ -64,6 +64,14 @@ are resolved. The work outstanding on the head is:
 
 - **A merge conflict**, when `mergeable` is `CONFLICTING`. `UNKNOWN` means
   GitHub has not computed it yet, so ask again after a few seconds.
+- **A failed CI check** on the head, which a `CHECKS` line names. Read the
+  failing job's log with `gh run view <run-id> --log-failed`, taking the run
+  id from the check's URL, or open the URL of a check from another app or of
+  a commit status. Reproduce the failure locally with the failing test, then
+  fix it as you fix a finding. A failure you cannot reproduce, or one in
+  infrastructure the change did not touch, such as a runner that could not
+  start or a flaky service, is not yours to patch: report it with the
+  check's URL, and change nothing.
 - **Every unresolved review thread.**
 - **A standing `CHANGES_REQUESTED`** from a cross-author reviewer, including
   one whose findings exist only in its body.
@@ -130,7 +138,12 @@ head the merge produces, and that head is the one the next review reads.
 3. Run the repository's full test, lint, format, documentation, and
    validation gate, on every layer the rebase rewrote for a stack. A merge
    or rebase without textual conflicts can still break, for example when one
-   side renames a function and the other adds a call to it.
+   side renames a function and the other adds a call to it. Where
+   `review.gate_checks` is set, CI runs the full suite on the push, so run the
+   smaller gate step 2 of
+   [Hold the pull request while changes are built](#hold-the-pull-request-while-changes-are-built)
+   describes, with the tests that cover each file the merge resolved, and let
+   a `CHECKS` line bring back what CI finds.
 4. Commit the merge, push the branch, and confirm that `mergeable` reads
    `MERGEABLE`. A stack's rebase leaves no merge to commit: once the gate
    passes on every rewritten layer, push them all with `gh stack push`, and
@@ -167,7 +180,7 @@ no review lists a suggestion. Decide every suggestion it lists.
   [Verify and fix findings](#verify-and-fix-findings): quote the lines it
   names and confirm that the change it describes is correct there. Then hold
   the pull request, as the next section describes, and build the change the
-  way you build a fix, through the full gate.
+  way you build a fix, through the gate.
 - **Defer** a suggestion that is large, reaches beyond this change, needs a
   decision you cannot make, or does not hold up when you verify it. Record
   it in your report with a one-line reason, and post nothing about it on the
@@ -206,7 +219,11 @@ the `origin` of the checkout you run them in, and refuse outside one.
    on, because the head is still the one the review signed off: a draft that
    carries `clean` tells a reader that a review signed the pull request off
    and that its author is building a change on top of it.
-2. Build each change, run the full gate, commit, and push. The push starts a
+2. Build each change, run the gate, commit, and push. Where
+   `review.gate_checks` is set, CI runs the full suite on the push, so run
+   the smaller gate `../implement/SKILL.md` describes under "Verify the
+   current slice": the tests that cover the change and the `review.gate`
+   command, not the full suite. The push starts a
    head with no sign-off yet, so the repository's label workflow, or the next
    review's `setup`, takes `clean` off.
 3. As soon as the push that carries every change succeeds, mark the pull
@@ -373,7 +390,9 @@ Fix code on the stack branch that introduced it. Find the layers above it,
 and carry each fix up through every one of them, as `../implement/SKILL.md`
 describes under "Stack dependent work": by rebasing with `gh stack` where it
 works, and by merging each layer into the one above it where it does not.
-Either way, run each affected layer's full gate before you push it. Do not
+Either way, run each affected layer's gate before you push it, as step 2 of
+[Hold the pull request while changes are built](#hold-the-pull-request-while-changes-are-built)
+describes. Do not
 patch parent code inside a child merely to avoid updating the layers above.
 
 The user can merge the whole stack, or its bottom layers, from GitHub at any
@@ -534,6 +553,10 @@ role are these:
   findings exist only in its body.
 - **`CONFLICT`** reports a branch that conflicts with its base. It clears
   when a push makes the branch mergeable again.
+- **`CHECKS`** reports CI checks that failed on the head, by name. It counts
+  failed check runs and failed commit statuses, but never Projector's own
+  `projector/review` status, which a `VERDICT` already reports. It clears
+  when a push moves the head.
 - **`REVIEW`** reports a Projector review whose suggestions
   `project review suggestions` lists, or any other reviewer's review body
   of the current head that has no inline thread, the shape every `COMMENT`
@@ -550,7 +573,8 @@ role are these:
   Tell the user once that no session on this machine reviews it, and that
   `review-pr` or `review-repo` would, unless they review it elsewhere. Never
   say that no session reviews it at all. It is not work: any work behind it
-  arrives as its own `FINDING`, `VERDICT`, `CONFLICT`, or `REVIEW` line. A
+  arrives as its own `FINDING`, `VERDICT`, `CONFLICT`, `CHECKS`, or `REVIEW`
+  line. A
   draft reports nothing, because it waits on its author, and so does a pull
   request that a session here reviews, or that a live start comment from the
   operator or another account whose review would count shows under review
@@ -572,7 +596,7 @@ role are these:
   operator cannot see it, and that the daemon removed the subscription.
   Tell the user.
 
-`FINDING`, `VERDICT`, and `CONFLICT` report work that stands until it is
+`FINDING`, `VERDICT`, `CONFLICT`, and `CHECKS` report work that stands until it is
 done, and the daemon announces each again every `watch.renotify`
 seconds, 15 minutes by default, while it stands. So a line about work a
 subagent already has is a reminder: send it on. A thread the subagent
@@ -594,7 +618,7 @@ point: on a new round the subagent already knows the findings it answered,
 the ones it declined and why, and the commits it pushed, so it reads a
 reopened thread as the recurrence it is instead of as new work.
 
-- On a pull request's first `FINDING`, `VERDICT`, `CONFLICT`, or `REVIEW`,
+- On a pull request's first `FINDING`, `VERDICT`, `CONFLICT`, `CHECKS`, or `REVIEW`,
   start its subagent under the name the event gives, `fix-<number>`. Give
   it the repository, the pull request, the operator login, the event lines,
   and the path of this file, and have it run this skill for the pull
