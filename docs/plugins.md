@@ -324,10 +324,10 @@ calls review requests, each author's together and the authors in order of
 login, with no line between the groups. The header counts the two apart,
 such as `14 pull requests · 10 review requests`. The panel tells which are
 yours by the operator, the account `gh` is signed in as, which it reads from
-the daemon's `daemon.json`. A pull request by a deleted account, which GitHub
-names no author for, is a review request. One that is still loading counts as
-yours until its author is known. A pull request that the session both fixes
-and reviews is listed once.
+the daemon's `daemon.json`. A pull request by a deleted account, which
+GitHub names no author for, is a review request. One that is still loading
+counts as yours until its author is known. A pull request that the session
+both fixes and reviews is listed once.
 
 In a terminal, the panel draws on a background of its own, so a line that
 moves as the panel scrolls is plainly the panel's. It is inset one column
@@ -615,10 +615,9 @@ out of view. A collapsed line starts with `+`, where an item's starts with
 `-`, to say it expands. Collapsed pull requests become a line such as
 `+ #12 #14 #15` in their place, listing each in the rows' order. Your pull
 requests and the review requests collapse apart, each to a line of its own,
-and yours always come first. With no
-review label beside it, each number's color says what its row says, from
-its notes and thread count as well as its state, taking the first of these
-that applies:
+and yours always come first. With no review label beside it, each number's
+color says what its row says, from its notes and thread count as well as its
+state, taking the first of these that applies:
 
 - **Red** when a conflict, a change request, or failing checks hold it back.
 - **Yellow** while it has unresolved review threads, which its row counts in
@@ -637,13 +636,13 @@ number moves the drawer to it.
 A drawer that is open when you collapse its pull requests stays open under
 their line. There it starts under the first number, where on its row it
 starts one column past the number. Click the `+` to expand those pull
-requests, and an open drawer moves back to its row. A collapsed kind of
-item becomes a line such as `+ 2 questions` at the top of the items, drawn
-in the kind's color. Click the line, or the count again, to expand it. Your
-pull requests, the review requests, the questions, the requests, and the
-notices collapse apart from each other, and each stays collapsed, new ones included, until you
-expand it. While a collapsed kind has nothing open, the header has no count
-for it, so its muted items show in the list.
+requests, and an open drawer moves back to its row. A collapsed kind of item
+becomes a line such as `+ 2 questions` at the top of the items, drawn in the
+kind's color. Click the line, or the count again, to expand it. Your pull
+requests, the review requests, the questions, the requests, and the notices
+collapse apart from each other, and each stays collapsed, new ones included,
+until you expand it. While a collapsed kind has nothing open, the header has
+no count for it, so its muted items show in the list.
 
 Click anywhere on an item to open its drawer, and click it again to close
 it. On the main screen, press Enter on it from the keyboard instead. While
