@@ -803,12 +803,15 @@ def add_worktree(checkout: Path, path: Path, sha: str) -> None:
 
 def worktree_on_branch(checkout: Path, branch: str) -> Optional[Path]:
     """The worktree of the checkout's repository that has `branch` checked out, or None when none has. A
-    prunable worktree's folder is gone, so it has nothing checked out."""
+    worktree whose folder is gone has nothing checked out. Git marks such a worktree prunable only when it
+    is unlocked, so the folder itself is checked."""
     listed = git("-C", str(checkout), "worktree", "list", "--porcelain", "-z")
     for record in listed.split("\0\0"):
         fields = record.strip("\0").split("\0")
-        if f"branch refs/heads/{branch}" in fields and not any(field.startswith("prunable") for field in fields):
-            return Path(fields[0].removeprefix("worktree "))
+        if f"branch refs/heads/{branch}" in fields:
+            path = Path(fields[0].removeprefix("worktree "))
+            if path.is_dir():
+                return path
     return None
 
 

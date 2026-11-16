@@ -3602,10 +3602,10 @@ cd "$(project worktree 12)"
 
 The command searches every worktree of the checkout you run it in, the main
 checkout included, from any one of them. It matches the whole branch name,
-and passes over a worktree whose folder is gone until `git worktree prune`
-forgets it. When no worktree has the branch checked out, it says which
-branch it looked for and exits 66. A detached worktree, such as a review's
-scratch worktree, has no branch, so the command never finds one.
+and passes over a worktree whose folder is gone, locked or not. When no
+worktree has the branch checked out, it says which branch it looked for and
+exits 66. A detached worktree, such as a review's scratch worktree, has no
+branch, so the command never finds one.
 
 ## Consume JSON
 

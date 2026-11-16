@@ -40,6 +40,10 @@ class WorktreeCommandTests(unittest.TestCase):
         self.add_detached("review")
         self.gone = self.add("gone", "gone")
         shutil.rmtree(self.gone)
+        # Git never marks a locked worktree prunable, even once its folder is gone.
+        locked = self.add("locked", "locked")
+        git(self.checkout, "worktree", "lock", "--reason", "agent", str(locked))
+        shutil.rmtree(locked)
         self.prs: dict[int, dict] = {}
         github = mock.patch.object(review, "run_gh", self.github)
         github.start()
@@ -87,6 +91,11 @@ class WorktreeCommandTests(unittest.TestCase):
         code, out, err = self.project("gone")
         self.assertEqual((66, ""), (code, out))
         self.assertIn("no worktree has branch gone checked out", err)
+
+    def test_refuses_a_branch_checked_out_only_in_a_locked_folder_that_is_gone(self) -> None:
+        code, out, err = self.project("locked")
+        self.assertEqual((66, ""), (code, out))
+        self.assertEqual("project: no worktree has branch locked checked out\n", err)
 
     def test_prints_the_worktree_of_a_pull_requests_head_branch(self) -> None:
         self.prs[12] = {"number": 12, "head": {"ref": "fix/login", "sha": "0" * 40}}
