@@ -216,7 +216,7 @@ what it did to each:
 
   ```text
   prefix_rule(
-      pattern = ["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary", "version", "watch"]],
+      pattern = ["project", ["check", "done", "help", "list", "loop", "owner", "priority", "search", "show", "status", "summary", "version", "watch", "worktree"]],
       decision = "allow",
   )
   prefix_rule(
@@ -3584,6 +3584,32 @@ minutes, and deletes the archive it reads.
 
 `devices --json` prints `devices`, each with its `name`, `udid`, `kind`,
 `tunnel`, and whether it is `installable`.
+
+## Find a branch's worktree
+
+`project worktree` prints the folder of the worktree that has a branch
+checked out. A worktree's folder is often named for something other than
+its branch, such as an agent's id, so the command saves you from reading
+`git worktree list` to find it. Give it a branch, or the number of a pull
+request of the repository `origin` names, which it looks up on GitHub for
+the pull request's head branch:
+
+```sh
+project worktree fix/login           # the worktree that has fix/login checked out
+project worktree 12                  # the worktree that has pull request 12's head branch checked out
+cd "$(project worktree 12)"
+```
+
+The command searches every worktree of the checkout you run it in, the main
+checkout included, from any one of them. It matches the whole branch name,
+and passes over a worktree whose folder is gone, locked or not. When no
+worktree has the branch checked out, it says which branch it looked for and
+exits 66. A detached worktree, such as a review's scratch worktree, has no
+branch, so the command never finds one. A pull request from a fork has a head
+branch in the fork, and the command looks for a local branch of the same
+name, so for a fork's `main` it finds the worktree that has your own `main`
+checked out. The command needs Git 2.36 or later, which added
+`git worktree list -z`.
 
 ## Consume JSON
 

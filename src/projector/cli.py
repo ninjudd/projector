@@ -871,6 +871,10 @@ def parser() -> argparse.ArgumentParser:
     add_loop_parser(subcommands)
     add_watch_parser(subcommands)
     add_agent_parser(subcommands)
+    worktree = subcommands.add_parser("worktree", help="print the folder of the worktree that has a branch, or a "
+                                                       "pull request's branch, checked out")
+    worktree.add_argument("target", metavar="branch-or-number",
+                          help="a branch, or the number of a pull request of origin's repository")
 
     site = subcommands.add_parser("site", help="build, serve, or host the Projector site for a repository")
     site_commands = site.add_subparsers(dest="site_command", required=True)
@@ -1189,6 +1193,26 @@ def run_ios(arguments: argparse.Namespace) -> int:
         ios.crash_reports(checkout, output=output, **where)
     else:
         ios.device_log(checkout, output=output, span=arguments.last, predicate=arguments.predicate, **where)
+    return 0
+
+
+class NoWorktree(ProjectorError):
+    exit_code = 66
+
+
+def run_worktree(arguments: argparse.Namespace) -> int:
+    """Print the folder of the worktree that has the branch checked out, or the pull request's branch."""
+    checkout = discover_git_root(Path.cwd())
+    if ios.NUMBER.fullmatch(arguments.target):
+        branch = review.read_pull_request(review.origin_repo(checkout), int(arguments.target))["head"]["ref"]
+        named = f"pull request {arguments.target}'s branch {branch}"
+    else:
+        branch = arguments.target
+        named = f"branch {branch}"
+    found = review.worktree_on_branch(checkout, branch)
+    if found is None:
+        raise NoWorktree(f"no worktree has {named} checked out")
+    print(found)
     return 0
 
 
@@ -2988,6 +3012,8 @@ def run(arguments: argparse.Namespace) -> int:
         return run_watch(arguments)
     if arguments.command == "agent":
         return run_agent(arguments)
+    if arguments.command == "worktree":
+        return run_worktree(arguments)
 
     # Resolved once and passed down, so configuration and the store agree on
     # the repository without asking git for it twice.
