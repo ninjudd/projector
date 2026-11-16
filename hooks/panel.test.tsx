@@ -141,7 +141,7 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
 function answer(query: string): string {
   const data: Record<string, unknown> = query.includes('viewer { login }') ? { viewer: { login: VIEWER } } : {}
   for (const [, alias, owner, name] of query.matchAll(/(r\d+): repository\(owner: "([^"]+)", name: "([^"]+)"\)/g)) {
-    data[alias ?? ''] = BY_REPO[`${owner}/${name}`] ?? null
+    data[alias ?? ''] = BY_REPO[`${owner}/${name}`.toLowerCase()] ?? null
   }
   return JSON.stringify({ data })
 }
@@ -809,6 +809,27 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   await ui.press({ key: 'pr:o/r#1' })
   await clock.settle()
   expect(await linksOf('o/r#1')).toEqual(['github:o/r#1'])
+  await ui.unmount()
+})
+
+test('names pull requests by number alone when their one repository is spelled in two cases', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  const { filled } = world(on, { [REVIEW]: 'o/r#1\n', [WATCH]: 'O/R#2\n' })
+
+  await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+  await $.tool.call({ tool: 'Bash', command: WATCH_COMMAND })
+  await clock.advance(1)
+  await clock.settle()
+
+  // GitHub ignores case in owner and repository names, so `o/r` and `O/R` are one repository.
+  const ui = await $.ui.mount(PANEL)
+  expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('#1')
+  expect((await ui.find({ type: 'Button', key: 'pr:o/r#2' }))?.props.label).toBe('#2')
+  await ui.press({ key: 'pr:o/r#2' })
+  await clock.settle()
+  await ui.press({ key: 'discuss:o/r#2' })
+  expect(filled).toEqual(['insert:#2 '])
   await ui.unmount()
 })
 
