@@ -3605,7 +3605,11 @@ checkout included, from any one of them. It matches the whole branch name,
 and passes over a worktree whose folder is gone, locked or not. When no
 worktree has the branch checked out, it says which branch it looked for and
 exits 66. A detached worktree, such as a review's scratch worktree, has no
-branch, so the command never finds one.
+branch, so the command never finds one. A pull request from a fork has a head
+branch in the fork, and the command looks for a local branch of the same
+name, so for a fork's `main` it finds the worktree that has your own `main`
+checked out. The command needs Git 2.36 or later, which added
+`git worktree list -z`.
 
 ## Consume JSON
 
