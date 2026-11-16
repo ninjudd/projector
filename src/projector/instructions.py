@@ -8,12 +8,16 @@ distinct files, carries its own copy of the block. Everything outside the
 markers belongs to the repository. `init` writes and refreshes the block;
 `check` reports when it has drifted from the template this package ships. Both
 render the template through `render`, so they compare the same string.
+`render` keeps the template's iOS rules for a repository with an iOS app and
+drops them for any other, so one version of the template renders two ways.
 
 The template's first line is its own begin marker, and the integer in that
 marker is the template version. It changes only when the text changes, so a
 repository's block can be compared with the installed template without a
-content hash: an older version is refreshed, a newer one is left alone, and an
-equal version with different text was edited by hand.
+content hash: an older version is refreshed, and a newer one is left alone. An
+equal version whose text matches the other rendering, with or without the iOS
+rules, belongs to a repository that gained or lost its app since the block was
+written. An equal version that matches neither was edited by hand.
 """
 
 from __future__ import annotations
