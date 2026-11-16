@@ -1229,14 +1229,16 @@ function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
 
 type Note = { text: string; color: 'error' | 'warning' | 'success' | 'claude' }
 
+const threadCount = (count: number) => `${count} thread${count === 1 ? '' : 's'}`
+
 type Hold = {
   status: string
   /**
    * The hold in full, which the row's notes give while its drawer is open,
    * and give as the status word otherwise. None for a conflict, which always
-   * takes the status, or for open threads, whose count is always a note.
+   * takes the status, so no note names it.
    */
-  phrase?: string
+  phrase?: (pr: PullRequest) => string
   color: 'error' | 'warning'
   holds: (pr: PullRequest) => boolean
 }
@@ -1248,21 +1250,26 @@ type Hold = {
  */
 const HOLDS: Hold[] = [
   { status: 'conflict', color: 'error', holds: pr => pr.isConflicting },
-  { status: 'failing', phrase: 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
+  { status: 'failing', phrase: () => 'checks failing', color: 'error', holds: pr => pr.checks === 'failing' },
   {
     status: 'changes',
-    phrase: 'changes requested',
+    phrase: () => 'changes requested',
     color: 'warning',
     holds: pr => pr.reviewDecision === 'CHANGES_REQUESTED',
   },
-  { status: 'threads', color: 'warning', holds: pr => pr.openThreads > 0 },
+  {
+    status: 'threads',
+    phrase: pr => threadCount(pr.openThreads),
+    color: 'warning',
+    holds: pr => pr.openThreads > 0,
+  },
 ]
 
 /**
  * The labels a review sets alone, in the order a row's word takes them:
  * `reviewing` while a review runs, over a `clean` an earlier head left, and
- * `clean` once a head is signed off. Reviewing is orange, as the drawer draws a reviewer, since
- * yellow marks findings.
+ * `clean` once a head is signed off. Reviewing is orange, as the drawer
+ * draws a reviewer, since yellow marks findings.
  */
 const REVIEW_LABELS: Note[] = [
   { text: 'reviewing', color: 'claude' },
@@ -1276,21 +1283,19 @@ const reviewLabel = (pr: PullRequest) => REVIEW_LABELS.find(label => hasLabel(pr
 
 /**
  * What a row says after the title: every other status that applies, in the
- * order the word takes them, then its approval and its open threads' count.
- * While the row's drawer `isOpen`, the holds show in full, and the one that
- * is the row's word shows as well.
+ * order the word takes them, then its approval. While the row's drawer
+ * `isOpen`, the holds show in full, and the one that is the row's word shows
+ * as well.
  */
 function notesOf(pr: PullRequest, isOpen: boolean): Note[] {
   const shown = rowState(pr).text
   const notes = HOLDS.flatMap(({ status, phrase, color, holds }): Note[] =>
     phrase !== undefined && holds(pr) && (isOpen || status !== shown)
-      ? [{ text: isOpen ? phrase : status, color }]
+      ? [{ text: isOpen ? phrase(pr) : status, color }]
       : [],
   )
   notes.push(...REVIEW_LABELS.filter(label => label.text !== shown && hasLabel(pr, label.text)))
   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
-  // The open threads' count comes last, beside the age.
-  if (pr.openThreads > 0) notes.push({ text: `${pr.openThreads}*`, color: 'warning' })
   return notes
 }
 
@@ -2438,7 +2443,7 @@ export const register: Register = on => {
             <Box key={`file:${key}:${path}`} flexDirection="column">
               <Button key={`toggle-file:${key}:${path}`} plain onPress={() => toggleFile(key, path)}>
                 {`${isFileOpen(key, path) ? '-' : '+'} ${path} `}
-                <Text color="warning">{`${threads.length}*`}</Text>
+                <Text color="warning">{threadCount(threads.length)}</Text>
               </Button>
               {isFileOpen(key, path) && (
                 <Box flexDirection="column" marginLeft={THREAD_INDENT}>
