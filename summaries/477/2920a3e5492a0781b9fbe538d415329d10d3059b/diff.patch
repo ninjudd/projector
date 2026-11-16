@@ -1,0 +1,1087 @@
+diff --git a/.github/scripts/release.py b/.github/scripts/release.py
+index ae2de1e3..4af08671 100755
+--- a/.github/scripts/release.py
++++ b/.github/scripts/release.py
+@@ -4,18 +4,21 @@
+     .github/scripts/release.py bump patch|minor|major   raise one part of the version and write it
+     .github/scripts/release.py set X.Y.Z                write an exact version instead
+     .github/scripts/release.py released                 exit 0 if origin/main's version is fully released, 3 if not
+-    .github/scripts/release.py tag                      tag vX.Y.Z at origin/main, move the vX major tag, and publish the GitHub release
++    .github/scripts/release.py tag                      tag vX.Y.Z at origin/main, publish its GitHub release, and move the vX major tag
+ 
+ The Release workflow runs these. Started by hand with patch, minor, or major,
+ it runs `bump` on a release/vX.Y.Z branch and opens the release pull request.
+ When a change to pyproject.toml reaches main, it runs `released`, and when that
+-exits 3 it runs `tag`: that pushes the immutable vX.Y.Z tag, force-moves the
+-major tag that marketplaces and the site action follow, and creates the
+-GitHub release for vX.Y.Z with generated notes; --no-release skips that step.
++exits 3 it runs `tag`: that pushes the immutable vX.Y.Z tag, creates the
++GitHub release for vX.Y.Z with generated notes (--no-release skips that step),
++and then force-moves the major tag that the installer, marketplaces, and the
++site action follow. The major tag moves last because `project upgrade` reads
++the newest GitHub release, and a release published after the major tag moved
++would leave a window in which the two name different versions.
+ 
+ A version is released once its tag and the major tag name the same commit and
+-its GitHub release exists. `tag` does only the steps the remote lacks, so
+-running it again finishes a release that stopped partway.
++its GitHub release exists. `tag` does only the steps the remote lacks, in that
++order, so running it again finishes a release that stopped partway.
+ """
+ 
+ from __future__ import annotations
+@@ -199,10 +202,10 @@ def released(root: Path, remote: str = "origin", branch: str = "main") -> tuple[
+     """The merged version and the parts of its release the remote still lacks."""
+     state = merged(root, remote, branch)
+     missing = [] if state.tagged else [f"the {state.name} tag"]
+-    if not state.major_moved:
+-        missing.append(f"{state.major} at {state.commit[:9]}")
+     if not published(root, remote, state.name):
+         missing.append("the GitHub release")
++    if not state.major_moved:
++        missing.append(f"{state.major} at {state.commit[:9]}")
+     return state, missing
+ 
+ 
+@@ -219,18 +222,18 @@ def tag(root: Path, remote: str = "origin", branch: str = "main", github_release
+             git(root, "tag", "--force", "-a", state.name, state.commit, "-m", f"Projector {state.version}")
+             git(root, "push", "--quiet", remote, f"refs/tags/{state.name}")
+             did.append(f"tagged {state.name}")
+-        if state.major_moved:
+-            found.append(state.major)
+-        else:
+-            git(root, "tag", "--force", "-a", state.major, state.commit, "-m", f"Projector {state.version}")
+-            git(root, "push", "--quiet", "--force", remote, f"refs/tags/{state.major}")
+-            did.append(f"moved {state.major}")
+         if github_release:
+             if published(root, remote, state.name):
+                 found.append("the GitHub release")
+             else:
+                 create_release(root, remote, state.name)
+                 did.append("published the GitHub release")
++        if state.major_moved:
++            found.append(state.major)
++        else:
++            git(root, "tag", "--force", "-a", state.major, state.commit, "-m", f"Projector {state.version}")
++            git(root, "push", "--quiet", "--force", remote, f"refs/tags/{state.major}")
++            did.append(f"moved {state.major}")
+     except ReleaseError as exc:
+         before = f" Before that it {', '.join(did)}." if did else ""
+         raise ReleaseError(f"{exc}.{before} Run tag again, or re-run the Release workflow, "
+@@ -249,7 +252,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
+     r = sub.add_parser("released", help=f"exit 0 when the merged version is fully released, {NOT_RELEASED} when it is not")
+     r.add_argument("--remote", default="origin")
+     r.add_argument("--branch", default="main")
+-    t = sub.add_parser("tag", help="do the release steps the remote lacks: the version tag, the major tag, the GitHub release")
++    t = sub.add_parser("tag", help="do the release steps the remote lacks: the version tag, the GitHub release, the major tag")
+     t.add_argument("--remote", default="origin")
+     t.add_argument("--branch", default="main")
+     t.add_argument("--no-release", action="store_true", help="push the tags without creating the GitHub release")
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 58c2642c..40104da8 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -1,8 +1,8 @@
+ name: Release
+ # Start a release by hand: choose patch, minor, or major, and the propose job
+ # opens a pull request that raises the version. Merging it is the decision to
+-# ship; the publish job then tags the merged version, moves the major tag, and
+-# creates the GitHub release.
++# ship; the publish job then tags the merged version, creates the GitHub
++# release, and moves the major tag last.
+ on:
+   workflow_dispatch:
+     inputs:
+@@ -70,7 +70,7 @@ jobs:
+             -f description="Version-only release; needs no review" \
+             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > /dev/null
+           cat > "$RUNNER_TEMP/body.md" <<EOF
+-          Raises Projector's version to $version in \`pyproject.toml\` and both plugin manifests. Merging this pull request publishes the release: the Release workflow then tags \`v$version\` on the merge commit, moves the major tag to it, and creates the GitHub release with generated notes. The workflow posted the \`projector/review\` status on this commit because it changes only the version; a push to this branch needs a review.
++          Raises Projector's version to $version in \`pyproject.toml\` and both plugin manifests. Merging this pull request publishes the release: the Release workflow then tags \`v$version\` on the merge commit, creates the GitHub release with generated notes, and moves the major tag to it. The workflow posted the \`projector/review\` status on this commit because it changes only the version; a push to this branch needs a review.
+ 
+           ## Testing
+ 
+diff --git a/docs/cli.md b/docs/cli.md
+index 2ed9c0b9..0adcdf9d 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -931,14 +931,16 @@ project upgrade status
+ How it upgrades depends on where pip recorded that the command came from:
+ 
+ - **A release**, installed by `curl -fsSL https://projector.bot/install.sh |
+-  bash`, from a release's source archive, or from a Git URL: `upgrade`
+-  downloads the installer from the newest release and runs it with the same
+-  targets, which reinstalls from the newest release without git. It prints
+-  the equivalent `curl ... | bash -s -- <targets>` command on stderr. The
+-  installer comes from `https://projector.bot/install.sh`, or, for a command
+-  installed from a GitHub fork, from `install.sh` at `PROJECTOR_REF` (default
+-  `v0`) in that fork, with `PROJECTOR_REPO` set to the fork.
+-  `PROJECTOR_INSTALLER_URL` names another installer to run.
++  bash`, from a release's source archive, or from a Git URL: `upgrade` asks
++  GitHub for the newest release's tag, such as `v0.9.0`, downloads
++  `install.sh` at that tag from `raw.githubusercontent.com`, and runs it with
++  the same targets and `PROJECTOR_REF` set to the tag. The installer and the
++  CLI it installs then come from one release, and a tag never moves, so no
++  cache can serve an older copy of either. `upgrade` asks with
++  `gh api repos/<owner>/<repo>/releases/latest` when `gh` is signed in
++  (`PROJECTOR_GH_COMMAND` names another `gh`), and with GitHub's anonymous
++  API otherwise. It prints the equivalent
++  `curl ... | PROJECTOR_REF=<tag> bash -s -- <targets>` command on stderr.
+ - **A checkout**: `pipx` installs a copy of the source, so a checkout that
+   moves on leaves the installed command and plugins behind. `upgrade` runs
+   the checkout's `install.sh`, prints that command on stderr, and ends with a
+@@ -946,15 +948,70 @@ How it upgrades depends on where pip recorded that the command came from:
+   means the command just built is older than main, so pull and run `upgrade`
+   again.
+ 
+-Either way `upgrade` exits with the installer's status, and targets are the
++A release install upgrades from the repository it was installed from, so a
++command installed from a GitHub fork upgrades from the fork's releases, with
++`PROJECTOR_REPO` set to the fork. These variables change what it installs:
++
++- **`PROJECTOR_REPO`** names another repository, such as `someone/projector`.
++- **`PROJECTOR_REF`** names the release to install, such as `v0.5.7`, and
++  skips the lookup.
++- **`PROJECTOR_INSTALLER_URL`** names another installer to run.
++
++When GitHub cannot name the newest release, as without a network, under the
++anonymous API's rate limit, or in a repository with no release yet,
++`upgrade` prints one warning on stderr that says why, and runs the installer
++that `v0` serves instead: `https://projector.bot/install.sh`, or `install.sh`
++at `v0` in a fork. projector.bot caches that installer for a few minutes, so
++just after a release it can still serve the one before.
++
++`upgrade` exits with the installer's status, and targets are the
+ installer's to validate: an unknown one is its usage error, exit 64. See
+-[the plugin guide](plugins.md) for what each target does. `upgrade` exits 69
++[the plugin guide](plugins.md) for what each target does. A release install
++that succeeds but does not match its release exits 1, as
++[Check the install against the release](#check-the-install-against-the-release)
++describes. `upgrade` exits 69
+ when the command is not an installed distribution, when the record of its
+ source is missing, when a checkout or its `install.sh` no longer exists, or
+ when the released installer cannot be downloaded.
+ 
+ `upgrade` has no `--json` mode because the installer owns the output.
+ 
++### Check the install against the release
++
++After a release install succeeds, `upgrade` runs the same installer's
++`status` and checks what it reports for each target it installed:
++
++- **The CLI.** The version of the `project` on your `PATH`, which is the
++  command the install left rather than the one running the upgrade.
++- **Claude Code.** The `projector` plugin.
++- **Codex.** The `projector` and `projector-hooks` plugins.
++
++A host that is not installed is not checked. When everything matches,
++`upgrade` prints one row:
++
++```text
++verified       what this upgrade installed matches the v0.9.0 release
++```
++
++Otherwise it prints each row that names a problem, with the command that
++fixes it, then a `mismatch` row, and exits 1:
++
++```text
++cli-stale      ⚠️  installed 0.8.18, release 0.9.0 -- run project upgrade cli
++hooks-absent   ⚠️  codex projector-hooks@projector -- run project upgrade codex
++mismatch       ⚠️  what this upgrade installed does not match the v0.9.0 release -- run the command each row above names
++```
++
++A `plugin-ahead` row means that a host installed a plugin newer than the
++release. Each host's marketplace follows the default branch, which carries a
++new version a few minutes before its release is published, so run
++`project upgrade` again once the release is out. When `status` has no release
++version to compare with, `upgrade` prints an `unverified` row instead and
++exits 0.
++
++Trusting Projector's hooks in Codex's `/hooks` is a step only you can take,
++so the check does not look at it. A checkout install is not checked, because
++its `status` compares the install with the checkout rather than a release.
+ ### Know when to run `init` again
+ 
+ After the installer's rows, `upgrade` prints rows of its own, in the same
+@@ -1008,8 +1065,8 @@ never changes stdout or the exit status, and `help`, `version`, and
+ `upgrade` itself do not print it.
+ 
+ The command reads the release's version from the plugin manifest at
+-`PROJECTOR_REF` (default `v0`) in the repository it was installed from, which
+-is the release `upgrade` installs. It checks at most once a day, waits at
++`PROJECTOR_REF` (default `v0`, which a release moves last) in the repository
++`upgrade` installs from. It checks at most once a day, waits at
+ most two seconds for an answer, and caches the answer in
+ `$XDG_CACHE_HOME/projector/release.json` (`~/.cache/projector/release.json`
+ by default). A check that fails also waits a day before the next one. Where
+diff --git a/docs/develop.md b/docs/develop.md
+index 974739da..aafe19c3 100644
+--- a/docs/develop.md
++++ b/docs/develop.md
+@@ -151,8 +151,9 @@ review. The status covers that commit alone, so a commit you push to the
+ release branch waits for a Projector review like any other head. The workflow
+ refuses a run dispatched from any branch but `main`, because the release
+ branch would carry that branch's unreviewed commits under the status.
+-Merging tags the release and moves `v0`, which is what the installer,
+-`project upgrade`, and every repository's site workflow use. When the publish
++Merging tags the release, publishes its GitHub release, which
++`project upgrade` installs, and then moves `v0`, which projector.bot's
++installer and every repository's site workflow use. When the publish
+ job fails partway, re-run it from the Actions page. It finishes the steps the
+ failed run left undone. See
+ [Release an update](plugins.md#release-an-update).
+diff --git a/docs/plugins.md b/docs/plugins.md
+index b012a40a..ccad409c 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -176,13 +176,25 @@ installs the CLI with `pipx` from the source archive of `PROJECTOR_REF`
+ (default `v0`, which every release moves), or, without `pipx`, into a virtual
+ environment under `~/.local/share/projector` with `project` linked into
+ `~/.local/bin`. It adds the `PROJECTOR_REPO` marketplace (default
+-`ninjudd/projector`) to each host. `status` compares the installed versions
+-with the release's. `project upgrade` downloads and runs the same installer,
+-and every `project` command warns on stderr when a newer release is out (see
+-[the CLI guide](cli.md#know-when-a-release-is-out)). projector.bot serves
+-`install.sh` from the `v0` tag, so it is always the newest release's
+-installer. Set `PROJECTOR_REF` to install a particular release, such as
+-`v0.5.7`, and `PROJECTOR_REPO` to install from a fork.
++`ninjudd/projector`) to each host. Set `PROJECTOR_REF` to install a
++particular release, such as `v0.5.7`, and `PROJECTOR_REPO` to install from a
++fork.
++
++`status` compares the installed versions with the release's: `cli-` rows for
++the command, `plugin-` rows for each host's `projector` plugin, and a `hooks`
++or `hooks-absent` row for Codex's `projector-hooks` plugin. A `plugin-ahead`
++row means that a host installed a plugin newer than the release. Each host's
++marketplace follows the default branch, which carries a new version a few
++minutes before its release is published, so run the installer again once the
++release is out.
++
++projector.bot serves `install.sh` from the `v0` tag, which every release
++moves, and caches it for a few minutes, so just after a release it can serve
++the one before. `project upgrade` avoids that cache: it runs `install.sh` from
++the newest release's own tag, such as `v0.9.0`, and then checks what it
++installed against that release (see [the CLI guide](cli.md#upgrade)). Every
++`project` command also warns on stderr when a newer release is out (see
++[Know when a release is out](cli.md#know-when-a-release-is-out)).
+ 
+ The installer also installs or moves the `gh-stack` plugin on each host,
+ since `claude plugin update` neither installs a dependency a plugin newly
+@@ -1054,7 +1066,8 @@ marker, when that source is a local path and the checkout names a repository
+ to move it to: the plugin goes stale with the checkout until `./install.sh
+ <host>` moves it. `plugin-current` reports an installed plugin at the
+ checkout's manifest version, `plugin-stale` one at another version, and
+-`plugin-absent` a host with none.
++`plugin-absent` a host with none. `hooks-absent` reports a Codex without the
++`projector-hooks` plugin, and `hooks` names the one it has.
+ 
+ The first row is about the checkout itself. The installer fetches the current
+ branch's upstream and prints `repo-current` when the checkout matches it,
+@@ -1141,7 +1154,7 @@ gh workflow run release.yml --repo ninjudd/projector -f bump=patch
+ Actions tab. The workflow writes the next version to all three files on a
+ `release/vX.Y.Z` branch and opens a pull request for it. Merging that pull
+ request is the decision to ship: the same workflow runs on the merge, tags
+-the merged version, moves the major tag, and creates the GitHub release. The
++the merged version, creates the GitHub release, and moves the major tag. The
+ workflow opens the pull request with its own token, which needs **Allow
+ GitHub Actions to create and approve pull requests** turned on under the
+ repository's **Settings > Actions > General**.
+@@ -1187,9 +1200,12 @@ change, whether there is anything to release:
+ 
+ `tag` reads the version from `origin/main`, not from the checkout, so an
+ unmerged bump cannot name a release. It does only the steps the remote still
+-lacks: it pushes an immutable `v0.6.0` tag, force-moves `v0` to the same
+-commit, and creates the GitHub release for `v0.6.0` with generated notes. It
+-prints what it did and what it found already done. `released` needs an
++lacks, in this order: it pushes an immutable `v0.6.0` tag, creates the GitHub
++release for `v0.6.0` with generated notes, and force-moves `v0` to the same
++commit. `v0` moves last because `project upgrade` installs the newest GitHub
++release while projector.bot serves the installer at `v0`, so by the time
++`v0` names a release, `project upgrade` finds that release too. `tag` prints
++what it did and what it found already done. `released` needs an
+ authenticated `gh`, because it looks for the GitHub release, and so does `tag`
+ unless you pass `--no-release`, which pushes only the tags and never calls
+ `gh`.
+diff --git a/install.sh b/install.sh
+index 00ecc7ed..0e357f0c 100755
+--- a/install.sh
++++ b/install.sh
+@@ -545,6 +545,10 @@ report_plugin() {
+     printf '%-14s %s\n' "plugin" "$host $installed (no release version to compare against)"
+   elif [ "$installed" = "$expected" ]; then
+     printf '%-14s %s\n' "plugin-current" "$host $installed"
++  elif [ -z "$REPO" ] && version_older "$expected" "$installed"; then
++    # The marketplace follows the default branch, which carries a release's
++    # version before the release is published.
++    printf '%-14s %s\n' "plugin-ahead" "$host installed $installed, release $expected -- the plugin is newer than the release, as it is while a new release publishes; run $(rerun all) again in a few minutes"
+   else
+     local from="checkout"
+     [ -n "$REPO" ] || from="release"
+@@ -552,6 +556,20 @@ report_plugin() {
+   fi
+ }
+ 
++# Codex runs Projector's hooks from a plugin of their own, which the installer
++# adds beside the main one. A release leaves its version alone, so only its
++# absence is something to fix.
++report_codex_hooks() {
++  local installed
++  command -v "$CODEX_COMMAND" >/dev/null 2>&1 || return 0
++  installed="$(host_plugin_version codex projector-hooks@projector)"
++  if [ -z "$installed" ]; then
++    printf '%-14s %s\n' "hooks-absent" "codex projector-hooks@projector -- run $(rerun codex)"
++  else
++    printf '%-14s %s\n' "hooks" "codex projector-hooks@projector $installed"
++  fi
++}
++
+ # The `gh stack` extension against the release Projector pins. It is optional,
+ # so a missing or old one is a row to act on rather than a failure.
+ report_gh_stack() {
+@@ -634,6 +652,7 @@ show_status() {
+   report_cli
+   report_plugin claude "$CLAUDE_COMMAND"
+   report_plugin codex "$CODEX_COMMAND"
++  report_codex_hooks
+   report_gh_stack
+ 
+   local host source target state
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 3387dbea..7161bfc9 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -19,9 +19,9 @@
+ import threading
+ import time
+ from pathlib import Path
+-from typing import Optional
++from typing import NamedTuple, Optional
+ from urllib.parse import urlparse
+-from urllib.request import url2pathname, urlopen
++from urllib.request import Request, url2pathname, urlopen
+ 
+ from . import agents, codex_watch, inbox, instructions, ios, loop, permissions, relay, review, site, summary, watch
+ from .permissions import allow_commands
+@@ -103,25 +103,99 @@ def github_repository(url: str) -> Optional[str]:
+     return f"{match.group(1)}/{match.group(2)}" if match else None
+ 
+ 
+-def release_installer(record: dict) -> tuple[str, dict[str, str]]:
+-    """The released installer to run, and the environment that points it at this install's repository.
++RELEASE_LOOKUP_TIMEOUT = 15
++GITHUB_API = "https://api.github.com"
+ 
+-    An install from Projector's own repository upgrades through the installer
+-    projector.bot serves, which is the one from the newest release. One from a
+-    fork upgrades from that fork, through its own released installer.
++
++def release_tag(repository: str) -> tuple[Optional[str], str]:
++    """The tag of `repository`'s newest GitHub release, or None and the reason it could not be read.
++
++    `gh` answers when it is signed in, which also spares the anonymous API's
++    rate limit. Without it, or when it fails, the anonymous API answers.
++    """
++
++    reasons = []
++    gh = shutil.which(os.environ.get("PROJECTOR_GH_COMMAND", "gh"))
++    if gh is not None:
++        try:
++            result = subprocess.run(
++                [gh, "api", "--hostname", "github.com", f"repos/{repository}/releases/latest", "--jq", ".tag_name"],
++                capture_output=True, text=True, timeout=RELEASE_LOOKUP_TIMEOUT, check=False,
++            )
++            if result.returncode == 0 and plain_ref(result.stdout.strip()):
++                return result.stdout.strip(), ""
++            said = result.stderr.strip().splitlines()
++            reasons.append(f"gh: {said[-1] if said else f'exit {result.returncode}'}")
++        except (OSError, subprocess.SubprocessError) as error:
++            reasons.append(f"gh: {error}")
++    request = Request(f"{GITHUB_API}/repos/{repository}/releases/latest",
++                      headers={"Accept": "application/vnd.github+json", "User-Agent": "projector-cli"})
++    try:
++        with urlopen(request, timeout=RELEASE_LOOKUP_TIMEOUT) as response:
++            release = json.loads(response.read())
++    except (OSError, ValueError, http.client.HTTPException) as error:
++        reasons.append(f"GitHub API: {error}")
++    else:
++        tag = release.get("tag_name") if isinstance(release, dict) else None
++        if isinstance(tag, str) and plain_ref(tag):
++            return tag, ""
++        reasons.append("GitHub API: the newest release names no tag")
++    return None, "; ".join(reasons)
++
++
++def plain_ref(ref: str) -> bool:
++    """Whether `ref` is a tag name that fits in a raw.githubusercontent.com path as it is."""
++
++    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", ref) is not None
++
++
++class ReleaseInstaller(NamedTuple):
++    url: str
++    environment: dict[str, str]
++    # The tag the installer and the CLI come from, or None when they come from the moving `v0`.
++    tag: Optional[str]
++
++
++def release_installer(record: dict) -> ReleaseInstaller:
++    """The released installer to run, the environment that points it at the release, and that release's tag.
++
++    The installer, and the CLI it installs, come from one release tag: the
++    newest GitHub release's, unless `PROJECTOR_REF` names one. A tag never
++    moves, so no cache can serve an older copy of it. When the newest release
++    cannot be read, the installer comes from `v0`, which every release moves:
++    for Projector's own repository through projector.bot, which caches it for a
++    few minutes. `PROJECTOR_REPO`, or a fork's archive, names the repository.
+     """
+ 
+     environment = dict(os.environ)
+-    override = os.environ.get("PROJECTOR_INSTALLER_URL")
+-    repository = github_repository(record.get("url", "")) or UPSTREAM
++    repository = release_repository(record)
+     if repository.lower() != UPSTREAM:
+-        environment.setdefault("PROJECTOR_REPO", repository)
+-    ref = environment.get("PROJECTOR_REF", "v0")
+-    if override:
+-        return override, environment
+-    if repository.lower() == UPSTREAM:
+-        return INSTALLER_URL, environment
+-    return f"https://raw.githubusercontent.com/{repository}/{ref}/install.sh", environment
++        environment["PROJECTOR_REPO"] = repository
++    tag, reason = environment.get("PROJECTOR_REF"), ""
++    if not tag:
++        tag, reason = release_tag(repository)
++    if tag:
++        environment["PROJECTOR_REF"] = tag
++        url = f"{raw_url(repository, tag)}/install.sh"
++    elif repository.lower() == UPSTREAM:
++        url = INSTALLER_URL
++    else:
++        url = f"{raw_url(repository, 'v0')}/install.sh"
++    url = environment.get("PROJECTOR_INSTALLER_URL") or url
++    if reason:
++        print(f"warning: could not read the newest release of {repository} ({reason}); upgrading with {url} "
++              "instead, which can trail a new release by a few minutes", file=sys.stderr)
++    return ReleaseInstaller(url, environment, tag)
++
++
++def release_repository(record: dict) -> str:
++    """owner/repo that a release install upgrades from: `PROJECTOR_REPO`, the fork it came from, or Projector's."""
++
++    return os.environ.get("PROJECTOR_REPO") or github_repository(record.get("url", "")) or UPSTREAM
++
++
++def raw_url(repository: str, ref: str) -> str:
++    return f"https://raw.githubusercontent.com/{repository}/{ref}"
+ 
+ 
+ def fetch_installer(url: str, target: Path) -> None:
+@@ -216,14 +290,77 @@ def report_init_changes(before: dict[str, dict[str, str]], succeeded: bool) -> N
+         installer_row("init-current", "nothing project init writes changed")
+ 
+ 
+-def run_installer(record: dict, targets: list[str]) -> int:
+-    """Run the installer from anywhere, with the same targets, output, and exit status.
++class ReleaseCheck(NamedTuple):
++    """The rows that say whether an install matches its release, and whether something does not."""
++
++    rows: list[tuple[str, str, bool]]
++    mismatched: bool
++
++
++MISMATCHED = 1
++# The rows of `install.sh status` that name something the install left wrong, each with the command that fixes it.
++MISMATCH_ROWS = {"cli-missing", "cli-stale", "plugin-absent", "plugin-stale", "plugin-ahead", "hooks-absent"}
++# The rows it prints when it has no release version to compare with.
++UNCOMPARED_ROWS = {"cli-installed", "plugin"}
++TARGET_SCOPES = {"all": {"cli", "claude", "codex"}, "cli": {"cli"}, "claude": {"claude"}, "codex": {"codex"}}
++
++
++def check_release(script: Path, environment: dict[str, str], targets: list[str],
++                  tag: Optional[str]) -> Optional[ReleaseCheck]:
++    """Compare what the install left with its release, by the released installer's own `status`.
++
++    `status` asks the `project` on PATH for its version, since this process
++    still runs the command the install replaced, and asks each host for its
++    plugins. A host that is not installed is not a mismatch, and a target
++    the installer does not install, such as `status`, has nothing to check.
++    """
++
++    scopes = TARGET_SCOPES.get(targets[0] if targets else "all")
++    if scopes is None:
++        return None
++    release = f"the {tag} release" if tag else "the newest release"
++    unchecked = ReleaseCheck([("unverified", f"could not compare what this upgrade installed with {release} -- "
++                               "run project upgrade status to compare", True)], False)
++    try:
++        status = subprocess.run(["bash", str(script), "status"], env=environment, capture_output=True, text=True,
++                                timeout=300, check=False)
++    except (OSError, subprocess.SubprocessError):
++        return unchecked
++    if status.returncode != 0:
++        return unchecked
++    seen, uncompared, mismatches = set(), False, []
++    for line in status.stdout.splitlines():
++        name, _, text = line.partition(" ")
++        text = text.strip()
++        if name.startswith("cli"):
++            scope = "cli"
++        elif name.startswith(("plugin", "hooks-")) or name == "host-missing":
++            scope = text.split(" ", 1)[0]
++        else:
++            continue
++        if scope not in scopes:
++            continue
++        seen.add(scope)
++        if name in MISMATCH_ROWS:
++            mismatches.append((name, text, True))
++        uncompared = uncompared or name in UNCOMPARED_ROWS
++    if mismatches:
++        return ReleaseCheck([*mismatches, ("mismatch", f"what this upgrade installed does not match {release} -- "
++                                           "run the command each row above names", True)], True)
++    if uncompared or seen != scopes:
++        return unchecked
++    return ReleaseCheck([("verified", f"what this upgrade installed matches {release}", False)], False)
++
++
++def run_installer(record: dict, targets: list[str]) -> tuple[int, Optional[ReleaseCheck]]:
++    """Run the installer from anywhere, with the same targets and output, and check a release install.
+ 
+     Installation belongs to the installer, which already knows how to place
+     the CLI and each host plugin, so nothing here decides what an upgrade is.
+     A checkout install runs the checkout's `install.sh`. Any other install --
+     from a release archive or a Git URL -- downloads the released installer
+-    and runs that, which reinstalls from the newest release without git.
++    and runs that, which reinstalls from the newest release without git, and
++    then checks what it installed against that release.
+     """
+ 
+     source = checkout(record)
+@@ -233,17 +370,21 @@ def run_installer(record: dict, targets: list[str]) -> int:
+             raise EnvironmentError(f"cannot upgrade: {script} does not exist")
+         command = [str(script), *targets]
+         print(f"+ {shlex.join(command)}", file=sys.stderr)
+-        return subprocess.run(command, check=False).returncode
+-    url, environment = release_installer(record)
++        return subprocess.run(command, check=False).returncode, None
++    url, environment, tag = release_installer(record)
+     with tempfile.TemporaryDirectory(prefix="projector-upgrade-") as scratch:
+         script = Path(scratch) / "install.sh"
+         fetch_installer(url, script)
+-        print(f"+ curl -fsSL {url} | bash -s -- {shlex.join(targets)}".rstrip(), file=sys.stderr)
+-        return subprocess.run(["bash", str(script), *targets], env=environment, check=False).returncode
++        chosen = [f"{name}={shlex.quote(environment[name])}" for name in ("PROJECTOR_REPO", "PROJECTOR_REF")
++                  if name in environment and environment[name] != os.environ.get(name)]
++        print(f"+ curl -fsSL {url} | {' '.join([*chosen, 'bash'])} -s -- {shlex.join(targets)}".rstrip(),
++              file=sys.stderr)
++        code = subprocess.run(["bash", str(script), *targets], env=environment, check=False).returncode
++        return code, check_release(script, environment, targets, tag) if code == 0 else None
+ 
+ 
+ def run_upgrade(targets: list[str]) -> int:
+-    """Run the installer, then list what it changed in what `init` writes."""
++    """Run the installer, list what it changed in what `init` writes, and say whether it matches the release."""
+ 
+     record = install_record()
+     # `install.sh cli` rewrites this package under the running interpreter,
+@@ -251,9 +392,13 @@ def run_upgrade(targets: list[str]) -> int:
+     # Everything else this process still needs is imported already, so nothing
+     # after it reaches for a file the reinstall is in the middle of replacing.
+     before = init_digests()
+-    code = run_installer(record, targets)
++    code, check = run_installer(record, targets)
+     report_init_changes(before, code == 0)
+-    return code
++    if check is None:
++        return code
++    for row in check.rows:
++        installer_row(*row)
++    return MISMATCHED if check.mismatched else code
+ 
+ 
+ RELEASE_CHECK_SECONDS = 24 * 60 * 60
+@@ -263,9 +408,7 @@ def run_upgrade(targets: list[str]) -> int:
+ def release_manifest_url(record: dict) -> str:
+     """The plugin manifest of the release `upgrade` would install, which carries the CLI's version too."""
+ 
+-    repository = github_repository(record.get("url", "")) or UPSTREAM
+-    ref = os.environ.get("PROJECTOR_REF", "v0")
+-    return f"https://raw.githubusercontent.com/{repository}/{ref}/.claude-plugin/plugin.json"
++    return f"{raw_url(release_repository(record), os.environ.get('PROJECTOR_REF', 'v0'))}/.claude-plugin/plugin.json"
+ 
+ 
+ def release_cache_file() -> Path:
+diff --git a/tests/test_projector.py b/tests/test_projector.py
+index f8dd9b6a..e791b655 100644
+--- a/tests/test_projector.py
++++ b/tests/test_projector.py
+@@ -2458,6 +2458,18 @@ def setUp(self) -> None:
+         # The command the fake installer "installs" writes what this one does.
+         self.answer = mock.patch.object(cli, "installed_init_digests", return_value=cli.init_digests())
+         self.installed = self.patch(self.answer)
++        # The newest release is read from a fake gh and a GitHub API on disk, never
++        # from GitHub, and no override from the environment running the tests leaks in.
++        self.bin = self.root / "fake-bin"
++        self.bin.mkdir()
++        self.gh_log = self.root / "gh.log"
++        environment = {key: value for key, value in os.environ.items()
++                       if key not in ("PROJECTOR_REF", "PROJECTOR_REPO", "PROJECTOR_INSTALLER_URL")}
++        environment["PROJECTOR_GH_COMMAND"] = str(self.bin / "gh")
++        self.patch(mock.patch.dict(os.environ, environment, clear=True))
++        self.api = self.root / "api"
++        self.patch(mock.patch.object(cli, "GITHUB_API", self.api.as_uri()))
++        self.newest_release(gh="v9.9.9")
+ 
+     def patch(self, patcher: object) -> object:
+         started = patcher.start()
+@@ -2543,65 +2555,150 @@ def test_an_editable_install_is_a_checkout_like_any_other(self) -> None:
+         self.assertEqual(0, code)
+         self.assertEqual(["1", "cli"], self.log.read_text().splitlines())
+ 
+-    def served_installer(self, exit_code: int = 0) -> str:
+-        """A released installer at a file:// URL, which is where `upgrade` fetches it from."""
+-
+-        served = self.root / "served" / "install.sh"
+-        served.parent.mkdir()
+-        served.write_text(
+-            f'#!/bin/sh\nprintf "%s\\n" "$#" "$@" "repo=${{PROJECTOR_REPO:-}}" > "{self.log}"\nexit {exit_code}\n'
++    def newest_release(self, *, gh: str | None = None, api: str | None = None) -> None:
++        """Make the fake gh answer `gh`, or fail as a gh that is not signed in, and the API on disk answer `api`."""
++
++        if gh:
++            answer = f'printf "%s\\n" {shlex.quote(gh)}'
++        else:
++            answer = 'echo "To get started with GitHub CLI, please run:  gh auth login" >&2; exit 4'
++        (self.bin / "gh").write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{self.gh_log}"\n{answer}\n')
++        (self.bin / "gh").chmod(0o755)
++        shutil.rmtree(self.api, ignore_errors=True)
++        if api:
++            for repository in ("ninjudd/projector", "someone/projector"):
++                latest = self.api / "repos" / repository / "releases" / "latest"
++                latest.parent.mkdir(parents=True)
++                latest.write_text(json.dumps({"tag_name": api, "name": api}))
++
++    def served_installer(self, exit_code: int = 0) -> list[str]:
++        """Serve an installer that logs each run, and return the URLs `upgrade` fetches it from."""
++
++        script = self.root / "served-install.sh"
++        script.write_text(
++            f'#!/bin/sh\nprintf "%s\\n" "$*|ref=${{PROJECTOR_REF:-}}|repo=${{PROJECTOR_REPO:-}}" >> "{self.log}"\n'
++            f'[ "$1" = status ] || exit {exit_code}\n'
+         )
+-        self.patch(mock.patch.dict(os.environ, {"PROJECTOR_INSTALLER_URL": served.as_uri()}))
+-        return served.as_uri()
++        fetched: list[str] = []
+ 
+-    def test_a_release_install_runs_the_released_installer(self) -> None:
+-        self.installed_from({"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz",
+-                             "archive_info": {"hash": "sha256=0"}})
+-        url = self.served_installer(exit_code=3)
++        def fetch(url: str, target: Path) -> None:
++            fetched.append(url)
++            shutil.copy(script, target)
+ 
+-        code, stdout, stderr = self.invoke("all")
++        self.patch(mock.patch.object(cli, "fetch_installer", side_effect=fetch))
++        return fetched
+ 
+-        self.assertEqual(3, code, stderr)
+-        self.assertEqual(["1", "all", "repo="], self.log.read_text().splitlines())
+-        self.assertEqual("", stdout)
+-        self.assertIn(f"+ curl -fsSL {url} | bash -s -- all", stderr)
++    def runs(self) -> list[str]:
++        return self.log.read_text().splitlines() if self.log.exists() else []
+ 
+-    def test_a_git_install_upgrades_the_same_way(self) -> None:
+-        self.installed_from({"url": "https://github.com/ninjudd/projector.git",
+-                             "vcs_info": {"vcs": "git", "commit_id": "0" * 40}})
+-        self.served_installer()
++    RELEASE = {"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz", "archive_info": {"hash": "sha256=0"}}
+ 
+-        code, _, stderr = self.invoke("status")
++    def test_a_release_install_runs_the_installer_from_the_newest_release_tag(self) -> None:
++        # The bug: the installer comes through projector.bot's cached v0, which
++        # can serve the previous release's installer after v0 moves.
++        self.installed_from(self.RELEASE)
++        fetched = self.served_installer(exit_code=3)
+ 
+-        self.assertEqual(0, code, stderr)
+-        self.assertEqual(["1", "status", "repo="], self.log.read_text().splitlines())
++        code, stdout, stderr = self.invoke("all")
+ 
+-    def test_a_fork_upgrades_from_its_own_repository(self) -> None:
+-        self.installed_from({"url": "https://github.com/someone/projector/archive/v0.tar.gz", "archive_info": {}})
+-        self.served_installer()
++        self.assertEqual((3, ""), (code, stdout), stderr)
++        self.assertEqual(["https://raw.githubusercontent.com/ninjudd/projector/v9.9.9/install.sh"], fetched)
++        self.assertEqual(["all|ref=v9.9.9|repo="], self.runs())
++        self.assertIn(f"+ curl -fsSL {fetched[0]} | PROJECTOR_REF=v9.9.9 bash -s -- all", stderr)
++        self.assertNotIn("warning", stderr)
++        self.assertEqual(["api --hostname github.com repos/ninjudd/projector/releases/latest --jq .tag_name"],
++                         self.gh_log.read_text().splitlines())
++
++    def test_without_a_signed_in_gh_the_anonymous_api_names_the_release(self) -> None:
++        self.installed_from(self.RELEASE)
++        for case, gh_command in (("gh fails", self.bin / "gh"), ("no gh", self.root / "no-gh")):
++            with self.subTest(case):
++                self.log.unlink(missing_ok=True)
++                os.environ["PROJECTOR_GH_COMMAND"] = str(gh_command)
++                self.newest_release(api="v9.9.8")
++                fetched = self.served_installer(exit_code=3)
++
++                _, _, stderr = self.invoke("cli")
++
++                self.assertEqual(["https://raw.githubusercontent.com/ninjudd/projector/v9.9.8/install.sh"], fetched)
++                self.assertEqual(["cli|ref=v9.9.8|repo="], self.runs())
++                self.assertNotIn("warning", stderr)
++
++    def test_an_unreadable_release_falls_back_to_v0_with_one_warning(self) -> None:
++        # No network, a rate limit, or no release yet must not stop the
++        # upgrade: it runs the installer v0 serves, and says why.
++        self.newest_release()
++        for record, url, repository in (
++            (self.RELEASE, "https://projector.bot/install.sh", ""),
++            ({"url": "git+https://github.com/ninjudd/projector.git", "vcs_info": {}},
++             "https://projector.bot/install.sh", ""),
++            ({"url": "https://example.com/projector.tar.gz", "archive_info": {}}, "https://projector.bot/install.sh", ""),
++            ({"url": "https://github.com/someone/projector/archive/v0.tar.gz", "archive_info": {}},
++             "https://raw.githubusercontent.com/someone/projector/v0/install.sh", "someone/projector"),
++        ):
++            with self.subTest(record["url"]):
++                self.log.unlink(missing_ok=True)
++                self.installed_from(record)
++                fetched = self.served_installer(exit_code=3)
++
++                code, _, stderr = self.invoke("all")
++
++                self.assertEqual(3, code, stderr)
++                self.assertEqual([url], fetched)
++                self.assertEqual([f"all|ref=|repo={repository}"], self.runs())
++                warnings = [line for line in stderr.splitlines() if line.startswith("warning:")]
++                self.assertEqual(1, len(warnings), stderr)
++                self.assertIn(f"could not read the newest release of {repository or 'ninjudd/projector'} (gh: ",
++                              warnings[0])
++                self.assertIn("gh auth login; GitHub API: ", warnings[0])
++                self.assertIn(f"upgrading with {url} instead", warnings[0])
++
++    def test_an_explicit_ref_is_installed_without_a_lookup(self) -> None:
++        self.installed_from(self.RELEASE)
++        os.environ["PROJECTOR_REF"] = "v0.5.7"
++        fetched = self.served_installer(exit_code=3)
+ 
+         self.invoke("cli")
+ 
+-        self.assertEqual(["1", "cli", "repo=someone/projector"], self.log.read_text().splitlines())
++        self.assertEqual(["https://raw.githubusercontent.com/ninjudd/projector/v0.5.7/install.sh"], fetched)
++        self.assertEqual(["cli|ref=v0.5.7|repo="], self.runs())
++        self.assertFalse(self.gh_log.exists(), "PROJECTOR_REF names the release, so nothing asks GitHub")
++
++    def test_projector_repo_and_a_fork_name_the_repository_to_upgrade_from(self) -> None:
++        for record, override in (
++            ({"url": "https://github.com/someone/projector/archive/v0.tar.gz", "archive_info": {}}, None),
++            (self.RELEASE, "someone/projector"),
++        ):
++            with self.subTest(override=override):
++                self.log.unlink(missing_ok=True)
++                self.gh_log.unlink(missing_ok=True)
++                os.environ.pop("PROJECTOR_REPO", None)
++                if override:
++                    os.environ["PROJECTOR_REPO"] = override
++                self.installed_from(record)
++                fetched = self.served_installer(exit_code=3)
+ 
+-    def test_the_installer_comes_from_projector_bot_or_the_fork(self) -> None:
+-        self.patch(mock.patch.dict(os.environ, {}, clear=False))
+-        os.environ.pop("PROJECTOR_INSTALLER_URL", None)
+-        os.environ.pop("PROJECTOR_REF", None)
++                self.invoke("cli")
+ 
+-        upstream, _ = cli.release_installer({"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz"})
+-        git, _ = cli.release_installer({"url": "git+https://github.com/ninjudd/projector.git"})
+-        unknown, _ = cli.release_installer({"url": "https://example.com/projector.tar.gz"})
+-        fork, environment = cli.release_installer({"url": "https://github.com/someone/projector/archive/v0.tar.gz"})
++                self.assertEqual(["https://raw.githubusercontent.com/someone/projector/v9.9.9/install.sh"], fetched)
++                self.assertEqual(["cli|ref=v9.9.9|repo=someone/projector"], self.runs())
++                self.assertIn("repos/someone/projector/releases/latest", self.gh_log.read_text())
+ 
+-        self.assertEqual({"https://projector.bot/install.sh"}, {upstream, git, unknown})
+-        self.assertEqual("https://raw.githubusercontent.com/someone/projector/v0/install.sh", fork)
+-        self.assertEqual("someone/projector", environment["PROJECTOR_REPO"])
++    def test_an_installer_url_override_is_the_one_run(self) -> None:
++        self.installed_from(self.RELEASE)
++        served = self.root / "elsewhere-install.sh"
++        served.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*|ref=$PROJECTOR_REF" >> "{self.log}"\nexit 3\n')
++        os.environ["PROJECTOR_INSTALLER_URL"] = served.as_uri()
++
++        code, _, stderr = self.invoke("cli")
++
++        self.assertEqual(3, code, stderr)
++        self.assertEqual(["cli|ref=v9.9.9"], self.runs())
+ 
+     def test_an_installer_that_cannot_be_fetched_is_named(self) -> None:
+-        self.installed_from({"url": "https://github.com/ninjudd/projector/archive/v0.tar.gz", "archive_info": {}})
++        self.installed_from(self.RELEASE)
+         missing = (self.root / "nowhere" / "install.sh").as_uri()
+-        self.patch(mock.patch.dict(os.environ, {"PROJECTOR_INSTALLER_URL": missing}))
++        os.environ["PROJECTOR_INSTALLER_URL"] = missing
+ 
+         code, _, stderr = self.invoke()
+ 
+@@ -2758,6 +2855,154 @@ def test_the_project_on_path_answers(self) -> None:
+             self.assertIsNone(cli.installed_init_digests())
+ 
+ 
++class UpgradeCheckTests(unittest.TestCase):
++    """`upgrade` checks what a release install left against that release, with the real installer's `status`.
++
++    This checkout's `install.sh` is served as the release's installer. pipx,
++    curl, gh, `project`, and both hosts are fakes on PATH that answer from
++    files a test writes, and HOME is a temporary directory, so nothing here
++    reaches the network or the machine's own install.
++    """
++
++    setUp_upgrade = UpgradeTests.setUp
++    patch = UpgradeTests.patch
++    installed_from = UpgradeTests.installed_from
++    invoke = UpgradeTests.invoke
++    newest_release = UpgradeTests.newest_release
++
++    def setUp(self) -> None:
++        self.setUp_upgrade()
++        self.installed_from(UpgradeTests.RELEASE)
++        self.state = self.root / "state"
++        self.state.mkdir()
++        self.curl_log = self.root / "curl.log"
++        installer = Path(__file__).parents[1] / "install.sh"
++        self.patch(mock.patch.object(cli, "fetch_installer",
++                                     side_effect=lambda url, target: shutil.copy(installer, target)))
++        fakes = {
++            "pipx": "exit 0",
++            # The release's manifest, which the installer reads its version from.
++            "curl": f'printf "%s\\n" "$*" >> "{self.curl_log}"\n'
++                    f'[ -f "{self.state}/release" ] || exit 22\n'
++                    f'printf \'{{\\n  "version": "%s"\\n}}\\n\' "$(cat "{self.state}/release")"',
++            "project": f'[ "$*" = version ] || exit 2\nprintf "project %s\\n" "$(cat "{self.state}/cli")"',
++            "host-claude": f'[ "$*" = "plugin list --json" ] && cat "{self.state}/claude.json"\nexit 0',
++            "host-codex": f'[ "$*" = "plugin list --json" ] && cat "{self.state}/codex.json"\nexit 0',
++        }
++        for name, body in fakes.items():
++            (self.bin / name).write_text(f"#!/bin/sh\n{body}\n")
++            (self.bin / name).chmod(0o755)
++        (self.bin / "python3").symlink_to(sys.executable)
++        home = self.root / "home"
++        home.mkdir()
++        for name in ("PROJECTOR_OFFLINE", "PROJECTOR_CLAUDE_DIR", "PROJECTOR_CODEX_DIR", "CLAUDE_CONFIG_DIR",
++                     "PROJECTOR_VENV", "PROJECTOR_BIN_DIR", "NO_COLOR"):
++            os.environ.pop(name, None)
++        os.environ.update({
++            "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
++            "HOME": str(home),
++            "PROJECTOR_USER_ROOT": str(home),
++            "PROJECTOR_CLAUDE_COMMAND": str(self.bin / "host-claude"),
++            "PROJECTOR_CODEX_COMMAND": str(self.bin / "host-codex"),
++        })
++
++    def left(self, *, release: str | None, cli_version: str, plugins: str, hooks: bool = True) -> None:
++        """The release's version, and what the install leaves: the CLI's version and each host's plugins."""
++
++        if release:
++            (self.state / "release").write_text(release)
++        (self.state / "cli").write_text(cli_version)
++        (self.state / "claude.json").write_text(json.dumps([{"id": "projector@projector", "version": plugins}]))
++        codex = [{"pluginId": "projector@projector", "version": plugins}]
++        if hooks:
++            codex.append({"pluginId": "projector-hooks@projector", "version": "1.0.0"})
++        (self.state / "codex.json").write_text(json.dumps({"installed": codex}))
++
++    def upgrade(self, *targets: str) -> tuple[int, list[str]]:
++        """Run `upgrade`, and return its status and the rows it printed after the installer's own."""
++
++        with tempfile.TemporaryFile() as installer_output:
++            saved = os.dup(1)
++            os.dup2(installer_output.fileno(), 1)
++            try:
++                code, stdout, stderr = self.invoke(*targets)
++            finally:
++                os.dup2(saved, 1)
++                os.close(saved)
++        rows = [line for line in stdout.splitlines() if not line.startswith("init-")]
++        return code, rows
++
++    def test_an_install_that_matches_its_release_says_so(self) -> None:
++        self.newest_release(gh="v0.9.0")
++        self.left(release="0.9.0", cli_version="0.9.0", plugins="0.9.0")
++
++        code, rows = self.upgrade("all")
++
++        self.assertEqual((0, ["verified       what this upgrade installed matches the v0.9.0 release"]), (code, rows))
++        # The version compared with is the tag's, which no cache can hold back the way it can v0's.
++        self.assertIn("https://raw.githubusercontent.com/ninjudd/projector/v0.9.0/.claude-plugin/plugin.json",
++                      self.curl_log.read_text())
++
++    def test_a_cli_behind_the_release_fails_the_upgrade_and_names_the_fix(self) -> None:
++        # The bug: an install that left the previous release's CLI printed success.
++        self.newest_release(gh="v0.9.0")
++        self.left(release="0.9.0", cli_version="0.8.18", plugins="0.9.0")
++
++        code, rows = self.upgrade()
++
++        self.assertEqual((1, [
++            "cli-stale      ⚠️  installed 0.8.18, release 0.9.0 -- run project upgrade cli",
++            "mismatch       ⚠️  what this upgrade installed does not match the v0.9.0 release -- run the command "
++            "each row above names",
++        ]), (code, rows))
++
++    def test_plugins_ahead_of_the_release_fail_the_upgrade(self) -> None:
++        # The default branch carries a release's version before its GitHub
++        # release is published, and both hosts install plugins from it.
++        self.newest_release(gh="v0.8.18")
++        self.left(release="0.8.18", cli_version="0.8.18", plugins="0.9.0")
++
++        code, rows = self.upgrade("all")
++
++        self.assertEqual(1, code)
++        self.assertEqual(["plugin-ahead", "plugin-ahead", "mismatch"], [row.split()[0] for row in rows])
++        self.assertIn("claude installed 0.9.0, release 0.8.18", rows[0])
++        self.assertIn("run project upgrade all again in a few minutes", rows[0])
++
++    def test_codex_without_its_hooks_plugin_fails_the_upgrade(self) -> None:
++        # The bug: an installer that never added projector-hooks left Codex
++        # without Projector's hooks, and the upgrade still printed success.
++        self.newest_release(gh="v0.9.0")
++        self.left(release="0.9.0", cli_version="0.9.0", plugins="0.9.0", hooks=False)
++
++        code, rows = self.upgrade("codex")
++
++        self.assertEqual((1, "hooks-absent   ⚠️  codex projector-hooks@projector -- run project upgrade codex"),
++                         (code, rows[0]))
++
++        # A target that leaves Codex alone does not fail over it.
++        code, rows = self.upgrade("claude")
++        self.assertEqual((0, "verified"), (code, rows[0].split()[0]))
++
++    def test_a_host_that_is_not_installed_does_not_fail_the_check(self) -> None:
++        self.newest_release(gh="v0.9.0")
++        self.left(release="0.9.0", cli_version="0.9.0", plugins="0.9.0", hooks=False)
++        os.environ["PROJECTOR_CODEX_COMMAND"] = str(self.root / "no-codex")
++
++        code, rows = self.upgrade("all")
++
++        self.assertEqual((0, ["verified       what this upgrade installed matches the v0.9.0 release"]), (code, rows))
++
++    def test_an_install_with_no_release_version_to_compare_is_not_called_verified(self) -> None:
++        self.newest_release(gh="v0.9.0")
++        self.left(release=None, cli_version="0.9.0", plugins="0.9.0")
++
++        code, rows = self.upgrade("all")
++
++        self.assertEqual((0, ["unverified     ⚠️  could not compare what this upgrade installed with the "
++                              "v0.9.0 release -- run project upgrade status to compare"]), (code, rows))
++
++
+ class StaleReleaseWarningTests(unittest.TestCase):
+     """Every command says on stderr when it is older than the release `upgrade` installs.
+ 
+diff --git a/tests/test_release.py b/tests/test_release.py
+index 91295682..28b4bb1d 100644
+--- a/tests/test_release.py
++++ b/tests/test_release.py
+@@ -203,9 +203,9 @@ def released(self) -> tuple[int, str]:
+             code = release.main(["released", "--branch", "trunk"], root=self.repo)
+         return code, out.getvalue()
+ 
+-    def test_a_fresh_release_tags_moves_the_major_tag_and_publishes(self) -> None:
++    def test_a_fresh_release_tags_publishes_and_moves_the_major_tag(self) -> None:
+         first = run(self.repo, "git", "rev-parse", "HEAD")
+-        self.assertEqual(f"v0.5.0 at {first[:9]} on origin/trunk: tagged v0.5.0, moved v0, published the GitHub release",
++        self.assertEqual(f"v0.5.0 at {first[:9]} on origin/trunk: tagged v0.5.0, published the GitHub release, moved v0",
+                          self.tag())
+         self.assertEqual(first, self.remote_tag("v0.5.0"))
+         self.assertEqual(first, self.remote_tag("v0"))
+@@ -240,12 +240,12 @@ def test_finishes_a_release_whose_major_tag_push_failed(self) -> None:
+         # A developer's global core.hooksPath would hide the remote's own hooks.
+         run(self.remote, "git", "config", "core.hooksPath", str(hook.parent))
+         with self.assertRaisesRegex(release.ReleaseError,
+-                                    r"(?s)fatal error in commit_refs.*Before that it tagged v0\.5\.1\. "
+-                                    r"Run tag again, or re-run the Release workflow, to finish v0\.5\.1"):
++                                    r"(?s)fatal error in commit_refs.*Before that it tagged v0\.5\.1, published the "
++                                    r"GitHub release\. Run tag again, or re-run the Release workflow, to finish v0\.5\.1"):
+             self.tag()
+         self.assertEqual(second, self.remote_tag("v0.5.1"))
+         self.assertEqual(first, self.remote_tag("v0"))
+-        self.assertEqual(["v0.5.0"], self.releases())
++        self.assertEqual(["v0.5.0", "v0.5.1"], self.releases())
+         tagged = self.remote_tag_object("v0.5.1")
+ 
+         hook.unlink()
+@@ -253,39 +253,49 @@ def test_finishes_a_release_whose_major_tag_push_failed(self) -> None:
+         # This clone still has the v0 it moved before the push failed, which
+         # the remote's v0 has to replace.
+         self.assertEqual((release.NOT_RELEASED,
+-                          f"v0.5.1 is not released yet; it still needs v0 at {second[:9]}, the GitHub release\n"),
++                          f"v0.5.1 is not released yet; it still needs v0 at {second[:9]}\n"),
+                          self.released())
+-        self.assertEqual(f"v0.5.1 at {second[:9]} on origin/trunk: moved v0, published the GitHub release "
+-                         "(already done: the v0.5.1 tag)", self.tag())
++        self.assertEqual(f"v0.5.1 at {second[:9]} on origin/trunk: moved v0 "
++                         "(already done: the v0.5.1 tag, the GitHub release)", self.tag())
+         self.assertEqual(tagged, self.remote_tag_object("v0.5.1"), "finishing a release never retags it")
+         self.assertEqual(second, self.remote_tag("v0"), "v0 follows the release, not the branch's newer head")
+         self.assertEqual(["v0.5.0", "v0.5.1"], self.releases())
+         self.assertEqual((0, "v0.5.1 is released\n"), self.released())
+ 
+-    def test_a_failed_github_release_is_finished_by_running_tag_again(self) -> None:
+-        commit = run(self.repo, "git", "rev-parse", "HEAD")
++    def test_v0_stays_on_the_previous_release_until_the_github_release_is_published(self) -> None:
++        # `project upgrade` installs the newest GitHub release, while
++        # projector.bot serves v0's installer, so a v0 that moves first serves
++        # one release's installer while upgrades still find the one before.
++        first = run(self.repo, "git", "rev-parse", "HEAD")
++        self.tag()
++        second = self.commit("0.5.1")
+         os.environ["FAKE_GH_FAIL"] = "release create"
+         with self.assertRaisesRegex(release.ReleaseError,
+-                                    r"gh release create failed: HTTP 403.*Before that it tagged v0\.5\.0, moved v0\."):
++                                    r"gh release create failed: HTTP 403.*Before that it tagged v0\.5\.1\. Run tag"):
+             self.tag()
++        self.assertEqual(first, self.remote_tag("v0"))
++        self.assertEqual((release.NOT_RELEASED, "v0.5.1 is not released yet; it still needs the GitHub release, "
++                          f"v0 at {second[:9]}\n"), self.released())
++
+         del os.environ["FAKE_GH_FAIL"]
+-        self.assertEqual(f"v0.5.0 at {commit[:9]} on origin/trunk: published the GitHub release "
+-                         "(already done: the v0.5.0 tag, v0)", self.tag())
+-        self.assertEqual(["v0.5.0"], self.releases())
++        self.assertEqual(f"v0.5.1 at {second[:9]} on origin/trunk: published the GitHub release, moved v0 "
++                         "(already done: the v0.5.1 tag)", self.tag())
++        self.assertEqual(second, self.remote_tag("v0"))
++        self.assertEqual(["v0.5.0", "v0.5.1"], self.releases())
+ 
+     def test_tag_does_nothing_once_the_version_is_released(self) -> None:
+         commit = run(self.repo, "git", "rev-parse", "HEAD")
+         self.tag()
+         tagged, major = self.remote_tag_object("v0.5.0"), self.remote_tag_object("v0")
+         self.assertEqual(f"v0.5.0 at {commit[:9]} on origin/trunk: nothing to do "
+-                         "(already done: the v0.5.0 tag, v0, the GitHub release)", self.tag())
++                         "(already done: the v0.5.0 tag, the GitHub release, v0)", self.tag())
+         self.assertEqual((tagged, major), (self.remote_tag_object("v0.5.0"), self.remote_tag_object("v0")))
+         self.assertEqual(1, sum(call.startswith("release create") for call in self.gh_calls()))
+ 
+-    def test_released_needs_the_tag_the_major_tag_and_the_github_release(self) -> None:
++    def test_released_needs_the_tag_the_github_release_and_the_major_tag(self) -> None:
+         head = run(self.repo, "git", "rev-parse", "HEAD")
+         self.assertEqual((release.NOT_RELEASED, "v0.5.0 is not released yet; it still needs the v0.5.0 tag, "
+-                          f"v0 at {head[:9]}, the GitHub release\n"), self.released())
++                          f"the GitHub release, v0 at {head[:9]}\n"), self.released())
+ 
+         self.tag()
+         self.commit_other_change()
+@@ -293,7 +303,7 @@ def test_released_needs_the_tag_the_major_tag_and_the_github_release(self) -> No
+ 
+         bump = self.commit("0.5.1")
+         self.assertEqual((release.NOT_RELEASED, "v0.5.1 is not released yet; it still needs the v0.5.1 tag, "
+-                          f"v0 at {bump[:9]}, the GitHub release\n"), self.released())
++                          f"the GitHub release, v0 at {bump[:9]}\n"), self.released())
+ 
+     def assert_refused(self, message: str) -> None:
+         major = run(self.remote, "git", "tag", "--list", "v0")

@@ -1,0 +1,175 @@
+{
+ "version": 1,
+ "name": "Upgrade from exact release tags",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 477,
+  "title": "Upgrade from the newest release's tag, check what it installed, and move v0 last",
+  "head": "2920a3e5492a0781b9fbe538d415329d10d3059b",
+  "headRef": "robust-upgrade",
+  "base": "c2563ec485417c1da9a1b5bd3adec6bd4645de16",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "<code>project upgrade</code> reinstalls Projector's CLI and each host's plugins by running <code>install.sh</code>, the same installer a first install pipes from <code>https://projector.bot/install.sh</code>. Until this change it fetched that installer, and the CLI's source archive, through <code>v0</code>: a tag every release moves, which projector.bot and GitHub each cache for about five minutes. Each host's plugin marketplace, meanwhile, follows the repository's default branch. So an upgrade during or just after a release could install a CLI from one release beside plugins from another, or run an older cached installer that never adds Codex's <code>projector-hooks</code> plugin, and still print success.",
+   "<p>The change closes that gap in three ways:</p>",
+   "<ol><li><b>Install from the release tag.</b> <code>upgrade</code> asks GitHub for the newest release's tag, such as <code>v0.9.0</code>, and runs <code>install.sh</code> from that tag with <code>PROJECTOR_REF</code> set to it. A tag never moves, so no cache can serve an older copy. When the lookup fails, it warns once and runs <code>v0</code>'s installer as before.</li><li><b>Check what got installed.</b> After a release install succeeds, <code>upgrade</code> runs that installer's own <code>status</code> and exits 1, naming the fix, when the CLI, a host's plugin, or <code>projector-hooks</code> does not match the release.</li><li><b>Move <code>v0</code> last.</b> The Release workflow now publishes the GitHub release before it moves <code>v0</code>, so once <code>v0</code> names a release, <code>upgrade</code>'s lookup already finds that release.</li></ol>",
+   "Checkout installs, which run the checkout's own <code>install.sh</code>, and the plain <code>curl | bash</code> first install keep their behavior."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms on this page",
+    "html": "<ul class=\"tight\"><li><b>Release install.</b> A CLI that pip recorded as installed from a release archive or a Git URL, rather than from a local checkout.</li><li><b><code>v0</code>.</b> The major tag every release force-moves. projector.bot serves <code>install.sh</code> from it.</li><li><b><code>releases/latest</code>.</b> GitHub's API for the newest published release, which never returns a draft or a pre-release.</li><li><b><code>status</code> rows.</b> Lines <code>install.sh status</code> prints, each a fixed-width name such as <code>cli-stale</code> followed by text.</li></ul>"
+   },
+   {
+    "id": "exits",
+    "title": "What upgrade prints after a release install",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Status reports</th><th>upgrade prints</th><th>Exit</th></tr></thead><tbody><tr><td>Every checked target matches</td><td><code>verified</code></td><td class=\"r\">0</td></tr><tr><td>A <code>cli-stale</code>, <code>cli-missing</code>, <code>plugin-stale</code>, <code>plugin-absent</code>, <code>plugin-ahead</code>, or <code>hooks-absent</code> row</td><td>Each such row, then <code>mismatch</code></td><td class=\"r\">1</td></tr><tr><td>No release version to compare with</td><td><code>unverified</code></td><td class=\"r\">0</td></tr><tr><td>The installer failed</td><td>Nothing more</td><td class=\"r\">the installer's</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "lookup",
+   "title": "Find the release and fetch its installer",
+   "kicker": "How upgrade picks the tag it installs, and what it does when GitHub cannot say",
+   "intro": [
+    "<code>release_tag</code> asks GitHub for the tag of the newest release in the repository the install came from. It tries a signed-in <code>gh</code> first, because that call does not count against the anonymous API's rate limit, and then the anonymous REST API through <code>urllib</code>. Each call has a 15-second timeout. A tag from either source must look like a plain tag name before it is used.",
+    "<code>release_installer</code> turns that tag into the URL of <code>install.sh</code> on <code>raw.githubusercontent.com</code> and sets <code>PROJECTOR_REF</code> for the installer, so the installer and the CLI archive it downloads come from the same tag. <code>PROJECTOR_REF</code> in your environment skips the lookup, <code>PROJECTOR_REPO</code> names the repository, and <code>PROJECTOR_INSTALLER_URL</code> still replaces the URL. After the installer succeeds, <code>check_release</code> reads the rows of its <code>status</code> to decide the exit."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Every failure of the lookup, whether no network, a rate limit, malformed JSON, or a repository with no release, returns no tag and a reason. The upgrade then runs the <code>v0</code> installer exactly as before, after one warning on stderr."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "The lookup, the installer choice, and the check after the install, all on the release-install path of <code>project upgrade</code>.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 146,
+       "text": "A tag must match <code>[A-Za-z0-9][A-Za-z0-9._-]*</code>, so an API answer cannot add a path segment, a query, or a leading <code>-</code> to the raw URL. Checked by reading the regex and every use of the tag."
+      },
+      {
+       "kind": "context",
+       "line": 184,
+       "text": "<code>PROJECTOR_INSTALLER_URL</code> replaces the URL but no longer skips the lookup, so the installer it names still gets <code>PROJECTOR_REF</code> set to the newest tag. <code>test_an_installer_url_override_is_the_one_run</code> pins that."
+      },
+      {
+       "kind": "verify",
+       "line": 337,
+       "text": "Rows are scoped by target: <code>cli</code> rows to the CLI, and <code>plugin</code>, <code>hooks-</code>, and <code>host-missing</code> rows to the host their text names. So <code>project upgrade claude</code> never fails over Codex, and a host that is not installed counts as checked. Traced against the row formats in <code>install.sh</code>."
+      },
+      {
+       "kind": "verify",
+       "line": 383,
+       "text": "The check runs only after the installer exits 0, and it runs the fetched installer's <code>status</code>, which asks the <code>project</code> on <code>PATH</code> for its version: the newly installed command, not this running process. Traced through <code>report_cli</code>."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "status",
+   "title": "Two new rows in the installer's status",
+   "kicker": "The rows the check reads for Codex's hooks plugin and for a plugin ahead of its release",
+   "intro": [
+    "<code>install.sh status</code> already compared the installed CLI and each host's <code>projector</code> plugin with the release's version. It gains two rows. <code>hooks</code> or <code>hooks-absent</code> reports whether Codex has the <code>projector-hooks</code> plugin, which carries Projector's hooks. <code>plugin-ahead</code> reports a plugin newer than the release, which is what the default-branch marketplace serves while a release publishes."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "install.sh",
+     "note": "Adds <code>report_codex_hooks</code> and the <code>plugin-ahead</code> branch of <code>report_plugin</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 551,
+       "text": "<code>plugin-ahead</code> appears only without a checkout. A checkout's <code>status</code> still reports a newer plugin as <code>plugin-stale</code>."
+      },
+      {
+       "kind": "context",
+       "line": 562,
+       "text": "Only the presence of <code>projector-hooks</code> is checked. Whether Codex trusts the hooks in <code>/hooks</code> is a step only a person can take, so it never fails the upgrade."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "release",
+   "title": "Publish the GitHub release before moving v0",
+   "kicker": "The new order of the Release workflow's tag step, and how a re-run finishes it",
+   "intro": [
+    "The Release workflow runs <code>release.py tag</code> after a version bump merges. It used to push the version tag, move <code>v0</code>, and then create the GitHub release. It now creates the release second and moves <code>v0</code> last, and <code>released</code> lists what is missing in that order. Each step still runs only when the remote lacks it, so re-running a failed job finishes the release."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Each partial state a failed run can leave is finished by a re-run: with the tag and no release, it publishes the release and then moves <code>v0</code>; with the tag and the release, it moves <code>v0</code>. In neither state does <code>v0</code> name a version that <code>releases/latest</code> has not reached. Walked by reading <code>tag</code>, and covered by the reordered <code>TagTests</code>."
+    }
+   ],
+   "files": [
+    {
+     "path": ".github/scripts/release.py",
+     "note": "Moves the major tag step after the GitHub release step, in both <code>tag</code> and <code>released</code>.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 14,
+       "text": "The docstring still says marketplaces follow the major tag, while the docs now say they follow the default branch. The review lists a suggestion to reword it."
+      }
+     ]
+    },
+    {
+     "path": ".github/workflows/release.yml",
+     "note": "Comment and release pull request text only. Permissions, triggers, and token use are unchanged."
+    },
+    {
+     "path": "tests/test_release.py",
+     "note": "Reorders the expected steps and adds a test that <code>v0</code> stays on the previous release while the GitHub release is missing."
+    }
+   ]
+  },
+  {
+   "id": "tests-docs",
+   "title": "Tests and documentation",
+   "kicker": "Fakes that keep the upgrade tests off the network, and the docs that describe the new behavior",
+   "intro": [
+    "<code>UpgradeTests</code> now clears the three override variables, points <code>PROJECTOR_GH_COMMAND</code> at a fake <code>gh</code>, and serves the GitHub API from a temporary directory. The new <code>UpgradeCheckTests</code> run this branch's real <code>install.sh status</code> with fake <code>curl</code>, <code>pipx</code>, <code>project</code>, and hosts on <code>PATH</code> and a temporary <code>HOME</code>, so nothing reaches the network or the machine's own install."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_projector.py",
+     "note": "Replaces the installer-URL tests with tests of the tag lookup, its fallback, the overrides, and the check after the install."
+    },
+    {
+     "path": "docs/cli.md",
+     "note": "Describes the lookup, the fallback, the overrides, and a new section on the check.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 979,
+       "text": "The new section ends without a blank line before the next heading. GitHub still renders it as a heading, and the review lists a suggestion to add the line."
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "Describes the new <code>status</code> rows, why <code>upgrade</code> avoids projector.bot's cache, and the new release order."
+    },
+    {
+     "path": "docs/develop.md",
+     "note": "Says what the GitHub release and <code>v0</code> are each used by, in release order."
+    }
+   ]
+  }
+ ]
+}
