@@ -801,6 +801,17 @@ def add_worktree(checkout: Path, path: Path, sha: str) -> None:
                           "which replaces the worktree")
 
 
+def worktree_on_branch(checkout: Path, branch: str) -> Optional[Path]:
+    """The worktree of the checkout's repository that has `branch` checked out, or None when none has. A
+    prunable worktree's folder is gone, so it has nothing checked out."""
+    listed = git("-C", str(checkout), "worktree", "list", "--porcelain", "-z")
+    for record in listed.split("\0\0"):
+        fields = record.strip("\0").split("\0")
+        if f"branch refs/heads/{branch}" in fields and not any(field.startswith("prunable") for field in fields):
+            return Path(fields[0].removeprefix("worktree "))
+    return None
+
+
 # Start comments
 
 def live_effort() -> str:
