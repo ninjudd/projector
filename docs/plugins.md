@@ -280,7 +280,7 @@ not subscribed to before.
 ```text
   /projector                            1 pull request · 1 review request  12s   [-]
    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
-   #258 threads grace Name the reviewed head in a re… 2 threads · reviewing 5m
+   #258 threads grace Name the revi… 2 threads · reviewing · checks passing 5m
         reviewer · sig-head · +84 −1 in 5 files · checks passing ·  reviewing
         7: Discuss  8: Dismiss
         open in github  open in projector
@@ -331,17 +331,19 @@ daemon's query of the pull request.
 
 Notes follow the title and name every other state that applies, in the
 order above and each in its color: `failing`, `changes`, `threads`,
-`reviewing`, `clean`, and `draft` in italic, then `approved` in green, and
-last `cancelled`, muted, while a workflow's newest run on the head was
-cancelled, so that nothing has run its checks since. A check that failed
-in that run before the cancel still counts, so such a head can read
-`failing` with a `cancelled` note. So a signed-off pull request whose
-checks fail reads `failing` with a green `clean` after its title, and a
-draft that conflicts says `draft` as well as its italic number.
+`reviewing`, `clean`, and `draft` in italic, then `approved` in green,
+`passing` in green while the head's checks pass, and last `cancelled`,
+muted, while a workflow's newest run on the head was cancelled, so that
+nothing has run its checks since. A check that failed in that run before
+the cancel still counts, so such a head can read `failing` with a
+`cancelled` note. So a signed-off pull request whose checks fail reads
+`failing` with a green `clean` after its title, and a draft that conflicts
+says `draft` as well as its italic number.
 No note names `conflict`, which always takes the state. While a pull
 request's drawer is open, its row spells the holds out as `checks failing`,
 `changes requested`, and the threads' count, such as `2 threads`, and names
-the one its state already says as well. The ` · ` between two notes keeps
+the one its state already says as well. It spells `passing` out as `checks
+passing` too. The ` · ` between two notes keeps
 the default text color. The line ends with how long ago the pull request
 last changed, in the column where the inbox's items end with their ages.
 Only the title shortens on a narrow terminal. A pull request that the watch

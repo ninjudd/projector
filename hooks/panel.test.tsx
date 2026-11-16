@@ -157,6 +157,45 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
         ],
       },
     }),
+    // An approved change whose checks pass, though another workflow's newest run on the head was cancelled.
+    p24: pr(24, 'Approved change whose checks pass', {
+      reviewDecision: 'APPROVED',
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: 'FAILURE',
+                contexts: {
+                  checkRunCountsByState: [
+                    { state: 'SUCCESS', count: 1 },
+                    { state: 'CANCELLED', count: 1 },
+                  ],
+                  nodes: (
+                    [
+                      ['lint', 'SUCCESS', 1],
+                      ['docs', 'CANCELLED', 2],
+                    ] as const
+                  ).map(([name, conclusion, workflow]) => ({
+                    __typename: 'CheckRun',
+                    name,
+                    conclusion,
+                    checkSuite: {
+                      conclusion,
+                      workflowRun: {
+                        databaseId: workflow,
+                        createdAt: new Date(NOW - 60_000).toISOString(),
+                        workflow: { databaseId: workflow },
+                      },
+                    },
+                  })),
+                },
+              },
+            },
+          },
+        ],
+      },
+    }),
   },
   'x/y': {
     p7: pr(7, 'Conflicting change', {
@@ -780,7 +819,7 @@ test('a panel.background the panel does not take leaves the color to the theme, 
 test('a row’s notes name every other status that applies, and an open drawer spells its row’s holds out', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
-  world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\no/r#22\no/r#23\n' })
+  world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\no/r#22\no/r#23\no/r#24\n' })
   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
   await clock.advance(1)
   await clock.settle()
@@ -800,6 +839,7 @@ test('a row’s notes name every other status that applies, and an open drawer s
     'Signed-off change failing its checks',
     'Failing change a review is reading',
     'Change whose run a label cancelled',
+    'Approved change whose checks pass',
   ]
   const allNotes = async () => Object.fromEntries(await Promise.all(TITLES.map(async title => [title, await notesOf(title)])))
 
@@ -818,6 +858,14 @@ test('a row’s notes name every other status that applies, and an open drawer s
     'Failing change a review is reading': [['reviewing', 'claude']],
     // A run a label cancelled, with nothing run since, is no failure; the row says so last, muted.
     'Change whose run a label cancelled': [['cancelled', 'subtle']],
+    // Passing checks follow the approval, in green, and come before the cancelled run's note.
+    'Approved change whose checks pass': [
+      ['approved', 'success'],
+      ' · ',
+      ['passing', 'success'],
+      ' · ',
+      ['cancelled', 'subtle'],
+    ],
   })
 
   // An open drawer spells its row's holds out, the one its word names as well, and leaves the other rows short.
@@ -837,6 +885,17 @@ test('a row’s notes name every other status that applies, and an open drawer s
   await ui.press({ key: 'pr:o/r#11' })
   await clock.settle()
   expect(await notesOf('Approved change')).toEqual([['3 threads', 'warning'], ' · ', ['approved', 'success']])
+
+  // An open drawer spells passing checks out too.
+  await ui.press({ key: 'pr:o/r#24' })
+  await clock.settle()
+  expect(await notesOf('Approved change whose checks pass')).toEqual([
+    ['approved', 'success'],
+    ' · ',
+    ['checks passing', 'success'],
+    ' · ',
+    ['cancelled', 'subtle'],
+  ])
 
   // A head whose only run was cancelled is ready, not failing, though its gathering job failed after the cancel,
   // and its drawer says its checks were cancelled, muted.
@@ -863,11 +922,12 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
   // The number is a plain button, so no terminal draws a URL beside it.
   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
-  // The conflict is the row's status, so its notes name the open threads it beat, and that it is a draft, in italic.
+  // The conflict is the row's status, so its notes name the open threads it beat, that it is a draft, in italic,
+  // and that its checks pass.
   expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
-  const notes = await ui.find({ type: 'Text', text: /^threads · draft$/ })
-  expect(partsOf(notes)).toEqual([['threads', 'warning'], ' · ', ['draft', undefined]])
-  const draft = (notes?.children ?? []).at(-1) as { props: { italic?: boolean } } | undefined
+  const notes = await ui.find({ type: 'Text', text: /^threads · draft · passing$/ })
+  expect(partsOf(notes)).toEqual([['threads', 'warning'], ' · ', ['draft', undefined], ' · ', ['passing', 'success']])
+  const draft = (notes?.children ?? []).at(2) as { props: { italic?: boolean } } | undefined
   expect(draft?.props.italic).toBe(true)
 
   await ui.press({ key: 'pr:x/y#7' })
