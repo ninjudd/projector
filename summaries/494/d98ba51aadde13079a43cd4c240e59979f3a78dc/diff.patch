@@ -1,0 +1,940 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 08cc145f..a2db69ae 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -2364,6 +2364,59 @@ such as `a/b` and `a-b`, cannot both be set up for one pull request on one
+ machine: the second `setup` refuses. Every refusal exits 1 and says what to
+ do.
+ 
++### Keep review labels from cancelling CI runs
++
++Each review label fires GitHub's `labeled` event: `setup` adds `reviewing`,
++and `publish` adds `clean`. In a repository whose CI starts on `labeled` and
++cancels a pull request's earlier run, each label cancels the run in
++progress. `project review ready` does the same in one whose CI starts on
++`ready_for_review`. The `CHECKS` event and the panel's checks tell the two
++kinds of failure in a cancelled workflow run apart by when each check
++started. The run was cancelled when the first of its check runs that
++concluded `CANCELLED` ended:
++
++- **A check that started at or after the cancel** failed because of it.
++  Only a job that runs `if: always()` to gather the jobs it needs starts
++  then, since it waits for them to end. Projector always leaves it out.
++- **A check that started before the cancel** failed on its own. Projector
++  leaves it out only once a newer run of the same workflow on the head
++  tests the code again: while the newer run is still running, or once it
++  has run a check of the same name rather than skipping or cancelling it.
++  The newer run's own result then stands for the code.
++
++When Projector read none of the run's cancelled check runs, nothing says
++when the cancel came, so each failure counts as one that started before
++it. The cancelled runs still cost CI time, and the panel notes `cancelled`
++on a pull request while a workflow's newest run on its head was cancelled.
++
++Leave `labeled` out of the `types` of the workflow that runs your checks. A
++job's `if` that skips the jobs for other labels is not enough. The
++workflow's concurrency group cancels the earlier run before any job's `if`
++is read. GitHub also counts a skipped job as a passing check, and the newest
++check of a name as that check, so a label's skipped run would cover a
++failure on GitHub, though Projector still reports it. When a label is meant
++to start a fuller run, give that run a workflow of its own, so every other
++label starts nothing that the checks' workflow counts. Name the label in its
++concurrency group, so a review label cannot cancel the fuller run either:
++
++```yaml
++# .github/workflows/integration.yml
++on:
++  pull_request:
++    types: [labeled]
++
++concurrency:
++  group: integration-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
++  cancel-in-progress: true
++
++jobs:
++  integration:
++    if: github.event.label.name == 'run-integration'
++    runs-on: ubuntu-latest
++    steps:
++      - run: make integration
++```
++
+ ## Use the inbox
+ 
+ `project inbox` keeps what an agent puts in front of you: questions, which
+@@ -2975,7 +3028,7 @@ MOVED acme/app#14 review for claude-opus-5-5 to another session — stop subagen
+ | `FINDING` | `fix` | An unresolved review thread |
+ | `VERDICT` | `fix` | A standing `CHANGES_REQUESTED` review |
+ | `CONFLICT` | `fix` | A branch that conflicts with its base |
+-| `CHECKS` | `fix` | CI failing on the head, naming each check run that concluded `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE` and each commit status in the state `FAILURE` or `ERROR`; the `projector/review` status does not count, and neither does a run that waits for approval or was cancelled or skipped |
++| `CHECKS` | `fix` | CI failing on the head, naming each check run that concluded `FAILURE`, `TIMED_OUT`, or `STARTUP_FAILURE` and each commit status in the state `FAILURE` or `ERROR`; the `projector/review` status does not count, and neither does a run that waits for approval or was cancelled or skipped, nor a failed check run of a cancelled workflow run that started at or after the cancel, as an `if: always()` job that gathers the others does, or that a newer run of the same workflow on the head tests again, by still running or by running a check of the same name rather than skipping or cancelling it. The cancel is when the first of the run's check runs that concluded `CANCELLED` ended |
+ | `REVIEW` | `fix` | A Projector review whose suggestions stand on the current head, with their count, or any other reviewer's comment review of the current head with a body |
+ | `LABEL` | `fix` | A `clean` or `reviewing` label added or removed since the owner last saw the pull request, as `+clean` or `-reviewing` |
+ | `UNREVIEWED` | `fix`, when no session on this machine reviews the pull request | A pull request ready for review whose head is not signed off, that no session here will review, and that no live start comment, from the operator or another account whose review would count, shows under review on any machine, once per head |
+diff --git a/docs/plugins.md b/docs/plugins.md
+index 48e131b5..8b1e415b 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -305,7 +305,14 @@ review wants something:
+ - **`failing`**, in red, while the head's checks fail. The panel leaves out
+   the `projector/review` status a review posts, as the drawer's checks do.
+   A review fails that status when it finds something, which the row already
+-  shows as `changes` or `threads`.
++  shows as `changes` or `threads`. It also leaves out a failed check run of
++  a cancelled workflow run, as a newer run in the same concurrency group
++  cancels it, such as one a review's label starts, when the check started
++  at or after the cancel. Only a job that runs `if: always()` to gather the
++  others starts then. A check that started before the cancel failed on its
++  own, so the panel leaves it out only once a newer run of the same
++  workflow tests the code again, by still running or by running a check of
++  the same name rather than skipping or cancelling it.
+ - **`changes`**, in yellow, while a review requests changes.
+ - **`threads`**, in yellow, while review threads are unresolved.
+ - **`reviewing`**, in orange, while the pull request carries the
+@@ -324,9 +331,14 @@ daemon's query of the pull request.
+ 
+ Notes follow the title and name every other state that applies, in the
+ order above and each in its color: `failing`, `changes`, `threads`,
+-`reviewing`, and `clean`, then `approved` in green. So a signed-off pull
+-request whose checks fail reads `failing` with a green `clean` after its
+-title. No note names `conflict`, which always takes the state. While a pull
++`reviewing`, `clean`, and `draft` in italic, then `approved` in green, and
++last `cancelled`, muted, while a workflow's newest run on the head was
++cancelled, so that nothing has run its checks since. A check that failed
++in that run before the cancel still counts, so such a head can read
++`failing` with a `cancelled` note. So a signed-off pull request whose
++checks fail reads `failing` with a green `clean` after its title, and a
++draft that conflicts says `draft` as well as its italic number.
++No note names `conflict`, which always takes the state. While a pull
+ request's drawer is open, its row spells the holds out as `checks failing`,
+ `changes requested`, and the threads' count, such as `2 threads`, and names
+ the one its state already says as well. The ` · ` between two notes keeps
+@@ -406,10 +418,13 @@ branch, in the palette's cyan, its size, its checks, and every label it
+ carries. The size reads as a diff stat: the insertions, such as `+84`, in
+ green and the deletions, such as `−12`, in red. The checks' state takes a
+ color of its own. It counts every check run and commit status on the head
+-but the `projector/review` status, so a head whose only failure is a
+-review's verdict reads `checks passing`, and one whose only check is that
+-status shows no checks at all. The rest, ` in 5 files` and each `·` included, keeps
+-the default text color. Each label is drawn as GitHub's light theme draws
++but the `projector/review` status and the failed check runs of a
++cancelled workflow run that the cancel caused or that a newer run tests
++again. So a head whose only failure is a review's verdict reads `checks
++passing`, one whose only check is that status shows no checks at all, and
++one with nothing failing or running whose every workflow's newest run was
++cancelled reads `checks cancelled`, muted. The rest, ` in 5 files` and
++each `·` included, keeps the default text color. Each label is drawn as GitHub's light theme draws
+ it: its name, as GitHub spells it, on the label's own color, in black on a
+ light color and white on a dark one. A label whose color the panel has not
+ read yet, which a daemon cache from before the panel read colors leaves
+diff --git a/hooks/github.ts b/hooks/github.ts
+index cd5078d5..a5ba6d99 100644
+--- a/hooks/github.ts
++++ b/hooks/github.ts
+@@ -21,8 +21,10 @@ const FIELDS = `number title url state isDraft reviewDecision mergeable body
+   labels(first: 20) { nodes { name color } }
+   reviewThreads(first: 100) { nodes { isResolved } }
+   commits(last: 1) { nodes { commit { status { context(name: "${REVIEW_CONTEXT}") { state } }
+-    statusCheckRollup { state contexts(first: 1) {
+-      checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }`
++    statusCheckRollup { state contexts(first: 20) {
++      checkRunCountsByState { state count } statusContextCountsByState { state count }
++      nodes { __typename ... on CheckRun { name conclusion startedAt completedAt
++        checkSuite { conclusion workflowRun { databaseId createdAt workflow { databaseId } } } } } } } } } }`
+ 
+ // What an open drawer lists of its pull request's threads. GitHub counts
+ // `comments` under `reviewThreads(first: 100)` as 100 requests, a point of
+@@ -42,16 +44,19 @@ const CHECKS: Record<string, Checks> = {
+   EXPECTED: 'pending',
+ }
+ 
++const COUNT_KEYS = ['checkRunCountsByState', 'statusContextCountsByState'] as const
++
+ /**
+  * What each check run's and commit status's state counts as, with the
+  * failures the watch daemon's CHECKS event counts. A state missing here,
+  * such as `SKIPPED`, holds nothing back.
+  */
+-const CONTEXT_CHECKS: Record<'checkRunCountsByState' | 'statusContextCountsByState', Record<string, Checks>> = {
++const CONTEXT_CHECKS: Record<(typeof COUNT_KEYS)[number], Record<string, Checks>> = {
+   checkRunCountsByState: {
+     FAILURE: 'failing',
+     TIMED_OUT: 'failing',
+     STARTUP_FAILURE: 'failing',
++    CANCELLED: 'cancelled',
+     QUEUED: 'pending',
+     IN_PROGRESS: 'pending',
+     WAITING: 'pending',
+@@ -131,24 +136,126 @@ function threadOf(node: unknown): Thread | null {
+   }
+ }
+ 
++/** The pull request's head commit, as the query reads it. */
++function headOf(node: Record<string, unknown>): Record<string, unknown> {
++  const [last] = nodesOf(node.commits)
++  return isRecord(last) && isRecord(last.commit) ? last.commit : {}
++}
++
++/** The suite of a check run the rollup lists, which says whether its workflow run was cancelled; none for a status. */
++function suiteOf(context: unknown): Record<string, unknown> | undefined {
++  return isRecord(context) && context.__typename === 'CheckRun' && isRecord(context.checkSuite)
++    ? context.checkSuite
++    : undefined
++}
++
++/** A check run's GitHub Actions run: its id, its workflow, its start, and its conclusion. */
++interface Run {
++  id: number | null
++  workflow: number
++  at: string
++  conclusion: string | null
++}
++
++/** The workflow run a check run belongs to, or none for a check run that no workflow run made. */
++function runOf(context: unknown): Run | undefined {
++  const suite = suiteOf(context)
++  const run = isRecord(suite?.workflowRun) ? suite.workflowRun : undefined
++  const workflow = isRecord(run?.workflow) ? run.workflow.databaseId : undefined
++  const at = stringOf(run?.createdAt)
++  const id = typeof run?.databaseId === 'number' ? run.databaseId : null
++  return typeof workflow === 'number' && at !== null
++    ? { id, workflow, at, conclusion: stringOf(suite?.conclusion) }
++    : undefined
++}
++
+ /**
+- * The head's checks, less the `projector/review` status. GitHub's rollup
+- * counts that status, which a review that requests changes sets to
+- * `failure`, so a head with nothing else failing would read as failing.
+- * Without that status the rollup's own state stands.
++ * When each cancelled workflow run was cancelled: the earliest end of its
++ * check runs that concluded `CANCELLED`. A cancelled run none of whose
++ * cancelled check runs the rollup listed has no time here.
+  */
+-function checksOf(node: Record<string, unknown>): Checks | null {
+-  const [last] = nodesOf(node.commits)
+-  const commit = isRecord(last) ? last.commit : undefined
+-  const rollup = isRecord(commit) ? commit.statusCheckRollup : undefined
++function cancelTimesOf(contexts: unknown[]): Map<number, string> {
++  const times = new Map<number, string>()
++  for (const context of contexts) {
++    const run = runOf(context)
++    const ended = isRecord(context) ? stringOf(context.completedAt) : null
++    if (run?.id == null || run.conclusion !== 'CANCELLED' || ended === null) continue
++    if (isRecord(context) && context.conclusion === 'CANCELLED') {
++      const seen = times.get(run.id)
++      if (seen === undefined || ended < seen) times.set(run.id, ended)
++    }
++  }
++  return times
++}
++
++/**
++ * Whether a failed check run of a cancelled workflow run started at or
++ * after the cancel, which only a job that runs `if: always()` to gather the
++ * jobs it needs does: it starts once they end, so in a cancelled run it
++ * starts after the cancel and fails though nothing in the code did. A
++ * failure that started before the cancel is the code's, and so is one in a
++ * run whose cancel time is unknown.
++ */
++function causedByCancel(context: unknown, times: Map<number, string>): boolean {
++  const run = runOf(context)
++  const started = isRecord(context) ? stringOf(context.startedAt) : null
++  const cancelled = run?.id == null ? undefined : times.get(run.id)
++  return run?.conclusion === 'CANCELLED' && cancelled !== undefined && started !== null && started >= cancelled
++}
++
++/**
++ * Whether a check run belongs to a cancelled workflow run that a newer run
++ * of the same workflow on the head tests again: one still running, or one
++ * whose check run of the same name ran rather than skipped or was
++ * cancelled. The newer run's own result stands for the code. A cancelled
++ * run with nothing newer, or whose newer run skipped the check, keeps each
++ * failure that the cancel did not cause, since that check failed before the
++ * cancel.
++ */
++function supersededOf(context: unknown, contexts: unknown[]): boolean {
++  const run = runOf(context)
++  if (run?.conclusion !== 'CANCELLED' || !isRecord(context)) return false
++  return contexts.some(other => {
++    const newer = runOf(other)
++    if (newer === undefined || !isRecord(other) || newer.workflow !== run.workflow || newer.at <= run.at) return false
++    const conclusion = stringOf(other.conclusion)
++    return newer.conclusion === null || (other.name === context.name && conclusion !== 'SKIPPED' && conclusion !== 'CANCELLED')
++  })
++}
++
++/** Each workflow's newest run on the head, among the check runs the rollup lists. */
++function newestRuns(contexts: unknown[]): Run[] {
++  const newest = new Map<number, Run>()
++  for (const context of contexts) {
++    const run = runOf(context)
++    if (run === undefined) continue
++    const seen = newest.get(run.workflow)
++    if (seen === undefined || run.at > seen.at) newest.set(run.workflow, run)
++  }
++  return [...newest.values()]
++}
++
++/**
++ * The head's checks from the rollup's counts, which cover every check run
++ * and commit status, less two kinds of failure that say nothing about the
++ * code: the `projector/review` status, which a review that requests changes
++ * sets to `failure`, and a failed check run of a cancelled workflow run that
++ * the cancel caused or that a newer run tests again. A newer run in the same
++ * concurrency group cancels the one in progress, as a review's label does
++ * where CI starts on `labeled`, and the cancelled run's `if: always()` job
++ * fails though nothing in the code did. GitHub keeps the cancelled run's
++ * checks on the head beside the newer run's. A head with nothing failing or pending reads
++ * `cancelled` when every workflow's newest run on it was cancelled. Without
++ * the counts the rollup's own state stands.
++ */
++function checksOf(commit: Record<string, unknown>): Checks | null {
++  const rollup = commit.statusCheckRollup
+   const state = isRecord(rollup) && typeof rollup.state === 'string' ? (CHECKS[rollup.state] ?? null) : null
+-  const status = isRecord(commit) ? commit.status : undefined
+-  const review = isRecord(status) && isRecord(status.context) ? stringOf(status.context.state) : null
+-  if (review === null || !isRecord(rollup) || !isRecord(rollup.contexts)) return state
++  const contexts = isRecord(rollup) && isRecord(rollup.contexts) ? rollup.contexts : undefined
++  if (contexts === undefined || !COUNT_KEYS.some(key => Array.isArray(contexts[key]))) return state
+ 
+-  const { contexts } = rollup
+-  const counts = { failing: 0, pending: 0, passing: 0 }
+-  for (const key of ['checkRunCountsByState', 'statusContextCountsByState'] as const) {
++  const counts: Record<Checks, number> = { failing: 0, pending: 0, passing: 0, cancelled: 0 }
++  for (const key of COUNT_KEYS) {
+     const rows = Array.isArray(contexts[key]) ? (contexts[key] as unknown[]) : []
+     for (const row of rows) {
+       if (isRecord(row) && typeof row.state === 'string' && typeof row.count === 'number') {
+@@ -156,10 +263,38 @@ function checksOf(node: Record<string, unknown>): Checks | null {
+       }
+     }
+   }
+-  counts[CONTEXT_CHECKS.statusContextCountsByState[review] ?? 'passing'] -= 1
++  const status = commit.status
++  const review = isRecord(status) && isRecord(status.context) ? stringOf(status.context.state) : null
++  if (review !== null) counts[CONTEXT_CHECKS.statusContextCountsByState[review] ?? 'passing'] -= 1
++  const nodes = nodesOf(contexts)
++  const times = cancelTimesOf(nodes)
++  for (const context of nodes) {
++    const conclusion = isRecord(context) ? stringOf(context.conclusion) : null
++    if (
++      CONTEXT_CHECKS.checkRunCountsByState[conclusion ?? ''] === 'failing' &&
++      (causedByCancel(context, times) || supersededOf(context, nodes))
++    ) {
++      counts.failing -= 1
++      counts.cancelled += 1
++    }
++  }
+   if (counts.failing > 0) return 'failing'
+   if (counts.pending > 0) return 'pending'
+-  return counts.passing > 0 ? 'passing' : null
++  const newest = newestRuns(nodes)
++  if (newest.length > 0 && newest.every(run => run.conclusion === 'CANCELLED')) return 'cancelled'
++  return (['passing', 'cancelled'] as const).find(checks => counts[checks] > 0) ?? null
++}
++
++/**
++ * Whether a workflow's newest run on the head was cancelled, so nothing has
++ * run its checks since. A cancelled run that a newer one replaced says
++ * nothing, since a newer run in the same concurrency group cancels the one
++ * before it whenever, for one, a label starts it.
++ */
++function cancelledOf(commit: Record<string, unknown>): boolean {
++  const rollup = commit.statusCheckRollup
++  const contexts = isRecord(rollup) ? nodesOf(rollup.contexts) : []
++  return newestRuns(contexts).some(run => run.conclusion === 'CANCELLED')
+ }
+ 
+ const LABEL_COLOR = /^[0-9a-f]{6}$/i
+@@ -195,7 +330,8 @@ function toPullRequest(pr: TrackedPr, node: Record<string, unknown>): PullReques
+     additions: numberOf(node.additions),
+     deletions: numberOf(node.deletions),
+     changedFiles: numberOf(node.changedFiles),
+-    checks: checksOf(node),
++    checks: checksOf(headOf(node)),
++    isCancelled: cancelledOf(headOf(node)),
+     labels: nodesOf(node.labels).flatMap(labelOf),
+     updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
+     summaryUrl: summary?.[1] ?? null,
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index 6afa19c4..03166531 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -116,6 +116,47 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+       commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] },
+       labels: { nodes: [{ name: 'reviewing' }] },
+     }),
++    // A label started a run that cancelled the only one, whose `if: always()` job then started and failed.
++    p23: pr(23, 'Change whose run a label cancelled', {
++      commits: {
++        nodes: [
++          {
++            commit: {
++              statusCheckRollup: {
++                state: 'FAILURE',
++                contexts: {
++                  checkRunCountsByState: [
++                    { state: 'CANCELLED', count: 1 },
++                    { state: 'FAILURE', count: 1 },
++                  ],
++                  // The cancel ends `slow` two seconds before `complete` starts.
++                  nodes: (
++                    [
++                      ['slow', 'CANCELLED', NOW - 50_000, NOW - 30_000],
++                      ['complete', 'FAILURE', NOW - 28_000, NOW - 25_000],
++                    ] as const
++                  ).map(([name, conclusion, started, completed]) => ({
++                    __typename: 'CheckRun',
++                    name,
++                    conclusion,
++                    startedAt: new Date(started).toISOString(),
++                    completedAt: new Date(completed).toISOString(),
++                    checkSuite: {
++                      conclusion: 'CANCELLED',
++                      workflowRun: {
++                        databaseId: 7,
++                        createdAt: new Date(NOW - 60_000).toISOString(),
++                        workflow: { databaseId: 1 },
++                      },
++                    },
++                  })),
++                },
++              },
++            },
++          },
++        ],
++      },
++    }),
+   },
+   'x/y': {
+     p7: pr(7, 'Conflicting change', {
+@@ -739,7 +780,7 @@ test('a panel.background the panel does not take leaves the color to the theme,
+ test('a row’s notes name every other status that applies, and an open drawer spells its row’s holds out', async ($, on) => {
+   const clock = mock.clock(on, { now: NOW })
+   mock.env(on, { HOME })
+-  world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\no/r#22\n' })
++  world(on, { [REVIEW]: 'o/r#10\no/r#11\no/r#12\no/r#14\no/r#21\no/r#22\no/r#23\n' })
+   await $.tool.call({ tool: 'Bash', command: REVIEW_COMMAND })
+   await clock.advance(1)
+   await clock.settle()
+@@ -758,6 +799,7 @@ test('a row’s notes name every other status that applies, and an open drawer s
+     'Change a review is reading',
+     'Signed-off change failing its checks',
+     'Failing change a review is reading',
++    'Change whose run a label cancelled',
+   ]
+   const allNotes = async () => Object.fromEntries(await Promise.all(TITLES.map(async title => [title, await notesOf(title)])))
+ 
+@@ -774,6 +816,8 @@ test('a row’s notes name every other status that applies, and an open drawer s
+     'Signed-off change failing its checks': [['clean', 'success']],
+     // A running review the failing checks beat shows as well, in the orange the drawer draws a reviewer in.
+     'Failing change a review is reading': [['reviewing', 'claude']],
++    // A run a label cancelled, with nothing run since, is no failure; the row says so last, muted.
++    'Change whose run a label cancelled': [['cancelled', 'subtle']],
+   })
+ 
+   // An open drawer spells its row's holds out, the one its word names as well, and leaves the other rows short.
+@@ -793,6 +837,15 @@ test('a row’s notes name every other status that applies, and an open drawer s
+   await ui.press({ key: 'pr:o/r#11' })
+   await clock.settle()
+   expect(await notesOf('Approved change')).toEqual([['3 threads', 'warning'], ' · ', ['approved', 'success']])
++
++  // A head whose only run was cancelled is ready, not failing, though its gathering job failed after the cancel,
++  // and its drawer says its checks were cancelled, muted.
++  await ui.press({ key: 'pr:o/r#23' })
++  await clock.settle()
++  const texts = await ui.findAll({ type: 'Text' })
++  expect(texts[texts.findIndex(found => found.text === 'Change whose run a label cancelled') - 1]?.text).toBe('ready')
++  const checks = await ui.find({ type: 'Text', text: /^checks cancelled$/ })
++  expect(checks?.props.color).toBe('subtle')
+   await ui.unmount()
+ })
+ 
+@@ -810,9 +863,12 @@ test('a press on a pull request’s number opens its drawer, and discuss puts it
+   // The number is a plain button, so no terminal draws a URL beside it.
+   expect((await ui.find({ type: 'Button', key: 'pr:x/y#7' }))?.props.label).toBe('y#7')
+   expect((await ui.find({ type: 'Button', key: 'pr:o/r#1' }))?.props.label).toBe('r#1')
+-  // The conflict is the row's status, so its notes name only the open threads it beat.
++  // The conflict is the row's status, so its notes name the open threads it beat, and that it is a draft, in italic.
+   expect((await ui.find({ type: 'Text', text: 'conflict' }))?.props.color).toBe('error')
+-  expect(partsOf(await ui.find({ type: 'Text', text: /^threads$/ }))).toEqual([['threads', 'warning']])
++  const notes = await ui.find({ type: 'Text', text: /^threads · draft$/ })
++  expect(partsOf(notes)).toEqual([['threads', 'warning'], ' · ', ['draft', undefined]])
++  const draft = (notes?.children ?? []).at(-1) as { props: { italic?: boolean } } | undefined
++  expect(draft?.props.italic).toBe(true)
+ 
+   await ui.press({ key: 'pr:x/y#7' })
+   await clock.settle()
+diff --git a/hooks/parse.test.ts b/hooks/parse.test.ts
+index ba47c327..479d4fba 100644
+--- a/hooks/parse.test.ts
++++ b/hooks/parse.test.ts
+@@ -156,6 +156,7 @@ describe('GitHub', () => {
+       deletions: 7,
+       changedFiles: 4,
+       checks: 'failing',
++      isCancelled: false,
+       // Spelled as GitHub spells them, with GitHub's color as `#rrggbb`, and none for a color the panel cannot draw.
+       labels: [
+         { name: 'Reviewing', color: '#fbca04' },
+@@ -215,8 +216,8 @@ describe('GitHub', () => {
+         checkRuns: { FAILURE: 1 },
+         statuses: { SUCCESS: 1 },
+       }),
+-      // A head with no review status keeps the rollup's own state.
+-      'no review status': checksOf('FAILURE', null, { checkRuns: { SUCCESS: 1 } }),
++      'no review status, a check run failed': checksOf('FAILURE', null, { checkRuns: { FAILURE: 1, SUCCESS: 1 } }),
++      'no review status, every check passed': checksOf('SUCCESS', null, { checkRuns: { SUCCESS: 2 } }),
+     }).toEqual({
+       'only the review failed': null,
+       'the review failed, the rest passed': 'passing',
+@@ -225,7 +226,110 @@ describe('GitHub', () => {
+       'the review is running, the rest still run': 'pending',
+       'the review is running, the rest passed': 'passing',
+       'the review passed, a check run failed': 'failing',
+-      'no review status': 'failing',
++      'no review status, a check run failed': 'failing',
++      'no review status, every check passed': 'passing',
++    })
++  })
++
++  test('reads a cancelled run’s failed checks as cancelled when the cancel caused them or a newer run tests them again, and notes a workflow whose newest run was cancelled', () => {
++    expect(query.text).toContain('CheckRun { name conclusion startedAt completedAt')
++    expect(query.text).toContain('checkSuite { conclusion workflowRun { databaseId createdAt workflow { databaseId } } }')
++
++    // A check run as the rollup lists it: its name and conclusion, its workflow run's conclusion, workflow, and
++    // start, which give the run its id, and its own start and end. A check run with no workflow belongs to no
++    // workflow run.
++    type Run = [
++      name: string,
++      conclusion: string | null,
++      suite: string | null,
++      workflow: number | null,
++      at: string,
++      started?: string,
++      completed?: string,
++    ]
++    const FIRST = '2026-11-16T22:00:00Z'
++    const LATER = '2026-11-16T22:01:00Z'
++    // When a cancelled run's jobs ran: a job that failed on its own, then the cancel, then the gathering job that
++    // runs `if: always()` once the jobs it needs end.
++    const STARTED = '2026-11-16T22:00:05Z'
++    const FAILED = '2026-11-16T22:00:20Z'
++    const CANCELLED = '2026-11-16T22:00:40Z'
++    const GATHERED = '2026-11-16T22:00:42Z'
++    const read = (rollup: string, runs: Run[]) => {
++      const counts = new Map<string, number>()
++      for (const [, conclusion] of runs) counts.set(conclusion ?? 'IN_PROGRESS', (counts.get(conclusion ?? 'IN_PROGRESS') ?? 0) + 1)
++      const nodes = runs.map(([name, conclusion, suite, workflow, at, started, completed]) => ({
++        __typename: 'CheckRun',
++        name,
++        conclusion,
++        startedAt: started ?? null,
++        completedAt: completed ?? null,
++        checkSuite: {
++          conclusion: suite,
++          workflowRun:
++            workflow === null
++              ? null
++              : { databaseId: Date.parse(at) / 1000 + workflow, createdAt: at, workflow: { databaseId: workflow } },
++        },
++      }))
++      const contexts = { checkRunCountsByState: [...counts].map(([state, count]) => ({ state, count })), nodes }
++      const node = { number: 1, commits: { nodes: [{ commit: { statusCheckRollup: { state: rollup, contexts } } }] } }
++      const found = parseCache({ repo: 'o/r', number: 1 }, JSON.stringify({ repository: { pullRequest: node } }))
++      return [found?.checks, found?.isCancelled]
++    }
++    // A label starts a run that cancels the one in progress, whose gathering job then starts and fails.
++    const slow: Run = ['slow', 'CANCELLED', 'CANCELLED', 1, FIRST, STARTED, CANCELLED]
++    const gathering: Run = ['complete', 'FAILURE', 'CANCELLED', 1, FIRST, GATHERED]
++    // The run's `lint` failed on its own before the cancel.
++    const lint: Run = ['lint', 'FAILURE', 'CANCELLED', 1, FIRST, STARTED, FAILED]
++
++    expect({
++      'nothing ran since': read('FAILURE', [slow, gathering]),
++      'the newer run passed': read('FAILURE', [
++        slow,
++        gathering,
++        ['slow', 'SUCCESS', 'SUCCESS', 1, LATER],
++        ['complete', 'SUCCESS', 'SUCCESS', 1, LATER],
++      ]),
++      'the newer run still runs': read('FAILURE', [slow, gathering, ['slow', null, null, 1, LATER]]),
++      // Without a cancelled check run of its own run, nothing says when the cancel came.
++      'the cancel time is unknown': read('FAILURE', [gathering]),
++      'a check failed before the cancel, nothing ran since': read('FAILURE', [lint, slow, gathering]),
++      'a check failed before the cancel, the newer run passed it': read('FAILURE', [
++        lint,
++        slow,
++        ['lint', 'SUCCESS', 'SUCCESS', 1, LATER],
++        ['slow', 'SUCCESS', 'SUCCESS', 1, LATER],
++      ]),
++      // A review's label starts a run whose job-level `if` skips every job.
++      'a check failed before the cancel, the newer run skipped it': read('FAILURE', [
++        lint,
++        slow,
++        ['lint', 'SKIPPED', 'SUCCESS', 1, LATER],
++        ['slow', 'SKIPPED', 'SUCCESS', 1, LATER],
++      ]),
++      'only a cancelled run, with a passed job': read('FAILURE', [
++        ['lint', 'SUCCESS', 'CANCELLED', 1, FIRST, STARTED, FAILED],
++        slow,
++      ]),
++      'another workflow failed': read('FAILURE', [slow, gathering, ['lint', 'FAILURE', 'FAILURE', 2, FIRST]]),
++      'a run failed and nothing cancelled it': read('FAILURE', [['lint', 'FAILURE', 'FAILURE', 1, FIRST]]),
++      'a check run that no workflow run made': read('FAILURE', [
++        ['other', 'CANCELLED', 'CANCELLED', null, FIRST, STARTED, CANCELLED],
++        ['external', 'FAILURE', 'CANCELLED', null, FIRST, GATHERED],
++      ]),
++    }).toEqual({
++      'nothing ran since': ['cancelled', true],
++      'the newer run passed': ['passing', false],
++      'the newer run still runs': ['pending', false],
++      'the cancel time is unknown': ['failing', true],
++      'a check failed before the cancel, nothing ran since': ['failing', true],
++      'a check failed before the cancel, the newer run passed it': ['passing', false],
++      'a check failed before the cancel, the newer run skipped it': ['failing', false],
++      'only a cancelled run, with a passed job': ['cancelled', true],
++      'another workflow failed': ['failing', true],
++      'a run failed and nothing cancelled it': ['failing', false],
++      'a check run that no workflow run made': ['failing', false],
+     })
+   })
+ 
+@@ -517,6 +621,7 @@ describe('the daemon’s files', () => {
+       deletions: 4,
+       changedFiles: 3,
+       checks: 'pending',
++      isCancelled: false,
+       labels: [{ name: 'clean', color: null }],
+       updatedAt: Date.UTC(2026, 9, 30, 11),
+       summaryUrl: null,
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index aaeb9c66..82523f79 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -113,10 +113,11 @@ const ROLE_OF: Record<SubscriptionRole | LoopKind, Role> = {
+   reviewing: 'reviewing',
+ }
+ 
+-const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning'> = {
++const CHECK_COLORS: Record<Checks, 'success' | 'error' | 'warning' | 'subtle'> = {
+   passing: 'success',
+   failing: 'error',
+   pending: 'warning',
++  cancelled: 'subtle',
+ }
+ 
+ /** The fill of a label whose color the panel has yet to read: GitHub's gray. */
+@@ -1227,7 +1228,7 @@ function referencer(prs: readonly PullRequest[]): (pr: PullRequest) => string {
+   return pr => (isOneRepo ? `#${pr.number}` : `${pr.repo}#${pr.number}`)
+ }
+ 
+-type Note = { text: string; color: 'error' | 'warning' | 'success' | 'claude' }
++type Note = { text: string; color?: 'error' | 'warning' | 'success' | 'claude' | 'subtle'; isItalic?: true }
+ 
+ const threadCount = (count: number) => `${count} thread${count === 1 ? '' : 's'}`
+ 
+@@ -1283,9 +1284,11 @@ const reviewLabel = (pr: PullRequest) => REVIEW_LABELS.find(label => hasLabel(pr
+ 
+ /**
+  * What a row says after the title: every other status that applies, in the
+- * order the word takes them, then its approval. While the row's drawer
++ * order the word takes them, then its approval, and last `cancelled` while a
++ * workflow's newest run on the head was cancelled. While the row's drawer
+  * `isOpen`, the holds show in full, and the one that is the row's word shows
+- * as well.
++ * as well. A draft's italic number is easy to miss, so a draft says so too
++ * when another status takes the word.
+  */
+ function notesOf(pr: PullRequest, isOpen: boolean): Note[] {
+   const shown = rowState(pr).text
+@@ -1295,7 +1298,9 @@ function notesOf(pr: PullRequest, isOpen: boolean): Note[] {
+       : [],
+   )
+   notes.push(...REVIEW_LABELS.filter(label => label.text !== shown && hasLabel(pr, label.text)))
++  if (pr.isDraft && shown !== 'draft') notes.push({ text: 'draft', isItalic: true })
+   if (pr.reviewDecision === 'APPROVED') notes.push({ text: 'approved', color: 'success' })
++  if (pr.isCancelled) notes.push({ text: 'cancelled', color: 'subtle' })
+   return notes
+ }
+ 
+@@ -2511,7 +2516,7 @@ export const register: Register = on => {
+                 <Text>
+                   {notes.flatMap((note, at) => [
+                     ...(at > 0 ? [' · '] : []),
+-                    <Text key={note.text} color={note.color}>
++                    <Text key={note.text} color={note.color} italic={note.isItalic}>
+                       {note.text}
+                     </Text>,
+                   ])}
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 0a2e6c38..29da1faf 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -11,7 +11,7 @@ export type SeenLoop = { kind: LoopKind; tracked: string }
+ /** What the session does with a pull request, as its drawer names it. */
+ export type Role = 'fixing' | 'reviewing'
+ 
+-export type Checks = 'passing' | 'failing' | 'pending'
++export type Checks = 'passing' | 'failing' | 'pending' | 'cancelled'
+ 
+ /** A label on a pull request, as GitHub spells and colors it. */
+ export type Label = {
+@@ -52,6 +52,8 @@ export type PullRequest = {
+   changedFiles: number
+   /** The head commit's combined check state; null when it has no checks. */
+   checks: Checks | null
++  /** Whether a workflow's newest run on the head was cancelled, so nothing has run its checks since. */
++  isCancelled: boolean
+   /** The pull request's labels, among them the `reviewing` and `clean` a review sets. */
+   labels: Label[]
+   /** When the pull request last changed, in milliseconds; null when GitHub did not say. */
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 28f11243..57036bf6 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -101,8 +101,11 @@
+ # LABEL events. `rateLimit` reports what it cost. The panel reads the head's `statusCheckRollup` `state`, and
+ # the daemon reads the rollup's contexts for CHECKS. GitHub's counts by state cover every context, so they say
+ # when a failed one lies past the first page. The `projector/review` status is among them, so the query reads
+-# it too, to take it out of the counts.
+-CONTEXT_NODES = "nodes{ __typename ... on CheckRun{ name conclusion } ... on StatusContext{ context state } }"
++# it too, to take it out of the counts. Each check run's suite says whether its workflow run was cancelled, and
++# the check run's start, beside when the run's cancelled jobs ended, says whether the cancel caused its failure.
++# The run's workflow and start say whether a newer run of that workflow on the head tests the code again.
++CONTEXT_NODES = ("nodes{ __typename ... on CheckRun{ name conclusion startedAt completedAt checkSuite{ conclusion"
++                 " workflowRun{ databaseId createdAt workflow{ databaseId } } } } ... on StatusContext{ context state } }")
+ QUERY = """query($o:String!,$r:String!,$n:Int!){ rateLimit { cost }
+   repository(owner:$o,name:$r){ visibility nameWithOwner
+     pullRequest(number:$n){
+@@ -633,17 +636,83 @@ def head_commit(pr: dict) -> dict:
+     return (nodes(pr, "commits") or [{}])[-1].get("commit") or {}
+ 
+ 
+-def failed_contexts(contexts: list[dict]) -> list[str]:
+-    """The names of the failed check runs and commit statuses among `contexts`, less the `projector/review`
+-    status, which a changes-requested verdict posts as `failure` and the VERDICT and FINDING events report."""
+-    failed = []
++def failures(contexts: list[dict]) -> list[dict]:
++    """The failed check runs and commit statuses among `contexts`, as the rollup's counts count them, less the
++    `projector/review` status, which a changes-requested verdict posts as `failure` and the VERDICT and FINDING
++    events report."""
++    return [found for found in contexts
++            if (found.get("__typename") == "CheckRun" and found.get("conclusion") in CHECK_FAILURES)
++            or (found.get("__typename") == "StatusContext" and found.get("state") in STATUS_FAILURES
++                and found.get("context") != review.REVIEW_CONTEXT)]
++
++
++def workflow_run(found: dict) -> Optional[tuple[int, str]]:
++    """The workflow and start of the GitHub Actions run a check run belongs to, or None for a check run that no
++    workflow run made."""
++    run = (found.get("checkSuite") or {}).get("workflowRun") or {}
++    workflow, at = (run.get("workflow") or {}).get("databaseId"), run.get("createdAt")
++    return (workflow, at) if isinstance(workflow, int) and isinstance(at, str) else None
++
++
++def run_id(found: dict) -> Optional[int]:
++    """The id of the workflow run a check run belongs to, or None for a check run that no workflow run made."""
++    run = (found.get("checkSuite") or {}).get("workflowRun") or {}
++    return run.get("databaseId") if isinstance(run.get("databaseId"), int) else None
++
++
++def cancel_times(contexts: list[dict]) -> dict[int, str]:
++    """When each cancelled workflow run among `contexts` was cancelled: the earliest end of its check runs that
++    concluded `CANCELLED`. A cancelled run none of whose cancelled check runs was read has no time here."""
++    times: dict[int, str] = {}
+     for found in contexts:
+-        if found.get("__typename") == "CheckRun" and found.get("conclusion") in CHECK_FAILURES:
+-            failed.append(found.get("name") or "?")
+-        elif found.get("__typename") == "StatusContext" and found.get("state") in STATUS_FAILURES \
+-                and found.get("context") != review.REVIEW_CONTEXT:
+-            failed.append(found.get("context") or "?")
+-    return failed
++        run, ended = run_id(found), found.get("completedAt")
++        if found.get("__typename") != "CheckRun" or run is None or not isinstance(ended, str) \
++                or found.get("conclusion") != "CANCELLED" \
++                or (found.get("checkSuite") or {}).get("conclusion") != "CANCELLED":
++            continue
++        times[run] = min(times.get(run, ended), ended)
++    return times
++
++
++def caused_by_cancel(found: dict, times: dict[int, str]) -> bool:
++    """Whether a failed check run of a cancelled workflow run started at or after the cancel, which only a job
++    that runs `if: always()` to gather the jobs it needs does: it starts once they end, so in a cancelled run it
++    starts after the cancel and fails though nothing in the code did. A failure that started before the cancel
++    is the code's, and so is one in a run whose cancel time is unknown."""
++    run, started = run_id(found), found.get("startedAt")
++    cancelled = times.get(run) if run is not None else None
++    return ((found.get("checkSuite") or {}).get("conclusion") == "CANCELLED" and cancelled is not None
++            and isinstance(started, str) and started >= cancelled)
++
++
++def superseded(found: dict, contexts: list[dict]) -> bool:
++    """Whether a check run belongs to a cancelled workflow run that a newer run of the same workflow on the head
++    tests again: one still running, or one whose check run of the same name ran rather than skipped or was
++    cancelled. A newer run in the same concurrency group cancels the one in progress, as a review's label does
++    where CI starts on `labeled`, and GitHub keeps the cancelled run's checks on the head, where a job that runs
++    `if: always()` to gather the others fails though nothing in the code did. The newer run's own result stands
++    for the code. A cancelled run with nothing newer, or whose newer run skipped the check, keeps each failure
++    that the cancel did not cause, since that check failed before the cancel."""
++    run = workflow_run(found)
++    if run is None or (found.get("checkSuite") or {}).get("conclusion") != "CANCELLED":
++        return False
++    for other in contexts:
++        newer = workflow_run(other) if other.get("__typename") == "CheckRun" else None
++        if newer is None or newer[0] != run[0] or newer[1] <= run[1]:
++            continue
++        if (other.get("checkSuite") or {}).get("conclusion") is None:
++            return True
++        if other.get("name") == found.get("name") and other.get("conclusion") not in {"SKIPPED", "CANCELLED"}:
++            return True
++    return False
++
++
++def failed_contexts(contexts: list[dict]) -> list[str]:
++    """The names of the failures among `contexts` that CHECKS reports: each but a check run of a cancelled run
++    that the cancel caused or that a newer run tests again."""
++    times = cancel_times(contexts)
++    return [found.get("name") or found.get("context") or "?" for found in failures(contexts)
++            if not caused_by_cancel(found, times) and not superseded(found, contexts)]
+ 
+ 
+ def failure_count(commit: dict) -> int:
+@@ -961,7 +1030,7 @@ def read_contexts(self, owner: str, name: str, pr: dict, now: float) -> None:
+         wanted = failure_count(commit)
+         read = [found for found in contexts.get("nodes") or [] if isinstance(found, dict)]
+         page = contexts.get("pageInfo") or {}
+-        while len(failed_contexts(read)) < wanted and page.get("hasNextPage") and page.get("endCursor"):
++        while len(failures(read)) < wanted and page.get("hasNextPage") and page.get("endCursor"):
+             data = self.graphql(CONTEXTS_QUERY, now, "-f", f"o={owner}", "-f", f"r={name}", "-f", f"h={head}",
+                                 "-f", f"c={page['endCursor']}") or {}
+             paged = (data.get("repository") or {}).get("object") or {}
+diff --git a/tests/test_watch.py b/tests/test_watch.py
+index 9fadd828..96c9760e 100644
+--- a/tests/test_watch.py
++++ b/tests/test_watch.py
+@@ -100,9 +100,22 @@ def projector_verdict(sha, verdict="changes-requested", *, at="2026-10-12T10:00:
+ FINDING = "<!-- projector-finding v=1 priority=P2 --> A nil deref"
+ 
+ 
+-def check_run(name, conclusion="SUCCESS"):
+-    """A check run in the head's rollup, as the daemon's query reads it; `conclusion` is None until it completes."""
+-    return {"__typename": "CheckRun", "name": name, "conclusion": conclusion}
++def check_run(name, conclusion="SUCCESS", suite=None, *, workflow=None, at="2026-11-16T22:00:00Z", started=None,
++              completed=None):
++    """A check run in the head's rollup, as the daemon's query reads it; `conclusion` is None until it completes,
++    and `suite` is its workflow run's conclusion, which defaults to its own. A check run with a `workflow` id
++    belongs to a run of that workflow started `at`, whose id the two give, so check runs of one run share it; one
++    without belongs to no workflow run. `started` and `completed` are the check run's own times."""
++    run = None if workflow is None else {"databaseId": workflow * 1_000_000 + int(at[11:19].replace(":", "")),
++                                         "createdAt": at, "workflow": {"databaseId": workflow}}
++    return {"__typename": "CheckRun", "name": name, "conclusion": conclusion, "startedAt": started,
++            "completedAt": completed, "checkSuite": {"conclusion": suite or conclusion, "workflowRun": run}}
++
++
++LATER = "2026-11-16T22:01:00Z"
++# When a cancelled run's jobs ran: a job that failed on its own, then the cancel, then the gathering job that
++# runs `if: always()` once the jobs it needs end.
++FAILED_AT, CANCELLED_AT, GATHERED_AT = "2026-11-16T22:00:20Z", "2026-11-16T22:00:40Z", "2026-11-16T22:00:42Z"
+ 
+ 
+ def commit_status(context, state="SUCCESS"):
+@@ -850,6 +863,96 @@ def test_only_a_context_that_failed_is_a_ci_failure(self) -> None:
+                     f"CHECKS acme/app#{number} head=aaaaaaaa failed: {failed} — {fix_action(number)}"]
+                 self.assertEqual(expected, [event for event in events if event.startswith(f"CHECKS acme/app#{number} ")])
+ 
++    def assert_checks(self, cases: dict) -> None:
++        """Give each case's contexts a pull request of its own, and check the CHECKS event each one hears: the
++        failures it names, or none for None."""
++        for number, (contexts, _) in enumerate(cases.values(), 1):
++            self.github.pull_request(number, contexts=contexts)
++        self.fixer(*(f"acme/app#{number} fix" for number in range(1, len(cases) + 1)))
++
++        events = self.cycle()["fixer"]
++
++        for number, (case, (_, failed)) in enumerate(cases.items(), 1):
++            with self.subTest(case=case):
++                expected = [] if failed is None else [
++                    f"CHECKS acme/app#{number} head=aaaaaaaa failed: {failed} — {fix_action(number)}"]
++                self.assertEqual(expected, [event for event in events if event.startswith(f"CHECKS acme/app#{number} ")])
++
++    def test_a_failure_the_cancel_caused_is_no_ci_failure(self) -> None:
++        # A label starts a run that cancels the one in progress. Its gathering job, which runs `if: always()`
++        # once the jobs it needs end, starts after the cancel and fails though nothing in the code did.
++        slow = check_run("slow", "CANCELLED", workflow=1, started="2026-11-16T22:00:05Z", completed=CANCELLED_AT)
++        gathering = check_run("complete", "FAILURE", "CANCELLED", workflow=1, started=GATHERED_AT,
++                              completed="2026-11-16T22:00:45Z")
++        self.assert_checks({
++            "nothing ran since": ([slow, gathering], None),
++            "the newer run skipped every job": ([slow, gathering, check_run("slow", "SKIPPED", workflow=1, at=LATER),
++                                                 check_run("complete", "SKIPPED", workflow=1, at=LATER)], None),
++            "it started as the cancel ended": ([slow, {**gathering, "startedAt": CANCELLED_AT}], None),
++            # A failure that ended before the cancel is the code's, whatever came after.
++            "a check failed before the cancel": ([check_run("lint", "FAILURE", "CANCELLED", workflow=1,
++                                                            started="2026-11-16T22:00:05Z", completed=FAILED_AT),
++                                                  slow, gathering], "lint"),
++            # Without a cancelled check run of its own run, nothing says when the cancel came.
++            "the cancel time is unknown": ([gathering], "complete"),
++            "only another run was cancelled": ([check_run("slow", "CANCELLED", workflow=2, completed=CANCELLED_AT),
++                                                gathering], "complete"),
++        })
++
++    def test_a_failure_in_a_cancelled_run_that_a_newer_run_tests_again_is_no_ci_failure(self) -> None:
++        # The run's `lint` failed on its own before a label's run cancelled it, and GitHub keeps both runs' checks
++        # on the head. The newer run's own result stands for the code.
++        cancelled = [check_run("lint", "FAILURE", "CANCELLED", workflow=1, started="2026-11-16T22:00:05Z",
++                               completed=FAILED_AT),
++                     check_run("slow", "CANCELLED", workflow=1, completed=CANCELLED_AT)]
++        self.assert_checks({
++            "the newer run passed": ([*cancelled, check_run("lint", workflow=1, at=LATER),
++                                      check_run("slow", workflow=1, at=LATER)], None),
++            "the newer run failed": ([*cancelled, check_run("lint", "FAILURE", workflow=1, at=LATER),
++                                      check_run("slow", "FAILURE", workflow=1, at=LATER)], "lint, slow"),
++            # Its other jobs have not started, so they have no check runs yet.
++            "the newer run still runs": ([*cancelled, check_run("slow", None, workflow=1, at=LATER)], None),
++            "nothing ran since": (cancelled, "lint"),
++            "the newer run skipped the job": ([*cancelled, check_run("lint", "SKIPPED", workflow=1, at=LATER),
++                                               check_run("slow", "SKIPPED", workflow=1, at=LATER)], "lint"),
++            "only another workflow ran since": ([*cancelled, check_run("lint", workflow=2, at=LATER)], "lint"),
++            "the cancelled run is the newer one": ([*cancelled, check_run("lint", workflow=1,
++                                                                          at="2026-11-16T21:59:00Z")], "lint"),
++        })
++
++    def test_a_check_that_failed_before_its_run_was_cancelled_is_a_ci_failure(self) -> None:
++        # CI starts on `labeled`, and a job-level `if` skips every job for a review's label, whose run cancels
++        # the run in which `lint` had already failed. The skipped `lint` tests nothing, so the failure stands,
++        # while the gathering job that failed after the cancel does not.
++        self.github.pull_request(1, contexts=[
++            check_run("lint", "FAILURE", "CANCELLED", workflow=1, started="2026-11-16T22:00:05Z", completed=FAILED_AT),
++            check_run("test", "CANCELLED", workflow=1, started="2026-11-16T22:00:05Z", completed=CANCELLED_AT),
++            check_run("complete", "FAILURE", "CANCELLED", workflow=1, started=GATHERED_AT),
++            check_run("lint", "SKIPPED", workflow=1, at=LATER),
++            check_run("test", "SKIPPED", workflow=1, at=LATER),
++            check_run("complete", "SKIPPED", workflow=1, at=LATER)])
++        # A check run that no workflow run made is never a cancelled run's, whatever its suite concluded.
++        self.github.pull_request(2, contexts=[check_run("external", "FAILURE", "CANCELLED", started=GATHERED_AT),
++                                              check_run("other", "CANCELLED", completed=CANCELLED_AT)])
++        self.fixer("acme/app#1 fix", "acme/app#2 fix")
++
++        events = self.cycle()["fixer"]
++
++        self.assertEqual([f"CHECKS acme/app#1 head=aaaaaaaa failed: lint — {fix_action(1)}",
++                          f"CHECKS acme/app#2 head=aaaaaaaa failed: external — {fix_action(2)}"],
++                         sorted(event for event in events if event.startswith("CHECKS ")))
++
++    def test_a_failure_in_a_cancelled_run_reads_no_later_page_of_contexts_for_one_it_cannot_find(self) -> None:
++        # The rollup counts the cancelled run's failure, which the first page holds, so nothing is left to find.
++        self.github.pull_request(1, contexts=[check_run("complete", "FAILURE", "CANCELLED", workflow=1),
++                                              check_run("complete", workflow=1, at=LATER),
++                                              *(check_run(f"job {index}") for index in range(3, 26))])
++        self.fixer("acme/app#1 fix")
++
++        events = self.cycle()["fixer"]
++
++        self.assertEqual(([], []), (events, self.github.pages_read()))
++
+     def test_a_failed_check_past_the_first_page_of_contexts_is_found_on_a_later_page(self) -> None:
+         self.github.pull_request(1, contexts=[*(check_run(f"job {index}") for index in range(1, 25)),
+                                               check_run("job 25", "FAILURE")])
