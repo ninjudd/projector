@@ -420,22 +420,23 @@ branch, in the palette's cyan, its size, its checks, and every label it
 carries. The size reads as a diff stat: the insertions, such as `+84`, in
 green and the deletions, such as `−12`, in red. The checks' state takes a
 color of its own. It counts every check run and commit status on the head
-but the `projector/review` status and the failed check runs of a
-cancelled workflow run that the cancel caused or that a newer run tests
-again. So a head whose only failure is a review's verdict reads `checks
-passing`, one whose only check is that status shows no checks at all, and
-one with nothing failing or running whose every workflow's newest run was
-cancelled reads `checks cancelled`, muted. The rest, ` in 5 files` and
-each `·` included, keeps the default text color. Each label is drawn as GitHub's light theme draws
-it: its name, as GitHub spells it, on the label's own color, in black on a
-light color and white on a dark one. A label whose color the panel has not
-read yet, which a daemon cache from before the panel read colors leaves
-until its next poll, is drawn on GitHub's light gray. The labels come last
-on the line, so a narrow terminal cuts them first. Below
-that come two actions, side by side on one line, on the digits `7` and `8`,
-as [Use the panel from the keyboard](#use-the-panel-from-the-keyboard)
-describes. The links to the pull request follow, side by side on the next
-line, and then the unresolved review threads, gathered under their files:
+but the `projector/review` status and the failed check runs of a cancelled
+workflow run that the cancel caused or that a newer run tests again. So a
+head whose only failure is a review's verdict reads `checks passing`, one
+whose only check is that status shows no checks at all, and one with
+nothing failing or running whose every workflow's newest run was cancelled
+reads `checks cancelled`, muted. The rest, ` in 5 files` and each `·`
+included, keeps the default text color. Each label is drawn as GitHub's
+light theme draws it: its name, as GitHub spells it, on the label's own
+color, in black on a light color and white on a dark one. A label whose
+color the panel has not read yet, which a daemon cache from before the
+panel read colors leaves until its next poll, is drawn on GitHub's light
+gray. The labels come last on the line, so a narrow terminal cuts them
+first. Below that come two actions, side by side on one line, on the digits
+`7` and `8`, as [Use the panel from the
+keyboard](#use-the-panel-from-the-keyboard) describes. The links to the
+pull request follow, side by side on the next line, and then the unresolved
+review threads, gathered under their files:
 
 - **Discuss** puts the pull request's number in the prompt at the
   cursor, as `#258`, or as `owner/repo#258` in lowercase when the panel

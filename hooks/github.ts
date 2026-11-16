@@ -244,9 +244,9 @@ function newestRuns(contexts: unknown[]): Run[] {
  * concurrency group cancels the one in progress, as a review's label does
  * where CI starts on `labeled`, and the cancelled run's `if: always()` job
  * fails though nothing in the code did. GitHub keeps the cancelled run's
- * checks on the head beside the newer run's. A head with nothing failing or pending reads
- * `cancelled` when every workflow's newest run on it was cancelled. Without
- * the counts the rollup's own state stands.
+ * checks on the head beside the newer run's. A head with nothing failing or
+ * pending reads `cancelled` when every workflow's newest run on it was
+ * cancelled. Without the counts the rollup's own state stands.
  */
 function checksOf(commit: Record<string, unknown>): Checks | null {
   const rollup = commit.statusCheckRollup
