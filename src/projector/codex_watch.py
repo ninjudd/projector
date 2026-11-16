@@ -22,6 +22,7 @@ from .inbox import locked, read_json, try_lock, unlock, write_json
 LEASE = 24 * 3600
 LIMIT = 8 * 1024
 TIMEOUT = 15
+CONFIRM_EVERY = 30
 MARKER = re.compile(r"^PROJECTOR WATCH ([0-9a-f-]{36})\n")
 TERMINAL = {"MERGED", "CLOSED", "MISSING", "MOVED"}
 
@@ -41,11 +42,25 @@ def registration(folder: Path) -> dict:
     return read_json(folder / "codex.json") or {}
 
 
+def own_transcript(session: str, value: object) -> Optional[str]:
+    """The hook's transcript when it belongs to the session's own thread. A subagent's hook carries its
+    parent's session ID with the subagent's transcript, which says nothing about the parent's thread."""
+    if isinstance(value, str) and "\0" not in value and Path(value).is_absolute() and session in Path(value).name:
+        return value
+    return None
+
+
 def active(folder: Path, now: float) -> bool:
     record = registration(folder)
     expires = record.get("expires_at")
     return (record.get("schema_version") == 1 and record.get("enabled") is True
-            and isinstance(expires, (int, float)) and expires > now)
+            and isinstance(expires, (int, float)) and expires > now and not gone(record))
+
+
+def gone(record: dict) -> bool:
+    """Whether Codex archived or deleted the conversation, which moves or removes its transcript."""
+    transcript = record.get("transcript_path")
+    return bool(transcript) and not Path(transcript).exists()
 
 
 def pending(folder: Path) -> list[tuple[Path, dict]]:
@@ -202,12 +217,40 @@ def acknowledge(folder: Path, session: str, prompt: str, now: float) -> tuple[bo
         if batch is None or prompt != message(session, batch):
             return False, []
         lines = [item["line"] for item in batch["items"] if eligible(folder, item)]
-        receipt.parent.mkdir(exist_ok=True)
-        write_json(receipt, {"batch_id": batch_id, "consumed_at": now})
-        # A command result can race this hook. The receipt wins over that result.
-        path.unlink(missing_ok=True)
-        write_json(folder / "codex-last.json", {"batch_id": batch_id, "state": "consumed", "last_error": ""})
+        consume(folder, batch_id, now)
     return True, lines
+
+
+def consume(folder: Path, batch_id: str, now: float) -> None:
+    receipt = folder / "codex-receipts" / f"{batch_id}.json"
+    receipt.parent.mkdir(exist_ok=True)
+    write_json(receipt, {"batch_id": batch_id, "consumed_at": now})
+    # A command result can race this. The receipt wins over that result.
+    (folder / "codex-pending" / f"{batch_id}.json").unlink(missing_ok=True)
+    write_json(folder / "codex-last.json", {"batch_id": batch_id, "state": "consumed", "last_error": ""})
+
+
+def delivered(folder: Path, path: Path, batch: dict) -> bool:
+    """Whether the thread's transcript shows that Codex started a turn with this batch, for a batch whose
+    `UserPromptSubmit` acknowledgment never arrived. Scan only what the transcript gained since the last
+    look, which began when the batch was submitted, so earlier text cannot match."""
+    transcript = registration(folder).get("transcript_path")
+    if not transcript:
+        return False
+    needle = json.dumps(f"PROJECTOR WATCH {batch['batch_id']}\nsession={folder.name}\n")[1:-1].encode()
+    start = batch.get("transcript_offset", 0)
+    try:
+        with open(transcript, "rb") as stream:
+            stream.seek(start)
+            text = stream.read()
+    except OSError:
+        return False
+    if needle in text:
+        return True
+    # Rescan a partial needle at the end, which the next write may complete.
+    batch["transcript_offset"] = max(start, start + len(text) - len(needle) + 1)
+    write_json(path, batch)
+    return False
 
 
 def disconnect(folder: Path) -> None:
@@ -260,13 +303,16 @@ def report(folder: Path, now: float) -> dict:
     if not record:
         return {}
     last = (pending(folder) or [(None, read_json(folder / "codex-last.json") or {})])[0][1]
-    state = ("disconnected" if not record.get("enabled") else
+    state = ("disconnected" if not record.get("enabled") or gone(record) else
              "expired" if not active(folder, now) else last.get("state", "idle"))
+    error = ("Codex archived or deleted this conversation; resume it to reconnect" if gone(record) else
+             last.get("last_error") or record.get("last_error", ""))
     return {"transport": "codex", "expires_at": record.get("expires_at"), "state": state,
-            "batch_id": last.get("batch_id"), "last_error": last.get("last_error") or record.get("last_error", "")}
+            "unloaded_at": record.get("unloaded_at"), "batch_id": last.get("batch_id"), "last_error": error}
 
 
-def register(folder: Path, session: str, cwd: str, now: float, *, run: Callable = subprocess.run) -> dict:
+def register(folder: Path, session: str, cwd: str, now: float, *, transcript: Optional[str] = None,
+             run: Callable = subprocess.run) -> dict:
     from .watch import LAPSE, seconds_of
     if not Path(cwd).is_absolute() or "\0" in cwd or not Path(cwd).is_dir():
         raise UsageError("Codex registration needs an existing absolute directory")
@@ -292,6 +338,8 @@ def register(folder: Path, session: str, cwd: str, now: float, *, run: Callable 
                   "executable_signature": signature, "cwd": cwd, "expires_at": now + LEASE,
                   "supported": supported, "enabled": bool(supported),
                   "last_error": "" if supported else "Codex CLI lacks queue --resume"}
+        if transcript or old.get("transcript_path"):
+            record["transcript_path"] = transcript or old["transcript_path"]
         write_json(folder / "codex.json", record)
         if not supported:
             raise UsageError("this Codex CLI lacks queue --resume; automatic delivery is unavailable")
@@ -362,23 +410,21 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
     if name == "UserPromptSubmit" and not isinstance(event.get("prompt"), str):
         raise UsageError("Codex hook prompt must be text")
     folder = watch.session_folder(root, session)
+    transcript = own_transcript(session, event.get("transcript_path"))
+    record = registration(folder)
+    if name == "SessionStart":
+        record = register(folder, session, cwd, now, transcript=transcript, run=run)
+    elif not record:
+        return {} if name == "SessionEnd" else {
+            "systemMessage": "Projector: no Codex registration; start or resume a session with trusted hooks."}
+    else:
+        record = note(folder, now, transcript, unloaded=name == "SessionEnd")
     if name == "SessionEnd":
-        disconnect(folder)
-        # Disconnecting lapses a registered agent at once. Its relay refs go on the daemon's next pass, so a
-        # daemon must be running to take them.
+        # An end that archived the conversation lapses a registered agent, and only a running daemon
+        # deletes its relay refs.
         if (folder / "agent.json").exists():
             ensure()
         return {}
-    record = registration(folder)
-    if name == "SessionStart":
-        record = register(folder, session, cwd, now, run=run)
-    elif not record:
-        return {"systemMessage": "Projector: no Codex registration; start or resume a session with trusted hooks."}
-    elif record.get("enabled"):
-        with locked(folder):
-            record = registration(folder)
-            record["expires_at"] = now + LEASE
-            write_json(folder / "codex.json", record)
     text = tool_output(event) if name == "PostToolUse" else None
     if text is not None and load_config(Path(cwd)).setting("watch.auto_start") is not False:
         watch.add_from_output(root, session, text)
@@ -398,6 +444,24 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
     return {"hookSpecificOutput": {"hookEventName": name, "additionalContext": context}}
 
 
+def note(folder: Path, now: float, transcript: Optional[str], *, unloaded: bool) -> dict:
+    """Record a hook's host activity. Codex sends `SessionEnd` when it unloads a thread that sat idle, as
+    well as on archive, delete, and exit, with no reason that tells them apart. So an end only marks the
+    thread unloaded: delivery stays enabled, `queue --resume` loads the thread again, and a missing
+    transcript shows that the conversation is gone."""
+    with locked(folder):
+        record = registration(folder)
+        if record.get("enabled") and not unloaded:
+            record["expires_at"] = now + LEASE
+        if transcript:
+            record["transcript_path"] = transcript
+        record.pop("unloaded_at", None)
+        if unloaded:
+            record["unloaded_at"] = now
+        write_json(folder / "codex.json", record)
+        return record
+
+
 class Dispatcher:
     def __init__(self, *, run: Callable = subprocess.run, wall: Callable[[], float] = time.time) -> None:
         self.run = run
@@ -405,6 +469,7 @@ class Dispatcher:
         self.pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="codex-watch")
         self.jobs: dict[Path, Future] = {}
         self.cleaned: dict[Path, float] = {}
+        self.confirmed: dict[Path, float] = {}
 
     def tick(self, folders: list[Path]) -> None:
         self.jobs = {folder: job for folder, job in self.jobs.items() if not job.done()}
@@ -418,11 +483,21 @@ class Dispatcher:
                     prune_receipts(folder, self.wall())
                     self.cleaned[folder] = self.wall()
                 batches = pending(folder)
-                if batches and batches[0][1]["state"] in ("queued", "uncertain"):
+                if batches and batches[0][1]["state"] in ("queued", "uncertain") and not self.confirm(folder, *batches[0]):
                     continue
                 batch = prepare(folder, self.wall())
             if batch is not None:
                 self.jobs[folder] = self.pool.submit(self.send, folder, batch["batch_id"])
+
+    def confirm(self, folder: Path, path: Path, batch: dict) -> bool:
+        """Consume an accepted batch whose acknowledgment was lost, so it stops holding back every later one."""
+        if self.wall() - self.confirmed.get(folder, float("-inf")) < CONFIRM_EVERY:
+            return False
+        self.confirmed[folder] = self.wall()
+        if not delivered(folder, path, batch):
+            return False
+        consume(folder, batch["batch_id"], self.wall())
+        return True
 
     def send(self, folder: Path, batch_id: str) -> None:
         with submission(folder) as held:
@@ -440,12 +515,14 @@ class Dispatcher:
             if not batch["items"]:
                 path.unlink()
                 return
+            transcript = record.get("transcript_path")
             if not Path(record["cwd"]).is_dir() or not Path(record["executable"]).is_file():
                 batch.update(state="failed", next_attempt_at=self.wall() + 300,
                              last_error="registered Codex executable or directory is missing")
                 write_json(path, batch)
                 return
-            batch.update(state="submitting", attempts=batch["attempts"] + 1)
+            batch.update(state="submitting", attempts=batch["attempts"] + 1,
+                         transcript_offset=Path(transcript).stat().st_size if transcript else 0)
             write_json(path, batch)
         try:
             result = self.run([record["executable"], "queue", "--thread", record["thread_id"],
