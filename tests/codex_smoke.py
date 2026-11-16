@@ -13,6 +13,7 @@ their command stays the same between runs, so the trust carries over.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shlex
@@ -154,8 +155,9 @@ class Smoke:
         return subprocess.run([*command, "--remote", self.endpoint], **kwargs)
 
     def archive(self) -> None:
+        # Archiving on the isolated server has taken longer than 15 seconds.
         subprocess.run([self.executable, "archive", self.thread, "--remote", self.endpoint],
-                       capture_output=True, timeout=15, check=True)
+                       capture_output=True, timeout=60, check=True)
         self.thread = None
 
     def hooks(self, name: str) -> list[dict]:
@@ -179,8 +181,8 @@ class Smoke:
             return
         try:
             if self.thread:
-                subprocess.run([self.executable, "archive", self.thread, "--remote", self.endpoint],
-                               capture_output=True, timeout=15)
+                with contextlib.suppress(subprocess.SubprocessError):
+                    self.archive()
         finally:
             self.server.terminate()
             try:
