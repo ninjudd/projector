@@ -1,0 +1,194 @@
+{
+ "version": 1,
+ "name": "Agent session messages",
+ "project": "agent-messages",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 459,
+  "title": "Carry agents' messages between machines through sealed refs in a shared repository",
+  "head": "437a9c3922736bc2e036d88858c72960f6ff9e7f",
+  "headRef": "agent-messages-relay",
+  "base": "f5d12a0d15fbbcc13517a36a0e2ef3903b8b0bf2",
+  "baseRef": "agent-messages-local",
+  "basePr": 454
+ },
+ "overview": {
+  "summary": [
+   "Projector's watch daemon wakes idle Claude Code and Codex sessions with event lines. The layer below this one, <code>agent-messages-local</code>, lets sessions on one machine register under a name and send each other messages through that same delivery. This pull request adds the <b>relay</b>, so sessions on two of your machines can reach each other through a GitHub repository both machines work in. It is the last layer of the <code>agent-messages</code> plan, so it also marks the plan <code>completed</code>.",
+   "The relay works like this:",
+   "<ol><li><b>One key opts you in.</b> <code>project agent key init</code> makes an X25519 key pair and stores the private key in the OS keychain, or inline in <code>~/.projector.toml</code> where there is none. You copy it to your other machines with <code>key export</code> and <code>key import</code>, which run only at a terminal.</li><li><b>Every record is sealed.</b> A session's presence and each message are encrypted and authenticated to the key itself, so the repository holds only ciphertext under random ref names.</li><li><b>Commands queue, the daemon pushes.</b> <code>register</code> and <code>send</code> add a ref change to a per-repository outbox and return at once. The daemon runs one job per repository on worker threads: it fetches the key's refs, opens and checks new records, delivers messages, renews leases, cleans up, and pushes every queued change in one <code>git push</code>.</li></ol>",
+   "The review found two open problems in the daemon's job, both in <code>relay.py</code>. One planted ref can stop the relay in a repository for good, and a message sent while a push runs waits for the next 60-second poll. The two-machine check by hand, and the Windows keychain on a real Windows machine, remain for after merge."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms used on this page",
+    "html": "<ul class=\"tight\"><li><b>Presence</b>: a session's sealed registration, at <code>refs/projector/agents/&lt;key-id&gt;/&lt;relay-id&gt;</code>, with a one-hour lease.</li><li><b>Relay ID</b>: 16 random hex digits that name a session in ref names instead of its session ID.</li><li><b>Outbox</b>: <code>outbox/&lt;owner&gt;/&lt;repo&gt;.json</code> under the watch state root, the ref changes waiting for a push, at most one per ref.</li><li><b>Job</b>: one pass of the relay over one repository, run on a worker thread.</li><li><b>Lease</b>: <code>--force-with-lease=&lt;ref&gt;:&lt;old&gt;</code>, which makes a push to a moved ref fail when the ref is no longer at the commit the outbox expects.</li></ul>"
+   },
+   {
+    "id": "settled",
+    "title": "What earlier review rounds settled",
+    "html": "<ul class=\"tight\"><li>Commands write no Git objects. The daemon writes them in the checkout it pushes from, just before the push.</li><li>The private key never appears in a command's output or arguments that an agent can see.</li><li>Relay commits carry a fixed identity and no signature.</li><li>Relay Git work runs off the daemon's loop, with timeouts.</li><li>The daemon bounds the work it does on refs anyone with push access can plant.</li><li>The authority notice comes before any text the sender chose.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "crypto",
+   "title": "Sealing a record",
+   "kicker": "X25519, ChaCha20, and HKDF in the standard library",
+   "intro": [
+    "Projector takes no runtime dependencies, and Python's standard library has no cipher, so this file implements the three published primitives the relay needs. Each is checked against its RFC's test vector.",
+    "<code>seal</code> makes a fresh ephemeral key pair for every record. Two key agreements, one with the ephemeral key and one with the sender's own key, feed HKDF, which yields a cipher key and a MAC key. <code>unseal</code> checks the HMAC tag before it decrypts anything. Because each record gets its own key, ChaCha20 runs under an all-zero nonce."
+   ],
+   "files": [
+    {
+     "path": "src/projector/crypto.py",
+     "note": "The primitives and the sealed record format.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The code is not constant-time. Only the local daemon and CLI run it, never a service an attacker can time."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "key",
+   "title": "Storing the key and keeping it out of output",
+   "kicker": "The keychain backends, the user-layer-only setting, and redaction",
+   "intro": [
+    "The key's private half is the secret that protects every record the relay has carried, so it must not reach an agent's transcript. <code>keychain.py</code> stores it with tools each system ships: <code>security</code> on macOS, Credential Manager on Windows, and <code>secret-tool</code> on Linux. No backend passes the key as an argument, and every call has a 5-second timeout, because a locked macOS keychain waits for a person.",
+    "<code>config.py</code> reads <code>agent.key</code> only from <code>~/.projector.toml</code>, so a checkout cannot plant a key its author knows, and refuses an inline key in a file other accounts can read. <code>redact</code> replaces an inline key, at or under the key a command prints, with <code>&lt;redacted, key ID …&gt;</code>."
+   ],
+   "files": [
+    {
+     "path": "src/projector/keychain.py",
+     "note": "The three keychain backends, each with store, read, and delete under a timeout."
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds <code>agent.key</code>, the user-only and secret key sets, <code>redact</code>, and the permission check."
+    }
+   ]
+  },
+  {
+   "id": "relay",
+   "title": "The relay's job",
+   "kicker": "Queue, fetch, open, deliver, renew, clean up, and push",
+   "intro": [
+    "<code>relay.py</code> is the heart of the change. Commands call <code>queue</code>, which keeps at most one item per ref in the repository's outbox, because one push refuses two updates to one ref. The daemon's <code>Relay</code> starts a <code>Job</code> per repository on a pool of two threads. A job fetches the key's refs, opens at most 64 new records and checks each one, delivers messages to sessions on this machine, renews and deletes this machine's refs, and pushes the whole outbox in one <code>git push --porcelain</code>.",
+    "<code>core.run_bounded</code> runs every relay Git command and keychain tool in its own process group, and kills the group at its timeout, so a hung pre-push hook dies with its parent."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Anyone who can push to the repository can plant refs under the key's ID, which <code>git ls-remote</code> shows. So everything a job reads from a fetched ref is untrusted until its tag checks out."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/relay.py",
+     "note": "The key commands' logic, the outbox, the job, and the daemon's relay state.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 588,
+       "text": "Open review finding: <code>Job.open</code> catches only <code>CryptoError</code> and <code>ValueError</code>. A planted <code>sealed.json</code> of about 10,000 or more <code>[</code> characters makes <code>json.loads</code> raise <code>RecursionError</code>, which fails every later job on that repository before it pushes, on every machine holding the key. The review reproduced it."
+      },
+      {
+       "kind": "flag",
+       "line": 848,
+       "text": "Open review finding: <code>collect</code> records the outbox's signature after the job ends, so a message queued during the job counts as already handled. It waits for the next 60-second poll instead of going out right after the running push. The review reproduced it."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/core.py",
+     "note": "Adds <code>run_bounded</code>, which kills a command's whole process group at its timeout."
+    }
+   ]
+  },
+  {
+   "id": "daemon",
+   "title": "Wiring the relay into sessions and the daemon",
+   "kicker": "Register and send through the relay, and run it from the watch daemon",
+   "intro": [
+    "<code>agents.py</code> now queues a session's presence when it registers, lists other machines' agents from the relay's cache, and sends to one of them by sealing the message into the outbox. A relayed message becomes a local one before delivery, through <code>deliver</code>, which writes it once and counts a different message under a delivered ID as a collision.",
+    "<code>well_formed</code> and <code>well_formed_presence</code> hold the sender fields of a relayed record to the shapes <code>register</code> gives them, because the event line and <code>read</code> print them before the authority notice. <code>watch.py</code> ticks the relay each second and reports it in <code>watch status</code>. Codex's <code>SessionEnd</code> hook starts the daemon so a registered session's refs get deleted."
+   ],
+   "files": [
+    {
+     "path": "src/projector/agents.py",
+     "note": "Relayed register, list, send, read, and the sender-field checks."
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Creates the daemon's <code>Relay</code>, ticks it each second, and keeps the daemon running while a relay job is busy."
+    },
+    {
+     "path": "src/projector/codex_watch.py",
+     "note": "Starts the daemon on <code>SessionEnd</code> for a registered session."
+    }
+   ]
+  },
+  {
+   "id": "cli",
+   "title": "The key commands and redacted config output",
+   "kicker": "project agent key, the relay header, and config redaction",
+   "intro": [
+    "<code>cli.py</code> adds <code>project agent key init</code>, <code>show</code>, <code>export</code>, <code>import</code>, and <code>remove</code>. <code>export</code> and <code>import</code> refuse unless standard input and output are a terminal. <code>config set agent.key</code> is refused, and every value <code>config get</code>, <code>list</code>, <code>set</code>, and <code>unset</code> print passes through <code>redact</code>. <code>send</code> prints a reminder when the relayed repository is not private."
+   ],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "The key subcommands, the relay lines in <code>agent list</code> and <code>watch status</code>, and redaction in the config commands."
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation, the skill, and the plan",
+   "kicker": "How agents and people use the relay, and what building it settled",
+   "intro": [
+    "The <code>message-agent</code> skill gains the rules the local layer deferred. An agent never runs the key commands unless asked, and in a public repository a message names no private repository. <code>docs/cli.md</code> documents the key and the relay. The plan records what the relay settled in § 10, its outcome in § 11, and moves to <code>completed</code>."
+   ],
+   "files": [
+    {
+     "path": "skills/message-agent/SKILL.md",
+     "note": "Adds leaving the key to the user, finding a peer on another machine, and the public-repository rule."
+    },
+    {
+     "path": "docs/cli.md"
+    },
+    {
+     "path": "docs/projects/agent-messages/readme.md",
+     "note": "§ 10 lists what the relay settled, and § 11 records the outcome."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "RFC vectors, and two simulated machines sharing a bare origin",
+   "intro": [
+    "<code>test_relay.py</code> stands up a temporary bare repository and two machines, each with its own home, state root, and checkout, with fake keychain tools that record every call. Each test is named after an acceptance criterion in plan § 4."
+   ],
+   "files": [
+    {
+     "path": "tests/test_crypto.py"
+    },
+    {
+     "path": "tests/test_relay.py"
+    },
+    {
+     "path": "tests/test_agents.py"
+    },
+    {
+     "path": "tests/test_permissions.py"
+    }
+   ]
+  }
+ ]
+}
