@@ -1,0 +1,88 @@
+{
+ "version": 1,
+ "name": "Panel section separator",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 500,
+  "title": "Set the panel's review requests apart from your pull requests with a blank line",
+  "head": "1d8556b7fc07375dd85b2a541043aa32ea287799",
+  "headRef": "panel-review-gap",
+  "base": "e23ac6172e05d81f89de049296e51250de243f17",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the list that its Claude Code mod draws above the prompt. It shows the pull requests your session fixes or reviews, one line each, and under them the inbox: questions, requests, and notices that agents posted for you. The pull requests come in two sections. Your own pull requests come first, then the <b>review requests</b>, which is what the panel calls pull requests that someone else wrote.",
+   "Before this change, the two sections ran together, and the only sign of where yours ended was the author column starting on the first review request. This change draws a blank line between the two sections, the same way a blank line already sets the inbox items apart from the pull requests. The line appears only when both sections show something, either their rows or, when you collapse a section from the header, its one <code>+</code> line. With no pull requests of your own, or no review requests, the list starts and ends as before.",
+   "The pull request also updates <code>docs/plugins.md</code>, the panel's documentation: its first example panel now shows the blank line, and its prose says when the line appears."
+  ],
+  "cards": []
+ },
+ "groups": [
+  {
+   "id": "separator",
+   "title": "A blank line between your pull requests and the review requests",
+   "kicker": "How the panel's render places the new line, and the tests that pin it",
+   "intro": [
+    "The panel's render builds the pull request part of the list from <code>PR_SECTIONS</code>, the two sections <code>pr</code> (yours) and <code>review</code> (everyone else's), in that order. For each section it takes the section's collapsed line from <code>expander</code>, which is empty unless the section is collapsed, and then the section's rows from <code>drawRow</code>, unless the section is collapsed.",
+    "The change collects each section's lines into <code>prLines</code> and drops a section that has none. It then joins what remains with a <code>&lt;Text key=\"before-reviews\"&gt; &lt;/Text&gt;</code> before every section but the first. Because there are only two sections, that is at most one blank line, and only when both have something to show."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "A collapsed section with no rows never earns the blank line. <code>isCollapsed</code> is true only while the header has a count for the section, and an empty section has none, so its <code>expander</code> output and its rows are both empty and <code>prLines</code> drops it. Checked by reading <code>isCollapsed</code> and <code>expander</code> at this head."
+    },
+    {
+     "kind": "verify",
+     "text": "The hooks module's tests pass at this head: <code>claude plugin test .</code> reported 237 pass and 0 fail, and <code>hooks/typecheck.sh</code> and both <code>claude plugin validate</code> runs passed, through <code>project review gate</code>. CI's <code>check</code> job passed too."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The panel's render: the pull request sections are now collected into <code>prLines</code>, empty ones dropped, and joined with one blank line.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A drawer opened under a collapsed section's line, or under the last of your rows, belongs to that section's lines, so it stays above the blank line rather than below it.",
+       "line": 2599
+      }
+     ]
+    },
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "Three existing panel tests gain assertions about the blank line: exactly one, between the sections, with rows; one between the two collapsed lines; and none once only review requests are left.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "The first test used to assert that the list had no blank line at all. It now asserts exactly one, and that the review request author <code>bob</code> appears only after it.",
+       "line": 1409
+      },
+      {
+       "kind": "context",
+       "text": "With both sections collapsed, the text right after your last label, <code>y#7</code>, must be the blank line and then the review requests' <code>+</code>. Without the separator it would be <code>+</code> directly.",
+       "line": 1460
+      },
+      {
+       "kind": "context",
+       "text": "This assertion catches the line opening the list when your own section is empty, as it would if empty sections were not dropped from <code>prLines</code>.",
+       "line": 5826
+      }
+     ]
+    },
+    {
+     "path": "docs/plugins.md",
+     "note": "The first example panel gains the blank line between <code>#267</code>, yours, and <code>#258</code>, a review request. The paragraph on how the pull requests are ordered now says a blank line sets the review requests apart whenever both sections show something.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The example's blank line is an empty line, as the inbox example writes the line before its items, and every row keeps its columns. Checked by comparing the bytes of both examples at this head.",
+       "line": 283
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
