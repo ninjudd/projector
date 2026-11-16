@@ -1,0 +1,770 @@
+diff --git a/docs/cli.md b/docs/cli.md
+index 08cc145f..8263ec57 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -824,6 +824,7 @@ reads, which are these:
+ | `watch.review_stall` | whole number | `1800` | the watch daemon, from `~/.projector.toml` only, as the seconds a review's lock can go unchanged before the daemon treats the review as stalled |
+ | `panel.background` | string | `auto` | Projector's panel in Claude Code, as its background in a terminal: `auto` picks one from the Claude Code theme; `rgb(r,g,b)`, `#rgb`, `#rrggbb`, or `ansi256(n)`, with each number from 0 to 255, is drawn as written; `sidebar` draws the theme's `composerSidebarBackground`, `black` `rgb(0,0,0)`, and `white` `rgb(255,255,255)`. The panel draws any other value as `auto` and says so once |
+ | `agent.message_limit` | whole number | `12` | `project agent send` and `reply`, from the checkout the sending session works in, as the most messages one session sends to one other session in a rolling hour; at least `1` |
++| `agent.auto_register` | boolean | `true` | `project watch add` and the Codex hooks, from the checkout the session works in, to register a session that subscribes to a pull request for agent messages, with a generated summary; `false` subscribes it without registering it, as [Registered when it subscribes](#registered-when-it-subscribes) describes |
+ | `agent.key` | string | none | the relay, from `~/.projector.toml` only, as `keychain:<key-id>`, naming the private key in the OS keychain, or the inline fallback, `x25519:` and a base64 private key. Its presence turns the relay on. Set it with `project agent key init` or `key import`, never `config set`; see [Message agents on other machines](#message-agents-on-other-machines) |
+ | `ios.app` | string | the Xcode project's name | `project ios`, as the app whose scheme is `<app> Development` or `<app>`, unless `--app` names another |
+ | `ios.project` | string | the one `.xcworkspace`, or the one `.xcodeproj` | `project ios build`, as the path of the Xcode project or workspace, relative to the repository's root |
+@@ -2791,6 +2792,12 @@ untrusted, modified, disabled, or missing, `add` names the problem and
+ what to do after the `events:` line, and in `codex_hooks` with `--json`.
+ `codex_hooks` is `null` when there is nothing to report.
+ 
++An `add` that writes a line, or finds the line it would write already
++there, the Codex hooks' subscriptions included, also registers a session
++that is not registered yet for agent messages, with a summary made from its
++subscriptions, unless `agent.auto_register` is `false`. The output of `add` stays the same either way, as
++[Registered when it subscribes](#registered-when-it-subscribes) describes.
++
+ ### Deliver events to Codex
+ 
+ With the `projector-hooks` plugin installed in local Codex, review and trust
+@@ -3107,6 +3114,52 @@ The watch daemon counts a live registered session as live, so an idle Codex
+ session with no subscriptions keeps the daemon running and still receives
+ messages.
+ 
++### Registered when it subscribes
++
++A session that subscribes to a pull request registers itself, so a loop that
++fixes or reviews pull requests can receive messages without being asked to
++register. When `project watch add` writes a subscription line, or finds it
++there already, through a target, `--from-output`, or the Codex hook that
++reads a push, and the session has no `agent.json`, `add` registers it the
++way `register` does, with no name and this summary:
++
++```console
++$ project watch add acme/app#12
++added acme/app#12 fix
++events: mod
++$ project agent list
++local only: no agent.key is set; run `project agent key init` to make one
++a1b2c3d4 (you)	claude	laptop	acme/app feature	0s ago	Fixing acme/app#12
++```
++
++The summary says what the session reviews and fixes, such as `Reviewing
++acme/app pull requests; fixing acme/app#12`. When the full list would pass
++120 characters, it counts pull requests instead of naming them, as in
++`Reviewing acme/app pull requests; fixing 39 pull requests`. It names only
++the repository of the session's own checkout, because the relay publishes
++the summary into that repository, which can be public. It counts any other,
++as in `Fixing acme/app#12 and 1 pull request in another repository`. The
++registration takes its model from a `review` subscription, when the session
++has one.
++
++While the summary is the generated one, Projector rewrites it each time the
++session's subscriptions change: through `add`, `remove`, `drop`, and
++`restore`, and when the daemon removes a merged, closed, or missing pull
++request. With the relay on, the daemon publishes the new summary on its next
++poll. Once the session gives its own summary with `register --summary`,
++Projector never changes it again. A registration with `--name` alone keeps
++the generated summary.
++
++The registration is skipped, and `add` still succeeds with the same output,
++when `agent.auto_register` is `false` in the checkout's configuration, when
++nothing delivers the session's events, when `gh` is not signed in, or when
++any other step of the registration fails. A later `add` tries again, even
++for a line the session has, so a session that nothing delivered to when it
++first subscribed, such as one that starts `project watch stream` after `add`
++prints `events: none`, registers on its next `add`. A running watch daemon
++supplies the GitHub login, so the registration asks `gh` for it only when no
++daemon has read it yet.
++
+ ### List the sessions
+ 
+ `list` prints the live registered sessions signed in to your login, one a
+@@ -3130,7 +3183,8 @@ and the reason: no `agent.key` is set, with the command that makes one, the
+ key could not be read, or the checkout has no GitHub origin. With an inline
+ key, the header says so and why, such as `relay: on, key 3f2a9c1d7e4b6a05
+ stored inline: secret-tool: not installed`. `unpublished` marks a session
+-whose presence still waits in the outbox.
++whose current presence the relay has not pushed yet, such as one that still
++waits in the outbox or a generated summary that changed since the last push.
+ 
+ `--all` adds lapsed sessions, marked `lapsed`. With `--json`, `list` prints
+ `local_only`, the `relay` header line, and `agents`, each session's record
+diff --git a/skills/fix-pr/SKILL.md b/skills/fix-pr/SKILL.md
+index 02988324..b6d4be87 100644
+--- a/skills/fix-pr/SKILL.md
++++ b/skills/fix-pr/SKILL.md
+@@ -438,6 +438,10 @@ they ask. Skip the command when
+ `project config get watch.auto_start --default true` prints `false`, and say
+ in your report that the setting kept the session from subscribing.
+ 
++Subscribing also registers the session for agent messages, with a generated
++summary and no name, so the user's other sessions can reach it. The
++`message-agent` skill describes how to give it a name.
++
+ The command finds the session's id in `CLAUDE_CODE_SESSION_ID`, which Claude
+ Code sets in every command, a subagent's included, so a subagent subscribes
+ the session it belongs to. On a host that sets no session id, the
+diff --git a/skills/message-agent/SKILL.md b/skills/message-agent/SKILL.md
+index 94a0a40e..329bb0df 100644
+--- a/skills/message-agent/SKILL.md
++++ b/skills/message-agent/SKILL.md
+@@ -73,6 +73,23 @@ Keep the summary current. When the work changes direction, run
+ `project agent register --summary "<new summary>"`. A later registration
+ changes only the fields it names.
+ 
++A session that subscribes to a pull request with `project watch add`, as
++`fix-pr`, `review-pr`, and `review-repo` do, is registered already: Projector
++registers it with no name and a summary made from its subscriptions, such as
++`Fixing acme/app#12`, and keeps that summary current while the
++subscriptions change. Once you know what the session is working on, give it
++a name, and a better summary when the generated one says too little:
++
++```sh
++project agent register --name parser-refactor --summary "Fixing the parser's error handling in acme/app#12" --model claude-opus-5-5
++```
++
++Give the model here too, because a registration made from a `fix`
++subscription records none.
++
++A summary you give replaces the generated one for good, so keep it current
++yourself from then on.
++
+ Registration refuses when nothing delivers the session's events, because a
+ message could not reach it. In Claude Code, Projector's mod delivers them;
+ in Codex, trusted Projector hooks do. Tell the user what the error says to
+diff --git a/skills/review-pr/SKILL.md b/skills/review-pr/SKILL.md
+index 65405c3a..630951f9 100644
+--- a/skills/review-pr/SKILL.md
++++ b/skills/review-pr/SKILL.md
+@@ -249,6 +249,10 @@ newest to the pull request itself, so it outranks the other session's on
+ this machine. The review moves here once the other review publishes, and
+ this session reviews from the next head.
+ 
++Subscribing also registers the session for agent messages, with a generated
++summary and no name, so the user's other sessions can reach it. The
++`message-agent` skill describes how to give it a name.
++
+ A subscription to the pull request itself announces every later head, draft
+ or not, because running this skill asks for the pull request's review now. A
+ repository subscription, which `review-repo` adds, waits until a draft is
+diff --git a/skills/review-repo/SKILL.md b/skills/review-repo/SKILL.md
+index a2cf29ef..42ddcfea 100644
+--- a/skills/review-repo/SKILL.md
++++ b/skills/review-repo/SKILL.md
+@@ -68,7 +68,10 @@ open.
+    `review.username` and then the operator. The command starts the daemon
+    when it is not running, and its last line says how the session's events
+    arrive. Act on that line as `../review-pr/SKILL.md` describes under
+-   "Subscribe the session to the pull request".
++   "Subscribe the session to the pull request". Subscribing also registers
++   the session for agent messages, with a generated summary and no name, so
++   the user's other sessions can reach it; `../message-agent/SKILL.md`
++   describes how to give it a name.
+ 4. Run `project watch list` and confirm that it shows the repository's
+    `review` line for this model. Tell the user which repository the session
+    reviews, as which model and reviewer.
+diff --git a/src/projector/agents.py b/src/projector/agents.py
+index f2b8b138..ce19bfc8 100644
+--- a/src/projector/agents.py
++++ b/src/projector/agents.py
+@@ -140,7 +140,7 @@ def register(root: Path, session: str, *, name: Optional[str], summary: Optional
+              cwd: Path, now: float, environ: Optional[dict] = None) -> tuple[dict, str]:
+     """Record the session's registration, and queue its presence for the relay when the relay runs for it.
+     Answers the record and why the relay does not run, if it does not. Fields that are not given keep their
+-    recorded values."""
++    recorded values, and Projector never replaces a summary given here with one it generates."""
+     environ = os.environ if environ is None else environ
+     if name is not None:
+         name = name.lower()
+@@ -156,10 +156,21 @@ def register(root: Path, session: str, *, name: Optional[str], summary: Optional
+         raise UsageError("a session's first registration needs --name, --summary, or both")
+     if not live(root, session, now):
+         raise AgentError(NO_DELIVERY.format(session=session))
+-    login = operator()
+-    place = checkout(cwd)
++    given = {key: value for key, value in (("name", name), ("summary", summary), ("model", model))
++             if value is not None}
++    new, off = write_registration(root, session, operator(), checkout(cwd), cwd, now, environ, given)
++    return new or {}, off
++
++
++def write_registration(root: Path, session: str, login: str, place: dict, cwd: Path, now: float, environ: dict,
++                       given: Optional[dict]) -> tuple[Optional[dict], str]:
++    """Write the session's record with the fields `given`, queue its presence, and answer the record and why the
++    relay does not run. With no fields given, write only a first registration, with no name and a summary made
++    from the session's subscriptions, and answer no record when the session is registered already or
++    subscribes to nothing."""
+     key, off = relay.command_key(environ) if place.get("repo") else (None, relay.NO_ORIGIN)
+     folder = watch.session_folder(root, session)
++    name = (given or {}).get("name")
+     with locked(root / "agents"):
+         if name is not None:
+             for other, found in records(root).items():
+@@ -171,30 +182,137 @@ def register(root: Path, session: str, *, name: Optional[str], summary: Optional
+                 if other != session and found.get("name") == name and found.get("login") == login:
+                     raise AgentError(f"the live session {other} of {login} on {found.get('machine_name')} already "
+                                      f"holds the name {name}; its summary: {found.get('summary') or '(none)'}")
+-        old = record(root, session) or {}
+-        given = {key: value for key, value in (("name", name), ("summary", summary), ("model", model))
+-                 if value is not None}
+-        new = {
+-            "schema_version": 1, "login": login,
+-            **{key: old[key] for key in ("name", "summary", "model") if key in old}, **given,
+-            "host": host_of(root, session, now, environ), "machine": this_machine(root),
+-            "machine_name": socket.gethostname().split(".")[0] or "unknown", "cwd": str(cwd), **place,
+-            "relay_id": old.get("relay_id") or secrets.token_hex(8),
+-            "registered_at": old.get("registered_at") or watch.stamp(now), "updated_at": watch.stamp(now),
+-            "relay": "pending" if key else ("off" if place.get("repo") else "none"),
+-        }
+         with locked(folder):
++            if given is None:
++                if (folder / "agent.json").exists():
++                    return None, off
++                given = generated_fields(watch.subscriptions(folder), place.get("repo"))
++                if given is None:
++                    return None, off
++            old = record(root, session) or {}
++            kept = {key: old[key] for key in ("name", "summary", "model", "summary_auto") if key in old}
++            if "summary" in given and "summary_auto" not in given:
++                kept.pop("summary_auto", None)
++            new = {
++                "schema_version": 1, "login": login, **kept, **given,
++                "host": host_of(root, session, now, environ), "machine": this_machine(root),
++                "machine_name": socket.gethostname().split(".")[0] or "unknown", "cwd": str(cwd), **place,
++                "relay_id": old.get("relay_id") or secrets.token_hex(8),
++                "registered_at": old.get("registered_at") or watch.stamp(now), "updated_at": watch.stamp(now),
++                "relay": "pending" if key else ("off" if place.get("repo") else "none"),
++            }
+             write_json(folder / "agent.json", new)
+         if key:
+             relay.publish(root, session, new, key, now)
+     return new, off
+ 
+ 
+-def mark_published(root: Path, session: str) -> None:
++def register_subscriber(root: Path, session: str, cwd: Path, now: float, config: Config,
++                        environ: Optional[dict] = None) -> Optional[dict]:
++    """Register a session that has just subscribed to a pull request, with no name and a summary made from its
++    subscriptions, so the user's other sessions can message it. Answers the record, or None when
++    `agent.auto_register` is false, the session is registered already, or `register` would refuse it. It never
++    raises, because the subscription it follows has already succeeded."""
++    folder = watch.session_folder(root, session)
++    if (config.setting("agent.auto_register") is False or (folder / "agent.json").exists()
++            or not live(root, session, now)):
++        return None
++    try:
++        login = running_operator(root) or watch.signed_in(watch.run_gh)
++        if login is None:
++            return None
++        return write_registration(root, session, login, checkout(cwd), cwd, now,
++                                  os.environ if environ is None else environ, None)[0]
++    except (ProjectorError, OSError):
++        return None
++
++
++def running_operator(root: Path) -> Optional[str]:
++    """The login the running watch daemon last read from `gh`, which spares asking `gh` again."""
++    found = (read_json(root / "daemon.json") or {}).get("operator") if watch.held(root) else None
++    return found if isinstance(found, str) and found else None
++
++
++# Generated summaries
++
++def generated_fields(lines: list[watch.Subscription], repo: Optional[str]) -> Optional[dict]:
++    """A first registration's fields from the session's subscriptions: the generated summary, and the model of a
++    review line, or None when the session subscribes to nothing."""
++    lines = [line for line in lines if not line.excluded]
++    summary = generated_summary(lines, repo)
++    if summary is None:
++        return None
++    model = next((line.model for line in lines if line.role == "review" and shaped(line.model, MODEL_ID)), None)
++    return {"summary": summary, "summary_auto": True, **({"model": model} if model else {})}
++
++
++def counted(count: int, one: str, many: str) -> str:
++    return f"{count} {one if count == 1 else many}"
++
++
++def series(phrases: list[str]) -> str:
++    return " and ".join(phrases) if len(phrases) < 3 else f"{', '.join(phrases[:-1])}, and {phrases[-1]}"
++
++
++def role_phrases(lines: list[watch.Subscription], repo: Optional[str], detail: int) -> list[str]:
++    """What the session covers in one role, from the most detail, 2, to the least, 0. Only the session's own
++    repository is ever named: the relay publishes the summary into that repository, which can be public while
++    another the session works in is private."""
++    own = (repo or "").lower()
++    wide = sorted({line.repo.lower() for line in lines if line.number is None})
++    pulls = sorted({(line.repo.lower(), line.number) for line in lines if line.number is not None})
++    if detail == 0:
++        return [*([f"pull requests in {counted(len(wide), 'repository', 'repositories')}"] if wide else []),
++                *([counted(len(pulls), "pull request", "pull requests")] if pulls else [])]
++    phrases = [f"{repo} pull requests"] if own in wide else []
++    others = len(wide) - len(phrases)
++    if others:
++        phrases.append(f"pull requests in {counted(others, 'other repository', 'other repositories')}")
++    if detail == 1:
++        return [*phrases, *([counted(len(pulls), "pull request", "pull requests")] if pulls else [])]
++    phrases += [f"{repo}#{number}" for name, number in pulls if name == own]
++    elsewhere = sum(1 for name, _ in pulls if name != own)
++    if elsewhere:
++        phrases.append(counted(elsewhere, "pull request in another repository", "pull requests in other repositories"))
++    return phrases
++
++
++def generated_summary(lines: list[watch.Subscription], repo: Optional[str]) -> Optional[str]:
++    """One line saying what the session reviews and fixes, in the most detail that fits in `MAX_SUMMARY`
++    characters, or None when it subscribes to nothing."""
++    text = ""
++    for detail in (2, 1, 0):
++        clauses = [f"{verb} {series(phrases)}" for verb, role in (("reviewing", "review"), ("fixing", "fix"))
++                   if (phrases := role_phrases([line for line in lines if line.role == role], repo, detail))]
++        text = "; ".join(clauses)
++        if len(text) <= MAX_SUMMARY:
++            break
++    return text[:1].upper() + text[1:] or None
++
++
++def refresh_summary(folder: Path, lines: list[str], now: float) -> None:
++    """Make a generated summary agree with the session's subscriptions, `lines`, and mark the session's
++    presence for the relay to publish again. The caller holds the session's lock."""
++    found = read_json(folder / "agent.json")
++    if not found or found.get("schema_version") != 1 or found.get("summary_auto") is not True:
++        return
++    parsed = [line for line in map(watch.Subscription.parse, lines) if line is not None and not line.excluded]
++    summary = generated_summary(parsed, found.get("repo"))
++    if summary == found.get("summary"):
++        return
++    new = {key: value for key, value in found.items() if key != "summary"}
++    new.update({**({"summary": summary} if summary else {}), "updated_at": watch.stamp(now),
++                **({"relay": "pending"} if found.get("relay") == "published" else {})})
++    write_json(folder / "agent.json", new)
++
++
++def mark_published(root: Path, session: str, landed: Optional[str]) -> None:
++    """Mark the session's presence published when the presence that landed, by its digest, says what the
++    registration says now. A summary refreshed while an older presence waited to be pushed stays pending."""
+     folder = watch.session_folder(root, session)
+     with locked(folder):
+         found = record(root, session)
+-        if found and found.get("relay") != "published":
++        if found and found.get("relay") != "published" and relay.digest(relay.presence(session, found, 0)) == landed:
+             write_json(folder / "agent.json", {**found, "relay": "published"})
+ 
+ 
+diff --git a/src/projector/cli.py b/src/projector/cli.py
+index 8b993158..e87a62d8 100644
+--- a/src/projector/cli.py
++++ b/src/projector/cli.py
+@@ -1567,11 +1567,14 @@ def run_watch(arguments: argparse.Namespace) -> int:
+         if arguments.from_output is not None:
+             text = (sys.stdin.read() if arguments.from_output == "-"
+                     else Path(arguments.from_output).read_text(encoding="utf-8", errors="replace"))
+-            if here_config().setting("watch.auto_start") is False:
++            here = here_config()
++            if here.setting("watch.auto_start") is False:
+                 report_added(root, session, [], json_output,
+                              "watch.auto_start is false, so the output subscribes the session to nothing")
+                 return 0
+-            added, problems = watch.add_from_output(root, session, text)
++            added, problems, subscribed = watch.add_from_output(root, session, text)
++            if subscribed:
++                agents.register_subscriber(root, session, Path.cwd(), time.time(), here)
+             for problem in problems:
+                 print(f"project: {problem}", file=sys.stderr)
+             report_added(root, session, added, json_output, "the output shows no new pull request to fix")
+@@ -1579,6 +1582,7 @@ def run_watch(arguments: argparse.Namespace) -> int:
+         repo, number = watch.parse_target(arguments.target)
+         wanted = watch_subscription(arguments, repo, number)
+         line = watch.add(root, session, wanted)
++        agents.register_subscriber(root, session, Path.cwd(), time.time(), here_config())
+         report_added(root, session, [line] if line else [], json_output,
+                      f"the session already subscribes to {wanted.target} {wanted.role}")
+     elif command in ("remove", "drop", "restore"):
+diff --git a/src/projector/codex_watch.py b/src/projector/codex_watch.py
+index 33980598..92db9b61 100644
+--- a/src/projector/codex_watch.py
++++ b/src/projector/codex_watch.py
+@@ -478,7 +478,7 @@ def push_command(command: str) -> bool:
+ 
+ 
+ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, run: Callable = subprocess.run) -> dict:
+-    from . import watch
++    from . import agents, watch
+     from .config import load as load_config
+     name, session, cwd = event.get("hook_event_name"), event.get("session_id"), event.get("cwd")
+     if not isinstance(name, str) or name not in {"SessionStart", "SessionEnd", "UserPromptSubmit", "PostToolUse", "Stop"}:
+@@ -506,8 +506,10 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
+             ensure()
+         return {}
+     text = tool_output(event) if name == "PostToolUse" else None
+-    if text is not None and load_config(Path(cwd)).setting("watch.auto_start") is not False:
+-        watch.add_from_output(root, session, text)
++    if text is not None:
++        config = load_config(Path(cwd))
++        if config.setting("watch.auto_start") is not False and watch.add_from_output(root, session, text)[2]:
++            agents.register_subscriber(root, session, Path(cwd), now, config)
+     consumed, lines = acknowledge(folder, session, event.get("prompt", ""), now) if name == "UserPromptSubmit" else (False, [])
+     if record.get("enabled") and has_work(folder):
+         ensure()
+diff --git a/src/projector/config.py b/src/projector/config.py
+index be218a99..26968bc6 100644
+--- a/src/projector/config.py
++++ b/src/projector/config.py
+@@ -74,6 +74,7 @@
+     "watch.review_stall": int,
+     "panel.background": str,
+     "agent.message_limit": int,
++    "agent.auto_register": bool,
+     "agent.key": str,
+     "ios.app": str,
+     "ios.project": str,
+diff --git a/src/projector/relay.py b/src/projector/relay.py
+index 831670a6..e64c2ed1 100644
+--- a/src/projector/relay.py
++++ b/src/projector/relay.py
+@@ -27,6 +27,7 @@
+ 
+ from __future__ import annotations
+ 
++import hashlib
+ import json
+ import os
+ import re
+@@ -350,7 +351,7 @@ def queue(root: Path, repo: str, cwd: Optional[str], changes: list[tuple[str, Op
+ 
+ 
+ def presence(session: str, found: dict, now: float) -> dict:
+-    record = {key: value for key, value in found.items() if key not in ("relay", "ended_at")}
++    record = {key: value for key, value in found.items() if key not in ("relay", "ended_at", "summary_auto")}
+     return {**record, "session": session, "expires_at": now + LEASE}
+ 
+ 
+@@ -362,7 +363,19 @@ def publish(root: Path, session: str, found: dict, key: Key, now: float) -> None
+     """Queue the session's sealed presence."""
+     record = presence(session, found, now)
+     queue(root, found["repo"], found["cwd"], [(presence_ref(key.id, found["relay_id"]), seal(key, record),
+-                                               {"kind": "agent", "expires_at": record["expires_at"]})], now)
++                                               presence_meta(record))], now)
++
++
++def presence_meta(record: dict) -> dict:
++    """What the outbox keeps beside a sealed presence: its lease, and a digest of what it says, so a push marks
++    the registration published only while the registration still says that."""
++    return {"kind": "agent", "expires_at": record["expires_at"], "digest": digest(record)}
++
++
++def digest(record: dict) -> str:
++    """A digest of a presence record apart from its lease."""
++    content = {key: value for key, value in record.items() if key != "expires_at"}
++    return hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+ 
+ 
+ def queue_message(root: Path, repo: str, cwd: str, key: Key, message: dict, now: float) -> None:
+@@ -716,11 +729,10 @@ def maintain(self) -> None:
+             if name in self.live:
+                 expires = (self.cache["seen"].get(ref) or {}).get("expires_at")
+                 due = ref not in self.cache["remote"] or not isinstance(expires, (int, float)) \
+-                    or expires - self.now < RENEW
++                    or expires - self.now < RENEW or found.get("relay") == "pending"
+                 if due and ref not in queued:
+                     record = presence(name, found, self.now)
+-                    self.changes.append((ref, seal(self.key, record),
+-                                         {"kind": "agent", "expires_at": record["expires_at"]}))
++                    self.changes.append((ref, seal(self.key, record), presence_meta(record)))
+                 continue
+             self.delete(ref)
+             for other in self.cache["remote"]:
+@@ -799,7 +811,7 @@ def record(self, cwd: Path, landed: dict[str, Optional[str]], snapshot: list[dic
+         lines = "".join(f"update {tracking(ref)} {sha}\n" if sha else f"delete {tracking(ref)}\n"
+                         for ref, sha in landed.items())
+         git(cwd, "update-ref", "--stdin", input=lines.encode())
+-        published = set()
++        published: dict[str, Optional[str]] = {}
+         for ref, sha in landed.items():
+             parsed = parse_ref(ref)
+             if sha is None:
+@@ -811,9 +823,9 @@ def record(self, cwd: Path, landed: dict[str, Optional[str]], snapshot: list[dic
+             self.cache["remote"][ref] = sha
+             self.cache["seen"][ref] = {"sha": sha, **metas.get(ref, {})}
+             if parsed and parsed[0] == "agent" and parsed[2] in self.relays:
+-                published.add(self.relays[parsed[2]])
+-        for name in published:
+-            agents.mark_published(self.root, name)
++                published[self.relays[parsed[2]]] = metas.get(ref, {}).get("digest")
++        for name, landed_digest in published.items():
++            agents.mark_published(self.root, name, landed_digest)
+ 
+ 
+ # The daemon's side
+diff --git a/src/projector/watch.py b/src/projector/watch.py
+index 28f11243..d91d8cb2 100644
+--- a/src/projector/watch.py
++++ b/src/projector/watch.py
+@@ -290,11 +290,14 @@ def subscriptions(folder: Path) -> list[Subscription]:
+ 
+ 
+ def edit_subscriptions(folder: Path, edit: Callable[[list[str]], list[str]]) -> None:
++    from . import agents
+     with locked(folder):
+         before = read_lines(folder)
+         after = edit(list(before))
+         if after != before:
+             write_text(folder / "subscriptions", "".join(f"{line}\n" for line in after))
++            with contextlib.suppress(OSError):
++                agents.refresh_summary(folder, after, time.time())
+ 
+ 
+ def parse_target(text: str) -> tuple[str, Optional[int]]:
+@@ -499,9 +502,10 @@ def unique(pairs: list[tuple[str, object]]) -> list[tuple[str, object]]:
+     return kept
+ 
+ 
+-def add_from_output(root: Path, session: str, text: str) -> tuple[list[str], list[str]]:
++def add_from_output(root: Path, session: str, text: str) -> tuple[list[str], list[str], bool]:
+     """Subscribe the session to `fix auto` on each pull request the output opened or pushed to, and answer
+-    the lines added and a problem for each branch whose pull request could not be looked up."""
++    the lines added, a problem for each branch whose pull request could not be looked up, and whether the
++    session now subscribes to any of those pull requests, through a line added or one it already had."""
+     pulls, branches = pushed(text)
+     found: list[tuple[str, object]] = list(pulls)
+     problems = []
+@@ -519,14 +523,16 @@ def add_from_output(root: Path, session: str, text: str) -> tuple[list[str], lis
+         found += [(repo, pull["number"]) for pull in listed if isinstance(pull, dict)
+                   and isinstance(pull.get("number"), int)]
+     added = []
++    subscribed = False
+     for repo, number in unique(found):
+         try:
+             line = add(root, session, Subscription(repo, number, "fix", auto=True))
+         except Excluded:
+             continue
++        subscribed = True
+         if line:
+             added.append(line)
+-    return added, problems
++    return added, problems, subscribed
+ 
+ 
+ # GitHub
+diff --git a/tests/test_agents.py b/tests/test_agents.py
+index a0afd892..80e65e97 100644
+--- a/tests/test_agents.py
++++ b/tests/test_agents.py
+@@ -365,6 +365,160 @@ def test_a_send_interrupted_before_its_line_keeps_the_record_and_appends_no_line
+         self.assertEqual([], self.events(A))
+ 
+ 
++class SubscriberTests(AgentCase):
++    """A session that subscribes to a pull request is registered with a generated summary."""
++
++    def setUp(self) -> None:
++        super().setUp()
++        self.git_checkout()
++
++    def watch(self, *args: str, claude: str = A, stdin: str = "") -> tuple[int, str, str]:
++        out, err = io.StringIO(), io.StringIO()
++        with contextlib.chdir(self.work), redirect_stdout(out), redirect_stderr(err), \
++                mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": claude}), \
++                mock.patch("time.time", return_value=self.now), mock.patch.object(sys, "stdin", io.StringIO(stdin)):
++            code = cli.main(["watch", *args])
++        self.assertEqual(0, code, err)
++        return code, out.getvalue(), err.getvalue()
++
++    def summary(self, session: str = A) -> object:
++        return (agents.record(self.root, session) or {}).get("summary")
++
++    def test_an_explicit_add_registers_the_session_without_changing_what_add_prints(self) -> None:
++        self.claude(A)
++
++        _, out, _ = self.watch("add", "acme/app#12")
++
++        found = agents.record(self.root, A) or {}
++        self.assertEqual("added acme/app#12 fix\nevents: mod\n", out)
++        self.assertEqual(("Fixing acme/app#12", True, "operator", "claude", "acme/app", None),
++                         tuple(found.get(key) for key in ("summary", "summary_auto", "login", "host", "repo", "name")))
++
++    def test_an_add_from_a_push_command_registers_the_session(self) -> None:
++        self.claude(A)
++
++        self.watch("add", "--from-output", "-", stdin="https://github.com/acme/app/pull/13\n")
++
++        self.assertEqual("Fixing acme/app#13", self.summary())
++
++    def test_a_pull_request_codex_opens_registers_the_codex_session(self) -> None:
++        self.codex(B)
++        event = {"hook_event_name": "PostToolUse", "session_id": B, "cwd": str(self.work), "tool_name": "Bash",
++                 "tool_input": {"command": "gh pr create --draft"},
++                 "tool_response": {"exit_code": 0, "output": "https://github.com/acme/app/pull/17\n"}}
++
++        codex.hook(self.root, event, self.now, lambda: None)
++
++        self.assertEqual(("Fixing acme/app#17", "codex"),
++                         (self.summary(B), (agents.record(self.root, B) or {}).get("host")))
++
++    def test_a_push_to_a_pull_request_codex_already_fixes_registers_the_codex_session(self) -> None:
++        watch.add(self.root, B, watch.Subscription("acme/app", 17, "fix", auto=True))
++        self.codex(B)
++        event = {"hook_event_name": "PostToolUse", "session_id": B, "cwd": str(self.work), "tool_name": "Bash",
++                 "tool_input": {"command": "git push"},
++                 "tool_response": {"exit_code": 0, "output": "https://github.com/acme/app/pull/17\n"}}
++
++        codex.hook(self.root, event, self.now, lambda: None)
++
++        self.assertEqual("Fixing acme/app#17", self.summary(B))
++
++    def test_auto_register_false_subscribes_without_registering(self) -> None:
++        (self.home / ".projector.toml").write_text("[agent]\nauto_register = false\n")
++        self.claude(A)
++
++        self.watch("add", "acme/app#12")
++
++        self.assertEqual(["acme/app#12 fix"], watch.read_lines(self.folder(A)))
++        self.assertFalse((self.folder(A) / "agent.json").exists())
++
++    def test_a_session_registered_with_its_own_summary_keeps_it_as_its_subscriptions_change(self) -> None:
++        self.claude(A)
++        self.register(A, "--name", "parser-refactor", "--summary", "Refactoring the parser")
++        before = agents.record(self.root, A)
++
++        self.watch("add", "acme/app#12")
++        self.watch("remove", "acme/app#12")
++
++        self.assertEqual(before, agents.record(self.root, A))
++
++    def test_a_generated_summary_follows_adds_and_removes_until_the_session_gives_its_own(self) -> None:
++        self.claude(A)
++        seen = []
++        for args in (["add", "acme/app#12"], ["add", "acme/app#13"], ["remove", "acme/app#12"]):
++            self.watch(*args)
++            seen.append(self.summary())
++        self.register(A, "--summary", "Fixing the parser's pull request")
++        self.watch("add", "acme/app#14")
++        seen.append(self.summary())
++
++        self.assertEqual(["Fixing acme/app#12", "Fixing acme/app#12 and acme/app#13", "Fixing acme/app#13",
++                          "Fixing the parser's pull request"], seen)
++
++    def test_a_review_subscription_gives_the_registration_its_model(self) -> None:
++        self.claude(A)
++
++        self.watch("add", "acme/app", "--role", "review", "--model", MODEL, "--reviewer", "octocat")
++
++        found = agents.record(self.root, A) or {}
++        self.assertEqual(("Reviewing acme/app pull requests", MODEL), (found.get("summary"), found.get("model")))
++
++    def test_a_session_nothing_delivers_to_subscribes_unregistered_with_the_usual_output(self) -> None:
++        _, out, _ = self.watch("add", "acme/app#12")
++
++        self.assertEqual(f"added acme/app#12 fix\nevents: none — start `project watch stream --session {A}` under "
++                         "your host's monitor facility\n", out)
++        self.assertFalse((self.folder(A) / "agent.json").exists())
++
++    def test_an_add_that_finds_its_line_registers_a_session_unreachable_when_it_first_subscribed(self) -> None:
++        self.watch("add", "acme/app#12")
++        self.watch("add", "--from-output", "-", stdin="https://github.com/acme/app/pull/13\n")
++        self.claude(A)
++        seen = []
++        for args, stdin in ((["add", "acme/app#12"], ""), (["add", "--from-output", "-"],
++                                                           "https://github.com/acme/app/pull/13\n")):
++            (self.folder(A) / "agent.json").unlink(missing_ok=True)
++            _, out, _ = self.watch(*args, stdin=stdin)
++            seen.append((out.splitlines()[0], self.summary()))
++
++        self.assertEqual([("the session already subscribes to acme/app#12 fix",
++                           "Fixing acme/app#12 and acme/app#13"),
++                          ("the output shows no new pull request to fix", "Fixing acme/app#12 and acme/app#13")],
++                         seen)
++
++    def test_an_add_from_output_that_names_no_pull_request_registers_nothing(self) -> None:
++        self.watch("add", "acme/app#12")
++        self.claude(A)
++
++        self.watch("add", "--from-output", "-", stdin="Everything up-to-date\n")
++
++        self.assertFalse((self.folder(A) / "agent.json").exists())
++
++    def test_a_signed_out_gh_subscribes_unregistered(self) -> None:
++        self.claude(A)
++        self.github.down = True
++
++        self.watch("add", "acme/app#12")
++
++        self.assertFalse((self.folder(A) / "agent.json").exists())
++
++    def test_a_pull_request_in_another_repository_is_counted_and_never_named(self) -> None:
++        self.claude(A)
++
++        self.watch("add", "secret-org/vault#5")
++        self.watch("add", "acme/app#12")
++
++        self.assertEqual("Fixing acme/app#12 and 1 pull request in another repository", self.summary())
++
++    def test_a_summary_of_many_subscriptions_counts_them_to_stay_within_120_characters(self) -> None:
++        self.claude(A)
++        watch.edit_subscriptions(self.folder(A), lambda lines: [f"acme/app#{number} fix" for number in range(1, 40)])
++
++        self.watch("add", "acme/app", "--role", "review", "--model", MODEL, "--reviewer", "octocat")
++
++        self.assertEqual("Reviewing acme/app pull requests; fixing 39 pull requests", self.summary())
++
++
+ class DaemonTests(AgentCase):
+     def test_an_idle_registered_codex_session_keeps_the_daemon_running_past_its_idle_stop(self) -> None:
+         self.codex(B)
+diff --git a/tests/test_codex_watch.py b/tests/test_codex_watch.py
+index fd638a17..f795afb9 100644
+--- a/tests/test_codex_watch.py
++++ b/tests/test_codex_watch.py
+@@ -42,6 +42,10 @@ def setUp(self):
+         self.patch = mock.patch("shutil.which", return_value=str(self.executable))
+         self.patch.start()
+         self.addCleanup(self.patch.stop)
++        # A pull request a hook subscribes to registers the session, which asks `gh` for the login.
++        gh = mock.patch.object(watch, "run_gh", return_value=watch.GhResult(1, "", "gh is not signed in"))
++        gh.start()
++        self.addCleanup(gh.stop)
+         codex.register(self.folder, "session-A", str(self.root), self.now)
+         watch.add(self.root, "session-A", watch.Subscription("Acme/App", 14, "fix"))
+         self.dispatcher = codex.Dispatcher(wall=lambda: self.now)
+diff --git a/tests/test_relay.py b/tests/test_relay.py
+index c80088a4..14206e7e 100644
+--- a/tests/test_relay.py
++++ b/tests/test_relay.py
+@@ -1192,6 +1192,39 @@ def test_registering_an_idle_codex_agent_publishes_it_to_the_other_machine(self)
+         self.assertIn(relay.presence_ref(self.key.id, self.b_relay_id()), self.refs())
+         self.assertIn("test-writer\tcodex\ttwo", self.one.project("agent", "list", claude=A)[1])
+ 
++    def test_a_generated_summary_reaches_the_other_machine_again_each_time_the_subscriptions_change(self) -> None:
++        self.pair()
++        self.one.claude(C)
++        for number in (12, 13):
++            self.github.pull_request(number)
++        listed = []
++        for target in ("acme/app#12", "acme/app#13"):
++            code, _, err = self.one.project("watch", "add", target, claude=C)
++            self.assertEqual(0, code, err)
++            self.one.run_pass()
++            self.two.run_pass()
++            listed += [line.split("\t")[-1] for line in self.two.project("agent", "list", claude=B)[1].splitlines()
++                       if line.startswith(C[:8])]
++
++        self.assertEqual(["Fixing acme/app#12", "Fixing acme/app#12 and acme/app#13"], listed)
++
++    def test_a_summary_refreshed_while_its_first_presence_waits_for_a_push_is_published_on_the_next_pass(
++            self) -> None:
++        self.pair()
++        self.one.claude(C)
++        for number in (12, 13):
++            self.github.pull_request(number)
++            code, _, err = self.one.project("watch", "add", f"acme/app#{number}", claude=C)
++            self.assertEqual(0, code, err)
++
++        self.one.run_pass()
++        self.one.run_pass()
++        self.two.run_pass()
++
++        listed = [line.split("\t")[-1] for line in self.two.project("agent", "list", claude=B)[1].splitlines()
++                  if line.startswith(C[:8])]
++        self.assertEqual(["Fixing acme/app#12 and acme/app#13"], listed)
++
+     def test_an_idle_codex_agent_keeps_its_daemon_renews_its_lease_and_receives(self) -> None:
+         self.one.inline_key(self.private)
+         self.two.inline_key(self.private)

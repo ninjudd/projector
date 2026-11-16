@@ -1,0 +1,187 @@
+{
+ "version": 1,
+ "name": "Automatic agent registration",
+ "project": "agent-messages",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 491,
+  "title": "Register a session for agent messages when it subscribes to a pull request",
+  "head": "ed21005679ff98ba105730eee0c29d2cbb7c5e43",
+  "headRef": "agent-auto-register",
+  "base": "6ca3a71e08f19d5492c1a85f7f2b19315838407c",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector lets your agent sessions message each other. A message reaches only a <b>registered</b> session, one that has an <code>agent.json</code> record with a name, a one-line summary, or both. Until now a session registered only when it ran <code>project agent register</code>, which the <code>message-agent</code> skill does only when messaging comes up. So long-running loops, such as a session fixing its pull requests or a Codex session reviewing a repository, were never reachable.",
+   "This pull request registers a session the first time it subscribes to a pull request or a repository with <code>project watch add</code>. That covers an explicit target, <code>--from-output</code> (which Projector's Claude Code mod runs after a push), and the Codex hook that reads a push. The automatic registration has no name. Its summary is generated from the session's subscriptions, such as <code>Fixing acme/app#12</code>, and Projector rewrites it each time the subscriptions change, until the session gives a summary of its own.",
+   "Setting <code>agent.auto_register = false</code> in a checkout's configuration turns the behavior off. Any refused precondition, such as no delivery, a signed-out <code>gh</code>, or an error part way, skips the registration silently, and <code>watch add</code> prints what it always printed.",
+   "The relay, which carries presence and messages between your machines through sealed hidden refs in the session's own repository, gains a small fix. A presence pushed while a newer summary was waiting no longer marks the record published."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Registration</b>: a session's <code>agent.json</code>, which makes it listable and messageable.</li><li><b>Presence</b>: the sealed copy of a registration that the relay pushes so your other machines can see the session.</li><li><b>Generated summary</b>: a summary Projector built from subscriptions, marked <code>summary_auto: true</code> in <code>agent.json</code>.</li><li><b>Delivery</b>: how a session's events reach it (<code>mod</code>, <code>codex</code>, <code>stream</code>, or <code>none</code>). A session with delivery <code>none</code> is never registered.</li></ul>"
+   },
+   {
+    "id": "review",
+    "title": "Review so far",
+    "html": "<ul class=\"tight\"><li>The first Projector review, at <code>a7fa0c8</code>, was clean, with two suggestions: retry the registration on an <code>add</code> that finds its line, and pass <code>--model</code> in the <code>message-agent</code> example. <code>ed21005</code> acts on both.</li><li>The review of <code>ed21005</code> opened one P2 thread: a rewrapped line in <code>docs/cli.md</code> runs to 105 characters.</li><li>The gate, the full Python suite, and <code>project check</code> passed at <code>ed21005</code>.</li></ul>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "registration",
+   "title": "Registering a subscriber",
+   "kicker": "How a first subscription writes a registration with a generated summary",
+   "intro": [
+    "<code>register</code> used to build and write <code>agent.json</code> itself. Its write now lives in <code>write_registration</code>, which both the explicit command and the new automatic path call. So an automatic registration records the same host, machine, checkout, <code>relay_id</code>, and login, and queues the same presence for the relay.",
+    "When it is called with no fields, <code>write_registration</code> acts only as a first registration: it returns without writing when <code>agent.json</code> exists or the session subscribes to nothing. <code>register_subscriber</code> wraps it with the preconditions (the setting, delivery, and a login) and swallows any failure, because the subscription it follows has already succeeded.",
+    "The generated summary names only the repository of the session's own checkout and counts every other one. The relay publishes presence into that repository, which can be public while another repository the session works in is private."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "Only the model reaches the <code>PEER MESSAGE</code> event line from this path, and only from a <code>review</code> line whose model passes <code>MODEL_ID</code>. The automatic registration never sets a name."
+    }
+   ],
+   "files": [
+    {
+     "path": "src/projector/agents.py",
+     "note": "Splits the record write out of <code>register</code>, adds the automatic registration, the summary generator, and the rewrite on subscription changes.",
+     "checks": [
+      {
+       "kind": "context",
+       "line": 195,
+       "text": "A registration that gives <code>--summary</code> drops <code>summary_auto</code>, so Projector stops rewriting it. A <code>--name</code>-only registration keeps the flag."
+      },
+      {
+       "kind": "verify",
+       "line": 210,
+       "text": "Every <code>add</code> now calls this, including one that finds its line already there, so a session nothing delivered to at its first <code>add</code> registers on a later one. The <code>agent.json</code> check here, and again under the session lock in <code>write_registration</code>, keeps a repeated call from changing an existing record, explicit or generated. Checked by reading both guards."
+      },
+      {
+       "kind": "verify",
+       "line": 257,
+       "text": "Least-detail summaries stay within 120 characters for every role mix the subscription grammar allows, because a <code>fix</code> line always names a pull request. Checked by generating summaries for 2 to 100 repositories and pull requests."
+      },
+      {
+       "kind": "verify",
+       "line": 315,
+       "text": "Removing the digest comparison here turns the relay race regression test red."
+      }
+     ]
+    },
+    {
+     "path": "src/projector/config.py",
+     "note": "Adds the boolean <code>agent.auto_register</code> setting."
+    }
+   ]
+  },
+  {
+   "id": "callers",
+   "title": "Where subscribing calls it",
+   "kicker": "The three paths that add a subscription line, and the one function every change goes through",
+   "intro": [
+    "Each path that can subscribe a session calls <code>register_subscriber</code> afterwards: <code>watch add</code> with a target, <code>watch add --from-output</code>, and the Codex <code>PostToolUse</code> hook. They call it even when the line was already there, so a session that could not be registered when it first subscribed, because nothing delivered its events yet, registers on its next <code>add</code>. Every change to a session's subscriptions, including the daemon's removal of a merged or closed pull request, goes through <code>edit_subscriptions</code>, which calls <code>refresh_summary</code> under the session's lock."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/cli.py",
+     "note": "Tries the registration after every target <code>add</code>, and after a <code>--from-output</code> that subscribes the session to any pull request. The output is unchanged."
+    },
+    {
+     "path": "src/projector/codex_watch.py",
+     "note": "Tries the registration whenever a push's output names a pull request the session subscribes to, reading the setting from the hook's <code>cwd</code>."
+    },
+    {
+     "path": "src/projector/watch.py",
+     "note": "Rewrites a generated summary whenever the subscription file changes, and has <code>add_from_output</code> also report whether the session subscribes to any pull request the output names, whether or not it added a line."
+    }
+   ]
+  },
+  {
+   "id": "relay",
+   "title": "Republishing a changed summary",
+   "kicker": "How a rewritten summary reaches your other machines, and the race it exposed",
+   "intro": [
+    "A rewrite marks a published presence <code>pending</code>, and <code>Job.maintain</code> now republishes any live session whose record is <code>pending</code>. That exposed a race. A push of an older presence, queued before the summary changed, used to mark the newer record published, so the new summary waited for the lease renewal, up to half an hour.",
+    "The outbox now stores a digest of each queued presence beside it. A landed push marks the record published only when the record still produces that digest. An item an older release queued has no digest, so it republishes once and then settles."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "src/projector/relay.py",
+     "note": "Adds <code>presence_meta</code> and <code>digest</code>, republishes <code>pending</code> presence, and passes each landed digest to <code>mark_published</code>. Keeps <code>summary_auto</code> out of the presence.",
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 732,
+       "text": "Removing the <code>pending</code> clause turns the test that a rewritten summary reaches a second machine red."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation and skills",
+   "kicker": "The CLI reference and the skills that tell agents a subscribed session is reachable",
+   "intro": [
+    "<code>docs/cli.md</code> documents the setting, the new behavior of <code>watch add</code>, and a new section on how the summary is generated and kept current. The <code>message-agent</code> skill tells a subscribed session that it is registered already and should give itself a name once it knows its work. <code>fix-pr</code>, <code>review-pr</code>, and <code>review-repo</code> each note that subscribing makes the session reachable."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/cli.md",
+     "note": "Documents <code>agent.auto_register</code>, adds the <b>Registered when it subscribes</b> section, and says that a later <code>add</code> retries the registration.",
+     "checks": [
+      {
+       "kind": "flag",
+       "line": 2798,
+       "text": "This line runs to 105 characters, while the lines around it wrap at 75 or fewer. The repository's <code>CLAUDE.md</code> asks you to match the line wrapping around a Markdown edit. An open review thread asks for the paragraph to be rewrapped."
+      }
+     ]
+    },
+    {
+     "path": "skills/message-agent/SKILL.md",
+     "note": "Explains the automatic registration and how to name the session, with <code>--model</code> in the example.",
+     "checks": []
+    },
+    {
+     "path": "skills/fix-pr/SKILL.md"
+    },
+    {
+     "path": "skills/review-pr/SKILL.md"
+    },
+    {
+     "path": "skills/review-repo/SKILL.md"
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "Registration on each subscribe path, the setting, and the relay race",
+   "intro": [
+    "<code>SubscriberTests</code> covers each subscribe path, the opt-out, a session's own summary left alone, a generated summary that follows adds and removes, the model from a review line, no delivery, a signed-out <code>gh</code>, another repository counted, and 39 subscriptions kept within 120 characters. Two <code>LifecycleTests</code> cover republishing to a second machine and the race. The Codex tests now fake <code>gh</code> as signed out, because a hook's subscription would otherwise ask it for a login.",
+    "Two new <code>SubscriberTests</code> cover the retry: an <code>add</code> that finds its line registers a session that nothing delivered to at first, by both the target and <code>--from-output</code> paths, and a Codex push to a pull request the session already fixes registers it. A third checks that output naming no pull request registers nothing."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_agents.py"
+    },
+    {
+     "path": "tests/test_codex_watch.py"
+    },
+    {
+     "path": "tests/test_relay.py"
+    }
+   ]
+  }
+ ]
+}
