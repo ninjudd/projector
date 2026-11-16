@@ -1,0 +1,381 @@
+diff --git a/docs/plugins.md b/docs/plugins.md
+index ccad409c..76e9c326 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -278,7 +278,7 @@ panel. It also appears when the session subscribes to a pull request it had
+ not subscribed to before.
+ 
+ ```text
+-  /projector                                              2 pull requests  12s   [-]
++  /projector                            1 pull request · 1 review request  12s   [-]
+    #267 ready List a loop's open pull requests above the Claude Code prompt 2h
+    #258 reviewing grace Name the reviewed head in a review's… conflict · 2* 5m
+         reviewer · review-signature · +84 −12 in 5 files · checks passing
+@@ -319,11 +319,15 @@ narrow terminal. A pull request that the watch daemon has not queried yet
+ reads `loading…` in place of its title, with no review label, author, or
+ age, until the daemon's first result for it arrives.
+ 
+-Your own pull requests come first, then everyone else's, each author's
+-together and the authors in order of login, with no line between the groups.
+-The panel tells which are yours by the operator, the account `gh` is signed
+-in as, which it reads from the daemon's `daemon.json`. A pull request that
+-the session both fixes and reviews is listed once.
++Your own pull requests come first, then everyone else's, which the panel
++calls review requests, each author's together and the authors in order of
++login, with no line between the groups. The header counts the two apart,
++such as `14 pull requests · 10 review requests`. The panel tells which are
++yours by the operator, the account `gh` is signed in as, which it reads from
++the daemon's `daemon.json`. A pull request by a deleted account, which
++GitHub names no author for, is a review request. One that is still loading
++counts as yours until its author is known. A pull request that the session
++both fixes and reviews is listed once.
+ 
+ In a terminal, the panel draws on a background of its own, so a line that
+ moves as the panel scrolls is plainly the panel's. It is inset one column
+@@ -609,10 +613,11 @@ Click a count in the header to collapse what it counts to one line, so a
+ long list of pull requests or a burst of notices does not push the questions
+ out of view. A collapsed line starts with `+`, where an item's starts with
+ `-`, to say it expands. Collapsed pull requests become a line such as
+-`+ #12 #14 #15` in their place, listing each in the rows' order. With no
+-review label beside it, each number's color says what its row says, from
+-its notes and thread count as well as its state, taking the first of these
+-that applies:
++`+ #12 #14 #15` in their place, listing each in the rows' order. Your pull
++requests and the review requests collapse apart, each to a line of its own,
++and yours always come first. With no review label beside it, each number's
++color says what its row says, from its notes and thread count as well as its
++state, taking the first of these that applies:
+ 
+ - **Red** when a conflict, a change request, or failing checks hold it back.
+ - **Yellow** while it has unresolved review threads, which its row counts in
+@@ -628,16 +633,16 @@ click one to open that pull request's drawer below the line, with its number
+ drawn inverted, and click it again to close the drawer. The pull requests
+ stay collapsed, and only one drawer is open at a time, so clicking another
+ number moves the drawer to it.
+-A drawer that is open when you collapse the pull requests stays open under
++A drawer that is open when you collapse its pull requests stays open under
+ their line. There it starts under the first number, where on its row it
+-starts one column past the number. Click the `+` to expand the pull
+-requests, and an open drawer moves back to its row. A collapsed kind of
+-item becomes a line such as `+ 2 questions` at the top of the items, drawn
+-in the kind's color. Click the line, or the count again, to expand it. The
+-pull requests, the questions, the requests, and the notices collapse apart
+-from each other, and each stays collapsed, new ones included, until you
+-expand it. While a collapsed kind has nothing open, the header has no count
+-for it, so its muted items show in the list.
++starts one column past the number. Click the `+` to expand those pull
++requests, and an open drawer moves back to its row. A collapsed kind of item
++becomes a line such as `+ 2 questions` at the top of the items, drawn in the
++kind's color. Click the line, or the count again, to expand it. Your pull
++requests, the review requests, the questions, the requests, and the notices
++collapse apart from each other, and each stays collapsed, new ones included,
++until you expand it. While a collapsed kind has nothing open, the header has
++no count for it, so its muted items show in the list.
+ 
+ Click anywhere on an item to open its drawer, and click it again to close
+ it. On the main screen, press Enter on it from the keyboard instead. While
+diff --git a/hooks/panel.test.tsx b/hooks/panel.test.tsx
+index b59f9cc3..6f5f8b6b 100644
+--- a/hooks/panel.test.tsx
++++ b/hooks/panel.test.tsx
+@@ -56,6 +56,7 @@ const pr = (number: number, title: string, fields: Record<string, unknown> = {})
+   reviewDecision: null,
+   mergeable: 'MERGEABLE',
+   reviewThreads: { nodes: [] },
++  author: { login: VIEWER },
+   ...fields,
+ })
+ 
+@@ -89,6 +90,7 @@ const BY_REPO: Record<string, Record<string, unknown>> = {
+     p14: pr(14, 'Change a review is reading', { labels: { nodes: [{ name: 'Reviewing' }, { name: 'clean' }] } }),
+     p15: pr(15, 'Signed-off change held for a suggestion', { isDraft: true, labels: { nodes: [{ name: 'clean' }] } }),
+     p16: pr(16, 'Draft that conflicts', { isDraft: true, mergeable: 'CONFLICTING' }),
++    p17: pr(17, 'Change by a deleted account', { author: null }),
+   },
+   'x/y': {
+     p7: pr(7, 'Conflicting change', {
+@@ -285,7 +287,7 @@ test('draws one line per open pull request of the session’s own loops', async
+   expect(texts.slice(0, 3).map(found => found.props.color)).toEqual(['subtle', 'subtle', 'subtle'])
+   expect(await ui.find({ type: 'Text', text: /─|updated|ago|just now/ })).toBeUndefined()
+   // The rows start on the line under the header, with no blank line between.
+-  expect(texts.slice(3, 6).map(found => found.text)).toEqual(['#1', 'clean', ''])
++  expect(texts.slice(3, 6).map(found => found.text)).toEqual(['#1', 'clean', 'Signed-off change'])
+   expect(await ui.find({ type: 'Text', text: 'Already merged' })).toBeUndefined()
+   expect(await ui.find({ type: 'Text', text: /Watching|Reviewing|tracked|session|Refresh/ })).toBeUndefined()
+   expect(await ui.find({ key: 'github:o/r#1' })).toBeUndefined()
+@@ -1114,8 +1116,8 @@ test('lists your pull requests first, then everyone else’s by author, naming t
+   // Yours keep their order, then bob's, then grace's two in theirs, with nothing between the groups.
+   const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key ?? '').filter(key => key.startsWith('pr:'))
+   expect(keys).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
+-  // The header counts everyone's pull requests the panel lists, the session's own and others'.
+-  expect(await headerOf(ui)).toMatch(/^\/projector +5 pull requests  \d+s$/)
++  // The header counts your pull requests apart from the review requests, everyone else's.
++  expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 3 review requests  \d+s$/)
+   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+   expect(texts.filter(text => text === ' ')).toEqual([])
+ 
+@@ -1132,6 +1134,55 @@ test('lists your pull requests first, then everyone else’s by author, naming t
+   await ui.unmount()
+ })
+ 
++test('your pull requests and the review requests collapse apart, yours always first', async ($, on) => {
++  const clock = mock.clock(on, { now: NOW })
++  mock.env(on, { HOME })
++  world(on, { [REVIEW]: 'o/r#4\no/r#9\no/r#5\no/r#17\no/r#6\n', [WATCH]: 'x/y#7\n' })
++  await $.tool.call({ tool: 'Bash', command: `${REVIEW_COMMAND} & ${WATCH_COMMAND}` })
++  await clock.advance(1)
++  await clock.settle()
++  const ui = await $.ui.mount(PANEL)
++  /** The panel's lines, a pull request by its key and a collapsed section by what it reads. */
++  const lines = async () => {
++    const buttons = (await ui.findAll({ type: 'Button' })).filter(button => /^(pr|expand):/.test(button.key ?? ''))
++    return Promise.all(
++      buttons.map(async button =>
++        button.key?.startsWith('expand:') === true
++          ? ((await ui.find({ key: `collapsed:${button.key.slice('expand:'.length)}` }))?.text ?? '')
++          : (button.key ?? ''),
++      ),
++    )
++  }
++
++  // GitHub names no author for a deleted account's pull request, which is someone else's, so it is a review request.
++  expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 4 review requests  \d+s$/)
++
++  // The review requests collapse to one line under your pull requests, listing them in their rows' order.
++  await ui.press({ key: 'count:review' })
++  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', '+ r#17 r#5 r#4 r#6'])
++  expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 4 review requests  \d+s$/)
++
++  // Yours collapse apart from them, and their line still comes first.
++  await ui.press({ key: 'count:pr' })
++  expect(await lines()).toEqual(['+ y#7 r#9', '+ r#17 r#5 r#4 r#6'])
++
++  // A label opens its drawer under its own section's line.
++  await ui.press({ key: 'open:o/r#4' })
++  const boxes = (await ui.findAll({ type: 'Box' })).map(box => box.key ?? '')
++  expect(boxes.filter(key => key === 'collapsed:review' || key.startsWith('drawer:'))).toEqual([
++    'collapsed:review',
++    'drawer:o/r#4',
++  ])
++
++  // Expanding the review requests leaves yours collapsed, and the drawer moves back to its row.
++  await ui.press({ key: 'expand:review' })
++  expect(await lines()).toEqual(['+ y#7 r#9', 'pr:o/r#17', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
++  expect(await ui.find({ key: 'drawer:o/r#4' })).toBeDefined()
++  await ui.press({ key: 'count:pr' })
++  expect(await lines()).toEqual(['pr:x/y#7', 'pr:o/r#9', 'pr:o/r#17', 'pr:o/r#5', 'pr:o/r#4', 'pr:o/r#6'])
++  await ui.unmount()
++})
++
+ /** Records each toast the panel shows. */
+ function toastsOf(on: On): string[] {
+   const toasts: string[] = []
+@@ -5155,11 +5206,11 @@ test('lists the session’s subscriptions from the daemon’s cache, with their
+   await begin($, session.clock)
+ 
+   // The session's new subscriptions showed the panel. The operator daemon.json names is ada, so her pull request
+-  // comes first; then the one still loading, whose author nobody knows yet; then grace's, whose cache file the panel
+-  // finds under the repository's name in lowercase. The `!` line keeps #5 out.
++  // comes first; then the one still loading, whose author nobody knows yet, so it counts as hers; then grace's review
++  // request, whose cache file the panel finds under the repository's name in lowercase. The `!` line keeps #5 out.
+   const ui = await $.ui.mount(PANEL)
+   expect(await rowsOf(ui)).toEqual(['pr:x/y#7', 'pr:o/r#13', 'pr:o/r#4'])
+-  expect(await headerOf(ui)).toMatch(/^\/projector +3 pull requests  \d+s$/)
++  expect(await headerOf(ui)).toMatch(/^\/projector +2 pull requests · 1 review request  \d+s$/)
+   expect(await ui.find({ type: 'Text', text: 'Conflicting change' })).toBeDefined()
+   expect(await ui.find({ key: 'author:x/y#7' })).toBeUndefined()
+   expect((await ui.find({ key: 'author:o/r#4' }))?.text).toBe('grace')
+@@ -5443,7 +5494,7 @@ test('dismiss drops a pull request from each role the session holds and from an
+   ])
+   expect(session.toasts).toEqual(['projector: stopped fixing and reviewing x/y#7'])
+   expect(await rowsOf(ui)).toEqual(['pr:o/r#4'])
+-  expect(await headerOf(ui)).toMatch(/^\/projector +1 pull request  \d+s$/)
++  expect(await headerOf(ui)).toMatch(/^\/projector +1 review request  \d+s$/)
+   await ui.unmount()
+ })
+ 
+diff --git a/hooks/register.tsx b/hooks/register.tsx
+index 4bda4b59..e0f09f85 100644
+--- a/hooks/register.tsx
++++ b/hooks/register.tsx
+@@ -149,8 +149,14 @@ const OTHER_REQUEST_COLOR = 'rgb(255,190,140)'
+ /** The kinds of item, in the order the header counts them. */
+ const ITEM_KINDS: readonly Item['kind'][] = ['question', 'request', 'notice']
+ 
++/** The sections of pull requests, in their order: your own, then the review requests. */
++const PR_SECTIONS = ['pr', 'review'] as const satisfies readonly Section[]
++
+ /** What the header counts, in its order: the pull requests, then each kind of item. */
+-const SECTIONS: readonly Section[] = ['pr', ...ITEM_KINDS]
++const SECTIONS: readonly Section[] = [...PR_SECTIONS, ...ITEM_KINDS]
++
++/** What the header calls each section of pull requests. */
++const PR_NOUNS: Record<(typeof PR_SECTIONS)[number], string> = { pr: 'pull request', review: 'review request' }
+ 
+ /** Where a started request stands: the agent is doing its start action, did it, or could not. */
+ type Stage = 'starting' | 'ready' | 'blocked'
+@@ -1289,21 +1295,29 @@ function threadsByFile(threads: readonly Thread[]): [string, Thread[]][] {
+   return [...files]
+ }
+ 
+-/** Whether the account the panel's `gh` is signed in as wrote a pull request. */
+-const isOwn = (pr: PullRequest, viewer: string | null) => viewer !== null && pr.author === viewer
++/**
++ * Whether a pull request is a review request: one someone other than you,
++ * the account the panel's `gh` is signed in as, wrote. GitHub names no author
++ * for a deleted account's, which is someone else's too. Until the panel knows
++ * who you are, and while a pull request is still loading, it cannot tell, so
++ * it lists the pull request with your own.
++ */
++const isReviewRequest = (pr: PullRequest, viewer: string | null) =>
++  viewer !== null && pr.isLoading !== true && pr.author !== viewer
+ 
+ /**
+- * The panel's pull requests in the order it lists them: yours first, then
+- * everyone else's, each author's together and the authors by login. Within
+- * each, they keep the order they came in.
++ * The panel's pull requests in the order it lists them, by section: yours,
++ * in the order they came in, then the review requests, each author's
++ * together and the authors by login, each author's in the order they came in.
+  */
+-function byAuthor(rows: readonly Row[], viewer: string | null): Row[] {
++function bySection(rows: readonly Row[], viewer: string | null): Record<(typeof PR_SECTIONS)[number], Row[]> {
+   const loginOf = (row: Row) => (row.pr.author ?? '').toLowerCase()
+-  const others = rows.filter(row => !isOwn(row.pr, viewer))
+-  return [
+-    ...rows.filter(row => isOwn(row.pr, viewer)),
+-    ...others.sort((one, other) => loginOf(one).localeCompare(loginOf(other))),
+-  ]
++  return {
++    pr: rows.filter(row => !isReviewRequest(row.pr, viewer)),
++    review: rows
++      .filter(row => isReviewRequest(row.pr, viewer))
++      .sort((one, other) => loginOf(one).localeCompare(loginOf(other))),
++  }
+ }
+ 
+ const secondsSince = (time: number, then: number) => Math.max(0, Math.round((time - then) / 1000))
+@@ -1681,13 +1695,14 @@ export const register: Register = on => {
+     const asking = await read($, asked)
+     const opening = await read($, openFiles)
+     const shownItems = (await read($, items)).filter(item => isShownAt(item, time))
+-    // Each count in the header is a button that collapses its pull requests
+-    // or its kind of item to one line at the top of their place in the list,
+-    // and the line expands them again. A section stays collapsed until it is
+-    // expanded, but while it has nothing open the header has no count to
+-    // expand it from, so a kind's muted items show.
++    // Each count in the header is a button that collapses your pull requests,
++    // the review requests, or a kind of item to one line at the top of their
++    // place in the list, and the line expands them again. A section stays
++    // collapsed until it is expanded, but while it has nothing open the
++    // header has no count to expand it from, so a kind's muted items show.
++    const sectioned = bySection(shown.rows, shown.viewer)
+     const sectionCounts: { section: Section; count: string | undefined }[] = [
+-      { section: 'pr', count: countOf(shown.rows.length, 'pull request') },
++      ...PR_SECTIONS.map(section => ({ section, count: countOf(sectioned[section].length, PR_NOUNS[section]) })),
+       ...ITEM_KINDS.map(kind => {
+         const open = shownItems.filter(
+           item => item.kind === kind && item.answer === undefined && !isSnoozedAt(item, time),
+@@ -1715,7 +1730,7 @@ export const register: Register = on => {
+     // column too.
+     const authorWidth = Math.max(
+       0,
+-      ...shown.rows.filter(row => !isOwn(row.pr, shown.viewer)).map(row => (row.pr.author ?? '').length),
++      ...sectioned.review.map(row => (row.pr.author ?? '').length),
+     )
+     const tally = counts.filter(part => part !== undefined).join(' · ')
+     const reloaded = shown.fetchedAt === null ? '' : span(secondsSince(time, shown.fetchedAt))
+@@ -1809,28 +1824,29 @@ export const register: Register = on => {
+       )
+     // A collapsed section's line expands it again, so it is bulleted `+`
+     // where an item is bulleted `-`. A collapsed kind of item reads as its
+-    // count, in the kind's color. Collapsed pull requests are a row of plain
+-    // Buttons: the `+` expands them, and each label after it, in the rows'
+-    // order and its status's color, works as a tab. Pressing a label opens
+-    // its drawer below the line, the section still collapsed, and draws the
+-    // label inverted while its drawer is open; pressing it again closes the
+-    // drawer. Only one drawer is ever open, so opening one closes another.
++    // count, in the kind's color. A collapsed section of pull requests is a
++    // row of plain Buttons: the `+` expands it, and each label after it, in
++    // the rows' order and its status's color, works as a tab. Pressing a
++    // label opens its drawer below the line, the section still collapsed, and
++    // draws the label inverted while its drawer is open; pressing it again
++    // closes the drawer. Only one drawer is ever open, so opening one closes
++    // another.
+     const expander = (section: Section) =>
+       shownCounts
+         .filter(one => one.section === section && isCollapsed(section))
+         .flatMap(({ count }) => {
+-          if (section !== 'pr') {
++          if (section !== 'pr' && section !== 'review') {
+             return [
+               <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
+                 <Text color={colorOf[section]}>{`+ ${count}`}</Text>
+               </Button>,
+             ]
+           }
+-          const rows = byAuthor(shown.rows, shown.viewer)
++          const rows = sectioned[section]
+           const tab = rows.find(row => keyOf(row.pr) === opened)
+           return [
+-            <Box key="collapsed:pr" flexDirection="row">
+-              <Button key="expand:pr" plain onPress={() => fold(section)}>
++            <Box key={`collapsed:${section}`} flexDirection="row">
++              <Button key={`expand:${section}`} plain onPress={() => fold(section)}>
+                 <Text>+</Text>
+               </Button>
+               {rows.flatMap(({ pr }) => {
+@@ -2416,7 +2432,7 @@ export const register: Register = on => {
+                 </Text>
+               </Box>
+             )}
+-            {isLoaded && !isOwn(pr, shown.viewer) && (
++            {isLoaded && isReviewRequest(pr, shown.viewer) && (
+               <Box key={`author:${key}`} flexShrink={0} width={authorWidth}>
+                 <Text color="subtle">{pr.author ?? ''}</Text>
+               </Box>
+@@ -2451,10 +2467,13 @@ export const register: Register = on => {
+     const focused = shownItems.find(item => opened === `item:${item.ref}`)
+     if (focused !== undefined) return panel(drawItem(focused), false)
+ 
+-    // Collapsed pull requests give way to one line in their place.
++    // Your pull requests come before the review requests, and a collapsed
++    // section gives way to one line in its place.
+     return panel([
+-      ...expander('pr'),
+-      ...(isCollapsed('pr') ? [] : byAuthor(shown.rows, shown.viewer).map(drawRow)),
++      ...PR_SECTIONS.flatMap(section => [
++        ...expander(section),
++        ...(isCollapsed(section) ? [] : sectioned[section].map(drawRow)),
++      ]),
+       failure !== undefined && (
+         <Text key="failure" color="error">
+           {failure}
+diff --git a/hooks/types.d.ts b/hooks/types.d.ts
+index 8653a1a0..15321e02 100644
+--- a/hooks/types.d.ts
++++ b/hooks/types.d.ts
+@@ -154,8 +154,12 @@ export type Item = Question | Notice | Request
+ /** An item whose answer or outcome goes back to the agent that posted it. */
+ export type Answerable = Question | Request
+ 
+-/** What the panel's header counts, and can collapse to one line: the pull requests, or a kind of item. */
+-export type Section = 'pr' | Item['kind']
++/**
++ * What the panel's header counts, and can collapse to one line: your own pull
++ * requests, the review requests someone else's pull requests make, or a kind
++ * of item.
++ */
++export type Section = 'pr' | 'review' | Item['kind']
+ 
+ /**
+  * An answer the panel claimed and is delivering: the claim's token, the route
+@@ -199,7 +203,7 @@ declare module 'claude-code' {
+       panelOpenFiles: { drawer: string; paths: string[] } | null
+       /** The session's inbox, as the panel last read it. */
+       panelInbox: Item[]
+-      /** The pull requests and the kinds of item collapsed to one line, from the header's counts. */
++      /** The sections of pull requests and the kinds of item collapsed to one line, from the header's counts. */
+       panelCollapsed: Section[]
+       /** The answers the panel is delivering, by reference. */
+       panelSending: Record<string, Sending>

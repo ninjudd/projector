@@ -1,0 +1,120 @@
+{
+ "version": 1,
+ "name": "Review requests in the panel",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 483,
+  "title": "Count and collapse review requests apart from your own pull requests",
+  "head": "d5a23b468fa60f15e19070c222ecb93a136dd7f2",
+  "headRef": "panel-review-requests",
+  "base": "52654a3eecab0bb3a656bd5448979c4822872629",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's panel is the list above the Claude Code prompt that shows each open pull request the session fixes or reviews, one line each, under a header that counts them. Before this change the header gave one number, such as <code>24 pull requests</code>, and clicking it collapsed the whole list. A session that reviews a busy repository could not tell how much of that list was its own work, and collapsing the list hid your pull requests along with everyone else's.",
+   "The change splits the list into two sections by author. Your own pull requests come first. Every pull request someone else wrote, a deleted account's included, is a <b>review request</b>. The header counts the two apart, as <code>14 pull requests · 10 review requests</code>, and each count collapses only its own section to a <code>+</code> line.",
+   "Nothing new comes from GitHub. The watch daemon's query, and what each row shows, stay as they were. The review found the code clean; its one finding, about line wrapping in <code>docs/plugins.md</code>, is fixed at this head."
+  ],
+  "cards": [
+   {
+    "id": "terms",
+    "title": "Terms",
+    "html": "<ul class=\"tight\"><li><b>Operator</b>: the account <code>gh</code> is signed in as, which the panel reads from the daemon's <code>daemon.json</code>. The code calls it the viewer.</li><li><b>Review request</b>: a pull request someone other than the operator wrote. The panel decides this by author alone, not by GitHub's list of requested reviewers.</li><li><b>Section</b>: something the header counts and can collapse: your pull requests (<code>pr</code>), the review requests (<code>review</code>), or a kind of inbox item.</li><li><b>Loading row</b>: a pull request the daemon has not queried yet, so its author is unknown.</li></ul>"
+   },
+   {
+    "id": "rules",
+    "title": "Which section a row lands in",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Row</th><th>Section</th></tr></thead><tbody><tr><td>Written by the operator</td><td class=\"r\">Yours</td></tr><tr><td>Written by anyone else</td><td class=\"r\">Review request</td></tr><tr><td>Deleted account (no author)</td><td class=\"r\">Review request</td></tr><tr><td>Still loading</td><td class=\"r\">Yours</td></tr><tr><td>Any row before the operator is known</td><td class=\"r\">Yours</td></tr></tbody></table></div>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "panel",
+   "title": "Two sections of pull requests",
+   "kicker": "One test sorts each row, and the header, the rows, and the collapsed lines all read it",
+   "intro": [
+    "The panel used to sort rows with <code>isOwn</code>, which put your pull requests first and everyone else's after them, grouped by author. The change replaces it with <code>isReviewRequest</code>, which answers the opposite question, and <code>bySection</code>, which returns the two sections as separate lists instead of one sorted list.",
+    "The header now has one count per section, and each count is its own button. A collapsed section of pull requests becomes a <code>+</code> line whose numbers work as tabs: clicking one opens that pull request's drawer, the panel of details under a row, beneath the collapsed line. Because both sections render through the same <code>expander</code>, that behavior is the same for either section."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "Every place that tells your rows from others' now reads <code>isReviewRequest</code> or the lists from <code>bySection</code>: the header counts, the author column's width, the author cell on each row, the collapsed lines, and the expanded list. So a row's author cell appears exactly on review requests. Checked by reading every caller at the head."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/register.tsx",
+     "note": "The classification, the split header, and the per-section collapsed lines.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "A loading row counts as yours, and moves to the review requests once its author arrives and turns out to be someone else. Before the operator is known, every row counts as yours, so no row shows an author column then.",
+       "line": 1306
+      },
+      {
+       "kind": "verify",
+       "text": "The collapsed line and the expanded rows read the same section's list, so a pull request appears in one place only, and a drawer open under a collapsed section draws under that section's line and nowhere else. Checked by reading <code>expander</code> and the final render, and by the new test.",
+       "line": 1845
+      },
+      {
+       "kind": "context",
+       "text": "A section with no rows has no count in the header, and <code>isCollapsed</code> requires a count, so an empty section draws no <code>+</code> line even when it was left collapsed.",
+       "line": 1705
+      }
+     ]
+    },
+    {
+     "path": "hooks/types.d.ts",
+     "note": "Adds <code>review</code> to <code>Section</code>, the type the stored list of collapsed sections holds."
+    }
+   ]
+  },
+  {
+   "id": "tests",
+   "title": "Tests",
+   "kicker": "A new test for the split, and the existing header expectations updated",
+   "intro": [
+    "The fixture's default pull request now names the operator as its author. Before, the default named no author, so the panel treated those rows as someone else's, though most tests meant them as yours. Under the new rule a missing author means a deleted account, so the default had to name the operator. A new fixture, <code>p17</code>, has no author, as GitHub reports a deleted account's pull request."
+   ],
+   "checks": [
+    {
+     "kind": "verify",
+     "text": "<code>claude plugin test .</code> passes at the head: 230 pass, 0 fail."
+    }
+   ],
+   "files": [
+    {
+     "path": "hooks/panel.test.tsx",
+     "note": "A new test, <code>your pull requests and the review requests collapse apart, yours always first</code>, and four header expectations updated to the split counts.",
+     "checks": [
+      {
+       "kind": "context",
+       "text": "This assertion is what catches a deleted account's pull request counted as yours: the header would read <code>3 pull requests · 3 review requests</code> instead.",
+       "line": 1158
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "docs",
+   "title": "Documentation",
+   "kicker": "The panel's section of the plugin guide",
+   "intro": [
+    "<code>docs/plugins.md</code> defines a review request, updates the header example, and says that each section collapses on its own. The text matches the code, and the edited paragraphs wrap at the file's width."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "docs/plugins.md",
+     "note": "Defines review requests, shows the split header, and describes collapsing each section apart.",
+     "checks": []
+    }
+   ]
+  }
+ ]
+}
