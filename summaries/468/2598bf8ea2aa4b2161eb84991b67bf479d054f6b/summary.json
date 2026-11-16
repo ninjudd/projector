@@ -1,0 +1,178 @@
+{
+ "version": 1,
+ "name": "Faster test suite",
+ "project": "",
+ "pr": {
+  "repo": "ninjudd/projector",
+  "number": 468,
+  "title": "Cut the test suite from nine minutes to about one",
+  "head": "2598bf8ea2aa4b2161eb84991b67bf479d054f6b",
+  "headRef": "faster-tests",
+  "base": "0869d7600162311918136385e23b0c1105b4ddc5",
+  "baseRef": "main"
+ },
+ "overview": {
+  "summary": [
+   "Projector's Python test suite took about nine minutes to run serially. It runs on every push, before every fix, and again in review. Most of that time went to starting processes. The same Git fixture was rebuilt with a dozen <code>git</code> processes before every test. The site server helper waited out a half-second poll on every request. Fixed sleeps and timeouts ran to their full length.",
+   "This pull request changes only tests, the gate command, and the documentation that names it. No file under <code>src/</code> changes. It does three things:",
+   "<ol><li><b>Builds each expensive fixture once and copies it.</b> <code>tests/scratch.py</code> adds <code>copy_of</code>, which runs a fixture builder once per process and gives each test its own copy. It rewrites the absolute paths Git recorded so they point into the copy.</li><li><b>Runs the suite in parallel.</b> <code>python3 -m tests</code> is a standard-library runner. It splits each test class into chunks of up to eight tests and runs <code>python3 -m unittest</code> on each chunk in its own worker process, one worker per CPU. It becomes the gate in <code>AGENTS.md</code>, <code>docs/develop.md</code>, and the Check workflow.</li><li><b>Deletes tests that caught nothing, and shortens waits.</b> It deletes tests that restated CSS or argparse choices, pinned a removed command, or checked the same behavior as another test through the same code path, or merges them into table tests. Projector's testing guide sets these rules.</li></ol>",
+   "The head merges <code>main</code> twice. The second merge moves <code>main</code>'s two new skill-text tests into <code>SkillTextTests</code>, the class where this branch now keeps the skill-text tests."
+  ],
+  "cards": [
+   {
+    "id": "numbers",
+    "title": "Test counts and wall time",
+    "html": "<div class=\"tblwrap\"><table class=\"tbl\"><thead><tr><th>Run</th><th>Tests</th><th>Wall time</th><th>Result</th></tr></thead><tbody><tr><td>Base <code>162b8fd</code>, <code>unittest discover</code></td><td>1,390</td><td>888s</td><td class=\"r\">OK, 1 skipped</td></tr><tr><td>Head <code>e94a6c7</code>, <code>python3 -m tests</code></td><td>1,327</td><td>70s</td><td class=\"r\">OK, 1 skipped</td></tr><tr><td>Head <code>2598bf8</code>, <code>python3 -m tests</code></td><td>1,328</td><td>69s</td><td class=\"r\">OK, 1 skipped</td></tr><tr><td>Head <code>2598bf8</code>, <code>unittest discover</code></td><td>1,328</td><td>356s</td><td class=\"r\">OK, 1 skipped</td></tr></tbody></table></div><p class=\"note\">Other review suites ran on the machine at the same time, at load averages from about 200 to 640 on 12 cores, so every time here is inflated. The current base <code>0869d76</code> has one more test than <code>162b8fd</code>, so the head has 63 fewer tests than its base. That matches the 63 test definitions this change deletes.</p>"
+   }
+  ]
+ },
+ "groups": [
+  {
+   "id": "runner",
+   "title": "The parallel runner and copied fixtures",
+   "kicker": "Two new helpers under tests/ that every other change builds on",
+   "intro": [
+    "<code>copy_of(build)</code> runs <code>build</code> once per process in a template directory, then copies the template for each test with <code>shutil.copytree</code>. Git writes absolute paths into a repository's <code>config</code>, for a remote's URL and <code>insteadOf</code> rules, and into a linked worktree's <code>gitdir</code> and <code>.git</code> files. So <code>relocate</code> replaces the template's path with the copy's in those files. A remote that names a sibling repository then names the copy's sibling, and no two tests share a repository.",
+    "<code>python3 -m tests</code> discovers the suite in the parent process and groups test ids by class. It splits each class into chunks of eight. A thread pool with one worker per CPU runs each chunk as <code>python3 -m unittest &lt;ids&gt;</code>. Each worker imports <code>tests/__init__.py</code>, which gives it a temporary root of its own, so workers share only the machine."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "A test class's chunks run in different processes. So anything a class caches, such as <code>copy_of</code>'s templates or <code>FileHeaderTests.built</code>, is built once per chunk rather than once per run. That costs time, not correctness."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/__main__.py",
+     "note": "The runner: discovery, chunking, the worker pool, and the summary line.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "verify",
+       "line": 45,
+       "text": "The loader turns a module that fails to import into a <code>_FailedTest</code>. The runner runs it by name, so its chunk fails and the run exits 1. I checked this by reading how <code>unittest.loader</code> names failed imports, both in discovery and in a run by name."
+      }
+     ]
+    },
+    {
+     "path": "tests/scratch.py",
+     "note": "<code>copy_of</code> and <code>relocate</code>.",
+     "collapsed": false,
+     "checks": [
+      {
+       "kind": "context",
+       "line": 45,
+       "text": "<code>relocate</code> skips symlinks. A fixture that made an absolute symlink inside its template would give every copy a link back into the template. None of the fixtures that use <code>copy_of</code> make a symlink."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "gate",
+   "title": "The gate runs the new runner",
+   "kicker": "The documented gate and CI switch from unittest discover to python3 -m tests",
+   "intro": [
+    "The Check workflow, the gate list in <code>AGENTS.md</code>, and <code>docs/develop.md</code> now run <code>PYTHONPATH=src python3 -m tests</code>. <code>CLAUDE.md</code> is a link to <code>AGENTS.md</code>, so it changes too. <code>docs/develop.md</code> also documents <code>-j</code>, <code>-v</code>, and running one module, class, or test. <code>python3 -m unittest</code> still runs any part of the suite in one process."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": ".github/workflows/check.yml",
+     "note": "Only the test step's command changes. No secret or permission changes."
+    },
+    {
+     "path": "AGENTS.md"
+    },
+    {
+     "path": "docs/develop.md"
+    }
+   ]
+  },
+  {
+   "id": "fixtures",
+   "title": "Fixtures built once and copied",
+   "kicker": "Review, relay, release, summary, and projector tests start from a copied template",
+   "intro": [
+    "Each of these files moves its Git setup from <code>setUp</code> into a builder at module level, which <code>copy_of</code> runs once. The rest of each test stays as it was. Some files also merge two tests that built the same fixture to check related facts. For example, the summary test of a publish that retries after losing a race now also checks that the retry keeps the head's attributes."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_relay.py",
+     "note": "The test copies the relay scratch directory, which holds each machine's checkout and the fake keychain and <code>codex</code> tools. The ref-flood test patches <code>OPEN_LIMIT</code> to 2 and plants 3 messages instead of 100.",
+     "checks": [
+      {
+       "kind": "verify",
+       "text": "The keychain fallback test now gives the fake <code>secret-tool</code> 0.2s to report \"no secret service\". It passed 20 of 20 runs at load averages of 300 to 560 on 12 cores, and it passed in the full parallel run."
+      }
+     ]
+    },
+    {
+     "path": "tests/test_release.py"
+    },
+    {
+     "path": "tests/test_summary.py"
+    },
+    {
+     "path": "tests/test_projector.py"
+    }
+   ]
+  },
+  {
+   "id": "pruned",
+   "title": "Tests removed or merged",
+   "kicker": "Duplicates, restated code, and pinned decisions go; facets of one outcome become table tests",
+   "intro": [
+    "Each test that this group deletes falls into one of two kinds. Some restate a literal the code holds, such as a CSS rule, a hex color, or argparse's choice list. Others check a behavior that another test already checks through the same code path. For example, every Projector reader of a verdict marker goes through <code>verdict_marker</code>. So the version-less and <code>approved</code> marker cases in <code>VerdictMarkerTests</code> cover status, dismissal, and the site, and the copies of those cases in each of those places are gone.",
+    "Ten interdiff rule tests each paid for a full incremental-review fixture. They become one table test. Its baseline head passes every rule. Each case changes one input, checks the refusal, and restores the input. The site's status and stack-segment logic is now called directly, and the test suite keeps one end-to-end case for each path through the build."
+   ],
+   "checks": [
+    {
+     "kind": "context",
+     "text": "<code>FileHeaderTests.build</code> caches one build for each set of arguments, for the life of the process, and returns a deep copy of it. That is correct only while no test changes the checkout before it builds, and none does at this head."
+    }
+   ],
+   "files": [
+    {
+     "path": "tests/test_review.py"
+    },
+    {
+     "path": "tests/test_site.py"
+    },
+    {
+     "path": "tests/test_config.py"
+    },
+    {
+     "path": "tests/test_instructions.py"
+    },
+    {
+     "path": "tests/test_loop.py"
+    },
+    {
+     "path": "tests/test_permissions.py"
+    }
+   ]
+  },
+  {
+   "id": "waits",
+   "title": "Shorter and event-driven waits",
+   "kicker": "Fixed joins and long timeouts give way to waits on the event itself",
+   "intro": [
+    "The agent registration race test used to join the second registration for half a second. It now waits until that registration reaches the names' lock. The inbox lock tests now hold the lock on a file descriptor of their own, so they start no subprocess, and they wait 0.1s instead of 0.3s. The installer test puts the real interpreter first on <code>PATH</code>, so a slow <code>python3</code> shim from a version manager does not run."
+   ],
+   "checks": [],
+   "files": [
+    {
+     "path": "tests/test_agents.py"
+    },
+    {
+     "path": "tests/test_inbox.py"
+    },
+    {
+     "path": "tests/test_install.py"
+    }
+   ]
+  }
+ ]
+}
