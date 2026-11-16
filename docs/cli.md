@@ -2792,10 +2792,10 @@ untrusted, modified, disabled, or missing, `add` names the problem and
 what to do after the `events:` line, and in `codex_hooks` with `--json`.
 `codex_hooks` is `null` when there is nothing to report.
 
-An `add` that writes a line, the Codex hooks' subscriptions included, also
-registers a session that is not registered yet for agent messages, with a
-summary made from its subscriptions, unless `agent.auto_register` is
-`false`. The output of `add` stays the same either way, as
+An `add` that writes a line, or finds the line it would write already
+there, the Codex hooks' subscriptions included, also registers a session
+that is not registered yet for agent messages, with a summary made from its
+subscriptions, unless `agent.auto_register` is `false`. The output of `add` stays the same either way, as
 [Registered when it subscribes](#registered-when-it-subscribes) describes.
 
 ### Deliver events to Codex
@@ -3118,10 +3118,10 @@ messages.
 
 A session that subscribes to a pull request registers itself, so a loop that
 fixes or reviews pull requests can receive messages without being asked to
-register. When `project watch add` writes a subscription line, through a
-target, `--from-output`, or the Codex hook that reads a push, and the session
-has no `agent.json`, `add` registers it the way `register` does, with no name
-and this summary:
+register. When `project watch add` writes a subscription line, or finds it
+there already, through a target, `--from-output`, or the Codex hook that
+reads a push, and the session has no `agent.json`, `add` registers it the
+way `register` does, with no name and this summary:
 
 ```console
 $ project watch add acme/app#12
@@ -3153,9 +3153,12 @@ the generated summary.
 The registration is skipped, and `add` still succeeds with the same output,
 when `agent.auto_register` is `false` in the checkout's configuration, when
 nothing delivers the session's events, when `gh` is not signed in, or when
-any other step of the registration fails. A running watch daemon supplies
-the GitHub login, so the registration asks `gh` for it only when no daemon
-has read it yet.
+any other step of the registration fails. A later `add` tries again, even
+for a line the session has, so a session that nothing delivered to when it
+first subscribed, such as one that starts `project watch stream` after `add`
+prints `events: none`, registers on its next `add`. A running watch daemon
+supplies the GitHub login, so the registration asks `gh` for it only when no
+daemon has read it yet.
 
 ### List the sessions
 

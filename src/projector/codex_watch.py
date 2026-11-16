@@ -508,7 +508,7 @@ def hook(root: Path, event: dict, now: float, ensure: Callable[[], object], *, r
     text = tool_output(event) if name == "PostToolUse" else None
     if text is not None:
         config = load_config(Path(cwd))
-        if config.setting("watch.auto_start") is not False and watch.add_from_output(root, session, text)[0]:
+        if config.setting("watch.auto_start") is not False and watch.add_from_output(root, session, text)[2]:
             agents.register_subscriber(root, session, Path(cwd), now, config)
     consumed, lines = acknowledge(folder, session, event.get("prompt", ""), now) if name == "UserPromptSubmit" else (False, [])
     if record.get("enabled") and has_work(folder):

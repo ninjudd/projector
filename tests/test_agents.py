@@ -412,6 +412,17 @@ class SubscriberTests(AgentCase):
         self.assertEqual(("Fixing acme/app#17", "codex"),
                          (self.summary(B), (agents.record(self.root, B) or {}).get("host")))
 
+    def test_a_push_to_a_pull_request_codex_already_fixes_registers_the_codex_session(self) -> None:
+        watch.add(self.root, B, watch.Subscription("acme/app", 17, "fix", auto=True))
+        self.codex(B)
+        event = {"hook_event_name": "PostToolUse", "session_id": B, "cwd": str(self.work), "tool_name": "Bash",
+                 "tool_input": {"command": "git push"},
+                 "tool_response": {"exit_code": 0, "output": "https://github.com/acme/app/pull/17\n"}}
+
+        codex.hook(self.root, event, self.now, lambda: None)
+
+        self.assertEqual("Fixing acme/app#17", self.summary(B))
+
     def test_auto_register_false_subscribes_without_registering(self) -> None:
         (self.home / ".projector.toml").write_text("[agent]\nauto_register = false\n")
         self.claude(A)
@@ -457,6 +468,30 @@ class SubscriberTests(AgentCase):
 
         self.assertEqual(f"added acme/app#12 fix\nevents: none — start `project watch stream --session {A}` under "
                          "your host's monitor facility\n", out)
+        self.assertFalse((self.folder(A) / "agent.json").exists())
+
+    def test_an_add_that_finds_its_line_registers_a_session_unreachable_when_it_first_subscribed(self) -> None:
+        self.watch("add", "acme/app#12")
+        self.watch("add", "--from-output", "-", stdin="https://github.com/acme/app/pull/13\n")
+        self.claude(A)
+        seen = []
+        for args, stdin in ((["add", "acme/app#12"], ""), (["add", "--from-output", "-"],
+                                                           "https://github.com/acme/app/pull/13\n")):
+            (self.folder(A) / "agent.json").unlink(missing_ok=True)
+            _, out, _ = self.watch(*args, stdin=stdin)
+            seen.append((out.splitlines()[0], self.summary()))
+
+        self.assertEqual([("the session already subscribes to acme/app#12 fix",
+                           "Fixing acme/app#12 and acme/app#13"),
+                          ("the output shows no new pull request to fix", "Fixing acme/app#12 and acme/app#13")],
+                         seen)
+
+    def test_an_add_from_output_that_names_no_pull_request_registers_nothing(self) -> None:
+        self.watch("add", "acme/app#12")
+        self.claude(A)
+
+        self.watch("add", "--from-output", "-", stdin="Everything up-to-date\n")
+
         self.assertFalse((self.folder(A) / "agent.json").exists())
 
     def test_a_signed_out_gh_subscribes_unregistered(self) -> None:

@@ -502,9 +502,10 @@ def unique(pairs: list[tuple[str, object]]) -> list[tuple[str, object]]:
     return kept
 
 
-def add_from_output(root: Path, session: str, text: str) -> tuple[list[str], list[str]]:
+def add_from_output(root: Path, session: str, text: str) -> tuple[list[str], list[str], bool]:
     """Subscribe the session to `fix auto` on each pull request the output opened or pushed to, and answer
-    the lines added and a problem for each branch whose pull request could not be looked up."""
+    the lines added, a problem for each branch whose pull request could not be looked up, and whether the
+    session now subscribes to any of those pull requests, through a line added or one it already had."""
     pulls, branches = pushed(text)
     found: list[tuple[str, object]] = list(pulls)
     problems = []
@@ -522,14 +523,16 @@ def add_from_output(root: Path, session: str, text: str) -> tuple[list[str], lis
         found += [(repo, pull["number"]) for pull in listed if isinstance(pull, dict)
                   and isinstance(pull.get("number"), int)]
     added = []
+    subscribed = False
     for repo, number in unique(found):
         try:
             line = add(root, session, Subscription(repo, number, "fix", auto=True))
         except Excluded:
             continue
+        subscribed = True
         if line:
             added.append(line)
-    return added, problems
+    return added, problems, subscribed
 
 
 # GitHub

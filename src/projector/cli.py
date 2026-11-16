@@ -1572,8 +1572,8 @@ def run_watch(arguments: argparse.Namespace) -> int:
                 report_added(root, session, [], json_output,
                              "watch.auto_start is false, so the output subscribes the session to nothing")
                 return 0
-            added, problems = watch.add_from_output(root, session, text)
-            if added:
+            added, problems, subscribed = watch.add_from_output(root, session, text)
+            if subscribed:
                 agents.register_subscriber(root, session, Path.cwd(), time.time(), here)
             for problem in problems:
                 print(f"project: {problem}", file=sys.stderr)
@@ -1582,8 +1582,7 @@ def run_watch(arguments: argparse.Namespace) -> int:
         repo, number = watch.parse_target(arguments.target)
         wanted = watch_subscription(arguments, repo, number)
         line = watch.add(root, session, wanted)
-        if line:
-            agents.register_subscriber(root, session, Path.cwd(), time.time(), here_config())
+        agents.register_subscriber(root, session, Path.cwd(), time.time(), here_config())
         report_added(root, session, [line] if line else [], json_output,
                      f"the session already subscribes to {wanted.target} {wanted.role}")
     elif command in ("remove", "drop", "restore"):
